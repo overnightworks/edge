@@ -125,8 +125,35 @@ def test_vscode_snap_trash_is_covered_too(layout: Layout) -> None:
     assert str(item) in subjects(tidy_home.expired_trash(layout, NOW, LIMITS))
 
 
+def test_a_dotted_trashinfo_name_cannot_escape_the_files_directory(layout: Layout) -> None:
+    trash = layout.home / ".local" / "share" / "Trash"
+    decoy = touch(trash / "files" / "keepme.txt", timedelta(0))
+    touch(trash / "info" / "...trashinfo", timedelta(0), "[Trash Info]\nDeletionDate=2026-07-01T10:00:00\n")
+
+    findings = tidy_home.expired_trash(layout, NOW, LIMITS)
+    for finding in findings:
+        tidy_home.apply_finding(finding, run=no_tools)
+
+    assert findings == []
+    assert decoy.exists()
+    assert trash.exists()
+
+
 def test_docker_rules_are_skipped_when_docker_is_unavailable() -> None:
     assert tidy_home.docker_leftovers(no_tools, NOW, LIMITS) == []
+
+
+def test_docker_leftovers_emit_nothing_when_there_is_nothing_to_clean() -> None:
+    def fake_docker(argv):
+        if argv[:2] == ["docker", "info"]:
+            return "28.0\n"
+        if argv[:3] == ["docker", "container", "ls"]:
+            return "live\t2026-08-01 10:00:00 +0200 CEST\trunning\n"
+        if argv[:3] == ["docker", "system", "df"]:
+            return "Images\t5GB\t0GB (0%)\nBuild Cache\t1GB\t0GB\n"
+        return ""
+
+    assert tidy_home.docker_leftovers(fake_docker, NOW, LIMITS) == []
 
 
 def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
@@ -154,8 +181,8 @@ def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
     assert details["dangling images"] == "55.69GB, reclaimable 25.66GB (46%)"
     assert details["build cache beyond 20GB"] == "32.33GB, reclaimable 421MB"
     recommendations = {f.subject: f.recommendation for f in findings}
-    assert recommendations["dangling images"] == "--apply, 25,7 GB"
-    assert recommendations["build cache beyond 20GB"] == "--apply, 0,4 GB"
+    assert recommendations["dangling images"] == "--apply"
+    assert recommendations["build cache beyond 20GB"] == "--apply"
 
 
 def test_docker_build_cache_limit_is_configurable() -> None:
@@ -165,12 +192,69 @@ def test_docker_build_cache_limit_is_configurable() -> None:
         if argv[:3] == ["docker", "container", "ls"]:
             return ""
         if argv[:3] == ["docker", "system", "df"]:
-            return "Images\t1GB\t0GB (0%)\nBuild Cache\t1GB\t0GB\n"
+            return "Images\t1GB\t0GB (0%)\nBuild Cache\t10GB\t3GB\n"
         return ""
 
     findings = tidy_home.docker_leftovers(fake_docker, NOW, Limits(docker_build_cache_keep="5GB"))
 
     assert any(f.subject == "build cache beyond 5GB" for f in findings)
+
+
+def test_run_findings_show_the_exact_apply_command_in_the_dry_run_report(layout: Layout) -> None:
+    with_readme(layout)
+
+    def fake_docker(argv):
+        if argv[:2] == ["docker", "info"]:
+            return "28.0\n"
+        if argv[:3] == ["docker", "container", "ls"]:
+            return ""
+        if argv[:3] == ["docker", "system", "df"]:
+            return "Images\t1GB\t0GB (0%)\nBuild Cache\t30GB\t5GB\n"
+        return ""
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=fake_docker, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    assert "--apply → `docker builder prune -f --keep-storage=20GB`" in report
+
+
+def test_uv_and_npm_never_appear_as_findings(layout: Layout) -> None:
+    with_readme(layout)
+
+    def fake_tools(argv):
+        return "1.0.0\n" if argv[-1] == "--version" else None
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=fake_tools, issue_state=lambda r, n: None)
+
+    assert not any(f.rule == "caches" for f in findings)
+
+
+def test_run_housekeeping_returns_the_last_output_line_per_tool() -> None:
+    def fake_run(argv):
+        if tuple(argv) == ("uv", "cache", "prune"):
+            return "Removed 12 files\nTotal size: 3.4MiB\n"
+        return None
+
+    assert tidy_home.run_housekeeping(fake_run) == "Total size: 3.4MiB"
+
+
+def test_dry_run_report_names_the_housekeeping_commands(layout: Layout) -> None:
+    with_readme(layout)
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=no_tools, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    assert "Wartung mit --apply: uv cache prune, npm cache verify" in report
+
+
+def test_apply_report_shows_the_housekeeping_outcome(layout: Layout) -> None:
+    with_readme(layout)
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(apply=True), LIMITS, run=no_tools, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home, apply=True, housekeeping="ok; ok")
+
+    assert "Wartung: ok; ok" in report
+    assert "Wartung mit --apply" not in report
 
 
 # --- audit rules ------------------------------------------------------------
@@ -210,6 +294,31 @@ def test_missing_readme_yields_exactly_one_finding(layout: Layout) -> None:
     findings = tidy_home.unknown_home_entries(layout)
 
     assert findings == [Finding("unknown-home-entry", Action.REPORT, "README.md fehlt", Verdict.REVIEW, "anlegen")]
+
+
+def test_known_entries_stop_at_the_removed_section_heading() -> None:
+    text = """
+`git/x` and `.secrets/y` are known. `~/.cloudflared` and `Dokumente/` too.
+
+## Was hier nicht mehr liegt
+
+`.atelier` wurde entfernt. `openstream` auch.
+"""
+
+    known = tidy_home._known_home_entry_names(text)
+
+    assert {"git", ".secrets", ".cloudflared", "Dokumente"} <= known
+    assert ".atelier" not in known
+    assert "openstream" not in known
+
+
+def test_known_entries_skip_backtick_tokens_that_are_not_path_shaped() -> None:
+    text = "Use `uv` or `pip` inside `songmaker`. Only `git/x` is a real path."
+
+    known = tidy_home._known_home_entry_names(text)
+
+    assert "git" in known
+    assert not {"uv", "pip", "songmaker"} & known
 
 
 def test_git_root_accepts_repos_and_their_worktree_dirs_only(layout: Layout) -> None:
@@ -265,19 +374,34 @@ def test_issue_state_is_looked_up_on_the_repo_slug_of_either_remote_form(remote:
     assert gh_call[gh_call.index("-R") + 1] == "overnightworks/songmaker"
 
 
-def test_largest_entries_are_listed_only_with_sizes_and_biggest_first(layout: Layout) -> None:
+def test_largest_entries_only_list_big_entries_with_sizes_and_biggest_first(layout: Layout) -> None:
     with_readme(layout)
 
     def fake_du(argv):
-        return f"3\t{layout.home}/small\n2048\t{layout.home}/big\n" if argv[0] == "du" else None
+        if argv[0] != "du":
+            return None
+        return f"2048\t{layout.home}/small\n8192\t{layout.home}/big\n20480\t{layout.home}/huge\n"
 
     without = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=fake_du, issue_state=lambda r, n: None)
     with_sizes = tidy_home.collect_findings(layout, NOW, Options(sizes=True), LIMITS, run=fake_du, issue_state=lambda r, n: None)
 
     assert not [f for f in without if f.rule == "largest-entries"]
     sized = [f for f in with_sizes.audit if f.rule == "largest-entries"]
-    assert [(f.subject, f.detail) for f in sized] == [(f"{layout.home}/big", "2.0 GiB"), (f"{layout.home}/small", "0.0 GiB")]
+    assert [(f.subject, f.detail) for f in sized] == [
+        (f"{layout.home}/huge", "20.0 GiB"),
+        (f"{layout.home}/big", "8.0 GiB"),
+    ]
     assert all(f.verdict is Verdict.REVIEW for f in sized)
+    assert all(f.recommendation == "mit `du -h --max-depth=1 <Pfad>` aufschlüsseln" for f in sized)
+
+
+def test_a_failed_du_is_not_applicable_not_a_clean_finding(layout: Layout) -> None:
+    with_readme(layout)
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(sizes=True), LIMITS, run=no_tools, issue_state=lambda r, n: None)
+
+    assert not [f for f in findings if f.rule == "largest-entries"]
+    assert ("largest-entries", "du fehlgeschlagen") in findings.not_applicable
 
 
 def test_findings_refuse_a_cleanup_action_filed_as_audit() -> None:
@@ -334,6 +458,7 @@ def test_codex_sessions_are_summarised_once_when_old_files_exist(layout: Layout)
     assert len(findings) == 1
     assert findings[0].detail.startswith("1 files older than 90 d")
     assert findings[0].verdict is Verdict.REVIEW
+    assert findings[0].recommendation == ("Sessions älter als 90 d löschen: `find ~/.codex/sessions -type f -mtime +90 -delete`")
 
 
 # --- configuration -----------------------------------------------------------
@@ -365,6 +490,24 @@ def test_limits_parse_downloads_ignore_list(layout: Layout) -> None:
     limits = tidy_home.load_limits(layout.config_file)
 
     assert limits.downloads_ignore == ("keepme.iso", "notes.txt")
+
+
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "trash_days = -1\n",
+        "trash_days = true\n",
+        'trash_days = "30"\n',
+        "docker_build_cache_keep = 5\n",
+        'downloads_ignore = "keepme.iso"\n',
+        "downloads_ignore = [1, 2]\n",
+    ],
+)
+def test_limits_reject_a_bad_value_shape(layout: Layout, config_text: str) -> None:
+    touch(layout.config_file, timedelta(0), config_text)
+
+    with pytest.raises(ValueError):
+        tidy_home.load_limits(layout.config_file)
 
 
 # --- orchestration ----------------------------------------------------------
@@ -431,6 +574,17 @@ def test_report_lists_rules_that_ran_and_found_nothing(layout: Layout) -> None:
     assert "pasted-images" in report.rsplit("Geprüft, nichts gefunden:", 1)[1]
 
 
+def test_missing_docker_is_not_applicable_not_checked_clean(layout: Layout) -> None:
+    with_readme(layout)
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=no_tools, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    assert "Nicht geprüft: docker (nicht installiert)" in report
+    checked_section = report.split("Geprüft, nichts gefunden:", 1)[1].splitlines()[0]
+    assert "docker" not in checked_section
+
+
 def test_header_reports_reclaimable_docker_size(layout: Layout) -> None:
     with_readme(layout)
 
@@ -446,12 +600,39 @@ def test_header_reports_reclaimable_docker_size(layout: Layout) -> None:
     findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=fake_docker, issue_state=lambda r, n: None)
     report = tidy_home.render_report(findings, NOW, layout.home)
 
-    assert "--apply gäbe ~2,5 GB frei" in report
+    assert "docker meldet ~2,5 GB wiederverwendbar" in report
+
+
+def test_header_caps_the_build_cache_contribution_at_its_reclaimable_amount(layout: Layout) -> None:
+    with_readme(layout)
+
+    def fake_docker(argv):
+        if argv[:2] == ["docker", "info"]:
+            return "28.0\n"
+        if argv[:3] == ["docker", "container", "ls"]:
+            return ""
+        if argv[:3] == ["docker", "system", "df"]:
+            return "Images\t55.69GB\t25.66GB (46%)\nBuild Cache\t32.33GB\t421MB\n"
+        return ""
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=fake_docker, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    # 25.66 GB (images) + 0.421 GB (build cache, capped at its own reclaimable figure, not size - keep)
+    assert "docker meldet ~26,1 GB wiederverwendbar" in report
 
 
 def test_empty_report_says_so(layout: Layout) -> None:
     empty = tidy_home.Findings(clean=(), audit=())
     assert "Nichts zu tun." in tidy_home.render_report(empty, NOW, layout.home)
+
+
+def test_pipe_characters_in_a_cell_are_escaped(layout: Layout) -> None:
+    finding = Finding("rule", Action.REPORT, "sub|ject", Verdict.REVIEW, "prüfen", "de|tail")
+    report = tidy_home.render_report(tidy_home.Findings(clean=(), audit=(finding,)), NOW, layout.home)
+
+    assert "sub\\|ject" in report
+    assert "de\\|tail" in report
 
 
 def test_notify_sends_the_report_header_as_the_summary() -> None:
@@ -470,3 +651,62 @@ def test_exit_code_is_zero_when_nothing_is_found() -> None:
 def test_exit_code_is_one_when_any_finding_exists() -> None:
     finding = Finding("downloads-inbox", Action.REPORT, "/tmp/x", Verdict.REVIEW, "prüfen")
     assert tidy_home.exit_code(tidy_home.Findings(clean=(), audit=(finding,))) == 1
+
+
+# --- main --------------------------------------------------------------------
+
+
+def test_main_runs_end_to_end_with_an_injected_home_and_runner(tmp_path: Path) -> None:
+    dirty_home = tmp_path / "dirty"
+    with_readme(Layout(dirty_home))
+    touch(dirty_home / "Eingefügtes Bild.png", timedelta(days=10))
+    clean_home = tmp_path / "clean"
+    with_readme(Layout(clean_home))
+
+    dirty_calls: list[list[str]] = []
+    clean_calls: list[list[str]] = []
+
+    def record(calls, argv):
+        calls.append(list(argv))
+        return None
+
+    dirty_code = tidy_home.main([], home=dirty_home, run=lambda argv: record(dirty_calls, argv))
+    clean_code = tidy_home.main([], home=clean_home, run=lambda argv: record(clean_calls, argv))
+
+    assert dirty_code == 1
+    assert clean_code == 0
+    assert (dirty_home / ".local" / "state" / "tidy-home" / "last-report.md").is_file()
+    assert (clean_home / ".local" / "state" / "tidy-home" / "last-report.md").is_file()
+    assert any(call[:1] == ["notify-send"] for call in dirty_calls)
+    assert not any(call[:1] == ["notify-send"] for call in clean_calls)
+
+
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "not_a_real_key = 1\n",
+        "trash_days = [\n",
+    ],
+)
+def test_main_exits_2_and_reports_a_broken_config(tmp_path: Path, capsys: pytest.CaptureFixture[str], config_text: str) -> None:
+    layout = Layout(tmp_path)
+    touch(layout.config_file, timedelta(0), config_text)
+
+    code = tidy_home.main([], home=tmp_path, run=no_tools)
+
+    assert code == 2
+    assert "tidy-home:" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+def test_main_exits_2_when_the_config_file_cannot_be_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    layout = Layout(tmp_path)
+    touch(layout.config_file, timedelta(0), "trash_days = 5\n")
+    layout.config_file.chmod(0)
+    try:
+        code = tidy_home.main([], home=tmp_path, run=no_tools)
+    finally:
+        layout.config_file.chmod(0o644)
+
+    assert code == 2
+    assert "tidy-home:" in capsys.readouterr().err

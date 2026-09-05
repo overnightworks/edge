@@ -3,10 +3,13 @@
 
 Without --apply it is a dry run: every finding is printed, nothing changes.
 With --apply the CLEAN findings are executed. AUDIT findings are never acted
-on automatically; they name what a person has to decide.
+on automatically; they name what a person has to decide. Package-cache
+housekeeping (uv, npm) also runs under --apply, but it is maintenance, not a
+finding: it is never counted, never blocks, never affects the exit code.
 
-Exit code: 1 when any finding exists (dry run or apply), 0 when the home is
-clean. That is not a failure — it is the signal the timer notifies on.
+Exit code: 0 when the home is clean, 1 when any finding exists (dry run or
+apply — not a failure, it is the signal the timer notifies on), 2 when the
+configuration file itself is invalid.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from pathlib import Path
 
 PASTED_IMAGE_GLOB = "Eingefügtes Bild*.png"
 LARGEST_ENTRIES_SHOWN = 10
+LARGEST_ENTRY_MIN_GIB = 5
 
 WORKTREE_ISSUE_PATTERN = re.compile(r"issue-(\d+)")
 TRASHINFO_DATE_PATTERN = re.compile(r"^DeletionDate=(.+)$", re.MULTILINE)
@@ -32,11 +36,17 @@ DOCKER_CREATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 DOCKER_CREATED_AT_PREFIX_LENGTH = len("2026-09-05 15:47:49")  # docker appends "+0200 CEST"
 
 BACKTICK_TOKEN_PATTERN = re.compile(r"`([^`]+)`")
-NON_ENTRY_TOKEN_MARKERS = (" ", "*", "--", "<")
+REMOVED_SECTION_HEADING = "## Was hier nicht mehr liegt"
 
-RECLAIMABLE_PATTERN = re.compile(r"reclaimable\s+([\d.]+)\s*(GB|MB|kB)")
+SIZE_PATTERN = re.compile(r"([\d.]+)\s*(GB|MB|kB)")
 BYTES_PER_UNIT = {"GB": 1_000_000_000, "MB": 1_000_000, "kB": 1_000}
 GIGABYTE = BYTES_PER_UNIT["GB"]
+
+HOUSEKEEPING_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("uv", "cache", "prune"),
+    ("npm", "cache", "verify"),
+)
+HOUSEKEEPING_DRY_RUN_NOTE = "Wartung mit --apply: " + ", ".join(" ".join(command) for command in HOUSEKEEPING_COMMANDS)
 
 
 class Action(Enum):
@@ -62,10 +72,25 @@ class Finding:
     recommendation: str
     detail: str = ""
     command: tuple[str, ...] = ()
+    reclaimable_bytes: int = 0
 
     @property
     def is_cleanup(self) -> bool:
         return self.action is not Action.REPORT
+
+
+def clean_finding(
+    rule: str,
+    action: Action,
+    subject: str,
+    *,
+    detail: str = "",
+    command: tuple[str, ...] = (),
+    recommendation: str = "--apply",
+    reclaimable_bytes: int = 0,
+) -> Finding:
+    """A finding --apply is allowed to execute; its verdict is always 'löschen'."""
+    return Finding(rule, action, subject, Verdict.DELETE, recommendation, detail, command, reclaimable_bytes)
 
 
 @dataclass(frozen=True)
@@ -101,8 +126,42 @@ class Limits:
         return timedelta(days=self.docker_stopped_container_days)
 
 
+DAY_LIMIT_KEYS = (
+    "pasted_image_days",
+    "trash_days",
+    "downloads_days",
+    "codex_session_days",
+    "docker_stopped_container_days",
+)
+
+
+def _require_non_negative_int(key: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{key} must be a non-negative integer, got {value!r}")
+
+
+def _require_str(key: str, value: object) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string, got {value!r}")
+
+
+def _require_str_list(key: str, value: object) -> None:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{key} must be a list of strings, got {value!r}")
+
+
+def _validate_limit_values(raw: dict[str, object]) -> None:
+    for key in DAY_LIMIT_KEYS:
+        if key in raw:
+            _require_non_negative_int(key, raw[key])
+    if "docker_build_cache_keep" in raw:
+        _require_str("docker_build_cache_keep", raw["docker_build_cache_keep"])
+    if "downloads_ignore" in raw:
+        _require_str_list("downloads_ignore", raw["downloads_ignore"])
+
+
 def load_limits(config_file: Path) -> Limits:
-    """Defaults apply when the file is absent; an unknown key is a config error."""
+    """Defaults apply when the file is absent; an unknown key or a bad value is a config error."""
     if not config_file.is_file():
         return Limits()
     with config_file.open("rb") as handle:
@@ -111,6 +170,7 @@ def load_limits(config_file: Path) -> Limits:
     unknown_keys = sorted(set(raw) - known_keys)
     if unknown_keys:
         raise ValueError(f"unknown tidy-home config key(s): {', '.join(unknown_keys)}")
+    _validate_limit_values(raw)
     if "downloads_ignore" in raw:
         raw = {**raw, "downloads_ignore": tuple(raw["downloads_ignore"])}
     return Limits(**raw)
@@ -197,7 +257,7 @@ def _days(delta: timedelta) -> str:
 def pasted_images(layout: Layout, now: datetime, limits: Limits) -> list[Finding]:
     """Terminal paste drops 'Eingefügtes Bild (n).png' into the cwd; a week later it is litter."""
     return [
-        Finding("pasted-images", Action.DELETE, str(image), Verdict.DELETE, "--apply", _days(_age(image, now)))
+        clean_finding("pasted-images", Action.DELETE, str(image), detail=_days(_age(image, now)))
         for directory in layout.pasted_image_dirs
         if directory.is_dir()
         for image in sorted(directory.glob(PASTED_IMAGE_GLOB))
@@ -214,15 +274,25 @@ def expired_trash(layout: Layout, now: datetime, limits: Limits) -> list[Finding
     """freedesktop trash keeps a .trashinfo per item; items past the trash limit go."""
     findings: list[Finding] = []
     for trash in layout.trash_dirs:
+        files_dir = trash / "files"
         for info_file in sorted((trash / "info").glob("*.trashinfo")):
             deleted_at = _trash_deletion_date(info_file)
             if deleted_at is None or now - deleted_at <= limits.trash_max_age:
                 continue
-            item = trash / "files" / info_file.name.removesuffix(".trashinfo")
+            name = info_file.name.removesuffix(".trashinfo")
+            if name.strip() in {"", ".", ".."} or "/" in name:
+                continue
+            item = files_dir / name
+            if item.parent != files_dir:
+                continue
             for path in (item, info_file):
                 if path.exists():
-                    findings.append(Finding("trash", Action.DELETE, str(path), Verdict.DELETE, "--apply", _days(now - deleted_at)))
+                    findings.append(clean_finding("trash", Action.DELETE, str(path), detail=_days(now - deleted_at)))
     return findings
+
+
+def _docker_available(run: CommandRunner) -> bool:
+    return run(["docker", "info", "--format", "{{.ServerVersion}}"]) is not None
 
 
 def _docker_stopped_containers(run: CommandRunner, now: datetime, max_age: timedelta) -> list[str]:
@@ -238,93 +308,116 @@ def _docker_stopped_containers(run: CommandRunner, now: datetime, max_age: timed
     return stale
 
 
-def _docker_usage(run: CommandRunner) -> dict[str, str]:
-    """Map docker's usage types ('Images', 'Build Cache', ...) to 'size, reclaimable'."""
+@dataclass(frozen=True)
+class DockerUsage:
+    size: str
+    reclaimable: str
+
+
+def _docker_usage(run: CommandRunner) -> dict[str, DockerUsage]:
+    """Map docker's usage types ('Images', 'Build Cache', ...) to their size and reclaimable text."""
     output = run(["docker", "system", "df", "--format", "{{.Type}}\t{{.Size}}\t{{.Reclaimable}}"]) or ""
-    usage: dict[str, str] = {}
+    usage: dict[str, DockerUsage] = {}
     for line in output.splitlines():
         kind, size, reclaimable = line.split("\t")
-        usage[kind] = f"{size}, reclaimable {reclaimable}"
+        usage[kind] = DockerUsage(size, reclaimable)
     return usage
 
 
-def _reclaimable_bytes(detail: str) -> int:
-    match = RECLAIMABLE_PATTERN.search(detail)
-    if not match:
-        return 0
-    return int(float(match.group(1)) * BYTES_PER_UNIT[match.group(2)])
+def _bytes_from_size(text: str) -> int:
+    match = SIZE_PATTERN.search(text)
+    return int(float(match.group(1)) * BYTES_PER_UNIT[match.group(2)]) if match else 0
 
 
 def _format_gb(total_bytes: int) -> str:
     return f"{total_bytes / GIGABYTE:.1f}".replace(".", ",") + " GB"
 
 
-def _reclaim_recommendation(detail: str) -> str:
-    reclaimable = _reclaimable_bytes(detail)
-    return f"--apply, {_format_gb(reclaimable)}" if reclaimable else "--apply"
-
-
-def docker_leftovers(run: CommandRunner, now: datetime, limits: Limits) -> list[Finding]:
-    """Stopped probe containers, dangling images and the build cache grow without bound."""
-    if run(["docker", "info", "--format", "{{.ServerVersion}}"]) is None:
-        return []
+def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[Finding]:
+    """Assumes docker is available; emits only what --apply would actually change."""
     max_age = limits.docker_stopped_container_max_age
     until = f"{max_age // timedelta(hours=1)}h"
     usage = _docker_usage(run)
     stale_containers = _docker_stopped_containers(run, now, max_age)
-    images_detail = usage.get("Images", "")
-    cache_detail = usage.get("Build Cache", "")
-    return [
-        Finding(
-            "docker",
-            Action.RUN,
-            "stopped containers older than " + until,
-            Verdict.DELETE,
-            "--apply",
-            ", ".join(stale_containers) or "none",
-            ("docker", "container", "prune", "-f", "--filter", f"until={until}"),
-        ),
-        Finding(
-            "docker",
-            Action.RUN,
-            "dangling images",
-            Verdict.DELETE,
-            _reclaim_recommendation(images_detail),
-            images_detail,
-            ("docker", "image", "prune", "-f"),
-        ),
-        Finding(
-            "docker",
-            Action.RUN,
-            f"build cache beyond {limits.docker_build_cache_keep}",
-            Verdict.DELETE,
-            _reclaim_recommendation(cache_detail),
-            cache_detail,
-            ("docker", "builder", "prune", "-f", f"--keep-storage={limits.docker_build_cache_keep}"),
-        ),
-    ]
-
-
-def package_caches(run: CommandRunner) -> list[Finding]:
     findings: list[Finding] = []
-    if run(["uv", "--version"]):
-        findings.append(Finding("caches", Action.RUN, "uv cache", Verdict.DELETE, "--apply", "", ("uv", "cache", "prune")))
-    if run(["npm", "--version"]):
-        findings.append(Finding("caches", Action.RUN, "npm cache", Verdict.DELETE, "--apply", "", ("npm", "cache", "verify")))
+
+    if stale_containers:
+        findings.append(
+            clean_finding(
+                "docker",
+                Action.RUN,
+                "stopped containers older than " + until,
+                detail=", ".join(stale_containers),
+                command=("docker", "container", "prune", "-f", "--filter", f"until={until}"),
+            )
+        )
+
+    images = usage.get("Images")
+    if images:
+        images_reclaimable = _bytes_from_size(images.reclaimable)
+        if images_reclaimable > 0:
+            findings.append(
+                clean_finding(
+                    "docker",
+                    Action.RUN,
+                    "dangling images",
+                    detail=f"{images.size}, reclaimable {images.reclaimable}",
+                    command=("docker", "image", "prune", "-f"),
+                    reclaimable_bytes=images_reclaimable,
+                )
+            )
+
+    cache = usage.get("Build Cache")
+    if cache:
+        cache_size = _bytes_from_size(cache.size)
+        cache_reclaimable = _bytes_from_size(cache.reclaimable)
+        keep = _bytes_from_size(limits.docker_build_cache_keep)
+        if cache_size > keep and cache_reclaimable > 0:
+            findings.append(
+                clean_finding(
+                    "docker",
+                    Action.RUN,
+                    f"build cache beyond {limits.docker_build_cache_keep}",
+                    detail=f"{cache.size}, reclaimable {cache.reclaimable}",
+                    command=("docker", "builder", "prune", "-f", f"--keep-storage={limits.docker_build_cache_keep}"),
+                    reclaimable_bytes=min(cache_reclaimable, max(0, cache_size - keep)),
+                )
+            )
+
     return findings
+
+
+def docker_leftovers(run: CommandRunner, now: datetime, limits: Limits) -> list[Finding]:
+    """Stopped probe containers, dangling images and the build cache grow without bound."""
+    if not _docker_available(run):
+        return []
+    return _docker_findings(run, now, limits)
+
+
+def run_housekeeping(run: CommandRunner) -> str:
+    """uv/npm cache maintenance: runs under --apply, never a Fund, never affects the exit code."""
+    outcomes: list[str] = []
+    for command in HOUSEKEEPING_COMMANDS:
+        output = run(command)
+        if output is None:
+            continue
+        lines = output.strip().splitlines()
+        outcomes.append(lines[-1] if lines else "ok")
+    return "; ".join(outcomes)
 
 
 # --- AUDIT rules: report only ---------------------------------------------
 
 
-def _is_entry_name_token(token: str) -> bool:
-    return not any(marker in token for marker in NON_ENTRY_TOKEN_MARKERS)
+def _looks_like_home_path(token: str) -> bool:
+    return token.startswith("~/") or token.startswith(".") or "/" in token
 
 
 def _known_home_entry_names(readme_text: str) -> set[str]:
+    text = readme_text.split(REMOVED_SECTION_HEADING, 1)[0]
     names = {"README.md"}
-    for token in BACKTICK_TOKEN_PATTERN.findall(readme_text):
-        if not _is_entry_name_token(token):
+    for token in BACKTICK_TOKEN_PATTERN.findall(text):
+        if not _looks_like_home_path(token):
             continue
         names.add(token.removeprefix("~/").split("/", 1)[0])
     return names
@@ -333,15 +426,15 @@ def _known_home_entry_names(readme_text: str) -> set[str]:
 def unknown_home_entries(layout: Layout) -> list[Finding]:
     """Anything in the home root that ~/README.md does not know is either new or litter."""
     if not layout.readme.is_file():
-        return [Finding("unknown-home-entry", Action.REPORT, "README.md fehlt", Verdict.REVIEW, "anlegen")]
+        return [Finding("unknown-home-entry", Action.REPORT, "README.md fehlt", verdict=Verdict.REVIEW, recommendation="anlegen")]
     known = _known_home_entry_names(layout.readme.read_text(errors="replace"))
     return [
         Finding(
             "unknown-home-entry",
             Action.REPORT,
             str(entry),
-            Verdict.REVIEW,
-            "Symlink-Ziel prüfen" if entry.is_symlink() else "in ~/README.md eintragen oder löschen",
+            verdict=Verdict.REVIEW,
+            recommendation="Symlink-Ziel prüfen" if entry.is_symlink() else "in ~/README.md eintragen oder löschen",
         )
         for entry in sorted(layout.home.iterdir())
         if entry.name not in known
@@ -366,9 +459,9 @@ def git_root_litter(layout: Layout) -> list[Finding]:
                 "git-root-litter",
                 Action.REPORT,
                 str(entry),
-                Verdict.REVIEW,
-                "in ein Repo verschieben oder löschen",
-                "neither a repo nor a <repo>-worktrees dir",
+                verdict=Verdict.REVIEW,
+                recommendation="in ein Repo verschieben oder löschen",
+                detail="neither a repo nor a <repo>-worktrees dir",
             )
         )
     return findings
@@ -393,9 +486,9 @@ def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandR
                         "stale-worktree",
                         Action.REPORT,
                         str(worktree),
-                        Verdict.REMOVE,
-                        recommendation,
-                        "not registered in git worktree list",
+                        verdict=Verdict.REMOVE,
+                        recommendation=recommendation,
+                        detail="not registered in git worktree list",
                     )
                 )
                 continue
@@ -406,9 +499,9 @@ def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandR
                         "stale-worktree",
                         Action.REPORT,
                         str(worktree),
-                        Verdict.REMOVE,
-                        recommendation,
-                        f"issue #{match.group(1)} is closed",
+                        verdict=Verdict.REMOVE,
+                        recommendation=recommendation,
+                        detail=f"issue #{match.group(1)} is closed",
                     )
                 )
     return findings
@@ -423,9 +516,9 @@ def old_downloads(layout: Layout, now: datetime, limits: Limits) -> list[Finding
             "downloads-inbox",
             Action.REPORT,
             str(entry),
-            Verdict.REVIEW,
-            "nach Dokumente/ einsortieren oder löschen",
-            _days(_age(entry, now)),
+            verdict=Verdict.REVIEW,
+            recommendation="nach Dokumente/ einsortieren oder löschen",
+            detail=_days(_age(entry, now)),
         )
         for entry in sorted(layout.downloads.iterdir())
         if entry.name not in limits.downloads_ignore and _older_than(entry, limits.downloads_max_age, now)
@@ -440,27 +533,35 @@ def old_codex_sessions(layout: Layout, now: datetime, limits: Limits) -> list[Fi
     if not old:
         return []
     size = sum(p.stat().st_size for p in old)
+    days = limits.codex_session_days
     return [
         Finding(
             "codex-sessions",
             Action.REPORT,
             str(layout.codex_sessions),
-            Verdict.REVIEW,
-            "alte Sessions prüfen und bei Bedarf löschen",
-            f"{len(old)} files older than {limits.codex_session_days} d, {size / 2**30:.1f} GiB",
+            verdict=Verdict.REVIEW,
+            recommendation=f"Sessions älter als {days} d löschen: `find ~/.codex/sessions -type f -mtime +{days} -delete`",
+            detail=f"{len(old)} files older than {days} d, {size / 2**30:.1f} GiB",
         )
     ]
 
 
-def largest_entries(layout: Layout, run: CommandRunner) -> list[Finding]:
-    output = run(["du", "-s", "--block-size=1M", *(str(p) for p in layout.home.iterdir())]) or ""
+def _parse_largest_entries(du_output: str) -> list[Finding]:
     sized = sorted(
-        ((int(size), path) for size, path in (line.split("\t", 1) for line in output.splitlines())),
+        ((int(size), path) for size, path in (line.split("\t", 1) for line in du_output.splitlines())),
         reverse=True,
     )
     return [
-        Finding("largest-entries", Action.REPORT, path, Verdict.REVIEW, "Größe prüfen", f"{size / 1024:.1f} GiB")
+        Finding(
+            "largest-entries",
+            Action.REPORT,
+            path,
+            verdict=Verdict.REVIEW,
+            recommendation="mit `du -h --max-depth=1 <Pfad>` aufschlüsseln",
+            detail=f"{size / 1024:.1f} GiB",
+        )
         for size, path in sized[:LARGEST_ENTRIES_SHOWN]
+        if size / 1024 >= LARGEST_ENTRY_MIN_GIB
     ]
 
 
@@ -473,17 +574,72 @@ class Options:
     sizes: bool = False
 
 
-ALWAYS_RUN_RULES: tuple[str, ...] = (
-    "pasted-images",
-    "trash",
-    "docker",
-    "caches",
-    "unknown-home-entry",
-    "git-root-litter",
-    "stale-worktree",
-    "downloads-inbox",
-    "codex-sessions",
+class RuleKind(Enum):
+    CLEAN = "clean"
+    AUDIT = "audit"
+
+
+class RuleStatus(Enum):
+    CLEAN = "clean"
+    FOUND = "found"
+    NOT_APPLICABLE = "not_applicable"
+
+
+@dataclass(frozen=True)
+class RuleOutcome:
+    findings: tuple[Finding, ...]
+    status: RuleStatus
+    reason: str = ""
+
+
+def _ran(findings: list[Finding]) -> RuleOutcome:
+    return RuleOutcome(tuple(findings), RuleStatus.FOUND if findings else RuleStatus.CLEAN)
+
+
+def _not_applicable(reason: str) -> RuleOutcome:
+    return RuleOutcome((), RuleStatus.NOT_APPLICABLE, reason)
+
+
+@dataclass(frozen=True)
+class RuleContext:
+    layout: Layout
+    now: datetime
+    limits: Limits
+    run: CommandRunner
+    issue_state: IssueStateLookup
+
+
+@dataclass(frozen=True)
+class Rule:
+    name: str
+    kind: RuleKind
+    check: Callable[[RuleContext], RuleOutcome]
+
+
+def _rule_docker(ctx: RuleContext) -> RuleOutcome:
+    if not _docker_available(ctx.run):
+        return _not_applicable("nicht installiert")
+    return _ran(_docker_findings(ctx.run, ctx.now, ctx.limits))
+
+
+def _rule_largest_entries(ctx: RuleContext) -> RuleOutcome:
+    output = ctx.run(["du", "-s", "--block-size=1M", *(str(p) for p in ctx.layout.home.iterdir())])
+    if output is None:
+        return _not_applicable("du fehlgeschlagen")
+    return _ran(_parse_largest_entries(output))
+
+
+RULES: tuple[Rule, ...] = (
+    Rule("pasted-images", RuleKind.CLEAN, lambda ctx: _ran(pasted_images(ctx.layout, ctx.now, ctx.limits))),
+    Rule("trash", RuleKind.CLEAN, lambda ctx: _ran(expired_trash(ctx.layout, ctx.now, ctx.limits))),
+    Rule("docker", RuleKind.CLEAN, _rule_docker),
+    Rule("unknown-home-entry", RuleKind.AUDIT, lambda ctx: _ran(unknown_home_entries(ctx.layout))),
+    Rule("git-root-litter", RuleKind.AUDIT, lambda ctx: _ran(git_root_litter(ctx.layout))),
+    Rule("stale-worktree", RuleKind.AUDIT, lambda ctx: _ran(stale_worktrees(ctx.layout, ctx.issue_state, ctx.run))),
+    Rule("downloads-inbox", RuleKind.AUDIT, lambda ctx: _ran(old_downloads(ctx.layout, ctx.now, ctx.limits))),
+    Rule("codex-sessions", RuleKind.AUDIT, lambda ctx: _ran(old_codex_sessions(ctx.layout, ctx.now, ctx.limits))),
 )
+LARGEST_ENTRIES_RULE = Rule("largest-entries", RuleKind.AUDIT, _rule_largest_entries)
 
 
 @dataclass(frozen=True)
@@ -492,7 +648,8 @@ class Findings:
 
     clean: tuple[Finding, ...]
     audit: tuple[Finding, ...]
-    ran_rules: tuple[str, ...] = ()
+    checked_clean: tuple[str, ...] = ()
+    not_applicable: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         misfiled = [f for f in self.clean if not f.is_cleanup] + [f for f in self.audit if f.is_cleanup]
@@ -518,22 +675,17 @@ def collect_findings(
     issue_state: IssueStateLookup | None = None,
 ) -> Findings:
     lookup = issue_state or (lambda repo, number: github_issue_state(repo, number, run))
-    clean = (
-        *pasted_images(layout, now, limits),
-        *expired_trash(layout, now, limits),
-        *docker_leftovers(run, now, limits),
-        *package_caches(run),
+    ctx = RuleContext(layout, now, limits, run, lookup)
+    rules = RULES + ((LARGEST_ENTRIES_RULE,) if options.sizes else ())
+    outcomes = {rule.name: rule.check(ctx) for rule in rules}
+
+    clean = tuple(f for rule in rules if rule.kind is RuleKind.CLEAN for f in outcomes[rule.name].findings)
+    audit = tuple(f for rule in rules if rule.kind is RuleKind.AUDIT for f in outcomes[rule.name].findings)
+    checked_clean = tuple(rule.name for rule in rules if outcomes[rule.name].status is RuleStatus.CLEAN)
+    not_applicable = tuple(
+        (rule.name, outcomes[rule.name].reason) for rule in rules if outcomes[rule.name].status is RuleStatus.NOT_APPLICABLE
     )
-    audit = (
-        *unknown_home_entries(layout),
-        *git_root_litter(layout),
-        *stale_worktrees(layout, lookup, run),
-        *old_downloads(layout, now, limits),
-        *old_codex_sessions(layout, now, limits),
-        *(largest_entries(layout, run) if options.sizes else ()),
-    )
-    ran_rules = ALWAYS_RUN_RULES + (("largest-entries",) if options.sizes else ())
-    return Findings(clean, audit, ran_rules)
+    return Findings(clean, audit, checked_clean, not_applicable)
 
 
 def apply_finding(finding: Finding, run: CommandRunner = run_command) -> str:
@@ -557,10 +709,27 @@ def _relative_to_home(subject: str, home: Path) -> str:
         return subject
 
 
+def _escape_cell(text: str) -> str:
+    return text.replace("|", "\\|")
+
+
 def _markdown_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
-    lines.extend("| " + " | ".join(cell or "-" for cell in row) + " |" for row in rows)
+    lines.extend("| " + " | ".join(_escape_cell(cell) or "-" for cell in row) + " |" for row in rows)
     return lines
+
+
+def _recommendation_cell(finding: Finding) -> str:
+    """A RUN finding shows the exact command --apply executes, not a paraphrase of it."""
+    if finding.action is Action.RUN:
+        return f"--apply → `{' '.join(finding.command)}`"
+    return finding.recommendation
+
+
+def _maintenance_footer(apply: bool, housekeeping: str) -> str:
+    if apply:
+        return f"Wartung: {housekeeping}" if housekeeping else ""
+    return HOUSEKEEPING_DRY_RUN_NOTE
 
 
 def render_report(
@@ -569,15 +738,29 @@ def render_report(
     home: Path,
     apply: bool = False,
     applied: dict[Finding, str] | None = None,
+    housekeeping: str = "",
 ) -> str:
     applied = applied or {}
     all_findings = list(findings)
     mode = "Apply" if apply else "Dry-Run"
-    reclaimable = sum(_reclaimable_bytes(f.detail) for f in all_findings)
-    reclaim_clause = f" | --apply gäbe ~{_format_gb(reclaimable)} frei" if reclaimable else ""
+    reclaimable = sum(f.reclaimable_bytes for f in all_findings)
+    reclaim_clause = f" | docker meldet ~{_format_gb(reclaimable)} wiederverwendbar" if reclaimable else ""
     header = f"# tidy-home {now:%d.%m.%Y %H:%M}  {mode} | {len(all_findings)} Funde{reclaim_clause}"
+
+    footnotes = []
+    if findings.checked_clean:
+        footnotes.append("Geprüft, nichts gefunden: " + ", ".join(findings.checked_clean))
+    if findings.not_applicable:
+        footnotes.append("Nicht geprüft: " + ", ".join(f"{name} ({reason})" for name, reason in findings.not_applicable))
+    footer = _maintenance_footer(apply, housekeeping)
+    if footer:
+        footnotes.append(footer)
+
     if not all_findings:
-        return f"{header}\n\nNichts zu tun.\n"
+        lines = [header, "", "Nichts zu tun."]
+        for footnote in footnotes:
+            lines += ["", footnote]
+        return "\n".join(lines).rstrip() + "\n"
 
     headers = ["Regel", "Fund", "Alter/Größe", "Urteil", "Empfehlung"]
     if apply:
@@ -589,18 +772,15 @@ def render_report(
             _relative_to_home(finding.subject, home),
             finding.detail,
             finding.verdict.value,
-            finding.recommendation,
+            _recommendation_cell(finding),
         ]
         if apply:
             row.append(applied.get(finding, ""))
         rows.append(row)
 
     lines = [header, "", *_markdown_table(headers, rows)]
-    found_rules = {f.rule for f in all_findings}
-    checked_empty = [rule for rule in findings.ran_rules if rule not in found_rules]
-    if checked_empty:
-        lines.append("")
-        lines.append("Geprüft, nichts gefunden: " + ", ".join(checked_empty))
+    for footnote in footnotes:
+        lines += ["", footnote]
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -611,7 +791,7 @@ def notify(report: str, run: CommandRunner) -> None:
 
 def exit_code(findings: Findings) -> int:
     """The timer treats 1 as success (SuccessExitStatus=1): findings are news, not failure."""
-    return 1 if list(findings) else 0
+    return 1 if findings.clean or findings.audit else 0
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Options:
@@ -622,20 +802,30 @@ def parse_args(argv: Sequence[str] | None = None) -> Options:
     return Options(apply=namespace.apply, sizes=namespace.sizes)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    home: Path = Path.home(),  # noqa: B008 -- the seam a test overrides with tmp_path; evaluated once per process, not per call
+    run: CommandRunner = run_command,
+) -> int:
     options = parse_args(argv)
-    layout = Layout(Path.home())
-    limits = load_limits(layout.config_file)
+    layout = Layout(home)
+    try:
+        limits = load_limits(layout.config_file)
+    except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
+        print(f"tidy-home: {error}", file=sys.stderr)
+        return 2
+
     now = datetime.now()
-    findings = collect_findings(layout, now, options, limits)
-    applied = {f: apply_finding(f) for f in findings.clean} if options.apply else {}
-    report = render_report(findings, now, layout.home, options.apply, applied)
+    findings = collect_findings(layout, now, options, limits, run=run)
+    applied = {f: apply_finding(f, run=run) for f in findings.clean} if options.apply else {}
+    housekeeping = run_housekeeping(run) if options.apply else ""
+    report = render_report(findings, now, layout.home, options.apply, applied, housekeeping)
     layout.report_file.parent.mkdir(parents=True, exist_ok=True)
     layout.report_file.write_text(report)
     sys.stdout.write(report)
     code = exit_code(findings)
     if code:
-        notify(report, run_command)
+        notify(report, run)
     return code
 
 
