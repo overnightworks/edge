@@ -40,7 +40,12 @@ Die Liste der bekannten Home-Einträge steht in `KNOWN_HOME_ENTRIES` in
 
 ```
 ln -s ~/git/home-tools/tidy_home.py ~/.local/bin/tidy-home
+systemctl --user link --force ~/git/home-tools/systemd/tidy-home.service ~/git/home-tools/systemd/tidy-home.timer
+systemctl --user enable --now tidy-home.timer
 ```
+
+Der Timer läuft montags 09:00 als Dry-Run und schreibt nur den Bericht.
+`--apply` bleibt ein bewusster Handgriff.
 
 ## Tests
 
