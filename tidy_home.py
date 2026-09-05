@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -31,6 +31,7 @@ LARGEST_ENTRIES_SHOWN = 10
 WORKTREE_ISSUE_PATTERN = re.compile(r"issue-(\d+)")
 TRASHINFO_DATE_PATTERN = re.compile(r"^DeletionDate=(.+)$", re.MULTILINE)
 DOCKER_CREATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
+DOCKER_CREATED_AT_PREFIX_LENGTH = len("2026-09-05 15:47:49")  # docker appends "+0200 CEST"
 
 # Everything ~/README.md lists as belonging to the home root.
 KNOWN_HOME_ENTRIES = frozenset(
@@ -150,7 +151,7 @@ def github_issue_state(repo: Path, number: int, run: CommandRunner = run_command
 
 
 def _age(path: Path, now: datetime) -> timedelta:
-    return now - datetime.fromtimestamp(path.stat().st_mtime)
+    return now - datetime.fromtimestamp(path.lstat().st_mtime)
 
 
 def _older_than(path: Path, max_age: timedelta, now: datetime) -> bool:
@@ -202,7 +203,7 @@ def _docker_stopped_containers(run: CommandRunner, now: datetime) -> list[str]:
         name, created_at, state = line.split("\t")
         if state not in {"exited", "created"}:
             continue
-        created = datetime.strptime(created_at[: len("2026-09-05 15:47:49")], DOCKER_CREATED_AT_FORMAT)
+        created = datetime.strptime(created_at[:DOCKER_CREATED_AT_PREFIX_LENGTH], DOCKER_CREATED_AT_FORMAT)
         if now - created > DOCKER_STOPPED_CONTAINER_MAX_AGE:
             stale.append(name)
     return stale
@@ -284,7 +285,7 @@ def git_root_litter(layout: Layout) -> list[Finding]:
 
 def _registered_worktrees(repo: Path, run: CommandRunner) -> set[Path]:
     listing = run(["git", "-C", str(repo), "worktree", "list", "--porcelain"]) or ""
-    return {Path(line.removeprefix("worktree ")) for line in listing.splitlines() if line.startswith("worktree ")}
+    return {Path(line.removeprefix("worktree ")).resolve() for line in listing.splitlines() if line.startswith("worktree ")}
 
 
 def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandRunner) -> list[Finding]:
@@ -344,10 +345,27 @@ def largest_entries(layout: Layout, run: CommandRunner) -> list[Finding]:
 # --- orchestration --------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class Options:
     apply: bool = False
     sizes: bool = False
+
+
+@dataclass(frozen=True)
+class Findings:
+    """Clean findings may be applied; audit findings only ever reach the report."""
+
+    clean: tuple[Finding, ...]
+    audit: tuple[Finding, ...]
+
+    def __post_init__(self) -> None:
+        misfiled = [f for f in self.clean if not f.is_cleanup] + [f for f in self.audit if f.is_cleanup]
+        if misfiled:
+            raise ValueError(f"finding filed under the wrong kind: {misfiled}")
+
+    def __iter__(self) -> Iterator[Finding]:
+        yield from self.clean
+        yield from self.audit
 
 
 def collect_findings(
@@ -356,22 +374,23 @@ def collect_findings(
     options: Options,
     run: CommandRunner = run_command,
     issue_state: IssueStateLookup | None = None,
-) -> list[Finding]:
+) -> Findings:
     lookup = issue_state or (lambda repo, number: github_issue_state(repo, number, run))
-    findings = [
+    clean = (
         *pasted_images(layout, now),
         *expired_trash(layout, now),
         *docker_leftovers(run, now),
         *package_caches(run),
+    )
+    audit = (
         *unknown_home_entries(layout),
         *git_root_litter(layout),
         *stale_worktrees(layout, lookup, run),
         *old_downloads(layout, now),
         *old_codex_sessions(layout, now),
-    ]
-    if options.sizes:
-        findings.extend(largest_entries(layout, run))
-    return findings
+        *(largest_entries(layout, run) if options.sizes else ()),
+    )
+    return Findings(clean, audit)
 
 
 def apply_finding(finding: Finding, run: CommandRunner = run_command) -> str:
@@ -422,7 +441,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     layout = Layout(Path.home())
     now = datetime.now()
     findings = collect_findings(layout, now, options)
-    applied = {f: apply_finding(f) for f in findings if f.is_cleanup} if options.apply else {}
+    applied = {f: apply_finding(f) for f in findings.clean} if options.apply else {}
     report = render_report(findings, now, applied)
     layout.report_file.parent.mkdir(parents=True, exist_ok=True)
     layout.report_file.write_text(report)
