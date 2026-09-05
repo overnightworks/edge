@@ -35,8 +35,8 @@ def no_tools(_argv):
     return None
 
 
-def fake_docker(*, containers: str = "", system_df: str = "", dangling_images: str = ""):
-    """A docker whose four queried listings are exactly what the caller names."""
+def fake_docker(*, containers: str = "", system_df: str = "", dangling_images: str | None = ""):
+    """An installed docker whose three listings are exactly what the caller names; None is a failed listing."""
 
     def run(argv):
         if argv[:2] == ["docker", "info"]:
@@ -175,14 +175,30 @@ def test_images_are_not_reported_without_dangling_images_even_when_docker_calls_
     assert tidy_home.docker_leftovers(docker, NOW, LIMITS) == []
 
 
-def test_dangling_images_are_reported_with_their_count_and_summed_size() -> None:
-    docker = fake_docker(dangling_images="1.5GB\n500MB\n2GB\n")
+@pytest.mark.parametrize(
+    ("system_df", "dangling_images", "expected_detail"),
+    [
+        ("Images\t20GB\t5GB (25%)\n", "1.5GB\n500MB\n2GB\n", "3 dangling, bis zu 4,0 GB"),
+        ("Images\t59.34GB\t29.22GB (49%)\n", "50GB\n50GB\n", "2 dangling, bis zu 29,2 GB"),
+        ("Build Cache\t1GB\t0GB\n", "2GB\n", "1 dangling, bis zu 0,0 GB"),
+    ],
+    ids=["sum below docker's figure", "shared layers inflate the sum", "docker reports no images at all"],
+)
+def test_dangling_images_are_counted_from_the_list_and_sized_no_higher_than_docker_says(
+    system_df: str, dangling_images: str, expected_detail: str
+) -> None:
+    docker = fake_docker(system_df=system_df, dangling_images=dangling_images)
 
     images = next(f for f in tidy_home.docker_leftovers(docker, NOW, LIMITS) if f.subject == "dangling images")
 
-    assert images.detail == "3 dangling, 4,0 GB"
-    assert images.reclaimable_bytes == 4_000_000_000
+    assert images.detail == expected_detail
     assert images.command == ("docker", "image", "prune", "-f")
+
+
+def test_a_failing_image_listing_yields_no_images_finding() -> None:
+    docker = fake_docker(system_df="Images\t59.34GB\t29.22GB (49%)\nBuild Cache\t1GB\t0GB\n", dangling_images=None)
+
+    assert tidy_home.docker_leftovers(docker, NOW, LIMITS) == []
 
 
 def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
@@ -203,7 +219,7 @@ def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
     assert "--filter" in containers.command and "until=168h" in containers.command
     assert all(f.action is Action.RUN and f.verdict is Verdict.DELETE for f in findings)
     details = {f.subject: f.detail for f in findings}
-    assert details["dangling images"] == "1 dangling, 25,7 GB"
+    assert details["dangling images"] == "1 dangling, bis zu 25,7 GB"
     assert details["build cache beyond 20GB"] == "32.33GB, reclaimable 421MB"
 
 
@@ -216,7 +232,7 @@ def test_docker_build_cache_limit_is_configurable() -> None:
 
 
 def test_terabyte_sized_images_and_build_cache_are_findings() -> None:
-    docker = fake_docker(system_df="Build Cache\t1.5TB\t900GB\n", dangling_images="1.2TB\n")
+    docker = fake_docker(system_df="Images\t2TB\t1.2TB (60%)\nBuild Cache\t1.5TB\t900GB\n", dangling_images="1.2TB\n")
 
     findings = tidy_home.docker_leftovers(docker, NOW, LIMITS)
 
@@ -246,7 +262,7 @@ def test_run_findings_show_the_exact_apply_command_in_the_dry_run_report(layout:
     with_readme(layout)
     docker = fake_docker(
         containers="old-probe\t2026-08-20 10:00:00 +0200 CEST\texited\n",
-        system_df="Build Cache\t30GB\t5GB\n",
+        system_df="Images\t10GB\t1GB (10%)\nBuild Cache\t30GB\t5GB\n",
         dangling_images="1GB\n",
     )
 
@@ -524,6 +540,12 @@ def test_limits_reject_an_unknown_key(layout: Layout) -> None:
         tidy_home.load_limits(layout.config_file)
 
 
+def test_a_zero_build_cache_limit_is_accepted(layout: Layout) -> None:
+    touch(layout.config_file, timedelta(0), 'docker_build_cache_keep = "0GB"\n')
+
+    assert tidy_home.load_limits(layout.config_file).docker_build_cache_keep == "0GB"
+
+
 def test_limits_parse_downloads_ignore_list(layout: Layout) -> None:
     touch(layout.config_file, timedelta(0), 'downloads_ignore = ["keepme.iso", "notes.txt"]\n')
 
@@ -629,7 +651,7 @@ def test_missing_docker_is_not_applicable_not_checked_clean(layout: Layout) -> N
 
 def test_header_reports_reclaimable_docker_size(layout: Layout) -> None:
     with_readme(layout)
-    docker = fake_docker(system_df="Build Cache\t1GB\t0GB\n", dangling_images="1.5GB\n1GB\n")
+    docker = fake_docker(system_df="Images\t10GB\t2.5GB (25%)\nBuild Cache\t1GB\t0GB\n", dangling_images="1.5GB\n1GB\n")
 
     findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=docker, issue_state=lambda r, n: None)
     report = tidy_home.render_report(findings, NOW, layout.home)
@@ -637,9 +659,20 @@ def test_header_reports_reclaimable_docker_size(layout: Layout) -> None:
     assert "docker meldet ~2,5 GB wiederverwendbar" in report
 
 
+def test_header_never_promises_more_than_docker_reports_for_images(layout: Layout) -> None:
+    with_readme(layout)
+    docker = fake_docker(system_df="Images\t59.34GB\t29.22GB (49%)\nBuild Cache\t1GB\t0GB\n", dangling_images="50GB\n50GB\n")
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=docker, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    assert "docker meldet ~29,2 GB wiederverwendbar" in report
+    assert "2 dangling, bis zu 29,2 GB" in report
+
+
 def test_header_caps_the_build_cache_contribution_at_its_reclaimable_amount(layout: Layout) -> None:
     with_readme(layout)
-    docker = fake_docker(system_df="Build Cache\t32.33GB\t421MB\n", dangling_images="25.66GB\n")
+    docker = fake_docker(system_df="Images\t55.69GB\t25.66GB (46%)\nBuild Cache\t32.33GB\t421MB\n", dangling_images="25.66GB\n")
 
     findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=docker, issue_state=lambda r, n: None)
     report = tidy_home.render_report(findings, NOW, layout.home)

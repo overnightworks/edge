@@ -146,9 +146,10 @@ def _require_str(key: str, value: object) -> None:
 
 
 def _require_parseable_size(key: str, value: object) -> None:
+    """Zero is a legitimate limit; only a size no unit matches is a config error."""
     _require_str(key, value)
-    if _bytes_from_size(value) <= 0:
-        raise ValueError(f"{key} must be a parseable size like '20GB', got {value!r}")
+    if not SIZE_PATTERN.search(value):
+        raise ValueError(f"{key} must be a size like '20GB', got {value!r}")
 
 
 def _require_str_list(key: str, value: object) -> None:
@@ -331,7 +332,7 @@ def _docker_usage(run: CommandRunner) -> dict[str, DockerUsage]:
 
 
 def _dangling_image_sizes(run: CommandRunner) -> list[int]:
-    """The sizes `docker image prune -f` would actually free — dangling images only."""
+    """One size per dangling image; shared layers appear in each of them, so the sum over-states them."""
     listing = run(["docker", "image", "ls", "-f", "dangling=true", "--format", "{{.Size}}"]) or ""
     return [_bytes_from_size(line) for line in listing.splitlines() if line.strip()]
 
@@ -366,13 +367,15 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
 
     dangling_images = _dangling_image_sizes(run)
     if dangling_images:
-        dangling_bytes = sum(dangling_images)
+        images = usage.get("Images")
+        # The per-image sizes double-count shared layers, so docker's own accounting is the ceiling.
+        dangling_bytes = min(sum(dangling_images), _bytes_from_size(images.reclaimable) if images else 0)
         findings.append(
             clean_finding(
                 DOCKER_RULE,
                 Action.RUN,
                 "dangling images",
-                detail=f"{len(dangling_images)} dangling, {_format_gb(dangling_bytes)}",
+                detail=f"{len(dangling_images)} dangling, bis zu {_format_gb(dangling_bytes)}",
                 command=("docker", "image", "prune", "-f"),
                 reclaimable_bytes=dangling_bytes,
             )
