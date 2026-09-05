@@ -346,6 +346,14 @@ def _format_gb(total_bytes: int) -> str:
     return f"{total_bytes / GIGABYTE:.1f}".replace(".", ",") + " GB"
 
 
+def _dangling_amount(dangling_sizes: list[int], images: DockerUsage | None) -> tuple[int, str]:
+    """Per-image sizes double-count shared layers, so docker's own figure caps them; without it there is no figure."""
+    if images is None:
+        return 0, "Größe unbekannt"
+    reclaimable = min(sum(dangling_sizes), _bytes_from_size(images.reclaimable))
+    return reclaimable, f"bis zu {_format_gb(reclaimable)}"
+
+
 def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[Finding]:
     """Assumes docker is available; emits only what --apply would actually change."""
     max_age = limits.docker_stopped_container_max_age
@@ -367,15 +375,13 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
 
     dangling_images = _dangling_image_sizes(run)
     if dangling_images:
-        images = usage.get("Images")
-        # The per-image sizes double-count shared layers, so docker's own accounting is the ceiling.
-        dangling_bytes = min(sum(dangling_images), _bytes_from_size(images.reclaimable) if images else 0)
+        dangling_bytes, amount = _dangling_amount(dangling_images, usage.get("Images"))
         findings.append(
             clean_finding(
                 DOCKER_RULE,
                 Action.RUN,
                 "dangling images",
-                detail=f"{len(dangling_images)} dangling, bis zu {_format_gb(dangling_bytes)}",
+                detail=f"{len(dangling_images)} dangling, {amount}",
                 command=("docker", "image", "prune", "-f"),
                 reclaimable_bytes=dangling_bytes,
             )

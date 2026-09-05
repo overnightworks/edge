@@ -180,7 +180,7 @@ def test_images_are_not_reported_without_dangling_images_even_when_docker_calls_
     [
         ("Images\t20GB\t5GB (25%)\n", "1.5GB\n500MB\n2GB\n", "3 dangling, bis zu 4,0 GB"),
         ("Images\t59.34GB\t29.22GB (49%)\n", "50GB\n50GB\n", "2 dangling, bis zu 29,2 GB"),
-        ("Build Cache\t1GB\t0GB\n", "2GB\n", "1 dangling, bis zu 0,0 GB"),
+        ("Build Cache\t1GB\t0GB\n", "2GB\n", "1 dangling, Größe unbekannt"),
     ],
     ids=["sum below docker's figure", "shared layers inflate the sum", "docker reports no images at all"],
 )
@@ -668,6 +668,16 @@ def test_header_never_promises_more_than_docker_reports_for_images(layout: Layou
 
     assert "docker meldet ~29,2 GB wiederverwendbar" in report
     assert "2 dangling, bis zu 29,2 GB" in report
+
+
+def test_an_unknown_image_size_leaves_the_header_silent(layout: Layout) -> None:
+    with_readme(layout)
+    docker = fake_docker(system_df="Build Cache\t1GB\t0GB\n", dangling_images="2GB\n")
+
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=docker, issue_state=lambda r, n: None)
+    report = tidy_home.render_report(findings, NOW, layout.home)
+
+    assert "wiederverwendbar" not in report
 
 
 def test_header_caps_the_build_cache_contribution_at_its_reclaimable_amount(layout: Layout) -> None:
