@@ -34,12 +34,13 @@ WORKTREE_ISSUE_PATTERN = re.compile(r"issue-(\d+)")
 TRASHINFO_DATE_PATTERN = re.compile(r"^DeletionDate=(.+)$", re.MULTILINE)
 DOCKER_CREATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 DOCKER_CREATED_AT_PREFIX_LENGTH = len("2026-09-05 15:47:49")  # docker appends "+0200 CEST"
+DOCKER_RULE = "docker"
 
 BACKTICK_TOKEN_PATTERN = re.compile(r"`([^`]+)`")
 REMOVED_SECTION_HEADING = "## Was hier nicht mehr liegt"
 
-SIZE_PATTERN = re.compile(r"([\d.]+)\s*(GB|MB|kB)")
-BYTES_PER_UNIT = {"GB": 1_000_000_000, "MB": 1_000_000, "kB": 1_000}
+SIZE_PATTERN = re.compile(r"([\d.]+)\s*(TB|GB|MB|kB|B)")
+BYTES_PER_UNIT = {"TB": 1_000_000_000_000, "GB": 1_000_000_000, "MB": 1_000_000, "kB": 1_000, "B": 1}
 GIGABYTE = BYTES_PER_UNIT["GB"]
 
 HOUSEKEEPING_COMMANDS: tuple[tuple[str, ...], ...] = (
@@ -86,11 +87,10 @@ def clean_finding(
     *,
     detail: str = "",
     command: tuple[str, ...] = (),
-    recommendation: str = "--apply",
     reclaimable_bytes: int = 0,
 ) -> Finding:
     """A finding --apply is allowed to execute; its verdict is always 'löschen'."""
-    return Finding(rule, action, subject, Verdict.DELETE, recommendation, detail, command, reclaimable_bytes)
+    return Finding(rule, action, subject, Verdict.DELETE, "--apply", detail, command, reclaimable_bytes)
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,12 @@ def _require_str(key: str, value: object) -> None:
         raise ValueError(f"{key} must be a string, got {value!r}")
 
 
+def _require_parseable_size(key: str, value: object) -> None:
+    _require_str(key, value)
+    if _bytes_from_size(value) <= 0:
+        raise ValueError(f"{key} must be a parseable size like '20GB', got {value!r}")
+
+
 def _require_str_list(key: str, value: object) -> None:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"{key} must be a list of strings, got {value!r}")
@@ -155,7 +161,7 @@ def _validate_limit_values(raw: dict[str, object]) -> None:
         if key in raw:
             _require_non_negative_int(key, raw[key])
     if "docker_build_cache_keep" in raw:
-        _require_str("docker_build_cache_keep", raw["docker_build_cache_keep"])
+        _require_parseable_size("docker_build_cache_keep", raw["docker_build_cache_keep"])
     if "downloads_ignore" in raw:
         _require_str_list("downloads_ignore", raw["downloads_ignore"])
 
@@ -324,6 +330,12 @@ def _docker_usage(run: CommandRunner) -> dict[str, DockerUsage]:
     return usage
 
 
+def _dangling_image_sizes(run: CommandRunner) -> list[int]:
+    """The sizes `docker image prune -f` would actually free — dangling images only."""
+    listing = run(["docker", "image", "ls", "-f", "dangling=true", "--format", "{{.Size}}"]) or ""
+    return [_bytes_from_size(line) for line in listing.splitlines() if line.strip()]
+
+
 def _bytes_from_size(text: str) -> int:
     match = SIZE_PATTERN.search(text)
     return int(float(match.group(1)) * BYTES_PER_UNIT[match.group(2)]) if match else 0
@@ -344,7 +356,7 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
     if stale_containers:
         findings.append(
             clean_finding(
-                "docker",
+                DOCKER_RULE,
                 Action.RUN,
                 "stopped containers older than " + until,
                 detail=", ".join(stale_containers),
@@ -352,20 +364,19 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
             )
         )
 
-    images = usage.get("Images")
-    if images:
-        images_reclaimable = _bytes_from_size(images.reclaimable)
-        if images_reclaimable > 0:
-            findings.append(
-                clean_finding(
-                    "docker",
-                    Action.RUN,
-                    "dangling images",
-                    detail=f"{images.size}, reclaimable {images.reclaimable}",
-                    command=("docker", "image", "prune", "-f"),
-                    reclaimable_bytes=images_reclaimable,
-                )
+    dangling_images = _dangling_image_sizes(run)
+    if dangling_images:
+        dangling_bytes = sum(dangling_images)
+        findings.append(
+            clean_finding(
+                DOCKER_RULE,
+                Action.RUN,
+                "dangling images",
+                detail=f"{len(dangling_images)} dangling, {_format_gb(dangling_bytes)}",
+                command=("docker", "image", "prune", "-f"),
+                reclaimable_bytes=dangling_bytes,
             )
+        )
 
     cache = usage.get("Build Cache")
     if cache:
@@ -375,7 +386,7 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
         if cache_size > keep and cache_reclaimable > 0:
             findings.append(
                 clean_finding(
-                    "docker",
+                    DOCKER_RULE,
                     Action.RUN,
                     f"build cache beyond {limits.docker_build_cache_keep}",
                     detail=f"{cache.size}, reclaimable {cache.reclaimable}",
@@ -632,7 +643,7 @@ def _rule_largest_entries(ctx: RuleContext) -> RuleOutcome:
 RULES: tuple[Rule, ...] = (
     Rule("pasted-images", RuleKind.CLEAN, lambda ctx: _ran(pasted_images(ctx.layout, ctx.now, ctx.limits))),
     Rule("trash", RuleKind.CLEAN, lambda ctx: _ran(expired_trash(ctx.layout, ctx.now, ctx.limits))),
-    Rule("docker", RuleKind.CLEAN, _rule_docker),
+    Rule(DOCKER_RULE, RuleKind.CLEAN, _rule_docker),
     Rule("unknown-home-entry", RuleKind.AUDIT, lambda ctx: _ran(unknown_home_entries(ctx.layout))),
     Rule("git-root-litter", RuleKind.AUDIT, lambda ctx: _ran(git_root_litter(ctx.layout))),
     Rule("stale-worktree", RuleKind.AUDIT, lambda ctx: _ran(stale_worktrees(ctx.layout, ctx.issue_state, ctx.run))),
@@ -743,7 +754,7 @@ def render_report(
     applied = applied or {}
     all_findings = list(findings)
     mode = "Apply" if apply else "Dry-Run"
-    reclaimable = sum(f.reclaimable_bytes for f in all_findings)
+    reclaimable = sum(f.reclaimable_bytes for f in all_findings if f.rule == DOCKER_RULE)
     reclaim_clause = f" | docker meldet ~{_format_gb(reclaimable)} wiederverwendbar" if reclaimable else ""
     header = f"# tidy-home {now:%d.%m.%Y %H:%M}  {mode} | {len(all_findings)} Funde{reclaim_clause}"
 
@@ -804,11 +815,11 @@ def parse_args(argv: Sequence[str] | None = None) -> Options:
 
 def main(
     argv: Sequence[str] | None = None,
-    home: Path = Path.home(),  # noqa: B008 -- the seam a test overrides with tmp_path; evaluated once per process, not per call
+    home: Path | None = None,
     run: CommandRunner = run_command,
 ) -> int:
     options = parse_args(argv)
-    layout = Layout(home)
+    layout = Layout(home or Path.home())
     try:
         limits = load_limits(layout.config_file)
     except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass

@@ -20,8 +20,9 @@ Desktop-Benachrichtigung mit der Kopfzeile des Berichts.
 
 Eine Regel meldet nur, wenn `--apply` wirklich etwas ändern würde: `docker`
 meldet gestoppte Container nur, wenn welche über dem Alterslimit liegen,
-Images nur bei reklamierbarem Speicher, den Build-Cache nur, wenn er über
-seinem Limit liegt *und* reklamierbaren Speicher hat.
+Images nur, wenn es dangling Images gibt (genau die löscht `docker image
+prune -f`), den Build-Cache nur, wenn er über seinem Limit liegt *und*
+reklamierbaren Speicher hat.
 
 ### clean: wird mit `--apply` ausgeführt
 
