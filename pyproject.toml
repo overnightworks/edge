@@ -1,0 +1,19 @@
+[project]
+name = "home-tools"
+version = "0.1.0"
+description = "Keeps the home directory in the shape ~/README.md describes"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
