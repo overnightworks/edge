@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import timeit
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -130,7 +132,8 @@ def test_apply_unlinks_a_symlinked_item_and_leaves_its_target_alone(layout: Layo
     for finding in tidy_home.pasted_images(layout, NOW, LIMITS):
         tidy_home.apply_finding(finding, run=no_tools)
 
-    assert not link.exists() and not link.is_symlink()
+    assert not link.is_symlink()
+    assert not link.exists()
     assert (target / "photo.png").exists()
 
 
@@ -154,6 +157,29 @@ def test_a_dotted_trashinfo_name_cannot_escape_the_files_directory(layout: Layou
     assert findings == []
     assert decoy.exists()
     assert trash.exists()
+
+
+def test_a_trashinfo_without_a_deletion_date_is_left_alone(layout: Layout) -> None:
+    trash = layout.home / ".local" / "share" / "Trash"
+    touch(trash / "files" / "undated.txt", timedelta(0))
+    touch(trash / "info" / "undated.txt.trashinfo", timedelta(0), "[Trash Info]\nPath=/home/x/undated.txt\n")
+
+    assert tidy_home.expired_trash(layout, NOW, LIMITS) == []
+
+
+def test_an_expired_info_file_is_a_finding_even_when_its_item_is_already_gone(layout: Layout) -> None:
+    trash = layout.home / ".local" / "share" / "Trash"
+    orphan_info = touch(trash / "info" / "vanished.txt.trashinfo", timedelta(0), "DeletionDate=2026-07-01T10:00:00\n")
+
+    assert subjects(tidy_home.expired_trash(layout, NOW, LIMITS)) == {str(orphan_info)}
+
+
+def test_the_trash_age_limit_is_configurable(layout: Layout) -> None:
+    trash = layout.home / ".local" / "share" / "Trash"
+    item, info = trash_item(trash, "old.txt", "2026-07-22")  # 45 days before NOW
+
+    assert tidy_home.expired_trash(layout, NOW, Limits(trash_days=60)) == []
+    assert subjects(tidy_home.expired_trash(layout, NOW, LIMITS)) == {str(item), str(info)}
 
 
 def test_docker_rules_are_skipped_when_docker_is_unavailable() -> None:
@@ -216,7 +242,7 @@ def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
 
     containers = next(f for f in findings if f.command[:3] == ("docker", "container", "prune"))
     assert containers.detail == "old-probe"
-    assert "--filter" in containers.command and "until=168h" in containers.command
+    assert containers.command == ("docker", "container", "prune", "-f", "--filter", "until=168h")
     assert all(f.action is Action.RUN and f.verdict is Verdict.DELETE for f in findings)
     details = {f.subject: f.detail for f in findings}
     assert details["dangling images"] == "1 dangling, bis zu 25,7 GB"
@@ -256,6 +282,25 @@ def test_terabyte_sized_images_and_build_cache_are_findings() -> None:
 )
 def test_docker_size_strings_are_read_in_every_unit_docker_prints(text: str, expected_bytes: int) -> None:
     assert tidy_home._bytes_from_size(text) == expected_bytes
+
+
+SIZE_SEARCH_ATTEMPTS = 7
+LINEAR_GROWTH_HEADROOM = 8  # a linear scan grows ~4x with a 4x payload, a backtracking one ~16x
+
+
+def fastest_size_search_seconds(payload: str) -> float:
+    """The fastest of several attempts, because a machine running other lanes only ever adds time."""
+    return min(timeit.repeat(lambda: tidy_home.SIZE_PATTERN.search(payload), repeat=SIZE_SEARCH_ATTEMPTS, number=1))
+
+
+def test_reading_a_size_costs_the_payload_not_its_square() -> None:
+    """A long run of digits and dots that no unit follows is where backtracking would explode."""
+    digits_and_dots = "1." * 1_250
+    four_times_as_long = digits_and_dots * 4
+
+    growth = fastest_size_search_seconds(four_times_as_long) / fastest_size_search_seconds(digits_and_dots)
+
+    assert growth < LINEAR_GROWTH_HEADROOM
 
 
 def test_run_findings_show_the_exact_apply_command_in_the_dry_run_report(layout: Layout) -> None:
@@ -415,6 +460,29 @@ def test_worktrees_with_closed_issues_or_no_registration_are_reported(layout: La
 
 
 @pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([sys.executable, "-c", "print('bereit')"], "bereit\n"),
+        ([sys.executable, "-c", "raise SystemExit(3)"], None),
+        (["tidy-home-no-such-tool"], None),
+    ],
+    ids=["a tool that succeeds", "a tool that fails", "a tool that is not installed"],
+)
+def test_only_a_tool_that_succeeds_hands_back_output(argv: list[str], expected: str | None) -> None:
+    assert tidy_home.run_command(argv) == expected
+
+
+def test_a_tool_that_hangs_is_killed_and_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tidy_home, "COMMAND_TIMEOUT_SECONDS", 0.2)
+
+    assert tidy_home.run_command([sys.executable, "-c", "import time; time.sleep(30)"]) is None
+
+
+def test_issue_state_is_unknown_when_the_repo_has_no_origin() -> None:
+    assert tidy_home.github_issue_state(Path("/repo"), 461, no_tools) is None
+
+
+@pytest.mark.parametrize(
     "remote",
     ["git@github.com:overnightworks/songmaker.git\n", "https://github.com/overnightworks/songmaker.git\n"],
 )
@@ -515,6 +583,12 @@ def test_codex_sessions_are_summarised_once_when_old_files_exist(layout: Layout)
     assert findings[0].detail.startswith("1 files older than 90 d")
     assert findings[0].verdict is Verdict.REVIEW
     assert findings[0].recommendation == ("Sessions älter als 90 d löschen: `find ~/.codex/sessions -type f -mtime +90 -delete`")
+
+
+def test_codex_sessions_within_the_age_limit_are_not_reported(layout: Layout) -> None:
+    touch(layout.codex_sessions / "b" / "rollout.jsonl", timedelta(days=1))
+
+    assert tidy_home.old_codex_sessions(layout, NOW, LIMITS) == []
 
 
 # --- configuration -----------------------------------------------------------
@@ -783,7 +857,7 @@ def test_main_exits_2_when_the_config_file_cannot_be_read(tmp_path: Path, capsys
     try:
         code = tidy_home.main([], home=tmp_path, run=no_tools)
     finally:
-        layout.config_file.chmod(0o644)
+        layout.config_file.chmod(0o600)
 
     assert code == 2
     assert "tidy-home:" in capsys.readouterr().err

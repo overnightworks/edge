@@ -32,6 +32,7 @@ LARGEST_ENTRY_MIN_GIB = 5
 
 WORKTREE_ISSUE_PATTERN = re.compile(r"issue-(\d+)")
 TRASHINFO_DATE_PATTERN = re.compile(r"^DeletionDate=(.+)$", re.MULTILINE)
+TRASH_NAMES_THAT_ARE_NO_ITEM = frozenset({"", ".", ".."})
 DOCKER_CREATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 DOCKER_CREATED_AT_PREFIX_LENGTH = len("2026-09-05 15:47:49")  # docker appends "+0200 CEST"
 DOCKER_RULE = "docker"
@@ -39,7 +40,10 @@ DOCKER_RULE = "docker"
 BACKTICK_TOKEN_PATTERN = re.compile(r"`([^`]+)`")
 REMOVED_SECTION_HEADING = "## Was hier nicht mehr liegt"
 
-SIZE_PATTERN = re.compile(r"([\d.]+)\s*(TB|GB|MB|kB|B)")
+# The bound keeps the scan linear, and no size docker prints comes near it: an
+# unbounded `[\d.]+` re-tries every shorter prefix at every offset of a long run
+# of digits and dots that no unit follows, which costs the square of its length.
+SIZE_PATTERN = re.compile(r"([\d.]{1,20})\s*(TB|GB|MB|kB|B)")
 BYTES_PER_UNIT = {"TB": 1_000_000_000_000, "GB": 1_000_000_000, "MB": 1_000_000, "kB": 1_000, "B": 1}
 GIGABYTE = BYTES_PER_UNIT["GB"]
 
@@ -227,11 +231,13 @@ class Layout:
 IssueStateLookup = Callable[[Path, int], str | None]
 CommandRunner = Callable[[Sequence[str]], str | None]
 
+COMMAND_TIMEOUT_SECONDS = 120
+
 
 def run_command(argv: Sequence[str]) -> str | None:
-    """Run an external command; None when the tool is missing or fails."""
+    """Run an external command; None when the tool is missing, hangs or fails."""
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=120, check=False)
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=COMMAND_TIMEOUT_SECONDS, check=False)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     return completed.stdout if completed.returncode == 0 else None
@@ -277,25 +283,35 @@ def _trash_deletion_date(info_file: Path) -> datetime | None:
     return datetime.fromisoformat(match.group(1).strip()) if match else None
 
 
+def _time_in_trash(info_file: Path, now: datetime, max_age: timedelta) -> timedelta | None:
+    """How long the item has been in the trash, or None while it is undated or still within the limit."""
+    deleted_at = _trash_deletion_date(info_file)
+    if deleted_at is None:
+        return None
+    age = now - deleted_at
+    return age if age > max_age else None
+
+
+def _trashed_item_name(info_file: Path) -> str | None:
+    """The item the info file describes, or None when its name would resolve to files/ itself or to its parent."""
+    name = info_file.name.removesuffix(".trashinfo")
+    return None if name.strip() in TRASH_NAMES_THAT_ARE_NO_ITEM else name
+
+
+def _expired_trash_of(trash: Path, now: datetime, max_age: timedelta) -> Iterator[Finding]:
+    for info_file in sorted((trash / "info").glob("*.trashinfo")):
+        age = _time_in_trash(info_file, now, max_age)
+        name = _trashed_item_name(info_file)
+        if age is None or name is None:
+            continue
+        for path in (trash / "files" / name, info_file):
+            if path.exists():
+                yield clean_finding("trash", Action.DELETE, str(path), detail=_days(age))
+
+
 def expired_trash(layout: Layout, now: datetime, limits: Limits) -> list[Finding]:
     """freedesktop trash keeps a .trashinfo per item; items past the trash limit go."""
-    findings: list[Finding] = []
-    for trash in layout.trash_dirs:
-        files_dir = trash / "files"
-        for info_file in sorted((trash / "info").glob("*.trashinfo")):
-            deleted_at = _trash_deletion_date(info_file)
-            if deleted_at is None or now - deleted_at <= limits.trash_max_age:
-                continue
-            name = info_file.name.removesuffix(".trashinfo")
-            if name.strip() in {"", ".", ".."} or "/" in name:
-                continue
-            item = files_dir / name
-            if item.parent != files_dir:
-                continue
-            for path in (item, info_file):
-                if path.exists():
-                    findings.append(clean_finding("trash", Action.DELETE, str(path), detail=_days(now - deleted_at)))
-    return findings
+    return [finding for trash in layout.trash_dirs for finding in _expired_trash_of(trash, now, limits.trash_max_age)]
 
 
 def _docker_available(run: CommandRunner) -> bool:

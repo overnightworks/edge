@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions: {}
+
+jobs:
+  ci:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --no-build
+
+      - name: Lint
+        run: uv run --locked --no-build ruff check .
+
+      # The 100 % line-and-branch floor lives in pyproject.toml, so this step
+      # fails on a coverage gap as well as on a failing test.
+      - name: Test with coverage
+        run: uv run --locked --no-build pytest -q --cov=tidy_home --cov-report=term-missing

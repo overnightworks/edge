@@ -100,6 +100,11 @@ Der Timer läuft montags 09:00 als Dry-Run und schreibt nur den Bericht.
 ## Tests
 
 ```
-uv run pytest
+uv run pytest                     # nur die Tests
+uv run pytest --cov=tidy_home     # zusätzlich die 100-%-Grenze aus pyproject.toml
 uv run ruff check .
 ```
+
+`tidy_home.py` hält 100 % Zeilen- und Branch-Abdeckung; `fail_under = 100` in
+`pyproject.toml` lässt jeden Coverage-Lauf rot werden, der darunter bleibt.
+`.github/workflows/ci.yml` fährt beides bei jedem Push und Pull Request.
