@@ -10,10 +10,12 @@ dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+# The project is not installed, so tests import the home_tools package from
+# `src` and the root-layout gate from `scripts` straight out of the tree.
+pythonpath = ["src", "scripts"]
 
 [tool.coverage.run]
-source = ["tidy_home"]
+source = ["src", "scripts"]
 branch = true
 
 [tool.coverage.report]
@@ -28,6 +30,9 @@ exclude_also = [
 
 [tool.ruff]
 line-length = 140
+# Same roots as pytest's pythonpath, so ruff sorts home_tools and
+# check_root_layout as first-party imports.
+src = ["src", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]

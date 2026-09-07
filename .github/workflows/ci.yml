@@ -32,7 +32,13 @@ jobs:
       - name: Lint
         run: uv run --locked --no-build ruff check .
 
-      # The 100 % line-and-branch floor lives in pyproject.toml, so this step
-      # fails on a coverage gap as well as on a failing test.
+      # The allowlist in the gate states the rule AGENTS.md carries, so a
+      # stray root file fails here rather than in a review.
+      - name: Check the repository root layout
+        run: uv run --locked --no-build python scripts/check_root_layout.py
+
+      # The measured sources and the 100 % line-and-branch floor live in
+      # pyproject.toml, so this step fails on a coverage gap as well as on a
+      # failing test.
       - name: Test with coverage
-        run: uv run --locked --no-build pytest -q --cov=tidy_home --cov-report=term-missing
+        run: uv run --locked --no-build pytest -q --cov --cov-report=term-missing

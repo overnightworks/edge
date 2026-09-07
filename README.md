@@ -89,7 +89,7 @@ downloads_ignore = ["keepme.iso"]
 ## Installation
 
 ```
-ln -s ~/git/home-tools/tidy_home.py ~/.local/bin/tidy-home
+ln -s ~/git/home-tools/src/home_tools/tidy_home.py ~/.local/bin/tidy-home
 systemctl --user link --force ~/git/home-tools/systemd/tidy-home.service ~/git/home-tools/systemd/tidy-home.timer
 systemctl --user enable --now tidy-home.timer
 ```
@@ -100,11 +100,14 @@ Der Timer läuft montags 09:00 als Dry-Run und schreibt nur den Bericht.
 ## Tests
 
 ```
-uv run pytest                     # nur die Tests
-uv run pytest --cov=tidy_home     # zusätzlich die 100-%-Grenze aus pyproject.toml
+uv run pytest          # nur die Tests
+uv run pytest --cov    # zusätzlich die 100-%-Grenze aus pyproject.toml
 uv run ruff check .
+uv run python scripts/check_root_layout.py   # was im Wurzelverzeichnis liegen darf
 ```
 
-`tidy_home.py` hält 100 % Zeilen- und Branch-Abdeckung; `fail_under = 100` in
-`pyproject.toml` lässt jeden Coverage-Lauf rot werden, der darunter bleibt.
-`.github/workflows/ci.yml` fährt beides bei jedem Push und Pull Request.
+`src/home_tools/tidy_home.py` und `scripts/check_root_layout.py` halten 100 %
+Zeilen- und Branch-Abdeckung; `fail_under = 100` in `pyproject.toml` lässt
+jeden Coverage-Lauf rot werden, der darunter bleibt. Die Layout-Prüfung hält
+das Wurzelverzeichnis auf der Allowlist, die `AGENTS.md` beschreibt.
+`.github/workflows/ci.yml` fährt alles bei jedem Push und Pull Request.

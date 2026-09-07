@@ -3,5 +3,5 @@ Description=tidy-home dry run: report what drifted from ~/README.md
 
 [Service]
 Type=oneshot
-ExecStart=/home/felix-hummert/.local/bin/tidy-home
+ExecStart=%h/.local/bin/tidy-home
 SuccessExitStatus=1

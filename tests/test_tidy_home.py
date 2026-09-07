@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import tidy_home
-from tidy_home import Action, Finding, Layout, Limits, Options, Verdict
+from home_tools import tidy_home
+from home_tools.tidy_home import Action, Finding, Layout, Limits, Options, Verdict
 
 NOW = datetime(2026, 9, 5, 12, 0)
 LIMITS = Limits()
