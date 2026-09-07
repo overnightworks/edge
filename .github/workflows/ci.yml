@@ -15,6 +15,13 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    # This repository is private, so the organisation's SONAR_TOKEN secret
+    # never reaches it (it reaches public repositories only); a fork's pull
+    # request would be in the same position even if it did. The findings gate
+    # below arms itself on the credential it needs rather than on a guess
+    # about the event that started the run.
+    env:
+      SONAR_ENABLED: ${{ secrets.SONAR_TOKEN != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,3 +49,35 @@ jobs:
       # failing test.
       - name: Test with coverage
         run: uv run --locked --no-build pytest -q --cov --cov-report=term-missing
+
+      # Unguarded on purpose: a green run must say whether it asserted the
+      # findings or deliberately skipped, because a step that is silently
+      # conditioned away reads as a proof it never produced.
+      - name: Report the skip when no SONAR_TOKEN reaches this run
+        if: ${{ env.SONAR_ENABLED != 'true' }}
+        run: >-
+          echo "::notice::SonarCloud open findings skipped: this run received
+          no SONAR_TOKEN, so the findings were never read."
+
+      # SonarCloud analyses this project through Automatic Analysis (no scan
+      # step here needs the credential) and grades it against a quality gate
+      # of ratings, which a finding accepted or marked false positive in its
+      # web interface leaves entirely; the interface is never the place to
+      # silence a finding. So this step asks the API for the open findings of
+      # this exact scope and fails with the list. How it asks -- the encoded
+      # scope, the proof that the scope resolves before a zero reads as clean,
+      # the credential that never leaves a header -- is owned by the fleet's
+      # action, which this repository consumes instead of copying. It reads
+      # this repository's own sonar-project.properties from the workspace, so
+      # the project it asks about is this one. The reference is pinned to a
+      # commit: a tag or a branch on a step guarding security findings is a
+      # supply-chain hole and a silent change to what the gate asserts.
+      - name: SonarCloud open findings
+        if: ${{ env.SONAR_ENABLED == 'true' }}
+        # The action bounds each call; this is the hard ceiling, because it
+        # pages and a per-call bound multiplies. A composite action's inner
+        # steps take no timeout-minutes, so the ceiling belongs to this step.
+        timeout-minutes: 5
+        uses: overnightworks/marketplace/.github/actions/sonar-findings-gate@85b0e13e0530ed12b5a81208681015eda6f7854b # sonar-findings-gate-v1
+        with:
+          sonar-token: ${{ secrets.SONAR_TOKEN }}
