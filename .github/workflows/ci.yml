@@ -1,5 +1,6 @@
 # Static checks only: the edge runs on the operator's host, so CI never starts containers.
-# It proves the compose file renders and that the loopback-only, deny-by-default shape holds.
+# It proves the compose file renders and that the loopback-only, deny-by-default shape holds,
+# and it lints and tests edge-check against fixture outputs.
 name: ci
 
 on:
@@ -19,6 +20,19 @@ jobs:
       DOCKER_GID: "127"
     steps:
       - uses: actions/checkout@v4.2.2
+
+      - uses: astral-sh/setup-uv@v10.3.0
+
+      - name: edge-check installs from the lock file
+        run: uv sync --locked
+
+      - name: edge-check lint
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+
+      - name: edge-check tests
+        run: uv run pytest
 
       - name: Compose renders (default and probe profile)
         run: |
