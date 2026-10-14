@@ -1,0 +1,8 @@
+[Unit]
+Description=home check: report what drifted from ~/README.md, notify only on new findings
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/home check
+# Exit 1 means "findings exist": news, not a failure. Exit 2 (invalid config) still fails the unit.
+SuccessExitStatus=1

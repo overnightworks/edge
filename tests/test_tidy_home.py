@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import timeit
 from datetime import datetime, timedelta
@@ -9,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from home_tools import tidy_home
-from home_tools.tidy_home import Action, Finding, Layout, Limits, Options, Verdict
+from home_tools.tidy_home import Action, Config, Finding, Layout, Limits, Options, Verdict
 
 NOW = datetime(2026, 9, 5, 12, 0)
 LIMITS = Limits()
@@ -464,7 +465,7 @@ def test_worktrees_with_closed_issues_or_no_registration_are_reported(layout: La
     [
         ([sys.executable, "-c", "print('bereit')"], "bereit\n"),
         ([sys.executable, "-c", "raise SystemExit(3)"], None),
-        (["tidy-home-no-such-tool"], None),
+        (["home-no-such-tool"], None),
     ],
     ids=["a tool that succeeds", "a tool that fails", "a tool that is not installed"],
 )
@@ -594,58 +595,77 @@ def test_codex_sessions_within_the_age_limit_are_not_reported(layout: Layout) ->
 # --- configuration -----------------------------------------------------------
 
 
-def test_limits_default_when_config_file_is_absent(layout: Layout) -> None:
-    assert tidy_home.load_limits(layout.config_file) == Limits()
+def write_config(layout: Layout, text: str) -> Layout:
+    touch(layout.config_file, timedelta(0), text)
+    return layout
 
 
-def test_limits_override_a_single_key(layout: Layout) -> None:
-    touch(layout.config_file, timedelta(0), "trash_days = 60\n")
+def test_config_defaults_when_the_file_is_absent(layout: Layout) -> None:
+    assert tidy_home.load_config(layout) == Config()
 
-    limits = tidy_home.load_limits(layout.config_file)
+
+def test_tidy_limits_override_a_single_key(layout: Layout) -> None:
+    limits = tidy_home.load_config(write_config(layout, "[tidy]\ntrash_days = 60\n")).tidy
 
     assert limits.trash_days == 60
     assert limits.downloads_days == Limits().downloads_days
 
 
-def test_limits_reject_an_unknown_key(layout: Layout) -> None:
-    touch(layout.config_file, timedelta(0), "not_a_real_key = 1\n")
-
-    with pytest.raises(ValueError, match="not_a_real_key"):
-        tidy_home.load_limits(layout.config_file)
-
-
 def test_a_zero_build_cache_limit_is_accepted(layout: Layout) -> None:
-    touch(layout.config_file, timedelta(0), 'docker_build_cache_keep = "0GB"\n')
+    config = tidy_home.load_config(write_config(layout, '[tidy]\ndocker_build_cache_keep = "0GB"\n'))
 
-    assert tidy_home.load_limits(layout.config_file).docker_build_cache_keep == "0GB"
+    assert config.tidy.docker_build_cache_keep == "0GB"
 
 
-def test_limits_parse_downloads_ignore_list(layout: Layout) -> None:
-    touch(layout.config_file, timedelta(0), 'downloads_ignore = ["keepme.iso", "notes.txt"]\n')
+def test_tidy_limits_parse_downloads_ignore_list(layout: Layout) -> None:
+    config = tidy_home.load_config(write_config(layout, '[tidy]\ndownloads_ignore = ["keepme.iso", "notes.txt"]\n'))
 
-    limits = tidy_home.load_limits(layout.config_file)
+    assert config.tidy.downloads_ignore == ("keepme.iso", "notes.txt")
 
-    assert limits.downloads_ignore == ("keepme.iso", "notes.txt")
+
+def test_notifications_can_be_switched_off(layout: Layout) -> None:
+    assert tidy_home.load_config(write_config(layout, "[notify]\nenabled = false\n")).notify_enabled is False
 
 
 @pytest.mark.parametrize(
-    "config_text",
+    ("config_text", "named"),
     [
-        "trash_days = -1\n",
-        "trash_days = true\n",
-        'trash_days = "30"\n',
-        "docker_build_cache_keep = 5\n",
-        'docker_build_cache_keep = "20GiB"\n',
-        'downloads_ignore = "keepme.iso"\n',
-        "downloads_ignore = [1, 2]\n",
+        ("[tidy]\nnot_a_real_key = 1\n", "not_a_real_key"),
+        ("[tidy]\ntrash_days = -1\n", "trash_days"),
+        ("[tidy]\ntrash_days = true\n", "trash_days"),
+        ('[tidy]\ntrash_days = "30"\n', "trash_days"),
+        ("[tidy]\ndocker_build_cache_keep = 5\n", "docker_build_cache_keep"),
+        ('[tidy]\ndocker_build_cache_keep = "20GiB"\n', "docker_build_cache_keep"),
+        ('[tidy]\ndownloads_ignore = "keepme.iso"\n', "downloads_ignore"),
+        ("[tidy]\ndownloads_ignore = [1, 2]\n", "downloads_ignore"),
+        ("[notify]\nloud = true\n", "loud"),
+        ('[notify]\nenabled = "yes"\n', "enabled"),
+        ("trash_days = 60\n", "trash_days"),
+        ("tidy = 5\n", "tidy"),
     ],
 )
-def test_limits_reject_a_bad_value_naming_the_key(layout: Layout, config_text: str) -> None:
-    touch(layout.config_file, timedelta(0), config_text)
-    key = config_text.split(" ", 1)[0]
+def test_config_rejects_a_bad_entry_naming_it(layout: Layout, config_text: str, named: str) -> None:
+    with pytest.raises(ValueError, match=named):
+        tidy_home.load_config(write_config(layout, config_text))
 
-    with pytest.raises(ValueError, match=key):
-        tidy_home.load_limits(layout.config_file)
+
+def test_a_left_behind_old_config_fails_loud_with_the_move_command(layout: Layout) -> None:
+    touch(layout.legacy_config_file, timedelta(0), 'docker_build_cache_keep = "80GB"\n')
+
+    with pytest.raises(ValueError, match="move it once with") as raised:
+        tidy_home.load_config(layout)
+
+    move = str(raised.value).split("move it once with: ", 1)[1]
+    subprocess.run(["bash", "-c", move], check=True)
+    assert tidy_home.load_config(layout).tidy.docker_build_cache_keep == "80GB"
+    assert not layout.legacy_config_file.parent.exists()
+
+
+def test_the_new_config_wins_once_it_exists_beside_the_old_one(layout: Layout) -> None:
+    touch(layout.legacy_config_file, timedelta(0), "trash_days = 1\n")
+    write_config(layout, "[tidy]\ntrash_days = 60\n")
+
+    assert tidy_home.load_config(layout).tidy.trash_days == 60
 
 
 # --- orchestration ----------------------------------------------------------
@@ -786,15 +806,6 @@ def test_pipe_characters_in_a_cell_are_escaped(layout: Layout) -> None:
     assert "de\\|tail" in report
 
 
-def test_notify_sends_the_report_header_as_the_summary() -> None:
-    calls: list[list[str]] = []
-    report = "# tidy-home 05.09.2026 12:00  Dry-Run | 1 Funde\n\n| Regel |\n"
-
-    tidy_home.notify(report, run=lambda argv: calls.append(list(argv)))
-
-    assert calls == [["notify-send", "# tidy-home 05.09.2026 12:00  Dry-Run | 1 Funde"]]
-
-
 def test_exit_code_is_zero_when_nothing_is_found() -> None:
     assert tidy_home.exit_code(tidy_home.Findings(clean=(), audit=())) == 0
 
@@ -802,62 +813,3 @@ def test_exit_code_is_zero_when_nothing_is_found() -> None:
 def test_exit_code_is_one_when_any_finding_exists() -> None:
     finding = Finding("downloads-inbox", Action.REPORT, "/tmp/x", Verdict.REVIEW, "prüfen")
     assert tidy_home.exit_code(tidy_home.Findings(clean=(), audit=(finding,))) == 1
-
-
-# --- main --------------------------------------------------------------------
-
-
-def test_main_runs_end_to_end_with_an_injected_home_and_runner(tmp_path: Path) -> None:
-    dirty_home = tmp_path / "dirty"
-    with_readme(Layout(dirty_home))
-    touch(dirty_home / "Eingefügtes Bild.png", timedelta(days=10))
-    clean_home = tmp_path / "clean"
-    with_readme(Layout(clean_home))
-
-    dirty_calls: list[list[str]] = []
-    clean_calls: list[list[str]] = []
-
-    def record(calls, argv):
-        calls.append(list(argv))
-        return None
-
-    dirty_code = tidy_home.main([], home=dirty_home, run=lambda argv: record(dirty_calls, argv))
-    clean_code = tidy_home.main([], home=clean_home, run=lambda argv: record(clean_calls, argv))
-
-    assert dirty_code == 1
-    assert clean_code == 0
-    assert (dirty_home / ".local" / "state" / "tidy-home" / "last-report.md").is_file()
-    assert (clean_home / ".local" / "state" / "tidy-home" / "last-report.md").is_file()
-    assert any(call[:1] == ["notify-send"] for call in dirty_calls)
-    assert not any(call[:1] == ["notify-send"] for call in clean_calls)
-
-
-@pytest.mark.parametrize(
-    "config_text",
-    [
-        "not_a_real_key = 1\n",
-        "trash_days = [\n",
-    ],
-)
-def test_main_exits_2_and_reports_a_broken_config(tmp_path: Path, capsys: pytest.CaptureFixture[str], config_text: str) -> None:
-    layout = Layout(tmp_path)
-    touch(layout.config_file, timedelta(0), config_text)
-
-    code = tidy_home.main([], home=tmp_path, run=no_tools)
-
-    assert code == 2
-    assert "tidy-home:" in capsys.readouterr().err
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
-def test_main_exits_2_when_the_config_file_cannot_be_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    layout = Layout(tmp_path)
-    touch(layout.config_file, timedelta(0), "trash_days = 5\n")
-    layout.config_file.chmod(0)
-    try:
-        code = tidy_home.main([], home=tmp_path, run=no_tools)
-    finally:
-        layout.config_file.chmod(0o600)
-
-    assert code == 2
-    assert "tidy-home:" in capsys.readouterr().err

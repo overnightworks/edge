@@ -28,9 +28,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The operator's uv, so CI resolves and builds exactly as the README's
+      # install does on the machine that runs `home`.
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          version: "0.10.9"
           python-version: "3.12"
 
       # `--no-build` keeps any package's build script from running, and this
@@ -56,10 +59,11 @@ jobs:
 
       # The tests import from the tree, so they would pass even if the wheel
       # lacked a module or the console script pointed nowhere. This step
-      # installs the built wheel the way README.md installs it and starts the
-      # command from an empty directory with an empty HOME, where nothing of
-      # the checkout is on the import path.
-      - name: Smoke-test the installed tidy-home outside the checkout
+      # installs the built wheel non-editable on purpose -- unlike README.md's
+      # editable install, which would run from the checkout and prove nothing
+      # about the wheel -- and starts the command from an empty directory with
+      # an empty HOME, where nothing of the checkout is on the import path.
+      - name: Smoke-test the installed home outside the checkout
         run: |
           smoke="$(mktemp -d)"
           uv build --wheel --out-dir "$smoke/dist"
@@ -67,7 +71,10 @@ jobs:
             uv tool install --no-build "$smoke"/dist/home_tools-*.whl
           mkdir "$smoke/home" "$smoke/cwd"
           cd "$smoke/cwd"
-          HOME="$smoke/home" "$smoke/bin/tidy-home" --help
+          export HOME="$smoke/home"
+          "$smoke/bin/home" --help
+          "$smoke/bin/home" tidy --help
+          "$smoke/bin/home" check --help
 
       # Unguarded on purpose: a green run must say whether it asserted the
       # findings or deliberately skipped, because a step that is silently

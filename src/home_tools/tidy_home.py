@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""tidy-home keeps the home directory in the shape ~/README.md describes.
+"""`home tidy` keeps the home directory in the shape ~/README.md describes.
 
 Without --apply it is a dry run: every finding is printed, nothing changes.
 With --apply the CLEAN findings are executed. AUDIT findings are never acted
@@ -8,14 +7,18 @@ housekeeping (uv, npm) also runs under --apply, but it is maintenance, not a
 finding: it is never counted, never blocks, never affects the exit code.
 
 Exit code: 0 when the home is clean, 1 when any finding exists (dry run or
-apply — not a failure, it is the signal the timer notifies on), 2 when the
-configuration file itself is invalid.
+apply — not a failure, it is news), 2 when the configuration file itself is
+invalid.
+
+This module also owns the one configuration file of `home` and the paths every
+subcommand derives from the home directory.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -83,6 +86,11 @@ class Finding:
     def is_cleanup(self) -> bool:
         return self.action is not Action.REPORT
 
+    @property
+    def identity(self) -> str:
+        """What the finding is about, without the age or size that changes from run to run."""
+        return f"{self.rule}\t{self.subject}"
+
 
 def clean_finding(
     rule: str,
@@ -99,7 +107,7 @@ def clean_finding(
 
 @dataclass(frozen=True)
 class Limits:
-    """Operator-tunable thresholds, loaded from ~/.config/tidy-home/config.toml."""
+    """Operator-tunable thresholds, loaded from the [tidy] table of ~/.config/home/config.toml."""
 
     pasted_image_days: int = 7
     trash_days: int = 30
@@ -171,16 +179,15 @@ def _validate_limit_values(raw: dict[str, object]) -> None:
         _require_str_list("downloads_ignore", raw["downloads_ignore"])
 
 
-def load_limits(config_file: Path) -> Limits:
-    """Defaults apply when the file is absent; an unknown key or a bad value is a config error."""
-    if not config_file.is_file():
-        return Limits()
-    with config_file.open("rb") as handle:
-        raw = tomllib.load(handle)
-    known_keys = {field.name for field in fields(Limits)}
+def _require_known_keys(where: str, raw: dict[str, object], known_keys: set[str]) -> None:
     unknown_keys = sorted(set(raw) - known_keys)
     if unknown_keys:
-        raise ValueError(f"unknown tidy-home config key(s): {', '.join(unknown_keys)}")
+        raise ValueError(f"unknown config key(s) in {where}: {', '.join(unknown_keys)}")
+
+
+def load_limits(raw: dict[str, object]) -> Limits:
+    """Defaults fill every key the [tidy] table leaves out; an unknown key or a bad value is a config error."""
+    _require_known_keys("[tidy]", raw, {field.name for field in fields(Limits)})
     _validate_limit_values(raw)
     if "downloads_ignore" in raw:
         raw = {**raw, "downloads_ignore": tuple(raw["downloads_ignore"])}
@@ -189,7 +196,7 @@ def load_limits(config_file: Path) -> Limits:
 
 @dataclass(frozen=True)
 class Layout:
-    """Every path the rules touch, derived from one home directory."""
+    """Every path `home` touches, derived from one home directory."""
 
     home: Path
 
@@ -211,6 +218,10 @@ class Layout:
 
     @property
     def config_file(self) -> Path:
+        return self.home / ".config" / "home" / "config.toml"
+
+    @property
+    def legacy_config_file(self) -> Path:
         return self.home / ".config" / "tidy-home" / "config.toml"
 
     @property
@@ -224,8 +235,64 @@ class Layout:
         return (gnome, *vscode_snap)
 
     @property
-    def report_file(self) -> Path:
-        return self.home / ".local" / "state" / "tidy-home" / "last-report.md"
+    def state_dir(self) -> Path:
+        return self.home / ".local" / "state" / "home"
+
+    @property
+    def tidy_report_file(self) -> Path:
+        return self.state_dir / "tidy-report.md"
+
+    @property
+    def check_report_file(self) -> Path:
+        return self.state_dir / "check-report.md"
+
+    @property
+    def check_fingerprint_file(self) -> Path:
+        return self.state_dir / "check-findings.sha256"
+
+
+@dataclass(frozen=True)
+class Config:
+    """The one configuration file of `home`: a table per subcommand that has settings."""
+
+    tidy: Limits = Limits()
+    notify_enabled: bool = True
+
+
+def _load_notify_enabled(raw: dict[str, object]) -> bool:
+    _require_known_keys("[notify]", raw, {"enabled"})
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"enabled must be true or false, got {enabled!r}")
+    return enabled
+
+
+def _require_table(name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"[{name}] must be a table, got {value!r}")
+    return value
+
+
+def migration_command(layout: Layout) -> str:
+    """The old file held only today's [tidy] keys at top level, so prefixing the table header is the whole move."""
+    new, old = shlex.quote(str(layout.config_file)), shlex.quote(str(layout.legacy_config_file))
+    new_dir, old_dir = shlex.quote(str(layout.config_file.parent)), shlex.quote(str(layout.legacy_config_file.parent))
+    return f"mkdir -p {new_dir} && {{ echo '[tidy]'; cat {old}; }} > {new} && rm {old} && rmdir {old_dir}"
+
+
+def load_config(layout: Layout) -> Config:
+    """Defaults apply when the file is absent; a left-behind old config, an unknown table or a bad value is a config error."""
+    if not layout.config_file.is_file():
+        if layout.legacy_config_file.is_file():
+            raise ValueError(f"{layout.legacy_config_file} is no longer read; move it once with: {migration_command(layout)}")
+        return Config()
+    with layout.config_file.open("rb") as handle:
+        raw = tomllib.load(handle)
+    _require_known_keys(str(layout.config_file), raw, {"tidy", "notify"})
+    return Config(
+        tidy=load_limits(_require_table("tidy", raw.get("tidy", {}))),
+        notify_enabled=_load_notify_enabled(_require_table("notify", raw.get("notify", {}))),
+    )
 
 
 IssueStateLookup = Callable[[Path, int], str | None]
@@ -781,7 +848,7 @@ def render_report(
     mode = "Apply" if apply else "Dry-Run"
     reclaimable = sum(f.reclaimable_bytes for f in all_findings if f.rule == DOCKER_RULE)
     reclaim_clause = f" | docker meldet ~{_format_gb(reclaimable)} wiederverwendbar" if reclaimable else ""
-    header = f"# tidy-home {now:%d.%m.%Y %H:%M}  {mode} | {len(all_findings)} Funde{reclaim_clause}"
+    header = f"# home tidy {now:%d.%m.%Y %H:%M}  {mode} | {len(all_findings)} Funde{reclaim_clause}"
 
     footnotes = []
     if findings.checked_clean:
@@ -820,50 +887,51 @@ def render_report(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def notify(report: str, run: CommandRunner) -> None:
-    """Desktop nudge for the timer; a no-op (via run_command) when notify-send is missing."""
-    run(["notify-send", report.splitlines()[0]])
-
-
 def exit_code(findings: Findings) -> int:
     """The timer treats 1 as success (SuccessExitStatus=1): findings are news, not failure."""
     return 1 if findings.clean or findings.audit else 0
 
 
-def parse_args(argv: Sequence[str] | None = None) -> Options:
-    parser = argparse.ArgumentParser(prog="tidy-home", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--apply", action="store_true", help="execute the clean findings (default: dry run)")
-    parser.add_argument("--sizes", action="store_true", help="also list the largest home entries (slow)")
-    namespace = parser.parse_args(argv)
-    return Options(apply=namespace.apply, sizes=namespace.sizes)
+def dry_run(layout: Layout, now: datetime, limits: Limits, run: CommandRunner) -> tuple[Findings, str]:
+    """What `home tidy` without flags would report; `home check` reads the home through this."""
+    findings = collect_findings(layout, now, Options(), limits, run=run)
+    return findings, render_report(findings, now, layout.home)
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    home: Path | None = None,
-    run: CommandRunner = run_command,
-) -> int:
-    options = parse_args(argv)
-    layout = Layout(home or Path.home())
-    try:
-        limits = load_limits(layout.config_file)
-    except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
-        print(f"tidy-home: {error}", file=sys.stderr)
-        return 2
-
+def tidy(options: Options, layout: Layout, config: Config, run: CommandRunner) -> int:
     now = datetime.now()
-    findings = collect_findings(layout, now, options, limits, run=run)
+    findings = collect_findings(layout, now, options, config.tidy, run=run)
     applied = {f: apply_finding(f, run=run) for f in findings.clean} if options.apply else {}
     housekeeping = run_housekeeping(run) if options.apply else ""
     report = render_report(findings, now, layout.home, options.apply, applied, housekeeping)
-    layout.report_file.parent.mkdir(parents=True, exist_ok=True)
-    layout.report_file.write_text(report)
+    layout.tidy_report_file.parent.mkdir(parents=True, exist_ok=True)
+    layout.tidy_report_file.write_text(report)
     sys.stdout.write(report)
-    code = exit_code(findings)
-    if code:
-        notify(report, run)
-    return code
+    return exit_code(findings)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+TIDY_EXAMPLES = """\
+Beispiele:
+  home tidy            Dry-Run: zeigt alle Funde, ändert nichts
+  home tidy --apply    führt die clean-Funde aus, audit-Funde bleiben Bericht
+  home tidy --sizes    zusätzlich die größten Einträge im Home (langsam)
+
+Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration ungültig.
+"""
+
+
+def _tidy_from_args(args: argparse.Namespace, layout: Layout, config: Config, run: CommandRunner) -> int:
+    return tidy(Options(apply=args.apply, sizes=args.sizes), layout, config, run)
+
+
+def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
+    parser = add_parser(
+        "tidy",
+        help="Home aufräumen: Funde zeigen, mit --apply die clean-Funde ausführen",
+        description="Prüft das Home gegen ~/README.md. Ohne --apply ändert nichts.",
+        epilog=TIDY_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--apply", action="store_true", help="führt die clean-Funde aus (ohne: Dry-Run)")
+    parser.add_argument("--sizes", action="store_true", help="listet zusätzlich die größten Einträge im Home (langsam)")
+    parser.set_defaults(handler=_tidy_from_args)

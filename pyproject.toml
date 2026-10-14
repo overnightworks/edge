@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
-tidy-home = "home_tools.tidy_home:main"
+home = "home_tools.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11"]
@@ -30,9 +30,9 @@ branch = true
 fail_under = 100
 show_missing = true
 exclude_also = [
-    # The process entry hands main()'s return value to the OS and does nothing
-    # else. Tests call main() directly with an injected home; spawning a
-    # process here would test the interpreter, not this tool.
+    # A script's process entry hands main()'s return value to the OS and does
+    # nothing else. Tests call main() directly; spawning a process here would
+    # test the interpreter, not the script.
     'if __name__ == "__main__":',
 ]
 
