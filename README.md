@@ -89,10 +89,16 @@ downloads_ignore = ["keepme.iso"]
 ## Installation
 
 ```
-ln -s ~/git/home-tools/src/home_tools/tidy_home.py ~/.local/bin/tidy-home
+rm ~/.local/bin/tidy-home    # nur einmal: der alte Symlink auf tidy_home.py
+uv tool install --editable ~/git/home-tools
 systemctl --user link --force ~/git/home-tools/systemd/tidy-home.service ~/git/home-tools/systemd/tidy-home.timer
 systemctl --user enable --now tidy-home.timer
 ```
+
+`uv tool install` legt den Befehl nach `~/.local/bin/tidy-home`, wo die
+systemd-Unit ihn aufruft; einen fremden Eintrag dort überschreibt es nicht,
+deshalb kommt der alte Symlink vorher weg. `--editable` lässt den Befehl aus
+dem Checkout laufen: eine Änderung unter `src/` wirkt ohne Neuinstallation.
 
 Der Timer läuft montags 09:00 als Dry-Run und schreibt nur den Bericht.
 `--apply` bleibt ein bewusster Handgriff.

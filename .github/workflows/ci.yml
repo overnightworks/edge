@@ -33,22 +33,41 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `--no-build` keeps any package's build script from running, and this
+      # project is built from source too, so the environment holds only the
+      # locked wheels: the steps below read the tree through pytest's
+      # pythonpath, and the smoke step at the end proves the built package.
       - name: Install dependencies
-        run: uv sync --locked --no-build
+        run: uv sync --locked --no-build --no-install-project
 
       - name: Lint
-        run: uv run --locked --no-build ruff check .
+        run: uv run --locked --no-build --no-sync ruff check .
 
       # The allowlist in the gate states the rule AGENTS.md carries, so a
       # stray root file fails here rather than in a review.
       - name: Check the repository root layout
-        run: uv run --locked --no-build python scripts/check_root_layout.py
+        run: uv run --locked --no-build --no-sync python scripts/check_root_layout.py
 
       # The measured sources and the 100 % line-and-branch floor live in
       # pyproject.toml, so this step fails on a coverage gap as well as on a
       # failing test.
       - name: Test with coverage
-        run: uv run --locked --no-build pytest -q --cov --cov-report=term-missing
+        run: uv run --locked --no-build --no-sync pytest -q --cov --cov-report=term-missing
+
+      # The tests import from the tree, so they would pass even if the wheel
+      # lacked a module or the console script pointed nowhere. This step
+      # installs the built wheel the way README.md installs it and starts the
+      # command from an empty directory with an empty HOME, where nothing of
+      # the checkout is on the import path.
+      - name: Smoke-test the installed tidy-home outside the checkout
+        run: |
+          smoke="$(mktemp -d)"
+          uv build --wheel --out-dir "$smoke/dist"
+          UV_TOOL_DIR="$smoke/tools" UV_TOOL_BIN_DIR="$smoke/bin" \
+            uv tool install --no-build "$smoke"/dist/home_tools-*.whl
+          mkdir "$smoke/home" "$smoke/cwd"
+          cd "$smoke/cwd"
+          HOME="$smoke/home" "$smoke/bin/tidy-home" --help
 
       # Unguarded on purpose: a green run must say whether it asserted the
       # findings or deliberately skipped, because a step that is silently
