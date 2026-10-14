@@ -1,8 +1,0 @@
-claim_id = "0341188e9d5c40dabcbd98ffedbf5bb2"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "df48023b31cba155e9f6ac09eb81c9a77465e281"
-branch = "claude/issue-5-edge-check"
-scope = [".github/workflows/ci.yml", "README.md", "edge-check.toml", "pyproject.toml", "src", "tests", "uv.lock"]
-opened_commit = "1d923e046ba1695127c9dd96898a1de5ef297443"
-whole_reason = "A new small Python tool: package, source, config, tests and CI belong together."
