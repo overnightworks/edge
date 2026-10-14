@@ -69,7 +69,11 @@ timeout 30 sh -c '
 ' && echo ready
 ```
 
-Stop: `docker compose down`.
+Stop: `docker compose --profile probe down`. A plain `docker compose down` leaves
+a running probe `hello` behind.
+
+After a reboot, socket-proxy and traefik come back on their own
+(`restart: unless-stopped`); `hello` never does.
 
 What the entrypoint answers without a route:
 

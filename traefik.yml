@@ -5,7 +5,7 @@ global:
 log:
   level: INFO
 
-# One entrypoint only. No api, ping or metrics block: each of them would add an implicit listener.
+# One entrypoint only. The api, ping and metrics blocks stay absent, so those features are disabled.
 entryPoints:
   edge:
     address: "127.0.0.1:8081"
