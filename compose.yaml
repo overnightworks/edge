@@ -1,0 +1,59 @@
+name: edge
+
+services:
+  socket-proxy:
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
+    restart: unless-stopped
+    user: "65534:${DOCKER_GID:?set DOCKER_GID to the host docker group id, see .env.example}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    # socket-proxy wraps every allow pattern in ^...$ itself; every method without an -allow flag is refused.
+    command:
+      - "-socketpath=/var/run/docker.sock"
+      - "-proxysocketendpoint=/run/socket-proxy/proxy.sock"
+      - "-proxysocketendpointfilemode=0600"
+      - '-allowGET=/v1\.[0-9]+/(version|events|containers/json|containers/[a-zA-Z0-9_.-]+/json)'
+      - "-allowHEAD=/_ping"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The directory, not the socket, is shared: the proxy recreates proxy.sock on every start.
+      - socket-proxy-run:/run/socket-proxy
+
+  traefik:
+    image: traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: host
+    environment:
+      EDGE_DOMAIN: ${EDGE_DOMAIN:?set EDGE_DOMAIN}
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./dynamic:/dynamic:ro
+      - socket-proxy-run:/run/socket-proxy:ro
+
+  hello:
+    image: traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+    profiles: [probe]
+    networks: [edge-probe]
+    labels:
+      traefik.enable: "true"
+      edge.name: hello
+      traefik.http.services.hello.loadbalancer.server.port: "80"
+
+volumes:
+  socket-proxy-run:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65534,gid=65534,mode=0700"
+
+networks:
+  edge-probe:
+    driver: bridge

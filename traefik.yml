@@ -1,0 +1,26 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+# One entrypoint only. No api, ping or metrics block: each of them would add an implicit listener.
+entryPoints:
+  edge:
+    address: "127.0.0.1:8081"
+    forwardedHeaders:
+      trustedIPs: ["127.0.0.1/32"]
+    http:
+      # Drop headers like X_Forwarded_For that CGI/WSGI-style backends read as the header Traefik manages.
+      aliasHeadersStrategy: delete
+
+providers:
+  docker:
+    endpoint: "unix:///run/socket-proxy/proxy.sock"
+    exposedByDefault: false
+    constraints: "LabelRegex(`edge.name`, `^[a-z0-9-]{1,63}$`)"
+    defaultRule: 'Host(`{{ index .Labels "edge.name" }}.{{ env "EDGE_DOMAIN" }}`)'
+  file:
+    directory: /dynamic
+    watch: true
