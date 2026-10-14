@@ -44,22 +44,29 @@ udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=48)) <-
 """
 
 
-def inspect_json(*containers: tuple[str, dict[str, list[tuple[str, str]]]]) -> str:
-    """`docker inspect` output for (name, {"80/tcp": [(host_ip, host_port)]}) pairs."""
-    return json.dumps(
-        [
-            {
-                "Name": f"/{name}",
-                "HostConfig": {
-                    "PortBindings": {
-                        container_port: [{"HostIp": ip, "HostPort": port} for ip, port in bindings]
-                        for container_port, bindings in port_bindings.items()
-                    }
-                },
-            }
-            for name, port_bindings in containers
-        ]
-    )
+def container(
+    name: str,
+    port_bindings: dict[str, list[tuple[str, str]]],
+    *,
+    exposed: tuple[str, ...] = (),
+    publish_all: bool = False,
+) -> dict:
+    """One `docker inspect` entry; port_bindings maps "80/tcp" to [(host_ip, host_port)]."""
+    return {
+        "Name": f"/{name}",
+        "Config": {"ExposedPorts": {port: {} for port in exposed}},
+        "HostConfig": {
+            "PublishAllPorts": publish_all,
+            "PortBindings": {
+                container_port: [{"HostIp": ip, "HostPort": port} for ip, port in bindings]
+                for container_port, bindings in port_bindings.items()
+            },
+        },
+    }
+
+
+def inspect_json(*containers: dict) -> str:
+    return json.dumps(list(containers))
 
 
 def finding(
@@ -100,31 +107,42 @@ HOSTS = {
     "nothing runs": Host(),
     "publications on 127.0.0.1 and ::1, listeners on loopback": Host(
         docker=inspect_json(
-            ("traefik", {"8081/tcp": [("127.0.0.1", "8081")]}),
-            ("dns", {"53/udp": [("::1", "5353")]}),
-            ("worker", {}),
+            container("traefik", {"8081/tcp": [("127.0.0.1", "8081")]}),
+            container("dns", {"53/udp": [("::1", "5353")]}),
+            container("worker", {}, exposed=("9000/tcp",)),
         ),
         ss=SS_LOOPBACK_ONLY,
     ),
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
-        docker=inspect_json(("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
         findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
     ),
     "publication on ::": Host(
-        docker=inspect_json(("dns", {"53/udp": [("::", "53")]})),
+        docker=inspect_json(container("dns", {"53/udp": [("::", "53")]})),
         findings=[finding("publication-beyond-loopback", "dns", "udp", "::", 53)],
     ),
     "publication on a loopback port range": Host(
-        docker=inspect_json(("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
+        docker=inspect_json(container("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
     ),
     "publication on a 0.0.0.0 port range names the range": Host(
-        docker=inspect_json(("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
+        docker=inspect_json(container("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
         findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
     ),
+    "publish-all publishes every exposed port not bound explicitly": Host(
+        docker=inspect_json(
+            container(
+                "lab",
+                {"9000/tcp": [("127.0.0.1", "9000")]},
+                exposed=("9000/tcp", "53/udp"),
+                publish_all=True,
+            )
+        ),
+        findings=[finding("publication-without-host-ip", "lab", "udp", "", None)],
+    ),
     "publication without host IP or host port": Host(
-        docker=inspect_json(("hello", {"80/tcp": [("", "")]})),
+        docker=inspect_json(container("hello", {"80/tcp": [("", "")]})),
         findings=[finding("publication-without-host-ip", "hello", "tcp", "", None)],
     ),
     "tcp listener on 0.0.0.0 names its process": Host(
@@ -161,8 +179,8 @@ HOSTS = {
     ),
     "repeated sockets and mixed findings come once, in a stable order": Host(
         docker=inspect_json(
-            ("web", {"8080/tcp": [("0.0.0.0", "8080"), ("::", "8080")]}),
-            ("api", {"9000/tcp": [("", "9000")]}),
+            container("web", {"8080/tcp": [("0.0.0.0", "8080"), ("::", "8080")]}),
+            container("api", {"9000/tcp": [("", "9000")]}),
         ),
         ss=SS_CHROME_MDNS_TWICE + SS_SSHD,
         findings=[
@@ -264,11 +282,11 @@ UNREADABLE_OUTPUTS = {
         "container 'broken'",
     ),
     "host port that is not a number": (
-        Host(docker=inspect_json(("web", {"80/tcp": [("127.0.0.1", "http")]}))),
+        Host(docker=inspect_json(container("web", {"80/tcp": [("127.0.0.1", "http")]}))),
         "container 'web'",
     ),
     "host IP that is not an address": (
-        Host(docker=inspect_json(("web", {"80/tcp": [("localhost", "80")]}))),
+        Host(docker=inspect_json(container("web", {"80/tcp": [("localhost", "80")]}))),
         "container 'web'",
     ),
     "unknown ss socket type": (

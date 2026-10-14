@@ -34,6 +34,8 @@ def _publications(container: dict) -> list[Publication]:
 def _parse_container(container: dict) -> list[Publication]:
     name = container["Name"].lstrip("/")
     port_bindings = container["HostConfig"].get("PortBindings") or {}
+    if container["HostConfig"].get("PublishAllPorts"):
+        port_bindings = _with_publish_all(port_bindings, container["Config"].get("ExposedPorts"))
     return [
         Publication(
             container=name,
@@ -44,6 +46,12 @@ def _parse_container(container: dict) -> list[Publication]:
         for container_port, bindings in port_bindings.items()
         for binding in bindings or []
     ]
+
+
+def _with_publish_all(port_bindings: dict, exposed_ports: dict | None) -> dict:
+    """`-P` publishes every exposed port without an explicit binding: no host IP, random port."""
+    publish_all = {port: [{}] for port in exposed_ports or {} if not port_bindings.get(port)}
+    return port_bindings | publish_all
 
 
 def _protocol(container_port: str) -> Protocol:

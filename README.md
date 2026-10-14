@@ -118,7 +118,7 @@ arguments, no shell, nothing written) and reports:
 | Problem | When |
 |---|---|
 | `publication-beyond-loopback` | a container publishes a port on an address that is not loopback (`0.0.0.0`, `::`, a LAN address) |
-| `publication-without-host-ip` | a container publishes a port without a host IP, so Docker would bind every interface |
+| `publication-without-host-ip` | a container publishes a port without a host IP, so Docker would bind every interface; `-P`/`--publish-all` does this for every exposed port |
 | `listener-beyond-loopback` | a TCP or UDP socket listens on a non-loopback address and no allow-list entry permits it |
 
 Stopped containers count too: their publications return when they start.
