@@ -26,7 +26,7 @@ class AllowEntry:
         return (
             listener.protocol == self.protocol
             and self.port in (None, listener.port)
-            and self.owner in (None, listener.owner)
+            and (self.owner is None or listener.is_owned_by(self.owner))
         )
 
 

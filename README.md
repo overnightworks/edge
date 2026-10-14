@@ -143,7 +143,7 @@ loopback. Docker publications are never allow-listed.
 ```toml
 [[allow]]
 protocol = "udp"                  # tcp or udp
-owner = "avahi-daemon.service"    # process name or systemd unit, as edge-check prints it
+owner = "avahi-daemon.service"    # process name, or the system unit (under system.slice)
 port = 5353                       # optional when owner is given
 reason = "mDNS service discovery" # required
 ```

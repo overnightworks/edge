@@ -21,6 +21,13 @@ owner = "cloudflared.service"
 reason = "the tunnel's QUIC client sockets use random ports"
 """
 
+ALLOW_AVAHI_UNIT = """
+[[allow]]
+protocol = "udp"
+owner = "avahi-daemon.service"
+reason = "mDNS: avahi answers local-network service discovery"
+"""
+
 SS_LOOPBACK_ONLY = """\
 udp UNCONN 0 0 127.0.0.53%lo:53    0.0.0.0:* cgroup:/system.slice/systemd-resolved.service <->
 tcp LISTEN 0 4096 127.0.0.1:8081  0.0.0.0:* cgroup:/system.slice/docker.service <->
@@ -28,6 +35,14 @@ tcp LISTEN 0 511 [::1]:6379     [::]:* users:(("redis-server",pid=4242,fd=7)) <-
 """
 SS_AVAHI = """\
 udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* uid:108 cgroup:/system.slice/avahi-daemon.service <->
+"""
+SS_AVAHI_SEEN_BY_ROOT = """\
+udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* users:(("avahi-daemon",pid=812,fd=12)) uid:108 \
+cgroup:/system.slice/avahi-daemon.service <->
+"""
+SS_USER_SCOPE_NAMED_AVAHI = """\
+udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* uid:1001 \
+cgroup:/user.slice/user-1001.slice/user@1001.service/app.slice/avahi-daemon.service <->
 """
 SS_CLOUDFLARED = """\
 udp UNCONN 0 0 *:33697       *:* uid:62260 cgroup:/system.slice/cloudflared.service v6only:0 <->
@@ -144,6 +159,19 @@ HOSTS = {
     "publication without host IP or host port": Host(
         docker=inspect_json(container("hello", {"80/tcp": [("", "")]})),
         findings=[finding("publication-without-host-ip", "hello", "tcp", "", None)],
+    ),
+    "allow-listed system unit, run as root so ss shows the process": Host(
+        ss=SS_AVAHI_SEEN_BY_ROOT, allow_list=ALLOW_AVAHI_UNIT
+    ),
+    "allow-listed process name, run as root": Host(
+        ss=SS_AVAHI_SEEN_BY_ROOT, allow_list=ALLOW_AVAHI_UNIT.replace(".service", "")
+    ),
+    "a user unit named like an allow-listed system unit is not permitted": Host(
+        ss=SS_USER_SCOPE_NAMED_AVAHI,
+        allow_list=ALLOW_AVAHI_UNIT,
+        findings=[
+            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", "0.0.0.0", 5353)
+        ],
     ),
     "tcp listener on 0.0.0.0 names its process": Host(
         ss=SS_LOOPBACK_ONLY + SS_SSHD,

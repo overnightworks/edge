@@ -1,6 +1,7 @@
 # Known listeners beyond loopback. Each entry needs `protocol` (tcp or udp), a
-# `reason`, and a `port`, an `owner`, or both. `owner` is the process name ss
-# shows, or the systemd unit when ss may not show the process (root-owned sockets).
+# `reason`, and a `port`, an `owner`, or both. `owner` matches the process name
+# or the socket's system unit (under system.slice), so one entry holds whether
+# edge-check runs as the user or as root.
 # Docker publications are never allow-listed: they must bind 127.0.0.1 or ::1.
 
 [[allow]]
