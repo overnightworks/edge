@@ -16,6 +16,7 @@ until then the edge is a local service only.
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
+| `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 
 ## Threat model
 
@@ -99,6 +100,56 @@ docker compose --profile probe stop hello && docker compose --profile probe rm -
 
 Afterwards `hello.<EDGE_DOMAIN>` answers 404, and a plain `docker compose up -d`
 leaves hello absent.
+
+## edge-check
+
+A read-only alarm: it fails loudly when something on this PC reaches beyond
+loopback. The Docker daemon default (operator step A7) enforces loopback
+publications; `edge-check` reports what slipped through.
+
+```sh
+uv run edge-check            # human table
+uv run edge-check --json     # the same findings as a JSON list, for machines
+```
+
+It runs `docker ps --all` + `docker inspect` and `ss -H -ltnupe` (fixed
+arguments, no shell, nothing written) and reports:
+
+| Problem | When |
+|---|---|
+| `publication-beyond-loopback` | a container publishes a port on an address that is not loopback (`0.0.0.0`, `::`, a LAN address) |
+| `publication-without-host-ip` | a container publishes a port without a host IP, so Docker would bind every interface; `-P`/`--publish-all` does this for every exposed port |
+| `listener-beyond-loopback` | a TCP or UDP socket listens on a non-loopback address and no allow-list entry permits it |
+
+Stopped containers count too: their publications return when they start.
+Each finding names the container or the listening process (or its systemd
+unit when `ss` cannot see a root-owned process), the address and the port.
+`--json` prints a list of objects with the keys `problem`, `subject`,
+`protocol`, `address` and `port` (`port` is `null` when Docker picks a random
+one, and a string such as `"8000-8010"` when it picks one from a range),
+deduplicated and in a stable order.
+
+| Exit | Meaning |
+|---|---|
+| 0 | every publication binds loopback; every listener is loopback or allow-listed |
+| 1 | at least one finding |
+| 2 | it cannot check: the allow-list is missing or invalid (the message names the entry), or `docker`/`ss` failed or printed something it cannot read (the message names the container or line) |
+
+### The allow-list
+
+`edge-check.toml` (or `--allow-list PATH`) names the known listeners beyond
+loopback. Docker publications are never allow-listed.
+
+```toml
+[[allow]]
+protocol = "udp"                  # tcp or udp
+owner = "avahi-daemon.service"    # process name, or the system unit (under system.slice)
+port = 5353                       # optional when owner is given
+reason = "mDNS service discovery" # required
+```
+
+Each entry needs a `reason` and a `port`, an `owner`, or both; any other key
+is an error. Allow by `owner` alone only when the service opens random ports.
 
 ## Rollback
 

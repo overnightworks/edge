@@ -1,0 +1,16 @@
+# Known listeners beyond loopback. Each entry needs `protocol` (tcp or udp), a
+# `reason`, and a `port`, an `owner`, or both. `owner` matches the process name
+# or the socket's system unit (under system.slice), so one entry holds whether
+# edge-check runs as the user or as root.
+# Docker publications are never allow-listed: they must bind 127.0.0.1 or ::1.
+
+[[allow]]
+protocol = "udp"
+owner = "avahi-daemon.service"
+reason = "mDNS: avahi answers local-network service discovery on 5353 and its own random query ports"
+
+[[allow]]
+protocol = "udp"
+owner = "NetworkManager.service"
+port = 546
+reason = "DHCPv6 client on the link-local address, the host's own network configuration"
