@@ -3,6 +3,6 @@ agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
 role = "builder"
 base = "40f65160755c22bbc3df7421e4679a5b088af4c1"
 branch = "claude/issue-2-pfoertner-lokal"
-scope = [".env.example", "README.md", "cloudflared-config.example.yml", "compose.yaml", "dynamic", "traefik.yml"]
+scope = [".env.example", ".github/workflows/ci.yml", ".gitignore", "README.md", "cloudflared-config.example.yml", "compose.yaml", "dynamic", "traefik.yml"]
 opened_commit = "faefe076261da1f959ac27a949132cda9b5d6657"
 whole_reason = "A new repo's first slice: one compose stack plus its static config, template and README belong together."
