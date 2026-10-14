@@ -9,7 +9,7 @@ from pathlib import Path
 from edge_check import host
 from edge_check.allowlist import AllowListError, parse_allow_list
 from edge_check.check import check
-from edge_check.exposure import Finding
+from edge_check.exposure import Finding, UnreadableOutputError
 
 DEFAULT_ALLOW_LIST = Path("edge-check.toml")
 _TABLE_HEADER = ("PROBLEM", "SUBJECT", "PROTO", "ADDRESS", "PORT")
@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         allow_list = parse_allow_list(_read_allow_list(arguments.allow_list))
         findings = check(host.docker_inspect_json(), host.socket_listeners(), allow_list)
-    except (AllowListError, host.HostCommandError) as error:
+    except (AllowListError, host.HostCommandError, UnreadableOutputError) as error:
         print(f"edge-check: {error}", file=sys.stderr)
         return ExitCode.CANNOT_CHECK
     print(_as_json(findings) if arguments.json else _as_table(findings))
@@ -68,7 +68,7 @@ def _as_table(findings: list[Finding]) -> str:
             finding.subject,
             finding.protocol,
             finding.address or "(none)",
-            "(random)" if finding.port is None else str(finding.port),
+            "(random)" if finding.port is None else str(finding.port.as_json()),
         )
         for finding in findings
     ]

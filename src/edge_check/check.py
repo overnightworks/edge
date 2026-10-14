@@ -2,7 +2,7 @@
 
 from edge_check.allowlist import AllowEntry
 from edge_check.docker import Publication, parse_publications
-from edge_check.exposure import Finding, Problem, is_loopback, ordered
+from edge_check.exposure import Finding, PortRange, Problem, is_loopback, ordered
 from edge_check.listeners import Listener, parse_listeners
 
 
@@ -19,7 +19,7 @@ def publication_findings(publications: list[Publication]) -> list[Finding]:
             subject=publication.container,
             protocol=publication.protocol,
             address=publication.host_ip,
-            port=publication.host_port,
+            port=publication.host_ports,
         )
         for publication in publications
         if (problem := _publication_problem(publication)) is not None
@@ -35,7 +35,7 @@ def listener_findings(
             subject=listener.owner or "unknown process",
             protocol=listener.protocol,
             address=listener.address,
-            port=listener.port,
+            port=PortRange.single(listener.port),
         )
         for listener in listeners
         if not is_loopback(listener.address)

@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-from edge_check.exposure import Protocol
+from edge_check.exposure import Protocol, UnreadableOutputError, checked_address
 
 _PROCESS_NAME = re.compile(r'users:\(\("([^"]+)"')
 _CGROUP = re.compile(r"cgroup:(\S+)")
@@ -23,11 +23,18 @@ def parse_listeners(ss_output: str) -> list[Listener]:
 
 
 def _parse_line(line: str) -> Listener:
+    try:
+        return _parse_columns(line)
+    except (IndexError, ValueError) as error:
+        raise UnreadableOutputError(f"ss: cannot read line {line.strip()!r}: {error}") from error
+
+
+def _parse_columns(line: str) -> Listener:
     columns = line.split()
     address, _, port = columns[_LOCAL_ADDRESS_COLUMN].rpartition(":")
     return Listener(
         protocol=Protocol(columns[0]),
-        address=_bare_address(address),
+        address=checked_address(_bare_address(address)),
         port=int(port),
         owner=_owner(line),
     )

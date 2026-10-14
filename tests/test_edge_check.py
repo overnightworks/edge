@@ -62,7 +62,9 @@ def inspect_json(*containers: tuple[str, dict[str, list[tuple[str, str]]]]) -> s
     )
 
 
-def finding(problem: str, subject: str, protocol: str, address: str, port: int | None) -> dict:
+def finding(
+    problem: str, subject: str, protocol: str, address: str, port: int | str | None
+) -> dict:
     return {
         "problem": problem,
         "subject": subject,
@@ -113,6 +115,13 @@ HOSTS = {
     "publication on ::": Host(
         docker=inspect_json(("dns", {"53/udp": [("::", "53")]})),
         findings=[finding("publication-beyond-loopback", "dns", "udp", "::", 53)],
+    ),
+    "publication on a loopback port range": Host(
+        docker=inspect_json(("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
+    ),
+    "publication on a 0.0.0.0 port range names the range": Host(
+        docker=inspect_json(("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
+        findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
     ),
     "publication without host IP or host port": Host(
         docker=inspect_json(("hello", {"80/tcp": [("", "")]})),
@@ -245,6 +254,42 @@ def test_exits_2_on_an_unreadable_allow_list(run_edge_check, allow_list, message
     exit_code, _, err = run_edge_check(Host(allow_list=allow_list))
 
     assert exit_code == 2
+    assert message in err
+
+
+UNREADABLE_OUTPUTS = {
+    "docker output is not JSON": (Host(docker="Error: no such object"), "docker inspect"),
+    "container without HostConfig": (
+        Host(docker=json.dumps([{"Name": "/broken"}])),
+        "container 'broken'",
+    ),
+    "host port that is not a number": (
+        Host(docker=inspect_json(("web", {"80/tcp": [("127.0.0.1", "http")]}))),
+        "container 'web'",
+    ),
+    "host IP that is not an address": (
+        Host(docker=inspect_json(("web", {"80/tcp": [("localhost", "80")]}))),
+        "container 'web'",
+    ),
+    "unknown ss socket type": (
+        Host(ss="raw UNCONN 0 0 0.0.0.0:255 0.0.0.0:* <->\n"),
+        "raw UNCONN 0 0 0.0.0.0:255",
+    ),
+    "ss address that is not an address": (
+        Host(ss="tcp LISTEN 0 128 eth0:22 0.0.0.0:* <->\n"),
+        "tcp LISTEN 0 128 eth0:22",
+    ),
+    "truncated ss line": (Host(ss="tcp LISTEN 0\n"), "tcp LISTEN 0"),
+}
+
+
+@pytest.mark.parametrize(
+    ("state", "message"), UNREADABLE_OUTPUTS.values(), ids=UNREADABLE_OUTPUTS.keys()
+)
+def test_exits_2_naming_the_command_output_it_cannot_read(run_edge_check, state, message):
+    exit_code, out, err = run_edge_check(state, "--json")
+
+    assert (exit_code, out) == (2, "")
     assert message in err
 
 

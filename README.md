@@ -126,13 +126,14 @@ Each finding names the container or the listening process (or its systemd
 unit when `ss` cannot see a root-owned process), the address and the port.
 `--json` prints a list of objects with the keys `problem`, `subject`,
 `protocol`, `address` and `port` (`port` is `null` when Docker picks a random
-one), deduplicated and in a stable order.
+one, and a string such as `"8000-8010"` when it picks one from a range),
+deduplicated and in a stable order.
 
 | Exit | Meaning |
 |---|---|
 | 0 | every publication binds loopback; every listener is loopback or allow-listed |
 | 1 | at least one finding |
-| 2 | it cannot check: the allow-list is missing or invalid (the message names the entry), or `docker`/`ss` failed |
+| 2 | it cannot check: the allow-list is missing or invalid (the message names the entry), or `docker`/`ss` failed or printed something it cannot read (the message names the container or line) |
 
 ### The allow-list
 
