@@ -3,6 +3,7 @@
 A run counts as success only after its last phase; every failure names its phase.
 """
 
+import os
 import shutil
 import stat
 import tempfile
@@ -31,8 +32,10 @@ from edge_backup.verify import (
     check_audio_references,
 )
 
-# Names every directory a run stages in, so a sweep removes only what a run left behind.
+# A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
+# mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
 STAGING_PREFIX = "staging-"
+RUN_MARK_SUFFIX = ".run"
 
 
 class StepFailed(Exception):
@@ -243,19 +246,37 @@ def sweep_leftover_staging(parent: Path) -> None:
     """A killed run never reaches its cleanup, so every run first removes the plaintext it left,
     whether or not it gets far enough to stage anything itself.
 
-    Only staging directories go, and only runs create them: `restore` refuses a target here.
+    Only directories with a run's mark go; anything else here is left alone.
     The host lock guarantees no other run is using them.
     """
-    for leftover in parent.glob(f"{STAGING_PREFIX}*"):
-        shutil.rmtree(leftover)
+    for mark in parent.glob(f"{STAGING_PREFIX}*{RUN_MARK_SUFFIX}"):
+        _remove_staging(mark)
 
 
 @contextmanager
 def _private_directory(parent: Path) -> Iterator[Path]:
     """A 0700 directory for dumps and restored copies, removed on success and on failure."""
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=parent))
+    descriptor, mark_name = tempfile.mkstemp(
+        prefix=STAGING_PREFIX, suffix=RUN_MARK_SUFFIX, dir=parent
+    )
+    os.close(descriptor)
+    mark = Path(mark_name)
     try:
+        directory = _staged_directory(mark)
+        directory.mkdir(mode=0o700)
         yield directory
     finally:
+        _remove_staging(mark)
+
+
+def _staged_directory(mark: Path) -> Path:
+    return mark.with_name(mark.name.removesuffix(RUN_MARK_SUFFIX))
+
+
+def _remove_staging(mark: Path) -> None:
+    """The directory goes before its mark, so a run killed in between leaves it findable."""
+    directory = _staged_directory(mark)
+    if directory.exists():
         shutil.rmtree(directory)
+    mark.unlink()

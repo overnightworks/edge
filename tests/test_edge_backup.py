@@ -15,7 +15,7 @@ import pytest
 from edge_backup import cli, host
 from edge_backup.apps import AppsError, DumpKind, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
-from edge_backup.runner import STAGING_PREFIX
+from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
 from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
@@ -838,15 +838,24 @@ def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
 ):
     arrange(edge_backup, machine)
     work_dir = home / ".cache/edge-backup"
-    killed_run, operator_restore = work_dir / f"{STAGING_PREFIX}killed", work_dir / "manual"
-    for kept_copy in (killed_run, operator_restore):
-        (kept_copy / "db").mkdir(parents=True)
-        (kept_copy / "db/db.dump").write_bytes(DUMP)
+    killed_run = _leave_killed_run_staging(work_dir)
+    unmarked = (work_dir / f"{STAGING_PREFIX}foreign", work_dir / "manual")
+    for copy in (killed_run, *unmarked):
+        (copy / "db").mkdir(parents=True, exist_ok=True)
+        (copy / "db/db.dump").write_bytes(DUMP)
 
     outcome = edge_backup(*arguments)
 
     assert outcome.exit_code == exit_code, outcome.err
-    assert list(work_dir.iterdir()) == [operator_restore]
+    assert set(work_dir.iterdir()) == set(unmarked)
+
+
+def _leave_killed_run_staging(work_dir: Path) -> Path:
+    """What a run killed outright leaves: its staging and the mark that proves it made it."""
+    staging = work_dir / f"{STAGING_PREFIX}killed"
+    staging.mkdir(parents=True)
+    staging.with_name(staging.name + RUN_MARK_SUFFIX).touch()
+    return staging
 
 
 def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, machine):
@@ -862,7 +871,7 @@ def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, mach
 @pytest.fixture
 def undeletable_leftover(home) -> Iterator[Path]:
     """A killed run's staging that `rmtree` cannot remove: a read-only directory holding a file."""
-    locked = home / f".cache/edge-backup/{STAGING_PREFIX}killed/audio/locked"
+    locked = _leave_killed_run_staging(home / ".cache/edge-backup") / "audio/locked"
     locked.mkdir(parents=True)
     (locked / "one.mp3").write_bytes(AUDIO["u1/one.mp3"])
     locked.chmod(0o500)
