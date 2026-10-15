@@ -252,10 +252,12 @@ class Stack:
         result = self.compose("up", "--detach", "--wait", *services, bootstrap=bootstrap)
         expect(result.returncode == 0, f"compose up failed:\n{tail(result.stderr)}")
 
-    def down(self) -> None:
+    def down(self) -> bool:
+        """Removes the stack, volumes included, and says whether that succeeded."""
         result = self.compose("down", "--volumes", "--remove-orphans", bootstrap=True)
         status = "removed" if result.returncode == 0 else f"FAILED ({tail(result.stderr)})"
         print(f"teardown: stack {PROJECT} {status}", flush=True)
+        return result.returncode == 0
 
     def container_env(self, service: str) -> list[str]:
         container_id = self.compose("ps", "--quiet", service).stdout.strip()
@@ -887,13 +889,17 @@ def main() -> int:
     # `timeout` sends SIGTERM; turn it into an exception so the teardown below still runs.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit("probe stopped by SIGTERM"))
     stack = Stack(scratch)
+    failures = []
     try:
         Probe(stack).run()
     except ProbeFailure as failure:
-        print(f"PROBE FAILED: {failure}", flush=True)
-        return 1
+        failures.append(str(failure))
     finally:
-        stack.down()
+        if not stack.down():
+            failures.append(f"stack {PROJECT} is left behind, remove it by hand")
+    if failures:
+        print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
+        return 1
     print("PROBE PASSED: proofs 1-8 hold", flush=True)
     return 0
 
