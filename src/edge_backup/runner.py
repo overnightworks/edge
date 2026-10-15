@@ -132,7 +132,7 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore(settings: Settings, app: App, target: Path) -> str:
     """The operator's restore: the latest snapshot of one app into a new private directory.
 
-    Never inside the work directory: every run sweeps the staging it finds there.
+    Never inside the work directory: the operator's plaintext stays out of what runs own and sweep.
     """
     if target.resolve().is_relative_to(settings.work_dir.resolve()):
         raise StepFailed(
