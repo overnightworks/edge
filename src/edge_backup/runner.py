@@ -136,6 +136,8 @@ def restore(settings: Settings, app: App, target: Path) -> str:
         raise StepFailed(
             ExitCategory.CONFIGURATION, "das Ziel liegt im Arbeitsverzeichnis von edge-backup"
         )
+    if target.exists():
+        raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     require_secret_and_repository(settings)
     snapshot_id = _latest_snapshot(settings, app)
     target.mkdir(mode=0o700, parents=True)

@@ -99,8 +99,6 @@ def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
     apps = {app.name: app for app in _apps(arguments.apps)}
     if (app := apps.get(arguments.app)) is None:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
-    if arguments.target.exists():
-        raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     snapshot_id = _command(runner.restore, settings, app, arguments.target)
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
