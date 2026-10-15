@@ -284,14 +284,15 @@ class Stack:
         remove_one_offs()
         result = self.compose("down", "--volumes", "--remove-orphans", bootstrap=True)
         left = leftovers()
-        if result.returncode != 0:
-            status = f"FAILED ({tail(result.stderr)})"
-        elif left:
-            status = f"FAILED (still there: {', '.join(left)})"
-        else:
+        removed = result.returncode == 0 and not left
+        if removed:
             status = "removed"
+        elif result.returncode != 0:
+            status = f"FAILED ({tail(result.stderr)})"
+        else:
+            status = f"FAILED (still there: {', '.join(left)})"
         print(f"teardown: stack {PROJECT} {status}", flush=True)
-        return status == "removed"
+        return removed
 
     def see_env(self, container: str) -> None:
         inspected = subprocess.run(

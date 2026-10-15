@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from urllib.request import Request
 from urllib.response import addinfourl
 
@@ -18,6 +18,7 @@ LOGIN_URL = "http://localhost:8090/realms/master/login-actions/authenticate"
 SERVICE_CONTAINER = "edge-kc-probe-keycloak-1"
 RUNNING_APPLY = "edge-kc-probe-apply-0a1b2c3d"
 LATE_APPLY = "edge-kc-probe-apply-4e5f6a7b"
+DAEMON_GONE = "Cannot connect to the Docker daemon"
 
 
 @pytest.fixture(scope="module")
@@ -67,13 +68,16 @@ def test_every_cookie_value_reaches_proof_7_although_a_later_response_replaces_o
 class FakeDocker:
     """The docker CLI as the teardown asks it, over the probe project's containers."""
 
-    def __init__(self, *, apply_lands_during_down: bool) -> None:
+    def __init__(self, *, apply_lands_during_down: bool, unlistable_kind: str | None) -> None:
         self.containers = {SERVICE_CONTAINER, RUNNING_APPLY}
         self.one_offs = {RUNNING_APPLY, LATE_APPLY}
         self.apply_lands_during_down = apply_lands_during_down
+        self.unlistable_kind = unlistable_kind
 
     def run(self, command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         listed = set()
+        if command[1:3] == [self.unlistable_kind, "ls"]:
+            return subprocess.CompletedProcess(command, 1, "", DAEMON_GONE)
         if command[:2] == ["docker", "compose"] and "down" in command:
             # Like Compose, down leaves a running one-off container alone.
             self.containers -= {SERVICE_CONTAINER}
@@ -88,16 +92,29 @@ class FakeDocker:
 
 
 @pytest.mark.parametrize(
-    ("apply_lands_during_down", "teardown_line", "left"),
+    ("apply_lands_during_down", "unlistable_kind", "teardown_line", "removed", "containers_left"),
     [
-        (False, "teardown: stack edge-kc-probe removed", set()),
+        (False, None, "teardown: stack edge-kc-probe removed", True, set()),
         (
             True,
+            None,
             f"teardown: stack edge-kc-probe FAILED (still there: container {LATE_APPLY})",
+            False,
             {LATE_APPLY},
         ),
+        (
+            False,
+            "volume",
+            f"teardown: stack edge-kc-probe FAILED (still there: volumes unlisted ({DAEMON_GONE}))",
+            False,
+            set(),
+        ),
     ],
-    ids=["a-sigterm-mid-apply-leaves-nothing", "a-container-left-behind-is-named"],
+    ids=[
+        "a-sigterm-mid-apply-leaves-nothing",
+        "a-container-left-behind-is-named",
+        "a-failing-listing-is-not-taken-for-nothing-left",
+    ],
 )
 def test_teardown_says_removed_only_when_nothing_of_the_stack_is_left(
     probe: ModuleType,
@@ -105,14 +122,20 @@ def test_teardown_says_removed_only_when_nothing_of_the_stack_is_left(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     apply_lands_during_down: bool,
+    unlistable_kind: str | None,
     teardown_line: str,
-    left: set[str],
+    removed: bool,
+    containers_left: set[str],
 ) -> None:
-    docker = FakeDocker(apply_lands_during_down=apply_lands_during_down)
+    docker = FakeDocker(
+        apply_lands_during_down=apply_lands_during_down, unlistable_kind=unlistable_kind
+    )
     monkeypatch.setattr(probe.subprocess, "run", docker.run)
+    # The compose environment names the docker group, which a host without Docker lacks.
+    monkeypatch.setattr(probe.grp, "getgrnam", lambda _: SimpleNamespace(gr_gid=999))
 
-    removed = probe.Stack(tmp_path).down()
+    said_removed = probe.Stack(tmp_path).down()
 
     assert capsys.readouterr().out.splitlines() == [teardown_line]
-    assert removed == (not left)
-    assert docker.containers == left
+    assert said_removed == removed
+    assert docker.containers == containers_left
