@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 
 ENV_REFERENCE = re.compile(r"\$\(env:[A-Za-z_][A-Za-z0-9_]*\)")
-COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose[\w.-]*\.ya?ml")
+COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose.*\.ya?ml")
 SECRET_KEY_SUFFIX = re.compile(r"(?:secret|password)$", re.IGNORECASE)
 SECRET_ENV_NAME = re.compile(r"PASSWORD|SECRET", re.IGNORECASE)
 SKIPPED_DIRECTORIES = {".git", ".venv", "node_modules"}
@@ -40,26 +40,21 @@ def keycloak_violations(document: object) -> Iterator[str]:
             yield from keycloak_violations(item)
 
 
-def environment_entries(environment: object) -> Iterator[tuple[str, str | None]]:
+def environment_names(environment: object) -> Iterator[str]:
     if isinstance(environment, dict):
-        for name, value in environment.items():
-            yield str(name), None if value is None else str(value)
+        for name in environment:
+            yield str(name)
     elif isinstance(environment, list):
         for entry in environment:
-            name, separator, value = str(entry).partition("=")
-            yield name, value if separator else None
+            yield str(entry).partition("=")[0]
 
 
 def compose_violations(document: object) -> Iterator[str]:
     if isinstance(document, dict):
         for key, value in document.items():
             if key == "environment":
-                for name, entry_value in environment_entries(value):
-                    if (
-                        SECRET_ENV_NAME.search(name)
-                        and entry_value is not None
-                        and not name.upper().endswith("_FILE")
-                    ):
+                for name in environment_names(value):
+                    if SECRET_ENV_NAME.search(name) and not name.upper().endswith("_FILE"):
                         yield name
             else:
                 yield from compose_violations(value)

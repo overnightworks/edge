@@ -40,6 +40,26 @@ LITERALS = {
         compose_with("\n      KC_DB_PASSWORD: hunter2"),
         "KC_DB_PASSWORD",
     ),
+    "compose-list-without-value": (
+        "compose.yaml",
+        compose_with("\n      - KC_DB_PASSWORD"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-map-without-value": (
+        "compose.yaml",
+        compose_with("\n      KC_DB_PASSWORD:"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-name-with-plus": (
+        "compose+prod.yaml",
+        compose_with("\n      KC_DB_PASSWORD: hunter2"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-name-with-space": (
+        "compose prod.yaml",
+        compose_with("\n      KC_DB_PASSWORD: hunter2"),
+        "KC_DB_PASSWORD",
+    ),
     "compose-overlay": (
         "probe/compose.probe.yaml",
         compose_with("\n      APP_SECRET: hunter2"),
