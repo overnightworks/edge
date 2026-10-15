@@ -292,14 +292,22 @@ uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new dire
 
 It holds `db/db.dump` and `audio/`. Loading them into the live app is a
 deliberate manual step. Stop every Songmaker container except its database,
-load the dump, copy the audio back into the volume, start them again:
+load the dump, copy the audio back into the volume, start them again. Paste the
+block as a whole: it runs in a subshell that stops at the first failing command,
+so a failed load or copy never goes on to the other half or restarts the app:
 
 ```sh
+(
+set -euo pipefail
 restored=~/restore-songmaker
 pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
   --filter label=com.docker.compose.service=postgres \
   --filter label=com.docker.compose.oneoff=False)
-stopped=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker | grep -vx "$pg")
+[ "$(wc -w <<<"$pg")" -eq 1 ] \
+  || { echo "need exactly one Songmaker database container, found: ${pg:-none}" >&2; exit 1; }
+stopped=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
+  | { grep -vx "$pg" || true; })
+[ -n "$stopped" ] || { echo "no running Songmaker container to stop" >&2; exit 1; }
 docker stop $stopped
 docker exec -i "$pg" pg_restore --username songmaker --dbname songmaker \
   --clean --if-exists --single-transaction --exit-on-error < "$restored/db/db.dump"
@@ -308,7 +316,14 @@ docker run --rm --network none \
   --mount type=volume,source=songmaker_audiofiles,target=/to \
   alpine:3 cp -a /from/. /to/
 docker start $stopped
+)
 ```
+
+When it stops, Songmaker stays down; `docker stop` printed the IDs of the
+containers it stopped. A failed load changed nothing (`--single-transaction`),
+so `docker start` with those IDs brings the old state back. After a failed copy
+the database is already restored: fix the cause and copy again before you start
+them.
 
 `cp -a` adds and overwrites; audio written after the snapshot stays in the
 volume. The copied files keep the owner restic restored them with (your user).
