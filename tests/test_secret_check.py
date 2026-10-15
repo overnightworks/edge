@@ -45,12 +45,53 @@ LITERALS = {
         compose_with("\n      APP_SECRET: hunter2"),
         "APP_SECRET",
     ),
+    "compose-interpolated-default": (
+        "compose.yaml",
+        compose_with("\n      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-hunter2}"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-interpolated-list-default": (
+        "compose.yaml",
+        compose_with("\n      - KC_DB_PASSWORD=${X-hunter2}"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-bare-interpolation": (
+        "compose.yaml",
+        compose_with("\n      APP_SECRET: ${APP_SECRET}"),
+        "APP_SECRET",
+    ),
+    "compose-hyphenated-overlay": (
+        "compose-prod.yaml",
+        compose_with("\n      APP_SECRET: hunter2"),
+        "APP_SECRET",
+    ),
+    "docker-compose-hyphenated-overlay": (
+        "docker-compose-prod.yml",
+        compose_with("\n      APP_SECRET: hunter2"),
+        "APP_SECRET",
+    ),
+    "keycloak-null": ("keycloak/realm.yaml", "clients:\n  - {clientId: x, secret: }\n", "secret"),
+    "keycloak-list": (
+        "keycloak/realm.yaml",
+        "clients:\n  - {clientId: x, secret: [Tr0ub4dor]}\n",
+        "secret",
+    ),
+    "keycloak-mapping": (
+        "keycloak/realm.yaml",
+        "clients:\n  - {clientId: x, secret: {value: Tr0ub4dor}}\n",
+        "secret",
+    ),
+    "compose-non-string-list-entry": (
+        "compose.yaml",
+        compose_with("\n      - 5\n      - APP_SECRET=hunter2"),
+        "APP_SECRET",
+    ),
 }
 
 REFERENCES = {
     "keycloak/realm.yaml": "clients:\n  - {clientId: x, secret: $(env:RP_SECRET)}\n",
     "compose.yaml": compose_with(
-        "\n      DB_PASSWORD_FILE: /run/secrets/db\n      APP_SECRET: ${APP_SECRET}"
+        "\n      DB_PASSWORD_FILE: /run/secrets/db\n      APP_SECRET_FILE: /run/secrets/app"
     ),
 }
 

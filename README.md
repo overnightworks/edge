@@ -435,8 +435,7 @@ CI's step "No secret in any file" runs gitleaks for literal-looking secrets and
 list style alike): a value whose key ends in `secret` or `password` in
 `keycloak/*.yaml` must be a `$(env:…)` reference, and a `PASSWORD`/`SECRET`
 environment entry in any compose file Compose may load (`compose*.yaml`,
-`docker-compose*.yml`, overlays included) must be a `_FILE` path or a `${…}`
-interpolation.
+`docker-compose*.yml`, overlays included) must be a `_FILE` path.
 
 ### Start and apply
 
@@ -537,7 +536,8 @@ flock /tmp/probe-stack.lock \
 
 It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 (exit 0) or `PROBE FAILED: <what>` (exit 1, also when SIGTERM or Ctrl-C
-stopped it: the teardown still runs and finishes); exit 2 means a refused
+stopped it: the teardown still runs and finishes; under the `timeout` wrapper above
+Ctrl-C never reaches the probe, so stop it with `kill -TERM` on the probe); exit 2 means a refused
 argument (`--scratch` must be a new or empty directory), exit 3 that 8081 or
 8090 was taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it

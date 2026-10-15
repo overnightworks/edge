@@ -1,13 +1,13 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["pyyaml"]
+# dependencies = ["pyyaml==6.0.2"]
 # ///
 """The repository's structural secret check (CI step "No secret in any file").
 
 Reads the YAML structure, so block, flow and list style are one case:
 - in keycloak/*.yaml every value whose key ends in secret or password is a $(env:NAME) reference;
 - in every compose file Compose may load, every PASSWORD/SECRET-named environment entry is a
-  *_FILE path or a ${...} interpolation.
+  *_FILE path (an interpolation would put the value into Config.Env).
 Literal-looking secrets anywhere are gitleaks' job. Exit 1 names each offending file and key.
 
     uv run --script keycloak/secret-check/secret_check.py [repository root]
@@ -21,8 +21,7 @@ from pathlib import Path
 import yaml
 
 ENV_REFERENCE = re.compile(r"\$\(env:[A-Za-z_][A-Za-z0-9_]*\)")
-INTERPOLATION = re.compile(r"\$\{[^}]+\}")
-COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose(?:\.[\w-]+)*\.ya?ml")
+COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose[\w.-]*\.ya?ml")
 SECRET_KEY_SUFFIX = re.compile(r"(?:secret|password)$", re.IGNORECASE)
 SECRET_ENV_NAME = re.compile(r"PASSWORD|SECRET", re.IGNORECASE)
 SKIPPED_DIRECTORIES = {".git", ".venv", "node_modules"}
@@ -31,15 +30,11 @@ SKIPPED_DIRECTORIES = {".git", ".venv", "node_modules"}
 def keycloak_violations(document: object) -> Iterator[str]:
     if isinstance(document, dict):
         for key, value in document.items():
-            if isinstance(value, dict | list):
+            if isinstance(key, str) and SECRET_KEY_SUFFIX.search(key):
+                if not (isinstance(value, str) and ENV_REFERENCE.fullmatch(value)):
+                    yield key
+            else:
                 yield from keycloak_violations(value)
-            elif (
-                isinstance(key, str)
-                and SECRET_KEY_SUFFIX.search(key)
-                and value is not None
-                and not ENV_REFERENCE.fullmatch(str(value))
-            ):
-                yield key
     elif isinstance(document, list):
         for item in document:
             yield from keycloak_violations(item)
@@ -51,8 +46,8 @@ def environment_entries(environment: object) -> Iterator[tuple[str, str | None]]
             yield str(name), None if value is None else str(value)
     elif isinstance(environment, list):
         for entry in environment:
-            name, _, value = str(entry).partition("=")
-            yield name, value if "=" in entry else None
+            name, separator, value = str(entry).partition("=")
+            yield name, value if separator else None
 
 
 def compose_violations(document: object) -> Iterator[str]:
@@ -64,7 +59,6 @@ def compose_violations(document: object) -> Iterator[str]:
                         SECRET_ENV_NAME.search(name)
                         and entry_value is not None
                         and not name.upper().endswith("_FILE")
-                        and not INTERPOLATION.fullmatch(entry_value)
                     ):
                         yield name
             else:
