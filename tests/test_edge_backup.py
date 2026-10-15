@@ -141,7 +141,18 @@ class Machine:
         return DUMP
 
     def _scan(self, argv, **_) -> bytes:
-        return b"".join(name.encode() + b"\0" for name in self.audio)
+        """`find /audio -type f -print0` over the live volume or a restored directory."""
+        mount = _mount(argv, "/audio")
+        if mount["type"] == "volume":
+            names = list(self.audio)
+        else:
+            root = Path(mount["source"])
+            names = [
+                str(path.relative_to(root))
+                for path in root.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            ]
+        return b"".join(name.encode() + b"\0" for name in names)
 
     def _backup(self, argv, **_) -> bytes:
         self.status_seen_during_backup = json.loads(self.status_file.read_text())
@@ -208,14 +219,17 @@ def _no_restore_server_left(machine: Machine) -> bool:
     return started == labels.count("Entfernen der Wegwerf-Datenbank")
 
 
-def _mount_source(argv: list[str], target: str) -> str:
+def _mount(argv: list[str], target: str) -> dict[str, str]:
     mounts = [argv[i + 1] for i, argument in enumerate(argv) if argument == "--mount"]
-    fields = next(
+    return next(
         dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
         for mount in mounts
         if f"target={target}," in mount + ","
     )
-    return fields["source"]
+
+
+def _mount_source(argv: list[str], target: str) -> str:
+    return _mount(argv, target)["source"]
 
 
 @dataclass
@@ -361,6 +375,16 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
     assert machine.labels()[-1] == "restic check"
     assert _no_restore_server_left(machine)
     assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+def test_the_restored_audio_is_counted_by_the_manifests_own_rule(edge_backup, machine):
+    edge_backup("backup")
+    edge_backup("restore-test")
+
+    scans = [argv for label, argv in machine.calls if label == "Zählen der Audiodateien"]
+    assert [_mount(argv, "/audio")["type"] for argv in scans] == ["volume", "bind"]
+    assert len({tuple(argv[argv.index("--entrypoint") :]) for argv in scans}) == 1
+    assert all(any(m.endswith("target=/audio,readonly") for m in argv) for argv in scans)
 
 
 def test_monthly_check_reads_a_tenth_of_the_data(edge_backup, machine):

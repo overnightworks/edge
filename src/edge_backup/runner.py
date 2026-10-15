@@ -13,6 +13,7 @@ from pathlib import Path
 
 from edge_backup import docker, host, restic
 from edge_backup.apps import App
+from edge_backup.restic import MountKind
 from edge_backup.settings import (
     READINESS_POLL_SECONDS,
     READINESS_TIMEOUT,
@@ -142,7 +143,8 @@ def _back_up(settings: Settings, app: App, run: Run) -> str:
         with run.phase(Phase.DUMP):
             docker.dump_database(app, container, staging / DUMP_NAME)
         with run.phase(Phase.MANIFEST):
-            manifest = Manifest(app.name, docker.count_volume_files(settings, volume))
+            audio_files = docker.count_audio_files(settings, MountKind.VOLUME, volume)
+            manifest = Manifest(app.name, audio_files)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
             return restic.backup(settings, app.name, staging, volume)
@@ -155,12 +157,14 @@ def _restore_test(settings: Settings, app: App, run: Run) -> None:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)
         with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
-            _verify(app, restored / "db", restored / "audio")
+            _verify(settings, app, restored / "db", restored / "audio")
 
 
-def _verify(app: App, restored_db: Path, restored_audio: Path) -> None:
+def _verify(settings: Settings, app: App, restored_db: Path, restored_audio: Path) -> None:
     manifest = Manifest.from_json(_read_restored(restored_db / MANIFEST_NAME))
-    check_audio_count(manifest, restored_audio)
+    check_audio_count(
+        manifest, docker.count_audio_files(settings, MountKind.BIND, str(restored_audio))
+    )
     dump = restored_db / DUMP_NAME
     with docker.restore_server() as server:
         _wait_until_ready(

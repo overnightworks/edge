@@ -92,13 +92,14 @@ def dump_database(app: App, container_id: str, target: Path) -> None:
     )  # fmt: skip
 
 
-def count_volume_files(settings: Settings, volume: str) -> int:
-    """Regular files in the volume, counted read-only in a container; names never leave it."""
+def count_audio_files(settings: Settings, kind: MountKind, source: str) -> int:
+    """Regular files under a volume or host directory, counted read-only in a container.
+
+    The one rule for the manifest's count and the restored copy's; names never leave it.
+    """
     listing = host.run(
         [
-            *container_argv(
-                settings, Mount(MountKind.VOLUME, volume, _SCANNED_AUDIO), entrypoint="find"
-            ),
+            *container_argv(settings, Mount(kind, source, _SCANNED_AUDIO), entrypoint="find"),
             _SCANNED_AUDIO, "-type", "f", "-print0",
         ],
         label="Zählen der Audiodateien",

@@ -33,18 +33,7 @@ class Manifest:
             raise VerificationError("das Manifest im Snapshot ist unlesbar") from error
 
 
-def count_regular_files(root: Path) -> int:
-    """What `find -type f` counts: regular files, no symlinks, no directories."""
-    return sum(
-        1
-        for directory, _, names in root.walk()
-        for name in names
-        if (directory / name).is_file() and not (directory / name).is_symlink()
-    )
-
-
-def check_audio_count(manifest: Manifest, restored_audio: Path) -> None:
-    restored = count_regular_files(restored_audio)
+def check_audio_count(manifest: Manifest, restored: int) -> None:
     if restored != manifest.audio_files:
         raise VerificationError(
             f"{restored} Audiodateien wiederhergestellt, das Manifest nennt {manifest.audio_files}"
