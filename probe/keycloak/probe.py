@@ -110,10 +110,6 @@ class LocalhostIsSecure(DefaultCookiePolicy):
         )
 
 
-def browser_opener() -> OpenerDirector:
-    return new_opener(CookieJar(policy=LocalhostIsSecure()))
-
-
 def new_opener(cookies: CookieJar | None = None) -> OpenerDirector:
     handlers: list[Any] = [NoRedirect()]
     if cookies is not None:
@@ -707,10 +703,12 @@ class Probe:
         """Signs in to the admin console like a browser does and returns the token response.
 
         `second_factor(page)` answers the page that follows the password: it returns the form
-        action and the fields to post.
+        action and the fields to post. The PKCE verifier, the authorization code and the session
+        cookies are credentials as well, so proof 7 looks for them too.
         """
-        opener = browser_opener()
-        verifier = secrets.token_urlsafe(48)
+        cookies = CookieJar(policy=LocalhostIsSecure())
+        opener = new_opener(cookies)
+        verifier = self.keep_secret(f"{holder} PKCE verifier", secrets.token_urlsafe(48))
         digest = hashlib.sha256(verifier.encode()).digest()
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         query = urlencode(
@@ -745,6 +743,7 @@ class Probe:
             f"{page_message(done)}",
         )
         code = parse_qs(urlsplit(location).query)["code"][0]
+        self.keep_secret(f"{holder} authorization code", code)
         token_form = {
             "grant_type": "authorization_code",
             "client_id": "security-admin-console",
@@ -753,6 +752,9 @@ class Probe:
             "code_verifier": verifier,
         }
         token_reply = http("POST", MASTER_TOKEN_URL, form=token_form, opener=opener)
+        for cookie in cookies:
+            if cookie.value:
+                self.keep_secret(f"{holder} cookie {cookie.name} on {cookie.path}", cookie.value)
         return self.tokens_from(holder, token_reply)
 
     def admin_console_only_on_loopback(self, admin: Admin) -> None:
@@ -948,8 +950,8 @@ class Probe:
         self.held(
             "7",
             f"none of the {len(self.secret_values)} credentials (secret files, passwords, the "
-            "TOTP seed, the RP secret, access, refresh, ID and admin tokens) is in the Config.Env "
-            "of the "
+            "TOTP seed, the RP secret, access, refresh, ID and admin tokens, the admin console's "
+            "PKCE verifiers, authorization codes and session cookies) is in the Config.Env of the "
             f"{len(self.stack.seen_env)} containers seen ({', '.join(containers)}), in any "
             "compose, apply or service log output, or in the probe's own output",
         )
