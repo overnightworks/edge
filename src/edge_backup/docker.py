@@ -1,0 +1,179 @@
+"""The apps' containers and volumes, found by compose labels, and the throwaway restore server."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from edge_backup import host
+from edge_backup.apps import App
+from edge_backup.restic import Mount, MountKind, container_argv
+from edge_backup.settings import POSTGRES_IMAGE, Settings
+
+PROJECT_LABEL = "com.docker.compose.project"
+SERVICE_LABEL = "com.docker.compose.service"
+VOLUME_LABEL = "com.docker.compose.volume"
+RESTORE_SERVER = "edge-backup-restore-test"
+RESTORE_DATABASE = "restore_test"
+_SCANNED_AUDIO = "/audio"
+_READY_STATES = frozenset({"running", "running healthy"})
+
+
+class NotReadyError(RuntimeError):
+    """Docker or the app's database is not up yet; worth waiting for."""
+
+
+class TargetError(RuntimeError):
+    """The labels do not name exactly one container or volume; waiting will not fix that."""
+
+
+def require_daemon() -> None:
+    try:
+        host.run(["docker", "info", "--format", "{{.ServerVersion}}"], label="docker info")
+    except host.HostCommandError as error:
+        raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+
+
+def database_container(app: App) -> str:
+    try:
+        ids = _lines(
+            host.run(
+                ["docker", "ps", "--all", "--quiet", "--no-trunc",
+                 *_label_filter(PROJECT_LABEL, app.compose_project),
+                 *_label_filter(SERVICE_LABEL, app.db_service)],
+                label="docker ps",
+            )
+        )  # fmt: skip
+        if len(ids) > 1:
+            raise TargetError(f"{len(ids)} Datenbank-Container für {app.name} statt genau einem")
+        if not ids:
+            raise NotReadyError(f"kein Datenbank-Container für {app.name}")
+        state = host.run(
+            ["docker", "inspect", "--format",
+             "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", ids[0]],
+            label="docker inspect",
+        )  # fmt: skip
+    except host.HostCommandError as error:
+        raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+    if state.decode().strip() not in _READY_STATES:
+        raise NotReadyError(f"die Datenbank von {app.name} ist nicht bereit")
+    return ids[0]
+
+
+def audio_volume(app: App) -> str:
+    names = _lines(
+        host.run(
+            ["docker", "volume", "ls", "--quiet",
+             *_label_filter(PROJECT_LABEL, app.compose_project),
+             *_label_filter(VOLUME_LABEL, app.volume)],
+            label="docker volume ls",
+        )
+    )  # fmt: skip
+    if len(names) != 1:
+        raise TargetError(f"{len(names)} Volumes {app.volume} für {app.name} statt genau einem")
+    return names[0]
+
+
+def dump_database(app: App, container_id: str, target: Path) -> None:
+    host.run(
+        ["docker", "exec", "-i", container_id, "pg_dump",
+         "--username", app.db_user, "--format=custom", "--dbname", app.db_name],
+        label="pg_dump",
+        stdout=target,
+    )  # fmt: skip
+
+
+def count_volume_files(settings: Settings, volume: str) -> int:
+    """Regular files in the volume, counted read-only in a container; names never leave it."""
+    listing = host.run(
+        [
+            *container_argv(
+                settings, Mount(MountKind.VOLUME, volume, _SCANNED_AUDIO), entrypoint="find"
+            ),
+            _SCANNED_AUDIO, "-type", "f", "-print0",
+        ],
+        label="Zählen der Audiodateien",
+    )  # fmt: skip
+    return listing.count(b"\0")
+
+
+@contextmanager
+def restore_server() -> Iterator["RestoreServer"]:
+    """A PostgreSQL without network or volume of ours; removed again whatever happens."""
+    if _lines(host.run(["docker", "ps", "--all", "--quiet", "--filter",
+                        f"name=^{RESTORE_SERVER}$"], label="docker ps")):  # fmt: skip
+        _remove_restore_server()
+    host.run(
+        ["docker", "run", "--detach", "--name", RESTORE_SERVER, "--network", "none",
+         # trust is safe here: the server has no network and holds only the restored copy.
+         "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", f"POSTGRES_DB={RESTORE_DATABASE}",
+         POSTGRES_IMAGE],
+        label="Start der Wegwerf-Datenbank",
+    )  # fmt: skip
+    try:
+        yield RestoreServer()
+    finally:
+        _remove_restore_server()
+
+
+class RestoreServer:
+    def is_ready(self) -> bool:
+        """Asked over TCP: the image's init server listens on the socket only, then restarts."""
+        try:
+            self._exec(["pg_isready", "--host", "127.0.0.1", "--quiet"], label="pg_isready")
+        except host.HostCommandError:
+            return False
+        return True
+
+    def list_dump(self, dump: Path) -> None:
+        self._exec(["pg_restore", "--list"], label="pg_restore --list", stdin=dump)
+
+    def load_dump(self, dump: Path) -> None:
+        self._exec(
+            ["pg_restore", "--exit-on-error", "--single-transaction", "--no-owner",
+             "--no-privileges", "--dbname", RESTORE_DATABASE],
+            label="pg_restore",
+            stdin=dump,
+        )  # fmt: skip
+
+    def row_count(self, table: str) -> int:
+        output = self._query(f'SELECT count(*) FROM "{table}"')
+        try:
+            return int(output.strip(b"\0\n"))
+        except ValueError as error:
+            raise host.UnreadableOutputError(f"die Zeilenzahl von {table} ist unlesbar") from error
+
+    def column_values(self, table: str, column: str) -> list[str]:
+        """The non-empty values; identifiers are validated by apps.toml, so quoting suffices."""
+        output = self._query(
+            f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL AND "{column}" <> \'\''
+        )
+        return [value.decode() for value in output.strip(b"\n").split(b"\0") if value]
+
+    def _query(self, sql: str) -> bytes:
+        return self._exec(
+            ["psql", "--username", "postgres", "--dbname", RESTORE_DATABASE, "--no-psqlrc",
+             "--tuples-only", "--no-align", "--record-separator-zero",
+             "--set", "ON_ERROR_STOP=1", "--command", sql],
+            label="psql",
+        )  # fmt: skip
+
+    def _exec(self, command: list[str], *, label: str, stdin: Path | None = None) -> bytes:
+        interactive = ["-i"] if stdin else []
+        return host.run(
+            ["docker", "exec", *interactive, RESTORE_SERVER, *command], label=label, stdin=stdin
+        )
+
+
+def _remove_restore_server() -> None:
+    host.run(
+        ["docker", "rm", "--force", "--volumes", RESTORE_SERVER],
+        label="Entfernen der Wegwerf-Datenbank",
+    )
+
+
+def _label_filter(label: str, value: str) -> list[str]:
+    return ["--filter", f"label={label}={value}"]
+
+
+def _lines(output: bytes) -> list[str]:
+    return output.decode().split()
