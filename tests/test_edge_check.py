@@ -1,6 +1,8 @@
 """edge-check driven through its CLI, with fixture command outputs in place of the host."""
 
 import json
+import os
+import time
 from dataclasses import dataclass, field
 
 import pytest
@@ -460,3 +462,73 @@ def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):
 
     assert exit_code == 2
     assert "cannot read" in capsys.readouterr().err
+
+
+@pytest.fixture
+def fake_docker(monkeypatch, tmp_path):
+    """A `docker` first on PATH answering `ps` and `inspect` with the script; `ss` is silent."""
+
+    def install_command(name: str, script: str) -> None:
+        executable = tmp_path / "bin" / name
+        executable.parent.mkdir(exist_ok=True)
+        executable.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    def install(script: str) -> None:
+        install_command("docker", script)
+        install_command("ss", "exit 0")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+
+    return install
+
+
+def run_against_real_host_commands(tmp_path) -> int:
+    allow_list = tmp_path / "edge-check.toml"
+    allow_list.write_text("", encoding="utf-8")
+    return cli.main(["--allow-list", str(allow_list)])
+
+
+def process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_exits_2_naming_the_command_that_does_not_answer_in_time_and_kills_it(
+    fake_docker, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
+    pid_file = tmp_path / "docker.pid"
+    fake_docker(f'echo $$ > "{pid_file}"\nexec sleep 30')
+
+    assert run_against_real_host_commands(tmp_path) == 2
+    assert "docker ps did not answer within 0.2 s" in capsys.readouterr().err
+    hung_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while process_is_running(hung_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not process_is_running(hung_pid)
+
+
+def test_names_ss_as_ss_when_it_does_not_answer_in_time(fake_docker, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
+    fake_docker("exit 0")
+    (tmp_path / "bin" / "ss").write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+
+    assert run_against_real_host_commands(tmp_path) == 2
+    assert "ss did not answer within 0.2 s" in capsys.readouterr().err
+
+
+SHORT_INSPECT_ANSWERS = {"empty list": "[]", "one of two": '[{"Name": "/a"}]'}
+
+
+@pytest.mark.parametrize("answer", SHORT_INSPECT_ANSWERS.values(), ids=SHORT_INSPECT_ANSWERS.keys())
+def test_exits_2_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
+    fake_docker, tmp_path, capsys, answer
+):
+    fake_docker(f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
+
+    assert run_against_real_host_commands(tmp_path) == 2
+    assert "docker ps listed 2" in capsys.readouterr().err

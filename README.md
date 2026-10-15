@@ -143,7 +143,7 @@ apply), deduplicated and in a stable order.
 |---|---|
 | 0 | every publication binds loopback; every listener is loopback or allow-listed |
 | 1 | at least one finding |
-| 2 | it cannot check: the allow-list is missing or invalid (the message names the entry), or `docker`/`ss` failed or printed something it cannot read (the message names the container or line) |
+| 2 | it cannot check: the allow-list is missing or invalid (the message names the entry), or `docker`/`ss` failed, did not answer within 30 s, or printed something it cannot read (the message names the command, container or line); `docker inspect` answering fewer containers than `docker ps` listed is unreadable too |
 
 ### The allow-list
 
