@@ -531,10 +531,12 @@ taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it
 kills the probe and its teardown (exit 137). After an exit 137 or a failure that
 says the stack is left behind, remove it under the lock, from a directory
-without a compose file:
+without a compose file; Compose finds the project's containers, networks and
+volumes by its name, and the lock is held for at most 330 seconds:
 
 ```sh
-flock /tmp/probe-stack.lock docker compose --project-name edge-kc-probe down --volumes --remove-orphans
+flock /tmp/probe-stack.lock \
+  timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
 ```
 
 The proofs: the public issuer and the path allow-list (1, 2a), the master issuer
