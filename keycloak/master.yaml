@@ -14,7 +14,8 @@ browserFlow: browser-mfa
 # A password grant (admin-cli, kcadm.sh) demands a TOTP code too, with no exception. Keycloak's
 # built-in direct grant asks for one only from an administrator who already has TOTP, so one
 # without it (created in the console and not yet signed in, or passkey-only) would get a token on
-# the password alone. The bootstrap signs in before the first apply binds this flow.
+# the password alone; here such an administrator is denied (401). The bootstrap signs in before
+# the first apply binds this flow.
 directGrantFlow: direct-grant-mfa
 authenticationFlows:
   - alias: browser-mfa
@@ -114,15 +115,70 @@ authenticationFlows:
         priority: 20
         autheticatorFlow: false
         userSetupAllowed: false
-      - authenticator: direct-grant-validate-otp
+      - flowAlias: direct-grant-mfa-second-factor
         requirement: REQUIRED
         priority: 30
+        autheticatorFlow: true
+        userSetupAllowed: false
+  # A REQUIRED OTP step alone would answer an administrator without TOTP with a server error (500),
+  # so the TOTP sub-flow runs for one who has it and everyone else is denied.
+  - alias: direct-grant-mfa-second-factor
+    description: Exactly one of the two sub-flows runs
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - flowAlias: direct-grant-mfa-totp
+        requirement: CONDITIONAL
+        priority: 10
+        autheticatorFlow: true
+        userSetupAllowed: false
+      - flowAlias: direct-grant-mfa-deny
+        requirement: CONDITIONAL
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: direct-grant-mfa-totp
+    description: The TOTP code, for an administrator who has TOTP
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-user-configured
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: direct-grant-validate-otp
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+  - alias: direct-grant-mfa-deny
+    description: Denies an administrator without TOTP
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-sub-flow-executed
+        authenticatorConfig: direct-grant-mfa-without-totp
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: deny-access-authenticator
+        requirement: REQUIRED
+        priority: 20
         autheticatorFlow: false
         userSetupAllowed: false
 authenticatorConfig:
   - alias: browser-mfa-without-passkey
     config:
       flow_to_check: browser-mfa-passkey
+      check_result: not-executed
+  - alias: direct-grant-mfa-without-totp
+    config:
+      flow_to_check: direct-grant-mfa-totp
       check_result: not-executed
 # A passkey for the admin console binds to the console's host name.
 webAuthnPolicyRpId: localhost
