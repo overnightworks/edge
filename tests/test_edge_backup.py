@@ -302,7 +302,8 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
     assert f"{machine.snapshots[-1]['id']}:/backup/songmaker" in restore
     assert machine.argv_of("pg_restore") == [
         "docker", "exec", "-i", "edge-backup-restore-test", "pg_restore", "--exit-on-error",
-        "--single-transaction", "--no-owner", "--no-privileges", "--dbname", "restore_test",
+        "--single-transaction", "--no-owner", "--no-privileges",
+        "--username", "postgres", "--dbname", "restore_test",
     ]  # fmt: skip
     assert machine.labels()[-1] == "restic check"
     assert _no_restore_server_left(machine)

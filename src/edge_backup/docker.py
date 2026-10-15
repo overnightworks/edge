@@ -14,6 +14,8 @@ SERVICE_LABEL = "com.docker.compose.service"
 VOLUME_LABEL = "com.docker.compose.volume"
 RESTORE_SERVER = "edge-backup-restore-test"
 RESTORE_DATABASE = "restore_test"
+# The image's superuser; `docker exec` runs as root, which is no role in the server.
+RESTORE_ROLE = "postgres"
 _SCANNED_AUDIO = "/audio"
 _READY_STATES = frozenset({"running", "running healthy"})
 
@@ -130,7 +132,7 @@ class RestoreServer:
     def load_dump(self, dump: Path) -> None:
         self._exec(
             ["pg_restore", "--exit-on-error", "--single-transaction", "--no-owner",
-             "--no-privileges", "--dbname", RESTORE_DATABASE],
+             "--no-privileges", "--username", RESTORE_ROLE, "--dbname", RESTORE_DATABASE],
             label="pg_restore",
             stdin=dump,
         )  # fmt: skip
@@ -151,7 +153,7 @@ class RestoreServer:
 
     def _query(self, sql: str) -> bytes:
         return self._exec(
-            ["psql", "--username", "postgres", "--dbname", RESTORE_DATABASE, "--no-psqlrc",
+            ["psql", "--username", RESTORE_ROLE, "--dbname", RESTORE_DATABASE, "--no-psqlrc",
              "--tuples-only", "--no-align", "--record-separator-zero",
              "--set", "ON_ERROR_STOP=1", "--command", sql],
             label="psql",
