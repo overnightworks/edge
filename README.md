@@ -299,7 +299,7 @@ therefore also judges freshness: `last_successful_backup` no older than about
 | Exit | Meaning |
 |---|---|
 | 0 | every phase succeeded |
-| 1 | a phase failed; one German line names it, and the status says `failed` |
+| 1 | a run failed; one German line names why. The status says `failed`, except for an unreadable status file, which stays as it is |
 
 ### Restore one app
 
@@ -311,8 +311,9 @@ It restores the snapshot of the **last successful backup**
 (`last_snapshot_id` in the status) and prints its short ID, never a newer
 snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
 that snapshot is gone, or the status names none, `restore` refuses with one
-German line and exit 1 and names the newest snapshot. It holds `db/db.dump` and `audio/`. Loading them into the live app is a
-deliberate manual step. Stop every Songmaker container except its database,
+German line and exit 1 and names the newest snapshot. The target holds
+`db/db.dump` and `audio/`. Loading them into the live app is a deliberate
+manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the
 block as a whole: it runs in a subshell that stops at the first failing command,
 so a failed load or copy never goes on to the other half or restarts the app:

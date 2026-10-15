@@ -57,11 +57,11 @@ def require_pinned_images() -> None:
                 ["docker", "image", "inspect", "--format", "{{.Id}}", image],
                 label="docker image inspect",
                 timeout=PROBE_TIMEOUT,
+                discard_stderr=True,
             )
         except host.HostCommandError as error:
             raise TargetError(
-                f"das gepinnte Image {image} fehlt oder Docker antwortet nicht; "
-                f"neu laden mit: docker pull {image}"
+                f"das gepinnte Image {image} fehlt; neu laden mit: docker pull {image}"
             ) from error
 
 

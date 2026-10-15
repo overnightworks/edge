@@ -115,7 +115,7 @@ def require_password_file(settings: Settings) -> None:
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-        _resolved(docker.require_pinned_images)
+    _require_docker_with_pinned_images(run)
     snapshot_ids = [_back_up(settings, app, run) for app in apps]
     run.backed_up(snapshot_ids[-1])
     for app in apps:
@@ -128,14 +128,30 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-        _resolved(docker.require_pinned_images)
-    with run.phase(Phase.READINESS):
-        _wait_until_ready(docker.require_daemon, READINESS_TIMEOUT, READINESS_POLL_SECONDS)
+    _require_docker_with_pinned_images(run)
     for app in apps:
         _restore_test(settings, app, run)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=True)
     run.restore_tested()
+
+
+def _require_docker_with_pinned_images(run: Run) -> None:
+    """A daemon that is still starting is waited for; only then is a missing image a failure."""
+    with run.phase(Phase.READINESS):
+        _wait_until_ready(docker.require_daemon, READINESS_TIMEOUT, READINESS_POLL_SECONDS)
+    with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
+        _resolved(docker.require_pinned_images)
+
+
+def previous_status(settings: Settings) -> Status | None:
+    """The file holds the only record of past successes: unreadable, it is left untouched."""
+    try:
+        return read_status(settings.status_file)
+    except StatusFileError as error:
+        raise StepFailed(
+            ExitCategory.CONFIGURATION, f"{error}; die Datei bleibt unverändert"
+        ) from error
 
 
 def restore(settings: Settings, app: App, target: Path) -> str:
@@ -208,10 +224,7 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
 
 def _last_successful_snapshot(settings: Settings, app: App) -> str:
     """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
-    try:
-        status = read_status(settings.status_file)
-    except StatusFileError as error:
-        raise StepFailed(ExitCategory.CONFIGURATION, str(error)) from error
+    status = previous_status(settings)
     newest = _latest_snapshot(settings, app)
     last_good = None if status is None else status.last_snapshot_id
     if last_good is None or not restic.has_snapshot(settings, app.name, last_good):

@@ -12,7 +12,7 @@ from edge_backup import host, restic, runner
 from edge_backup.apps import App, AppsError, parse_apps
 from edge_backup.runner import Run, StepFailed
 from edge_backup.settings import Settings
-from edge_backup.status import ExitCategory, StatusFileError, first_attempt, read_status
+from edge_backup.status import ExitCategory, first_attempt
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +59,7 @@ def _parser() -> argparse.ArgumentParser:
         ("unlock", _unlock, "remove stale restic locks"),
     ):
         commands.add_parser(name, help=help_text).set_defaults(command=command)
-    restore = commands.add_parser("restore", help="restore one app's latest snapshot")
+    restore = commands.add_parser("restore", help="restore one app's last successful backup")
     restore.add_argument("app", help="the app's name in apps.toml")
     restore.add_argument("--target", type=Path, required=True, help="a directory to create")
     restore.set_defaults(command=_restore)
@@ -112,13 +112,10 @@ def _recorded(
     """Every outcome lands in the status file; only a full run is `ok`."""
     started = host.now()
     try:
-        previous = read_status(settings.status_file)
-    except StatusFileError as error:
-        # The file holds the only record of past successes: it is left untouched, not replaced.
+        previous = runner.previous_status(settings)
+    except StepFailed:
         runner.sweep_leftover_staging(settings.work_dir)
-        raise StepFailed(
-            ExitCategory.CONFIGURATION, f"{error}; die Datei bleibt unverändert"
-        ) from error
+        raise
     run = Run(
         settings.status_file,
         first_attempt(started) if previous is None else previous.attempt(started),
