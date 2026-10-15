@@ -31,6 +31,9 @@ from edge_backup.verify import (
     check_audio_references,
 )
 
+# Names every directory a run stages in, so a sweep removes only what a run left behind.
+STAGING_PREFIX = "staging-"
+
 
 class StepFailed(Exception):
     """A handled failure: the run is over, the status says `failed`, the message is German."""
@@ -233,18 +236,18 @@ def _sweep_leftover_staging(parent: Path) -> None:
     """A killed run never reaches its cleanup, so every run first removes the plaintext it left,
     whether or not it gets far enough to stage anything itself.
 
-    The host lock guarantees no other run is using `parent`.
+    Only staging directories go: an operator's `restore --target` may live beside them.
+    The host lock guarantees no other run is using them.
     """
-    if parent.exists():
-        for leftover in parent.iterdir():
-            shutil.rmtree(leftover)
+    for leftover in parent.glob(f"{STAGING_PREFIX}*"):
+        shutil.rmtree(leftover)
 
 
 @contextmanager
 def _private_directory(parent: Path) -> Iterator[Path]:
     """A 0700 directory for dumps and restored copies, removed on success and on failure."""
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    directory = Path(tempfile.mkdtemp(dir=parent))
+    directory = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=parent))
     try:
         yield directory
     finally:

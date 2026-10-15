@@ -15,6 +15,7 @@ import pytest
 from edge_backup import cli, host
 from edge_backup.apps import AppsError, DumpKind, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
+from edge_backup.runner import STAGING_PREFIX
 from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
@@ -815,18 +816,20 @@ def _make_the_database_ambiguous(edge_backup, machine) -> None:
         ("restore-test", _leave_no_snapshot, 1),
     ],
 )
-def test_a_run_sweeps_the_plaintext_a_killed_run_left_behind(
+def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
     edge_backup, machine, home, command, arrange, exit_code
 ):
     arrange(edge_backup, machine)
-    killed_run = home / ".cache/edge-backup/tmpkilled"
-    (killed_run / "db").mkdir(parents=True)
-    (killed_run / "db/db.dump").write_bytes(DUMP)
+    work_dir = home / ".cache/edge-backup"
+    killed_run, operator_restore = work_dir / f"{STAGING_PREFIX}killed", work_dir / "manual"
+    for kept_copy in (killed_run, operator_restore):
+        (kept_copy / "db").mkdir(parents=True)
+        (kept_copy / "db/db.dump").write_bytes(DUMP)
 
     outcome = edge_backup(command)
 
     assert outcome.exit_code == exit_code, outcome.err
-    assert list((home / ".cache/edge-backup").iterdir()) == []
+    assert list(work_dir.iterdir()) == [operator_restore]
 
 
 def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, machine):
