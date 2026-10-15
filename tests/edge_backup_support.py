@@ -104,6 +104,7 @@ class Machine:
         answers = {
             "docker info": self._daemon,
             "docker image inspect": self._image,
+            "docker pull": self._pull,
             "docker ps": self._containers,
             "docker inspect": self._state,
             "docker volume ls": self._volumes,
@@ -163,6 +164,10 @@ class Machine:
             print(f"Error: No such image: {argv[-1]}", file=sys.stderr)
         return exit_with("docker image inspect", 1)
 
+    def _pull(self, argv, **_) -> bytes:
+        self.missing_images.discard(argv[-1])
+        return b"sha256:0\n"
+
     def _containers(self, argv, **_) -> bytes:
         if any("edge-backup-restore-test" in argument for argument in argv):
             ours = f"label={RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}" in argv
@@ -219,7 +224,9 @@ class Machine:
 
     def _snapshots(self, argv, **_) -> bytes:
         if "--json" in argv:
-            listed = self.snapshots[-1:] if "--latest" in argv else self.snapshots
+            tag = argv[argv.index("--tag") + 1]
+            tagged = [s for s in self.snapshots if s.get("app", "songmaker") == tag]
+            listed = tagged[-1:] if "--latest" in argv else tagged
             return json.dumps([{"id": s["id"]} for s in listed]).encode()
         return f"{len(self.snapshots)} snapshots\n".encode()
 

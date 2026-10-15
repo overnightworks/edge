@@ -62,6 +62,11 @@ def _parser() -> argparse.ArgumentParser:
     restore = commands.add_parser("restore", help="restore one app's last successful backup")
     restore.add_argument("app", help="the app's name in apps.toml")
     restore.add_argument("--target", type=Path, required=True, help="a directory to create")
+    restore.add_argument(
+        "--snapshot",
+        help="restore this snapshot of the app (ID from `snapshots`) instead of the last "
+        "successful backup's: the way when no status file survives",
+    )
     restore.set_defaults(command=_restore)
     return parser
 
@@ -99,7 +104,7 @@ def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
     apps = {app.name: app for app in _apps(arguments.apps)}
     if (app := apps.get(arguments.app)) is None:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
-    snapshot_id = _command(runner.restore, settings, app, arguments.target)
+    snapshot_id = _command(runner.restore, settings, app, arguments.target, arguments.snapshot)
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
 

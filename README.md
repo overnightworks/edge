@@ -184,8 +184,9 @@ restic runs from the official image, pinned by version and digest
 (`restic/restic:0.19.1@sha256:…`, see `src/edge_backup/settings.py`), with no
 network, no capabilities and a read-only root, as your own user. Backup and
 restore test check first that the pinned restic and postgres images are
-present and fail early, before staging anything, naming the image and
-`docker pull`. `docker image prune -a` removes them: pull them again. The password
+present. `docker image prune -a` removes them; the next run pulls them again
+by their digest-pinned reference and fails early, before staging anything,
+naming the image only if that pull fails. The password
 file is mounted read-only at `/run/secrets/restic-password` and handed to
 restic only as `--password-file`; edge-backup never reads, prints or logs it.
 
@@ -311,7 +312,19 @@ It restores the snapshot of the **last successful backup**
 (`last_snapshot_id` in the status) and prints its short ID, never a newer
 snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
 that snapshot is gone, or the status names none, `restore` refuses with one
-German line and exit 1 and names the newest snapshot. The target holds
+German line and exit 1, names the newest snapshot and says how to choose it.
+The restore test verifies the same snapshot and refuses the same way.
+
+Disaster recovery on a machine without the status file: list the repository
+with `uv run edge-backup snapshots`, then choose a snapshot of that app by the
+first 8 or more characters of its ID:
+
+```sh
+uv run edge-backup restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
+```
+
+An ID that is unknown, ambiguous or another app's is refused with one German
+line. The target holds
 `db/db.dump` and `audio/`. Loading them into the live app is a deliberate
 manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the

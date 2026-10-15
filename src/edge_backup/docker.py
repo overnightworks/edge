@@ -49,20 +49,31 @@ def require_daemon() -> None:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
 
 
-def require_pinned_images() -> None:
-    """Docker never pulls on its own here: `docker image prune -a` removes what runs need."""
+def ensure_pinned_images() -> None:
+    """`docker image prune -a` removes the pinned images; a missing one is pulled by its digest."""
     for image in (RESTIC_IMAGE, POSTGRES_IMAGE):
-        try:
-            host.run(
-                ["docker", "image", "inspect", "--format", "{{.Id}}", image],
-                label="docker image inspect",
-                timeout=PROBE_TIMEOUT,
-                discard_stderr=True,
-            )
-        except host.HostCommandError as error:
-            raise TargetError(
-                f"das gepinnte Image {image} fehlt; neu laden mit: docker pull {image}"
-            ) from error
+        if not _image_present(image):
+            _pull(image)
+
+
+def _image_present(image: str) -> bool:
+    try:
+        host.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            label="docker image inspect",
+            timeout=PROBE_TIMEOUT,
+            discard_stderr=True,
+        )
+    except host.HostCommandError:
+        return False
+    return True
+
+
+def _pull(image: str) -> None:
+    try:
+        host.run(["docker", "pull", "--quiet", image], label="docker pull")
+    except host.HostCommandError as error:
+        raise TargetError(f"das gepinnte Image {image} fehlt und lässt sich nicht laden") from error
 
 
 def database_container(app: App) -> str:

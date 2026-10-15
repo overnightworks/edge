@@ -44,6 +44,8 @@ from edge_backup.verify import (
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
 STAGING_PREFIX = "staging-"
 RUN_MARK_SUFFIX = ".run"
+# restic's own short ID length, as `edge-backup snapshots` lists it.
+MIN_SNAPSHOT_PREFIX = 8
 
 
 class StepFailed(Exception):
@@ -155,11 +157,11 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 
 
 def _require_docker_with_pinned_images(run: Run, readiness: _Deadline) -> None:
-    """A daemon that is still starting is waited for; only then is a missing image a failure."""
+    """A daemon that is still starting is waited for; only then are missing images pulled."""
     with run.phase(Phase.READINESS):
         _wait_until_ready(docker.require_daemon, readiness, READINESS_POLL_SECONDS)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
-        _resolved(docker.require_pinned_images)
+        _resolved(docker.ensure_pinned_images)
 
 
 def previous_status(settings: Settings) -> Status | None:
@@ -172,8 +174,9 @@ def previous_status(settings: Settings) -> Status | None:
         ) from error
 
 
-def restore(settings: Settings, app: App, target: Path) -> str:
-    """The operator's restore: the last successful backup's snapshot into a new private directory.
+def restore(settings: Settings, app: App, target: Path, snapshot_prefix: str | None) -> str:
+    """The operator's restore into a new private directory: the last successful backup's snapshot,
+    or the one of this app that the operator names.
 
     Never inside the work directory: the operator's plaintext stays out of what runs own and sweep.
     """
@@ -184,7 +187,11 @@ def restore(settings: Settings, app: App, target: Path) -> str:
     if target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     require_secret_and_repository(settings)
-    snapshot_id = _last_successful_snapshot(settings, app)
+    snapshot_id = (
+        _last_successful_snapshot(settings, app)
+        if snapshot_prefix is None
+        else _chosen_snapshot(settings, app, snapshot_prefix)
+    )
     target.mkdir(mode=0o700, parents=True)
     restic.restore(settings, app.name, snapshot_id, target)
     return snapshot_id
@@ -209,7 +216,7 @@ def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> st
 
 def _restore_test(settings: Settings, app: App, run: Run) -> None:
     with run.phase(Phase.RESTORE):
-        snapshot_id = _latest_snapshot(settings, app)
+        snapshot_id = _last_successful_snapshot(settings, app)
     with _private_directory(settings.work_dir) as restored:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)
@@ -251,9 +258,26 @@ def _last_successful_snapshot(settings: Settings, app: App) -> str:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
             f"der Snapshot des letzten erfolgreichen Backups von {app.name} fehlt; "
-            f"der neueste Snapshot ist {newest[:8]}",
+            f"der neueste Snapshot ist {newest[:8]}; wählbar mit: "
+            f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>",
         )
     return last_good
+
+
+def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
+    """Only this app's snapshots count, so another app's ID is as unknown as a mistyped one."""
+    matches = [
+        snapshot_id
+        for snapshot_id in restic.snapshot_ids(settings, app.name)
+        if len(prefix) >= MIN_SNAPSHOT_PREFIX and snapshot_id.startswith(prefix)
+    ]
+    if len(matches) != 1:
+        raise StepFailed(
+            ExitCategory.CONFIGURATION,
+            f"{prefix} nennt keinen einzelnen Snapshot von {app.name} "
+            f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `edge-backup snapshots`)",
+        )
+    return matches[0]
 
 
 def _latest_snapshot(settings: Settings, app: App) -> str:

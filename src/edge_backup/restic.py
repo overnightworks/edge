@@ -113,15 +113,15 @@ def check(settings: Settings, *, read_data: bool) -> None:
 
 
 def latest_snapshot(settings: Settings, app: str) -> str | None:
-    ids = _snapshot_ids(settings, app, "--latest", "1")
+    ids = snapshot_ids(settings, app, "--latest", "1")
     return ids[-1] if ids else None
 
 
 def has_snapshot(settings: Settings, app: str, snapshot_id: str) -> bool:
-    return snapshot_id in _snapshot_ids(settings, app)
+    return snapshot_id in snapshot_ids(settings, app)
 
 
-def _snapshot_ids(settings: Settings, app: str, *options: str) -> list[str]:
+def snapshot_ids(settings: Settings, app: str, *options: str) -> list[str]:
     output = _restic(settings, "restic snapshots", ["snapshots", "--json", *options, *_scope(app)])
     try:
         return [snapshot["id"] for snapshot in json.loads(output)]
