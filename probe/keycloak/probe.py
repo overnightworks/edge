@@ -55,6 +55,7 @@ PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
 EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
 MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
+MASTER_TOKEN_URL = f"{MASTER_ISSUER}/protocol/openid-connect/token"
 ADMIN_CONSOLE_REDIRECT = f"{ADMIN_URL}/admin/master/console/"
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
@@ -326,25 +327,6 @@ def wait_until_ready() -> None:
 class Admin:
     token: str
 
-    @classmethod
-    def with_password(cls, username: str, password: str) -> Admin:
-        form = {
-            "grant_type": "password",
-            "client_id": "admin-cli",
-            "username": username,
-            "password": password,
-        }
-        return cls(token_from(f"{ADMIN_URL}/realms/master/protocol/openid-connect/token", form))
-
-    @classmethod
-    def with_client(cls, secret: str) -> Admin:
-        form = {
-            "grant_type": "client_credentials",
-            "client_id": "config-cli",
-            "client_secret": secret,
-        }
-        return cls(token_from(f"{ADMIN_URL}/realms/master/protocol/openid-connect/token", form))
-
     def call(self, method: str, path: str, json_body: Any = None) -> Response:
         return http(
             method, f"{ADMIN_URL}/admin/realms{path}", json_body=json_body, bearer=self.token
@@ -391,12 +373,6 @@ class Admin:
         )
         expect(response.status == 200, f"partial export answered {response.status}")
         return response.json()
-
-
-def token_from(url: str, form: dict[str, str], opener: OpenerDirector = PLAIN) -> str:
-    response = http("POST", url, form=form, opener=opener)
-    expect(response.status == 200, f"token request answered {response.status}: {response.text}")
-    return response.json()["access_token"]
 
 
 def without_config_cli_state(export: dict[str, Any]) -> dict[str, Any]:
@@ -497,54 +473,6 @@ def within_keycloak(response: Response, opener: OpenerDirector) -> Response:
     return response
 
 
-def admin_console_login(username: str, password: str, second_factor: Any) -> str:
-    """Signs in to the admin console like a browser does and returns the access token.
-
-    `second_factor(page)` answers the page that follows the password: it returns the form
-    action and the fields to post.
-    """
-    opener = browser_opener()
-    verifier = secrets.token_urlsafe(48)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=")
-    query = urlencode(
-        {
-            "client_id": "security-admin-console",
-            "redirect_uri": ADMIN_CONSOLE_REDIRECT,
-            "response_type": "code",
-            "scope": "openid",
-            "state": secrets.token_urlsafe(8),
-            "nonce": secrets.token_urlsafe(8),
-            "code_challenge": challenge.decode(),
-            "code_challenge_method": "S256",
-        }
-    )
-    login_page = http("GET", f"{MASTER_ISSUER}/protocol/openid-connect/auth?{query}", opener=opener)
-    expect(login_page.status == 200, f"admin login page answered {login_page.status}")
-    action, fields = form_with(login_page, "username")
-    fields |= {"username": username, "password": password}
-    factor_page = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
-    expect(
-        factor_page.status == 200,
-        f"password step answered {factor_page.status}: {page_message(factor_page)}",
-    )
-    action, fields = second_factor(factor_page)
-    done = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
-    location = done.headers.get("Location", "")
-    expect(
-        done.status == 302 and location.startswith(ADMIN_CONSOLE_REDIRECT),
-        f"second factor answered {done.status} without the console redirect: {page_message(done)}",
-    )
-    code = parse_qs(urlsplit(location).query)["code"][0]
-    token_form = {
-        "grant_type": "authorization_code",
-        "client_id": "security-admin-console",
-        "redirect_uri": ADMIN_CONSOLE_REDIRECT,
-        "code": code,
-        "code_verifier": verifier,
-    }
-    return token_from(f"{MASTER_ISSUER}/protocol/openid-connect/token", token_form)
-
-
 # --- Proofs -------------------------------------------------------------------------------------
 
 
@@ -568,6 +496,37 @@ class Probe:
         self.secret_values[name] = value
         return value
 
+    def tokens_from(self, holder: str, response: Response) -> dict[str, Any]:
+        """Reads a token response and registers every token in it, so proof 7 looks for each."""
+        expect(
+            response.status == 200,
+            f"the token request for {holder} answered {response.status}: {response.text}",
+        )
+        tokens = response.json()
+        for kind, value in tokens.items():
+            if kind.endswith("_token"):
+                self.keep_secret(f"{holder} {kind}", value)
+        return tokens
+
+    def admin_with_password(self, username: str, password: str) -> Admin:
+        form = {
+            "grant_type": "password",
+            "client_id": "admin-cli",
+            "username": username,
+            "password": password,
+        }
+        tokens = self.tokens_from(username, http("POST", MASTER_TOKEN_URL, form=form))
+        return Admin(tokens["access_token"])
+
+    def admin_with_client(self, secret: str) -> Admin:
+        form = {
+            "grant_type": "client_credentials",
+            "client_id": "config-cli",
+            "client_secret": secret,
+        }
+        tokens = self.tokens_from("config-cli", http("POST", MASTER_TOKEN_URL, form=form))
+        return Admin(tokens["access_token"])
+
     def run(self) -> None:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
@@ -576,10 +535,9 @@ class Probe:
         self.stack.move_master_to_admin_entrypoint()
         self.say("stack: up with the temporary bootstrap admin, master on the admin entrypoint")
 
-        bootstrap_admin = Admin.with_password(
+        bootstrap_admin = self.admin_with_password(
             "temp-admin", self.secret_values["bootstrap-admin-password"]
         )
-        self.keep_secret("temp-admin token", bootstrap_admin.token)
         self.missing_variable_fails_loudly(bootstrap_admin)
         self.stack.must_apply("fresh apply", bootstrap=True)
         # The bootstrap keycloak container and its logs disappear when it is recreated below.
@@ -588,8 +546,7 @@ class Probe:
         self.stack.up("keycloak")
         wait_until_ready()
         # The config-cli client exists only if the fresh apply created the master configuration.
-        admin = Admin.with_client(self.secret_values["config-cli-secret"])
-        self.keep_secret("config-cli token", admin.token)
+        admin = self.admin_with_client(self.secret_values["config-cli-secret"])
         expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
         self.held(
             "3a",
@@ -744,6 +701,60 @@ class Probe:
             "and an encoded slash inside the admitted prefix (400)",
         )
 
+    def admin_console_login(
+        self, holder: str, username: str, password: str, second_factor: Any
+    ) -> dict[str, Any]:
+        """Signs in to the admin console like a browser does and returns the token response.
+
+        `second_factor(page)` answers the page that follows the password: it returns the form
+        action and the fields to post.
+        """
+        opener = browser_opener()
+        verifier = secrets.token_urlsafe(48)
+        digest = hashlib.sha256(verifier.encode()).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+        query = urlencode(
+            {
+                "client_id": "security-admin-console",
+                "redirect_uri": ADMIN_CONSOLE_REDIRECT,
+                "response_type": "code",
+                "scope": "openid",
+                "state": secrets.token_urlsafe(8),
+                "nonce": secrets.token_urlsafe(8),
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+        login_page = http(
+            "GET", f"{MASTER_ISSUER}/protocol/openid-connect/auth?{query}", opener=opener
+        )
+        expect(login_page.status == 200, f"admin login page answered {login_page.status}")
+        action, fields = form_with(login_page, "username")
+        fields |= {"username": username, "password": password}
+        factor_page = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
+        expect(
+            factor_page.status == 200,
+            f"password step answered {factor_page.status}: {page_message(factor_page)}",
+        )
+        action, fields = second_factor(factor_page)
+        done = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
+        location = done.headers.get("Location", "")
+        expect(
+            done.status == 302 and location.startswith(ADMIN_CONSOLE_REDIRECT),
+            f"second factor answered {done.status} without the console redirect: "
+            f"{page_message(done)}",
+        )
+        code = parse_qs(urlsplit(location).query)["code"][0]
+        token_form = {
+            "grant_type": "authorization_code",
+            "client_id": "security-admin-console",
+            "redirect_uri": ADMIN_CONSOLE_REDIRECT,
+            "code": code,
+            "code_verifier": verifier,
+        }
+        token_reply = http("POST", MASTER_TOKEN_URL, form=token_form, opener=opener)
+        return self.tokens_from(holder, token_reply)
+
     def admin_console_only_on_loopback(self, admin: Admin) -> None:
         master_discovery = http("GET", f"{MASTER_ISSUER}/.well-known/openid-configuration")
         expect(
@@ -764,7 +775,7 @@ class Probe:
         admin.must("POST", f"/master/users/{admin_id}/role-mappings/realm", [admin_role])
         password_only = http(
             "POST",
-            f"{MASTER_ISSUER}/protocol/openid-connect/token",
+            MASTER_TOKEN_URL,
             form={
                 "grant_type": "password",
                 "client_id": "admin-cli",
@@ -783,8 +794,10 @@ class Probe:
             enrolled["secret"] = self.keep_secret("probe-admin TOTP seed", fields["totpSecret"])
             return action, fields | {"totp": totp(fields["totpSecret"]), "userLabel": "probe"}
 
-        first_token = admin_console_login("probe-admin", password, enrol_totp)
-        first = claims(self.keep_secret("probe-admin console token", first_token))
+        first_login = self.admin_console_login(
+            "probe-admin console", "probe-admin", password, enrol_totp
+        )
+        first = claims(first_login["access_token"])
         expect(first["iss"] == MASTER_ISSUER, f"admin token issuer is {first['iss']}")
 
         def answer_otp(page: Response) -> tuple[str, dict[str, str]]:
@@ -793,8 +806,10 @@ class Probe:
             # window of one period accepts the next.
             return action, fields | {"otp": totp(enrolled["secret"], period_offset=1)}
 
-        second_token = admin_console_login("probe-admin", password, answer_otp)
-        second = claims(self.keep_secret("probe-admin second console token", second_token))
+        second_login = self.admin_console_login(
+            "probe-admin second console", "probe-admin", password, answer_otp
+        )
+        second = claims(second_login["access_token"])
         expect(second["iss"] == MASTER_ISSUER, f"second admin token issuer is {second['iss']}")
         self.held(
             "2b",
@@ -859,12 +874,7 @@ class Probe:
                 "scope": "openid",
             },
         )
-        expect(response.status == 200, f"password grant for {username} answered {response.status}")
-        tokens = response.json()
-        for kind, value in tokens.items():
-            if kind.endswith("_token"):
-                self.keep_secret(f"{username} {kind}", value)
-        return tokens
+        return self.tokens_from(username, response)
 
     def member_token_carries_groups_and_audience(self, rp_secret: str) -> None:
         tokens = self.password_grant("probe-member", self.member_password, rp_secret)
