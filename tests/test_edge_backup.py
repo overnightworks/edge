@@ -818,6 +818,11 @@ def _forbid_reading_the_status_file(edge_backup, machine) -> None:
     machine.status_file.chmod(0o000)
 
 
+def _write_undecodable_status(edge_backup, machine) -> None:
+    machine.status_file.parent.mkdir(parents=True)
+    machine.status_file.write_bytes(b"\xff\xfe{}")
+
+
 @pytest.mark.parametrize(
     ("arguments", "arrange", "exit_code"),
     [
@@ -829,6 +834,7 @@ def _forbid_reading_the_status_file(edge_backup, machine) -> None:
         (("--apps", "/nonexistent/apps.toml", "restore-test"), _arrange_nothing, 1),
         (("backup",), _corrupt_the_status_file, 1),
         (("backup",), _forbid_reading_the_status_file, 1),
+        (("backup",), _write_undecodable_status, 1),
     ],
     ids=[
         "backup-succeeds",
@@ -839,6 +845,7 @@ def _forbid_reading_the_status_file(edge_backup, machine) -> None:
         "restore-test-without-apps",
         "backup-with-a-corrupt-status",
         "backup-with-a-status-it-may-not-read",
+        "backup-with-a-status-that-is-not-utf-8",
     ],
 )
 def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
@@ -942,7 +949,8 @@ def test_a_broken_setup_fails_before_touching_docker(
 
 
 @pytest.mark.parametrize(
-    "break_status", [_corrupt_the_status_file, _forbid_reading_the_status_file]
+    "break_status",
+    [_corrupt_the_status_file, _forbid_reading_the_status_file, _write_undecodable_status],
 )
 def test_an_unreadable_status_file_is_replaced_by_a_failed_one(edge_backup, machine, break_status):
     break_status(edge_backup, machine)

@@ -102,7 +102,7 @@ def first_attempt(started: datetime) -> Status:
 
 def read_status(path: Path) -> Status | None:
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
     except FileNotFoundError:
         return None
     except OSError as error:
@@ -110,7 +110,7 @@ def read_status(path: Path) -> Status | None:
             f"die bisherige Statusdatei ist unlesbar: {error.strerror}"
         ) from error
     try:
-        return _parse(json.loads(text))
+        return _parse(json.loads(raw))
     except (ValueError, KeyError, TypeError) as error:
         raise StatusFileError("die bisherige Statusdatei ist unlesbar") from error
 
