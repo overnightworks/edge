@@ -78,10 +78,6 @@ def expect(condition: bool, message: str) -> None:
         raise ProbeFailure(message)
 
 
-def held(proof: str, detail: str) -> None:
-    print(f"PROOF {proof} held: {detail}", flush=True)
-
-
 # --- HTTP -----------------------------------------------------------------------------------
 
 
@@ -174,6 +170,10 @@ class Stack:
     scratch: Path
     secrets_dir: Path = field(init=False)
     config_dir: Path = field(init=False)
+    # Everything a secret could leak into, for proof 7: each container's Config.Env as it was
+    # seen, and the output of every compose command (applies and service logs included).
+    seen_env: list[tuple[str, list[str]]] = field(init=False, default_factory=list)
+    outputs: list[str] = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self.secrets_dir = self.scratch / "secrets"
@@ -198,13 +198,15 @@ class Stack:
         command = ["docker", "compose", "--project-name", PROJECT, "--project-directory", str(REPO)]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
-        return subprocess.run(
+        result = subprocess.run(
             [*command, *args],
             env=self.environment(config_dir or self.config_dir),
             capture_output=True,
             text=True,
             check=False,
         )
+        self.outputs.append(result.stdout + result.stderr)
+        return result
 
     def write_secrets(self) -> dict[str, str]:
         self.secrets_dir.mkdir(mode=0o700, parents=True)
@@ -227,12 +229,17 @@ class Stack:
     def apply(
         self, *, bootstrap: bool = False, config_dir: Path | None = None, cache: bool = True
     ) -> subprocess.CompletedProcess[str]:
-        options = ["--rm", "--no-deps"]
+        # Kept until inspected, so proof 7 sees the one-off container's Config.Env too.
+        container = f"{PROJECT}-apply-{secrets.token_hex(4)}"
+        options = ["--no-deps", "--name", container]
         if not cache:
             options += ["--env", "IMPORT_CACHE_ENABLED=false"]
-        return self.compose(
+        result = self.compose(
             "run", *options, "keycloak-config-cli", bootstrap=bootstrap, config_dir=config_dir
         )
+        self.see_env(container)
+        subprocess.run(["docker", "rm", container], capture_output=True, check=True)
+        return result
 
     def must_apply(self, label: str, **kwargs: Any) -> str:
         result = self.apply(**kwargs)
@@ -260,16 +267,21 @@ class Stack:
         print(f"teardown: stack {PROJECT} {status}", flush=True)
         return result.returncode == 0
 
-    def container_env(self, service: str) -> list[str]:
-        container_id = self.compose("ps", "--quiet", service).stdout.strip()
-        expect(bool(container_id), f"{service} is not running")
+    def see_env(self, container: str) -> None:
         inspected = subprocess.run(
-            ["docker", "inspect", "--format", "{{json .Config.Env}}", container_id],
+            ["docker", "inspect", "--format", "{{.Name}} {{json .Config.Env}}", container],
             capture_output=True,
             text=True,
             check=True,
         )
-        return json.loads(inspected.stdout)
+        name, environment = inspected.stdout.split(" ", 1)
+        self.seen_env.append((name.lstrip("/"), json.loads(environment)))
+
+    def see_running(self) -> None:
+        """Records the Config.Env and the logs of every container the stack runs right now."""
+        for container_id in self.compose("ps", "--quiet").stdout.split():
+            self.see_env(container_id)
+        self.compose("logs", "--no-log-prefix")
 
     def logs(self, service: str) -> str:
         return self.compose("logs", "--no-log-prefix", service).stdout
@@ -536,6 +548,15 @@ class Probe:
     stack: Stack
     secret_values: dict[str, str] = field(default_factory=dict)
     member_password: str = field(default_factory=lambda: secrets.token_urlsafe(16))
+    evidence: list[str] = field(default_factory=list)
+
+    def say(self, line: str) -> None:
+        """Prints a line of evidence and keeps it, so proof 7 can check it for secrets."""
+        self.evidence.append(line)
+        print(line, flush=True)
+
+    def held(self, proof: str, detail: str) -> None:
+        self.say(f"PROOF {proof} held: {detail}")
 
     def run(self) -> None:
         self.secret_values = self.stack.write_secrets()
@@ -543,20 +564,22 @@ class Probe:
         self.stack.up(bootstrap=True)
         wait_until_ready()
         self.stack.move_master_to_admin_entrypoint()
-        print("stack: up with the temporary bootstrap admin, master on the admin entrypoint")
+        self.say("stack: up with the temporary bootstrap admin, master on the admin entrypoint")
 
         bootstrap_admin = Admin.with_password(
             "temp-admin", self.secret_values["bootstrap-admin-password"]
         )
         self.missing_variable_fails_loudly(bootstrap_admin)
         self.stack.must_apply("fresh apply", bootstrap=True)
+        # The bootstrap keycloak container and its logs disappear when it is recreated below.
+        self.stack.see_running()
 
         self.stack.up("keycloak")
         wait_until_ready()
         # The config-cli client exists only if the fresh apply created the master configuration.
         admin = Admin.with_client(self.secret_values["config-cli-secret"])
         expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
-        held(
+        self.held(
             "3a",
             "a fresh apply created the master configuration (the config-cli client signs in "
             "after a restart without the bootstrap overlay) and the hallucinai realm",
@@ -571,7 +594,7 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
-        self.no_secret_in_config_env()
+        self.no_secret_leaked()
 
     def missing_variable_fails_loudly(self, admin: Admin) -> None:
         broken = self.stack.copy_config(self.stack.scratch / "config-missing-variable")
@@ -584,7 +607,7 @@ class Probe:
         expect(result.returncode != 0, "an apply with an undefined variable exited 0")
         expect("PROBE_UNDEFINED_VARIABLE" in output, "the failure does not name the variable")
         expect(admin.call("GET", f"/{REALM}").status == 404, "the failed apply left a realm")
-        held(
+        self.held(
             "3b",
             f"an undefined variable fails the apply (exit {result.returncode}, names "
             "PROBE_UNDEFINED_VARIABLE) and creates no realm",
@@ -594,7 +617,7 @@ class Probe:
         """Stands in for a person and a membership the operator manages in the admin console."""
         member_id = admin.create_user(REALM, "probe-member", self.member_password)
         admin.join_group(member_id, MEMBER_GROUP)
-        print(f"seed: probe-member in {MEMBER_GROUP} through the admin API", flush=True)
+        self.say(f"seed: probe-member in {MEMBER_GROUP} through the admin API")
         return member_id
 
     def reapply_is_idempotent(self, admin: Admin, member_id: str) -> None:
@@ -605,7 +628,7 @@ class Probe:
         changed = differences(before, after)
         expect(not changed, f"the second apply changed the realm export: {changed}")
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
-        held(
+        self.held(
             "3c",
             "a second apply with IMPORT_CACHE_ENABLED=false leaves the realm export unchanged "
             f"and probe-member in {MEMBER_GROUP}",
@@ -642,7 +665,7 @@ class Probe:
             if master.get(key) != value:
                 wrong[f"master.{key}"] = master.get(key)
         expect(not wrong, f"realm settings differ from the decisions: {wrong}")
-        held(
+        self.held(
             "8",
             "rpId hallucinai.de, access token 300 s, SSO max 30 d / idle 7 d, login events "
             "30 d, admin events 1 y, brute force on in both realms, "
@@ -675,7 +698,9 @@ class Probe:
         expect(stylesheet is not None, "the login page links no /resources/ stylesheet")
         resource = through_tunnel("GET", stylesheet.group(1))
         expect(resource.status == 200, f"{stylesheet.group(1)} answered {resource.status}")
-        held("1", f"public discovery issuer {issuer}; the login page renders without HTTPS error")
+        self.held(
+            "1", f"public discovery issuer {issuer}; the login page renders without HTTPS error"
+        )
 
         refused = [
             (PUBLIC_HOST, "/realms/master/.well-known/openid-configuration"),
@@ -698,7 +723,7 @@ class Probe:
         # Inside the admitted prefix, so only the entrypoint's encoded-character rule stops it.
         encoded = through_tunnel("GET", "/realms/hallucinai/..%2Fmaster/")
         expect(encoded.status == 400, f"an encoded slash on 8081 answered {encoded.status}")
-        held(
+        self.held(
             "2a",
             f"8081 answers /realms/hallucinai/ and /resources/; Traefik refuses {len(refused)} "
             "master, admin, metrics, health, root, traversal and Host: localhost requests (404) "
@@ -741,7 +766,7 @@ class Probe:
 
         second = admin_console_login("probe-admin", password, answer_otp)
         expect(second["iss"] == MASTER_ISSUER, f"second admin token issuer is {second['iss']}")
-        held(
+        self.held(
             "2b",
             f"on localhost:8090 the master issuer is {issuer}; a new admin must enrol TOTP "
             "before the console login completes, the next login demands the code; 8090 "
@@ -777,7 +802,7 @@ class Probe:
             f"the console-made subgroup {CONSOLE_SUBGROUP} survived the apply",
         )
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
-        held(
+        self.held(
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
             f"group /{CHANGED_GROUP}) and deletes the console-made {CONSOLE_SUBGROUP} it does "
@@ -813,7 +838,7 @@ class Probe:
         expect(access.get("iss") == PUBLIC_ISSUER, f"access token issuer is {access.get('iss')}")
         expect(MEMBER_GROUP in access.get("groups", []), f"groups claim is {access.get('groups')}")
         expect("agent-service" in audience, f"audience is {audience}")
-        held(
+        self.held(
             "4",
             f"probe-member's access token: iss {access['iss']}, groups {access['groups']}, "
             f"aud {audience}",
@@ -836,7 +861,7 @@ class Probe:
         )
         error = refresh.json().get("error") if refresh.status == 400 else None
         expect(error == "invalid_grant", f"refresh after disabling answered {refresh.status}")
-        held("5", "a disabled user's refresh is refused (400 invalid_grant)")
+        self.held("5", "a disabled user's refresh is refused (400 invalid_grant)")
 
     def backchannel_logout_reaches_rp(self, admin: Admin, rp_secret: str) -> None:
         password = secrets.token_urlsafe(16)
@@ -850,7 +875,7 @@ class Probe:
                     record = json.loads(line.removeprefix("backchannel-logout "))
                     if record["sub"] == user_id:
                         expect(record["iss"] == PUBLIC_ISSUER, f"logout iss is {record['iss']}")
-                        held(
+                        self.held(
                             "6",
                             "an admin logout of probe-logout reached probe-rp over the compose "
                             f"network (iss {record['iss']}, sid present: {bool(record['sid'])})",
@@ -859,21 +884,26 @@ class Probe:
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
 
-    def no_secret_in_config_env(self) -> None:
-        counts = {}
-        for service in ("keycloak", "keycloak-db"):
-            environment = self.stack.container_env(service)
-            leaked = [
-                name
-                for name, value in self.secret_values.items()
-                if any(value in entry for entry in environment)
-            ]
-            expect(not leaked, f"{service} Config.Env holds the value of {leaked}")
-            counts[service] = len(environment)
-        held(
+    def no_secret_leaked(self) -> None:
+        self.stack.see_running()
+        places = [(f"Config.Env of {name}", "\n".join(env)) for name, env in self.stack.seen_env]
+        places += [
+            ("the compose, apply and service log output", "\n".join(self.stack.outputs)),
+            ("the probe's own output", "\n".join(self.evidence)),
+        ]
+        leaks = [
+            f"{secret_name} in {place}"
+            for place, text in places
+            for secret_name, value in self.secret_values.items()
+            if value in text
+        ]
+        expect(not leaks, f"generated secrets leaked: {leaks}")
+        containers = sorted({name for name, _ in self.stack.seen_env})
+        self.held(
             "7",
-            f"Config.Env of keycloak ({counts['keycloak']} entries) and keycloak-db "
-            f"({counts['keycloak-db']} entries) holds none of the {len(SECRET_FILES)} secrets",
+            f"none of the {len(SECRET_FILES)} generated secrets is in the Config.Env of the "
+            f"{len(self.stack.seen_env)} containers seen ({', '.join(containers)}), in any "
+            "compose, apply or service log output, or in the probe's own output",
         )
 
 
