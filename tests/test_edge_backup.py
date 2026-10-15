@@ -1,7 +1,9 @@
 """edge-backup driven through its CLI, with a scripted Docker host in place of docker and restic."""
 
+import fcntl
 import json
 import re
+import stat
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -29,6 +31,8 @@ STATUS_KEYS = {
     "last_successful_restore_test",
     "last_snapshot_id",
 }
+# The real boundary, kept before the `machine` fixture swaps it: exits and files go through it.
+REAL_HOST_RUN = host.run
 
 
 @dataclass
@@ -48,6 +52,10 @@ class Machine:
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
     status_seen_during_backup: dict | None = None
     status_file: Path | None = None
+    lock_free_during: set[str] = field(default_factory=set)
+    """Labels of commands that ran while the host lock was free."""
+    private_modes: dict[str, int] = field(default_factory=dict)
+    """Modes of the staging and restore directories and files, seen while restic used them."""
 
     def run(
         self,
@@ -59,9 +67,11 @@ class Machine:
     ) -> bytes:
         argv = list(argv)
         self.calls.append((label, argv))
+        if self._host_lock_is_free():
+            self.lock_free_during.add(label)
         if (failure := self.failing.get(label)) is not None:
             if isinstance(failure, int):
-                raise host.HostCommandError(label, failure)
+                return _exit(label, failure)
             raise failure()
         answers = {
             "docker info": self._daemon,
@@ -78,13 +88,28 @@ class Machine:
             "pg_restore": self._pg_restore,
             "psql": self._psql,
         }
-        return answers.get(label, self._silent)(argv, stdin=stdin, stdout=stdout)
+        answer = answers.get(label, self._silent)(argv, stdin=stdin)
+        if stdout is None:
+            return answer
+        return REAL_HOST_RUN(["printf", "%s", answer.decode()], label=label, stdout=stdout)
 
     def labels(self) -> list[str]:
         return [label for label, _ in self.calls]
 
     def argv_of(self, label: str) -> list[str]:
         return next(argv for called, argv in self.calls if called == label)
+
+    def _host_lock_is_free(self) -> bool:
+        lock = self.status_file.with_name("backup.lock")
+        if not lock.exists():
+            return True
+        with lock.open("rb") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            return True
 
     def _daemon(self, argv, **_) -> bytes:
         return b"27.3.1\n"
@@ -103,10 +128,8 @@ class Machine:
     def _volumes(self, argv, **_) -> bytes:
         return "\n".join(self.volumes).encode()
 
-    def _pg_dump(self, argv, *, stdout, **_) -> bytes:
-        stdout.touch(mode=0o600)
-        stdout.write_bytes(DUMP)
-        return b""
+    def _pg_dump(self, argv, **_) -> bytes:
+        return DUMP
 
     def _scan(self, argv, **_) -> bytes:
         return b"".join(name.encode() + b"\0" for name in self.audio)
@@ -114,6 +137,8 @@ class Machine:
     def _backup(self, argv, **_) -> bytes:
         self.status_seen_during_backup = json.loads(self.status_file.read_text())
         staging = Path(_mount_source(argv, "/backup/songmaker/db"))
+        self.private_modes["staging"] = _mode(staging)
+        self.private_modes |= {path.name: _mode(path) for path in staging.iterdir()}
         snapshot_id = f"{len(self.snapshots) + 1:064x}"
         self.snapshots.append(
             {
@@ -135,6 +160,7 @@ class Machine:
         snapshot_id = argv[argv.index("restore") + 1].split(":")[0]
         snapshot = next(s for s in self.snapshots if s["id"] == snapshot_id)
         target = Path(_mount_source(argv, "/restore"))
+        self.private_modes["restored"] = _mode(target)
         for folder in ("db", "audio"):
             for name, content in snapshot[folder].items():
                 (target / folder / name).parent.mkdir(parents=True, exist_ok=True)
@@ -149,13 +175,22 @@ class Machine:
 
     def _pg_restore(self, argv, *, stdin, **_) -> bytes:
         if not stdin.read_bytes().startswith(b"PGDMP"):
-            raise host.HostCommandError("pg_restore", 1)
+            return _exit("pg_restore", 1)
         return b""
 
     def _psql(self, argv, **_) -> bytes:
         if "count(*)" in argv[-1]:
             return b"42\n"
         return b"".join(reference.encode() + b"\0" for reference in self.references)
+
+
+def _exit(label: str, exit_code: int) -> bytes:
+    """A real process exits with the code, so host.run decides what it means."""
+    return REAL_HOST_RUN(["sh", "-c", f"exit {exit_code}"], label=label)
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
 
 
 def _no_restore_server_left(machine: Machine) -> bool:
@@ -363,6 +398,57 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
     if not backup_counts:
         assert "restic forget" not in machine.labels()
     assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+@pytest.mark.parametrize("command", ["backup", "restore-test"])
+def test_every_command_of_a_run_holds_the_host_lock(edge_backup, machine, command):
+    edge_backup("backup")
+    machine.calls.clear()
+
+    outcome = edge_backup(command)
+
+    assert outcome.exit_code == 0, outcome.err
+    assert machine.calls
+    assert machine.lock_free_during == set()
+
+
+def test_staging_and_restore_directories_and_their_files_are_private(edge_backup, machine):
+    edge_backup("backup")
+    edge_backup("restore-test")
+
+    assert machine.private_modes == {
+        "staging": 0o700,
+        "db.dump": 0o600,
+        "manifest.json": 0o600,
+        "restored": 0o700,
+    }
+
+
+@pytest.mark.parametrize(
+    ("argv", "exit_code", "message"),
+    [
+        (["sh", "-c", "exit 3"], 3, "probe endete mit Exit 3"),
+        (["sh", "-c", "exit 1"], 1, "probe endete mit Exit 1"),
+        (["edge-backup-no-such-binary"], None, "probe ist nicht installiert"),
+    ],
+)
+def test_host_run_fails_on_every_nonzero_exit_and_a_missing_binary(argv, exit_code, message):
+    with pytest.raises(host.HostCommandError, match=message) as raised:
+        host.run(argv, label="probe")
+
+    assert raised.value.exit_code == exit_code
+
+
+def test_host_run_returns_stdout_or_writes_it_into_a_new_private_file(tmp_path):
+    target = tmp_path / "out"
+
+    assert host.run(["printf", "piped"], label="probe") == b"piped"
+    host.run(["printf", "filed"], label="probe", stdout=target)
+
+    assert (target.read_bytes(), _mode(target)) == (b"filed", 0o600)
+    with pytest.raises(FileExistsError):
+        host.run(["printf", "again"], label="probe", stdout=target)
+    assert target.read_bytes() == b"filed"
 
 
 def test_a_failed_check_keeps_the_last_successful_backup(edge_backup, machine):
