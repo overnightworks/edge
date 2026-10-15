@@ -149,6 +149,9 @@ HOSTS = {
         ss=SS_LOOPBACK_ONLY,
     ),
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
+    "the project's allow-list permits the tunnel's QUIC and Chrome's mDNS sockets": Host(
+        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE, allow_list=cli.DEFAULT_ALLOW_LIST.read_text()
+    ),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
         docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
