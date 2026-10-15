@@ -4,7 +4,7 @@ import fcntl
 import json
 import re
 import stat
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,8 +43,11 @@ class Machine:
     references: list[str] = field(default_factory=lambda: ["u1/one.mp3", "u1/two.mp3"])
     db_containers: list[str] = field(default_factory=lambda: [SONGMAKER_CONTAINER])
     volumes: list[str] = field(default_factory=lambda: ["songmaker_audiofiles"])
+    clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
+    hanging: set[str] = field(default_factory=set)
+    """Labels of probes that never answer; only a timeout ends them."""
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
     failing: dict[str, int | type[BaseException]] = field(default_factory=dict)
@@ -64,9 +67,15 @@ class Machine:
         label: str,
         stdin: Path | None = None,
         stdout: Path | None = None,
+        timeout: timedelta | None = None,
     ) -> bytes:
         argv = list(argv)
         self.calls.append((label, argv))
+        assert len(self.calls) < 10_000, "the runner never gives up"
+        if label in self.hanging:
+            assert timeout is not None, f"{label} would hang forever"
+            self.clock.sleep(timeout.total_seconds())
+            raise host.HostCommandError(label, "antwortete nicht")
         if self._host_lock_is_free():
             self.lock_free_during.add(label)
         if (failure := self.failing.get(label)) is not None:
@@ -212,12 +221,19 @@ def _mount_source(argv: list[str], target: str) -> str:
 @dataclass
 class Clock:
     moment: datetime = datetime(2026, 10, 18, 3, 0, tzinfo=UTC)
+    elapsed: float = 0.0
+    wall_drift_per_sleep: timedelta = timedelta(0)
+    """How far someone sets the wall clock while the runner sleeps (NTP, an operator)."""
 
     def now(self) -> datetime:
         return self.moment
 
+    def monotonic(self) -> float:
+        return self.elapsed
+
     def sleep(self, seconds: float) -> None:
-        self.moment += timedelta(seconds=seconds)
+        self.elapsed += seconds
+        self.moment += timedelta(seconds=seconds) + self.wall_drift_per_sleep
 
 
 @dataclass(frozen=True)
@@ -243,10 +259,10 @@ def home(tmp_path, monkeypatch) -> Path:
 @pytest.fixture
 def machine(monkeypatch, home) -> Machine:
     machine = Machine(status_file=home / ".local/state/edge/backup-status.json")
-    clock = Clock()
     monkeypatch.setattr(host, "run", machine.run)
-    monkeypatch.setattr(host, "now", clock.now)
-    monkeypatch.setattr(host, "sleep", clock.sleep)
+    monkeypatch.setattr(host, "now", machine.clock.now)
+    monkeypatch.setattr(host, "monotonic", machine.clock.monotonic)
+    monkeypatch.setattr(host, "sleep", machine.clock.sleep)
     return machine
 
 
@@ -452,6 +468,13 @@ def test_host_run_fails_on_every_nonzero_exit_and_a_missing_binary(argv, exit_co
     assert raised.value.exit_code == exit_code
 
 
+def test_host_run_kills_a_command_that_outlasts_its_timeout():
+    with pytest.raises(
+        host.HostCommandError, match=re.escape("probe antwortete nicht binnen 0.05 s")
+    ):
+        host.run(["sleep", "5"], label="probe", timeout=timedelta(milliseconds=50))
+
+
 def test_host_run_returns_stdout_or_writes_it_into_a_new_private_file(tmp_path):
     target = tmp_path / "out"
 
@@ -483,16 +506,39 @@ def test_backup_waits_for_the_database_container_to_appear(edge_backup, machine)
     assert machine.labels().count("docker ps") == 4
 
 
-def test_backup_gives_up_after_ten_minutes_without_the_database(edge_backup, machine):
+def _never_start_the_database(machine: Machine) -> None:
     machine.absent_polls = 10_000
 
-    outcome = edge_backup("backup")
+
+def _set_the_wall_clock_back_while_waiting(machine: Machine) -> None:
+    _never_start_the_database(machine)
+    machine.clock.wall_drift_per_sleep = timedelta(hours=-1)
+
+
+def _hang(label: str) -> Callable[[Machine], None]:
+    return lambda machine: machine.hanging.add(label)
+
+
+@pytest.mark.parametrize(
+    ("command", "stall"),
+    [
+        ("backup", _never_start_the_database),
+        ("backup", _set_the_wall_clock_back_while_waiting),
+        ("backup", _hang("docker ps")),
+        ("restore-test", _hang("docker info")),
+    ],
+    ids=["database-absent", "wall-clock-set-back", "docker-ps-hangs", "docker-info-hangs"],
+)
+def test_readiness_gives_up_after_ten_minutes(edge_backup, machine, command, stall):
+    stall(machine)
+
+    outcome = edge_backup(command)
 
     assert outcome.exit_code == 1
     assert "nach 10 Minuten nicht bereit" in outcome.err
     assert outcome.status["failing_phase"] == "readiness"
     assert outcome.status["exit_category"] == "not-ready"
-    assert "pg_dump" not in machine.labels()
+    assert not {"pg_dump", "restic restore"} & set(machine.labels())
 
 
 @pytest.mark.parametrize(

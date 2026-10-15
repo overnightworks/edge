@@ -2,12 +2,13 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from edge_backup import host
 from edge_backup.apps import App
 from edge_backup.restic import Mount, MountKind, container_argv
-from edge_backup.settings import POSTGRES_IMAGE, Settings
+from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, Settings
 
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -30,7 +31,11 @@ class TargetError(RuntimeError):
 
 def require_daemon() -> None:
     try:
-        host.run(["docker", "info", "--format", "{{.ServerVersion}}"], label="docker info")
+        host.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            label="docker info",
+            timeout=PROBE_TIMEOUT,
+        )
     except host.HostCommandError as error:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
 
@@ -43,6 +48,7 @@ def database_container(app: App) -> str:
                  *_label_filter(PROJECT_LABEL, app.compose_project),
                  *_label_filter(SERVICE_LABEL, app.db_service)],
                 label="docker ps",
+                timeout=PROBE_TIMEOUT,
             )
         )  # fmt: skip
         if len(ids) > 1:
@@ -53,6 +59,7 @@ def database_container(app: App) -> str:
             ["docker", "inspect", "--format",
              "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", ids[0]],
             label="docker inspect",
+            timeout=PROBE_TIMEOUT,
         )  # fmt: skip
     except host.HostCommandError as error:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
@@ -68,6 +75,7 @@ def audio_volume(app: App) -> str:
              *_label_filter(PROJECT_LABEL, app.compose_project),
              *_label_filter(VOLUME_LABEL, app.volume)],
             label="docker volume ls",
+            timeout=PROBE_TIMEOUT,
         )
     )  # fmt: skip
     if len(names) != 1:
@@ -121,7 +129,11 @@ class RestoreServer:
     def is_ready(self) -> bool:
         """Asked over TCP: the image's init server listens on the socket only, then restarts."""
         try:
-            self._exec(["pg_isready", "--host", "127.0.0.1", "--quiet"], label="pg_isready")
+            self._exec(
+                ["pg_isready", "--host", "127.0.0.1", "--quiet"],
+                label="pg_isready",
+                timeout=PROBE_TIMEOUT,
+            )
         except host.HostCommandError:
             return False
         return True
@@ -159,10 +171,20 @@ class RestoreServer:
             label="psql",
         )  # fmt: skip
 
-    def _exec(self, command: list[str], *, label: str, stdin: Path | None = None) -> bytes:
+    def _exec(
+        self,
+        command: list[str],
+        *,
+        label: str,
+        stdin: Path | None = None,
+        timeout: timedelta | None = None,
+    ) -> bytes:
         interactive = ["-i"] if stdin else []
         return host.run(
-            ["docker", "exec", *interactive, RESTORE_SERVER, *command], label=label, stdin=stdin
+            ["docker", "exec", *interactive, RESTORE_SERVER, *command],
+            label=label,
+            stdin=stdin,
+            timeout=timeout,
         )
 
 

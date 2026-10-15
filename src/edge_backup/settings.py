@@ -16,6 +16,8 @@ POSTGRES_IMAGE = (
 RESTIC_HOSTNAME = "edge-backup"
 READINESS_TIMEOUT = timedelta(minutes=10)
 READINESS_POLL_SECONDS = 15
+# One readiness probe (docker info/ps/inspect, pg_isready); a hung daemon must not outlast the wait.
+PROBE_TIMEOUT = timedelta(seconds=30)
 RESTORE_SERVER_TIMEOUT = timedelta(minutes=2)
 RESTORE_SERVER_POLL_SECONDS = 1
 

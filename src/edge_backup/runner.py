@@ -183,12 +183,12 @@ def _latest_snapshot(settings: Settings, app: App) -> str:
 
 
 def _wait_until_ready[T](probe: Callable[[], T], timeout: timedelta, poll_seconds: float) -> T:
-    deadline = host.now() + timeout
+    deadline = host.monotonic() + timeout.total_seconds()
     while True:
         try:
             return _resolved(probe)
         except docker.NotReadyError as error:
-            if host.now() >= deadline:
+            if host.monotonic() >= deadline:
                 minutes = int(timeout.total_seconds() // 60)
                 raise StepFailed(
                     ExitCategory.NOT_READY, f"nach {minutes} Minuten nicht bereit: {error}"

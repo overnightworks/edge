@@ -9,7 +9,7 @@ import subprocess
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO
 
@@ -19,11 +19,10 @@ class HostError(RuntimeError):
 
 
 class HostCommandError(HostError):
-    """A command could not run or exited non-zero; the message names the step, never argv."""
+    """A command could not run, did not answer in time or exited non-zero; never names argv."""
 
-    def __init__(self, label: str, exit_code: int | None) -> None:
+    def __init__(self, label: str, reason: str, exit_code: int | None = None) -> None:
         self.exit_code = exit_code
-        reason = "ist nicht installiert" if exit_code is None else f"endete mit Exit {exit_code}"
         super().__init__(f"{label} {reason}")
 
 
@@ -32,18 +31,32 @@ class UnreadableOutputError(HostError):
 
 
 def run(
-    argv: Sequence[str], *, label: str, stdin: Path | None = None, stdout: Path | None = None
+    argv: Sequence[str],
+    *,
+    label: str,
+    stdin: Path | None = None,
+    stdout: Path | None = None,
+    timeout: timedelta | None = None,
 ) -> bytes:
-    """Run argv without a shell; stdout goes to a new 0600 file when given, else is returned."""
+    """Run argv without a shell; stdout goes to a new 0600 file when given, else is returned.
+
+    A timeout bounds a probe: past it the command is killed and counts as failed.
+    """
+    seconds = None if timeout is None else timeout.total_seconds()
     with ExitStack() as files:
         source = files.enter_context(stdin.open("rb")) if stdin else subprocess.DEVNULL
         sink = files.enter_context(_new_private_file(stdout)) if stdout else subprocess.PIPE
         try:
-            completed = subprocess.run(argv, stdin=source, stdout=sink, check=False)
+            completed = subprocess.run(
+                argv, stdin=source, stdout=sink, check=False, timeout=seconds
+            )
         except FileNotFoundError as error:
-            raise HostCommandError(label, None) from error
+            raise HostCommandError(label, "ist nicht installiert") from error
+        except subprocess.TimeoutExpired as error:
+            raise HostCommandError(label, f"antwortete nicht binnen {seconds:g} s") from error
     if completed.returncode != 0:
-        raise HostCommandError(label, completed.returncode)
+        exit_code = completed.returncode
+        raise HostCommandError(label, f"endete mit Exit {exit_code}", exit_code)
     return completed.stdout or b""
 
 
@@ -58,6 +71,11 @@ def exclusive_lock(path: Path) -> Iterator[None]:
 
 def now() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
+
+
+def monotonic() -> float:
+    """Seconds on a clock no one can set back; deadlines are measured on it."""
+    return time.monotonic()
 
 
 def sleep(seconds: float) -> None:
