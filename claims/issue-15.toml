@@ -1,0 +1,8 @@
+claim_id = "2da1371871324a609f7cef811a5499cb"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "d5462277ff716d7e18c7406a9f307e272b2400a4"
+branch = "claude/issue-15-edge-check-a-hung-host-command-ends-as-u"
+scope = ["README.md", "src/edge_check/docker.py", "src/edge_check/host.py", "tests/test_edge_check.py"]
+opened_commit = "ebd1d8236eba7f67b861be3a66332f4c6a9284f3"
+whole_reason = "The timeout, the two inspect residuals and their README lines are one edge-check behaviour change."
