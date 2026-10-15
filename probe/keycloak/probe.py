@@ -279,9 +279,14 @@ class Stack:
 
     def see_running(self) -> None:
         """Records the Config.Env and the logs of every container the stack runs right now."""
-        for container_id in self.compose("ps", "--quiet").stdout.split():
+        listed = self.compose("ps", "--quiet")
+        expect(listed.returncode == 0, f"compose ps failed:\n{tail(listed.stderr)}")
+        container_ids = listed.stdout.split()
+        expect(bool(container_ids), "compose ps lists no running container")
+        for container_id in container_ids:
             self.see_env(container_id)
-        self.compose("logs", "--no-log-prefix")
+        logs = self.compose("logs", "--no-log-prefix")
+        expect(logs.returncode == 0, f"compose logs failed:\n{tail(logs.stderr)}")
 
     def logs(self, service: str) -> str:
         return self.compose("logs", "--no-log-prefix", service).stdout
