@@ -11,7 +11,10 @@ ingress:
   - hostname: presentator.hallucinai.de
     service: http://localhost:8100
   # The login service is public on purpose: browsers and apps must reach it without an Access
-  # session. Traefik admits only the hallucinai realm and its static resources on this line.
+  # session. Cloudflare enforces Access at its own edge before this line, so the line needs its own
+  # Access app for auth.hallucinai.de whose one policy is Bypass (README, A8 step 3); without it the
+  # wildcard app covers auth too. No `access` block here: the bypass issues no token to check.
+  # Traefik admits only the hallucinai realm and its static resources on this line.
   - hostname: auth.hallucinai.de
     service: http://127.0.0.1:8081
   # Every other subdomain goes to the edge gatekeeper; cloudflared itself rejects requests

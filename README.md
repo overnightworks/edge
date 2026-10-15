@@ -9,9 +9,9 @@ GET-only socket proxy hands it the container list and events.
 
 Nothing here is reachable from outside until the operator applies the steps A8
 below. Cloudflare Access enforcement (and JWT checks) arrives with that step
-for every name except `auth`: the login service must be public, so its tunnel
-line has no Access (see [Keycloak](#keycloak-auth)). Until A8 the edge is a
-local service only.
+for every name except `auth`: the login service must be public, so it gets its
+own Access app whose one policy is Bypass, and its tunnel line has no JWT check
+(see [Keycloak](#keycloak-auth)). Until A8 the edge is a local service only.
 
 | File | Owns |
 |---|---|
@@ -456,11 +456,20 @@ credential.
    and add a passkey.
 7. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
    `rm ~/.secrets/keycloak/bootstrap-admin-password`.
-8. **Tunnel line.** The operator approves and applies the `auth.hallucinai.de`
-   line (A8, step 3) and, if not done yet, the DNS wildcard (A8, step 4).
-   Ready when
-   `https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration`
-   answers with the issuer `https://auth.hallucinai.de/realms/hallucinai`.
+8. **Public login.** The operator approves the `auth.hallucinai.de` bypass
+   app and tunnel line, then applies them (A8, steps 3 and 4) and, if not done
+   yet, the DNS wildcard (A8, step 5). Ready when a request without any
+   Cloudflare cookie gets the discovery document, not a 302 to
+   `cloudflareaccess.com`:
+
+   ```sh
+   curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
+     | grep -o '"issuer":"[^"]*"'
+   # "issuer":"https://auth.hallucinai.de/realms/hallucinai"
+   ```
+
+   The operator's own browser is no proof: it holds an Access session and
+   passes the wildcard app either way.
 
 ### Patch upgrade
 
@@ -522,14 +531,22 @@ what makes the edge reachable.
    answers 401 to a request without a session.
 2. **Wildcard Access app.** Create the Access app for `*.hallucinai.de`,
    operator only. Note its AUD tag and the team name.
-3. **Ingress line.** Apply `cloudflared-config.example.yml` to
+3. **Login bypass app.** Only after the operator has approved it and the
+   Keycloak go-live above holds through its step 7 (until then skip this step
+   and the `auth` line in step 4; go-live step 8 returns here): create a
+   second Access app for `auth.hallucinai.de` alone, with exactly one policy,
+   action **Bypass**, include **Everyone**. Cloudflare enforces Access at its own edge, per
+   hostname, before a request reaches the tunnel; without this more specific
+   app the wildcard app covers `auth` too, and browsers and the apps' token
+   calls meet the Access login. That a per-host app beats the wildcard app is
+   proven live by E4 in overnightworks/edge#1.
+4. **Ingress line.** Apply `cloudflared-config.example.yml` to
    `/etc/cloudflared/config.yml` with the real tunnel ID, team name and AUD tag
    (the wildcard rule always carries `access.required`, `teamName` and
    `audTag` together), then restart cloudflared. The apex, `www` and
    presentator rules stay ahead of the wildcard.
-   The `auth.hallucinai.de` line goes along only after the operator has
-   approved it and the Keycloak go-live below holds up to its step 6: it sits
-   ahead of the wildcard, has **no** Access (browsers and apps must reach the
-   login), and points to `http://127.0.0.1:8081`.
-4. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
+   The `auth.hallucinai.de` line goes along only together with step 3: it
+   sits ahead of the wildcard, carries **no** `access` block (no JWT check:
+   the bypass app issues no token), and points to `http://127.0.0.1:8081`.
+5. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
    `<name>.hallucinai.de` requests reach the edge, `auth` included.
