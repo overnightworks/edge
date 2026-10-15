@@ -4,6 +4,7 @@ import configparser
 import fcntl
 import itertools
 import json
+import os
 import re
 import stat
 import tempfile
@@ -77,6 +78,8 @@ class Machine:
     status_file: Path | None = None
     lock_free_during: set[str] = field(default_factory=set)
     """Labels of commands that ran while the host lock was free."""
+    missing_images: set[str] = field(default_factory=set)
+    """Pinned images `docker image prune -a` removed."""
     private_modes: dict[str, int] = field(default_factory=dict)
     """Modes of the staging and restore directories and files, seen while restic used them."""
 
@@ -104,6 +107,7 @@ class Machine:
             raise failure()
         answers = {
             "docker info": self._daemon,
+            "docker image inspect": self._image,
             "docker ps": self._containers,
             "docker inspect": self._state,
             "docker volume ls": self._volumes,
@@ -150,6 +154,9 @@ class Machine:
 
     def _daemon(self, argv, **_) -> bytes:
         return b"27.3.1\n"
+
+    def _image(self, argv, **_) -> bytes:
+        return _exit("docker image inspect", 1) if argv[-1] in self.missing_images else b"sha256:0"
 
     def _containers(self, argv, **_) -> bytes:
         if any("edge-backup-restore-test" in argument for argument in argv):
@@ -207,7 +214,8 @@ class Machine:
 
     def _snapshots(self, argv, **_) -> bytes:
         if "--json" in argv:
-            return json.dumps([{"id": s["id"]} for s in self.snapshots[-1:]]).encode()
+            listed = self.snapshots[-1:] if "--latest" in argv else self.snapshots
+            return json.dumps([{"id": s["id"]} for s in listed]).encode()
         return f"{len(self.snapshots)} snapshots\n".encode()
 
     def _restore(self, argv, **_) -> bytes:
@@ -343,13 +351,23 @@ def machine(monkeypatch, home) -> Machine:
     return machine
 
 
+def _status_if_readable(status_file: Path) -> dict | None:
+    """A status a run refused to touch may be unreadable or no JSON: then there is none to read."""
+    if not status_file.exists() or not os.access(status_file, os.R_OK):
+        return None
+    try:
+        return json.loads(status_file.read_text())
+    except ValueError:
+        return None
+
+
 @pytest.fixture
 def edge_backup(machine, home, capsys):
     def run(*arguments: str) -> Outcome:
         exit_code = cli.main(list(arguments))
         captured = capsys.readouterr()
         status_file = home / ".local/state/edge/backup-status.json"
-        status = json.loads(status_file.read_text()) if status_file.exists() else None
+        status = _status_if_readable(status_file)
         return Outcome(exit_code, captured.out, captured.err, status)
 
     return run
@@ -972,18 +990,43 @@ def test_a_broken_setup_fails_before_touching_docker(
     assert machine.calls == []
 
 
+def _write_unknown_schema_status(edge_backup, machine) -> None:
+    machine.status_file.parent.mkdir(parents=True)
+    machine.status_file.write_text(json.dumps({"schema": 2, "state": "ok"}))
+
+
+def _identity_of(path: Path) -> tuple[int, int, int, int]:
+    """Inode, mtime, size and mode: a rewrite or replacement changes at least one."""
+    seen = path.stat()
+    return seen.st_ino, seen.st_mtime_ns, seen.st_size, seen.st_mode
+
+
 @pytest.mark.parametrize(
     "break_status",
-    [_corrupt_the_status_file, _forbid_reading_the_status_file, _write_undecodable_status],
+    [
+        _corrupt_the_status_file,
+        _forbid_reading_the_status_file,
+        _write_undecodable_status,
+        _write_unknown_schema_status,
+    ],
 )
-def test_an_unreadable_status_file_is_replaced_by_a_failed_one(edge_backup, machine, break_status):
+@pytest.mark.parametrize(
+    "command",
+    [("backup",), ("restore-test",), ("restore", "songmaker", "--target", "restored")],
+    ids=lambda command: command[0],
+)
+def test_an_unreadable_status_file_is_never_overwritten(
+    edge_backup, machine, command, break_status
+):
     break_status(edge_backup, machine)
+    before = _identity_of(machine.status_file)
 
-    outcome = edge_backup("backup")
+    outcome = edge_backup(*command)
 
     assert outcome.exit_code == 1
-    assert "Statusdatei ist unlesbar" in outcome.err
-    assert outcome.status["state"] == "failed"
+    [line] = outcome.err.splitlines()
+    assert "Statusdatei ist unlesbar" in line
+    assert _identity_of(machine.status_file) == before
     assert machine.calls == []
 
 
@@ -1135,3 +1178,71 @@ def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
     with pytest.raises(SystemExit) as help_shown:
         cli.main([command, "--help"])
     assert help_shown.value.code == 0
+
+
+def _leave_a_partial_snapshot(machine: Machine) -> str:
+    """A failed run's restic exit 3 leaves a snapshot that no successful backup recorded."""
+    partial = {"id": "a973e990" * 8, "db": {"db.dump": b"partial"}, "audio": {}}
+    machine.snapshots.append(partial)
+    return partial["id"]
+
+
+def test_restore_takes_the_last_successful_backups_snapshot_not_a_newer_partial_one(
+    edge_backup, machine, home
+):
+    edge_backup("backup")
+    good = machine.snapshots[-1]["id"]
+    _leave_a_partial_snapshot(machine)
+    target = home / "restored"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(target))
+
+    assert outcome.exit_code == 0, outcome.err
+    assert good[:8] in outcome.out
+    assert (target / "db/db.dump").read_bytes() == DUMP
+
+
+def _forget_the_recorded_snapshot(machine: Machine) -> None:
+    machine.snapshots.pop()
+
+
+def _lose_the_status(machine: Machine) -> None:
+    machine.status_file.unlink()
+
+
+@pytest.mark.parametrize("break_history", [_forget_the_recorded_snapshot, _lose_the_status])
+def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newest(
+    edge_backup, machine, home, break_history
+):
+    edge_backup("backup")
+    edge_backup("backup")
+    break_history(machine)
+    target = home / "restored"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(target))
+
+    assert outcome.exit_code == 1
+    [line] = outcome.err.splitlines()
+    assert "letzten erfolgreichen Backups" in line
+    assert f"der neueste Snapshot ist {machine.snapshots[-1]['id'][:8]}" in line
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("image", [RESTIC_IMAGE, POSTGRES_IMAGE], ids=["restic", "postgres"])
+@pytest.mark.parametrize("command", ["backup", "restore-test"])
+def test_a_missing_pinned_image_fails_early_naming_it_and_how_to_pull_it(
+    edge_backup, machine, home, command, image
+):
+    machine.missing_images = {image}
+
+    outcome = edge_backup(command)
+
+    assert outcome.exit_code == 1
+    [line] = outcome.err.splitlines()
+    assert f"docker pull {image}" in line
+    assert set(machine.labels()) == {"docker image inspect"}
+    assert outcome.status["exit_category"] == "configuration"
+    assert (
+        not (home / ".cache/edge-backup").exists()
+        or list((home / ".cache/edge-backup").iterdir()) == []
+    )

@@ -21,7 +21,14 @@ from edge_backup.settings import (
     RESTORE_SERVER_TIMEOUT,
     Settings,
 )
-from edge_backup.status import ExitCategory, Phase, Status, write_status
+from edge_backup.status import (
+    ExitCategory,
+    Phase,
+    Status,
+    StatusFileError,
+    read_status,
+    write_status,
+)
 from edge_backup.verify import (
     DUMP_NAME,
     MANIFEST_NAME,
@@ -108,6 +115,7 @@ def require_password_file(settings: Settings) -> None:
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
+        _resolved(docker.require_pinned_images)
     snapshot_ids = [_back_up(settings, app, run) for app in apps]
     run.backed_up(snapshot_ids[-1])
     for app in apps:
@@ -120,6 +128,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
+        _resolved(docker.require_pinned_images)
     with run.phase(Phase.READINESS):
         _wait_until_ready(docker.require_daemon, READINESS_TIMEOUT, READINESS_POLL_SECONDS)
     for app in apps:
@@ -130,7 +139,7 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 
 
 def restore(settings: Settings, app: App, target: Path) -> str:
-    """The operator's restore: the latest snapshot of one app into a new private directory.
+    """The operator's restore: the last successful backup's snapshot into a new private directory.
 
     Never inside the work directory: the operator's plaintext stays out of what runs own and sweep.
     """
@@ -141,7 +150,7 @@ def restore(settings: Settings, app: App, target: Path) -> str:
     if target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     require_secret_and_repository(settings)
-    snapshot_id = _latest_snapshot(settings, app)
+    snapshot_id = _last_successful_snapshot(settings, app)
     target.mkdir(mode=0o700, parents=True)
     restic.restore(settings, app.name, snapshot_id, target)
     return snapshot_id
@@ -195,6 +204,23 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
                 app.restore_test.audio_reference_table, app.restore_test.audio_reference_column
             )
     check_audio_references(references, restored_audio)
+
+
+def _last_successful_snapshot(settings: Settings, app: App) -> str:
+    """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
+    try:
+        status = read_status(settings.status_file)
+    except StatusFileError as error:
+        raise StepFailed(ExitCategory.CONFIGURATION, str(error)) from error
+    newest = _latest_snapshot(settings, app)
+    last_good = None if status is None else status.last_snapshot_id
+    if last_good is None or not restic.has_snapshot(settings, app.name, last_good):
+        raise StepFailed(
+            ExitCategory.CONFIGURATION,
+            f"der Snapshot des letzten erfolgreichen Backups von {app.name} fehlt; "
+            f"der neueste Snapshot ist {newest[:8]}",
+        )
+    return last_good
 
 
 def _latest_snapshot(settings: Settings, app: App) -> str:

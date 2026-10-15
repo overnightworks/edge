@@ -182,7 +182,10 @@ The database container and the volume are found by their
 
 restic runs from the official image, pinned by version and digest
 (`restic/restic:0.19.1@sha256:…`, see `src/edge_backup/settings.py`), with no
-network, no capabilities and a read-only root, as your own user. The password
+network, no capabilities and a read-only root, as your own user. Backup and
+restore test check first that the pinned restic and postgres images are
+present and fail early, before staging anything, naming the image and
+`docker pull`. `docker image prune -a` removes them: pull them again. The password
 file is mounted read-only at `/run/secrets/restic-password` and handed to
 restic only as `--password-file`; edge-backup never reads, prints or logs it.
 
@@ -282,6 +285,11 @@ marked as its own; anything else in that directory stays.
 `last_successful_backup` moves on and `state` is `failed`. The file holds no
 output, command line, path or file name.
 
+A status file that cannot be read (mode 000, corrupt JSON, an unknown
+`schema`) is never overwritten: backup, restore test and restore fail with one
+German line and exit 1, and the file stays byte-identical. Past successes are
+never replaced by nulls; repair or remove the file by hand to go on.
+
 `state` describes the latest run of either command, backup or restore test: a
 failed Sunday backup followed two hours later by a passing restore test reads
 `ok`, and a timer that never fires leaves the last `ok` standing. A reader
@@ -299,7 +307,11 @@ therefore also judges freshness: `last_successful_backup` no older than about
 uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
-It holds `db/db.dump` and `audio/`. Loading them into the live app is a
+It restores the snapshot of the **last successful backup**
+(`last_snapshot_id` in the status) and prints its short ID, never a newer
+snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
+that snapshot is gone, or the status names none, `restore` refuses with one
+German line and exit 1 and names the newest snapshot. It holds `db/db.dump` and `audio/`. Loading them into the live app is a
 deliberate manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the
 block as a whole: it runs in a subshell that stops at the first failing command,

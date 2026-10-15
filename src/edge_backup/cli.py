@@ -113,9 +113,12 @@ def _recorded(
     started = host.now()
     try:
         previous = read_status(settings.status_file)
-        unreadable_status = None
     except StatusFileError as error:
-        previous, unreadable_status = None, StepFailed(ExitCategory.CONFIGURATION, str(error))
+        # The file holds the only record of past successes: it is left untouched, not replaced.
+        runner.sweep_leftover_staging(settings.work_dir)
+        raise StepFailed(
+            ExitCategory.CONFIGURATION, f"{error}; die Datei bleibt unverändert"
+        ) from error
     run = Run(
         settings.status_file,
         first_attempt(started) if previous is None else previous.attempt(started),
@@ -123,8 +126,6 @@ def _recorded(
     try:
         # Even a run that fails at once sweeps first, so a killed run's plaintext never waits.
         runner.sweep_leftover_staging(settings.work_dir)
-        if unreadable_status is not None:
-            raise unreadable_status
         step(settings, _apps(arguments.apps), run)
     except StepFailed as failure:
         run.failed(failure.category)

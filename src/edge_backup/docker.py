@@ -10,7 +10,7 @@ from pathlib import Path
 from edge_backup import host
 from edge_backup.apps import App
 from edge_backup.restic import Mount, MountKind, container_argv
-from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, Settings
+from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, RESTIC_IMAGE, Settings
 
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -47,6 +47,22 @@ def require_daemon() -> None:
         )
     except host.HostCommandError as error:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+
+
+def require_pinned_images() -> None:
+    """Docker never pulls on its own here: `docker image prune -a` removes what runs need."""
+    for image in (RESTIC_IMAGE, POSTGRES_IMAGE):
+        try:
+            host.run(
+                ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+                label="docker image inspect",
+                timeout=PROBE_TIMEOUT,
+            )
+        except host.HostCommandError as error:
+            raise TargetError(
+                f"das gepinnte Image {image} fehlt oder Docker antwortet nicht; "
+                f"neu laden mit: docker pull {image}"
+            ) from error
 
 
 def database_container(app: App) -> str:
