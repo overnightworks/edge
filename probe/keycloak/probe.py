@@ -737,9 +737,17 @@ class Probe:
             "1", f"public discovery issuer {issuer}; the login page renders without HTTPS error"
         )
 
+        localization = through_tunnel("GET", f"/resources/{REALM}/account/en")
+        expect(
+            localization.status == 200,
+            f"the hallucinai account localization answered {localization.status}",
+        )
+
         refused = [
             (PUBLIC_HOST, "/realms/master/.well-known/openid-configuration"),
             (PUBLIC_HOST, "/realms/master/protocol/openid-connect/token"),
+            (PUBLIC_HOST, "/resources/master/login/en"),
+            (PUBLIC_HOST, "/resources/master/admin/en"),
             (PUBLIC_HOST, "/admin/"),
             (PUBLIC_HOST, "/admin/master/console/"),
             (PUBLIC_HOST, "/metrics"),
@@ -760,8 +768,9 @@ class Probe:
         expect(encoded.status == 400, f"an encoded slash on 8081 answered {encoded.status}")
         self.held(
             "2a",
-            f"8081 answers /realms/hallucinai/ and /resources/; Traefik refuses {len(refused)} "
-            "master, admin, metrics, health, root, traversal and Host: localhost requests (404) "
+            f"8081 answers /realms/hallucinai/, its localization and the versioned static "
+            f"resources; Traefik refuses {len(refused)} master realm and master resources, admin, "
+            "metrics, health, root, traversal and Host: localhost requests (404) "
             "and an encoded slash inside the admitted prefix (400)",
         )
 

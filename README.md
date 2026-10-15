@@ -28,9 +28,11 @@ own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 ## Threat model
 
 Access protects every edge name except `auth`, which is public by design:
-there Traefik admits only `/realms/hallucinai/` and `/resources/`, so the master
-realm, the admin console, metrics and health never reach the tunnel. On the
-machine any process reaches any tool, the Keycloak admin entrypoint included.
+there Traefik admits only `/realms/hallucinai/`, `/resources/hallucinai/` and
+Keycloak's versioned static `/resources/<5 characters>/`, so the master realm (its
+`/resources/master/` texts included), the admin console, metrics and health never
+reach the tunnel. On the machine any process reaches any tool, the Keycloak admin
+entrypoint included.
 
 The allowed container inspection is privileged read access and can expose
 container environment values; review evidence must not dump those payloads.
@@ -384,7 +386,7 @@ two ways:
 
 | Entrypoint | Host | Admits |
 |---|---|---|
-| `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…` and `/resources/…` only; everything else is Traefik's 404 |
+| `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…`, `/resources/hallucinai/…` and the versioned static `/resources/<5 characters>/…` only; everything else, `/resources/master/…` included, is Traefik's 404 |
 | `admin` (`127.0.0.1:8090`, this PC only) | `localhost` | the admin console and the master realm (`http://localhost:8090/admin/`) |
 
 The public issuer is `https://auth.<EDGE_DOMAIN>/realms/hallucinai`; the

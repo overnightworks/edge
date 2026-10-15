@@ -106,11 +106,14 @@ services:
       traefik.enable: "true"
       edge.name: auth
       traefik.http.services.auth.loadbalancer.server.port: "8080"
-      # The tunnel reaches only the hallucinai realm and the static resources it renders with.
+      # The tunnel reaches only the hallucinai realm, its localization and the static resources
+      # under Keycloak's five-character resources version. Any wider /resources/ prefix admits
+      # /resources/master/…, the master realm's localization texts.
       traefik.http.routers.auth.entrypoints: edge
       traefik.http.routers.auth.service: auth
       traefik.http.routers.auth.rule: >-
-        Host(`auth.${EDGE_DOMAIN}`) && (PathPrefix(`/realms/hallucinai/`) || PathPrefix(`/resources/`))
+        Host(`auth.${EDGE_DOMAIN}`) && (PathPrefix(`/realms/hallucinai/`)
+        || PathPrefix(`/resources/hallucinai/`) || PathRegexp(`^/resources/[a-z0-9]{5}/`))
       # The admin console and the master realm answer on the loopback-only admin entrypoint.
       traefik.http.routers.auth-admin.entrypoints: admin
       traefik.http.routers.auth-admin.service: auth
