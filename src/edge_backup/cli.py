@@ -151,7 +151,7 @@ def _apps(path: Path) -> tuple[App, ...]:
 def _command[**P, T](operation: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     try:
         return operation(*args, **kwargs)
-    except (host.HostCommandError, host.UnreadableOutputError) as error:
+    except host.HostError as error:
         raise StepFailed(ExitCategory.COMMAND_FAILED, str(error)) from error
 
 

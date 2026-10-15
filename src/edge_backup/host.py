@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import BinaryIO
 
 
-class HostCommandError(RuntimeError):
+class HostError(RuntimeError):
+    """A host step failed in a way every command reports as one German line, not a traceback."""
+
+
+class HostCommandError(HostError):
     """A command could not run or exited non-zero; the message names the step, never argv."""
 
     def __init__(self, label: str, exit_code: int | None) -> None:
@@ -23,7 +27,7 @@ class HostCommandError(RuntimeError):
         super().__init__(f"{label} {reason}")
 
 
-class UnreadableOutputError(RuntimeError):
+class UnreadableOutputError(HostError):
     """A command succeeded but printed something the runner cannot read."""
 
 

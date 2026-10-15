@@ -54,7 +54,7 @@ class Run:
         self._record(self._status.entering(phase))
         try:
             yield
-        except (host.HostCommandError, host.UnreadableOutputError) as error:
+        except host.HostError as error:
             raise StepFailed(failing, f"Phase {phase}: {error}") from error
         except VerificationError as error:
             raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"Phase {phase}: {error}") from error
