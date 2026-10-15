@@ -14,6 +14,7 @@ from edge_backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
 REPOSITORY = "/repo"
 PASSWORD_FILE = "/run/secrets/restic-password"
 RESTORE_TARGET = "/restore"
+SCRATCH = "/scratch"
 RETRY_LOCK = "5m"
 KEEP_WEEKLY = 4
 KEEP_MONTHLY = 3
@@ -50,7 +51,10 @@ def container_argv(settings: Settings, *mounts: Mount, entrypoint: str | None = 
         "--network", "none",
         "--hostname", RESTIC_HOSTNAME,
         "--user", f"{settings.uid}:{settings.gid}",
-        "--read-only", "--tmpfs", "/tmp",
+        "--read-only",
+        # restic stages pack files in TMPDIR: a tmpfs only this container's user can enter.
+        "--tmpfs", f"{SCRATCH}:mode=0700,uid={settings.uid},gid={settings.gid}",
+        "--env", f"TMPDIR={SCRATCH}",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
     ]  # fmt: skip
     argv += [argument for mount in mounts for argument in ("--mount", mount.as_argument())]

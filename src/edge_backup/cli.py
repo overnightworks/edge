@@ -24,14 +24,11 @@ class ExitCode(IntEnum):
     FAILED = 1
 
 
-class Interrupted(BaseException):
-    """systemd stopped the unit; raised so cleanup runs and the status says `failed`."""
-
-
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     settings = Settings.for_home(Path.home(), os.getuid(), os.getgid())
-    previous_handler = signal.signal(signal.SIGTERM, _interrupt)
+    # systemd stops a unit with SIGTERM: as KeyboardInterrupt, cleanup runs and the status fails.
+    previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         return arguments.command(settings, arguments)
     except StepFailed as failure:
@@ -130,7 +127,7 @@ def _recorded(
         except StepFailed as failure:
             run.failed(failure.category)
             return _report(failure)
-        except (KeyboardInterrupt, Interrupted):
+        except KeyboardInterrupt:
             run.failed(ExitCategory.INTERRUPTED)
             return _report(StepFailed(ExitCategory.INTERRUPTED, "abgebrochen"))
         except BaseException:
@@ -161,7 +158,3 @@ def _command[**P, T](operation: Callable[P, T], *args: P.args, **kwargs: P.kwarg
 def _report(failure: StepFailed) -> int:
     print(f"edge-backup: fehlgeschlagen: {failure}", file=sys.stderr)
     return ExitCode.FAILED
-
-
-def _interrupt(signal_number: int, _frame: object) -> None:
-    raise Interrupted(signal_number)

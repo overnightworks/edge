@@ -1,6 +1,7 @@
 """edge-backup driven through its CLI, with a scripted Docker host in place of docker and restic."""
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -254,7 +255,8 @@ def test_backup_forgets_by_host_and_app_tag_then_checks(edge_backup, machine):
         *expected_scope,
         *["--keep-weekly", "4", "--keep-monthly", "3", "--prune"],
     ]
-    assert "--retry-lock" in forget and "--no-lock" not in forget
+    assert "--retry-lock" in forget
+    assert "--no-lock" not in forget
 
 
 def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_backup, machine):
@@ -556,7 +558,8 @@ def test_status_holds_the_contract_keys_and_no_paths_or_output(edge_backup, mach
 
     assert set(json.loads(status_text)) == STATUS_KEYS
     assert str(home) not in status_text
-    assert "u1/" not in status_text and "docker" not in status_text
+    assert "u1/" not in status_text
+    assert "docker" not in status_text
 
 
 def test_the_password_never_appears_in_argv_output_status_or_errors(edge_backup, machine):
@@ -644,9 +647,10 @@ def test_apps_toml_accepts_only_validated_records(change, message):
         if not line.startswith(f"{key} =")
     ]
     lines.insert(lines.index("[app.songmaker]") + 1, f"{key} = {value}")
+    text = "\n".join(lines)
 
-    with pytest.raises(AppsError, match=message.replace("[", r"\[").replace("]", r"\]")):
-        parse_apps("\n".join(lines))
+    with pytest.raises(AppsError, match=re.escape(message)):
+        parse_apps(text)
 
 
 def test_apps_toml_rejects_an_unsafe_sql_identifier():
