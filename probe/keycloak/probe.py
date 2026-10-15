@@ -27,9 +27,10 @@ import struct
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy
+from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy, parse_ns_headers
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -108,6 +109,26 @@ class LocalhostIsSecure(DefaultCookiePolicy):
         return urlsplit(request.full_url).hostname == "localhost" or super().return_ok_secure(
             cookie, request
         )
+
+
+class ReceivedCookies(CookieJar):
+    """A browser's cookie jar that hands every nonempty value a response sets to `keep` as it
+    arrives, so proof 7 looks for it even after a later response replaces or expires it."""
+
+    def __init__(self, keep: Callable[[str, str], object]) -> None:
+        super().__init__(policy=LocalhostIsSecure())
+        self.keep = keep
+        self.received = 0
+
+    def extract_cookies(self, response: Any, request: Request) -> None:
+        for name_and_value, *_attributes in parse_ns_headers(
+            response.info().get_all("Set-Cookie", [])
+        ):
+            name, value = name_and_value
+            if value:
+                self.received += 1
+                self.keep(f"cookie {name} #{self.received}", value)
+        super().extract_cookies(response, request)
 
 
 def new_opener(cookies: CookieJar | None = None) -> OpenerDirector:
@@ -706,8 +727,9 @@ class Probe:
         action and the fields to post. The PKCE verifier, the authorization code and the session
         cookies are credentials as well, so proof 7 looks for them too.
         """
-        cookies = CookieJar(policy=LocalhostIsSecure())
-        opener = new_opener(cookies)
+        opener = new_opener(
+            ReceivedCookies(lambda name, value: self.keep_secret(f"{holder} {name}", value))
+        )
         verifier = self.keep_secret(f"{holder} PKCE verifier", secrets.token_urlsafe(48))
         digest = hashlib.sha256(verifier.encode()).digest()
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
@@ -751,11 +773,9 @@ class Probe:
             "code": code,
             "code_verifier": verifier,
         }
-        token_reply = http("POST", MASTER_TOKEN_URL, form=token_form, opener=opener)
-        for cookie in cookies:
-            if cookie.value:
-                self.keep_secret(f"{holder} cookie {cookie.name} on {cookie.path}", cookie.value)
-        return self.tokens_from(holder, token_reply)
+        return self.tokens_from(
+            holder, http("POST", MASTER_TOKEN_URL, form=token_form, opener=opener)
+        )
 
     def admin_console_only_on_loopback(self, admin: Admin) -> None:
         master_discovery = http("GET", f"{MASTER_ISSUER}/.well-known/openid-configuration")
