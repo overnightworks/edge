@@ -2,12 +2,25 @@
 
 import json
 import subprocess
+from dataclasses import dataclass
 
 from edge_check.exposure import UnreadableOutputError
 
-DOCKER_CONTAINER_IDS = ("docker", "ps", "--all", "--quiet", "--no-trunc")
-DOCKER_INSPECT = ("docker", "inspect")
-SOCKET_LISTENERS = ("ss", "-H", "-ltnupe")
+
+@dataclass(frozen=True)
+class HostCommand:
+    """A fixed argv and the name its failures are reported under."""
+
+    name: str
+    argv: tuple[str, ...]
+
+    def with_arguments(self, *arguments: str) -> "HostCommand":
+        return HostCommand(self.name, (*self.argv, *arguments))
+
+
+DOCKER_CONTAINER_IDS = HostCommand("docker ps", ("docker", "ps", "--all", "--quiet", "--no-trunc"))
+DOCKER_INSPECT = HostCommand("docker inspect", ("docker", "inspect"))
+SOCKET_LISTENERS = HostCommand("ss", ("ss", "-H", "-ltnupe"))
 HOST_COMMAND_TIMEOUT_SECONDS = 30
 
 
@@ -19,7 +32,7 @@ def docker_inspect_json() -> str:
     container_ids = _run(DOCKER_CONTAINER_IDS).split()
     if not container_ids:
         return "[]"
-    inspect_json = _run((*DOCKER_INSPECT, *container_ids))
+    inspect_json = _run(DOCKER_INSPECT.with_arguments(*container_ids))
     _require_every_container_inspected(inspect_json, len(container_ids))
     return inspect_json
 
@@ -40,10 +53,10 @@ def _require_every_container_inspected(inspect_json: str, listed: int) -> None:
         )
 
 
-def _run(argv: tuple[str, ...]) -> str:
+def _run(command: HostCommand) -> str:
     try:
         completed = subprocess.run(
-            argv,
+            command.argv,
             capture_output=True,
             text=True,
             check=True,
@@ -51,12 +64,12 @@ def _run(argv: tuple[str, ...]) -> str:
         )
     except subprocess.TimeoutExpired as error:
         raise HostCommandError(
-            f"{' '.join(argv[:2])} did not answer within {HOST_COMMAND_TIMEOUT_SECONDS:g} s"
+            f"{command.name} did not answer within {HOST_COMMAND_TIMEOUT_SECONDS:g} s"
         ) from error
     except FileNotFoundError as error:
-        raise HostCommandError(f"{argv[0]} is not installed") from error
+        raise HostCommandError(f"{command.argv[0]} is not installed") from error
     except subprocess.CalledProcessError as error:
         raise HostCommandError(
-            f"{' '.join(argv[:2])} failed with exit {error.returncode}: {error.stderr.strip()}"
+            f"{command.name} failed with exit {error.returncode}: {error.stderr.strip()}"
         ) from error
     return completed.stdout
