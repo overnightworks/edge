@@ -1,0 +1,8 @@
+claim_id = "366241887c784c1ab64e78ceca08baaa"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "8cae17c7bf921f52314823260c52b2c4d3931dfa"
+branch = "claude/issue-12-k11a-keycloak"
+scope = [".env.example", ".github/workflows/ci.yml", "README.md", "cloudflared-config.example.yml", "compose.yaml", "keycloak", "probe/keycloak", "traefik.yml"]
+opened_commit = "cc6962d87907812ee2c48bd01de4f65b4ef8b0ed"
+whole_reason = "One identity service, its configuration-as-code and its proof form one deploy unit."
