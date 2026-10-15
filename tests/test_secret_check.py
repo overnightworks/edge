@@ -1,0 +1,90 @@
+"""The structural secret check refuses a literal in every YAML style, and passes the real files."""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+CHECK = ROOT / "keycloak" / "secret-check" / "secret_check.py"
+
+KEYCLOAK_BLOCK = "clients:\n  - clientId: x\n    secret: Tr0ub4dor\n"
+KEYCLOAK_FLOW = "clients:\n  - {clientId: x, secret: Tr0ub4dor}\n"
+KEYCLOAK_FLOW_SHORT = "{clientId: x, secret: Tr0ub4dor}\n"
+KEYCLOAK_CAMEL_CASE = "users:\n  - {adminPassword: Tr0ub4dor}\n"
+
+
+def compose_with(environment: str) -> str:
+    return f"services:\n  a:\n    environment:{environment}\n"
+
+
+# style: (file, content, offending key)
+LITERALS = {
+    "block": ("keycloak/realm.yaml", KEYCLOAK_BLOCK, "secret"),
+    "flow": ("keycloak/realm.yaml", KEYCLOAK_FLOW, "secret"),
+    "flow-short": ("keycloak/realm.yaml", KEYCLOAK_FLOW_SHORT, "secret"),
+    "camel-case-key": ("keycloak/master.yaml", KEYCLOAK_CAMEL_CASE, "adminPassword"),
+    "compose-flow": ("compose.yaml", compose_with(" {KC_DB_PASSWORD: hunter2}"), "KC_DB_PASSWORD"),
+    "compose-list": (
+        "compose.yaml",
+        compose_with("\n      - KC_DB_PASSWORD=hunter2"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-lowercase": (
+        "compose.yaml",
+        compose_with("\n      db_password: hunter2"),
+        "db_password",
+    ),
+    "docker-compose-override": (
+        "docker-compose.override.yml",
+        compose_with("\n      KC_DB_PASSWORD: hunter2"),
+        "KC_DB_PASSWORD",
+    ),
+    "compose-overlay": (
+        "probe/compose.probe.yaml",
+        compose_with("\n      APP_SECRET: hunter2"),
+        "APP_SECRET",
+    ),
+}
+
+REFERENCES = {
+    "keycloak/realm.yaml": "clients:\n  - {clientId: x, secret: $(env:RP_SECRET)}\n",
+    "compose.yaml": compose_with(
+        "\n      DB_PASSWORD_FILE: /run/secrets/db\n      APP_SECRET: ${APP_SECRET}"
+    ),
+}
+
+
+def run_check(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "--script", str(CHECK), str(root)], capture_output=True, text=True
+    )
+
+
+def plant(root: Path, name: str, content: str) -> None:
+    (root / name).parent.mkdir(parents=True, exist_ok=True)
+    (root / name).write_text(content)
+
+
+@pytest.mark.parametrize("style", LITERALS)
+def test_a_literal_secret_exits_non_zero_naming_file_and_key(style: str, tmp_path: Path) -> None:
+    name, content, key = LITERALS[style]
+    plant(tmp_path, name, content)
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert f"{name}: {key} holds a literal" in result.stdout
+
+
+def test_references_and_file_paths_pass(tmp_path: Path) -> None:
+    for name, content in REFERENCES.items():
+        plant(tmp_path, name, content)
+
+    assert run_check(tmp_path).returncode == 0
+
+
+def test_the_repository_files_pass() -> None:
+    result = run_check(ROOT)
+
+    assert result.returncode == 0, result.stdout

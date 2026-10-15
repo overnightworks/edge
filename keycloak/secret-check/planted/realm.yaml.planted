@@ -1,4 +1,0 @@
-realm: planted
-clients:
-  - clientId: planted
-    secret: planted-literal-not-a-secret

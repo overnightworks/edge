@@ -430,11 +430,13 @@ chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 070
 ```
 
 `bootstrap-admin-password` lives only until the go-live's step 7.
-CI's step "No secret in any file" runs gitleaks with
-`keycloak/secret-check/gitleaks.toml`: a value whose key ends in `secret` or
-`password` in `keycloak/*.yaml` must be a `$(env:…)` reference, and a
-`PASSWORD`/`SECRET` key in any compose file (`compose.yaml` and its overlays)
-must be a `_FILE` path.
+CI's step "No secret in any file" runs gitleaks for literal-looking secrets and
+`keycloak/secret-check/secret_check.py`, which reads the YAML (block, flow and
+list style alike): a value whose key ends in `secret` or `password` in
+`keycloak/*.yaml` must be a `$(env:…)` reference, and a `PASSWORD`/`SECRET`
+environment entry in any compose file Compose may load (`compose*.yaml`,
+`docker-compose*.yml`, overlays included) must be a `_FILE` path or a `${…}`
+interpolation.
 
 ### Start and apply
 

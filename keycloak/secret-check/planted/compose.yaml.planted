@@ -1,4 +1,0 @@
-services:
-  planted:
-    environment:
-      KC_DB_PASSWORD: planted-literal-not-a-secret

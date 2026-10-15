@@ -136,37 +136,10 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check
           tar -xzf gitleaks.tar.gz gitleaks
 
-      # The real files pass, and each repository rule catches its planted literal, so a rule that
-      # silently stopped matching turns this step red.
+      # gitleaks finds literal-looking secrets anywhere; the structural rule (a literal in
+      # keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.
+      # tests/test_secret_check.py plants each style, so a check that stops matching turns it red.
       - name: No secret in any file
         run: |
-          set -euo pipefail
-          gitleaks="$RUNNER_TEMP/gitleaks"
-          config=keycloak/secret-check/gitleaks.toml
-          "$gitleaks" dir --no-banner --redact --config "$config" .
-          planted="$RUNNER_TEMP/planted"
-          mkdir -p "$planted/keycloak" "$planted/probe"
-          cp keycloak/secret-check/planted/realm.yaml.planted "$planted/keycloak/realm.yaml"
-          cp keycloak/secret-check/planted/compose.yaml.planted "$planted/compose.yaml"
-          cp keycloak/secret-check/planted/compose.yaml.planted "$planted/probe/compose.probe.yaml"
-          if "$gitleaks" dir --no-banner --redact --config "$config" \
-              --report-format json --report-path "$RUNNER_TEMP/planted.json" "$planted"; then
-            echo "::error::the planted literals passed the secret check" >&2
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/planted.json" <<'PY'
-          import json, sys
-          findings = json.load(open(sys.argv[1]))
-          caught = {finding["RuleID"] for finding in findings}
-          missing = {"keycloak-config-literal-secret", "compose-literal-secret"} - caught
-          if missing:
-              sys.exit(f"planted literals not caught by {sorted(missing)}")
-          overlay = [
-              f for f in findings
-              if f["RuleID"] == "compose-literal-secret"
-              and f["File"].endswith("/probe/compose.probe.yaml")
-          ]
-          if not overlay:
-              sys.exit("the planted literal in the overlay probe/compose.probe.yaml passed")
-          print(f"planted literals caught by {sorted(caught)}, the compose overlay included")
-          PY
+          "$RUNNER_TEMP/gitleaks" dir --no-banner --redact .
+          uv run --script keycloak/secret-check/secret_check.py .
