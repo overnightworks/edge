@@ -6,5 +6,3 @@ Documentation=file://%h/git/edge/README.md
 Type=oneshot
 ExecStart=%h/git/edge/.venv/bin/edge-backup restore-test
 TimeoutStartSec=6h
-Nice=10
-IOSchedulingClass=idle

@@ -14,6 +14,8 @@ from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, Settings
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
 VOLUME_LABEL = "com.docker.compose.volume"
+# `docker compose run` leaves one-off containers with the same project and service labels.
+ONEOFF_LABEL = "com.docker.compose.oneoff"
 RESTORE_SERVER = "edge-backup-restore-test"
 # Marks a throwaway server as edge-backup's own: only a container carrying it is ever removed.
 RESTORE_OWNER_LABEL = "edge-backup.role"
@@ -50,7 +52,8 @@ def database_container(app: App) -> str:
             host.run(
                 ["docker", "ps", "--all", "--quiet", "--no-trunc",
                  *_label_filter(PROJECT_LABEL, app.compose_project),
-                 *_label_filter(SERVICE_LABEL, app.db_service)],
+                 *_label_filter(SERVICE_LABEL, app.db_service),
+                 *_label_filter(ONEOFF_LABEL, "False")],
                 label="docker ps",
                 timeout=PROBE_TIMEOUT,
             )

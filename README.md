@@ -273,6 +273,12 @@ It never touches the live database or volume.
 `last_successful_backup` moves on and `state` is `failed`. The file holds no
 output, command line, path or file name.
 
+`state` describes the latest run of either command, backup or restore test: a
+failed Sunday backup followed two hours later by a passing restore test reads
+`ok`, and a timer that never fires leaves the last `ok` standing. A reader
+therefore also judges freshness: `last_successful_backup` no older than about
+8 days, `last_successful_restore_test` no older than about 5 weeks.
+
 | Exit | Meaning |
 |---|---|
 | 0 | every phase succeeded |
@@ -284,16 +290,38 @@ output, command line, path or file name.
 uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory
 ```
 
-It holds `db/db.dump` and `audio/`. Loading the dump into the live database
-and copying audio back into the volume is a deliberate manual step: stop the
-app first, then use `pg_restore` and a container that mounts the volume.
+It holds `db/db.dump` and `audio/`. Loading them into the live app is a
+deliberate manual step. Stop every Songmaker container except its database,
+load the dump, copy the audio back into the volume, start them again:
+
+```sh
+restored=~/restore-songmaker
+pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
+  --filter label=com.docker.compose.service=postgres \
+  --filter label=com.docker.compose.oneoff=False)
+stopped=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker | grep -vx "$pg")
+docker stop $stopped
+docker exec -i "$pg" pg_restore --username songmaker --dbname songmaker \
+  --clean --if-exists --single-transaction --exit-on-error < "$restored/db/db.dump"
+docker run --rm --network none \
+  --mount type=bind,source="$restored/audio",target=/from,readonly \
+  --mount type=volume,source=songmaker_audiofiles,target=/to \
+  alpine:3 cp -a /from/. /to/
+docker start $stopped
+```
+
+`cp -a` adds and overwrites; audio written after the snapshot stays in the
+volume. The copied files keep the owner restic restored them with (your user).
 
 ### Stale locks
 
 edge-backup's host lock frees itself when the process ends. A restic lock left
-by a killed run is removed with `uv run edge-backup unlock` (it removes stale
-locks only); every command waits up to 5 minutes for a live lock and never
-runs with `--no-lock`.
+by a killed run is removed with `uv run edge-backup unlock`, but only once it
+is stale: every container is host `edge-backup` with restic as PID 1, so
+restic cannot tell from the PID that the run died and counts its lock as
+stale only after 30 minutes. Until then `unlock` leaves it, and a new run
+waits up to 5 minutes for it, then fails. No command ever runs with
+`--no-lock`.
 
 ### The old backup
 

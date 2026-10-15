@@ -7,5 +7,3 @@ Type=oneshot
 # The checkout lives at ~/git/edge and `uv sync` has built its .venv (README: backup setup).
 ExecStart=%h/git/edge/.venv/bin/edge-backup backup
 TimeoutStartSec=6h
-Nice=10
-IOSchedulingClass=idle

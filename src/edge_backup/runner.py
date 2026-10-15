@@ -156,26 +156,30 @@ def _restore_test(settings: Settings, app: App, run: Run) -> None:
     with _private_directory(settings.work_dir) as restored:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)
-        with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
-            _verify(settings, app, restored / "db", restored / "audio")
+        with run.phase(Phase.VERIFY):
+            _verify(settings, app, restored, run)
 
 
-def _verify(settings: Settings, app: App, restored_db: Path, restored_audio: Path) -> None:
-    manifest = Manifest.from_json(_read_restored(restored_db / MANIFEST_NAME))
+def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
+    """Only what the copy shows fails verification; a container that will not run is a command."""
+    restored_db, restored_audio = restored / restic.DB_FOLDER, restored / restic.AUDIO_FOLDER
+    manifest_file = _restored_file(restored_db / MANIFEST_NAME, "kein Manifest")
+    manifest = Manifest.from_json(manifest_file.read_text(encoding="utf-8"))
+    dump = _restored_file(restored_db / DUMP_NAME, "keinen Datenbank-Dump")
     check_audio_count(
         manifest, docker.count_audio_files(settings, MountKind.BIND, str(restored_audio))
     )
-    dump = restored_db / DUMP_NAME
     with docker.restore_server() as server:
         _wait_until_ready(
             lambda: _ready_or_raise(server), RESTORE_SERVER_TIMEOUT, RESTORE_SERVER_POLL_SECONDS
         )
-        server.list_dump(dump)
-        server.load_dump(dump)
-        server.row_count(app.restore_test.count_table)
-        references = server.column_values(
-            app.restore_test.audio_reference_table, app.restore_test.audio_reference_column
-        )
+        with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
+            server.list_dump(dump)
+            server.load_dump(dump)
+            server.row_count(app.restore_test.count_table)
+            references = server.column_values(
+                app.restore_test.audio_reference_table, app.restore_test.audio_reference_column
+            )
     check_audio_references(references, restored_audio)
 
 
@@ -212,11 +216,10 @@ def _ready_or_raise(server: docker.RestoreServer) -> None:
         raise docker.NotReadyError("die Wegwerf-Datenbank startet nicht")
 
 
-def _read_restored(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise VerificationError("der Snapshot enthält kein Manifest") from None
+def _restored_file(path: Path, missing: str) -> Path:
+    if not path.is_file():
+        raise VerificationError(f"der Snapshot enthält {missing}")
+    return path
 
 
 def _write_private(path: Path, text: str) -> None:

@@ -54,6 +54,8 @@ class Machine:
     """Throwaway servers a killed restore test left behind; they carry the owner label."""
     foreign_server_name: bool = False
     """A container that is not edge-backup's already holds the throwaway server's name."""
+    snapshot_without: set[str] = field(default_factory=set)
+    """Staged files a snapshot lacks, as if they had vanished before restic's scan."""
     starting_server_polls: int = 1
     """How many pg_isready polls find the throwaway server still starting."""
     server_accepting: bool = False
@@ -183,7 +185,11 @@ class Machine:
         self.snapshots.append(
             {
                 "id": snapshot_id,
-                "db": {path.name: path.read_bytes() for path in staging.iterdir()},
+                "db": {
+                    path.name: path.read_bytes()
+                    for path in staging.iterdir()
+                    if path.name not in self.snapshot_without
+                },
                 "audio": self.audio | self.written_during_scan,
             }
         )
@@ -378,6 +384,7 @@ def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_b
         "docker", "ps", "--all", "--quiet", "--no-trunc",
         "--filter", "label=com.docker.compose.project=songmaker",
         "--filter", "label=com.docker.compose.service=postgres",
+        "--filter", "label=com.docker.compose.oneoff=False",
     ]  # fmt: skip
     assert machine.argv_of("pg_dump") == [
         "docker", "exec", "-i", SONGMAKER_CONTAINER, "pg_dump",
@@ -680,6 +687,14 @@ def _corrupt_the_dump(machine: Machine) -> None:
     machine.failing["pg_restore"] = 1
 
 
+def _lose_the_dump(machine: Machine) -> None:
+    machine.snapshot_without = {"db.dump"}
+
+
+def _lose_the_manifest(machine: Machine) -> None:
+    machine.snapshot_without = {"manifest.json"}
+
+
 @pytest.mark.parametrize(
     ("break_backup", "message"),
     [
@@ -688,6 +703,8 @@ def _corrupt_the_dump(machine: Machine) -> None:
         (_reference_an_empty_file, "1 von 3 referenzierten Audiodateien fehlen"),
         (_reference_outside_the_audio_volume, "1 von 3 referenzierten Audiodateien fehlen"),
         (_corrupt_the_dump, "pg_restore endete mit Exit 1"),
+        (_lose_the_dump, "der Snapshot enthält keinen Datenbank-Dump"),
+        (_lose_the_manifest, "der Snapshot enthält kein Manifest"),
     ],
 )
 def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
@@ -706,6 +723,24 @@ def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
     assert outcome.status["last_successful_restore_test"] is None
     assert _no_restore_server_left(machine)
     assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "failing_label",
+    ["Zählen der Audiodateien", "Start der Wegwerf-Datenbank", "Entfernen der Wegwerf-Datenbank"],
+)
+def test_restore_test_counts_a_container_that_will_not_run_as_a_failed_command(
+    edge_backup, machine, failing_label
+):
+    edge_backup("backup")
+    machine.failing[failing_label] = 125
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 1
+    assert f"{failing_label} endete mit Exit 125" in outcome.err
+    assert outcome.status["failing_phase"] == "verify"
+    assert outcome.status["exit_category"] == "command-failed"
 
 
 def test_restore_test_without_a_snapshot_fails(edge_backup):

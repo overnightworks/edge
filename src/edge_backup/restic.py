@@ -19,6 +19,9 @@ RETRY_LOCK = "5m"
 KEEP_WEEKLY = 4
 KEEP_MONTHLY = 3
 CHECK_READ_DATA_SUBSET = "10%"
+# The snapshot layout under an app's source path: the dump and manifest, and the audio.
+DB_FOLDER = "db"
+AUDIO_FOLDER = "audio"
 
 
 class MountKind(StrEnum):
@@ -40,7 +43,7 @@ class Mount:
 
 
 def app_source(app: str) -> str:
-    """The fixed in-container path an app's snapshot holds: `db/` (dump, manifest) and `audio/`."""
+    """The fixed in-container path an app's snapshot holds: DB_FOLDER and AUDIO_FOLDER."""
     return f"/backup/{app}"
 
 
@@ -85,9 +88,9 @@ def backup(settings: Settings, app: str, staging: Path, volume: str) -> str:
     output = _restic(
         settings,
         "restic backup",
-        ["backup", "--json", "--tag", app, app_source(app)],
-        Mount(MountKind.BIND, str(staging), f"{app_source(app)}/db"),
-        Mount(MountKind.VOLUME, volume, f"{app_source(app)}/audio"),
+        ["backup", "--json", *_tag(app), app_source(app)],
+        Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}"),
+        Mount(MountKind.VOLUME, volume, f"{app_source(app)}/{AUDIO_FOLDER}"),
     )
     return _snapshot_id(output)
 
@@ -121,7 +124,7 @@ def latest_snapshot(settings: Settings, app: str) -> str | None:
 
 
 def restore(settings: Settings, app: str, snapshot_id: str, target: Path) -> None:
-    """The app's source path lands directly in target: `target/db` and `target/audio`."""
+    """The app's source path lands directly in target: DB_FOLDER and AUDIO_FOLDER below it."""
     _restic(
         settings,
         "restic restore",
@@ -144,7 +147,12 @@ def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) 
 
 
 def _scope(app: str) -> list[str]:
-    return ["--host", RESTIC_HOSTNAME, "--tag", app]
+    return ["--host", RESTIC_HOSTNAME, *_tag(app)]
+
+
+def _tag(app: str) -> list[str]:
+    """Each app's snapshots carry its name as their tag."""
+    return ["--tag", app]
 
 
 def _snapshot_id(backup_output: bytes) -> str:
