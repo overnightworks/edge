@@ -74,20 +74,30 @@ jobs:
           addresses = sorted(e["address"] for e in traefik["entryPoints"].values())
           if addresses != ["127.0.0.1:8081", "127.0.0.1:8090"]:
               sys.exit(f"traefik.yml listens on {addresses}")
-          defaults = sorted(n for n, e in traefik["entryPoints"].items() if e.get("asDefault"))
+          flags = {n: e.get("asDefault", False) for n, e in traefik["entryPoints"].items()}
+          not_boolean = sorted(n for n, flag in flags.items() if not isinstance(flag, bool))
+          if not_boolean:
+              sys.exit(f"asDefault is not a boolean on {not_boolean}")
+          defaults = sorted(n for n, flag in flags.items() if flag)
           if defaults != ["edge"]:
               sys.exit(f"the default entrypoints are {defaults}, not exactly edge")
-          labels = {}
-          for service in yaml.safe_load(compose)["services"].values():
-              labels |= service.get("labels") or {}
-          routers = {key.split(".")[3] for key in labels if key.startswith("traefik.http.routers.")}
-          bindings = {r: labels.get(f"traefik.http.routers.{r}.entrypoints") for r in routers}
-          unnamed = sorted(r for r, entrypoints in bindings.items() if not entrypoints)
+          bindings = {}
+          for service_name, service in yaml.safe_load(compose)["services"].items():
+              labels = service.get("labels") or {}
+              routers = {k.split(".")[3] for k in labels if k.startswith("traefik.http.routers.")}
+              for router in routers:
+                  entrypoints = labels.get(f"traefik.http.routers.{router}.entrypoints")
+                  bindings.setdefault(router, []).append((service_name, entrypoints))
+          shared = sorted(r for r, owners in bindings.items() if len(owners) > 1)
+          if shared:
+              sys.exit(f"routers defined by more than one service: {shared}")
+          unnamed = sorted(r for r, [(_, entrypoints)] in bindings.items() if not entrypoints)
           if unnamed:
               sys.exit(f"routers without an entrypoint: {unnamed}")
           for router, entrypoint in {"auth": "edge", "auth-admin": "admin"}.items():
-              if bindings.get(router) != entrypoint:
-                  sys.exit(f"router {router} binds {bindings.get(router)}, not {entrypoint}")
+              owner = bindings.get(router, [(None, None)])[0]
+              if owner != ("keycloak", entrypoint):
+                  sys.exit(f"router {router} is {owner}, not keycloak on {entrypoint}")
           PY
 
       # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login
