@@ -53,6 +53,13 @@ tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
 SS_DHCP6_LINK_LOCAL = """\
 udp UNCONN 0 0 [fe80::d8e8:44d:1d8e:31f0]%wlp7s0:546      [::]:* ino:18742 sk:f <->
 """
+SS_DOCKER_PROXY_3000 = """\
+tcp LISTEN 0 4096 0.0.0.0:3000  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+"""
+SS_DOCKER_PROXY_8080_BOTH_FAMILIES = """\
+tcp LISTEN 0 4096 0.0.0.0:8080  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+tcp LISTEN 0 4096    [::]:8080     [::]:* uid:0 cgroup:/system.slice/docker.service <->
+"""
 SS_CHROME_MDNS_TWICE = """\
 udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=49)) <->
 udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=48)) <->
@@ -217,6 +224,26 @@ HOSTS = {
         ss=SS_SSHD,
         allow_list=ALLOW_CLOUDFLARED.replace('"udp"', '"tcp"'),
         findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+    ),
+    "a 0.0.0.0 publication and its docker-proxy listener are one finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+    ),
+    "a publication without host IP and docker-proxy on both families are one finding": Host(
+        docker=inspect_json(container("hello", {"80/tcp": [("", "8080")]})),
+        ss=SS_DOCKER_PROXY_8080_BOTH_FAMILIES,
+        findings=[finding("publication-without-host-ip", "hello", "tcp", "", 8080)],
+    ),
+    "a stopped container's publication does not hide a listener on its port": Host(
+        docker=inspect_json(
+            container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]}, running=False)
+        ),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[
+            finding("listener-beyond-loopback", "docker.service", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
     ),
     "routed container with a valid, unique edge.name": Host(
         docker=inspect_json(container("blog", labels=ROUTED | {"edge.name": "blog-2"})),

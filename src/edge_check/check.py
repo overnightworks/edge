@@ -18,7 +18,16 @@ def check(inspect_json: str, ss_output: str, allow_list: tuple[AllowEntry, ...])
         [publication for container in containers for publication in container.publications]
     )
     findings += edge_name_findings(containers)
-    findings += listener_findings(parse_listeners(ss_output), allow_list)
+    findings += listener_findings(
+        parse_listeners(ss_output),
+        allow_list,
+        [
+            publication
+            for container in containers
+            if container.running
+            for publication in container.publications
+        ],
+    )
     return ordered(findings)
 
 
@@ -37,8 +46,15 @@ def publication_findings(publications: list[Publication]) -> list[Finding]:
 
 
 def listener_findings(
-    listeners: list[Listener], allow_list: tuple[AllowEntry, ...]
+    listeners: list[Listener],
+    allow_list: tuple[AllowEntry, ...],
+    running_publications: list[Publication],
 ) -> list[Finding]:
+    """Listeners no allow-list entry permits, apart from docker-proxy's sockets for publications.
+
+    A publication beyond loopback is already its own finding; counting docker-proxy's listener
+    again would tempt someone to allow-list docker.service, which would hide the next one.
+    """
     return [
         Finding(
             problem=Problem.LISTENER_BEYOND_LOOPBACK,
@@ -50,6 +66,9 @@ def listener_findings(
         for listener in listeners
         if not is_loopback(listener.address)
         and not any(entry.permits(listener) for entry in allow_list)
+        and not any(
+            _holds_socket_for(publication, listener) for publication in running_publications
+        )
     ]
 
 
@@ -88,3 +107,13 @@ def _publication_problem(publication: Publication) -> Problem | None:
     if not is_loopback(publication.host_ip):
         return Problem.PUBLICATION_BEYOND_LOOPBACK
     return None
+
+
+def _holds_socket_for(publication: Publication, listener: Listener) -> bool:
+    """docker-proxy listens on the published address and port; no host IP means every address."""
+    return (
+        publication.protocol == listener.protocol
+        and publication.host_ip in ("", listener.address)
+        and publication.host_ports is not None
+        and publication.host_ports.contains(listener.port)
+    )

@@ -126,6 +126,9 @@ arguments, no shell, nothing written) and reports:
 
 Stopped containers count too: their publications and labels return when they
 start; only the duplicate check looks at running containers alone.
+docker-proxy's socket for a running container's publication is not reported
+again as a listener: the publication is the finding, and `docker.service`
+never belongs on the allow-list.
 Each finding names the container or the listening process (or its systemd
 unit when `ss` cannot see a root-owned process), the address and the port;
 an edge-name finding names the containers and the `edge.name` instead.

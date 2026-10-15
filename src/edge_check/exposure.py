@@ -37,6 +37,9 @@ class PortRange:
     def single(cls, port: int) -> "PortRange":
         return cls(port, port)
 
+    def contains(self, port: int) -> bool:
+        return self.first <= port <= self.last
+
     def as_json(self) -> int | str:
         return self.first if self.first == self.last else f"{self.first}-{self.last}"
 
