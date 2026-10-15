@@ -101,6 +101,7 @@ def require_password_file(settings: Settings) -> None:
 
 
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+    _sweep_leftover_staging(settings.work_dir)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     snapshot_ids = [_back_up(settings, app, run) for app in apps]
@@ -113,6 +114,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 
 
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+    _sweep_leftover_staging(settings.work_dir)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     with run.phase(Phase.READINESS):
@@ -227,16 +229,21 @@ def _write_private(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-@contextmanager
-def _private_directory(parent: Path) -> Iterator[Path]:
-    """A 0700 directory for dumps and restored copies, removed on success and on failure.
+def _sweep_leftover_staging(parent: Path) -> None:
+    """A killed run never reaches its cleanup, so every run first removes the plaintext it left,
+    whether or not it gets far enough to stage anything itself.
 
-    A killed run never reaches its cleanup, so entering first sweeps the plaintext it left;
-    the host lock guarantees no other run is using `parent`.
+    The host lock guarantees no other run is using `parent`.
     """
     if parent.exists():
-        shutil.rmtree(parent)
-    parent.mkdir(mode=0o700, parents=True)
+        for leftover in parent.iterdir():
+            shutil.rmtree(leftover)
+
+
+@contextmanager
+def _private_directory(parent: Path) -> Iterator[Path]:
+    """A 0700 directory for dumps and restored copies, removed on success and on failure."""
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(dir=parent))
     try:
         yield directory

@@ -794,16 +794,38 @@ def test_an_interrupted_run_is_failed_and_cleans_up(edge_backup, machine, home):
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
-def test_a_run_sweeps_the_plaintext_a_killed_run_left_behind(edge_backup, home, command):
+def _back_up_once(edge_backup, machine) -> None:
     edge_backup("backup")
+
+
+def _leave_no_snapshot(edge_backup, machine) -> None:
+    pass
+
+
+def _make_the_database_ambiguous(edge_backup, machine) -> None:
+    machine.db_containers = ["c0ffee", "c0ffee2"]
+
+
+@pytest.mark.parametrize(
+    ("command", "arrange", "exit_code"),
+    [
+        ("backup", _back_up_once, 0),
+        ("restore-test", _back_up_once, 0),
+        ("backup", _make_the_database_ambiguous, 1),
+        ("restore-test", _leave_no_snapshot, 1),
+    ],
+)
+def test_a_run_sweeps_the_plaintext_a_killed_run_left_behind(
+    edge_backup, machine, home, command, arrange, exit_code
+):
+    arrange(edge_backup, machine)
     killed_run = home / ".cache/edge-backup/tmpkilled"
     (killed_run / "db").mkdir(parents=True)
     (killed_run / "db/db.dump").write_bytes(DUMP)
 
     outcome = edge_backup(command)
 
-    assert outcome.exit_code == 0, outcome.err
+    assert outcome.exit_code == exit_code, outcome.err
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
 
