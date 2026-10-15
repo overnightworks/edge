@@ -8,8 +8,10 @@ import stat
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import Self
 
 from edge_backup import docker, host, restic
 from edge_backup.apps import App
@@ -112,11 +114,27 @@ def require_password_file(settings: Settings) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _Deadline:
+    """One waiting budget that several consecutive waits draw from."""
+
+    timeout: timedelta
+    expires_at: float
+
+    @classmethod
+    def start(cls, timeout: timedelta = READINESS_TIMEOUT) -> Self:
+        return cls(timeout, host.monotonic() + timeout.total_seconds())
+
+
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    _require_docker_with_pinned_images(run)
-    snapshot_ids = [_back_up(settings, app, run) for app in apps]
+    first_readiness = _Deadline.start(READINESS_TIMEOUT)
+    _require_docker_with_pinned_images(run, first_readiness)
+    snapshot_ids = [
+        _back_up(settings, app, run, first_readiness if index == 0 else _Deadline.start())
+        for index, app in enumerate(apps)
+    ]
     run.backed_up(snapshot_ids[-1])
     for app in apps:
         with run.phase(Phase.FORGET):
@@ -128,7 +146,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    _require_docker_with_pinned_images(run)
+    _require_docker_with_pinned_images(run, _Deadline.start())
     for app in apps:
         _restore_test(settings, app, run)
     with run.phase(Phase.CHECK):
@@ -136,10 +154,10 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     run.restore_tested()
 
 
-def _require_docker_with_pinned_images(run: Run) -> None:
+def _require_docker_with_pinned_images(run: Run, readiness: _Deadline) -> None:
     """A daemon that is still starting is waited for; only then is a missing image a failure."""
     with run.phase(Phase.READINESS):
-        _wait_until_ready(docker.require_daemon, READINESS_TIMEOUT, READINESS_POLL_SECONDS)
+        _wait_until_ready(docker.require_daemon, readiness, READINESS_POLL_SECONDS)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         _resolved(docker.require_pinned_images)
 
@@ -172,10 +190,10 @@ def restore(settings: Settings, app: App, target: Path) -> str:
     return snapshot_id
 
 
-def _back_up(settings: Settings, app: App, run: Run) -> str:
+def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> str:
     with run.phase(Phase.READINESS):
         container = _wait_until_ready(
-            lambda: docker.database_container(app), READINESS_TIMEOUT, READINESS_POLL_SECONDS
+            lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
         )
         volume = _resolved(lambda: docker.audio_volume(app))
     with _private_directory(settings.work_dir) as staging:
@@ -210,7 +228,9 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     )
     with docker.restore_server() as server:
         _wait_until_ready(
-            lambda: _ready_or_raise(server), RESTORE_SERVER_TIMEOUT, RESTORE_SERVER_POLL_SECONDS
+            lambda: _ready_or_raise(server),
+            _Deadline.start(RESTORE_SERVER_TIMEOUT),
+            RESTORE_SERVER_POLL_SECONDS,
         )
         with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
             server.list_dump(dump)
@@ -243,14 +263,13 @@ def _latest_snapshot(settings: Settings, app: App) -> str:
     return snapshot_id
 
 
-def _wait_until_ready[T](probe: Callable[[], T], timeout: timedelta, poll_seconds: float) -> T:
-    deadline = host.monotonic() + timeout.total_seconds()
+def _wait_until_ready[T](probe: Callable[[], T], deadline: _Deadline, poll_seconds: float) -> T:
     while True:
         try:
             return _resolved(probe)
         except docker.NotReadyError as error:
-            if host.monotonic() >= deadline:
-                minutes = int(timeout.total_seconds() // 60)
+            if host.monotonic() >= deadline.expires_at:
+                minutes = int(deadline.timeout.total_seconds() // 60)
                 raise StepFailed(
                     ExitCategory.NOT_READY, f"nach {minutes} Minuten nicht bereit: {error}"
                 ) from error
