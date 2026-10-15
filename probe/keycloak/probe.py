@@ -463,6 +463,17 @@ def totp(secret: str, period_offset: int = 0) -> str:
     return f"{number % 1_000_000:06d}"
 
 
+def within_keycloak(response: Response, opener: OpenerDirector) -> Response:
+    """Follows Keycloak's own redirects (a required action, say) as a browser would, and stops
+    at the redirect back to the admin console."""
+    while response.status in (302, 303):
+        location = response.headers["Location"]
+        if location.startswith(ADMIN_CONSOLE_REDIRECT):
+            break
+        response = http("GET", location, opener=opener)
+    return response
+
+
 def admin_console_login(username: str, password: str, second_factor: Any) -> dict[str, Any]:
     """Signs in to the admin console like a browser does and returns the access token's claims.
 
@@ -488,13 +499,13 @@ def admin_console_login(username: str, password: str, second_factor: Any) -> dic
     expect(login_page.status == 200, f"admin login page answered {login_page.status}")
     action, fields = form_with(login_page, "username")
     fields |= {"username": username, "password": password}
-    factor_page = http("POST", action, form=fields, opener=opener)
+    factor_page = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
     expect(
         factor_page.status == 200,
         f"password step answered {factor_page.status}: {page_message(factor_page)}",
     )
     action, fields = second_factor(factor_page)
-    done = http("POST", action, form=fields, opener=opener)
+    done = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
     location = done.headers.get("Location", "")
     expect(
         done.status == 302 and location.startswith(ADMIN_CONSOLE_REDIRECT),
