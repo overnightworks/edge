@@ -972,7 +972,7 @@ class Probe:
             f"none of the {len(self.secret_values)} credentials (secret files, passwords, the "
             "TOTP seed, the RP secret, access, refresh, ID and admin tokens, the admin console's "
             "PKCE verifiers, authorization codes and session cookies) is in the Config.Env of the "
-            f"{len(self.stack.seen_env)} containers seen ({', '.join(containers)}), in any "
+            f"{len(containers)} containers seen ({', '.join(containers)}), in any "
             "compose, apply or service log output, or in the probe's own output",
         )
 
