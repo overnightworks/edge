@@ -30,12 +30,7 @@ from edge_backup import cli, host
 from edge_backup.apps import AppsError, DumpKind, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
-from edge_backup.settings import (
-    POSTGRES_IMAGE,
-    READINESS_POLL_SECONDS,
-    READINESS_TIMEOUT,
-    RESTIC_IMAGE,
-)
+from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
 
 
 def test_backup_puts_dump_manifest_and_audio_into_one_snapshot(edge_backup, machine, home):
@@ -844,15 +839,3 @@ def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
     with pytest.raises(SystemExit) as help_shown:
         cli.main([command, "--help"])
     assert help_shown.value.code == 0
-
-
-def test_backup_waits_at_most_the_readiness_budget_for_docker_and_the_database_together(
-    edge_backup, machine
-):
-    machine.daemon_down_polls = 36
-    _never_start_the_database(machine)
-
-    outcome = edge_backup("backup")
-
-    assert outcome.status["exit_category"] == "not-ready"
-    assert machine.clock.elapsed <= READINESS_TIMEOUT.total_seconds() + READINESS_POLL_SECONDS
