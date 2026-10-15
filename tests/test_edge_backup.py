@@ -400,12 +400,25 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
-def test_every_command_of_a_run_holds_the_host_lock(edge_backup, machine, command):
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("backup",),
+        ("restore-test",),
+        ("snapshots",),
+        ("unlock",),
+        ("restore", "songmaker", "--target", "restored"),
+    ],
+    ids=lambda command: command[0],
+)
+def test_every_repository_command_holds_the_host_lock(
+    edge_backup, machine, home, monkeypatch, command
+):
+    monkeypatch.chdir(home)
     edge_backup("backup")
     machine.calls.clear()
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command)
 
     assert outcome.exit_code == 0, outcome.err
     assert machine.calls

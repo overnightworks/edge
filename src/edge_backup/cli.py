@@ -83,13 +83,16 @@ def _restore_test(settings: Settings, arguments: argparse.Namespace) -> int:
 
 def _snapshots(settings: Settings, _: argparse.Namespace) -> int:
     runner.require_secret_and_repository(settings)
-    print(_command(restic.snapshots, settings), end="")
+    with host.exclusive_lock(settings.lock_file):
+        listing = _command(restic.snapshots, settings)
+    print(listing, end="")
     return ExitCode.OK
 
 
 def _unlock(settings: Settings, _: argparse.Namespace) -> int:
     runner.require_secret_and_repository(settings)
-    _command(restic.unlock, settings)
+    with host.exclusive_lock(settings.lock_file):
+        _command(restic.unlock, settings)
     return ExitCode.OK
 
 
@@ -99,7 +102,8 @@ def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
     if arguments.target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
-    snapshot_id = _command(runner.restore, settings, app, arguments.target)
+    with host.exclusive_lock(settings.lock_file):
+        snapshot_id = _command(runner.restore, settings, app, arguments.target)
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
 
