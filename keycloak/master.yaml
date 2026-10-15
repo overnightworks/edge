@@ -10,6 +10,11 @@ bruteForceProtected: true
 # registered, TOTP otherwise. An administrator with neither must enrol TOTP before the login
 # completes, so no admin session ever rests on the password alone.
 browserFlow: browser-mfa
+# A password grant (admin-cli, kcadm.sh) demands a TOTP code too, with no exception. Keycloak's
+# built-in direct grant asks for one only from an administrator who already has TOTP, so one
+# without it (created in the console and not yet signed in, or passkey-only) would get a token on
+# the password alone. The bootstrap signs in before the first apply binds this flow.
+directGrantFlow: direct-grant-mfa
 authenticationFlows:
   - alias: browser-mfa
     description: Password plus a required second factor (passkey or TOTP)
@@ -90,6 +95,27 @@ authenticationFlows:
       - authenticator: auth-otp-form
         requirement: REQUIRED
         priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+  - alias: direct-grant-mfa
+    description: Username, password and a TOTP code, for every administrator
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: direct-grant-validate-username
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: direct-grant-validate-password
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: direct-grant-validate-otp
+        requirement: REQUIRED
+        priority: 30
         autheticatorFlow: false
         userSetupAllowed: false
 authenticatorConfig:

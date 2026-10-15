@@ -659,6 +659,7 @@ class Probe:
         master_expected = {
             "bruteForceProtected": True,
             "browserFlow": "browser-mfa",
+            "directGrantFlow": "direct-grant-mfa",
             "webAuthnPolicyRpId": "localhost",
         }
         for key, value in master_expected.items():
@@ -670,7 +671,7 @@ class Probe:
             "rpId hallucinai.de, access token 300 s, SSO max 30 d / idle 7 d, login events "
             "30 d, admin events 1 y, brute force on in both realms, "
             f"{len(providers)} identity providers (so no trustEmail=true), master browser flow "
-            "browser-mfa with rpId localhost",
+            "browser-mfa, direct grant direct-grant-mfa, rpId localhost",
         )
 
     def public_issuer_and_paths(self) -> None:
@@ -748,6 +749,20 @@ class Probe:
         admin_id = admin.create_user("master", "probe-admin", password)
         admin_role = admin.get("/master/roles/admin")
         admin.must("POST", f"/master/users/{admin_id}/role-mappings/realm", [admin_role])
+        password_only = http(
+            "POST",
+            f"{MASTER_ISSUER}/protocol/openid-connect/token",
+            form={
+                "grant_type": "password",
+                "client_id": "admin-cli",
+                "username": "probe-admin",
+                "password": password,
+            },
+        )
+        expect(
+            password_only.status == 401 and b"access_token" not in password_only.body,
+            f"an admin-cli password grant without TOTP answered {password_only.status}",
+        )
         enrolled: dict[str, str] = {}
 
         def enrol_totp(page: Response) -> tuple[str, dict[str, str]]:
@@ -768,9 +783,10 @@ class Probe:
         expect(second["iss"] == MASTER_ISSUER, f"second admin token issuer is {second['iss']}")
         self.held(
             "2b",
-            f"on localhost:8090 the master issuer is {issuer}; a new admin must enrol TOTP "
-            "before the console login completes, the next login demands the code; 8090 "
-            "refuses the public host (404) and an encoded slash (400)",
+            f"on localhost:8090 the master issuer is {issuer}; a new admin's admin-cli password "
+            "grant without TOTP is refused (401), the admin must enrol TOTP before the console "
+            "login completes, the next login demands the code; 8090 refuses the public host "
+            "(404) and an encoded slash (400)",
         )
 
     def changed_yaml_applies(self, admin: Admin, member_id: str) -> None:

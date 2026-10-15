@@ -391,7 +391,9 @@ The public issuer is `https://auth.<EDGE_DOMAIN>/realms/hallucinai`; the
 master realm's issuer is `http://localhost:8090/realms/master`. Every master
 login needs a password and a second factor: an administrator without one must
 enrol TOTP before the console opens, and may add a passkey (rpId `localhost`)
-afterwards. Remote administration while travelling arrives with the A9 travel
+afterwards. A password grant on the master realm (`admin-cli`, `kcadm.sh`)
+demands a TOTP code as well, so an administrator without TOTP gets no token
+that way. Remote administration while travelling arrives with the A9 travel
 setup (an SSH or Tailscale forward to 8090), never through the tunnel.
 
 Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`,
@@ -527,19 +529,25 @@ It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 (exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 means 8081 or 8090 was
 taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it
-kills the probe and its teardown (exit 137). After an exit 137 or a failure
-that says the stack is left behind, remove it under the lock, from a directory
+kills the probe and its teardown (exit 137). After an exit 137 or a failure that
+says the stack is left behind, remove it under the lock, from a directory
 without a compose file:
-`flock /tmp/probe-stack.lock docker compose --project-name edge-kc-probe down --volumes --remove-orphans`. The proofs: the public issuer and the path allow-list (1, 2a), the
-master issuer and the forced second factor on 8090 (2b), a failing undefined
-variable, a fresh apply, an unchanged export after a cache-off second apply and
-a changed YAML that applies and deletes a console-made subgroup it does not
-list, with a seeded member untouched (3a–3d), the `groups` claim and the
-`agent-service` audience (4), a disabled user refused on refresh (5), a
-back-channel logout reaching the test RP (6), none of the generated secrets in
-the `Config.Env` of any container it ran (the bootstrap Keycloak and every
-keycloak-config-cli run included), in any compose, apply or service log output,
-or in its own output (7), and the realm settings as decided (8).
+
+```sh
+flock /tmp/probe-stack.lock docker compose --project-name edge-kc-probe down --volumes --remove-orphans
+```
+
+The proofs: the public issuer and the path allow-list (1, 2a), the master issuer
+and the forced second factor on 8090, for the console and for a password grant
+(2b), a failing undefined variable, a fresh apply, an unchanged export after a
+cache-off second apply and a changed YAML that applies and deletes a
+console-made subgroup it does not list, with a seeded member untouched (3a–3d),
+the `groups` claim and the `agent-service` audience (4), a disabled user refused
+on refresh (5), a back-channel logout reaching the test RP (6), none of the
+generated secrets in the `Config.Env` of any container it ran (the bootstrap
+Keycloak and every keycloak-config-cli run included), in any compose, apply or
+service log output, or in its own output (7), and the realm settings as decided
+(8).
 
 ## Rollback
 
@@ -568,13 +576,13 @@ what makes the edge reachable.
    operator only. Note its AUD tag and the team name.
 3. **Login bypass app.** Only after the operator has approved it and the
    Keycloak go-live above holds through its step 7 (until then skip this step
-   and the `auth` line in step 4; go-live step 8 returns here): create a
-   second Access app for `auth.hallucinai.de` alone, with exactly one policy,
-   action **Bypass**, include **Everyone**. Cloudflare enforces Access at its own edge, per
-   hostname, before a request reaches the tunnel; without this more specific
-   app the wildcard app covers `auth` too, and browsers and the apps' token
-   calls meet the Access login. That a per-host app beats the wildcard app is
-   proven live by E4 in overnightworks/edge#1.
+   and the `auth` line in step 4; go-live step 8 returns here): create a second
+   Access app for `auth.hallucinai.de` alone, with exactly one policy, action
+   **Bypass**, include **Everyone**. Cloudflare enforces Access at its own
+   edge, per hostname, before a request reaches the tunnel; without this more
+   specific app the wildcard app covers `auth` too, and browsers and the apps'
+   token calls meet the Access login. That a per-host app beats the wildcard
+   app is proven live by E4 in overnightworks/edge#1.
 4. **Ingress line.** Apply `cloudflared-config.example.yml` to
    `/etc/cloudflared/config.yml` with the real tunnel ID, team name and AUD tag
    (the wildcard rule always carries `access.required`, `teamName` and
