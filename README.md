@@ -66,6 +66,9 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 
 ```sh
 docker compose up -d
+# Traefik reads traefik.yml (its entrypoints) only when it starts, and a plain `up -d`
+# keeps a running Traefik whose service definition did not change.
+docker compose up -d --force-recreate socket-proxy traefik
 ```
 
 Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
@@ -430,9 +433,12 @@ CI's step "No secret in any file" runs gitleaks with
 
 ### Start and apply
 
+Start the stack as in [Start, readiness, stop](#start-readiness-stop), Traefik
+included, and wait until the readiness check prints `ready`. Then apply
+`keycloak/*.yaml`:
+
 ```sh
-docker compose up -d                       # keycloak-db, then keycloak (about 30 s)
-docker compose run --rm keycloak-config-cli   # apply keycloak/*.yaml
+docker compose run --rm keycloak-config-cli
 ```
 
 The apply signs in as the `config-cli` service client and fails loudly on a
@@ -458,8 +464,12 @@ credential.
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
    ```
-5. **Leave the bootstrap overlay:** `docker compose up -d keycloak`. Every later
-   apply uses the `config-cli` client.
+5. **Leave the bootstrap overlay and start the edge.** Start as in
+   [Start, readiness, stop](#start-readiness-stop): the plain `up -d` recreates
+   Keycloak without the overlay, and the forced recreate starts Traefik with
+   the current `traefik.yml`, `admin` entrypoint included. Step 6 needs
+   `http://localhost:8090`, so wait until the readiness check prints `ready`.
+   Every later apply uses the `config-cli` client.
 6. **Permanent admin.** Sign in at `http://localhost:8090/admin/` as
    `temp-admin` (enrol TOTP when asked), create the permanent admin in the
    master realm with the realm role `admin`, sign in as that admin, enrol TOTP
@@ -495,8 +505,9 @@ credential.
    and digest), and of keycloak-config-cli if a build for the new version exists.
 3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge
    first with `docker compose --profile probe down` (volumes stay).
-4. **Start** with `docker compose up -d`; Keycloak migrates its database on the
-   first start of the new version.
+4. **Start** as in [Start, readiness, stop](#start-readiness-stop) and wait
+   until the readiness check prints `ready`; Keycloak migrates its database on
+   the first start of the new version.
 
 ### Keycloak probe
 
