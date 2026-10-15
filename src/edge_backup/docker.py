@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
@@ -14,6 +15,9 @@ PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
 VOLUME_LABEL = "com.docker.compose.volume"
 RESTORE_SERVER = "edge-backup-restore-test"
+# Marks a throwaway server as edge-backup's own: only a container carrying it is ever removed.
+RESTORE_OWNER_LABEL = "edge-backup.role"
+RESTORE_OWNER_ROLE = "restore-test"
 RESTORE_DATABASE = "restore_test"
 # The image's superuser; `docker exec` runs as root, which is no role in the server.
 RESTORE_ROLE = "postgres"
@@ -109,24 +113,39 @@ def count_audio_files(settings: Settings, kind: MountKind, source: str) -> int:
 
 @contextmanager
 def restore_server() -> Iterator["RestoreServer"]:
-    """A PostgreSQL without network or volume of ours; removed again whatever happens."""
-    if _lines(host.run(["docker", "ps", "--all", "--quiet", "--filter",
-                        f"name=^{RESTORE_SERVER}$"], label="docker ps")):  # fmt: skip
-        _remove_restore_server()
-    host.run(
+    """A PostgreSQL without network or volume of ours; removed again whatever happens.
+
+    Removal goes by container ID and only to containers with our owner label: a foreign
+    container holding the name makes the start fail instead of being deleted.
+    """
+    for leftover in _lines(
+        host.run(
+            ["docker", "ps", "--all", "--quiet", "--no-trunc",
+             "--filter", f"name=^{RESTORE_SERVER}$",
+             *_label_filter(RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE)],
+            label="docker ps",
+        )
+    ):  # fmt: skip
+        _remove_restore_server(leftover)
+    started = host.run(
         ["docker", "run", "--detach", "--name", RESTORE_SERVER, "--network", "none",
+         "--label", f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}",
          # trust is safe here: the server has no network and holds only the restored copy.
          "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", f"POSTGRES_DB={RESTORE_DATABASE}",
          POSTGRES_IMAGE],
         label="Start der Wegwerf-Datenbank",
     )  # fmt: skip
+    server = RestoreServer(_started_container(started))
     try:
-        yield RestoreServer()
+        yield server
     finally:
-        _remove_restore_server()
+        _remove_restore_server(server.container_id)
 
 
+@dataclass(frozen=True)
 class RestoreServer:
+    container_id: str
+
     def is_ready(self) -> bool:
         """Asked over TCP: the image's init server listens on the socket only, then restarts."""
         try:
@@ -182,16 +201,24 @@ class RestoreServer:
     ) -> bytes:
         interactive = ["-i"] if stdin else []
         return host.run(
-            ["docker", "exec", *interactive, RESTORE_SERVER, *command],
+            ["docker", "exec", *interactive, self.container_id, *command],
             label=label,
             stdin=stdin,
             timeout=timeout,
         )
 
 
-def _remove_restore_server() -> None:
+def _started_container(run_output: bytes) -> str:
+    match _lines(run_output):
+        case [container_id]:
+            return container_id
+        case _:
+            raise host.UnreadableOutputError("docker run meldete keine Container-ID")
+
+
+def _remove_restore_server(container_id: str) -> None:
     host.run(
-        ["docker", "rm", "--force", "--volumes", RESTORE_SERVER],
+        ["docker", "rm", "--force", "--volumes", container_id],
         label="Entfernen der Wegwerf-Datenbank",
     )
 

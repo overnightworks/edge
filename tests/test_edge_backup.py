@@ -13,6 +13,7 @@ import pytest
 
 from edge_backup import cli, host
 from edge_backup.apps import AppsError, DumpKind, parse_apps
+from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
@@ -47,6 +48,10 @@ class Machine:
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
     hanging: set[str] = field(default_factory=set)
+    leftover_servers: list[str] = field(default_factory=list)
+    """Throwaway servers a killed restore test left behind; they carry the owner label."""
+    foreign_server_name: bool = False
+    """A container that is not edge-backup's already holds the throwaway server's name."""
     """Labels of probes that never answer; only a timeout ends them."""
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
@@ -125,7 +130,9 @@ class Machine:
 
     def _containers(self, argv, **_) -> bytes:
         if any("edge-backup-restore-test" in argument for argument in argv):
-            return b""
+            ours = f"label={RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}" in argv
+            foreign = [] if ours or not self.foreign_server_name else ["f0re1gn"]
+            return "\n".join([*self.leftover_servers, *foreign]).encode()
         if self.absent_polls:
             self.absent_polls -= 1
             return b""
@@ -191,7 +198,12 @@ class Machine:
         return b""
 
     def _start_server(self, argv, **_) -> bytes:
-        return RESTORE_SERVER_ID.encode()
+        name_taken = self.foreign_server_name or set(self.leftover_servers) - set(
+            _removed_servers(self)
+        )
+        if name_taken:
+            return _exit("Start der Wegwerf-Datenbank", 125)
+        return f"{RESTORE_SERVER_ID}\n".encode()
 
     def _pg_restore(self, argv, *, stdin, **_) -> bytes:
         if not stdin.read_bytes().startswith(b"PGDMP"):
@@ -213,10 +225,13 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def _removed_servers(machine: Machine) -> list[str]:
+    return [argv[-1] for label, argv in machine.calls if label == "Entfernen der Wegwerf-Datenbank"]
+
+
 def _no_restore_server_left(machine: Machine) -> bool:
-    labels = machine.labels()
-    started = labels.count("Start der Wegwerf-Datenbank")
-    return started == labels.count("Entfernen der Wegwerf-Datenbank")
+    started = machine.labels().count("Start der Wegwerf-Datenbank")
+    return started == _removed_servers(machine).count(RESTORE_SERVER_ID)
 
 
 def _mount(argv: list[str], target: str) -> dict[str, str]:
@@ -368,7 +383,7 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
     restore = machine.argv_of("restic restore")
     assert f"{machine.snapshots[-1]['id']}:/backup/songmaker" in restore
     assert machine.argv_of("pg_restore") == [
-        "docker", "exec", "-i", "edge-backup-restore-test", "pg_restore", "--exit-on-error",
+        "docker", "exec", "-i", RESTORE_SERVER_ID, "pg_restore", "--exit-on-error",
         "--single-transaction", "--no-owner", "--no-privileges",
         "--username", "postgres", "--dbname", "restore_test",
     ]  # fmt: skip
@@ -385,6 +400,29 @@ def test_the_restored_audio_is_counted_by_the_manifests_own_rule(edge_backup, ma
     assert [_mount(argv, "/audio")["type"] for argv in scans] == ["volume", "bind"]
     assert len({tuple(argv[argv.index("--entrypoint") :]) for argv in scans}) == 1
     assert all(any(m.endswith("target=/audio,readonly") for m in argv) for argv in scans)
+
+
+def test_restore_test_removes_only_throwaway_servers_it_owns_by_id(edge_backup, machine):
+    machine.leftover_servers = ["1eft0ver"]
+    edge_backup("backup")
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert _removed_servers(machine) == ["1eft0ver", RESTORE_SERVER_ID]
+    start = machine.argv_of("Start der Wegwerf-Datenbank")
+    assert start[start.index("--label") + 1] == f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}"
+
+
+def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_backup, machine):
+    machine.foreign_server_name = True
+    edge_backup("backup")
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 1
+    assert "Start der Wegwerf-Datenbank endete mit Exit 125" in outcome.err
+    assert _removed_servers(machine) == []
 
 
 def test_monthly_check_reads_a_tenth_of_the_data(edge_backup, machine):
