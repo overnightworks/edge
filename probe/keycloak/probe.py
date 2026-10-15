@@ -492,8 +492,8 @@ def within_keycloak(response: Response, opener: OpenerDirector) -> Response:
     return response
 
 
-def admin_console_login(username: str, password: str, second_factor: Any) -> dict[str, Any]:
-    """Signs in to the admin console like a browser does and returns the access token's claims.
+def admin_console_login(username: str, password: str, second_factor: Any) -> str:
+    """Signs in to the admin console like a browser does and returns the access token.
 
     `second_factor(page)` answers the page that follows the password: it returns the form
     action and the fields to post.
@@ -537,7 +537,7 @@ def admin_console_login(username: str, password: str, second_factor: Any) -> dic
         "code": code,
         "code_verifier": verifier,
     }
-    return claims(token_from(f"{MASTER_ISSUER}/protocol/openid-connect/token", token_form))
+    return token_from(f"{MASTER_ISSUER}/protocol/openid-connect/token", token_form)
 
 
 # --- Proofs -------------------------------------------------------------------------------------
@@ -558,6 +558,11 @@ class Probe:
     def held(self, proof: str, detail: str) -> None:
         self.say(f"PROOF {proof} held: {detail}")
 
+    def keep_secret(self, name: str, value: str) -> str:
+        """Registers a credential the probe made or received, so proof 7 looks for it too."""
+        self.secret_values[name] = value
+        return value
+
     def run(self) -> None:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
@@ -569,6 +574,7 @@ class Probe:
         bootstrap_admin = Admin.with_password(
             "temp-admin", self.secret_values["bootstrap-admin-password"]
         )
+        self.keep_secret("temp-admin token", bootstrap_admin.token)
         self.missing_variable_fails_loudly(bootstrap_admin)
         self.stack.must_apply("fresh apply", bootstrap=True)
         # The bootstrap keycloak container and its logs disappear when it is recreated below.
@@ -578,6 +584,7 @@ class Probe:
         wait_until_ready()
         # The config-cli client exists only if the fresh apply created the master configuration.
         admin = Admin.with_client(self.secret_values["config-cli-secret"])
+        self.keep_secret("config-cli token", admin.token)
         expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
         self.held(
             "3a",
@@ -615,7 +622,8 @@ class Probe:
 
     def seed_member(self, admin: Admin) -> str:
         """Stands in for a person and a membership the operator manages in the admin console."""
-        member_id = admin.create_user(REALM, "probe-member", self.member_password)
+        password = self.keep_secret("probe-member password", self.member_password)
+        member_id = admin.create_user(REALM, "probe-member", password)
         admin.join_group(member_id, MEMBER_GROUP)
         self.say(f"seed: probe-member in {MEMBER_GROUP} through the admin API")
         return member_id
@@ -745,7 +753,7 @@ class Probe:
         encoded = http("GET", f"{ADMIN_URL}/admin%2Fmaster/console/")
         expect(encoded.status == 400, f"an encoded slash on 8090 answered {encoded.status}")
 
-        password = secrets.token_urlsafe(16)
+        password = self.keep_secret("probe-admin password", secrets.token_urlsafe(16))
         admin_id = admin.create_user("master", "probe-admin", password)
         admin_role = admin.get("/master/roles/admin")
         admin.must("POST", f"/master/users/{admin_id}/role-mappings/realm", [admin_role])
@@ -767,10 +775,11 @@ class Probe:
 
         def enrol_totp(page: Response) -> tuple[str, dict[str, str]]:
             action, fields = form_with(page, "totpSecret")
-            enrolled["secret"] = fields["totpSecret"]
+            enrolled["secret"] = self.keep_secret("probe-admin TOTP seed", fields["totpSecret"])
             return action, fields | {"totp": totp(fields["totpSecret"]), "userLabel": "probe"}
 
-        first = admin_console_login("probe-admin", password, enrol_totp)
+        first_token = admin_console_login("probe-admin", password, enrol_totp)
+        first = claims(self.keep_secret("probe-admin console token", first_token))
         expect(first["iss"] == MASTER_ISSUER, f"admin token issuer is {first['iss']}")
 
         def answer_otp(page: Response) -> tuple[str, dict[str, str]]:
@@ -779,7 +788,8 @@ class Probe:
             # window of one period accepts the next.
             return action, fields | {"otp": totp(enrolled["secret"], period_offset=1)}
 
-        second = admin_console_login("probe-admin", password, answer_otp)
+        second_token = admin_console_login("probe-admin", password, answer_otp)
+        second = claims(self.keep_secret("probe-admin second console token", second_token))
         expect(second["iss"] == MASTER_ISSUER, f"second admin token issuer is {second['iss']}")
         self.held(
             "2b",
@@ -828,7 +838,8 @@ class Probe:
     def create_probe_rp(self, admin: Admin) -> str:
         representation = json.loads((REPO / "probe/keycloak/probe-rp-client.json").read_text())
         client_id = admin.create(f"/{REALM}/clients", representation)
-        return admin.get(f"/{REALM}/clients/{client_id}/client-secret")["value"]
+        secret = admin.get(f"/{REALM}/clients/{client_id}/client-secret")["value"]
+        return self.keep_secret("probe-rp client secret", secret)
 
     def password_grant(self, username: str, password: str, rp_secret: str) -> dict[str, Any]:
         response = through_tunnel(
@@ -844,7 +855,11 @@ class Probe:
             },
         )
         expect(response.status == 200, f"password grant for {username} answered {response.status}")
-        return response.json()
+        tokens = response.json()
+        for kind, value in tokens.items():
+            if kind.endswith("_token"):
+                self.keep_secret(f"{username} {kind}", value)
+        return tokens
 
     def member_token_carries_groups_and_audience(self, rp_secret: str) -> None:
         tokens = self.password_grant("probe-member", self.member_password, rp_secret)
@@ -861,7 +876,7 @@ class Probe:
         )
 
     def disabled_user_refused_on_refresh(self, admin: Admin, rp_secret: str) -> None:
-        password = secrets.token_urlsafe(16)
+        password = self.keep_secret("probe-disabled password", secrets.token_urlsafe(16))
         user_id = admin.create_user(REALM, "probe-disabled", password)
         tokens = self.password_grant("probe-disabled", password, rp_secret)
         admin.must("PUT", f"/{REALM}/users/{user_id}", {"enabled": False})
@@ -880,7 +895,7 @@ class Probe:
         self.held("5", "a disabled user's refresh is refused (400 invalid_grant)")
 
     def backchannel_logout_reaches_rp(self, admin: Admin, rp_secret: str) -> None:
-        password = secrets.token_urlsafe(16)
+        password = self.keep_secret("probe-logout password", secrets.token_urlsafe(16))
         user_id = admin.create_user(REALM, "probe-logout", password)
         self.password_grant("probe-logout", password, rp_secret)
         admin.must("POST", f"/{REALM}/users/{user_id}/logout")
@@ -913,11 +928,13 @@ class Probe:
             for secret_name, value in self.secret_values.items()
             if value in text
         ]
-        expect(not leaks, f"generated secrets leaked: {leaks}")
+        expect(not leaks, f"credentials leaked: {leaks}")
         containers = sorted({name for name, _ in self.stack.seen_env})
         self.held(
             "7",
-            f"none of the {len(SECRET_FILES)} generated secrets is in the Config.Env of the "
+            f"none of the {len(self.secret_values)} credentials (secret files, passwords, the "
+            "TOTP seed, the RP secret, access, refresh, ID and admin tokens) is in the Config.Env "
+            "of the "
             f"{len(self.stack.seen_env)} containers seen ({', '.join(containers)}), in any "
             "compose, apply or service log output, or in the probe's own output",
         )

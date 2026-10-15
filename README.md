@@ -546,7 +546,8 @@ cache-off second apply and a changed YAML that applies and deletes a
 console-made subgroup it does not list, with a seeded member untouched (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused
 on refresh (5), a back-channel logout reaching the test RP (6), none of the
-generated secrets in the `Config.Env` of any container it ran (the bootstrap
+credentials it made or received (secret files, passwords, the TOTP seed, the RP
+secret, every token) in the `Config.Env` of any container it ran (the bootstrap
 Keycloak and every keycloak-config-cli run included), in any compose, apply or
 service log output, or in its own output (7), and the realm settings as decided
 (8).
