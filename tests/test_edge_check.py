@@ -466,7 +466,7 @@ def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):
 
 @pytest.fixture
 def fake_docker(monkeypatch, tmp_path):
-    """A `docker` first on PATH that runs the given shell script as its `ps` / `inspect` answers; `ss` hears nothing."""
+    """A `docker` first on PATH answering `ps` and `inspect` with the script; `ss` is silent."""
 
     def install_command(name: str, script: str) -> None:
         executable = tmp_path / "bin" / name
