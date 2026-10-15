@@ -58,8 +58,9 @@ jobs:
             keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
-      # entrypoint 8090, and nothing implicit.
-      - name: No published ports, Traefik listens on 8081 and 8090 only
+      # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,
+      # and each Keycloak router names its own.
+      - name: No published ports, Traefik listens on 8081 and 8090 only, routers bind as declared
         run: |
           python3 - <<'PY'
           import re, sys, yaml
@@ -73,6 +74,20 @@ jobs:
           addresses = sorted(e["address"] for e in traefik["entryPoints"].values())
           if addresses != ["127.0.0.1:8081", "127.0.0.1:8090"]:
               sys.exit(f"traefik.yml listens on {addresses}")
+          defaults = sorted(n for n, e in traefik["entryPoints"].items() if e.get("asDefault"))
+          if defaults != ["edge"]:
+              sys.exit(f"the default entrypoints are {defaults}, not exactly edge")
+          labels = {}
+          for service in yaml.safe_load(compose)["services"].values():
+              labels |= service.get("labels") or {}
+          routers = {key.split(".")[3] for key in labels if key.startswith("traefik.http.routers.")}
+          bindings = {r: labels.get(f"traefik.http.routers.{r}.entrypoints") for r in routers}
+          unnamed = sorted(r for r, entrypoints in bindings.items() if not entrypoints)
+          if unnamed:
+              sys.exit(f"routers without an entrypoint: {unnamed}")
+          for router, entrypoint in {"auth": "edge", "auth-admin": "admin"}.items():
+              if bindings.get(router) != entrypoint:
+                  sys.exit(f"router {router} binds {bindings.get(router)}, not {entrypoint}")
           PY
 
       # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login
