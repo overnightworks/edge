@@ -478,8 +478,13 @@ credential.
 ### Patch upgrade
 
 1. **Dump the database** (until K11b automates it). The dump holds signing keys
-   and credential hashes; keep it as private as the secrets:
-   `docker compose exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak > keycloak-$(date +%F).dump`
+   and credential hashes, so it goes beside the secrets, never into the
+   checkout, and only its owner may read it:
+
+   ```sh
+   (umask 077; docker compose exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak \
+     > ~/.secrets/keycloak/keycloak-$(date +%F).dump)
+   ```
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version
    and digest), and of keycloak-config-cli if a build for the new version exists.
 3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge
