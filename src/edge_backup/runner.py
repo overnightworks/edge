@@ -229,8 +229,14 @@ def _write_private(path: Path, text: str) -> None:
 
 @contextmanager
 def _private_directory(parent: Path) -> Iterator[Path]:
-    """A 0700 directory for dumps and restored copies, removed on success and on failure."""
-    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """A 0700 directory for dumps and restored copies, removed on success and on failure.
+
+    A killed run never reaches its cleanup, so entering first sweeps the plaintext it left;
+    the host lock guarantees no other run is using `parent`.
+    """
+    if parent.exists():
+        shutil.rmtree(parent)
+    parent.mkdir(mode=0o700, parents=True)
     directory = Path(tempfile.mkdtemp(dir=parent))
     try:
         yield directory

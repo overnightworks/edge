@@ -794,6 +794,19 @@ def test_an_interrupted_run_is_failed_and_cleans_up(edge_backup, machine, home):
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
 
+@pytest.mark.parametrize("command", ["backup", "restore-test"])
+def test_a_run_sweeps_the_plaintext_a_killed_run_left_behind(edge_backup, home, command):
+    edge_backup("backup")
+    killed_run = home / ".cache/edge-backup/tmpkilled"
+    (killed_run / "db").mkdir(parents=True)
+    (killed_run / "db/db.dump").write_bytes(DUMP)
+
+    outcome = edge_backup(command)
+
+    assert outcome.exit_code == 0, outcome.err
+    assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
 def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, machine):
     machine.failing["restic backup"] = RuntimeError
 
