@@ -5,7 +5,7 @@ import fcntl
 import json
 import re
 import stat
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -807,6 +807,11 @@ def _make_the_database_ambiguous(edge_backup, machine) -> None:
     machine.db_containers = ["c0ffee", "c0ffee2"]
 
 
+def _corrupt_the_status_file(edge_backup, machine) -> None:
+    machine.status_file.parent.mkdir(parents=True)
+    machine.status_file.write_text("{not json")
+
+
 @pytest.mark.parametrize(
     ("arguments", "arrange", "exit_code"),
     [
@@ -816,6 +821,7 @@ def _make_the_database_ambiguous(edge_backup, machine) -> None:
         (("restore-test",), _leave_no_snapshot, 1),
         (("--apps", "/nonexistent/apps.toml", "backup"), _leave_no_snapshot, 1),
         (("--apps", "/nonexistent/apps.toml", "restore-test"), _back_up_once, 1),
+        (("backup",), _corrupt_the_status_file, 1),
     ],
     ids=[
         "backup-succeeds",
@@ -824,6 +830,7 @@ def _make_the_database_ambiguous(edge_backup, machine) -> None:
         "restore-test-without-a-snapshot",
         "backup-without-apps",
         "restore-test-without-apps",
+        "backup-with-an-unreadable-status",
     ],
 )
 def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
@@ -847,6 +854,28 @@ def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, mach
 
     with pytest.raises(RuntimeError):
         edge_backup("backup")
+
+    status = json.loads(machine.status_file.read_text())
+    assert (status["state"], status["exit_category"]) == ("failed", "internal")
+
+
+@pytest.fixture
+def undeletable_leftover(home) -> Iterator[Path]:
+    """A killed run's staging that `rmtree` cannot remove: a read-only directory holding a file."""
+    locked = home / f".cache/edge-backup/{STAGING_PREFIX}killed/audio/locked"
+    locked.mkdir(parents=True)
+    (locked / "one.mp3").write_bytes(AUDIO["u1/one.mp3"])
+    locked.chmod(0o500)
+    yield locked
+    locked.chmod(0o700)
+
+
+@pytest.mark.parametrize("command", ["backup", "restore-test"])
+def test_a_sweep_that_cannot_remove_a_leftover_marks_the_run_failed(
+    edge_backup, machine, undeletable_leftover, command
+):
+    with pytest.raises(PermissionError):
+        edge_backup(command)
 
     status = json.loads(machine.status_file.read_text())
     assert (status["state"], status["exit_category"]) == ("failed", "internal")

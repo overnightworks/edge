@@ -112,19 +112,21 @@ def _recorded(
     step: Callable[[Settings, tuple[App, ...], Run], None],
 ) -> int:
     """Every outcome lands in the status file; only a full run is `ok`."""
-    runner.sweep_leftover_staging(settings.work_dir)
+    started = host.now()
     try:
         previous = read_status(settings.status_file)
+        unreadable_status = None
     except StatusFileError as error:
-        run = Run(settings.status_file, first_attempt(host.now()))
-        run.failed(ExitCategory.CONFIGURATION)
-        return _report(StepFailed(ExitCategory.CONFIGURATION, str(error)))
-    started = host.now()
+        previous, unreadable_status = None, StepFailed(ExitCategory.CONFIGURATION, str(error))
     run = Run(
         settings.status_file,
         first_attempt(started) if previous is None else previous.attempt(started),
     )
     try:
+        # Even a run that fails at once sweeps first, so a killed run's plaintext never waits.
+        runner.sweep_leftover_staging(settings.work_dir)
+        if unreadable_status is not None:
+            raise unreadable_status
         step(settings, _apps(arguments.apps), run)
     except StepFailed as failure:
         run.failed(failure.category)
