@@ -1,0 +1,25 @@
+# Probe overlay (probe/keycloak/probe.py): throwaway secrets and config copies from the probe's
+# scratch directory, plus a test relying party that records back-channel logouts. Never used live.
+services:
+  keycloak-config-cli:
+    volumes:
+      - ${PROBE_CONFIG_DIR:?run through probe/keycloak/probe.py}:/config:ro
+
+  probe-rp:
+    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [keycloak]
+    command: ["python", "-u", "/rp/test_rp.py"]
+    volumes:
+      - ./probe/keycloak/test_rp.py:/rp/test_rp.py:ro
+
+secrets:
+  keycloak_db_password:
+    file: ${PROBE_SECRETS_DIR:?run through probe/keycloak/probe.py}/db-password
+  keycloak_config_cli_secret:
+    file: ${PROBE_SECRETS_DIR}/config-cli-secret
+  keycloak_bootstrap_admin_password:
+    file: ${PROBE_SECRETS_DIR}/bootstrap-admin-password
