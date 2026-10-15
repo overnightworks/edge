@@ -52,8 +52,12 @@ class Machine:
     hanging: set[str] = field(default_factory=set)
     leftover_servers: list[str] = field(default_factory=list)
     """Throwaway servers a killed restore test left behind; they carry the owner label."""
+    created_servers: list[str] = field(default_factory=list)
+    """Throwaway servers `docker run` created; they carry the owner label too."""
     foreign_server_name: bool = False
     """A container that is not edge-backup's already holds the throwaway server's name."""
+    server_start_output: bytes = f"{RESTORE_SERVER_ID}\n".encode()
+    """What `docker run` prints once it has created the throwaway server."""
     snapshot_without: set[str] = field(default_factory=set)
     """Staged files a snapshot lacks, as if they had vanished before restic's scan."""
     starting_server_polls: int = 1
@@ -147,7 +151,7 @@ class Machine:
         if any("edge-backup-restore-test" in argument for argument in argv):
             ours = f"label={RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}" in argv
             foreign = [] if ours or not self.foreign_server_name else ["f0re1gn"]
-            return "\n".join([*self.leftover_servers, *foreign]).encode()
+            return "\n".join([*self._owned_servers(), *foreign]).encode()
         if self.absent_polls:
             self.absent_polls -= 1
             return b""
@@ -217,13 +221,15 @@ class Machine:
         return b""
 
     def _start_server(self, argv, **_) -> bytes:
-        name_taken = self.foreign_server_name or set(self.leftover_servers) - set(
-            _removed_servers(self)
-        )
-        if name_taken:
+        if self.foreign_server_name or self._owned_servers():
             return _exit("Start der Wegwerf-Datenbank", 125)
         self.server_accepting = False
-        return f"{RESTORE_SERVER_ID}\n".encode()
+        self.created_servers.append(RESTORE_SERVER_ID)
+        return self.server_start_output
+
+    def _owned_servers(self) -> list[str]:
+        removed = set(_removed_servers(self))
+        return [s for s in [*self.leftover_servers, *self.created_servers] if s not in removed]
 
     def _pg_isready(self, argv, **_) -> bytes:
         assert argv[argv.index("pg_isready") + 1 :] == ["--host", "127.0.0.1", "--quiet"]
@@ -464,6 +470,20 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
     assert outcome.exit_code == 1
     assert "Start der Wegwerf-Datenbank endete mit Exit 125" in outcome.err
     assert _removed_servers(machine) == []
+
+
+@pytest.mark.parametrize("output", [b"", b"WARNING: platform mismatch\ndeadbeef\n"])
+def test_a_started_throwaway_server_is_removed_even_when_its_id_is_unreadable(
+    edge_backup, machine, output
+):
+    machine.server_start_output = output
+    edge_backup("backup")
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 1
+    assert "docker run meldete keine Container-ID" in outcome.err
+    assert _removed_servers(machine) == [RESTORE_SERVER_ID]
 
 
 def test_monthly_check_reads_a_tenth_of_the_data(edge_backup, machine):

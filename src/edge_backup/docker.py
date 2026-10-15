@@ -121,15 +121,7 @@ def restore_server() -> Iterator["RestoreServer"]:
     Removal goes by container ID and only to containers with our owner label: a foreign
     container holding the name makes the start fail instead of being deleted.
     """
-    for leftover in _lines(
-        host.run(
-            ["docker", "ps", "--all", "--quiet", "--no-trunc",
-             "--filter", f"name=^{RESTORE_SERVER}$",
-             *_label_filter(RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE)],
-            label="docker ps",
-        )
-    ):  # fmt: skip
-        _remove_restore_server(leftover)
+    _remove_owned_restore_servers()
     started = host.run(
         ["docker", "run", "--detach", "--name", RESTORE_SERVER, "--network", "none",
          "--label", f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}",
@@ -138,11 +130,16 @@ def restore_server() -> Iterator["RestoreServer"]:
          POSTGRES_IMAGE],
         label="Start der Wegwerf-Datenbank",
     )  # fmt: skip
-    server = RestoreServer(_started_container(started))
     try:
-        yield server
+        container_id = _started_container(started)
+    except host.UnreadableOutputError:
+        # The server exists, only its ID is unknown: name and owner label still find it.
+        _remove_owned_restore_servers()
+        raise
+    try:
+        yield RestoreServer(container_id)
     finally:
-        _remove_restore_server(server.container_id)
+        _remove_restore_server(container_id)
 
 
 @dataclass(frozen=True)
@@ -217,6 +214,18 @@ def _started_container(run_output: bytes) -> str:
             return container_id
         case _:
             raise host.UnreadableOutputError("docker run meldete keine Container-ID")
+
+
+def _remove_owned_restore_servers() -> None:
+    for container_id in _lines(
+        host.run(
+            ["docker", "ps", "--all", "--quiet", "--no-trunc",
+             "--filter", f"name=^{RESTORE_SERVER}$",
+             *_label_filter(RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE)],
+            label="docker ps",
+        )
+    ):  # fmt: skip
+        _remove_restore_server(container_id)
 
 
 def _remove_restore_server(container_id: str) -> None:
