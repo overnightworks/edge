@@ -799,7 +799,7 @@ def _back_up_once(edge_backup, machine) -> None:
     edge_backup("backup")
 
 
-def _leave_no_snapshot(edge_backup, machine) -> None:
+def _arrange_nothing(edge_backup, machine) -> None:
     pass
 
 
@@ -818,15 +818,15 @@ def _corrupt_the_status_file(edge_backup, machine) -> None:
         (("backup",), _back_up_once, 0),
         (("restore-test",), _back_up_once, 0),
         (("backup",), _make_the_database_ambiguous, 1),
-        (("restore-test",), _leave_no_snapshot, 1),
-        (("--apps", "/nonexistent/apps.toml", "backup"), _leave_no_snapshot, 1),
-        (("--apps", "/nonexistent/apps.toml", "restore-test"), _back_up_once, 1),
+        (("restore-test",), _arrange_nothing, 1),
+        (("--apps", "/nonexistent/apps.toml", "backup"), _arrange_nothing, 1),
+        (("--apps", "/nonexistent/apps.toml", "restore-test"), _arrange_nothing, 1),
         (("backup",), _corrupt_the_status_file, 1),
     ],
     ids=[
         "backup-succeeds",
         "restore-test-succeeds",
-        "backup-without-a-database",
+        "backup-with-an-ambiguous-database",
         "restore-test-without-a-snapshot",
         "backup-without-apps",
         "restore-test-without-apps",
