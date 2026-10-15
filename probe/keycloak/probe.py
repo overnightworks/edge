@@ -440,7 +440,9 @@ def form_with(page: Response, field_name: str) -> tuple[str, dict[str, str]]:
 def page_message(page: Response) -> str:
     """The feedback a Keycloak page shows the user, for a failure message."""
     found = re.search(
-        r'class="[^"]*(?:kc-feedback-text|alert|error)[^"]*"[^>]*>\s*([^<]{3,200})', page.text
+        r'(?:kc-feedback-text|kc-error-message|class="instruction")[^>]*>\s*(?:<[^>]+>\s*)*'
+        r"([^<]{3,200})",
+        page.text,
     )
     return found.group(1).strip() if found else f"no feedback text ({len(page.body)} bytes)"
 

@@ -6,11 +6,13 @@ realm: master
 attributes:
   frontendUrl: http://localhost:8090
 bruteForceProtected: true
-# Every administrator signs in with a password and a second factor: TOTP or a passkey.
+# Every administrator signs in with a password and a second factor: the passkey when one is
+# registered, TOTP otherwise. An administrator with neither must enrol TOTP before the login
+# completes, so no admin session ever rests on the password alone.
 browserFlow: browser-mfa
 authenticationFlows:
   - alias: browser-mfa
-    description: Password plus a required second factor (TOTP or passkey)
+    description: Password plus a required second factor (passkey or TOTP)
     providerId: basic-flow
     topLevel: true
     builtIn: false
@@ -42,21 +44,59 @@ authenticationFlows:
         autheticatorFlow: true
         userSetupAllowed: false
   - alias: browser-mfa-second-factor
-    description: TOTP or a passkey; an administrator without either enrols TOTP first
+    description: Exactly one of the two sub-flows runs
     providerId: basic-flow
     topLevel: false
     builtIn: false
     authenticationExecutions:
-      - authenticator: auth-otp-form
-        requirement: ALTERNATIVE
+      - flowAlias: browser-mfa-passkey
+        requirement: CONDITIONAL
+        priority: 10
+        autheticatorFlow: true
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-totp
+        requirement: CONDITIONAL
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-passkey
+    description: The passkey, for an administrator who has registered one
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-user-configured
+        requirement: REQUIRED
         priority: 10
         autheticatorFlow: false
-        userSetupAllowed: true
+        userSetupAllowed: false
       - authenticator: webauthn-authenticator
-        requirement: ALTERNATIVE
+        requirement: REQUIRED
         priority: 20
         autheticatorFlow: false
         userSetupAllowed: false
+  - alias: browser-mfa-totp
+    description: TOTP, enrolled on the spot if missing, whenever the passkey sub-flow did not run
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-sub-flow-executed
+        authenticatorConfig: browser-mfa-without-passkey
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: auth-otp-form
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+authenticatorConfig:
+  - alias: browser-mfa-without-passkey
+    config:
+      flow_to_check: browser-mfa-passkey
+      check_result: not-executed
 # A passkey for the admin console binds to the console's host name.
 webAuthnPolicyRpId: localhost
 webAuthnPolicyRpEntityName: hallucinai admin
