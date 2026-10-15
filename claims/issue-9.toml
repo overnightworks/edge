@@ -1,8 +1,0 @@
-claim_id = "21695ae33cc24dd492c9b4eb4474a0a5"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "8cae17c7bf921f52314823260c52b2c4d3931dfa"
-branch = "claude/issue-9-b1-restic-backup"
-scope = [".github/workflows/ci.yml", "README.md", "backup", "pyproject.toml", "src/edge_backup", "systemd", "tests/test_edge_backup.py", "uv.lock"]
-opened_commit = "42af50f419a8ab87b264d1e58d3d7187a44bdd52"
-whole_reason = "One backup capability spans its CLI, declarations, timers, tests and docs."
