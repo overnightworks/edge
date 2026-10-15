@@ -990,6 +990,18 @@ def test_restore_puts_the_latest_snapshot_into_a_new_directory(edge_backup, mach
     assert edge_backup("restore", "songmaker", "--target", str(target)).exit_code == 1
 
 
+@pytest.mark.parametrize("target", [f"{STAGING_PREFIX}manual", "manual"])
+def test_restore_refuses_a_target_in_the_directory_runs_sweep(edge_backup, machine, home, target):
+    edge_backup("backup")
+    work_dir = home / ".cache/edge-backup"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(work_dir / target))
+
+    assert outcome.exit_code == 1
+    assert "Arbeitsverzeichnis" in outcome.err
+    assert list(work_dir.iterdir()) == []
+
+
 def test_init_creates_a_private_repository_directory(edge_backup, machine, home):
     (home / "backups/restic/config").unlink()
     (home / "backups/restic").rmdir()

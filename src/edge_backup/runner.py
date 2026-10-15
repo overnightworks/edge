@@ -128,7 +128,14 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 
 
 def restore(settings: Settings, app: App, target: Path) -> str:
-    """The operator's restore: the latest snapshot of one app into a new private directory."""
+    """The operator's restore: the latest snapshot of one app into a new private directory.
+
+    Never inside the work directory: every run sweeps the staging it finds there.
+    """
+    if target.resolve().is_relative_to(settings.work_dir.resolve()):
+        raise StepFailed(
+            ExitCategory.CONFIGURATION, "das Ziel liegt im Arbeitsverzeichnis von edge-backup"
+        )
     require_secret_and_repository(settings)
     snapshot_id = _latest_snapshot(settings, app)
     target.mkdir(mode=0o700, parents=True)
@@ -234,7 +241,7 @@ def sweep_leftover_staging(parent: Path) -> None:
     """A killed run never reaches its cleanup, so every run first removes the plaintext it left,
     whether or not it gets far enough to stage anything itself.
 
-    Only staging directories go: an operator's `restore --target` may live beside them.
+    Only staging directories go, and only runs create them: `restore` refuses a target here.
     The host lock guarantees no other run is using them.
     """
     for leftover in parent.glob(f"{STAGING_PREFIX}*"):

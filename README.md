@@ -289,7 +289,7 @@ therefore also judges freshness: `last_successful_backup` no older than about
 ### Restore one app
 
 ```sh
-uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory
+uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
 It holds `db/db.dump` and `audio/`. Loading them into the live app is a
