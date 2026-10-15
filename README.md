@@ -219,7 +219,9 @@ The units expect the checkout at `~/git/edge`.
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database
 is not up yet, the backup waits up to 10 minutes, then fails. One host lock
-(`~/.local/state/edge/backup.lock`) serialises backup and restore test.
+(`~/.local/state/edge/backup.lock`) serialises every edge-backup command: run
+by hand during a backup or restore test, `snapshots`, `restore` or any other
+command waits silently until that run ends.
 
 ### Run now
 

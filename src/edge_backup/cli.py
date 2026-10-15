@@ -30,7 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     # systemd stops a unit with SIGTERM: as KeyboardInterrupt, cleanup runs and the status fails.
     previous_handler = signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        return arguments.command(settings, arguments)
+        # Every command holds the one host lock, so no two edge-backup runs share the repository.
+        with host.exclusive_lock(settings.lock_file):
+            return arguments.command(settings, arguments)
     except StepFailed as failure:
         return _report(failure)
     finally:
@@ -66,9 +68,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def _init(settings: Settings, _: argparse.Namespace) -> int:
     runner.require_password_file(settings)
-    with host.exclusive_lock(settings.lock_file):
-        settings.repository.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _command(restic.init, settings)
+    settings.repository.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _command(restic.init, settings)
     print("edge-backup: Repository angelegt")
     return ExitCode.OK
 
@@ -83,16 +84,14 @@ def _restore_test(settings: Settings, arguments: argparse.Namespace) -> int:
 
 def _snapshots(settings: Settings, _: argparse.Namespace) -> int:
     runner.require_secret_and_repository(settings)
-    with host.exclusive_lock(settings.lock_file):
-        listing = _command(restic.snapshots, settings)
+    listing = _command(restic.snapshots, settings)
     print(listing, end="")
     return ExitCode.OK
 
 
 def _unlock(settings: Settings, _: argparse.Namespace) -> int:
     runner.require_secret_and_repository(settings)
-    with host.exclusive_lock(settings.lock_file):
-        _command(restic.unlock, settings)
+    _command(restic.unlock, settings)
     return ExitCode.OK
 
 
@@ -102,8 +101,7 @@ def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
     if arguments.target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
-    with host.exclusive_lock(settings.lock_file):
-        snapshot_id = _command(runner.restore, settings, app, arguments.target)
+    snapshot_id = _command(runner.restore, settings, app, arguments.target)
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
 
@@ -113,31 +111,30 @@ def _recorded(
     arguments: argparse.Namespace,
     step: Callable[[Settings, tuple[App, ...], Run], None],
 ) -> int:
-    """Under the host lock, with every outcome in the status file; only a full run is `ok`."""
-    with host.exclusive_lock(settings.lock_file):
-        try:
-            previous = read_status(settings.status_file)
-        except StatusFileError as error:
-            run = Run(settings.status_file, first_attempt(host.now()))
-            run.failed(ExitCategory.CONFIGURATION)
-            return _report(StepFailed(ExitCategory.CONFIGURATION, str(error)))
-        started = host.now()
-        run = Run(
-            settings.status_file,
-            first_attempt(started) if previous is None else previous.attempt(started),
-        )
-        try:
-            step(settings, _apps(arguments.apps), run)
-        except StepFailed as failure:
-            run.failed(failure.category)
-            return _report(failure)
-        except KeyboardInterrupt:
-            run.failed(ExitCategory.INTERRUPTED)
-            return _report(StepFailed(ExitCategory.INTERRUPTED, "abgebrochen"))
-        except BaseException:
-            run.failed(ExitCategory.INTERNAL)
-            raise
-        run.succeeded()
+    """Every outcome lands in the status file; only a full run is `ok`."""
+    try:
+        previous = read_status(settings.status_file)
+    except StatusFileError as error:
+        run = Run(settings.status_file, first_attempt(host.now()))
+        run.failed(ExitCategory.CONFIGURATION)
+        return _report(StepFailed(ExitCategory.CONFIGURATION, str(error)))
+    started = host.now()
+    run = Run(
+        settings.status_file,
+        first_attempt(started) if previous is None else previous.attempt(started),
+    )
+    try:
+        step(settings, _apps(arguments.apps), run)
+    except StepFailed as failure:
+        run.failed(failure.category)
+        return _report(failure)
+    except KeyboardInterrupt:
+        run.failed(ExitCategory.INTERRUPTED)
+        return _report(StepFailed(ExitCategory.INTERRUPTED, "abgebrochen"))
+    except BaseException:
+        run.failed(ExitCategory.INTERNAL)
+        raise
+    run.succeeded()
     return ExitCode.OK
 
 

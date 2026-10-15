@@ -50,6 +50,7 @@ class Machine:
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
     hanging: set[str] = field(default_factory=set)
+    """Labels of probes that never answer; only a timeout ends them."""
     leftover_servers: list[str] = field(default_factory=list)
     """Throwaway servers a killed restore test left behind; they carry the owner label."""
     created_servers: list[str] = field(default_factory=list)
@@ -63,7 +64,7 @@ class Machine:
     starting_server_polls: int = 1
     """How many pg_isready polls find the throwaway server still starting."""
     server_accepting: bool = False
-    """Labels of probes that never answer; only a timeout ends them."""
+    """pg_isready has said yes since the throwaway server started."""
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
     failing: dict[str, int | type[BaseException]] = field(default_factory=dict)
@@ -542,6 +543,7 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
 @pytest.mark.parametrize(
     "command",
     [
+        ("init",),
         ("backup",),
         ("restore-test",),
         ("snapshots",),
