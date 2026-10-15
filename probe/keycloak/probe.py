@@ -45,6 +45,7 @@ from urllib.request import (
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "edge-kc-probe"
+PROJECT_LABEL = f"com.docker.compose.project={PROJECT}"
 DOMAIN = "hallucinai.de"
 REALM = "hallucinai"
 REALM_FILE = "realm.yaml"
@@ -279,11 +280,18 @@ class Stack:
         expect(result.returncode == 0, f"compose up failed:\n{tail(result.stderr)}")
 
     def down(self) -> bool:
-        """Removes the stack, volumes included, and says whether that succeeded."""
+        """Removes the stack, volumes included, and says whether nothing of it is left."""
+        remove_one_offs()
         result = self.compose("down", "--volumes", "--remove-orphans", bootstrap=True)
-        status = "removed" if result.returncode == 0 else f"FAILED ({tail(result.stderr)})"
+        left = leftovers()
+        if result.returncode != 0:
+            status = f"FAILED ({tail(result.stderr)})"
+        elif left:
+            status = f"FAILED (still there: {', '.join(left)})"
+        else:
+            status = "removed"
         print(f"teardown: stack {PROJECT} {status}", flush=True)
-        return result.returncode == 0
+        return status == "removed"
 
     def see_env(self, container: str) -> None:
         inspected = subprocess.run(
@@ -308,6 +316,45 @@ class Stack:
 
     def logs(self, service: str) -> str:
         return self.compose("logs", "--no-log-prefix", service).stdout
+
+
+def docker(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+
+
+def remove_one_offs() -> None:
+    # `compose down` skips a one-off `compose run` container that is still running, as an apply
+    # is when a SIGTERM kills its compose client.
+    listed = docker(
+        "container",
+        "ls",
+        "--all",
+        "--quiet",
+        "--filter",
+        f"label={PROJECT_LABEL}",
+        "--filter",
+        "label=com.docker.compose.oneoff=True",
+    )
+    one_offs = listed.stdout.split()
+    if one_offs:
+        docker("container", "rm", "--force", *one_offs)
+
+
+def leftovers() -> list[str]:
+    """Names every container, network and volume of the probe's project that still exists."""
+    left = []
+    for kind, all_flag, name in (
+        ("container", ["--all"], "{{.Names}}"),
+        ("network", [], "{{.Name}}"),
+        ("volume", [], "{{.Name}}"),
+    ):
+        listed = docker(
+            kind, "ls", *all_flag, "--filter", f"label={PROJECT_LABEL}", "--format", name
+        )
+        if listed.returncode != 0:
+            left.append(f"{kind}s unlisted ({tail(listed.stderr)})")
+        left += [f"{kind} {found}" for found in listed.stdout.split()]
+    return left
 
 
 def tail(output: str, lines: int = 15) -> str:
