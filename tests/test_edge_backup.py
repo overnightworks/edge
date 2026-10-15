@@ -888,14 +888,16 @@ def undeletable_leftover(home) -> Iterator[Path]:
 
 
 @pytest.mark.parametrize("command", ["backup", "restore-test"])
-def test_a_sweep_that_cannot_remove_a_leftover_marks_the_run_failed(
+def test_a_sweep_that_cannot_remove_a_leftover_fails_the_run_with_one_line(
     edge_backup, machine, undeletable_leftover, command
 ):
-    with pytest.raises(PermissionError):
-        edge_backup(command)
+    outcome = edge_backup(command)
 
-    status = json.loads(machine.status_file.read_text())
-    assert (status["state"], status["exit_category"]) == ("failed", "internal")
+    assert outcome.exit_code == 1
+    [line] = outcome.err.splitlines()
+    assert line.startswith("edge-backup: fehlgeschlagen: der Klartext eines abgebrochenen Laufs")
+    assert (outcome.status["state"], outcome.status["exit_category"]) == ("failed", "internal")
+    assert machine.calls == []
 
 
 def _remove_password_file(home: Path) -> None:

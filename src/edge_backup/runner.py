@@ -249,8 +249,14 @@ def sweep_leftover_staging(parent: Path) -> None:
     Only directories with a run's mark go; anything else here is left alone.
     The host lock guarantees no other run is using them.
     """
-    for mark in parent.glob(f"{STAGING_PREFIX}*{RUN_MARK_SUFFIX}"):
-        _remove_staging(mark)
+    try:
+        for mark in parent.glob(f"{STAGING_PREFIX}*{RUN_MARK_SUFFIX}"):
+            _remove_staging(mark)
+    except OSError as error:
+        raise StepFailed(
+            ExitCategory.INTERNAL,
+            f"der Klartext eines abgebrochenen Laufs lässt sich nicht entfernen: {error.strerror}",
+        ) from error
 
 
 @contextmanager
