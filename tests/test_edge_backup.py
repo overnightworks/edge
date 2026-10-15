@@ -52,6 +52,9 @@ class Machine:
     """Throwaway servers a killed restore test left behind; they carry the owner label."""
     foreign_server_name: bool = False
     """A container that is not edge-backup's already holds the throwaway server's name."""
+    starting_server_polls: int = 1
+    """How many pg_isready polls find the throwaway server still starting."""
+    server_accepting: bool = False
     """Labels of probes that never answer; only a timeout ends them."""
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
@@ -98,11 +101,19 @@ class Machine:
             "restic snapshots": self._snapshots,
             "restic restore": self._restore,
             "Start der Wegwerf-Datenbank": self._start_server,
+            "pg_isready": self._pg_isready,
             "pg_restore --list": self._pg_restore,
             "pg_restore": self._pg_restore,
             "psql": self._psql,
+            "Entfernen der Wegwerf-Datenbank": self._silent,
+            "restic init": self._silent,
+            "restic forget": self._silent,
+            "restic check": self._silent,
+            "restic unlock": self._silent,
         }
-        answer = answers.get(label, self._silent)(argv, stdin=stdin)
+        if label not in answers:
+            pytest.fail(f"the scripted machine does not know {label!r}")
+        answer = answers[label](argv, stdin=stdin)
         if stdout is None:
             return answer
         return REAL_HOST_RUN(["printf", "%s", answer.decode()], label=label, stdout=stdout)
@@ -203,17 +214,36 @@ class Machine:
         )
         if name_taken:
             return _exit("Start der Wegwerf-Datenbank", 125)
+        self.server_accepting = False
         return f"{RESTORE_SERVER_ID}\n".encode()
 
+    def _pg_isready(self, argv, **_) -> bytes:
+        assert argv[argv.index("pg_isready") + 1 :] == ["--host", "127.0.0.1", "--quiet"]
+        if self.starting_server_polls:
+            self.starting_server_polls -= 1
+            return _exit("pg_isready", 2)
+        self.server_accepting = True
+        return b""
+
     def _pg_restore(self, argv, *, stdin, **_) -> bytes:
+        assert self.server_accepting, "pg_restore before pg_isready said the server accepts"
         if not stdin.read_bytes().startswith(b"PGDMP"):
             return _exit("pg_restore", 1)
         return b""
 
     def _psql(self, argv, **_) -> bytes:
-        if "count(*)" in argv[-1]:
-            return b"42\n"
-        return b"".join(reference.encode() + b"\0" for reference in self.references)
+        assert self.server_accepting, "psql before pg_isready said the server accepts"
+        sql = argv[argv.index("--command") + 1]
+        answers = {
+            'SELECT count(*) FROM "songs"': b"42\n",
+            'SELECT "mp3_path" FROM "generations"'
+            ' WHERE "mp3_path" IS NOT NULL AND "mp3_path" <> \'\'': b"".join(
+                reference.encode() + b"\0" for reference in self.references
+            ),
+        }
+        if sql not in answers:
+            pytest.fail(f"the throwaway server was asked an unexpected query: {sql}")
+        return answers[sql]
 
 
 def _exit(label: str, exit_code: int) -> bytes:
@@ -378,7 +408,8 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
 
     assert outcome.exit_code == 0, outcome.err
     assert outcome.status["state"] == "ok"
-    assert outcome.status["last_successful_restore_test"] == "2026-10-18T03:00:00+00:00"
+    # The throwaway server answered the second pg_isready poll, one second in.
+    assert outcome.status["last_successful_restore_test"] == "2026-10-18T03:00:01+00:00"
     assert outcome.status["last_successful_backup"] == backed_up
     restore = machine.argv_of("restic restore")
     assert f"{machine.snapshots[-1]['id']}:/backup/songmaker" in restore
@@ -388,6 +419,7 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
         "--username", "postgres", "--dbname", "restore_test",
     ]  # fmt: skip
     assert machine.labels()[-1] == "restic check"
+    assert machine.labels().count("pg_isready") == 2
     assert _no_restore_server_left(machine)
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
