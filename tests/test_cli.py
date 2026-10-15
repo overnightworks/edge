@@ -83,3 +83,27 @@ def test_home_without_a_subcommand_is_a_usage_error() -> None:
         cli.main([])
 
     assert exited.value.code == 2
+
+
+@pytest.mark.parametrize("subcommand", ["tidy", "check"])
+def test_an_unexpected_error_exits_3_with_one_german_line_never_1(
+    clean_home, runner, probe, capsys: pytest.CaptureFixture[str], subcommand: str
+) -> None:
+    state_dir = Layout(clean_home).state_dir
+    state_dir.parent.mkdir(parents=True)
+    state_dir.write_text("a file where the state directory belongs")
+
+    code = cli.main([subcommand], home=clean_home, run=runner, probe=probe)
+
+    error = capsys.readouterr().err
+    assert code == 3
+    assert error.startswith("home: unerwarteter Fehler (")
+    assert error.count("\n") == 1
+
+
+def test_the_help_promises_a_notification_only_when_the_findings_change(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+
+    help_text = " ".join(capsys.readouterr().out.split())  # argparse wraps long help lines
+    assert "meldet nur, wenn sich die Funde ändern" in help_text

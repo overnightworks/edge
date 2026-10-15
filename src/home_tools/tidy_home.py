@@ -8,7 +8,7 @@ finding: it is never counted, never blocks, never affects the exit code.
 
 Exit code: 0 when the home is clean, 1 when any finding exists (dry run or
 apply — not a failure, it is news), 2 when the configuration file itself is
-invalid.
+invalid, 3 when the run broke on an unexpected error.
 
 This module also owns the one configuration file of `home` and the paths every
 subcommand derives from the home directory.
@@ -28,6 +28,8 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+
+from home_tools.report import findings_count, markdown_table
 
 PASTED_IMAGE_GLOB = "Eingefügtes Bild*.png"
 LARGEST_ENTRIES_SHOWN = 10
@@ -247,8 +249,16 @@ class Layout:
         return self.state_dir / "check-report.md"
 
     @property
-    def check_fingerprint_file(self) -> Path:
-        return self.state_dir / "check-findings.sha256"
+    def check_findings_file(self) -> Path:
+        return self.state_dir / "check-findings.txt"
+
+    @property
+    def secrets_dir(self) -> Path:
+        return self.home / ".secrets"
+
+    @property
+    def secrets_report_file(self) -> Path:
+        return self.state_dir / "secrets-report.md"
 
 
 @dataclass(frozen=True)
@@ -812,16 +822,6 @@ def _relative_to_home(subject: str, home: Path) -> str:
         return subject
 
 
-def _escape_cell(text: str) -> str:
-    return text.replace("|", "\\|")
-
-
-def _markdown_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
-    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
-    lines.extend("| " + " | ".join(_escape_cell(cell) or "-" for cell in row) + " |" for row in rows)
-    return lines
-
-
 def _recommendation_cell(finding: Finding) -> str:
     """A RUN finding shows the exact command --apply executes, not a paraphrase of it."""
     if finding.action is Action.RUN:
@@ -848,7 +848,7 @@ def render_report(
     mode = "Apply" if apply else "Dry-Run"
     reclaimable = sum(f.reclaimable_bytes for f in all_findings if f.rule == DOCKER_RULE)
     reclaim_clause = f" | docker meldet ~{_format_gb(reclaimable)} wiederverwendbar" if reclaimable else ""
-    header = f"# home tidy {now:%d.%m.%Y %H:%M}  {mode} | {len(all_findings)} Funde{reclaim_clause}"
+    header = f"# home tidy {now:%d.%m.%Y %H:%M}  {mode} | {findings_count(len(all_findings))}{reclaim_clause}"
 
     footnotes = []
     if findings.checked_clean:
@@ -881,7 +881,7 @@ def render_report(
             row.append(applied.get(finding, ""))
         rows.append(row)
 
-    lines = [header, "", *_markdown_table(headers, rows)]
+    lines = [header, "", *markdown_table(headers, rows)]
     for footnote in footnotes:
         lines += ["", footnote]
     return "\n".join(lines).rstrip() + "\n"
@@ -898,8 +898,7 @@ def dry_run(layout: Layout, now: datetime, limits: Limits, run: CommandRunner) -
     return findings, render_report(findings, now, layout.home)
 
 
-def tidy(options: Options, layout: Layout, config: Config, run: CommandRunner) -> int:
-    now = datetime.now()
+def tidy(options: Options, layout: Layout, config: Config, run: CommandRunner, now: datetime) -> int:
     findings = collect_findings(layout, now, options, config.tidy, run=run)
     applied = {f: apply_finding(f, run=run) for f in findings.clean} if options.apply else {}
     housekeeping = run_housekeeping(run) if options.apply else ""
@@ -916,12 +915,12 @@ Beispiele:
   home tidy --apply    führt die clean-Funde aus, audit-Funde bleiben Bericht
   home tidy --sizes    zusätzlich die größten Einträge im Home (langsam)
 
-Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration ungültig.
+Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration ungültig, 3 unerwarteter Fehler.
 """
 
 
-def _tidy_from_args(args: argparse.Namespace, layout: Layout, config: Config, run: CommandRunner) -> int:
-    return tidy(Options(apply=args.apply, sizes=args.sizes), layout, config, run)
+def _tidy_from_args(args: argparse.Namespace, layout: Layout, config: Config, run: CommandRunner, _probe: object, now: datetime) -> int:
+    return tidy(Options(apply=args.apply, sizes=args.sizes), layout, config, run, now)
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

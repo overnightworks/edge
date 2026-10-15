@@ -75,6 +75,9 @@ jobs:
           "$smoke/bin/home" --help
           "$smoke/bin/home" tidy --help
           "$smoke/bin/home" check --help
+          "$smoke/bin/home" secrets --help
+          # Reads the packaged secrets_manifest.toml without probing or writing.
+          "$smoke/bin/home" secrets --by-service | grep -F "deklarierte Abhängigkeiten"
 
       # Unguarded on purpose: a green run must say whether it asserted the
       # findings or deliberately skipped, because a step that is silently

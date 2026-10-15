@@ -6,8 +6,10 @@ dieses README ist die lange Anleitung.
 
 Alle Befehle teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/home-check.service` trägt
-`SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei selbst ungültig
-ist (der Timer meldet das dann als fehlgeschlagenen Dienst, zu Recht).
+`SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
+Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
+zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
+Timer einen fehlgeschlagenen Dienst, zu Recht.
 
 ## home check
 
@@ -15,16 +17,119 @@ ist (der Timer meldet das dann als fehlgeschlagenen Dienst, zu Recht).
 home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung
 ```
 
-`home check` fährt jede Prüfung, die nichts ändert — heute den Dry-Run von
-`home tidy` — und schreibt einen gemeinsamen Bericht nach
-`~/.local/state/home/check-report.md`. Eine Desktop-Benachrichtigung (über
-`notify-send`, falls installiert) kommt nur, wenn es Funde gibt **und** sich
-die Menge der Funde seit dem letzten Lauf geändert hat. Ein Fund ist dabei
-Regel plus Gegenstand: Derselbe Fund, der nur älter oder größer wird, nervt
-nicht erneut. Den Fingerabdruck der letzten Fundmenge hält
-`~/.local/state/home/check-findings.sha256`. Ein Lauf ohne Funde
-benachrichtigt nie, merkt sich aber den sauberen Stand, sodass ein
-wiederkehrender Fund wieder meldet.
+`home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
+`home tidy` und die Ansicht von `home secrets` — und schreibt einen gemeinsamen
+Bericht nach `~/.local/state/home/check-report.md`. Eine
+Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
+wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
+Funde gibt oder eine zerbrochene Prüfung wieder läuft. Ein Fund ist dabei Regel plus Gegenstand: Derselbe Fund, der nur
+älter oder größer wird, nervt nicht erneut. Zerbricht eine Prüfung oder läuft
+sie wieder, meldet das ebenfalls; ihre Funde zählen dabei weder als neu noch
+als weg, der Titel nennt die Prüfung. Die Benachrichtigung nennt im
+Titel die Zahl der Funde und darunter, wie viele neu und wie viele weg sind,
+samt Pfad zum Bericht:
+
+```
+home check 15.10.2026 09:00 | 3 Funde
+1 neu, 2 weg. Bericht: /home/felix/.local/state/home/check-report.md
+```
+
+Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`.
+Ein Lauf ohne Funde benachrichtigt nur, wenn eine zerbrochene Prüfung wieder
+läuft; den sauberen Stand merkt er sich, sodass ein wiederkehrender Fund
+wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die zuletzt
+gemeldete Fundmenge stehen — auch bei einem sauberen Lauf nach einer wieder
+laufenden Prüfung —, und der nächste Lauf meldet, was dann noch von ihr
+abweicht.
+
+Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
+lesen darf), steht an ihrer Stelle eine Zeile „Prüfung secrets fehlgeschlagen
+(…)“, die Funde der anderen Prüfung bleiben im Bericht, die Benachrichtigung
+geht trotzdem raus, und der Lauf endet mit Exit-Code `3` — bei einem
+ungültigen Geheimnis-Manifest mit `2`, und stderr nennt Datei und Schlüssel.
+
+## home secrets
+
+```
+home secrets                # jedes Geheimnis: Datei, Prüfung, Ablauf; nie ein Wert
+home secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
+```
+
+`home secrets` zeigt jedes Geheimnis, das das Manifest
+`src/home_tools/secrets_manifest.toml` nennt, und ändert nichts außer seinem
+Bericht `~/.local/state/home/secrets-report.md`. Es braucht kein Terminal;
+Agenten dürfen es fahren.
+
+**Kein Wert, nirgends.** Das Manifest enthält nur Namen, Orte und Links.
+`home secrets` liest Geheimnisdateien nur per `stat` und öffnet sie nie. Die
+einzige Prüfung ist `gh auth status` (der Keyring-Login von `gh`): `home`
+behält davon nur den Exit-Code, verwirft Ausgabe und Fehlerausgabe und bricht
+nach 20 Sekunden ab.
+
+Beispiel (gekürzt):
+
+```
+# home secrets 15.10.2026 09:00 | 4 Funde
+
+| Name | Art | Datei | Prüfung | Ablauf | Ort | Neu anlegen |
+|---|---|---|---|---|---|---|
+| gitlab | Token | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/gitlab | https://code.siemens.com/-/user_settings/personal_access_tokens |
+| gh | Tool-Login | vorhanden | geprüft: gültig | Ablauf unbekannt | ~/.config/gh | `gh auth login --web` |
+| ssh/id_ed25519.ppk | abgeleitete Kopie | fehlt | nicht geprüft | Ablauf unbekannt | ~/.ssh/id_ed25519.ppk | `puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk` |
+| github/token | Token | zurückgezogen | Widerruf unbestätigt | Ablauf unbekannt | ~/.secrets/github/token | Widerruf: https://github.com/settings/tokens |
+
+## Funde
+
+| Regel | Gegenstand | Befund | Empfehlung |
+|---|---|---|---|
+| missing | ssh/id_ed25519.ppk | - | neu anlegen, siehe Tabelle |
+| revocation-unconfirmed | github/token | https://github.com/settings/tokens | beim Anbieter widerrufen, siehe Tabelle |
+| unknown-file | ~/.secrets/README | - | unbekannt: ins Manifest eintragen oder von Hand löschen |
+| loose-mode | ~/.secrets/gmail-cleanup | 775, höchstens 700 | von Hand enger setzen; home ändert keine Rechte |
+
+Keine Werte: home secrets liest Geheimnisdateien nur per stat und öffnet sie nie.
+```
+
+So liest sich die Tabelle:
+
+| Spalte | Werte |
+|---|---|
+| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, abgeleitete Kopie — genau eine je Eintrag |
+| Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen` |
+| Prüfung | nur `gh` wird geprüft (`geprüft: gültig`, `geprüft: ungültig`, `Prüfung nicht möglich` bei Zeitüberschreitung oder fehlendem `gh`); alle anderen `nicht geprüft` |
+| Ablauf | heute immer `Ablauf unbekannt`: ein Datum erscheint erst mit Herkunft (Antwort des Anbieters oder ein vom Assistenten geschriebenes `rotated_on`); das Dateialter zählt nie |
+
+Funde sind: ein fehlender oder unbekannter Eintrag, ein zurückgezogenes
+Geheimnis, dessen Widerruf unbestätigt ist, eine fehlgeschlagene oder nicht
+mögliche Prüfung, eine Datei oder ein Ordner unter `~/.secrets`, den kein
+Eintrag nennt („unbekannt“; bleibt unangetastet), und Rechte lockerer als
+`600` für Dateien oder `700` für Ordner unter `~/.secrets`. `home` setzt nie
+Rechte; `chmod` bleibt ein Handgriff.
+
+`--by-service` dreht `read_by` des Manifests um: je Dienst die Geheimnisse,
+die er laut Manifest liest, dazu die abgeleiteten Kopien und ihre Quelle. Die
+Überschrift sagt „deklarierte Abhängigkeiten“: Das ist, was das Manifest
+behauptet, kein Beweis vollständiger Wirkung.
+
+### Einen Eintrag hinzufügen
+
+Ein neues Geheimnis ist ein Block im Manifest:
+
+```toml
+[[secret]]
+name = "grafana-admin"
+kind = "service-password"
+paths = ["~/.secrets/grafana/admin"]
+read_by = ["grafana.service"]
+recreate = "wird beim Einrichten erzeugt"
+```
+
+`paths` beginnt mit `~/`, nur der letzte Teil darf einen Platzhalter tragen
+(`~/.secrets/cloudflared/*.json`). Ein zurückgezogener Eintrag trägt
+`retired_on = 2026-10-14` und `revoke_url`, eine abgeleitete Kopie
+`mirror_of`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
+abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
+mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 ## home tidy
 

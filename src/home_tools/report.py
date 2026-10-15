@@ -1,0 +1,97 @@
+"""What every `home` report shares: its Markdown building blocks, and the one way the secrets and check state files reach and leave disk."""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import stat
+import unicodedata
+import uuid
+from collections.abc import Sequence
+from pathlib import Path
+
+
+def findings_count(count: int) -> str:
+    """German singular and plural: "1 Fund", "0 Funde", "2 Funde"."""
+    return "1 Fund" if count == 1 else f"{count} Funde"
+
+
+def _escape_cell(text: str) -> str:
+    return "".join(_escape_character(character) for character in text)
+
+
+def _escape_character(character: str) -> str:
+    """A pipe would split the cell, a control character such as a newline the row, and a surrogate from a file name
+    that is not UTF-8 the writing of the report, so each shows as an escape."""
+    if character == "|":
+        return "\\|"
+    if unicodedata.category(character) in {"Cc", "Cs"}:
+        return character.encode("unicode_escape").decode("ascii")
+    return character
+
+
+def markdown_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    """One line per row; an empty cell shows as "-" so no column ever looks shifted."""
+    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
+    lines.extend("| " + " | ".join(_escape_cell(cell) or "-" for cell in row) + " |" for row in rows)
+    return lines
+
+
+def write_state_file(home: Path, path: Path, text: str) -> None:
+    """Replaces a file of home's state directory below `home`; a symlink on the way there is refused, never followed.
+
+    The new text goes to a fresh file that is renamed over the old one, which is never opened: a symlink or hard link
+    planted there is replaced, not written through. Either kind of link would otherwise let a report overwrite a file
+    outside the state directory, a secret under ~/.secrets included.
+    """
+    directory = _open_state_directory(home, path.parent.relative_to(home))
+    try:
+        _replace(directory, path.name, text)
+    finally:
+        os.close(directory)
+
+
+def read_state_file(home: Path, path: Path) -> str | None:
+    """Reads a file of home's state directory below `home` without following a symlink anywhere on the way.
+
+    None when the file does not exist yet. A symlink in its place raises instead of being read, because its target
+    may lie outside the state directory, a secret under ~/.secrets included. Anything else that is not a regular file
+    raises too; it is opened without blocking, because a FIFO planted there would otherwise wait forever for a writer.
+    """
+    directory = _open_state_directory(home, path.parent.relative_to(home))
+    try:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    finally:
+        os.close(directory)
+    with open(descriptor) as state_file:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{path} ist keine reguläre Datei")
+        return state_file.read()
+
+
+def _replace(directory: int, name: str, text: str) -> None:
+    fresh = f".{name}.{uuid.uuid4().hex}"
+    descriptor = os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=directory)
+    try:
+        with open(descriptor, "w") as fresh_file:
+            fresh_file.write(text)
+        os.replace(fresh, name, src_dir_fd=directory, dst_dir_fd=directory)
+    except BaseException:
+        os.unlink(fresh, dir_fd=directory)
+        raise
+
+
+def _open_state_directory(home: Path, below_home: Path) -> int:
+    """Creates the missing directories below home one at a time and opens each without following a symlink."""
+    directory = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    for name in below_home.parts:
+        try:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(name, dir_fd=directory)
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+        finally:
+            os.close(directory)
+        directory = child
+    return directory

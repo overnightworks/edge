@@ -5,18 +5,22 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 
-from home_tools import check, tidy_home
+from home_tools import check, secrets_view, tidy_home
+from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Layout, load_config, run_command
 
-SUBCOMMANDS = (tidy_home, check)
+SUBCOMMANDS = (check, tidy_home, secrets_view)
+UNEXPECTED_ERROR_EXIT = 3
 
 EXAMPLES = """\
 Beispiele:
   home check           tägliche Prüfung, wie der Timer sie fährt
   home tidy            zeigt, was im Home liegt, wo es nicht hingehört
   home tidy --apply    räumt die clean-Funde weg
+  home secrets         zeigt jedes Geheimnis, nie einen Wert
   home <befehl> --help Einzelheiten zu einem Befehl
 
 Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository home-tools.
@@ -51,7 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None, home: Path | None = None, run: CommandRunner = run_command) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    home: Path | None = None,
+    run: CommandRunner = run_command,
+    probe: ExitCodeProbe = probe_exit_code,
+    now: datetime | None = None,
+) -> int:
     args = build_parser().parse_args(argv)
     layout = Layout(home or Path.home())
     try:
@@ -59,4 +69,12 @@ def main(argv: Sequence[str] | None = None, home: Path | None = None, run: Comma
     except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
         print(f"home: {error}", file=sys.stderr)
         return 2
-    return args.handler(args, layout, config, run)
+    # Exit 1 means "findings" and the timer counts it as success, so a crash must end with its own code.
+    try:
+        return args.handler(args, layout, config, run, probe, now or datetime.now())
+    except secrets_view.ManifestError as error:
+        print(f"home: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:
+        print(f"home: unerwarteter Fehler ({type(error).__name__}): {error}", file=sys.stderr)
+        return UNEXPECTED_ERROR_EXIT
