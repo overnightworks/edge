@@ -14,20 +14,18 @@ _EDGE_NAME = re.compile(r"[a-z0-9-]{1,63}")
 
 def check(inspect_json: str, ss_output: str, allow_list: tuple[AllowEntry, ...]) -> list[Finding]:
     containers = parse_containers(inspect_json)
-    findings = publication_findings(
-        [publication for container in containers for publication in container.publications]
-    )
+    publications = [
+        publication for container in containers for publication in container.publications
+    ]
+    running_publications = [
+        publication
+        for container in containers
+        if container.running
+        for publication in container.publications
+    ]
+    findings = publication_findings(publications)
     findings += edge_name_findings(containers)
-    findings += listener_findings(
-        parse_listeners(ss_output),
-        allow_list,
-        [
-            publication
-            for container in containers
-            if container.running
-            for publication in container.publications
-        ],
-    )
+    findings += listener_findings(parse_listeners(ss_output), allow_list, running_publications)
     return ordered(findings)
 
 
