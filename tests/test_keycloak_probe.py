@@ -1,6 +1,8 @@
 """The Keycloak probe's credential bookkeeping and teardown, checked without a Keycloak stack."""
 
 import importlib.util
+import os
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -139,3 +141,109 @@ def test_teardown_says_removed_only_when_nothing_of_the_stack_is_left(
     assert capsys.readouterr().out.splitlines() == [teardown_line]
     assert said_removed == removed
     assert docker.containers == containers_left
+
+
+@pytest.fixture
+def restored_signal_handlers() -> Iterator[None]:
+    saved = {name: signal.getsignal(name) for name in (signal.SIGTERM, signal.SIGINT)}
+    yield
+    for name, handler in saved.items():
+        signal.signal(name, handler)
+
+
+def run_main(
+    probe: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    scratch: Path,
+    *,
+    run_signal: signal.Signals | None,
+    down_signal: signal.Signals | None,
+) -> int:
+    """main() over a stack and proofs that each receive a signal, as `timeout` or Ctrl-C would."""
+
+    class FakeProbe:
+        def __init__(self, _stack: object) -> None: ...
+
+        def run(self) -> None:
+            if run_signal:
+                os.kill(os.getpid(), run_signal)
+
+    class FakeStack:
+        def __init__(self, _scratch: Path) -> None: ...
+
+        def down(self) -> bool:
+            if down_signal:
+                os.kill(os.getpid(), down_signal)
+            print("teardown: stack edge-kc-probe removed", flush=True)
+            return True
+
+    monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(scratch)])
+    monkeypatch.setattr(probe, "ports_free", lambda *_: [])
+    monkeypatch.setattr(probe, "Probe", FakeProbe)
+    monkeypatch.setattr(probe, "Stack", FakeStack)
+    return probe.main()
+
+
+@pytest.mark.parametrize("signal_name", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_during_the_teardown_does_not_cut_it_short(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+    signal_name: signal.Signals,
+) -> None:
+    exit_code = run_main(
+        probe, monkeypatch, tmp_path / "s", run_signal=None, down_signal=signal_name
+    )
+
+    assert exit_code == 0
+    assert "teardown: stack edge-kc-probe removed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("signal_name", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_during_the_proofs_tears_down_and_ends_with_one_failed_line(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+    signal_name: signal.Signals,
+) -> None:
+    exit_code = run_main(
+        probe, monkeypatch, tmp_path / "s", run_signal=signal_name, down_signal=None
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "teardown: stack edge-kc-probe removed",
+        f"PROBE FAILED: stopped by {signal_name.name}",
+    ]
+
+
+def test_a_scratch_that_is_a_file_or_not_empty_is_refused_with_the_usage_exit_code(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    a_file = tmp_path / "file"
+    a_file.write_text("x")
+    non_empty = tmp_path / "dir"
+    non_empty.mkdir()
+    (non_empty / "x").write_text("x")
+
+    for scratch in (a_file, non_empty):
+        with pytest.raises(SystemExit) as refused:
+            run_main(probe, monkeypatch, scratch, run_signal=None, down_signal=None)
+        assert refused.value.code == 2
+        assert f"{scratch} is not an empty directory" in capsys.readouterr().err
+
+
+def test_a_taken_port_is_refused_with_its_own_exit_code(
+    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(tmp_path / "s")])
+    monkeypatch.setattr(probe, "ports_free", lambda *_: [8081])
+
+    assert probe.main() == 3

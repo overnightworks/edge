@@ -1034,25 +1034,37 @@ class Probe:
         )
 
 
+PORT_TAKEN_EXIT = 3
+
+
+def stop_as_failure(signum: int, _frame: object) -> None:
+    raise ProbeFailure(f"stopped by {signal.Signals(signum).name}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True, help="an empty or new directory")
     scratch = parser.parse_args().scratch.resolve()
-    if scratch.exists() and any(scratch.iterdir()):
-        parser.error(f"{scratch} is not empty")
+    if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
+        parser.error(f"{scratch} is not an empty directory")
     taken = ports_free(8081, 8090)
     if taken:
         print(f"probe refused: 127.0.0.1 port(s) {taken} in use; stop the live edge first")
-        return 2
-    # `timeout` sends SIGTERM; turn it into an exception so the teardown below still runs.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit("probe stopped by SIGTERM"))
+        return PORT_TAKEN_EXIT
     stack = Stack(scratch)
+    # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
+    # below still runs and the probe ends with its one FAILED line.
+    for stopping in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(stopping, stop_as_failure)
     failures = []
     try:
         Probe(stack).run()
     except ProbeFailure as failure:
         failures.append(str(failure))
     finally:
+        # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
+        for stopping in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(stopping, signal.SIG_IGN)
         if not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:

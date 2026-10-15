@@ -387,7 +387,7 @@ two ways:
 | Entrypoint | Host | Admits |
 |---|---|---|
 | `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…`, `/resources/hallucinai/…` and the versioned static `/resources/<5 characters>/…` only; everything else, `/resources/master/…` included, is Traefik's 404 |
-| `admin` (`127.0.0.1:8090`, this PC only) | `localhost` | the admin console and the master realm (`http://localhost:8090/admin/`) |
+| `admin` (`127.0.0.1:8090`, this PC only) | `localhost` | the admin console and the master realm (`http://localhost:8090/admin/`); `127.0.0.1:8090` answers a bare 404 by design, because the WebAuthn rpId is a hostname |
 
 The public issuer is `https://auth.<EDGE_DOMAIN>/realms/hallucinai`; the
 master realm's issuer is `http://localhost:8090/realms/master`. Every master
@@ -536,8 +536,10 @@ flock /tmp/probe-stack.lock \
 ```
 
 It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
-(exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 means 8081 or 8090 was
-taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
+(exit 0) or `PROBE FAILED: <what>` (exit 1, also when SIGTERM or Ctrl-C
+stopped it: the teardown still runs and finishes); exit 2 means a refused
+argument (`--scratch` must be a new or empty directory), exit 3 that 8081 or
+8090 was taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it
 kills the probe and its teardown (exit 137). After an exit 137 or a
 `teardown: stack edge-kc-probe FAILED` line, remove it under the lock, from a directory
