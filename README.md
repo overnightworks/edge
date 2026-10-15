@@ -146,8 +146,10 @@ apply), deduplicated and in a stable order.
 
 ### The allow-list
 
-`edge-check.toml` (or `--allow-list PATH`) names the known listeners beyond
-loopback. Docker publications are never allow-listed.
+`edge-check.toml` in this project (or `--allow-list PATH`) names the known
+listeners beyond loopback. The default is found next to the project's
+`pyproject.toml`, not in the current directory, so `uv run --project PATH
+edge-check` works from anywhere. Docker publications are never allow-listed.
 
 ```toml
 [[allow]]

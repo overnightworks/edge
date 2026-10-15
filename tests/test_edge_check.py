@@ -434,6 +434,16 @@ def test_exits_2_when_a_host_command_fails(monkeypatch, tmp_path, capsys):
     assert "docker ps failed" in capsys.readouterr().err
 
 
+def test_default_allow_list_is_the_projects_whatever_the_cwd(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
+    monkeypatch.setattr(host, "socket_listeners", lambda: "")
+
+    exit_code = cli.main(["--json"])
+
+    assert (exit_code, capsys.readouterr().out) == (0, "[]\n")
+
+
 def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):
     exit_code = cli.main(["--allow-list", str(tmp_path / "absent.toml")])
 

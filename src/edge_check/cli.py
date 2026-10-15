@@ -11,7 +11,9 @@ from edge_check.allowlist import AllowListError, parse_allow_list
 from edge_check.check import check
 from edge_check.exposure import Finding, UnreadableOutputError
 
-DEFAULT_ALLOW_LIST = Path("edge-check.toml")
+# uv installs the project editable, so this file sits in the checkout: src/edge_check/cli.py.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ALLOW_LIST = _PROJECT_ROOT / "edge-check.toml"
 _TABLE_HEADER = ("PROBLEM", "SUBJECT", "PROTO", "ADDRESS", "PORT", "EDGE.NAME")
 _NOT_A_SOCKET = "-"
 
