@@ -1,0 +1,163 @@
+"""restic, run from its pinned image: the repository and the password file are mounted, never read.
+
+The password reaches restic only as a read-only file behind `--password-file`.
+"""
+
+import json
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+
+from edge_backup import host
+from edge_backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
+
+REPOSITORY = "/repo"
+PASSWORD_FILE = "/run/secrets/restic-password"
+RESTORE_TARGET = "/restore"
+SCRATCH = "/scratch"
+RETRY_LOCK = "5m"
+KEEP_WEEKLY = 4
+KEEP_MONTHLY = 3
+CHECK_READ_DATA_SUBSET = "10%"
+# The snapshot layout under an app's source path: the dump and manifest, and the audio.
+DB_FOLDER = "db"
+AUDIO_FOLDER = "audio"
+
+
+class MountKind(StrEnum):
+    BIND = "bind"
+    VOLUME = "volume"
+
+
+@dataclass(frozen=True)
+class Mount:
+    kind: MountKind
+    source: str
+    """A host path for a bind mount (it must exist; Docker never creates it), else a volume."""
+    target: str
+    readonly: bool = True
+
+    def as_argument(self) -> str:
+        argument = f"type={self.kind},source={self.source},target={self.target}"
+        return f"{argument},readonly" if self.readonly else argument
+
+
+def app_source(app: str) -> str:
+    """The fixed in-container path an app's snapshot holds: DB_FOLDER and AUDIO_FOLDER."""
+    return f"/backup/{app}"
+
+
+def container_argv(settings: Settings, *mounts: Mount, entrypoint: str | None = None) -> list[str]:
+    """`docker run` with no network, no privileges and a read-only root, as the operator's user."""
+    argv = [
+        "docker", "run", "--rm",
+        "--network", "none",
+        "--hostname", RESTIC_HOSTNAME,
+        "--user", f"{settings.uid}:{settings.gid}",
+        "--read-only",
+        # restic stages pack files in TMPDIR: a tmpfs only this container's user can enter.
+        "--tmpfs", f"{SCRATCH}:mode=0700,uid={settings.uid},gid={settings.gid}",
+        "--env", f"TMPDIR={SCRATCH}",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    ]  # fmt: skip
+    argv += [argument for mount in mounts for argument in ("--mount", mount.as_argument())]
+    if entrypoint is not None:
+        argv += ["--entrypoint", entrypoint]
+    return [*argv, RESTIC_IMAGE]
+
+
+def restic_argv(settings: Settings, command: list[str], *mounts: Mount) -> list[str]:
+    repository = Mount(MountKind.BIND, str(settings.repository), REPOSITORY, readonly=False)
+    password = Mount(MountKind.BIND, str(settings.password_file), PASSWORD_FILE)
+    return [
+        *container_argv(settings, repository, password, *mounts),
+        "--repo", REPOSITORY,
+        "--password-file", PASSWORD_FILE,
+        "--no-cache",
+        "--retry-lock", RETRY_LOCK,
+        *command,
+    ]  # fmt: skip
+
+
+def init(settings: Settings) -> None:
+    _restic(settings, "restic init", ["init"])
+
+
+def backup(settings: Settings, app: str, staging: Path, volume: str) -> str:
+    """One snapshot holding dump, manifest and audio; any non-zero exit (3 too) is a failure."""
+    output = _restic(
+        settings,
+        "restic backup",
+        ["backup", "--json", *_tag(app), app_source(app)],
+        Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}"),
+        Mount(MountKind.VOLUME, volume, f"{app_source(app)}/{AUDIO_FOLDER}"),
+    )
+    return _snapshot_id(output)
+
+
+def forget(settings: Settings, app: str) -> None:
+    _restic(
+        settings,
+        "restic forget",
+        [
+            "forget", *_scope(app), "--group-by", "host,tags",
+            "--keep-weekly", str(KEEP_WEEKLY), "--keep-monthly", str(KEEP_MONTHLY),
+            "--prune",
+        ],
+    )  # fmt: skip
+
+
+def check(settings: Settings, *, read_data: bool) -> None:
+    subset = [f"--read-data-subset={CHECK_READ_DATA_SUBSET}"] if read_data else []
+    _restic(settings, "restic check", ["check", *subset])
+
+
+def latest_snapshot(settings: Settings, app: str) -> str | None:
+    output = _restic(
+        settings, "restic snapshots", ["snapshots", "--json", "--latest", "1", *_scope(app)]
+    )
+    try:
+        latest = json.loads(output)
+        return latest[-1]["id"] if latest else None
+    except (ValueError, KeyError, TypeError) as error:
+        raise host.UnreadableOutputError("restic snapshots ist unlesbar") from error
+
+
+def restore(settings: Settings, app: str, snapshot_id: str, target: Path) -> None:
+    """The app's source path lands directly in target: DB_FOLDER and AUDIO_FOLDER below it."""
+    _restic(
+        settings,
+        "restic restore",
+        ["restore", f"{snapshot_id}:{app_source(app)}", "--target", RESTORE_TARGET],
+        Mount(MountKind.BIND, str(target), RESTORE_TARGET, readonly=False),
+    )
+
+
+def snapshots(settings: Settings) -> str:
+    return _restic(settings, "restic snapshots", ["snapshots"]).decode()
+
+
+def unlock(settings: Settings) -> None:
+    """Removes only stale restic locks; a live run's lock stays."""
+    _restic(settings, "restic unlock", ["unlock"])
+
+
+def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) -> bytes:
+    return host.run(restic_argv(settings, command, *mounts), label=label)
+
+
+def _scope(app: str) -> list[str]:
+    return ["--host", RESTIC_HOSTNAME, *_tag(app)]
+
+
+def _tag(app: str) -> list[str]:
+    """Each app's snapshots carry its name as their tag."""
+    return ["--tag", app]
+
+
+def _snapshot_id(backup_output: bytes) -> str:
+    try:
+        messages = [json.loads(line) for line in backup_output.splitlines() if line.strip()]
+        return next(m["snapshot_id"] for m in messages if m.get("message_type") == "summary")
+    except (ValueError, KeyError, AttributeError, StopIteration) as error:
+        raise host.UnreadableOutputError("restic backup meldete keinen Snapshot") from error
