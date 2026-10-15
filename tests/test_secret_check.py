@@ -90,6 +90,11 @@ LITERALS = {
         compose_with("\n      APP_SECRET: hunter2"),
         "APP_SECRET",
     ),
+    "compose-name-with-newline": (
+        "compose\nprod.yaml",
+        compose_with("\n      KC_DB_PASSWORD: hunter2"),
+        "KC_DB_PASSWORD",
+    ),
     "keycloak-null": ("keycloak/realm.yaml", "clients:\n  - {clientId: x, secret: }\n", "secret"),
     "keycloak-list": (
         "keycloak/realm.yaml",
@@ -135,7 +140,8 @@ def test_a_literal_secret_exits_non_zero_naming_file_and_key(style: str, tmp_pat
     result = run_check(tmp_path)
 
     assert result.returncode == 1
-    assert f"{name}: {key} holds a literal" in result.stdout
+    rule = "holds a literal" if name.startswith("keycloak/") else "must be a _FILE path"
+    assert f"{name}: {key} {rule}" in result.stdout
 
 
 def test_references_and_file_paths_pass(tmp_path: Path) -> None:

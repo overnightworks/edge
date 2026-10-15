@@ -21,7 +21,7 @@ from pathlib import Path
 import yaml
 
 ENV_REFERENCE = re.compile(r"\$\(env:[A-Za-z_][A-Za-z0-9_]*\)")
-COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose.*\.ya?ml")
+COMPOSE_FILE = re.compile(r"(?:[\w-]+\.)*(?:docker-)?compose.*\.ya?ml", re.DOTALL)
 SECRET_KEY_SUFFIX = re.compile(r"(?:secret|password)$", re.IGNORECASE)
 SECRET_ENV_NAME = re.compile(r"PASSWORD|SECRET", re.IGNORECASE)
 SKIPPED_DIRECTORIES = {".git", ".venv", "node_modules"}
@@ -74,13 +74,13 @@ def violations(root: Path) -> Iterator[str]:
     for path in repository_files(root):
         relative = path.relative_to(root)
         if COMPOSE_FILE.fullmatch(path.name):
-            found = compose_violations
+            found, rule = compose_violations, "must be a _FILE path"
         elif relative.parent == Path("keycloak") and path.suffix in {".yaml", ".yml"}:
-            found = keycloak_violations
+            found, rule = keycloak_violations, "holds a literal"
         else:
             continue
         for key in found(yaml.safe_load(path.read_text())):
-            yield f"{relative}: {key} holds a literal"
+            yield f"{relative}: {key} {rule}"
 
 
 def main() -> int:
