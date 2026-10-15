@@ -256,6 +256,13 @@ It restores the latest snapshot into a private directory under
 
 It never touches the live database or volume.
 
+Backup and restore test stage their plaintext (the dump, the restored copy) in
+`~/.cache/edge-backup` and remove it when they end, on success or failure. A
+run killed outright (power cut, out of memory, systemd's stop timeout) cannot,
+so its plaintext stays there until the next backup or restore test, which
+removes it before anything else. That sweep removes only directories a run
+marked as its own; anything else in that directory stays.
+
 ### Status
 
 `~/.local/state/edge/backup-status.json`, written atomically at every phase:
@@ -302,6 +309,10 @@ so a failed load or copy never goes on to the other half or restarts the app:
 (
 set -euo pipefail
 restored=~/restore-songmaker
+# The copy runs in edge-backup's own restic image, pinned by version and digest: no
+# unpinned image ever gets write access to the live audio volume.
+image=$(cd ~/git/edge && .venv/bin/python -c \
+  'from edge_backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
 pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
   --filter label=com.docker.compose.service=postgres \
   --filter label=com.docker.compose.oneoff=False)
@@ -316,7 +327,7 @@ docker exec -i "$pg" pg_restore --username songmaker --dbname songmaker \
 docker run --rm --network none \
   --mount type=bind,source="$restored/audio",target=/from,readonly \
   --mount type=volume,source=songmaker_audiofiles,target=/to \
-  alpine:3 cp -a /from/. /to/
+  --entrypoint cp "$image" -a /from/. /to/
 docker start $stopped
 )
 ```
