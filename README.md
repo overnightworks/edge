@@ -19,7 +19,7 @@ local service only.
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
-| `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay, the secret check's rules |
+| `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay and its master step, the secret check's rules |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
@@ -246,8 +246,14 @@ credential.
 2. **Secrets.** Create the three files (above).
 3. **First start**, with the temporary bootstrap admin `temp-admin`:
    `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
-4. **First apply**, signed in as `temp-admin`:
-   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli`
+4. **Master on the admin entrypoint, then the first apply**, both signed in as
+   `temp-admin`. The apply cannot move the master realm itself: that move
+   changes the issuer of the token it signs in with.
+
+   ```sh
+   docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
+   docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
+   ```
 5. **Leave the bootstrap overlay:** `docker compose up -d keycloak`. Every later
    apply uses the `config-cli` client.
 6. **Permanent admin.** Sign in at `http://localhost:8090/admin/` as

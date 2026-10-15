@@ -59,6 +59,8 @@ clientScopes:
           included.client.audience: agent-service
           id.token.claim: "false"
           access.token.claim: "true"
+          # Stated, because Keycloak would otherwise default it on create and the next apply flip it.
+          userinfo.token.claim: "false"
           introspection.token.claim: "true"
 clients:
   # Audience only: the agent service accepts tokens issued for it and never signs anyone in.
