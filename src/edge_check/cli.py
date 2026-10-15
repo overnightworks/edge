@@ -12,7 +12,8 @@ from edge_check.check import check
 from edge_check.exposure import Finding, UnreadableOutputError
 
 DEFAULT_ALLOW_LIST = Path("edge-check.toml")
-_TABLE_HEADER = ("PROBLEM", "SUBJECT", "PROTO", "ADDRESS", "PORT")
+_TABLE_HEADER = ("PROBLEM", "SUBJECT", "PROTO", "ADDRESS", "PORT", "EDGE.NAME")
+_NOT_A_SOCKET = "-"
 
 
 class ExitCode(IntEnum):
@@ -62,18 +63,23 @@ def _as_json(findings: list[Finding]) -> str:
 def _as_table(findings: list[Finding]) -> str:
     if not findings:
         return "edge-check: nothing reaches beyond loopback"
-    rows = [_TABLE_HEADER] + [
-        (
-            finding.problem,
-            finding.subject,
-            finding.protocol,
-            finding.address or "(none)",
-            "(random)" if finding.port is None else str(finding.port.as_json()),
-        )
-        for finding in findings
-    ]
+    rows = [_TABLE_HEADER] + [_table_row(finding) for finding in findings]
     widths = [max(len(row[column]) for row in rows) for column in range(len(_TABLE_HEADER))]
     return "\n".join(
         "  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
         for row in rows
+    )
+
+
+def _table_row(finding: Finding) -> tuple[str, ...]:
+    if finding.protocol is None:
+        no_socket = (_NOT_A_SOCKET,) * 3
+        return (finding.problem, finding.subject, *no_socket, finding.edge_name or "(none)")
+    return (
+        finding.problem,
+        finding.subject,
+        finding.protocol,
+        finding.address or "(none)",
+        "(random)" if finding.port is None else str(finding.port.as_json()),
+        "",
     )

@@ -120,14 +120,20 @@ arguments, no shell, nothing written) and reports:
 | `publication-beyond-loopback` | a container publishes a port on an address that is not loopback (`0.0.0.0`, `::`, a LAN address) |
 | `publication-without-host-ip` | a container publishes a port without a host IP, so Docker would bind every interface; `-P`/`--publish-all` does this for every exposed port |
 | `listener-beyond-loopback` | a TCP or UDP socket listens on a non-loopback address and no allow-list entry permits it |
+| `routed-without-edge-name` | a container carries `traefik.enable=true` but no `edge.name` label |
+| `invalid-edge-name` | a container's `edge.name` does not match `^[a-z0-9-]{1,63}$` |
+| `duplicate-edge-name` | two or more running containers carry the same `edge.name` (one finding names them all) |
 
-Stopped containers count too: their publications return when they start.
+Stopped containers count too: their publications and labels return when they
+start; only the duplicate check looks at running containers alone.
 Each finding names the container or the listening process (or its systemd
-unit when `ss` cannot see a root-owned process), the address and the port.
+unit when `ss` cannot see a root-owned process), the address and the port;
+an edge-name finding names the containers and the `edge.name` instead.
 `--json` prints a list of objects with the keys `problem`, `subject`,
-`protocol`, `address` and `port` (`port` is `null` when Docker picks a random
-one, and a string such as `"8000-8010"` when it picks one from a range),
-deduplicated and in a stable order.
+`protocol`, `address`, `port` and `edge_name` (`port` is `null` when Docker
+picks a random one, and a string such as `"8000-8010"` when it picks one from
+a range; `protocol`, `port` and `edge_name` are `null` where they do not
+apply), deduplicated and in a stable order.
 
 | Exit | Meaning |
 |---|---|
