@@ -105,6 +105,10 @@ def read_status(path: Path) -> Status | None:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+    except OSError as error:
+        raise StatusFileError(
+            f"die bisherige Statusdatei ist unlesbar: {error.strerror}"
+        ) from error
     try:
         return _parse(json.loads(text))
     except (ValueError, KeyError, TypeError) as error:
