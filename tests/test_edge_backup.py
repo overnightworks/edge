@@ -2,9 +2,11 @@
 
 import configparser
 import fcntl
+import itertools
 import json
 import re
 import stat
+import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -871,6 +873,28 @@ def _leave_killed_run_staging(work_dir: Path) -> Path:
     staging.mkdir(parents=True)
     staging.with_name(staging.name + RUN_MARK_SUFFIX).touch()
     return staging
+
+
+@pytest.mark.parametrize("command", ["backup", "restore-test"])
+def test_a_run_whose_staging_name_is_taken_leaves_that_directory_alone(
+    edge_backup, machine, home, monkeypatch, command
+):
+    _back_up_once(edge_backup, machine)
+    work_dir = home / ".cache/edge-backup"
+    taken = work_dir / f"{STAGING_PREFIX}taken"
+    (taken / "db").mkdir(parents=True)
+    (taken / "db/db.dump").write_bytes(DUMP)
+    # The first random name every temporary file or directory draws is the one already taken.
+    random_names = tempfile._get_candidate_names
+    monkeypatch.setattr(
+        tempfile, "_get_candidate_names", lambda: itertools.chain(["taken"], random_names())
+    )
+
+    outcome = edge_backup(command)
+
+    assert outcome.exit_code == 0, outcome.err
+    assert (taken / "db/db.dump").read_bytes() == DUMP
+    assert set(work_dir.iterdir()) == {taken}
 
 
 def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, machine):

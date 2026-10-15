@@ -3,7 +3,6 @@
 A run counts as success only after its last phase; every failure names its phase.
 """
 
-import os
 import shutil
 import stat
 import tempfile
@@ -261,19 +260,27 @@ def sweep_leftover_staging(parent: Path) -> None:
 
 @contextmanager
 def _private_directory(parent: Path) -> Iterator[Path]:
-    """A 0700 directory for dumps and restored copies, removed on success and on failure."""
+    """A 0700 directory for dumps and restored copies, removed on success and on failure.
+
+    The directory is reserved under a fresh name before it is marked, so the mark never
+    claims a directory this run did not create; plaintext enters only once it is marked.
+    """
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    descriptor, mark_name = tempfile.mkstemp(
-        prefix=STAGING_PREFIX, suffix=RUN_MARK_SUFFIX, dir=parent
-    )
-    os.close(descriptor)
-    mark = Path(mark_name)
+    directory = Path(tempfile.mkdtemp(prefix=STAGING_PREFIX, dir=parent))
+    mark = _run_mark(directory)
     try:
-        directory = _staged_directory(mark)
-        directory.mkdir(mode=0o700)
+        mark.touch(mode=0o600, exist_ok=False)
+    except BaseException:
+        directory.rmdir()
+        raise
+    try:
         yield directory
     finally:
         _remove_staging(mark)
+
+
+def _run_mark(directory: Path) -> Path:
+    return directory.with_name(directory.name + RUN_MARK_SUFFIX)
 
 
 def _staged_directory(mark: Path) -> Path:
