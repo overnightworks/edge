@@ -73,6 +73,8 @@ class Machine:
     """Labels of commands that ran while the host lock was free."""
     missing_images: set[str] = field(default_factory=set)
     """Pinned images `docker image prune -a` removed."""
+    unpullable_images: set[str] = field(default_factory=set)
+    """Pinned images `docker pull` cannot fetch, as if the registry were unreachable."""
     daemon_down_polls: int = 0
     """How many `docker info` polls find the daemon not up yet; until then docker calls exit 1."""
     private_modes: dict[str, int] = field(default_factory=dict)
@@ -99,8 +101,6 @@ class Machine:
             self.lock_free_during.add(label)
         if (failure := self.failing.get(label)) is not None:
             if isinstance(failure, int):
-                if label == "docker pull" and not discard_stderr:
-                    print("Error response from daemon: Get registry: dial tcp", file=sys.stderr)
                 return exit_with(label, failure)
             raise failure()
         answers = {
@@ -166,7 +166,11 @@ class Machine:
             print(f"Error: No such image: {argv[-1]}", file=sys.stderr)
         return exit_with("docker image inspect", 1)
 
-    def _pull(self, argv, **_) -> bytes:
+    def _pull(self, argv, *, discard_stderr, **_) -> bytes:
+        if argv[-1] in self.unpullable_images:
+            if not discard_stderr:
+                print("Error response from daemon: Get registry: dial tcp", file=sys.stderr)
+            return exit_with("docker pull", 1)
         self.missing_images.discard(argv[-1])
         return b"sha256:0\n"
 

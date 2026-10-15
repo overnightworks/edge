@@ -75,7 +75,7 @@ def test_a_pinned_image_that_cannot_be_pulled_fails_early_naming_it(
     edge_backup, machine, home, command
 ):
     machine.missing_images = {RESTIC_IMAGE}
-    machine.failing = {"docker pull": 1}
+    machine.unpullable_images = {RESTIC_IMAGE}
 
     outcome = edge_backup(command)
 
