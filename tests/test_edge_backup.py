@@ -21,7 +21,7 @@ CANARY_PASSWORD = "canary-7f3e-never-print-me"
 DUMP = b"PGDMP custom archive"
 AUDIO = {"u1/one.mp3": b"ID3 one", "u1/two.mp3": b"ID3 two", "u2/cover.png": b"PNG"}
 SONGMAKER_CONTAINER = "c0ffee"
-RESTORE_SERVER_ID = "deadbeef"
+RESTORE_SERVER_ID = "deadbeef" * 8
 STATUS_KEYS = {
     "schema",
     "state",
@@ -473,9 +473,17 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
     assert _removed_servers(machine) == []
 
 
-@pytest.mark.parametrize("output", [b"", b"WARNING: platform mismatch\ndeadbeef\n"])
+@pytest.mark.parametrize(
+    ("output", "complaint"),
+    [
+        (b"", "docker run meldete keine Container-ID"),
+        (f"WARNING: platform mismatch\n{RESTORE_SERVER_ID}\n".encode(), "keine Container-ID"),
+        (b"not-a-container-id\n", "docker run meldete keine Container-ID"),
+        (b"\xff\xfe\n", "docker meldete Ausgabe, die kein UTF-8 ist"),
+    ],
+)
 def test_a_started_throwaway_server_is_removed_even_when_its_id_is_unreadable(
-    edge_backup, machine, output
+    edge_backup, machine, output, complaint
 ):
     machine.server_start_output = output
     edge_backup("backup")
@@ -483,7 +491,7 @@ def test_a_started_throwaway_server_is_removed_even_when_its_id_is_unreadable(
     outcome = edge_backup("restore-test")
 
     assert outcome.exit_code == 1
-    assert "docker run meldete keine Container-ID" in outcome.err
+    assert complaint in outcome.err
     assert _removed_servers(machine) == [RESTORE_SERVER_ID]
 
 

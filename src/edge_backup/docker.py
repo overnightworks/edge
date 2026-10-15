@@ -1,5 +1,6 @@
 """The apps' containers and volumes, found by compose labels, and the throwaway restore server."""
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ RESTORE_DATABASE = "restore_test"
 RESTORE_ROLE = "postgres"
 _SCANNED_AUDIO = "/audio"
 _READY_STATES = frozenset({"running", "running healthy"})
+# What `docker run --detach` prints: the full ID, never a name or a shortened one.
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 
 
 class NotReadyError(RuntimeError):
@@ -131,15 +134,11 @@ def restore_server() -> Iterator["RestoreServer"]:
         label="Start der Wegwerf-Datenbank",
     )  # fmt: skip
     try:
-        container_id = _started_container(started)
-    except host.UnreadableOutputError:
-        # The server exists, only its ID is unknown: name and owner label still find it.
-        _remove_owned_restore_servers()
-        raise
-    try:
-        yield RestoreServer(container_id)
+        yield RestoreServer(_started_container(started))
     finally:
-        _remove_restore_server(container_id)
+        # By name and owner label, not by the reported ID: the server goes even when
+        # docker run's output could not be read.
+        _remove_owned_restore_servers()
 
 
 @dataclass(frozen=True)
@@ -210,7 +209,7 @@ class RestoreServer:
 
 def _started_container(run_output: bytes) -> str:
     match _lines(run_output):
-        case [container_id]:
+        case [container_id] if _CONTAINER_ID.fullmatch(container_id):
             return container_id
         case _:
             raise host.UnreadableOutputError("docker run meldete keine Container-ID")
@@ -240,4 +239,7 @@ def _label_filter(label: str, value: str) -> list[str]:
 
 
 def _lines(output: bytes) -> list[str]:
-    return output.decode().split()
+    try:
+        return output.decode().split()
+    except UnicodeDecodeError as error:
+        raise host.UnreadableOutputError("docker meldete Ausgabe, die kein UTF-8 ist") from error
