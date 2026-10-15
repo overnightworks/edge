@@ -1,26 +1,35 @@
 # edge
 
 The gatekeeper in front of the tools on the operator's PC. Traefik listens on
-`127.0.0.1:8081` only and routes `<name>.<EDGE_DOMAIN>` to the container that
-carries the label `edge.name=<name>`. Traefik never sees the Docker socket: a
+loopback only: `127.0.0.1:8081` is the tunnel's target and routes
+`<name>.<EDGE_DOMAIN>` to the container that carries the label
+`edge.name=<name>`; `127.0.0.1:8090` serves the Keycloak admin console on this
+PC and is never a tunnel target. Traefik never sees the Docker socket: a
 GET-only socket proxy hands it the container list and events.
 
 Nothing here is reachable from outside until the operator applies the steps A8
-below. Cloudflare Access enforcement (and JWT checks) arrives with that step;
-until then the edge is a local service only.
+below. Cloudflare Access enforcement (and JWT checks) arrives with that step
+for every name except `auth`: the login service must be public, so its tunnel
+line has no Access (see [Keycloak](#keycloak-auth)). Until A8 the edge is a
+local service only.
 
 | File | Owns |
 |---|---|
-| `compose.yaml` | the three services, image pins (version and digest), the socket directory volume |
-| `traefik.yml` | the one entrypoint and the providers |
+| `compose.yaml` | the services, image pins (version and digest), the socket directory and Keycloak database volumes, the Keycloak secrets |
+| `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) |
-| `.env.example` | the two settings the stack needs |
+| `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
+| `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay, the secret check's rules |
+| `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 
 ## Threat model
 
-Access protects the edge; on the machine any process reaches any tool.
+Access protects every edge name except `auth`, which is public by design:
+there Traefik admits only `/realms/hallucinai/` and `/resources/`, so the master
+realm, the admin console, metrics and health never reach the tunnel. On the
+machine any process reaches any tool, the Keycloak admin entrypoint included.
 
 The allowed container inspection is privileged read access and can expose
 container environment values; review evidence must not dump those payloads.
@@ -71,10 +80,11 @@ timeout 30 sh -c '
 ```
 
 Stop: `docker compose --profile probe down`. A plain `docker compose down` leaves
-a running probe `hello` behind.
+a running probe `hello` behind. Neither removes a volume; never add `--volumes`,
+because that deletes the Keycloak database.
 
-After a reboot, socket-proxy and traefik come back on their own
-(`restart: unless-stopped`); `hello` never does.
+After a reboot, socket-proxy, traefik, keycloak-db and keycloak come back on
+their own (`restart: unless-stopped`); `hello` never does.
 
 What the entrypoint answers without a route:
 
@@ -162,16 +172,144 @@ reason = "mDNS service discovery" # required
 Each entry needs a `reason` and a `port`, an `owner`, or both; any other key
 is an error. Allow by `owner` alone only when the service opens random ports.
 
+## Keycloak (auth)
+
+The one login for the apps: Keycloak with its own Postgres (`keycloak-db`,
+volume `keycloak-db`), both on the `keycloak` network (`172.31.253.0/24`, which
+`KC_PROXY_TRUSTED_ADDRESSES` names). Traefik reaches Keycloak on port 8080 in
+two ways:
+
+| Entrypoint | Host | Admits |
+|---|---|---|
+| `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…` and `/resources/…` only; everything else is Traefik's 404 |
+| `admin` (`127.0.0.1:8090`, this PC only) | `localhost` | the admin console and the master realm (`http://localhost:8090/admin/`) |
+
+The public issuer is `https://auth.<EDGE_DOMAIN>/realms/hallucinai`; the
+master realm's issuer is `http://localhost:8090/realms/master`. Every master
+login needs a password and a second factor: an administrator without one must
+enrol TOTP before the console opens, and may add a passkey (rpId `localhost`)
+afterwards. Remote administration while travelling arrives with the A9 travel
+setup (an SSH or Tailscale forward to 8090), never through the tunnel.
+
+Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`,
+applied by keycloak-config-cli. People and their group memberships are managed
+only in the admin console; no file lists a person. App clients arrive with each
+app's cutover (K12–K14).
+
+> **Managed in full.** The apply deletes every group, client, client scope and
+> flow that an earlier apply created and the YAML no longer lists. Removing or
+> renaming a group in `realm.yaml` therefore deletes the group **and every
+> membership in it**. Rename a group in the admin console first, then in the
+> YAML.
+
+### Keycloak secrets
+
+No secret is in any file of this repository or in any container's `Config.Env`.
+Compose mounts three files from `${HOME}/.secrets/keycloak/`; Postgres reads its
+password through `POSTGRES_PASSWORD_FILE`, and `keycloak/entrypoint.sh` exports
+the others from `/run/secrets` into the process and `exec`s Keycloak or
+keycloak-config-cli. Create them once:
+
+```sh
+install -d -m 0700 ~/.secrets/keycloak
+for name in db-password config-cli-secret bootstrap-admin-password; do
+  openssl rand -hex 32 > ~/.secrets/keycloak/$name
+done
+chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 0700 directory keeps everyone else out
+```
+
+`bootstrap-admin-password` lives only until the go-live's step 7.
+CI's step "No secret in any file" runs gitleaks with
+`keycloak/secret-check/gitleaks.toml`: a value whose key ends in `secret` or
+`password` in `keycloak/*.yaml` must be a `$(env:…)` reference, and a
+`PASSWORD`/`SECRET` key in `compose.yaml` must be a `_FILE` path.
+
+### Start and apply
+
+```sh
+docker compose up -d                       # keycloak-db, then keycloak (about 30 s)
+docker compose run --rm keycloak-config-cli   # apply keycloak/*.yaml
+```
+
+The apply signs in as the `config-cli` service client and fails loudly on a
+`$(env:…)` variable that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`).
+It skips a realm whose file has not changed since the last apply; add
+`--env IMPORT_CACHE_ENABLED=false` to force it.
+
+### Keycloak go-live
+
+The operator does these himself, in this order; an agent never holds an admin
+credential.
+
+1. **Backup.** K11b (Keycloak in the B1 backup) has landed, or the operator
+   accepts running without a backup until it lands.
+2. **Secrets.** Create the three files (above).
+3. **First start**, with the temporary bootstrap admin `temp-admin`:
+   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
+4. **First apply**, signed in as `temp-admin`:
+   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli`
+5. **Leave the bootstrap overlay:** `docker compose up -d keycloak`. Every later
+   apply uses the `config-cli` client.
+6. **Permanent admin.** Sign in at `http://localhost:8090/admin/` as
+   `temp-admin` (enrol TOTP when asked), create the permanent admin in the
+   master realm with the realm role `admin`, sign in as that admin, enrol TOTP
+   and add a passkey.
+7. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
+   `rm ~/.secrets/keycloak/bootstrap-admin-password`.
+8. **Tunnel line.** The operator approves and applies the `auth.hallucinai.de`
+   line (A8, step 3) and, if not done yet, the DNS wildcard (A8, step 4).
+   Ready when
+   `https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration`
+   answers with the issuer `https://auth.hallucinai.de/realms/hallucinai`.
+
+### Patch upgrade
+
+1. **Dump the database** (until K11b automates it). The dump holds signing keys
+   and credential hashes; keep it as private as the secrets:
+   `docker compose exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak > keycloak-$(date +%F).dump`
+2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version
+   and digest), and of keycloak-config-cli if a build for the new version exists.
+3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge
+   first with `docker compose --profile probe down` (volumes stay).
+4. **Start** with `docker compose up -d`; Keycloak migrates its database on the
+   first start of the new version.
+
+### Keycloak probe
+
+`probe/keycloak/probe.py` proves the service on a throwaway compose project
+(`edge-kc-probe`) built from this checkout, with throwaway secrets in the
+scratch directory, and always removes it again, volumes included. It stands in
+for Cloudflare by sending `Host: auth.hallucinai.de` and
+`X-Forwarded-Proto: https` to `127.0.0.1:8081`. The test relying party
+`probe-rp` and its client exist only there.
+
+```sh
+flock /tmp/probe-stack.lock timeout 540 python3 probe/keycloak/probe.py --scratch "$(mktemp -d)"
+```
+
+It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
+(exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 means 8081 or 8090 was
+taken. The proofs: the public issuer and the path allow-list (1, 2a), the
+master issuer and the forced second factor on 8090 (2b), a failing undefined
+variable, a fresh apply, an unchanged export after a cache-off second apply and
+a changed YAML that applies, with a seeded member untouched (3a–3d), the
+`groups` claim and the `agent-service` audience (4), a disabled user refused on
+refresh (5), a back-channel logout reaching the test RP (6), no secret in
+`Config.Env` (7), and the realm settings as decided (8).
+
 ## Rollback
 
 ```sh
 docker compose --profile probe down
 ```
 
-This removes all three containers and the `edge-probe` network; the listener on
-`127.0.0.1:8081` disappears. The socket directory volume is tmpfs and holds
-nothing; `docker compose --profile probe down --volumes` removes its definition
-too. Then revert the commit.
+This removes every edge container and the `edge-probe` and `keycloak` networks;
+the listeners on `127.0.0.1:8081` and `127.0.0.1:8090` disappear. It keeps the
+volumes: `keycloak-db` holds every Keycloak user, credential and session and
+survives the rollback, so a later start finds them again. Never run
+`down --volumes`. The socket directory volume is tmpfs and holds nothing; remove
+its definition alone with `docker volume rm edge_socket-proxy-run`. Then revert
+the commit.
 
 ## Operator steps A8 (going live)
 
@@ -189,5 +327,9 @@ what makes the edge reachable.
    (the wildcard rule always carries `access.required`, `teamName` and
    `audTag` together), then restart cloudflared. The apex, `www` and
    presentator rules stay ahead of the wildcard.
+   The `auth.hallucinai.de` line goes along only after the operator has
+   approved it and the Keycloak go-live below holds up to its step 6: it sits
+   ahead of the wildcard, has **no** Access (browsers and apps must reach the
+   login), and points to `http://127.0.0.1:8081`.
 4. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
-   `<name>.hallucinai.de` requests reach the edge.
+   `<name>.hallucinai.de` requests reach the edge, `auth` included.
