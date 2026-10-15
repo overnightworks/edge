@@ -344,6 +344,10 @@ INVALID_ALLOW_LISTS = {
         'protocol = "icmp"\nport = 1\nreason = "x"',
         "allow entry 2 (icmp 1): protocol must be tcp or udp",
     ),
+    "empty owner": (
+        'protocol = "tcp"\nowner = ""\nreason = "x"',
+        "allow entry 2 (tcp): owner must be a non-empty string",
+    ),
     "neither port nor owner": (
         'protocol = "udp"\nreason = "x"',
         "allow entry 2 (udp): needs a port, an owner, or both",
