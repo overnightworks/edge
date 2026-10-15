@@ -19,8 +19,8 @@ regexes = ['''^\$\(env:[A-Za-z_][A-Za-z0-9_]*\)$''']
 
 [[rules]]
 id = "compose-literal-secret"
-description = "compose.yaml passes secrets only as files (_FILE paths or compose secrets), never as values"
-path = '''(^|/)compose\.ya?ml$'''
+description = "Compose files pass secrets only as files (_FILE paths or compose secrets), never as values"
+path = '''(^|/)(?:[\w-]+\.)*compose(?:\.[\w-]+)*\.ya?ml$'''
 # The key is the reported group: gitleaks' default allowlist would pass a ${VAR} value, and an
 # interpolated secret lands in Config.Env as surely as a literal does.
 regex = '''(?m)^[ \t-]*["']?([A-Z0-9_]*(?:PASSWORD|SECRET)[A-Z0-9_]*)["']?[ \t]*[:=][ \t]*["']?[^\s"'#]'''

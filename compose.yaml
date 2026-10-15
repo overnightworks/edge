@@ -89,12 +89,14 @@ services:
       KC_DB_URL_DATABASE: keycloak
       KC_DB_USERNAME: keycloak
       KC_HOSTNAME: https://auth.${EDGE_DOMAIN:?set EDGE_DOMAIN}
-      KC_HOSTNAME_ADMIN: http://localhost:8090
+      # The one owner of the admin front end; the apply reads it for master.yaml's frontendUrl.
+      KC_HOSTNAME_ADMIN: &admin-hostname http://localhost:8090
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
       # TLS ends at Cloudflare; Traefik forwards plain HTTP from the host side of the keycloak network.
       KC_HTTP_ENABLED: "true"
       KC_PROXY_HEADERS: xforwarded
-      KC_PROXY_TRUSTED_ADDRESSES: 172.31.253.0/24
+      # The keycloak network's subnet (networks.keycloak below takes it from here).
+      KC_PROXY_TRUSTED_ADDRESSES: &keycloak-subnet 172.31.253.0/24
     secrets:
       - source: keycloak_db_password
         target: KC_DB_PASSWORD
@@ -131,6 +133,7 @@ services:
       IMPORT_FILES_LOCATIONS: file:/config/master.yaml,file:/config/realm.yaml
       IMPORT_VARSUBSTITUTION_ENABLED: "true"
       IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR: "true"
+      KC_HOSTNAME_ADMIN: *admin-hostname
     secrets:
       - source: keycloak_config_cli_secret
         target: KEYCLOAK_CLIENTSECRET
@@ -163,4 +166,4 @@ networks:
     ipam:
       config:
         # Pinned so KC_PROXY_TRUSTED_ADDRESSES names exactly the network Traefik reaches Keycloak through.
-        - subnet: 172.31.253.0/24
+        - subnet: *keycloak-subnet

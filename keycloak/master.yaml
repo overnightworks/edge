@@ -1,10 +1,11 @@
 # The master realm holds only administration. Applied by keycloak-config-cli (README, "Apply").
 # People are managed in the admin console; this file never lists a human user.
 realm: master
-# Master logins and tokens live on the loopback admin entrypoint (compose.yaml, KC_HOSTNAME_ADMIN),
-# never on the public hostname. The first start sets it with keycloak/admin-frontend.sh.
+# Master logins and tokens live on the loopback admin entrypoint, never on the public hostname.
+# compose.yaml owns the value (KC_HOSTNAME_ADMIN) and hands it to Keycloak and to the apply; the
+# first start sets it with keycloak/admin-frontend.sh.
 attributes:
-  frontendUrl: http://localhost:8090
+  frontendUrl: $(env:KC_HOSTNAME_ADMIN)
 bruteForceProtected: true
 # Every administrator signs in with a password and a second factor: the passkey when one is
 # registered, TOTP otherwise. An administrator with neither must enrol TOTP before the login
