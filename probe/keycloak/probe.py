@@ -63,6 +63,9 @@ LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
+CONSOLE_PARENT = "/apps"
+CONSOLE_SUBGROUP_NAME = "probe-console"
+CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
 
 
 class ProbeFailure(Exception):
@@ -752,6 +755,10 @@ class Probe:
         )
         text = text.replace("  - name: ki-abo\n", f"  - name: ki-abo\n  - name: {CHANGED_GROUP}\n")
         realm_file.write_text(text)
+        # Stands in for a subgroup the operator makes in the admin console; README warns that the
+        # apply deletes it, because realm.yaml does not list it.
+        parent = admin.get(f"/{REALM}/group-by-path{CONSOLE_PARENT}")
+        admin.create(f"/{REALM}/groups/{parent['id']}/children", {"name": CONSOLE_SUBGROUP_NAME})
         self.stack.must_apply("changed apply", config_dir=changed)
         realm = admin.get(f"/{REALM}")
         expect(
@@ -762,11 +769,16 @@ class Probe:
             admin.call("GET", f"/{REALM}/group-by-path/{CHANGED_GROUP}").status == 200,
             f"group {CHANGED_GROUP} was not created",
         )
+        expect(
+            admin.call("GET", f"/{REALM}/group-by-path{CONSOLE_SUBGROUP}").status == 404,
+            f"the console-made subgroup {CONSOLE_SUBGROUP} survived the apply",
+        )
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
         held(
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
-            f"group /{CHANGED_GROUP}); probe-member is still in {MEMBER_GROUP}",
+            f"group /{CHANGED_GROUP}) and deletes the console-made {CONSOLE_SUBGROUP} it does "
+            f"not list; probe-member is still in {MEMBER_GROUP}",
         )
 
     def create_probe_rp(self, admin: Admin) -> str:

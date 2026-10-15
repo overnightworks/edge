@@ -1,6 +1,9 @@
 # The hallucinai realm: the one login for the apps. Applied by keycloak-config-cli (README, "Apply").
-# People and memberships are managed in the admin console, never here. Groups are managed in full:
-# removing or renaming a group below deletes it, and every membership in it, on the next apply.
+# People and memberships are managed in the admin console, never here. Groups are managed in full
+# and created or renamed only here: removing or renaming a group below deletes it, and every
+# membership in it, on the next apply, and so does the apply to any subgroup under /apps or /ki-abo
+# that this file lacks, even one made in the admin console. Renaming in the console first is safe
+# only if no apply runs before the matching change here lands.
 # App clients arrive with each app's cutover, together with its live redirect and logout URLs.
 realm: hallucinai
 enabled: true

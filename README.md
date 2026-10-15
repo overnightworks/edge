@@ -390,11 +390,15 @@ applied by keycloak-config-cli. People and their group memberships are managed
 only in the admin console; no file lists a person. App clients arrive with each
 app's cutover (K12–K14).
 
-> **Managed in full.** The apply deletes every group, client, client scope and
-> flow that an earlier apply created and the YAML no longer lists. Removing or
-> renaming a group in `realm.yaml` therefore deletes the group **and every
-> membership in it**. Rename a group in the admin console first, then in the
-> YAML.
+> **Managed in full.** Groups are created and renamed only in `realm.yaml`.
+> The apply deletes every top-level group, client, client scope and flow that
+> an earlier apply created and the YAML no longer lists, and below a listed
+> group it deletes **every** subgroup the YAML lacks, whoever created it: a
+> group made in the admin console under `/apps` or `/ki-abo` (say
+> `/apps/newtool`) disappears on the next apply, **with every membership in
+> it**. Removing or renaming a group in `realm.yaml` deletes it the same way.
+> Renaming a group in the admin console first is safe only if no apply runs
+> before the matching YAML change lands.
 
 ### Keycloak secrets
 
@@ -501,10 +505,11 @@ It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 taken. The proofs: the public issuer and the path allow-list (1, 2a), the
 master issuer and the forced second factor on 8090 (2b), a failing undefined
 variable, a fresh apply, an unchanged export after a cache-off second apply and
-a changed YAML that applies, with a seeded member untouched (3a–3d), the
-`groups` claim and the `agent-service` audience (4), a disabled user refused on
-refresh (5), a back-channel logout reaching the test RP (6), no secret in
-`Config.Env` (7), and the realm settings as decided (8).
+a changed YAML that applies and deletes a console-made subgroup it does not
+list, with a seeded member untouched (3a–3d), the `groups` claim and the
+`agent-service` audience (4), a disabled user refused on refresh (5), a
+back-channel logout reaching the test RP (6), no secret in `Config.Env` (7),
+and the realm settings as decided (8).
 
 ## Rollback
 
