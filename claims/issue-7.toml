@@ -1,8 +1,0 @@
-claim_id = "39c03d3017ac464e9abb6a8d0eff7cb2"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "b743b98a50e7641fd521dd658db754dc777a98b9"
-branch = "claude/issue-7-e5-name-rules"
-scope = [".gitignore", "README.md", "edge-check.toml", "src/edge_check", "tests/test_edge_check.py", "traefik.yml"]
-opened_commit = "224a1ac1b93759ece2ed441d4bc2c3b4fb5b1a88"
-whole_reason = "The checker rules, its allow-list, its fixtures and its docs change together."
