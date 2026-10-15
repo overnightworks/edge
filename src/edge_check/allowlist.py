@@ -71,5 +71,5 @@ def _is_port(value: object) -> bool:
 
 
 def _describe(entry: dict[str, object]) -> str:
-    parts = [str(entry[key]) for key in ("owner", "protocol", "port") if key in entry]
+    parts = [part for key in ("owner", "protocol", "port") if (part := str(entry.get(key, "")))]
     return " ".join(parts) or "empty"

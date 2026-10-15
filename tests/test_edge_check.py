@@ -53,6 +53,13 @@ tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
 SS_DHCP6_LINK_LOCAL = """\
 udp UNCONN 0 0 [fe80::d8e8:44d:1d8e:31f0]%wlp7s0:546      [::]:* ino:18742 sk:f <->
 """
+SS_DOCKER_PROXY_3000 = """\
+tcp LISTEN 0 4096 0.0.0.0:3000  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+"""
+SS_DOCKER_PROXY_8080_BOTH_FAMILIES = """\
+tcp LISTEN 0 4096 0.0.0.0:8080  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+tcp LISTEN 0 4096    [::]:8080     [::]:* uid:0 cgroup:/system.slice/docker.service <->
+"""
 SS_CHROME_MDNS_TWICE = """\
 udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=49)) <->
 udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=48)) <->
@@ -61,20 +68,23 @@ udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=48)) <-
 
 def container(
     name: str,
-    port_bindings: dict[str, list[tuple[str, str]]],
+    port_bindings: dict[str, list[tuple[str, str]]] | None = None,
     *,
     exposed: tuple[str, ...] = (),
     publish_all: bool = False,
+    labels: dict[str, str] | None = None,
+    running: bool = True,
 ) -> dict:
     """One `docker inspect` entry; port_bindings maps "80/tcp" to [(host_ip, host_port)]."""
     return {
         "Name": f"/{name}",
-        "Config": {"ExposedPorts": {port: {} for port in exposed}},
+        "State": {"Running": running},
+        "Config": {"ExposedPorts": {port: {} for port in exposed}, "Labels": labels},
         "HostConfig": {
             "PublishAllPorts": publish_all,
             "PortBindings": {
                 container_port: [{"HostIp": ip, "HostPort": port} for ip, port in bindings]
-                for container_port, bindings in port_bindings.items()
+                for container_port, bindings in (port_bindings or {}).items()
             },
         },
     }
@@ -85,7 +95,13 @@ def inspect_json(*containers: dict) -> str:
 
 
 def finding(
-    problem: str, subject: str, protocol: str, address: str, port: int | str | None
+    problem: str,
+    subject: str,
+    protocol: str | None = None,
+    address: str = "",
+    port: int | str | None = None,
+    *,
+    edge_name: str | None = None,
 ) -> dict:
     return {
         "problem": problem,
@@ -93,7 +109,11 @@ def finding(
         "protocol": protocol,
         "address": address,
         "port": port,
+        "edge_name": edge_name,
     }
+
+
+ROUTED = {"traefik.enable": "true"}
 
 
 @dataclass(frozen=True)
@@ -129,6 +149,9 @@ HOSTS = {
         ss=SS_LOOPBACK_ONLY,
     ),
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
+    "the project's allow-list permits the tunnel's QUIC and Chrome's mDNS sockets": Host(
+        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE, allow_list=cli.DEFAULT_ALLOW_LIST.read_text()
+    ),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
         docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
@@ -205,6 +228,62 @@ HOSTS = {
         allow_list=ALLOW_CLOUDFLARED.replace('"udp"', '"tcp"'),
         findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
     ),
+    "a 0.0.0.0 publication and its docker-proxy listener are one finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+    ),
+    "a publication without host IP and docker-proxy on both families are one finding": Host(
+        docker=inspect_json(container("hello", {"80/tcp": [("", "8080")]})),
+        ss=SS_DOCKER_PROXY_8080_BOTH_FAMILIES,
+        findings=[finding("publication-without-host-ip", "hello", "tcp", "", 8080)],
+    ),
+    "another process on a published port is its own finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_SSHD.replace(":22 ", ":3000 "),
+        findings=[
+            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
+    ),
+    "a stopped container's publication does not hide a listener on its port": Host(
+        docker=inspect_json(
+            container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]}, running=False)
+        ),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[
+            finding("listener-beyond-loopback", "docker.service", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
+    ),
+    "routed container with a valid, unique edge.name": Host(
+        docker=inspect_json(container("blog", labels=ROUTED | {"edge.name": "blog-2"})),
+    ),
+    "routed container without edge.name": Host(
+        docker=inspect_json(container("blog", labels=ROUTED)),
+        findings=[finding("routed-without-edge-name", "blog")],
+    ),
+    "edge.name outside [a-z0-9-]{1,63}": Host(
+        docker=inspect_json(container("blog", labels=ROUTED | {"edge.name": "Blog.App"})),
+        findings=[finding("invalid-edge-name", "blog", edge_name="Blog.App")],
+    ),
+    "edge.name longer than 63 characters": Host(
+        docker=inspect_json(container("blog", labels={"edge.name": "b" * 64})),
+        findings=[finding("invalid-edge-name", "blog", edge_name="b" * 64)],
+    ),
+    "two running containers with the same edge.name": Host(
+        docker=inspect_json(
+            container("blog-old", labels=ROUTED | {"edge.name": "blog"}),
+            container("blog-new", labels=ROUTED | {"edge.name": "blog"}),
+        ),
+        findings=[finding("duplicate-edge-name", "blog-new, blog-old", edge_name="blog")],
+    ),
+    "a stopped container sharing an edge.name is no duplicate": Host(
+        docker=inspect_json(
+            container("blog-old", labels=ROUTED | {"edge.name": "blog"}, running=False),
+            container("blog-new", labels=ROUTED | {"edge.name": "blog"}),
+        ),
+    ),
     "repeated sockets and mixed findings come once, in a stable order": Host(
         docker=inspect_json(
             container("web", {"8080/tcp": [("0.0.0.0", "8080"), ("::", "8080")]}),
@@ -242,6 +321,13 @@ def test_human_table_names_subject_address_and_port(run_edge_check):
     ]
 
 
+def test_human_table_names_the_edge_name_a_finding_is_about(run_edge_check):
+    exit_code, out, _ = run_edge_check(HOSTS["edge.name outside [a-z0-9-]{1,63}"])
+
+    assert exit_code == 1
+    assert out.splitlines()[1].split() == ["invalid-edge-name", "blog", "-", "-", "-", "Blog.App"]
+
+
 def test_human_output_says_so_when_nothing_is_exposed(run_edge_check):
     exit_code, out, _ = run_edge_check(HOSTS["allow-listed mDNS port"])
 
@@ -268,6 +354,10 @@ INVALID_ALLOW_LISTS = {
     "unknown protocol": (
         'protocol = "icmp"\nport = 1\nreason = "x"',
         "allow entry 2 (icmp 1): protocol must be tcp or udp",
+    ),
+    "empty owner": (
+        'protocol = "tcp"\nowner = ""\nreason = "x"',
+        "allow entry 2 (tcp): owner must be a non-empty string",
     ),
     "neither port nor owner": (
         'protocol = "udp"\nreason = "x"',
@@ -305,6 +395,7 @@ def test_exits_2_on_an_unreadable_allow_list(run_edge_check, allow_list, message
 
 UNREADABLE_OUTPUTS = {
     "docker output is not JSON": (Host(docker="Error: no such object"), "docker inspect"),
+    "docker output is JSON but not a list": (Host(docker="null"), "not a list of containers"),
     "container without HostConfig": (
         Host(docker=json.dumps([{"Name": "/broken"}])),
         "container 'broken'",
@@ -352,6 +443,16 @@ def test_exits_2_when_a_host_command_fails(monkeypatch, tmp_path, capsys):
 
     assert exit_code == 2
     assert "docker ps failed" in capsys.readouterr().err
+
+
+def test_default_allow_list_is_the_projects_whatever_the_cwd(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
+    monkeypatch.setattr(host, "socket_listeners", lambda: "")
+
+    exit_code = cli.main(["--json"])
+
+    assert (exit_code, capsys.readouterr().out) == (0, "[]\n")
 
 
 def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):

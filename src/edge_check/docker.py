@@ -1,9 +1,14 @@
-"""Docker port publications, read from `docker inspect` JSON."""
+"""Docker containers, their port publications and edge labels, read from `docker inspect` JSON."""
 
 import json
 from dataclasses import dataclass
 
 from edge_check.exposure import PortRange, Protocol, UnreadableOutputError, checked_address
+
+EDGE_NAME_LABEL = "edge.name"
+_TRAEFIK_ENABLE_LABEL = "traefik.enable"
+# Traefik reads the label with Go's strconv.ParseBool, so these are exactly the "true" spellings.
+_GO_TRUE_SPELLINGS = frozenset({"1", "t", "T", "true", "TRUE", "True"})
 
 
 @dataclass(frozen=True)
@@ -14,15 +19,29 @@ class Publication:
     host_ports: PortRange | None
 
 
-def parse_publications(inspect_json: str) -> list[Publication]:
+@dataclass(frozen=True)
+class Container:
+    name: str
+    running: bool
+    routed: bool
+    """Labelled `traefik.enable=true`, so Traefik would route it."""
+    edge_name: str | None
+    publications: tuple[Publication, ...]
+
+
+def parse_containers(inspect_json: str) -> list[Container]:
     try:
         containers = json.loads(inspect_json)
     except json.JSONDecodeError as error:
         raise UnreadableOutputError(f"docker inspect printed no JSON: {error}") from error
-    return [publication for container in containers for publication in _publications(container)]
+    if not isinstance(containers, list):
+        raise UnreadableOutputError(
+            f"docker inspect printed {inspect_json.strip()[:40]!r}, not a list of containers"
+        )
+    return [_container(container) for container in containers]
 
 
-def _publications(container: dict) -> list[Publication]:
+def _container(container: dict) -> Container:
     try:
         return _parse_container(container)
     except (KeyError, TypeError, ValueError, AttributeError) as error:
@@ -31,12 +50,23 @@ def _publications(container: dict) -> list[Publication]:
         ) from error
 
 
-def _parse_container(container: dict) -> list[Publication]:
+def _parse_container(container: dict) -> Container:
     name = container["Name"].lstrip("/")
+    labels = container["Config"].get("Labels") or {}
+    return Container(
+        name=name,
+        running=container["State"]["Running"],
+        routed=labels.get(_TRAEFIK_ENABLE_LABEL) in _GO_TRUE_SPELLINGS,
+        edge_name=labels.get(EDGE_NAME_LABEL),
+        publications=_publications(name, container),
+    )
+
+
+def _publications(name: str, container: dict) -> tuple[Publication, ...]:
     port_bindings = container["HostConfig"].get("PortBindings") or {}
     if container["HostConfig"].get("PublishAllPorts"):
         port_bindings = _with_publish_all(port_bindings, container["Config"].get("ExposedPorts"))
-    return [
+    return tuple(
         Publication(
             container=name,
             protocol=_protocol(container_port),
@@ -45,7 +75,7 @@ def _parse_container(container: dict) -> list[Publication]:
         )
         for container_port, bindings in port_bindings.items()
         for binding in bindings or []
-    ]
+    )
 
 
 def _with_publish_all(port_bindings: dict, exposed_ports: dict | None) -> dict:

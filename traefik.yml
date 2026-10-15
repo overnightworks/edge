@@ -14,6 +14,16 @@ entryPoints:
     http:
       # Drop headers like X_Forwarded_For that CGI/WSGI-style backends read as the header Traefik manages.
       aliasHeadersStrategy: delete
+      # Traefik 3.7 allows encoded path characters by default; reject them so no app sees a traversal.
+      sanitizePath: true
+      encodedCharacters:
+        allowEncodedSlash: false
+        allowEncodedBackSlash: false
+        allowEncodedNullCharacter: false
+        allowEncodedSemicolon: false
+        allowEncodedPercent: false
+        allowEncodedQuestionMark: false
+        allowEncodedHash: false
 
 providers:
   docker:

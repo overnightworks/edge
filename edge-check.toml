@@ -14,3 +14,14 @@ protocol = "udp"
 owner = "NetworkManager.service"
 port = 546
 reason = "DHCPv6 client on the link-local address, the host's own network configuration"
+
+[[allow]]
+protocol = "udp"
+owner = "cloudflared.service"
+reason = "the Cloudflare tunnel's outbound QUIC sockets on random ports; the tunnel is the edge's only way in"
+
+[[allow]]
+protocol = "udp"
+owner = "chrome"
+port = 5353
+reason = "Chrome joins the mDNS multicast group 224.0.0.251 to discover cast and local devices"
