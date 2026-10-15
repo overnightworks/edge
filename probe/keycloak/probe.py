@@ -44,8 +44,13 @@ from urllib.request import (
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "edge-kc-probe"
 DOMAIN = "hallucinai.de"
+REALM = "hallucinai"
+REALM_FILE = "realm.yaml"
+CONFIG_FILES = ("master.yaml", REALM_FILE)
 PUBLIC_HOST = f"auth.{DOMAIN}"
-PUBLIC_ISSUER = f"https://{PUBLIC_HOST}/realms/hallucinai"
+REALM_PATH = f"/realms/{REALM}"
+PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
+PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
 EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
 MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
@@ -211,7 +216,7 @@ class Stack:
 
     def copy_config(self, target: Path) -> Path:
         target.mkdir(parents=True)
-        for name in ("master.yaml", "realm.yaml"):
+        for name in CONFIG_FILES:
             shutil.copy(REPO / "keycloak" / name, target / name)
         return target
 
@@ -351,15 +356,15 @@ class Admin:
         )
 
     def join_group(self, user_id: str, group_path: str) -> None:
-        group = self.get(f"/hallucinai/group-by-path{group_path}")
-        self.must("PUT", f"/hallucinai/users/{user_id}/groups/{group['id']}")
+        group = self.get(f"/{REALM}/group-by-path{group_path}")
+        self.must("PUT", f"/{REALM}/users/{user_id}/groups/{group['id']}")
 
     def group_paths(self, user_id: str) -> list[str]:
-        return sorted(group["path"] for group in self.get(f"/hallucinai/users/{user_id}/groups"))
+        return sorted(group["path"] for group in self.get(f"/{REALM}/users/{user_id}/groups"))
 
     def realm_export(self) -> dict[str, Any]:
         response = self.call(
-            "POST", "/hallucinai/partial-export?exportClients=true&exportGroupsAndRoles=true"
+            "POST", f"/{REALM}/partial-export?exportClients=true&exportGroupsAndRoles=true"
         )
         expect(response.status == 200, f"partial export answered {response.status}")
         return response.json()
@@ -450,7 +455,9 @@ def page_message(page: Response) -> str:
 def totp(secret: str, period_offset: int = 0) -> str:
     """RFC 6238 code for Keycloak's default policy: HmacSHA1, 6 digits, 30 s, the raw secret."""
     counter = int(time.time()) // 30 + period_offset
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()
+    # HmacSHA1 is the algorithm the master realm's OTP policy demands (Keycloak's default, the one
+    # every authenticator app supports); the probe answers that challenge, it chooses no hash.
+    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()  # NOSONAR
     offset = digest[-1] & 0x0F
     number = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
     return f"{number % 1_000_000:06d}"
@@ -531,7 +538,7 @@ class Probe:
         wait_until_ready()
         # The config-cli client exists only if the fresh apply created the master configuration.
         admin = Admin.with_client(self.secret_values["config-cli-secret"])
-        expect(admin.get("/hallucinai")["realm"] == "hallucinai", "no hallucinai realm")
+        expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
         held(
             "3a",
             "a fresh apply created the master configuration (the config-cli client signs in "
@@ -551,7 +558,7 @@ class Probe:
 
     def missing_variable_fails_loudly(self, admin: Admin) -> None:
         broken = self.stack.copy_config(self.stack.scratch / "config-missing-variable")
-        realm_file = broken / "realm.yaml"
+        realm_file = broken / REALM_FILE
         realm_file.write_text(
             realm_file.read_text() + "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"
         )
@@ -559,7 +566,7 @@ class Probe:
         output = result.stdout + result.stderr
         expect(result.returncode != 0, "an apply with an undefined variable exited 0")
         expect("PROBE_UNDEFINED_VARIABLE" in output, "the failure does not name the variable")
-        expect(admin.call("GET", "/hallucinai").status == 404, "the failed apply left a realm")
+        expect(admin.call("GET", f"/{REALM}").status == 404, "the failed apply left a realm")
         held(
             "3b",
             f"an undefined variable fails the apply (exit {result.returncode}, names "
@@ -568,7 +575,7 @@ class Probe:
 
     def seed_member(self, admin: Admin) -> str:
         """Stands in for a person and a membership the operator manages in the admin console."""
-        member_id = admin.create_user("hallucinai", "probe-member", self.member_password)
+        member_id = admin.create_user(REALM, "probe-member", self.member_password)
         admin.join_group(member_id, MEMBER_GROUP)
         print(f"seed: probe-member in {MEMBER_GROUP} through the admin API", flush=True)
         return member_id
@@ -589,7 +596,7 @@ class Probe:
         self.realm_settings_as_decided(admin, after)
 
     def realm_settings_as_decided(self, admin: Admin, export: dict[str, Any]) -> None:
-        realm = admin.get("/hallucinai")
+        realm = admin.get(f"/{REALM}")
         master = admin.get("/master")
         expected = {
             "webAuthnPolicyRpId": DOMAIN,
@@ -627,17 +634,17 @@ class Probe:
         )
 
     def public_issuer_and_paths(self) -> None:
-        discovery = through_tunnel("GET", "/realms/hallucinai/.well-known/openid-configuration")
+        discovery = through_tunnel("GET", f"{REALM_PATH}/.well-known/openid-configuration")
         expect(discovery.status == 200, f"public discovery answered {discovery.status}")
         issuer = discovery.json()["issuer"]
         expect(issuer == PUBLIC_ISSUER, f"public issuer is {issuer}")
         login_page = through_tunnel(
             "GET",
-            "/realms/hallucinai/protocol/openid-connect/auth?"
+            f"{REALM_PATH}/protocol/openid-connect/auth?"
             + urlencode(
                 {
                     "client_id": "account-console",
-                    "redirect_uri": f"https://{PUBLIC_HOST}/realms/hallucinai/account/",
+                    "redirect_uri": f"https://{PUBLIC_HOST}{REALM_PATH}/account/",
                     "response_type": "code",
                     "scope": "openid",
                     "code_challenge": "x" * 43,
@@ -662,7 +669,7 @@ class Probe:
             (PUBLIC_HOST, "/health"),
             (PUBLIC_HOST, "/"),
             (PUBLIC_HOST, "/realms/hallucinai/../master/.well-known/openid-configuration"),
-            ("localhost", "/realms/hallucinai/.well-known/openid-configuration"),
+            ("localhost", f"{REALM_PATH}/.well-known/openid-configuration"),
             ("localhost", "/admin/master/console/"),
         ]
         for host, path in refused:
@@ -726,7 +733,7 @@ class Probe:
 
     def changed_yaml_applies(self, admin: Admin, member_id: str) -> None:
         changed = self.stack.copy_config(self.stack.scratch / "config-changed")
-        realm_file = changed / "realm.yaml"
+        realm_file = changed / REALM_FILE
         text = realm_file.read_text()
         expect("accessTokenLifespan: 300 " in text, "realm.yaml no longer sets 300 s as expected")
         text = text.replace(
@@ -735,13 +742,13 @@ class Probe:
         text = text.replace("  - name: ki-abo\n", f"  - name: ki-abo\n  - name: {CHANGED_GROUP}\n")
         realm_file.write_text(text)
         self.stack.must_apply("changed apply", config_dir=changed)
-        realm = admin.get("/hallucinai")
+        realm = admin.get(f"/{REALM}")
         expect(
             realm["accessTokenLifespan"] == CHANGED_ACCESS_TOKEN_LIFESPAN,
             f"access token lifespan is {realm['accessTokenLifespan']} after the change",
         )
         expect(
-            admin.call("GET", f"/hallucinai/group-by-path/{CHANGED_GROUP}").status == 200,
+            admin.call("GET", f"/{REALM}/group-by-path/{CHANGED_GROUP}").status == 200,
             f"group {CHANGED_GROUP} was not created",
         )
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
@@ -753,13 +760,13 @@ class Probe:
 
     def create_probe_rp(self, admin: Admin) -> str:
         representation = json.loads((REPO / "probe/keycloak/probe-rp-client.json").read_text())
-        client_id = admin.create("/hallucinai/clients", representation)
-        return admin.get(f"/hallucinai/clients/{client_id}/client-secret")["value"]
+        client_id = admin.create(f"/{REALM}/clients", representation)
+        return admin.get(f"/{REALM}/clients/{client_id}/client-secret")["value"]
 
     def password_grant(self, username: str, password: str, rp_secret: str) -> dict[str, Any]:
         response = through_tunnel(
             "POST",
-            "/realms/hallucinai/protocol/openid-connect/token",
+            PUBLIC_TOKEN_PATH,
             form={
                 "grant_type": "password",
                 "client_id": "probe-rp",
@@ -788,12 +795,12 @@ class Probe:
 
     def disabled_user_refused_on_refresh(self, admin: Admin, rp_secret: str) -> None:
         password = secrets.token_urlsafe(16)
-        user_id = admin.create_user("hallucinai", "probe-disabled", password)
+        user_id = admin.create_user(REALM, "probe-disabled", password)
         tokens = self.password_grant("probe-disabled", password, rp_secret)
-        admin.must("PUT", f"/hallucinai/users/{user_id}", {"enabled": False})
+        admin.must("PUT", f"/{REALM}/users/{user_id}", {"enabled": False})
         refresh = through_tunnel(
             "POST",
-            "/realms/hallucinai/protocol/openid-connect/token",
+            PUBLIC_TOKEN_PATH,
             form={
                 "grant_type": "refresh_token",
                 "client_id": "probe-rp",
@@ -807,9 +814,9 @@ class Probe:
 
     def backchannel_logout_reaches_rp(self, admin: Admin, rp_secret: str) -> None:
         password = secrets.token_urlsafe(16)
-        user_id = admin.create_user("hallucinai", "probe-logout", password)
+        user_id = admin.create_user(REALM, "probe-logout", password)
         self.password_grant("probe-logout", password, rp_secret)
-        admin.must("POST", f"/hallucinai/users/{user_id}/logout")
+        admin.must("POST", f"/{REALM}/users/{user_id}/logout")
         deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             for line in self.stack.logs("probe-rp").splitlines():
