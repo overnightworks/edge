@@ -131,6 +131,26 @@ def test_restore_takes_the_named_snapshot_on_a_machine_without_a_status_file(
     assert (target / "db/db.dump").read_bytes() == DUMP
 
 
+@pytest.mark.parametrize("prefix_length", [64, 8], ids=["full-id", "short-prefix"])
+def test_restore_takes_an_older_snapshot_when_a_newer_one_exists(
+    edge_backup, machine, home, prefix_length
+):
+    edge_backup("backup")
+    edge_backup("backup")
+    older, newer = machine.snapshots
+    older["id"] = "b0b0b0b0" * 8
+    older["db"]["db.dump"] = b"older contents"
+    target = home / "restored"
+
+    outcome = edge_backup(
+        "restore", "songmaker", "--snapshot", older["id"][:prefix_length], "--target", str(target)
+    )
+
+    assert outcome.exit_code == 0, outcome.err
+    assert (target / "db/db.dump").read_bytes() == b"older contents"
+    assert newer["db"]["db.dump"] == DUMP
+
+
 @pytest.mark.parametrize(
     "snapshot", ["f" * 64, "0" * 7, "00000000"], ids=["unknown", "too-short", "ambiguous"]
 )
@@ -144,7 +164,8 @@ def test_restore_refuses_a_snapshot_that_is_not_one_single_snapshot_of_the_app(
     outcome = edge_backup("restore", "songmaker", "--snapshot", snapshot, "--target", str(target))
 
     assert outcome.exit_code == 1
-    assert len(outcome.err.splitlines()) == 1
+    [line] = outcome.err.splitlines()
+    assert "nennt keinen einzelnen Snapshot" in line
     assert not target.exists()
 
 
@@ -158,6 +179,8 @@ def test_restore_refuses_the_snapshot_of_another_app(edge_backup, machine, home)
     )
 
     assert outcome.exit_code == 1
+    [line] = outcome.err.splitlines()
+    assert "nennt keinen einzelnen Snapshot" in line
     assert not target.exists()
 
 

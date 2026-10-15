@@ -166,7 +166,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 ## edge-backup
 
 A weekly encrypted backup of the declared apps (B1: Songmaker only) into a
-local restic repository, and a monthly test that restores the latest snapshot
+local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
 **What it protects against:** accidental deletion and corruption. The
@@ -219,7 +219,7 @@ The units expect the checkout at `~/git/edge`.
 | Timer | When | Does |
 |---|---|---|
 | `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check` |
-| `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the latest snapshot, load and verify it; then `check --read-data-subset=10%` |
+| `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database
 is not up yet, the backup waits up to 10 minutes, then fails. One host lock
@@ -247,7 +247,7 @@ exactly that, so such a backup never counts as good.
 
 ### The restore test
 
-It restores the latest snapshot into a private directory under
+It restores the last successful backup's snapshot into a private directory under
 `~/.cache/edge-backup` and checks:
 
 - the restored audio file count equals the manifest's;

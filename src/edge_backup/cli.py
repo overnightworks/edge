@@ -54,7 +54,7 @@ def _parser() -> argparse.ArgumentParser:
     for name, command, help_text in (
         ("init", _init, "create the restic repository once"),
         ("backup", _backup, "dump, scan and back up every app, then forget, prune and check"),
-        ("restore-test", _restore_test, "restore the latest snapshots and prove they are good"),
+        ("restore-test", _restore_test, "restore the last successful backup's snapshot and prove it is good"),
         ("snapshots", _snapshots, "list the repository's snapshots"),
         ("unlock", _unlock, "remove stale restic locks"),
     ):

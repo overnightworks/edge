@@ -71,7 +71,9 @@ def _image_present(image: str) -> bool:
 
 def _pull(image: str) -> None:
     try:
-        host.run(["docker", "pull", "--quiet", image], label="docker pull")
+        host.run(
+            ["docker", "pull", "--quiet", image], label="docker pull", discard_stderr=True
+        )
     except host.HostCommandError as error:
         raise TargetError(f"das gepinnte Image {image} fehlt und lässt sich nicht laden") from error
 

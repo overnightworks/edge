@@ -99,6 +99,8 @@ class Machine:
             self.lock_free_during.add(label)
         if (failure := self.failing.get(label)) is not None:
             if isinstance(failure, int):
+                if label == "docker pull" and not discard_stderr:
+                    print("Error response from daemon: Get registry: dial tcp", file=sys.stderr)
                 return exit_with(label, failure)
             raise failure()
         answers = {
