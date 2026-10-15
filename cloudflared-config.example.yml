@@ -10,6 +10,10 @@ ingress:
     service: http://localhost:8080
   - hostname: presentator.hallucinai.de
     service: http://localhost:8100
+  # The login service is public on purpose: browsers and apps must reach it without an Access
+  # session. Traefik admits only the hallucinai realm and its static resources on this line.
+  - hostname: auth.hallucinai.de
+    service: http://127.0.0.1:8081
   # Every other subdomain goes to the edge gatekeeper; cloudflared itself rejects requests
   # without a valid Access token for the wildcard Access app. Keep teamName and audTag together.
   - hostname: "*.hallucinai.de"

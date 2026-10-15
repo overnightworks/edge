@@ -1,0 +1,80 @@
+# The master realm holds only administration. Applied by keycloak-config-cli (README, "Apply").
+# People are managed in the admin console; this file never lists a human user.
+realm: master
+# Master logins and tokens live on the loopback admin entrypoint, never on the public hostname.
+attributes:
+  frontendUrl: http://localhost:8090
+bruteForceProtected: true
+# Every administrator signs in with a password and a second factor: TOTP or a passkey.
+browserFlow: browser-mfa
+authenticationFlows:
+  - alias: browser-mfa
+    description: Password plus a required second factor (TOTP or passkey)
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-cookie
+        requirement: ALTERNATIVE
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-forms
+        requirement: ALTERNATIVE
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-forms
+    description: Username and password, then the second factor
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-username-password-form
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-second-factor
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-second-factor
+    description: TOTP or a passkey; an administrator without either enrols TOTP first
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-otp-form
+        requirement: ALTERNATIVE
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: true
+      - authenticator: webauthn-authenticator
+        requirement: ALTERNATIVE
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+# A passkey for the admin console binds to the console's host name.
+webAuthnPolicyRpId: localhost
+webAuthnPolicyRpEntityName: hallucinai admin
+clients:
+  # Every apply after the first signs in with this service client (client credentials).
+  - clientId: config-cli
+    name: keycloak-config-cli
+    enabled: true
+    publicClient: false
+    clientAuthenticatorType: client-secret
+    secret: $(env:CONFIG_CLI_CLIENT_SECRET)
+    serviceAccountsEnabled: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    frontchannelLogout: false
+users:
+  - username: service-account-config-cli
+    enabled: true
+    serviceAccountClientId: config-cli
+    realmRoles:
+      - admin

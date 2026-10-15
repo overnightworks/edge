@@ -1,0 +1,33 @@
+# The repository's secret check (CI step "No secret in any file"): gitleaks' default rules plus two
+# rules for this repository's own files. planted/ holds the literals CI plants to prove each rule
+# fails; their .planted suffix keeps them out of the real scan.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "keycloak-config-literal-secret"
+description = "A value whose key ends in secret or password, in keycloak/*.yaml, must be a $(env:...) reference"
+path = '''(^|/)keycloak/[^/]+\.ya?ml$'''
+regex = '''(?im)^[ \t-]*["']?[\w.-]*(?:secret|password)["']?[ \t]*:[ \t]*["']?([^\s"'#][^"'#\n]*?)["']?[ \t]*(?:#.*)?$'''
+secretGroup = 1
+keywords = ["secret", "password"]
+
+[[rules.allowlists]]
+description = "An environment reference, filled by keycloak-config-cli at apply time"
+regexTarget = "secret"
+regexes = ['''^\$\(env:[A-Za-z_][A-Za-z0-9_]*\)$''']
+
+[[rules]]
+id = "compose-literal-secret"
+description = "compose.yaml passes secrets only as files (_FILE paths or compose secrets), never as values"
+path = '''(^|/)compose\.ya?ml$'''
+# The key is the reported group: gitleaks' default allowlist would pass a ${VAR} value, and an
+# interpolated secret lands in Config.Env as surely as a literal does.
+regex = '''(?m)^[ \t-]*["']?([A-Z0-9_]*(?:PASSWORD|SECRET)[A-Z0-9_]*)["']?[ \t]*[:=][ \t]*["']?[^\s"'#]'''
+secretGroup = 1
+keywords = ["PASSWORD", "SECRET"]
+
+[[rules.allowlists]]
+description = "A path to a mounted secret file"
+regexTarget = "secret"
+regexes = ['''_FILE$''']

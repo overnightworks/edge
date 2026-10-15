@@ -34,30 +34,42 @@ jobs:
       - name: edge-check tests
         run: uv run pytest
 
-      - name: Compose renders (default and probe profile)
+      - name: Compose renders (default, probe profile, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
           docker compose --profile probe config -q
+          docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
+            --profile apply config -q
+          PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
+            docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
+            --file probe/keycloak/compose.probe.yaml --profile apply config -q
 
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
-            traefik.yml cloudflared-config.example.yml
+            traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
+            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml
 
-      # The gatekeeper must listen on loopback only and expose no implicit listener.
-      - name: No published ports, no extra Traefik listeners
+      # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
+      # entrypoint 8090, and nothing implicit.
+      - name: No published ports, Traefik listens on 8081 and 8090 only
         run: |
           python3 - <<'PY'
           import re, sys, yaml
           compose = open("compose.yaml").read()
           if re.search(r"^\s*ports:", compose, re.M) or "0.0.0.0" in compose:
               sys.exit("compose.yaml publishes ports or binds 0.0.0.0")
-          forbidden = {"api", "ping", "metrics"} & set(yaml.safe_load(open("traefik.yml")))
+          traefik = yaml.safe_load(open("traefik.yml"))
+          forbidden = {"api", "ping", "metrics"} & set(traefik)
           if forbidden:
               sys.exit(f"traefik.yml enables {sorted(forbidden)}")
+          addresses = sorted(e["address"] for e in traefik["entryPoints"].values())
+          if addresses != ["127.0.0.1:8081", "127.0.0.1:8090"]:
+              sys.exit(f"traefik.yml listens on {addresses}")
           PY
 
-      # Unmatched hosts must end at 404, and the wildcard must demand an Access token.
+      # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login
+      # line alone is public: ahead of the wildcard, without Access, to the edge entrypoint.
       - name: Tunnel template denies by default
         run: |
           python3 - <<'PY'
@@ -65,9 +77,51 @@ jobs:
           ingress = yaml.safe_load(open("cloudflared-config.example.yml"))["ingress"]
           if ingress[-1].get("service") != "http_status:404":
               sys.exit("last ingress rule is not http_status:404")
-          wildcard = next(r for r in ingress if str(r.get("hostname", "")).startswith("*."))
+          hostnames = [str(r.get("hostname", "")) for r in ingress]
+          wildcard = ingress[next(i for i, h in enumerate(hostnames) if h.startswith("*."))]
           access = wildcard.get("originRequest", {}).get("access", {})
           missing = [k for k in ("required", "teamName", "audTag") if not access.get(k)]
           if missing:
               sys.exit(f"wildcard access rule lacks {missing}")
+          if hostnames.count("auth.hallucinai.de") != 1:
+              sys.exit("there is not exactly one auth.hallucinai.de line")
+          auth_index = hostnames.index("auth.hallucinai.de")
+          auth = ingress[auth_index]
+          if auth_index > hostnames.index(wildcard["hostname"]):
+              sys.exit("the auth line comes after the wildcard")
+          if auth != {"hostname": "auth.hallucinai.de", "service": "http://127.0.0.1:8081"}:
+              sys.exit(f"the auth line is not the bare edge route: {auth}")
+          PY
+
+      - name: Install pinned gitleaks
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      # The real files pass, and each repository rule catches its planted literal, so a rule that
+      # silently stopped matching turns this step red.
+      - name: No secret in any file
+        run: |
+          set -euo pipefail
+          gitleaks="$RUNNER_TEMP/gitleaks"
+          config=keycloak/secret-check/gitleaks.toml
+          "$gitleaks" dir --no-banner --redact --config "$config" .
+          planted="$RUNNER_TEMP/planted"
+          mkdir -p "$planted/keycloak"
+          cp keycloak/secret-check/planted/realm.yaml.planted "$planted/keycloak/realm.yaml"
+          cp keycloak/secret-check/planted/compose.yaml.planted "$planted/compose.yaml"
+          if "$gitleaks" dir --no-banner --redact --config "$config" \
+              --report-format json --report-path "$RUNNER_TEMP/planted.json" "$planted"; then
+            echo "::error::the planted literals passed the secret check" >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/planted.json" <<'PY'
+          import json, sys
+          caught = {finding["RuleID"] for finding in json.load(open(sys.argv[1]))}
+          missing = {"keycloak-config-literal-secret", "compose-literal-secret"} - caught
+          if missing:
+              sys.exit(f"planted literals not caught by {sorted(missing)}")
+          print(f"planted literals caught by {sorted(caught)}")
           PY
