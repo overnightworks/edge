@@ -519,12 +519,18 @@ for Cloudflare by sending `Host: auth.hallucinai.de` and
 `probe-rp` and its client exist only there.
 
 ```sh
-flock /tmp/probe-stack.lock timeout 540 python3 probe/keycloak/probe.py --scratch "$(mktemp -d)"
+flock /tmp/probe-stack.lock \
+  timeout --kill-after=50 540 python3 probe/keycloak/probe.py --scratch "$(mktemp -d)"
 ```
 
 It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 (exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 means 8081 or 8090 was
-taken. The proofs: the public issuer and the path allow-list (1, 2a), the
+taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
+probe, which still tears its stack down (exit 124), and 50 seconds later it
+kills the probe and its teardown (exit 137). After an exit 137 or a failure
+that says the stack is left behind, remove it under the lock, from a directory
+without a compose file:
+`flock /tmp/probe-stack.lock docker compose --project-name edge-kc-probe down --volumes --remove-orphans`. The proofs: the public issuer and the path allow-list (1, 2a), the
 master issuer and the forced second factor on 8090 (2b), a failing undefined
 variable, a fresh apply, an unchanged export after a cache-off second apply and
 a changed YAML that applies and deletes a console-made subgroup it does not

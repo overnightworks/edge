@@ -5,7 +5,8 @@ directory, stands in for Cloudflare by sending `Host: auth.<domain>` and
 `X-Forwarded-Proto: https` to 127.0.0.1:8081, prints one line per proof, and always tears the
 stack down, volumes included. It needs 127.0.0.1:8081 and :8090 free, so the live edge is stopped.
 
-    flock /tmp/probe-stack.lock timeout 540 python3 probe/keycloak/probe.py --scratch DIR
+    flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
+        python3 probe/keycloak/probe.py --scratch DIR
 """
 
 from __future__ import annotations
@@ -896,7 +897,7 @@ def main() -> int:
         failures.append(str(failure))
     finally:
         if not stack.down():
-            failures.append(f"stack {PROJECT} is left behind, remove it by hand")
+            failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1
