@@ -112,6 +112,7 @@ def _recorded(
     step: Callable[[Settings, tuple[App, ...], Run], None],
 ) -> int:
     """Every outcome lands in the status file; only a full run is `ok`."""
+    runner.sweep_leftover_staging(settings.work_dir)
     try:
         previous = read_status(settings.status_file)
     except StatusFileError as error:

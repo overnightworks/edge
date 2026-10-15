@@ -104,7 +104,6 @@ def require_password_file(settings: Settings) -> None:
 
 
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-    _sweep_leftover_staging(settings.work_dir)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     snapshot_ids = [_back_up(settings, app, run) for app in apps]
@@ -117,7 +116,6 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 
 
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-    _sweep_leftover_staging(settings.work_dir)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     with run.phase(Phase.READINESS):
@@ -232,7 +230,7 @@ def _write_private(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _sweep_leftover_staging(parent: Path) -> None:
+def sweep_leftover_staging(parent: Path) -> None:
     """A killed run never reaches its cleanup, so every run first removes the plaintext it left,
     whether or not it gets far enough to stage anything itself.
 

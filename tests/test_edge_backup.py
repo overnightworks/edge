@@ -808,16 +808,26 @@ def _make_the_database_ambiguous(edge_backup, machine) -> None:
 
 
 @pytest.mark.parametrize(
-    ("command", "arrange", "exit_code"),
+    ("arguments", "arrange", "exit_code"),
     [
-        ("backup", _back_up_once, 0),
-        ("restore-test", _back_up_once, 0),
-        ("backup", _make_the_database_ambiguous, 1),
-        ("restore-test", _leave_no_snapshot, 1),
+        (("backup",), _back_up_once, 0),
+        (("restore-test",), _back_up_once, 0),
+        (("backup",), _make_the_database_ambiguous, 1),
+        (("restore-test",), _leave_no_snapshot, 1),
+        (("--apps", "/nonexistent/apps.toml", "backup"), _leave_no_snapshot, 1),
+        (("--apps", "/nonexistent/apps.toml", "restore-test"), _back_up_once, 1),
+    ],
+    ids=[
+        "backup-succeeds",
+        "restore-test-succeeds",
+        "backup-without-a-database",
+        "restore-test-without-a-snapshot",
+        "backup-without-apps",
+        "restore-test-without-apps",
     ],
 )
 def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
-    edge_backup, machine, home, command, arrange, exit_code
+    edge_backup, machine, home, arguments, arrange, exit_code
 ):
     arrange(edge_backup, machine)
     work_dir = home / ".cache/edge-backup"
@@ -826,7 +836,7 @@ def test_a_run_sweeps_only_the_plaintext_a_killed_run_left_behind(
         (kept_copy / "db").mkdir(parents=True)
         (kept_copy / "db/db.dump").write_bytes(DUMP)
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*arguments)
 
     assert outcome.exit_code == exit_code, outcome.err
     assert list(work_dir.iterdir()) == [operator_restore]
