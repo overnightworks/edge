@@ -68,15 +68,21 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 docker compose up -d
 ```
 
-Readiness: the stack is ready when `127.0.0.1:8081` listens and an unknown host
-gets 404. The procedure gives up after 30 seconds:
+Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
+listen, an unknown host gets 404 on 8081, and Keycloak (with its database)
+answers the master realm on 8090. Keycloak's start takes longest, so the
+procedure gives up after 240 seconds:
 
 ```sh
 set -a; . ./.env; set +a
-timeout 30 sh -c '
-  until ss -ltnH "sport = :8081" | grep -q "127.0.0.1:8081"; do sleep 1; done
+timeout 240 sh -c '
+  for port in 8081 8090; do
+    until ss -ltnH "sport = :$port" | grep -q "127.0.0.1:$port"; do sleep 1; done
+  done
   until [ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 \
       -H "Host: unknown.$EDGE_DOMAIN" http://127.0.0.1:8081/)" = 404 ]; do sleep 1; done
+  until [ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 \
+      http://localhost:8090/realms/master)" = 200 ]; do sleep 1; done
 ' && echo ready
 ```
 
