@@ -1,6 +1,7 @@
 """edge-check driven through its CLI, with fixture command outputs in place of the host."""
 
 import json
+import os
 from dataclasses import dataclass, field
 
 import pytest
@@ -460,3 +461,47 @@ def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):
 
     assert exit_code == 2
     assert "cannot read" in capsys.readouterr().err
+
+
+@pytest.fixture
+def fake_docker(monkeypatch, tmp_path):
+    """A `docker` first on PATH that runs the given shell script as its `ps` / `inspect` answers."""
+
+    def install(script: str) -> None:
+        executable = tmp_path / "bin" / "docker"
+        executable.parent.mkdir()
+        executable.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
+        executable.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{executable.parent}:{os.environ['PATH']}")
+        monkeypatch.setattr(host, "socket_listeners", lambda: "")
+
+    return install
+
+
+def run_against_real_host_commands(tmp_path) -> int:
+    allow_list = tmp_path / "edge-check.toml"
+    allow_list.write_text("", encoding="utf-8")
+    return cli.main(["--allow-list", str(allow_list)])
+
+
+def test_exits_2_naming_the_command_that_does_not_answer_in_time(
+    fake_docker, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
+    fake_docker("exec sleep 30")
+
+    assert run_against_real_host_commands(tmp_path) == 2
+    assert "docker ps did not answer within 0.2 s" in capsys.readouterr().err
+
+
+SHORT_INSPECT_ANSWERS = {"empty list": "[]", "one of two": '[{"Name": "/a"}]'}
+
+
+@pytest.mark.parametrize("answer", SHORT_INSPECT_ANSWERS.values(), ids=SHORT_INSPECT_ANSWERS.keys())
+def test_exits_2_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
+    fake_docker, tmp_path, capsys, answer
+):
+    fake_docker(f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
+
+    assert run_against_real_host_commands(tmp_path) == 2
+    assert "docker ps listed 2" in capsys.readouterr().err
