@@ -431,7 +431,8 @@ chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 070
 CI's step "No secret in any file" runs gitleaks with
 `keycloak/secret-check/gitleaks.toml`: a value whose key ends in `secret` or
 `password` in `keycloak/*.yaml` must be a `$(env:…)` reference, and a
-`PASSWORD`/`SECRET` key in `compose.yaml` must be a `_FILE` path.
+`PASSWORD`/`SECRET` key in any compose file (`compose.yaml` and its overlays)
+must be a `_FILE` path.
 
 ### Start and apply
 
@@ -466,6 +467,11 @@ credential.
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
    ```
+
+   If the apply fails after it applied `master.yaml`, a second run with the
+   overlay gets a 401: master now demands TOTP for `temp-admin`'s password
+   grant. Re-run it without the overlay, `docker compose run --rm
+   keycloak-config-cli`, because the `config-cli` client exists by then.
 5. **Leave the bootstrap overlay and start the edge.** Start as in
    [Start, readiness, stop](#start-readiness-stop): the plain `up -d` recreates
    Keycloak without the overlay, and the forced recreate starts Traefik with
@@ -529,8 +535,8 @@ It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 (exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 means 8081 or 8090 was
 taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it
-kills the probe and its teardown (exit 137). After an exit 137 or a failure that
-says the stack is left behind, remove it under the lock, from a directory
+kills the probe and its teardown (exit 137). After an exit 137 or a
+`teardown: stack edge-kc-probe FAILED` line, remove it under the lock, from a directory
 without a compose file; Compose finds the project's containers, networks and
 volumes by its name, and the lock is held for at most 330 seconds:
 
