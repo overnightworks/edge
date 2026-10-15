@@ -11,6 +11,9 @@ from edge_check.listeners import Listener, parse_listeners
 # The same pattern traefik.yml's provider constraint demands of the `edge.name` label.
 _EDGE_NAME = re.compile(r"[a-z0-9-]{1,63}")
 
+# docker-proxy runs in dockerd's unit: ss shows that cgroup to every caller, the process to root.
+_DOCKER_PROXY_UNIT = "docker.service"
+
 
 def check(inspect_json: str, ss_output: str, allow_list: tuple[AllowEntry, ...]) -> list[Finding]:
     containers = parse_containers(inspect_json)
@@ -110,7 +113,8 @@ def _publication_problem(publication: Publication) -> Problem | None:
 def _holds_socket_for(publication: Publication, listener: Listener) -> bool:
     """docker-proxy listens on the published address and port; no host IP means every address."""
     return (
-        publication.protocol == listener.protocol
+        listener.is_owned_by(_DOCKER_PROXY_UNIT)
+        and publication.protocol == listener.protocol
         and publication.host_ip in ("", listener.address)
         and publication.host_ports is not None
         and publication.host_ports.contains(listener.port)

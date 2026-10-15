@@ -238,6 +238,14 @@ HOSTS = {
         ss=SS_DOCKER_PROXY_8080_BOTH_FAMILIES,
         findings=[finding("publication-without-host-ip", "hello", "tcp", "", 8080)],
     ),
+    "another process on a published port is its own finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_SSHD.replace(":22 ", ":3000 "),
+        findings=[
+            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
+    ),
     "a stopped container's publication does not hide a listener on its port": Host(
         docker=inspect_json(
             container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]}, running=False)
