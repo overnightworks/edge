@@ -614,7 +614,7 @@ These lines become true only after D14: agents under their own user, without Doc
 
 ## 9. The operator's decisions
 
-**What is ruled and what is open.** Ruled by the operator: D14 (securing the agents is not a go-live gate; it is its own block), the deploy by version tag (section 5), and Grafana for the whole platform (section 8). Every other line, D1 to D13 including the tunnel (D6) and the remote kill switch (D13), is open: the Recommendation column is a proposal, not a ruling.
+**What is ruled and what is open.** Ruled by the operator: D14 (securing the agents is not a go-live gate; it is its own block), the deploy by version tag (section 5), OpenTofu for the external services, Cloudflare and GitHub (L3 in section 3), Grafana for the whole platform (section 8), and, inside D4, Keycloak for every app user. Everything else in D1 to D13, including the rest of D4, the tunnel (D6) and the remote kill switch (D13), is open: the Recommendation column is a proposal, not a ruling.
 
 "Spoken yes" marks a line about secrets, rights, deletion or anything irreversible: it waits for his words. The others take the recommendation if he does not answer.
 
