@@ -533,6 +533,9 @@ line naming the step and exit code 1. It never prints a secret.
 2. **Secrets.** It creates the three files with random values, in a 0700
    directory with 0644 files. An existing file is never overwritten; if only
    some of the files exist it refuses and names the missing ones.
+   The one exception: once Keycloak's database exists, a missing
+   `bootstrap-admin-password` alone means step 7 has already retired it, and the
+   run goes on.
 3. **First start** with the temporary admin `temp-admin`.
 4. **Master on the admin entrypoint, then the first apply**, both with
    `temp-admin`. The apply cannot move the master realm itself, because the move
