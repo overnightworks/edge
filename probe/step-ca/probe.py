@@ -623,7 +623,9 @@ class Probe:
 
     def proof_10_apply_cycle(self) -> None:
         copy = self.repository_copy()
+        self.compose("up", "--detach", "--no-deps", "hello-mcp")  # the origin behind the gateway
         self.edge_apply(copy, enabled=True)
+        served_before = self.wait_until_served()
         before = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
         self.edge_apply(copy, enabled=False)
         left = self.compose("ps", "--all", "-q", "step-ca", "traefik-mcp").stdout.decode().strip()
@@ -632,11 +634,12 @@ class Probe:
             self.run(["docker", "volume", "inspect", volume])  # a missing volume exits 1
         self.edge_apply(copy, enabled=True)
         self.wait_until_answering()
-        served = self.wait_until_served()
+        served_after = self.wait_until_served()
         after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
         expect(after == before, f"intermediate changed across off and on: {before} -> {after}")
         expect(
-            served["issuer_dn"] == self.intermediate_certificate()["subject_dn"],
+            served_after["issuer_dn"] == served_before["issuer_dn"]
+            == self.intermediate_certificate()["subject_dn"],
             "not served by the same intermediate",
         )
         again = self.edge_apply(copy, enabled=True)
