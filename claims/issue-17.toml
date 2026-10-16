@@ -1,8 +1,0 @@
-claim_id = "574c9654f0b64842808e5ee19eacbe2c"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "bf7bd69e2dbe62105ea51533c3b8b39048303871"
-branch = "claude/issue-17-b1b-restore-nimmt-den-letzten-erfolgreic"
-scope = ["README.md", "src/edge_backup", "systemd", "tests/test_edge_backup.py"]
-opened_commit = "eea5097dfef1a275808f124bfbc968655a1f5289"
-whole_reason = "Three small data-safety cards on the same runner, status and README sections land together."
