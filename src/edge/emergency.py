@@ -68,7 +68,12 @@ def stop_unit(
         since = None if running else _confirmed_off(engine, marks, key, services, now)
     except KeyboardInterrupt:
         return _report_close(
-            marks, key, services, None, None, "interrupted while waiting to stop it"
+            marks,
+            key,
+            services,
+            _recorded(marks, key, now),
+            None,
+            "interrupted while waiting to stop it",
         )
     if since:
         _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
@@ -86,6 +91,8 @@ def _confirmed_off(
     """The switch time of a unit that is off, decided under the lock so no start is mid-`up`.
 
     The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in.
+
+    An unmarked unit is handed back to the stop unlocked, so the stop records before it waits.
 
     None when the unit is not switched off, or when anything stops us from being sure: then the
     stop closes it, and reports the record itself.

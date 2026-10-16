@@ -983,6 +983,31 @@ def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_ex
     assert "run `edge stop step-ca` again" in err
 
 
+def test_an_interrupt_after_a_start_cleared_the_marker_still_records_the_switch(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rules 2 and 5: a stop behind a start's `up` records before it says "recorded"."""
+    put_unit_in("B", scripted, repository, state)
+    marks = switches.Switches(state)
+    planned = scripted.verb_ps
+    plans = []
+
+    def start_finishes_then_interrupt(profile, arguments):
+        plans.append(profile)
+        if len(plans) == 1:
+            return planned(profile, arguments)
+        marks.clear("step-ca", marks.mark("step-ca"))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scripted, "verb_ps", start_finishes_then_interrupt)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded" in err
+    assert marker(state) is not None
+
+
 def test_stop_of_a_disabled_stopped_unit_with_a_marker_changes_nothing(
     stop, scripted, repository, state
 ):
