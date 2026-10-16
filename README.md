@@ -534,8 +534,8 @@ line naming the step and exit code 1. It never prints a secret.
 4. **Master on the admin entrypoint, then the first apply**, both with
    `temp-admin`. The apply cannot move the master realm itself, because the move
    changes the issuer of the token it signs in with.
-5. **Leave the bootstrap overlay and start the edge**, then wait until the
-   readiness check prints `ready`.
+5. **Leave the bootstrap overlay and start the edge.** The script waits by
+   itself until the edge is ready.
 6. **Your part, in the browser.** The script stops and says what to do: sign in
    at `http://localhost:8090/admin/` as `temp-admin` (password in the bootstrap
    file; enrol TOTP when asked), create your own admin in the master realm with
@@ -561,10 +561,12 @@ line naming the step and exit code 1. It never prints a secret.
 
 If the script cannot be used, the same steps by hand, in this order:
 
-1. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
-2. **First start**, with the temporary bootstrap admin `temp-admin`:
+1. **Backup.** Decide once whether to continue without the Keycloak backup
+   (K11b has not landed); stop here if you do not accept that.
+2. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
+3. **First start**, with the temporary bootstrap admin `temp-admin`:
    `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
-3. **Master on the admin entrypoint, then the first apply**, both with the overlay:
+4. **Master on the admin entrypoint, then the first apply**, both with the overlay:
 
    ```sh
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
@@ -575,14 +577,14 @@ If the script cannot be used, the same steps by hand, in this order:
    overlay gets a 401: master now demands TOTP for `temp-admin`'s password
    grant. Re-run it without the overlay, `docker compose run --rm
    keycloak-config-cli`, because the `config-cli` client exists by then.
-4. **Leave the overlay and start the edge** as in
+5. **Leave the overlay and start the edge** as in
    [Start, readiness, stop](#start-readiness-stop): the plain `up -d` recreates
    Keycloak without the overlay, and the forced recreate starts Traefik with
    the current `traefik.yml`. Wait until the readiness check prints `ready`.
-5. **Permanent admin** in the browser, as in step 6 above.
-6. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
+6. **Permanent admin** in the browser, as in step 6 above.
+7. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
    `rm ~/.secrets/keycloak/bootstrap-admin-password`.
-7. **Public login** in Cloudflare, as in step 8 above.
+8. **Public login** in Cloudflare, as in step 8 above.
 
 ### Patch upgrade
 
