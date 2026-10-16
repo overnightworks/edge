@@ -82,6 +82,12 @@ class DockerHost:
                 "volumes": {"step-ca": {"name": VOLUME}},
             }
             return self.done(json.dumps(config))
+        if command[1:3] == ["volume", "inspect"]:
+            if self.failing_tool == "volume inspect":
+                return self.done(returncode=1, stderr=self.failure_text)
+            if command[-1] in self.volumes:
+                return self.done("[]")
+            return self.done(returncode=1, stderr=f"Error: No such volume: {command[-1]}")
         if command[1] == "volume":
             self.volumes[command[-1]] = dict(
                 argument.split("=", 1) for argument in command[2:-1] if "=" in argument
@@ -164,11 +170,21 @@ def session() -> Session:
 
 
 @pytest.fixture
-def init(init_module, docker: DockerHost, session: Session, secrets_dir: Path):
+def make_init(init_module, docker: DockerHost, session: Session, secrets_dir: Path):
     tools = init_module.Tools(
         run=docker.run, say=session.printed.append, host_uid=lambda: session.uid
     )
-    return init_module.StepCaInit(tools, secrets_dir)
+    return lambda read_only: init_module.StepCaInit(tools, secrets_dir, read_only=read_only)
+
+
+@pytest.fixture
+def init(make_init):
+    return make_init(read_only=False)
+
+
+@pytest.fixture
+def check(make_init):
+    return make_init(read_only=True).check
 
 
 def mode(path: Path) -> int:
@@ -197,7 +213,7 @@ def test_a_fresh_run_makes_the_files_with_their_modes(init, docker, secrets_dir,
     assert mode(secrets_dir / PASSWORD) == 0o644
     assert volume_files(docker) == INTERMEDIATE_FILES | {"certs/root_ca.crt"}
     assert not (secrets_dir / ".pending-root").exists()
-    assert "docker compose --profile step-ca up -d step-ca" in session.output
+    assert "then run `edge apply --closed`" in session.output
 
 
 def test_the_output_holds_neither_the_password_nor_a_private_key(
@@ -615,34 +631,125 @@ def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
     assert "teardown: project edge-stepca-probe removed" in probe_run.stdout
 
 
-@pytest.mark.parametrize(
-    ("uv_script", "outcome"),
-    [
-        ("echo '[]'; exit 0", []),
-        ('echo \'[{"kind": "listener"}]\'; exit 1', [{"kind": "listener"}]),
-        ("echo 'no such command' >&2; exit 1", "ProbeFailed"),
-        ("echo 'not json'; exit 0", "ProbeFailed"),
-        ("echo '[]'; exit 2", "ProbeFailed"),
-    ],
-)
-def test_the_probe_reads_edge_check_findings_and_fails_loud_when_it_cannot_run(
-    probe: ModuleType,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    uv_script: str,
-    outcome: object,
-) -> None:
-    """defect:#48 proof (e): a missing edge-check is a failure, not 'no findings'."""
+def fake_uv_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_script: str) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     uv = bin_dir / "uv"
     uv.write_text(f"#!/bin/sh\n{uv_script}\n")
     uv.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    running = probe.Probe(tmp_path / "scratch")
 
-    if outcome == "ProbeFailed":
-        with pytest.raises(probe.ProbeFailed):
-            running.edge_check_findings()
-    else:
-        assert running.edge_check_findings() == outcome
+
+@pytest.mark.parametrize(
+    ("uv_script", "findings"),
+    [
+        ("echo '[]'; exit 0", []),
+        ('echo \'[{"kind": "listener"}]\'; exit 1', [{"kind": "listener"}]),
+    ],
+)
+def test_the_probe_reads_the_edge_check_findings(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    uv_script: str,
+    findings: list,
+) -> None:
+    fake_uv_on_path(tmp_path, monkeypatch, uv_script)
+
+    assert probe.Probe(tmp_path / "scratch").edge_check_findings() == findings
+
+
+@pytest.mark.parametrize(
+    "uv_script",
+    [
+        "echo 'no such command' >&2; exit 1",
+        "echo 'not json'; exit 0",
+        "echo '[]'; exit 2",
+    ],
+)
+def test_the_probe_fails_loud_when_edge_check_cannot_run(
+    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_script: str
+) -> None:
+    """defect:#48 proof (e): a missing edge-check is a failure, not 'no findings'."""
+    fake_uv_on_path(tmp_path, monkeypatch, uv_script)
+
+    with pytest.raises(probe.ProbeFailed):
+        probe.Probe(tmp_path / "scratch").edge_check_findings()
+
+
+# --- step-ca/init --check: the setup contract of `edge apply` (#52 rule 8) ----------------------
+
+
+def host_snapshot(docker: DockerHost, secrets_dir: Path) -> tuple[dict, dict, set]:
+    return (
+        fingerprint_of_files(secrets_dir.parent) if secrets_dir.parent.exists() else {},
+        fingerprint_of_files(docker.volume_dir),
+        set(docker.volumes),
+    )
+
+
+def test_check_passes_after_init_and_changes_nothing(init, check, docker, secrets_dir, session):
+    init.run()
+    before = host_snapshot(docker, secrets_dir)
+    init_commands = len(docker.commands)
+    session.printed.clear()
+
+    assert check() == 0
+
+    assert host_snapshot(docker, secrets_dir) == before
+    assert not {"mkdir", "cp", "step"} & {
+        docker.entrypoint(c) for c in docker.commands[init_commands:] if c[1] == "run"
+    }
+    assert (secrets_dir / PASSWORD).read_text() not in session.output
+
+
+def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
+    check, docker, secrets_dir, session
+):
+    assert check() == 1
+
+    assert "secrets directory is missing" in session.output
+    assert not secrets_dir.exists()
+    assert docker.volumes == {}
+    assert not [c for c in docker.commands if c[1:3] == ["volume", "create"]]
+
+
+def test_check_with_secrets_but_no_volume_never_creates_the_volume(
+    init, check, docker, secrets_dir, session
+):
+    init.run()
+    docker.volumes.clear()
+
+    assert check() == 1
+
+    assert "intermediate is missing" in session.output
+    assert docker.volumes == {}
+
+
+def test_check_names_a_key_without_its_certificate_in_inits_own_words(
+    init, check, secrets_dir, session
+):
+    init.run()
+    (secrets_dir / ROOT_CERT).unlink()
+    session.printed.clear()
+
+    assert check() == 1
+
+    assert f"{ROOT_KEY} exists but {ROOT_CERT} is missing" in session.output
+
+
+@pytest.mark.parametrize("failing_tool", ["compose", "volume inspect"])
+def test_check_cannot_tell_when_docker_does_not_answer(init, check, docker, session, failing_tool):
+    init.run()
+    docker.failing_tool, docker.failure_text = failing_tool, "Cannot connect to the Docker daemon"
+    session.printed.clear()
+
+    assert check() == 2
+
+    assert "Cannot connect to the Docker daemon" in session.output
+
+
+def test_check_refuses_another_user_than_the_images_with_exit_2(check, session):
+    session.uid = 1001
+
+    assert check() == 2
