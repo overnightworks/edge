@@ -120,16 +120,16 @@ class FakeTofu:
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     @contextmanager
-    def watch_apply(self) -> Iterator[Callable[[], None]]:
-        """Yield a wait that returns once the hanging apply has installed its SIGINT handler."""
+    def watch_hang(self) -> Iterator[Callable[[], None]]:
+        """Yield a wait that returns once the hanging tofu run has installed its SIGINT handler."""
         descriptor = os.open(self.directory / "applying", os.O_RDONLY | os.O_NONBLOCK)
 
-        def wait_until_applying() -> None:
+        def wait_until_hanging() -> None:
             ready, _, _ = select.select([descriptor], [], [], 20)
-            assert ready, "tofu apply never started"
+            assert ready, "hanging tofu command never started"
 
         try:
-            yield wait_until_applying
+            yield wait_until_hanging
         finally:
             os.close(descriptor)
 
@@ -488,7 +488,7 @@ class Terminal:
 
 @pytest.fixture
 def terminal(home, fake_tofu):
-    """Start apply on a pty with a minimal environment and no session bus."""
+    """Start `command` on a pty with a minimal environment and no session bus."""
     started = []
 
     def start(*, command="apply", stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
@@ -647,12 +647,12 @@ def test_the_plan_file_is_deleted_on_every_path(
     """#45 rule 4: success, abort, failures and signals leave the plans directory empty."""
     fake_tofu.configure(**configuration)
     apply = terminal()
-    with fake_tofu.watch_apply() as wait_until_applying:
+    with fake_tofu.watch_hang() as wait_until_hanging:
         if reaction is not None:
             apply.read_until(PROMPT)
             if configuration.get("hang_in") == "apply":
                 apply.type("yes\n")
-                wait_until_applying()
+                wait_until_hanging()
             if isinstance(reaction, signal.Signals):
                 apply.signal(reaction)
             else:
@@ -666,14 +666,15 @@ def test_the_plan_file_is_deleted_on_every_path(
 def test_an_interrupt_during_plan_exits_2_names_the_step_and_shows_tofus_output(
     home, fake_tofu, terminal, interrupt
 ):
-    """X1b: an interrupted plan is `cannot plan` (2), never `changes pending` (1)."""
+    """#40 rule 4 / #45: an interrupted plan is `cannot plan` (2), never `changes pending` (1)."""
     fake_tofu.configure(hang_in="plan")
     plan = terminal(command="plan")
-    with fake_tofu.watch_apply() as wait_until_planning:
-        wait_until_planning()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        wait_until_hanging()
         plan.signal(interrupt)
         assert plan.finish() == 2
     assert fake_tofu.stopped_gracefully
+    assert fake_tofu.sigints_received == 1
     assert "tofu stopped gracefully" in plan.output
     assert "edge external plan: interrupted during the plan" in plan.output
     assert "Traceback" not in plan.output
@@ -686,10 +687,10 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed."""
     fake_tofu.configure(plan=2, hang_in="apply")
     apply = terminal()
-    with fake_tofu.watch_apply() as wait_until_applying:
+    with fake_tofu.watch_hang() as wait_until_hanging:
         apply.read_until(PROMPT)
         apply.type("yes\n")
-        wait_until_applying()
+        wait_until_hanging()
         apply.signal(interrupt)
         assert apply.finish() == 1
     assert fake_tofu.stopped_gracefully
@@ -701,10 +702,10 @@ def test_further_interrupts_while_tofu_drains_are_not_forwarded_to_it(home, fake
     """#45 rule 4/5: later interrupts while tofu drains are not forwarded as further SIGINTs."""
     fake_tofu.configure(plan=2, hang_in="apply", drain_until_released=True)
     apply = terminal()
-    with fake_tofu.watch_apply() as wait_until_applying:
+    with fake_tofu.watch_hang() as wait_until_hanging:
         apply.read_until(PROMPT)
         apply.type("yes\n")
-        wait_until_applying()
+        wait_until_hanging()
         apply.signal(signal.SIGINT)
         deadline = time.monotonic() + 20
         while fake_tofu.sigints_received < 1:

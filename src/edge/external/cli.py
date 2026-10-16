@@ -118,6 +118,9 @@ def _plan(home: Path, token_values: dict[str, str]) -> int:
         apply.print_interrupted_output(interrupted, token_values)
         print("edge external plan: interrupted during the plan, no plan was made", file=sys.stderr)
         return ExitCode.CANNOT_PLAN
+    except KeyboardInterrupt:
+        print("edge external plan: interrupted during the plan, no plan was made", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
     exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
     redacted_output = secrets.redact(planned.output, token_values)
     if exit_code is ExitCode.CANNOT_PLAN:
