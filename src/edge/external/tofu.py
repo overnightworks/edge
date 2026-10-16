@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -39,6 +40,14 @@ class Completed:
     output: str
 
 
+class Interrupted(KeyboardInterrupt):
+    """The operator interrupted the wrapper; tofu was asked to stop and has exited."""
+
+    def __init__(self, completed: Completed) -> None:
+        super().__init__()
+        self.completed = completed
+
+
 def pinned_version() -> str:
     """The version `external/main.tf` requires: the pin is stated once, there."""
     match = _PIN.search((EXTERNAL_ROOT / "main.tf").read_text())
@@ -67,15 +76,35 @@ PLAN_ARGUMENTS = ["plan", "-refresh=true", "-detailed-exitcode"]
 
 
 def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Completed:
-    result = subprocess.run(
+    """Run tofu to its end. An interrupt reaches tofu once, as SIGINT, and tofu is awaited.
+
+    tofu leads its own session so a terminal Ctrl-C does not also reach it: a second SIGINT
+    makes tofu abort instead of finishing its in-flight provider calls and writing its state.
+    """
+    with subprocess.Popen(
         [str(tofu), *arguments],
         cwd=EXTERNAL_ROOT,
         env=environment,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-    )
-    return Completed(result.returncode, result.stdout + result.stderr)
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate()
+        except KeyboardInterrupt:
+            process.send_signal(signal.SIGINT)
+            raise Interrupted(_finish_after_interrupt(process)) from None
+    return Completed(process.returncode, stdout + stderr)
+
+
+def _finish_after_interrupt(process: subprocess.Popen) -> Completed:
+    while True:
+        try:
+            stdout, stderr = process.communicate()
+        except KeyboardInterrupt:
+            continue  # tofu was told once; only its exit ends the wait
+        return Completed(process.returncode, stdout + stderr)
 
 
 def require_pinned_version(tofu: Path, environment: dict[str, str]) -> None:

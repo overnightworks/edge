@@ -36,34 +36,45 @@ def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
 
 
 def plan_command(home: Path) -> int:
-    return _guarded("plan", home, secrets.Access.READ, _plan)
+    return _guarded("plan", home, secrets.Access.READ, _plan, ExitCode.CANNOT_PLAN)
 
 
 def apply_command(home: Path) -> int:
-    return _guarded("apply", home, secrets.Access.WRITE, apply.apply_plan)
+    return _guarded(
+        "apply", home, secrets.Access.WRITE, apply.apply_plan, apply.ApplyExit.CANNOT_PLAN
+    )
 
 
 def _guarded(
-    command: str, home: Path, access: secrets.Access, run: Callable[[Path, dict[str, str]], int]
+    command: str,
+    home: Path,
+    access: secrets.Access,
+    run: Callable[[Path, dict[str, str]], int],
+    cannot_plan: int,
 ) -> int:
-    """Run one command; every failure before the plan is exit 2, named and without a token."""
+    """Run one command; every failure before the plan is `cannot_plan`, named, without a token."""
     token_values: dict[str, str] = {}
     try:
         apply.remove_leftover_plans(home)
-        if access is secrets.Access.WRITE and not apply.has_terminal():
-            print(
-                "edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr
-            )
-            return apply.REFUSED
         token_values = secrets.read_secrets(home, access)
         return run(home, token_values)
     except (secrets.SecretFileError, tofu.TofuError) as error:
         _report(f"edge external {command}: {error}", error, token_values, command)
+    except apply.StepFailed as failure:
+        _report(
+            f"edge external {command}: {failure.step} failed, {_describe(failure.cause)}",
+            failure.cause,
+            token_values,
+            command,
+        )
+        return apply.ApplyExit.REFUSED
     except OSError as error:
-        # The filename can be child-controlled (a failed cleanup names what the child left).
-        where = f" ({error.filename})" if error.filename else ""
-        cause = f"{type(error).__name__}: {error.strerror}{where}"
-        _report(f"edge external {command}: cannot plan, {cause}", error, token_values, command)
+        _report(
+            f"edge external {command}: cannot plan, {_describe(error)}",
+            error,
+            token_values,
+            command,
+        )
     except ValueError as error:
         # Only the type: a decode error's message can quote bytes of a token file.
         _report(
@@ -72,7 +83,13 @@ def _guarded(
             token_values,
             command,
         )
-    return ExitCode.CANNOT_PLAN
+    return cannot_plan
+
+
+def _describe(error: OSError) -> str:
+    # The filename can be child-controlled (a failed cleanup names what the child left).
+    where = f" ({error.filename})" if error.filename else ""
+    return f"{type(error).__name__}: {error.strerror}{where}"
 
 
 def _report(message: str, error: Exception, token_values: dict[str, str], command: str) -> None:

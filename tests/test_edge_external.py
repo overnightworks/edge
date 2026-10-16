@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 import tomllib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,7 +45,7 @@ PLANS_DIRECTORY = ".secrets/opentofu/plans"
 PROMPT = "to apply exactly this plan"
 
 FAKE_TOFU = f"""#!{sys.executable}
-import json, os, sys, time
+import json, os, signal, sys, time
 from pathlib import Path
 
 here = Path(__file__).parent
@@ -59,10 +61,15 @@ with (here / "calls.jsonl").open("a") as calls:
 plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
-if command == "apply":
-    (here / "applying").write_text(sys.argv[2])
-    if config["hang_in_apply"]:
-        time.sleep(60)
+if command == "apply" and config["hang_in_apply"]:
+    def stop_gracefully(*_):
+        (here / "stopped gracefully").write_text("stopped")
+        print("tofu stopped gracefully", flush=True)
+        sys.exit(130)
+    signal.signal(signal.SIGINT, stop_gracefully)
+    with open(here / "applying", "w") as started:
+        started.write("applying")
+    time.sleep(60)
 locked = Path(os.environ["TMPDIR"]) / config["locked_name"]
 if config["leave_undeletable"] and not locked.exists():
     locked.mkdir()
@@ -104,6 +111,24 @@ class FakeTofu:
         log = self.directory / "calls.jsonl"
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
+    @contextmanager
+    def watch_apply(self) -> Iterator[Callable[[], None]]:
+        """Yield a wait that returns once the hanging apply has installed its SIGINT handler."""
+        descriptor = os.open(self.directory / "applying", os.O_RDONLY | os.O_NONBLOCK)
+
+        def wait_until_applying() -> None:
+            ready, _, _ = select.select([descriptor], [], [], 20)
+            assert ready, "tofu apply never started"
+
+        try:
+            yield wait_until_applying
+        finally:
+            os.close(descriptor)
+
+    @property
+    def stopped_gracefully(self) -> bool:
+        return (self.directory / "stopped gracefully").exists()
+
     def call(self, command: str) -> dict:
         return next(call for call in self.calls() if call["argv"][0] == command)
 
@@ -130,6 +155,7 @@ def fake_tofu(tmp_path, monkeypatch) -> FakeTofu:
     executable = directory / "tofu"
     executable.write_text(FAKE_TOFU)
     executable.chmod(0o755)
+    os.mkfifo(directory / "applying")
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     fake = FakeTofu(directory)
     fake.configure()
@@ -449,15 +475,19 @@ def terminal(home, fake_tofu):
     """Start apply on a pty with a minimal environment and no session bus."""
     started = []
 
-    def start() -> Terminal:
+    def start(*, stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
         master, slave = pty.openpty()
         program = "import sys; from edge import cli; sys.exit(cli.main(sys.argv[1:]))"
         process = subprocess.Popen(
             [sys.executable, "-c", program, "external", "apply"],
-            stdin=slave,
-            stdout=slave,
+            stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
+            stdout=slave if stdout_is_terminal else subprocess.DEVNULL,
             stderr=slave,
-            env={"HOME": str(home), "PATH": f"{fake_tofu.directory}:/usr/bin:/bin"},
+            env={
+                "HOME": str(home),
+                "PATH": f"{fake_tofu.directory}:/usr/bin:/bin",
+                "PYTHONPATH": os.pathsep.join(path for path in sys.path if path),
+            },
             start_new_session=True,
         )
         os.close(slave)
@@ -478,6 +508,23 @@ def test_apply_without_a_terminal_exits_1_before_any_tofu_call(home, fake_tofu, 
     """#45 rule 2: stdin or stdout that is no terminal refuses before tofu."""
     assert cli.main(["external", "apply"]) == 1
     assert "terminal" in capsys.readouterr().err
+    assert fake_tofu.calls() == []
+
+
+@pytest.mark.parametrize(
+    "terminals",
+    [
+        pytest.param({"stdout_is_terminal": False}, id="stdin-terminal-stdout-redirected"),
+        pytest.param({"stdin_is_terminal": False}, id="stdin-redirected-stdout-terminal"),
+    ],
+)
+def test_apply_with_only_one_of_stdin_and_stdout_a_terminal_exits_1_before_tofu(
+    home, fake_tofu, terminal, terminals
+):
+    """#45 rule 2: stdin and stdout must both be terminals."""
+    apply = terminal(**terminals)
+    assert apply.finish() == 1
+    assert "must be a terminal" in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -573,25 +620,65 @@ def test_the_plan_file_is_deleted_on_every_path(
     """#45 rule 4: success, abort, failures and signals leave the plans directory empty."""
     fake_tofu.configure(**configuration)
     apply = terminal()
-    if reaction is not None:
-        apply.read_until(PROMPT)
-        if configuration.get("hang_in_apply"):
-            apply.type("yes\n")
-            wait_for(fake_tofu.directory / "applying")
-        if isinstance(reaction, signal.Signals):
-            apply.signal(reaction)
-        else:
-            apply.type(reaction)
-    assert apply.finish() == expected_exit
+    with fake_tofu.watch_apply() as wait_until_applying:
+        if reaction is not None:
+            apply.read_until(PROMPT)
+            if configuration.get("hang_in_apply"):
+                apply.type("yes\n")
+                wait_until_applying()
+            if isinstance(reaction, signal.Signals):
+                apply.signal(reaction)
+            else:
+                apply.type(reaction)
+        assert apply.finish() == expected_exit
     assert plan_files(home) == []
     assert list((home / ".secrets/opentofu/tmp").iterdir()) == []
 
 
-def wait_for(path: Path) -> None:
-    deadline = time.monotonic() + 20
-    while not path.exists():
-        assert time.monotonic() < deadline, f"{path} never appeared"
-        time.sleep(0.05)
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
+    home, fake_tofu, terminal, interrupt
+):
+    """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed."""
+    fake_tofu.configure(plan=2, hang_in_apply=True)
+    apply = terminal()
+    with fake_tofu.watch_apply() as wait_until_applying:
+        apply.read_until(PROMPT)
+        apply.type("yes\n")
+        wait_until_applying()
+        apply.signal(interrupt)
+        assert apply.finish() == 1
+    assert fake_tofu.stopped_gracefully
+    assert "tofu stopped gracefully" in apply.output
+    assert "interrupted during tofu apply, live services may be partly changed" in apply.output
+
+
+def test_a_second_plan_command_keeps_the_plan_file_of_an_apply_awaiting_confirmation(
+    home, fake_tofu, terminal
+):
+    """#45 rule 4: only leftovers of killed runs are deleted, not a live run's plan."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    edge_external_plan()
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    assert fake_tofu.call("apply")["plan_file_existed"]
+
+
+def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_exit_1(
+    home, fake_tofu, terminal
+):
+    """#45 rule 5: a failure after a good plan is exit 1 naming the step, not 'cannot plan'."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    (fake_tofu.directory / "tofu").unlink()
+    apply.type("yes\n")
+    assert apply.finish() == 1
+    assert "tofu apply failed" in apply.output
+    assert "cannot plan" not in apply.output
+    assert plan_files(home) == []
 
 
 @pytest.mark.parametrize("command", ["plan", "apply"])
@@ -610,15 +697,20 @@ def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_start(
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):
     """#34 finding 11 (a): the in-flight exception is the body's own, not an outer handled one."""
     try:
-        raise ValueError("handled elsewhere")
-    except ValueError:
-        with pytest.raises(PermissionError), secrets.private_temporary_directory(home) as directory:
-            locked = directory / "locked"
-            locked.mkdir()
-            (locked / "file").write_text("x")
-            locked.chmod(0o500)
-    for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
-        locked.chmod(0o700)
+        try:
+            raise ValueError("handled elsewhere")
+        except ValueError:
+            with (
+                pytest.raises(PermissionError),
+                secrets.private_temporary_directory(home) as directory,
+            ):
+                locked = directory / "locked"
+                locked.mkdir()
+                (locked / "file").write_text("x")
+                locked.chmod(0o500)
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
 
 
 def test_the_changes_pending_line_follows_the_plan_without_a_blank_line(home, fake_tofu, capsys):
