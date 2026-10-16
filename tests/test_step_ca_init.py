@@ -532,29 +532,40 @@ def probe() -> Iterator[ModuleType]:
     del sys.modules[spec.name]
 
 
-@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+@pytest.mark.parametrize("stop_signal", ["TERM", "INT"])
 def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
-    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop_signal: signal.Signals
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stop_signal: str,
 ) -> None:
-    removed: list[str] = []
-
-    class SignalledDuringCleanup:
-        def __init__(self, _scratch: Path) -> None:
-            pass
-
-        def teardown(self) -> None:
-            os.kill(os.getpid(), stop_signal)
-            removed.append("containers and volume")
-
-    monkeypatch.setattr(probe, "Probe", SignalledDuringCleanup)
-    monkeypatch.setattr(probe, "prove", lambda _probe: 0)
-    monkeypatch.setattr(sys, "argv", ["probe", "--scratch", str(tmp_path / "scratch")])
-    handler_before = signal.getsignal(signal.SIGTERM)
+    """defect:#38 PR 39 finding 2: teardown finishes when SIGTERM or Ctrl-C hits cleanup."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    down_finished = tmp_path / "down-finished"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        f'  *" down "*) kill -{stop_signal} $PPID; sleep 0.2; touch "{down_finished}" ;;\n'
+        "  ps*|volume*) ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    handlers_before = {
+        number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)
+    }
 
     try:
-        exit_code = probe.main()
+        exit_code = probe.main(["--scratch", str(tmp_path / "scratch")])
     finally:
-        signal.signal(signal.SIGTERM, handler_before)
+        for number, handler in handlers_before.items():
+            signal.signal(number, handler)
 
-    assert removed == ["containers and volume"]
-    assert exit_code == 0
+    assert down_finished.exists()
+    assert f"teardown: project {probe.PROJECT} removed" in capsys.readouterr().out
+    assert exit_code == 1

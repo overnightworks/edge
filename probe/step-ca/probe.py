@@ -65,18 +65,21 @@ class Probe:
         }
         self.environment.pop("DOCKER_STEPCA_INIT_PASSWORD", None)
 
-    def run(self, command: list[str], *, stdin: bytes | None = None, check: bool = True):
+    def run(
+        self, command: list[str], *, stdin: bytes | None = None, check: bool = True,
+        own_session: bool = False,
+    ):  # fmt: skip
         result = subprocess.run(
             command, capture_output=True, input=stdin, env=self.environment, cwd=REPO,
-            check=False, timeout=240, close_fds=True,
+            check=False, timeout=240, close_fds=True, start_new_session=own_session,
         )  # fmt: skip
         if check and result.returncode != 0:
             tail = (result.stderr or result.stdout).decode(errors="replace").strip().splitlines()
             raise ProbeFailed(f"{' '.join(command[:4])} exited {result.returncode}: {tail[-1:]}")
         return result
 
-    def compose(self, *args: str, check: bool = True):
-        return self.run(["docker", "compose", *args], check=check)
+    def compose(self, *args: str, check: bool = True, own_session: bool = False):
+        return self.run(["docker", "compose", *args], check=check, own_session=own_session)
 
     def init(self) -> str:
         result = self.run([str(REPO / "step-ca" / "init")])
@@ -256,12 +259,17 @@ class Probe:
         print("proof 5 held: init completed the intermediate; root key byte-for-byte unchanged")
 
     def teardown(self) -> None:
-        self.compose("down", "--volumes", "--remove-orphans", "--timeout", "10", check=False)
+        # Own session: a signal to the probe's process group must not reach these.
+        self.compose(
+            "down", "--volumes", "--remove-orphans", "--timeout", "10", check=False,
+            own_session=True,
+        )  # fmt: skip
         left = self.run(
-            ["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"]
+            ["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"],
+            own_session=True,
         ).stdout.decode()
         volumes = self.run(
-            ["docker", "volume", "ls", "-q", "--filter", f"name={PROJECT}_"]
+            ["docker", "volume", "ls", "-q", "--filter", f"name={PROJECT}_"], own_session=True
         ).stdout.decode()
         expect(
             not (left.strip() or volumes.strip()), f"left behind: {left.split()} {volumes.split()}"
@@ -282,10 +290,10 @@ def stop_signals_ignored() -> Iterator[None]:
             signal.signal(number, handler)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True)
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
         print("PROBE FAILED: --scratch is not empty")
         return 3
