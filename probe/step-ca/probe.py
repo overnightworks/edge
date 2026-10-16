@@ -46,6 +46,7 @@ DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
+DISCARD_OUTPUT = "/dev/null"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
 INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
@@ -188,7 +189,7 @@ class Probe:
         """The directory's HTTP status as a throwaway container on the CA's network sees it, or -1
         when the certificate does not verify; raises OSError while the CA is not answering."""
         result = self.client(
-            "mcp-ca", "--output", "/dev/null", "--write-out", "%{http_code}", DIRECTORY_URL,
+            "mcp-ca", "--output", DISCARD_OUTPUT, "--write-out", "%{http_code}", DIRECTORY_URL,
             root=cafile,
         )  # fmt: skip
         if result.returncode == CERTIFICATE_UNVERIFIED:
@@ -518,7 +519,7 @@ class Probe:
             ("mcp-ca", BACKEND_URL): False,
         }
         for (network, url), expected in reachable.items():
-            result = self.client(network, "--insecure", "--output", "/dev/null", url)
+            result = self.client(network, "--insecure", "--output", DISCARD_OUTPUT, url)
             outcome = "answered" if result.returncode == 0 else f"curl exit {result.returncode}"
             wanted = 0 if expected else COULD_NOT_RESOLVE
             expect(result.returncode == wanted, f"{network} -> {url}: {outcome}")
@@ -619,7 +620,7 @@ class Probe:
         )
         command = shlex.join([str(copy / ".venv" / "bin" / "edge"), "apply", "--closed"])
         result = subprocess.run(
-            ["script", "-qec", command, "/dev/null"],
+            ["script", "-qec", command, DISCARD_OUTPUT],
             input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
             timeout=APPLY_SECONDS,
         )  # fmt: skip

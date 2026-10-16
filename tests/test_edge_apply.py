@@ -270,7 +270,8 @@ def test_a_failed_removal_is_partial_and_never_reported_as_applied(switch, scrip
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial" in err and "step-ca" in err
+    assert "partial" in err
+    assert "step-ca" in err
     assert "last line" in err
     assert "is off" not in out
 
@@ -299,7 +300,8 @@ def test_switching_on_off_on_keeps_the_volumes_and_what_they_hold(switch, script
     switch()
     write_fleet(repository, DISABLED)
     switch()
-    assert scripted.containers == {} and scripted.volumes == held
+    assert scripted.containers == {}
+    assert scripted.volumes == held
     write_fleet(repository, ENABLED)
     exit_code, _, _ = switch()
 
@@ -330,7 +332,8 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
     exit_code, _, err = switch()
 
     assert exit_code == 1
-    assert "interrupted while changing step-ca" in err and "may be partial" in err
+    assert "interrupted while changing step-ca" in err
+    assert "may be partial" in err
 
 
 def test_a_missing_setup_refuses_before_yes_and_changes_nothing(switch, scripted, setup_check):
@@ -378,7 +381,8 @@ def test_without_a_terminal_it_refuses_before_anything_else(
 
     assert exit_code == 1
     assert "refused, stdin and stdout must be a terminal" in capsys.readouterr().err
-    assert scripted.calls == [] and setup_check.commands == []
+    assert scripted.calls == []
+    assert setup_check.commands == []
 
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", "yes please"])
@@ -397,7 +401,8 @@ def test_plain_apply_says_the_publish_phase_is_not_built_and_names_closed(capsys
 
     assert exit_code == 2
     err = capsys.readouterr().err
-    assert "publish phase is not built yet" in err and "edge apply --closed" in err
+    assert "publish phase is not built yet" in err
+    assert "edge apply --closed" in err
 
 
 @pytest.mark.parametrize(
@@ -455,7 +460,8 @@ def test_an_entry_without_run_is_ignored(switch, scripted, repository):
 
     exit_code, out, _ = switch()
 
-    assert exit_code == 0 and "nothing to change" in out
+    assert exit_code == 0
+    assert "nothing to change" in out
 
 
 def test_compose_that_cannot_be_read_is_cannot_plan(switch, scripted):
@@ -465,7 +471,8 @@ def test_compose_that_cannot_be_read_is_cannot_plan(switch, scripted):
     exit_code, _, err = switch()
 
     assert exit_code == 2
-    assert "cannot plan" in err and "last line" in err
+    assert "cannot plan" in err
+    assert "last line" in err
 
 
 # --- catalog and compose cannot drift (catalog -> compose) --------------------------------------
