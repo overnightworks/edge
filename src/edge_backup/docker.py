@@ -10,7 +10,7 @@ from pathlib import Path
 from edge_backup import host
 from edge_backup.apps import App
 from edge_backup.restic import Mount, MountKind, container_argv
-from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, Settings
+from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, RESTIC_IMAGE, Settings
 
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -47,6 +47,33 @@ def require_daemon() -> None:
         )
     except host.HostCommandError as error:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+
+
+def ensure_pinned_images() -> None:
+    """`docker image prune -a` removes the pinned images; a missing one is pulled by its digest."""
+    for image in (RESTIC_IMAGE, POSTGRES_IMAGE):
+        if not _image_present(image):
+            _pull(image)
+
+
+def _image_present(image: str) -> bool:
+    try:
+        host.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            label="docker image inspect",
+            timeout=PROBE_TIMEOUT,
+            discard_stderr=True,
+        )
+    except host.HostCommandError:
+        return False
+    return True
+
+
+def _pull(image: str) -> None:
+    try:
+        host.run(["docker", "pull", "--quiet", image], label="docker pull", discard_stderr=True)
+    except host.HostCommandError as error:
+        raise TargetError(f"das gepinnte Image {image} fehlt und lässt sich nicht laden") from error
 
 
 def database_container(app: App) -> str:

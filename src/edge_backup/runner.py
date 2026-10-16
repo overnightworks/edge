@@ -8,8 +8,10 @@ import stat
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import Self
 
 from edge_backup import docker, host, restic
 from edge_backup.apps import App
@@ -21,7 +23,14 @@ from edge_backup.settings import (
     RESTORE_SERVER_TIMEOUT,
     Settings,
 )
-from edge_backup.status import ExitCategory, Phase, Status, write_status
+from edge_backup.status import (
+    ExitCategory,
+    Phase,
+    Status,
+    StatusFileError,
+    read_status,
+    write_status,
+)
 from edge_backup.verify import (
     DUMP_NAME,
     MANIFEST_NAME,
@@ -35,6 +44,8 @@ from edge_backup.verify import (
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
 STAGING_PREFIX = "staging-"
 RUN_MARK_SUFFIX = ".run"
+# restic's own short ID length, as `edge-backup snapshots` lists it.
+MIN_SNAPSHOT_PREFIX = 8
 
 
 class StepFailed(Exception):
@@ -105,10 +116,27 @@ def require_password_file(settings: Settings) -> None:
         )
 
 
+@dataclass(frozen=True)
+class _Deadline:
+    """One waiting budget that several consecutive waits draw from."""
+
+    timeout: timedelta
+    expires_at: float
+
+    @classmethod
+    def start(cls, timeout: timedelta = READINESS_TIMEOUT) -> Self:
+        return cls(timeout, host.monotonic() + timeout.total_seconds())
+
+
 def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    snapshot_ids = [_back_up(settings, app, run) for app in apps]
+    first_readiness = _Deadline.start(READINESS_TIMEOUT)
+    _require_docker_with_pinned_images(run, first_readiness)
+    snapshot_ids = [
+        _back_up(settings, app, run, first_readiness if index == 0 else _Deadline.start())
+        for index, app in enumerate(apps)
+    ]
     run.backed_up(snapshot_ids[-1])
     for app in apps:
         with run.phase(Phase.FORGET):
@@ -120,8 +148,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    with run.phase(Phase.READINESS):
-        _wait_until_ready(docker.require_daemon, READINESS_TIMEOUT, READINESS_POLL_SECONDS)
+    _require_docker_with_pinned_images(run, _Deadline.start())
     for app in apps:
         _restore_test(settings, app, run)
     with run.phase(Phase.CHECK):
@@ -129,8 +156,27 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     run.restore_tested()
 
 
-def restore(settings: Settings, app: App, target: Path) -> str:
-    """The operator's restore: the latest snapshot of one app into a new private directory.
+def _require_docker_with_pinned_images(run: Run, readiness: _Deadline) -> None:
+    """A daemon that is still starting is waited for; only then are missing images pulled."""
+    with run.phase(Phase.READINESS):
+        _wait_until_ready(docker.require_daemon, readiness, READINESS_POLL_SECONDS)
+    with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
+        _resolved(docker.ensure_pinned_images)
+
+
+def previous_status(settings: Settings) -> Status | None:
+    """The file holds the only record of past successes: unreadable, it is left untouched."""
+    try:
+        return read_status(settings.status_file)
+    except StatusFileError as error:
+        raise StepFailed(
+            ExitCategory.CONFIGURATION, f"{error}; die Datei bleibt unverändert"
+        ) from error
+
+
+def restore(settings: Settings, app: App, target: Path, snapshot_prefix: str | None) -> str:
+    """The operator's restore into a new private directory: the last successful backup's snapshot,
+    or the one of this app that the operator names.
 
     Never inside the work directory: the operator's plaintext stays out of what runs own and sweep.
     """
@@ -141,16 +187,20 @@ def restore(settings: Settings, app: App, target: Path) -> str:
     if target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     require_secret_and_repository(settings)
-    snapshot_id = _latest_snapshot(settings, app)
+    snapshot_id = (
+        _last_successful_snapshot(settings, app)
+        if snapshot_prefix is None
+        else _chosen_snapshot(settings, app, snapshot_prefix)
+    )
     target.mkdir(mode=0o700, parents=True)
     restic.restore(settings, app.name, snapshot_id, target)
     return snapshot_id
 
 
-def _back_up(settings: Settings, app: App, run: Run) -> str:
+def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> str:
     with run.phase(Phase.READINESS):
         container = _wait_until_ready(
-            lambda: docker.database_container(app), READINESS_TIMEOUT, READINESS_POLL_SECONDS
+            lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
         )
         volume = _resolved(lambda: docker.audio_volume(app))
     with _private_directory(settings.work_dir) as staging:
@@ -166,7 +216,7 @@ def _back_up(settings: Settings, app: App, run: Run) -> str:
 
 def _restore_test(settings: Settings, app: App, run: Run) -> None:
     with run.phase(Phase.RESTORE):
-        snapshot_id = _latest_snapshot(settings, app)
+        snapshot_id = _last_successful_snapshot(settings, app)
     with _private_directory(settings.work_dir) as restored:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)
@@ -185,7 +235,9 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     )
     with docker.restore_server() as server:
         _wait_until_ready(
-            lambda: _ready_or_raise(server), RESTORE_SERVER_TIMEOUT, RESTORE_SERVER_POLL_SECONDS
+            lambda: _ready_or_raise(server),
+            _Deadline.start(RESTORE_SERVER_TIMEOUT),
+            RESTORE_SERVER_POLL_SECONDS,
         )
         with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
             server.list_dump(dump)
@@ -197,6 +249,37 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     check_audio_references(references, restored_audio)
 
 
+def _last_successful_snapshot(settings: Settings, app: App) -> str:
+    """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
+    status = previous_status(settings)
+    newest = _latest_snapshot(settings, app)
+    last_good = None if status is None else status.last_snapshot_id
+    if last_good is None or not restic.has_snapshot(settings, app.name, last_good):
+        raise StepFailed(
+            ExitCategory.CONFIGURATION,
+            f"der Snapshot des letzten erfolgreichen Backups von {app.name} fehlt; "
+            f"der neueste Snapshot ist {newest[:8]}; wählbar mit: "
+            f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>",
+        )
+    return last_good
+
+
+def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
+    """Only this app's snapshots count, so another app's ID is as unknown as a mistyped one."""
+    matches = [
+        snapshot_id
+        for snapshot_id in restic.snapshot_ids(settings, app.name)
+        if len(prefix) >= MIN_SNAPSHOT_PREFIX and snapshot_id.startswith(prefix)
+    ]
+    if len(matches) != 1:
+        raise StepFailed(
+            ExitCategory.CONFIGURATION,
+            f"{prefix} nennt keinen einzelnen Snapshot von {app.name} "
+            f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `edge-backup snapshots`)",
+        )
+    return matches[0]
+
+
 def _latest_snapshot(settings: Settings, app: App) -> str:
     snapshot_id = restic.latest_snapshot(settings, app.name)
     if snapshot_id is None:
@@ -204,14 +287,13 @@ def _latest_snapshot(settings: Settings, app: App) -> str:
     return snapshot_id
 
 
-def _wait_until_ready[T](probe: Callable[[], T], timeout: timedelta, poll_seconds: float) -> T:
-    deadline = host.monotonic() + timeout.total_seconds()
+def _wait_until_ready[T](probe: Callable[[], T], deadline: _Deadline, poll_seconds: float) -> T:
     while True:
         try:
             return _resolved(probe)
         except docker.NotReadyError as error:
-            if host.monotonic() >= deadline:
-                minutes = int(timeout.total_seconds() // 60)
+            if host.monotonic() >= deadline.expires_at:
+                minutes = int(deadline.timeout.total_seconds() // 60)
                 raise StepFailed(
                     ExitCategory.NOT_READY, f"nach {minutes} Minuten nicht bereit: {error}"
                 ) from error

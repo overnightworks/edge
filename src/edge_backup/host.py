@@ -37,10 +37,12 @@ def run(
     stdin: Path | None = None,
     stdout: Path | None = None,
     timeout: timedelta | None = None,
+    discard_stderr: bool = False,
 ) -> bytes:
     """Run argv without a shell; stdout goes to a new 0600 file when given, else is returned.
 
     A timeout bounds a probe: past it the command is killed and counts as failed.
+    A probe whose failure the caller words itself discards the command's own diagnostic.
     """
     seconds = None if timeout is None else timeout.total_seconds()
     with ExitStack() as files:
@@ -48,7 +50,12 @@ def run(
         sink = files.enter_context(_new_private_file(stdout)) if stdout else subprocess.PIPE
         try:
             completed = subprocess.run(
-                argv, stdin=source, stdout=sink, check=False, timeout=seconds
+                argv,
+                stdin=source,
+                stdout=sink,
+                stderr=subprocess.DEVNULL if discard_stderr else None,
+                check=False,
+                timeout=seconds,
             )
         except FileNotFoundError as error:
             raise HostCommandError(label, "ist nicht installiert") from error

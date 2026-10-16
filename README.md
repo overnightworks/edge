@@ -187,7 +187,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 ## edge-backup
 
 A weekly encrypted backup of the declared apps (B1: Songmaker only) into a
-local restic repository, and a monthly test that restores the latest snapshot
+local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
 **What it protects against:** accidental deletion and corruption. The
@@ -203,7 +203,11 @@ The database container and the volume are found by their
 
 restic runs from the official image, pinned by version and digest
 (`restic/restic:0.19.1@sha256:…`, see `src/edge_backup/settings.py`), with no
-network, no capabilities and a read-only root, as your own user. The password
+network, no capabilities and a read-only root, as your own user. Backup and
+restore test check first that the pinned restic and postgres images are
+present. `docker image prune -a` removes them; the next run pulls them again
+by their digest-pinned reference and fails early, before staging anything,
+naming the image only if that pull fails. The password
 file is mounted read-only at `/run/secrets/restic-password` and handed to
 restic only as `--password-file`; edge-backup never reads, prints or logs it.
 
@@ -236,7 +240,7 @@ The units expect the checkout at `~/git/edge`.
 | Timer | When | Does |
 |---|---|---|
 | `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check` |
-| `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the latest snapshot, load and verify it; then `check --read-data-subset=10%` |
+| `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database
 is not up yet, the backup waits up to 10 minutes, then fails. One host lock
@@ -264,7 +268,7 @@ exactly that, so such a backup never counts as good.
 
 ### The restore test
 
-It restores the latest snapshot into a private directory under
+It restores the last successful backup's snapshot into a private directory under
 `~/.cache/edge-backup` and checks:
 
 - the restored audio file count equals the manifest's;
@@ -303,6 +307,11 @@ marked as its own; anything else in that directory stays.
 `last_successful_backup` moves on and `state` is `failed`. The file holds no
 output, command line, path or file name.
 
+A status file that cannot be read (mode 000, corrupt JSON, an unknown
+`schema`) is never overwritten: backup, restore test and restore fail with one
+German line and exit 1, and the file stays byte-identical. Past successes are
+never replaced by nulls; repair or remove the file by hand to go on.
+
 `state` describes the latest run of either command, backup or restore test: a
 failed Sunday backup followed two hours later by a passing restore test reads
 `ok`, and a timer that never fires leaves the last `ok` standing. A reader
@@ -312,7 +321,7 @@ therefore also judges freshness: `last_successful_backup` no older than about
 | Exit | Meaning |
 |---|---|
 | 0 | every phase succeeded |
-| 1 | a phase failed; one German line names it, and the status says `failed` |
+| 1 | a run failed; one German line names why. The status says `failed`, except for an unreadable status file, which stays as it is |
 
 ### Restore one app
 
@@ -320,8 +329,25 @@ therefore also judges freshness: `last_successful_backup` no older than about
 uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
-It holds `db/db.dump` and `audio/`. Loading them into the live app is a
-deliberate manual step. Stop every Songmaker container except its database,
+It restores the snapshot of the **last successful backup**
+(`last_snapshot_id` in the status) and prints its short ID, never a newer
+snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
+that snapshot is gone, or the status names none, `restore` refuses with one
+German line and exit 1, names the newest snapshot and says how to choose it.
+The restore test verifies the same snapshot and refuses the same way.
+
+Disaster recovery on a machine without the status file: list the repository
+with `uv run edge-backup snapshots`, then choose a snapshot of that app by the
+first 8 or more characters of its ID:
+
+```sh
+uv run edge-backup restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
+```
+
+An ID that is unknown, ambiguous or another app's is refused with one German
+line. The target holds
+`db/db.dump` and `audio/`. Loading them into the live app is a deliberate
+manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the
 block as a whole: it runs in a subshell that stops at the first failing command,
 so a failed load or copy never goes on to the other half or restarts the app:

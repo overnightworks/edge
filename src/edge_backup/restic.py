@@ -113,12 +113,18 @@ def check(settings: Settings, *, read_data: bool) -> None:
 
 
 def latest_snapshot(settings: Settings, app: str) -> str | None:
-    output = _restic(
-        settings, "restic snapshots", ["snapshots", "--json", "--latest", "1", *_scope(app)]
-    )
+    ids = snapshot_ids(settings, app, "--latest", "1")
+    return ids[-1] if ids else None
+
+
+def has_snapshot(settings: Settings, app: str, snapshot_id: str) -> bool:
+    return snapshot_id in snapshot_ids(settings, app)
+
+
+def snapshot_ids(settings: Settings, app: str, *options: str) -> list[str]:
+    output = _restic(settings, "restic snapshots", ["snapshots", "--json", *options, *_scope(app)])
     try:
-        latest = json.loads(output)
-        return latest[-1]["id"] if latest else None
+        return [snapshot["id"] for snapshot in json.loads(output)]
     except (ValueError, KeyError, TypeError) as error:
         raise host.UnreadableOutputError("restic snapshots ist unlesbar") from error
 
