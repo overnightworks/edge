@@ -162,8 +162,8 @@ def _switch(
     if plan.action is Action.ON:
         progress.step = "start"
         with marks.lock():
-            current = marks.mark(plan.unit.key)
-            if current != read[plan.unit.key]:
+            if changed := marks.changed(plan.unit.key, read[plan.unit.key]):
+                current = changed.current
                 return current.since if current else switches.UNKNOWN_SWITCH_TIME
             engine.start(plan.unit.key, plan.services)
         return None

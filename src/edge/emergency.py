@@ -61,11 +61,17 @@ def stop_unit(
     except compose.ComposeError as error:
         _complain(STOP, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
-    if not running and (since := _confirmed_off(engine, marks, key, services, now)):
-        _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
-        return ApplyExit.APPLIED_OR_NOTHING
     if not running and not unit.enabled:
         _say(STOP, f"{key} is disabled in the catalog and nothing of it runs")
+        return ApplyExit.APPLIED_OR_NOTHING
+    try:
+        since = None if running else _confirmed_off(engine, marks, key, services, now)
+    except KeyboardInterrupt:
+        return _report_close(
+            marks, key, services, None, None, "interrupted while waiting to stop it"
+        )
+    if since:
+        _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
         return ApplyExit.APPLIED_OR_NOTHING
     return _close(engine, marks, key, services, now)
 
@@ -137,9 +143,9 @@ def _close(
 
 def _recorded_time(marks: switches.Switches, key: str) -> str:
     try:
-        return switches.describe_since(marks.since(key) or "")
+        return switches.describe_since(marks.since(key) or switches.UNKNOWN_SWITCH_TIME)
     except switches.SwitchError:
-        return "unknown time"
+        return switches.UNKNOWN_SWITCH_TIME
 
 
 def _report_close(
@@ -226,9 +232,9 @@ def start_unit(
 
 
 def _switched_off_again_line(key: str, current: switches.Mark | None) -> str:
-    """The switch is not the one start read, after the start ran: the unit stays as it is."""
+    """The switch is not the one start read, after the start ran."""
     if current is None:
-        return f"partial: the switch of {key} was ended meanwhile; not started"
+        return f"partial: {key} was started, but its switch had already been ended meanwhile"
     return (
         f"partial: {key} was switched off again (since {switches.describe_since(current.since)}); "
         "it stays switched off"
@@ -258,9 +264,8 @@ def _open(
 ) -> int:
     try:
         with marks.lock():
-            current = marks.mark(key)
-            if current != read:
-                return _refused_before_up(key, current)
+            if changed := marks.changed(key, read):
+                return _refused_before_up(key, changed.current)
             engine.start(key, services)
             observed_on = compose.is_up(engine.states(), config, services)
             if not observed_on:

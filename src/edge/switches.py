@@ -51,6 +51,13 @@ class Mark:
 
 
 @dataclass(frozen=True)
+class Changed:
+    """The marker is no longer the one a reader saw; `current` is None when it is gone."""
+
+    current: Mark | None
+
+
+@dataclass(frozen=True)
 class Switches:
     directory: Path
 
@@ -73,6 +80,11 @@ class Switches:
             raise SwitchError(f"cannot read the switch of {unit} ({error.strerror})") from error
         return Mark(line or UNKNOWN_SWITCH_TIME, status.st_ino, status.st_mtime_ns)
 
+    def changed(self, unit: str, read: Mark | None) -> Changed | None:
+        """What the marker is now when it is no longer the one the caller read, else None."""
+        current = self.mark(unit)
+        return Changed(current) if current != read else None
+
     def since(self, unit: str) -> str | None:
         """The time the unit was switched off, or None when it is not switched off."""
         mark = self.mark(unit)
@@ -90,7 +102,7 @@ class Switches:
 
     def clear(self, unit: str, expected: Mark) -> bool:
         """Remove the marker only if it is still the one the caller read."""
-        if self.mark(unit) != expected:
+        if self.changed(unit, expected):
             return False
         try:
             (self._stopped / unit).unlink()

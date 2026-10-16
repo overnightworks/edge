@@ -945,16 +945,43 @@ def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
     assert marker(state) is not None
 
 
-def test_a_lock_that_cannot_be_taken_does_not_blame_the_record(
+def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_exit_1(
     stop, scripted, repository, state, monkeypatch
 ):
+    """#60 rule 2 partial from B with nothing running: Ctrl-C behind a start's `up` exits 1."""
+    put_unit_in("B", scripted, repository, state)
+
+    def interrupted(_self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(switches.Switches, "lock", interrupted)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded (since 17.10. 22:10), but interrupted" in err
+    assert "run `edge stop step-ca` again" in err
+
+
+def test_stop_of_a_disabled_stopped_unit_with_a_marker_changes_nothing(
+    stop, scripted, repository, state
+):
+    """#60 rule 2 from E: no marker is written, the same file stays."""
+    put_unit_in("E", scripted, repository, state)
+    switch_off(state)
+    inode = (state / "stopped" / "step-ca").stat().st_ino
+
+    exit_code, out, _ = stop()
+
+    assert exit_code == 0
+    assert "step-ca is disabled in the catalog and nothing of it runs" in out
+    assert (state / "stopped" / "step-ca").stat().st_ino == inode
+
+
+def test_a_lock_that_cannot_be_taken_does_not_blame_the_record(stop, scripted, repository, state):
     """#60 rule 2: the partial line says the switch is recorded when only the lock failed."""
     put_unit_in("A", scripted, repository, state)
-
-    def refused(_self):
-        raise switches.SwitchError("cannot take the switch lock (nope)")
-
-    monkeypatch.setattr(switches.Switches, "lock", refused)
+    (state / "switch.lock").mkdir(parents=True)
 
     exit_code, _, err = stop()
 
