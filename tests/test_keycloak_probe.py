@@ -255,17 +255,6 @@ SECRET_VALUE = "s3cret-value-that-must-not-be-printed"
 FRESH_APPLY_LINE = "fresh apply done"
 
 
-class HeldStack:
-    """A stack whose bring-up is done and whose teardown only says so."""
-
-    def __init__(self, scratch: Path) -> None:
-        self.secrets_dir = scratch / "secrets"
-
-    def down(self) -> bool:
-        print("teardown: stack edge-kc-probe removed", flush=True)
-        return True
-
-
 class OperatorInput:
     """Stdin that ends the way a caller would: by a signal or by closing the pipe."""
 
@@ -278,13 +267,32 @@ class OperatorInput:
         return ""
 
 
+class SignallingStdout:
+    """Stdout that sends a signal as READY is written, while the stop signals are blocked."""
+
+    def __init__(self, real: object, signal_to_send: signal.Signals) -> None:
+        self.real = real
+        self.signal_to_send = signal_to_send
+
+    def write(self, text: str) -> int:
+        written = self.real.write(text)
+        if text.startswith("READY "):
+            os.kill(os.getpid(), self.signal_to_send)
+        return written
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.real, name)
+
+
 def run_hold(
     probe: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     scratch: Path,
     *,
     before_ready: signal.Signals | None = None,
+    while_ready_is_written: signal.Signals | None = None,
     after_ready: signal.Signals | None = None,
+    teardown_leaves_container: bool = False,
 ) -> int:
     def start_with_bootstrap_admin(self: object) -> None:
         self.secret_values = {"config-cli-secret": SECRET_VALUE}
@@ -297,7 +305,11 @@ def run_hold(
     monkeypatch.setattr(sys, "argv", ["probe.py", "hold", "--scratch", str(scratch)])
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
     monkeypatch.setattr(probe, "ports_free", lambda *_: [])
-    monkeypatch.setattr(probe, "Stack", HeldStack)
+    docker = FakeDocker(apply_lands_during_down=teardown_leaves_container, unlistable_kind=None)
+    monkeypatch.setattr(probe.subprocess, "run", docker.run)
+    monkeypatch.setattr(probe.grp, "getgrnam", lambda _: SimpleNamespace(gr_gid=999))
+    if while_ready_is_written:
+        monkeypatch.setattr(sys, "stdout", SignallingStdout(sys.stdout, while_ready_is_written))
     monkeypatch.setattr(probe.Probe, "start_with_bootstrap_admin", start_with_bootstrap_admin)
     monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
     return probe.main()
@@ -314,6 +326,7 @@ def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
     capsys: pytest.CaptureFixture[str],
     restored_signal_handlers: None,
 ) -> None:
+    """#21 D1a: hold prints one READY line naming the secret file, never the secret value."""
     scratch = tmp_path / "s"
     run_hold(probe, monkeypatch, scratch)
 
@@ -341,6 +354,7 @@ def test_hold_ends_normally_when_told_to_stop_after_ready(
     restored_signal_handlers: None,
     ending: signal.Signals | None,
 ) -> None:
+    """#21 D1a: SIGTERM, SIGINT or stdin EOF after READY tears down, prints HOLD ENDED, exits 0."""
     exit_code = run_hold(probe, monkeypatch, tmp_path / "s", after_ready=ending)
 
     lines = capsys.readouterr().out.splitlines()
@@ -356,6 +370,7 @@ def test_hold_stopped_by_a_signal_before_ready_tears_down_and_fails(
     capsys: pytest.CaptureFixture[str],
     restored_signal_handlers: None,
 ) -> None:
+    """#21 D1a: a stop signal before READY tears down and ends with PROBE FAILED, exit 1."""
     exit_code = run_hold(probe, monkeypatch, tmp_path / "s", before_ready=signal.SIGTERM)
 
     lines = capsys.readouterr().out.splitlines()
@@ -367,9 +382,43 @@ def test_hold_stopped_by_a_signal_before_ready_tears_down_and_fails(
     ]
 
 
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+def test_hold_stopped_while_ready_is_written_still_ends_normally(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+    stop_signal: signal.Signals,
+) -> None:
+    """#21 D1a: a stop signal arriving as READY is flushed is a stop: HOLD ENDED, exit 0."""
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", while_ready_is_written=stop_signal)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert lines[-2:] == ["teardown: stack edge-kc-probe removed", "HOLD ENDED"]
+
+
+def test_hold_whose_teardown_leaves_the_stack_after_ready_fails(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+) -> None:
+    """#21 D1a: a teardown that leaves the stack after READY is PROBE FAILED, exit 1."""
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", teardown_leaves_container=True)
+
+    last_line = capsys.readouterr().out.splitlines()[-1]
+    assert exit_code == 1
+    assert last_line.startswith("PROBE FAILED: stack edge-kc-probe is left behind")
+
+
 def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
     probe: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """#21 D1a: the run mode keeps its proof order (3b before the fresh apply, 3a after it)."""
+
     def start_with_bootstrap_admin(_self: object) -> object:
         print("stack: up with the temporary bootstrap admin", flush=True)
         return object()

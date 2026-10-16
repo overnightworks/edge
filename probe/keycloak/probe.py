@@ -1064,6 +1064,11 @@ class Probe:
 PORT_TAKEN_EXIT = 3
 READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+# Per mode: the Probe method that runs it and the line that reports it ended well.
+MODES = {
+    "run": ("run", "PROBE PASSED: proofs 1-8 hold"),
+    "hold": ("hold", "HOLD ENDED"),
+}
 
 
 class StopHolding(Exception):
@@ -1082,14 +1087,15 @@ def keep_stack_until_told_to_stop(ready_line: str) -> None:
     """Prints the READY line, then blocks until SIGTERM, SIGINT or EOF on stdin."""
     # A signal that arrives while the handler is swapped waits until READY is out, so one
     # before READY is a failure and one after it is a stop, never the other way round.
+    # Unblocking delivers a pending signal inside pthread_sigmask, so it sits under the suppress.
     signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
-    try:
-        for stopping in STOP_SIGNALS:
-            signal.signal(stopping, stop_holding)
-        print(ready_line, flush=True)
-    finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
     with contextlib.suppress(StopHolding):
+        try:
+            for stopping in STOP_SIGNALS:
+                signal.signal(stopping, stop_holding)
+            print(ready_line, flush=True)
+        finally:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
         sys.stdin.read()
 
 
@@ -1098,7 +1104,7 @@ def main() -> int:
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=("run", "hold"),
+        choices=tuple(MODES),
         default="run",
         help="run: the proofs (default); hold: keep the stack up for another repository's proof",
     )
@@ -1118,8 +1124,11 @@ def main() -> int:
         signal.signal(stopping, stop_as_failure)
     failures = []
     probe = Probe(stack)
+    method_name, success_line = MODES[arguments.mode]
     try:
-        getattr(probe, arguments.mode)()
+        getattr(probe, method_name)()
+    except StopHolding:
+        pass  # a second stop signal before the handlers are ignored is still the normal end
     except ProbeFailure as failure:
         failures.append(str(failure))
     finally:
@@ -1131,7 +1140,7 @@ def main() -> int:
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1
-    print("HOLD ENDED" if arguments.mode == "hold" else "PROBE PASSED: proofs 1-8 hold", flush=True)
+    print(success_line, flush=True)
     return 0
 
 
