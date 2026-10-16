@@ -149,7 +149,7 @@ Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
 | `~/.secrets/github/fleet-read` | `GITHUB_TOKEN` |
 | `~/.secrets/opentofu/state-passphrase` | `TF_VAR_state_passphrase` |
 
-Zwei weitere Token-Dateien (die Schreib-Tokens fuer `apply`) folgen mit X5b.
+Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
 `plan` verweigert ein `tofu`, dessen Version nicht der Pin in
 `external/main.tf` entspricht.
 
