@@ -54,21 +54,28 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
 
-      - name: Compose renders (default, probe profile, Keycloak bootstrap and probe overlays)
+      - name: Compose renders (default, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
+          docker compose --profile step-ca config -q
           docker compose --profile probe config -q
+          docker compose --profile step-ca config --services | grep -x step-ca
+          docker compose --profile step-ca config --services | grep -x traefik-mcp
+          docker compose --profile step-ca config --services | grep -x traefik-mcp-acme-owner
           docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --profile apply config -q
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
             docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --file probe/keycloak/compose.probe.yaml --profile apply config -q
+          PROBE_CA_JSON=/nonexistent docker compose --file compose.yaml \
+            --file probe/step-ca/compose.probe.yaml --profile probe --profile step-ca config -q
 
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
             traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
-            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml step-ca/ca.json
+            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml probe/step-ca/compose.probe.yaml step-ca/ca.json \
+            traefik-mcp.yml mcp/dynamic/*
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
       # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,
@@ -140,6 +147,33 @@ jobs:
               sys.exit("step-ca does not read its password from /run/secrets")
           if "./step-ca/ca.json:/etc/step-ca/ca.json:ro" not in step_ca["volumes"]:
               sys.exit("step-ca/ca.json is not mounted read-only")
+          PY
+
+      # traefik-mcp has no host listener: it sits on the three internal MCP networks and nowhere
+      # else, sets the sysctl that lets uid 65534 bind 443, and copies traefik.yml's global, log and
+      # hardening blocks, so the two Traefiks cannot drift apart. The address check above stays
+      # as it is.
+      - name: traefik-mcp has no host networking, exactly the three MCP networks and the 443 sysctl
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+          compose = yaml.safe_load(open("compose.yaml"))
+          mcp = compose["services"]["traefik-mcp"]
+          if "network_mode" in mcp or "ports" in mcp:
+              sys.exit("traefik-mcp has host networking or published ports")
+          if sorted(mcp["networks"]) != ["mcp", "mcp-backends", "mcp-ca"]:
+              sys.exit(f"traefik-mcp is on {sorted(mcp['networks'])}")
+          if mcp.get("sysctls") != {"net.ipv4.ip_unprivileged_port_start": 0}:
+              sys.exit(f"traefik-mcp sysctls are {mcp.get('sysctls')}")
+          public = yaml.safe_load(open("traefik.yml"))
+          internal = yaml.safe_load(open("traefik-mcp.yml"))
+          for block in ("global", "log"):
+              if public[block] != internal[block]:
+                  sys.exit(f"traefik-mcp.yml's {block} differs from traefik.yml's")
+          hardening = dict(internal["entryPoints"]["mcp"]["http"])
+          hardening.pop("tls")
+          if hardening != public["entryPoints"]["edge"]["http"]:
+              sys.exit("traefik-mcp.yml's hardening block differs from traefik.yml's")
           PY
 
       # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login

@@ -1,5 +1,17 @@
 name: edge
 
+# What both Traefik instances share: one image digest and one hardening.
+x-traefik: &traefik
+  image: traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c
+  user: "65534:65534"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+# The MCP origins' names: traefik-mcp answers to them on mcp-ca (step-ca validates the ACME
+# challenge there) and on mcp (the clients). step-ca/ca.json's policy allows exactly this suffix.
+x-mcp-origins: &mcp-origins [hello.mcp.internal]
+
 services:
   socket-proxy:
     image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
@@ -22,13 +34,9 @@ services:
       - socket-proxy-run:/run/socket-proxy
 
   traefik:
-    image: traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c
+    <<: *traefik
     restart: unless-stopped
     depends_on: [socket-proxy]
-    user: "65534:65534"
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
     network_mode: host
     environment:
       EDGE_DOMAIN: ${EDGE_DOMAIN:?set EDGE_DOMAIN}
@@ -38,7 +46,7 @@ services:
       - socket-proxy-run:/run/socket-proxy:ro
 
   hello:
-    image: traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
+    image: &whoami traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44
     profiles: [probe]
     networks: [edge-probe]
     labels:
@@ -147,6 +155,7 @@ services:
       - ./keycloak:/config:ro
 
   step-ca:
+    profiles: [step-ca]
     image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270
     restart: unless-stopped
     # The image's own user; step-ca/init makes the volume's files for it.
@@ -157,7 +166,7 @@ services:
     # bounding set the kernel refuses to exec it (verified on 0.30.2). The CA itself listens on 9000.
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
-    # Only the internal network: no route out, no published port. Slice 2's Traefik joins it.
+    # Only the internal network: no route out, no published port. traefik-mcp joins it.
     networks: [mcp-ca]
     # Not the image's entrypoint: its init path would print an admin password into the log.
     entrypoint: ["/usr/local/bin/step-ca"]
@@ -169,6 +178,62 @@ services:
       - ./step-ca/ca.json:/etc/step-ca/ca.json:ro
       # Intermediate certificate and key, the root certificate and the db; never the root key.
       - step-ca:/home/step
+
+  # Gives the ACME volume to uid 65534: a new named volume belongs to root, and traefik-mcp is
+  # read_only and not root.
+  traefik-mcp-acme-owner:
+    <<: *traefik
+    profiles: [step-ca]
+    user: "0:0"
+    cap_add: [CHOWN]
+    restart: "no"
+    network_mode: none
+    entrypoint: ["chown", "65534:65534", "/acme"]
+    volumes:
+      - traefik-mcp-acme:/acme
+
+  # The second Traefik: the one gateway between the agent service and the MCP servers. No host
+  # networking, no Docker API; the only container on all three MCP networks.
+  traefik-mcp:
+    <<: *traefik
+    profiles: [step-ca]
+    restart: unless-stopped
+    # Traefik asks the CA once when it starts and does not ask again if the CA was not there; with
+    # an empty ACME storage nothing is left to renew. service_started does not wait for the CA and
+    # the daemon starts containers unordered after its own restart, so the wait is here. With a
+    # stored certificate it starts at once and renews later.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        trap 'exit 143' TERM
+        grep -qs '"certificate"' /acme/acme.json || {
+          echo 'traefik-mcp: waiting for step-ca:9000' >&2
+          until nc -z step-ca 9000; do sleep 1; done
+        }
+        exec traefik
+    depends_on:
+      step-ca: {condition: service_started}
+      traefik-mcp-acme-owner: {condition: service_completed_successfully}
+    # The entrypoint listens on 443 as uid 65534.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    networks:
+      mcp-ca: {aliases: *mcp-origins}
+      mcp: {aliases: *mcp-origins}
+      mcp-backends: {}
+    secrets: [step_ca_root_certificate]
+    volumes:
+      - ./traefik-mcp.yml:/etc/traefik/traefik.yml:ro
+      - ./mcp/dynamic:/mcp/dynamic:ro
+      # Issued certificates; not backed up, they are issued again.
+      - traefik-mcp-acme:/acme
+
+  # The probe's MCP server behind traefik-mcp (mcp/dynamic/hello.yml); plain HTTP, mcp-backends only.
+  hello-mcp:
+    image: *whoami
+    profiles: [probe]
+    networks: [mcp-backends]
 volumes:
   socket-proxy-run:
     driver: local
@@ -178,6 +243,7 @@ volumes:
       o: "uid=65534,gid=65534,mode=0700"
   keycloak-db:
   step-ca:
+  traefik-mcp-acme:
 
 secrets:
   # Files only, outside the repository; README "Keycloak secrets" names how to create them.
@@ -188,6 +254,9 @@ secrets:
   # step-ca/init creates it; README "Interne CA".
   step_ca_password:
     file: ${HOME}/.secrets/step-ca/password
+  # The same init makes it; traefik-mcp trusts the CA through it alone.
+  step_ca_root_certificate:
+    file: ${HOME}/.secrets/step-ca/root_ca.crt
 
 networks:
   edge-probe:
@@ -195,6 +264,12 @@ networks:
   # step-ca's own network: internal, so it has no route to the internet or other networks (Docker
   # still lets its containers reach host services through the gateway address).
   mcp-ca:
+    internal: true
+  # The agent service and traefik-mcp; the clients never see step-ca or the backends.
+  mcp:
+    internal: true
+  # traefik-mcp and the apps' MCP servers.
+  mcp-backends:
     internal: true
   keycloak:
     driver: bridge

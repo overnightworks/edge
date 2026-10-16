@@ -19,6 +19,7 @@ lives only in the property `role`.
 | CLI | `<stem>`, and features are subcommands. A component with its own distribution has the entry point `<stem>-<component>` | one command per repo; a separately installed process stays visibly part of it |
 | systemd unit, compose service | `<stem>` or `<stem>-<job>` | `systemctl list-units '<stem>*'` finds them all |
 | Sonar project key | `overnightworks_<stem>` | SonarCloud's org-key form |
+| MCP origin host | `<stem>.mcp.internal`, the stem of the app's repository | the name `traefik-mcp` routes on and answers to, and the only suffix `step-ca/ca.json` issues for (edge#37) |
 | CSS / release asset | `<stem>.css`, `<stem>-<version>...` | |
 | Hosts, Keycloak groups and clients | **not derived; unchanged** unless the job changes | external identities. keycloak-config-cli deletes a renamed group *with its memberships*, and a renamed client changes the token audience |
 | Ecosystem-dictated names | the ecosystem's form with the stem inside: Slidev `slidev-addon-<stem>`, Claude/Codex plugin `<stem>` | the ecosystem finds them only that way |

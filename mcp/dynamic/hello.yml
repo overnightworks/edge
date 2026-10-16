@@ -1,0 +1,14 @@
+# The probe's MCP origin: one router and one service per app, `<app>.mcp.internal` (docs/naming.md).
+http:
+  routers:
+    hello:
+      rule: Host(`hello.mcp.internal`)
+      entryPoints: [mcp]
+      service: hello
+      tls:
+        certResolver: internal
+  services:
+    hello:
+      loadBalancer:
+        servers:
+          - url: http://hello-mcp:80
