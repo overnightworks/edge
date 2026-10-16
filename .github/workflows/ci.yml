@@ -36,7 +36,10 @@ jobs:
       - name: edge-check tests
         env:
           PYTHONPATH: src
-        run: uv run --no-sync --no-build pytest --cov=src --cov-report=xml:coverage.xml
+        # pytest-cov stays out of pyproject.toml; the pins are the lock-file discipline for this one tool.
+        run: >-
+          uv run --no-sync --no-build --with pytest-cov==7.1.0 --with coverage==7.16.2
+          pytest --cov=src --cov-report=xml:coverage.xml
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report

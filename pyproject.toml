@@ -11,7 +11,7 @@ edge-check = "edge_check.cli:main"
 edge-backup = "edge_backup.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=6", "ruff>=0.15"]
+dev = ["pytest>=8", "ruff>=0.15"]
 
 [build-system]
 requires = ["uv_build>=0.10,<0.11"]
