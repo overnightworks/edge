@@ -32,7 +32,6 @@ BOOTSTRAP_SECRET = "bootstrap-admin-password"
 BOOTSTRAP_ADMIN = "temp-admin"
 BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
 BOOTSTRAP_ENV = "KC_BOOTSTRAP_ADMIN_USERNAME"
-COMPOSE_PROJECT = "edge"  # compose.yaml `name:`
 DATABASE_VOLUME = "keycloak-db"
 ADMIN_URL = "http://localhost:8090"
 EDGE_URL = "http://127.0.0.1:8081"
@@ -206,15 +205,13 @@ class GoLive:
     # --- docker compose -------------------------------------------------------------------
 
     def database_volume_exists(self) -> bool:
-        result = self.tools.run(
-            ["docker", "volume", "ls", "-q",
-             "--filter", f"label=com.docker.compose.project={COMPOSE_PROJECT}",
-             "--filter", f"label=com.docker.compose.volume={DATABASE_VOLUME}"],
-            SHORT_COMMAND_SECONDS,
-        )  # fmt: skip
-        if result.returncode != 0:
-            raise StepFailure(self.failure_line("volume ls", result))
-        return bool(result.stdout.strip())
+        # Compose names the volume (project name, COMPOSE_PROJECT_NAME and all); ask it.
+        config = self.compose_must("config", "--format", "json")
+        volume_name = json.loads(config.stdout)["volumes"][DATABASE_VOLUME]["name"]
+        inspected = self.tools.run(
+            ["docker", "volume", "inspect", volume_name], SHORT_COMMAND_SECONDS
+        )
+        return inspected.returncode == 0
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()

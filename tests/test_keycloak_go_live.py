@@ -34,6 +34,10 @@ def golive() -> Iterator[ModuleType]:
     del sys.modules[spec.name]
 
 
+# Not "edge_keycloak-db": compose, not the script, decides the project name.
+PROJECT_VOLUME = "operators-project_keycloak-db"
+
+
 @dataclass
 class Keycloak:
     """What compose and Keycloak have done so far, answering the way the real ones do."""
@@ -79,14 +83,15 @@ class Keycloak:
         if stdin is not None:
             self.stdin_seen = stdin
         self.commands.append(command)
-        if command[:3] == ["docker", "volume", "ls"]:
-            return self.done("edge_keycloak-db\n" if self.database_volume else "")
+        if command[:3] == ["docker", "volume", "inspect"]:
+            exists = self.database_volume and command[3] == PROJECT_VOLUME
+            return self.done(returncode=0 if exists else 1)
         if command[:2] == ["docker", "inspect"]:
             env = ["KC_DB=postgres"] + (
                 ["KC_BOOTSTRAP_ADMIN_USERNAME=temp-admin"] * self.with_overlay
             )
             return self.done(json.dumps(env))
-        verb = next(arg for arg in command if arg in {"up", "exec", "run", "ps"})
+        verb = next(arg for arg in command if arg in {"up", "exec", "run", "ps", "config"})
         return getattr(self, f"compose_{verb}")(command)
 
     @staticmethod
@@ -94,6 +99,9 @@ class Keycloak:
         stdout: str = "", returncode: int = 0, stderr: str = ""
     ) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def compose_config(self, command: list[str]):
+        return self.done(json.dumps({"volumes": {"keycloak-db": {"name": PROJECT_VOLUME}}}))
 
     def compose_ps(self, command: list[str]):
         return self.done("abc123\n" if self.running else "")
