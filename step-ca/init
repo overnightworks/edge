@@ -34,6 +34,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "step-ca"
+ACME_VOLUME_KEY = "traefik-mcp-acme"  # traefik-mcp mounts it; apply must not be the one to create it
 PROFILE = "step-ca"  # compose.yaml puts step-ca and traefik-mcp behind it
 ROOT_NAME = "edge internal CA"
 INTERMEDIATE_NAME = "edge internal CA intermediate"
@@ -59,7 +60,7 @@ ROOT_COPY = "certs/root_ca.crt"
 INTERMEDIATE_FILES = {INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY}
 LONG_COMMAND_SECONDS = 300
 SHORT_COMMAND_SECONDS = 60
-NO_SUCH_VOLUME = "No such volume"
+NO_SUCH_VOLUME = "no such volume"  # the daemon says it in lower case; older ones capitalised
 REDACTED = "[redacted]"
 COMPOSE = [
     "docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml",
@@ -113,6 +114,7 @@ class Step:
 class Deployment:
     image: str
     volume: str
+    acme_volume: str
     project: str
 
 
@@ -140,6 +142,7 @@ class StepCaInit:
             self.deployment = Deployment(
                 image=config["services"][SERVICE]["image"],
                 volume=config["volumes"][SERVICE]["name"],
+                acme_volume=config["volumes"][ACME_VOLUME_KEY]["name"],
                 project=config["name"],
             )
         return self.deployment
@@ -244,16 +247,19 @@ class StepCaInit:
     def volume_mount(self) -> str:
         deployment = self.compose_deployment()
         if not self.volume_exists:
-            # Docker names an unknown volume on first mount without labels and cannot relabel it
-            # later; the backup finds the volume by compose's labels.
-            self.docker_must(
-                "volume", "create",
-                "--label", f"{COMPOSE_PROJECT_LABEL}={deployment.project}",
-                "--label", f"{COMPOSE_VOLUME_LABEL}={SERVICE}",
-                deployment.volume,
-            )  # fmt: skip
+            self.create_volume(deployment.volume, SERVICE)
             self.volume_exists = True
         return f"{deployment.volume}:{VOLUME_MOUNT}"
+
+    def create_volume(self, name: str, compose_key: str) -> None:
+        # Docker names an unknown volume on first mount without labels and cannot relabel it
+        # later; the backup finds the volume by compose's labels.
+        self.docker_must(
+            "volume", "create",
+            "--label", f"{COMPOSE_PROJECT_LABEL}={self.compose_deployment().project}",
+            "--label", f"{COMPOSE_VOLUME_LABEL}={compose_key}",
+            name,
+        )  # fmt: skip
 
     def docker_must(self, *arguments: str) -> None:
         result = self.tools.run(["docker", *arguments], SHORT_COMMAND_SECONDS)
@@ -261,16 +267,16 @@ class StepCaInit:
             raise CannotTell(self.failure_line(f"docker {arguments[0]} {arguments[1]}", result))
 
     def volume_found(self) -> bool:
-        """`docker volume inspect` is the only way a check looks at the volume: it never creates."""
         if not self.volume_exists:
-            result = self.tools.run(
-                ["docker", "volume", "inspect", self.compose_deployment().volume],
-                SHORT_COMMAND_SECONDS,
-            )
-            if result.returncode != 0 and NO_SUCH_VOLUME not in result.stderr:
-                raise CannotTell(self.failure_line("docker volume inspect", result))
-            self.volume_exists = result.returncode == 0
+            self.volume_exists = self.inspect_volume(self.compose_deployment().volume)
         return self.volume_exists
+
+    def inspect_volume(self, name: str) -> bool:
+        """`docker volume inspect` is the only way a check looks at a volume: it never creates."""
+        result = self.tools.run(["docker", "volume", "inspect", name], SHORT_COMMAND_SECONDS)
+        if result.returncode != 0 and NO_SUCH_VOLUME not in result.stderr.lower():
+            raise CannotTell(self.failure_line("docker volume inspect", result))
+        return result.returncode == 0
 
     def password_mount(self) -> str:
         return f"{self.path(PASSWORD_FILE)}:{PASSWORD_MOUNT}:ro"
@@ -373,6 +379,12 @@ class StepCaInit:
             "cp", f"{SECRETS_MOUNT}/{ROOT_CERTIFICATE_FILE}", ROOT_COPY, mounts=mounts
         )
 
+    def acme_volume_is_present(self) -> bool:
+        return self.inspect_volume(self.compose_deployment().acme_volume)
+
+    def create_acme_volume(self) -> None:
+        self.create_volume(self.compose_deployment().acme_volume, ACME_VOLUME_KEY)
+
     # --- the run ------------------------------------------------------------------------------
 
     def steps(self) -> list[Step]:
@@ -407,6 +419,13 @@ class StepCaInit:
                 self.root_copy_is_present,
                 self.copy_root,
                 "The service reads the public root certificate from its volume.",
+            ),
+            Step(
+                "ACME volume",
+                self.acme_volume_is_present,
+                self.create_acme_volume,
+                "traefik-mcp keeps its issued certificates in this volume; it is made here so "
+                "that switching on never creates a volume.",
             ),
             Step(
                 "file modes",

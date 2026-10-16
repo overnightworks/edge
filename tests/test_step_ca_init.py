@@ -26,6 +26,7 @@ PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
 IMAGE = "smallstep/step-ca:0.30.2@sha256:" + "ab" * 32
 PROJECT = "operators-project"
 VOLUME = f"{PROJECT}_step-ca"
+ACME_VOLUME = f"{PROJECT}_traefik-mcp-acme"
 PRIVATE_KEY_HEADER = "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"
 ROOT_KEY, ROOT_CERT, PASSWORD = "root_ca_key", "root_ca.crt", "password"
 INTERMEDIATE_FILES = {"certs/intermediate_ca.crt", "secrets/intermediate_ca_key"}
@@ -79,7 +80,7 @@ class DockerHost:
             config = {
                 "name": PROJECT,
                 "services": {"step-ca": {"image": IMAGE}},
-                "volumes": {"step-ca": {"name": VOLUME}},
+                "volumes": {"step-ca": {"name": VOLUME}, "traefik-mcp-acme": {"name": ACME_VOLUME}},
             }
             return self.done(json.dumps(config))
         if command[1:3] == ["volume", "inspect"]:
@@ -87,7 +88,7 @@ class DockerHost:
                 return self.done(returncode=1, stderr=self.failure_text)
             if command[-1] in self.volumes:
                 return self.done("[]")
-            return self.done(returncode=1, stderr=f"Error: No such volume: {command[-1]}")
+            return self.done(returncode=1, stderr=f"Error response from daemon: get {command[-1]}: no such volume")
         if command[1] == "volume":
             self.volumes[command[-1]] = dict(
                 argument.split("=", 1) for argument in command[2:-1] if "=" in argument
@@ -426,7 +427,11 @@ def test_the_volume_is_created_with_compose_labels_before_any_container_mounts_i
         VOLUME: {
             "com.docker.compose.project": PROJECT,
             "com.docker.compose.volume": "step-ca",
-        }
+        },
+        ACME_VOLUME: {
+            "com.docker.compose.project": PROJECT,
+            "com.docker.compose.volume": "traefik-mcp-acme",
+        },
     }
     first_mount = next(
         i for i, c in enumerate(docker.commands) if c[1] == "run" and VOLUME in " ".join(c)
@@ -654,6 +659,7 @@ def test_the_probe_reads_the_edge_check_findings(
     uv_script: str,
     findings: list,
 ) -> None:
+    """#34 finding 19: the findings of the edge check are read from its JSON."""
     fake_uv_on_path(tmp_path, monkeypatch, uv_script)
 
     assert probe.Probe(tmp_path / "scratch").edge_check_findings() == findings
@@ -689,6 +695,7 @@ def host_snapshot(docker: DockerHost, secrets_dir: Path) -> tuple[dict, dict, se
 
 
 def test_check_passes_after_init_and_changes_nothing(init, check, docker, secrets_dir, session):
+    """#52 rule 8: after init, --check exits 0 and changes nothing."""
     init.run()
     before = host_snapshot(docker, secrets_dir)
     init_commands = len(docker.commands)
@@ -706,6 +713,7 @@ def test_check_passes_after_init_and_changes_nothing(init, check, docker, secret
 def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
     check, docker, secrets_dir, session
 ):
+    """#52 rule 8: a fresh home is exit 1 and --check creates no directory, file or volume."""
     assert check() == 1
 
     assert "secrets directory is missing" in session.output
@@ -717,6 +725,7 @@ def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
 def test_check_with_secrets_but_no_volume_never_creates_the_volume(
     init, check, docker, secrets_dir, session
 ):
+    """#52 rule 8: a missing volume is "not set up" (exit 1) as today's daemon words it."""
     init.run()
     docker.volumes.clear()
 
@@ -726,9 +735,24 @@ def test_check_with_secrets_but_no_volume_never_creates_the_volume(
     assert docker.volumes == {}
 
 
+def test_check_without_the_acme_volume_is_not_set_up_and_never_creates_it(
+    init, check, docker, session
+):
+    """#52 rule 2/8: apply never creates a volume, so setup owns the ACME volume and --check asks."""
+    init.run()
+    del docker.volumes[ACME_VOLUME]
+    session.printed.clear()
+
+    assert check() == 1
+
+    assert "ACME volume is missing" in session.output
+    assert ACME_VOLUME not in docker.volumes
+
+
 def test_check_names_a_key_without_its_certificate_in_inits_own_words(
     init, check, secrets_dir, session
 ):
+    """#52 rule 8: a broken partial state is exit 1 with init's own refusal line."""
     init.run()
     (secrets_dir / ROOT_CERT).unlink()
     session.printed.clear()
@@ -740,6 +764,7 @@ def test_check_names_a_key_without_its_certificate_in_inits_own_words(
 
 @pytest.mark.parametrize("failing_tool", ["compose", "volume inspect"])
 def test_check_cannot_tell_when_docker_does_not_answer(init, check, docker, session, failing_tool):
+    """#52 rule 8: Docker or Compose not answering is exit 2."""
     init.run()
     docker.failing_tool, docker.failure_text = failing_tool, "Cannot connect to the Docker daemon"
     session.printed.clear()
@@ -750,6 +775,7 @@ def test_check_cannot_tell_when_docker_does_not_answer(init, check, docker, sess
 
 
 def test_check_refuses_another_user_than_the_images_with_exit_2(check, session):
+    """#52 rule 8: the uid-1000 refusal stays exit 2."""
     session.uid = 1001
 
     assert check() == 2
