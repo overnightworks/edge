@@ -395,9 +395,7 @@ def test_the_password_reaches_the_containers_only_through_run_secrets(init, dock
     runs = [c for c in docker.commands if c[1] == "run"]
     password_mounts = [a for c in runs for a in c if a.endswith("/run/secrets/password:ro")]
     assert password_mounts
-    assert set(password_mounts) == {
-        f"{secrets_dir / PASSWORD}:/run/secrets/password:ro"
-    }
+    assert set(password_mounts) == {f"{secrets_dir / PASSWORD}:/run/secrets/password:ro"}
     assert not any("/secrets/password" in a and "/run" not in a for c in runs for a in c)
 
 
