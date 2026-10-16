@@ -15,7 +15,7 @@ from typing import Any
 REPOSITORY = Path(__file__).resolve().parents[2]
 READ_SECONDS = 60
 CHANGE_SECONDS = 600
-_NO_RESTART = "no"
+_COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
 
@@ -35,9 +35,14 @@ def profile_services(config: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
     return {profile: tuple(names) for profile, names in services.items()}
 
 
-def is_long_running(service: Mapping[str, Any]) -> bool:
-    """A service that restarts is meant to stay up; the others (restart "no") may run once."""
-    return service.get("restart", _NO_RESTART) != _NO_RESTART
+def one_shot_services(config: Mapping[str, Any]) -> set[str]:
+    """Services another service waits on to complete; only these may be done after exiting 0."""
+    return {
+        name
+        for service in config["services"].values()
+        for name, dependency in service.get("depends_on", {}).items()
+        if dependency.get("condition") == _COMPLETES
+    }
 
 
 def named_volumes(service: Mapping[str, Any]) -> tuple[str, ...]:
@@ -103,14 +108,12 @@ def is_up(
     states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
 ) -> bool:
     """Every service of the unit has a container: running, or for a one-shot also completed."""
+    one_shots = one_shot_services(config)
     return all(
-        states.get(name, set()) and states[name] <= _accepted_states(config["services"][name])
+        states.get(name, set())
+        and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
         for name in services
     )
-
-
-def _accepted_states(service: Mapping[str, Any]) -> set[str]:
-    return {_RUNNING} if is_long_running(service) else {_RUNNING, _COMPLETED}
 
 
 def _state_of(container: Mapping[str, Any]) -> str:

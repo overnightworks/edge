@@ -44,6 +44,9 @@ def resolved_configuration() -> dict:
                 "restart": "unless-stopped",
                 "profiles": ["step-ca"],
                 "volumes": volume("traefik-mcp-acme"),
+                "depends_on": {
+                    "traefik-mcp-acme-owner": {"condition": "service_completed_successfully"}
+                },
             },
         }
     }
@@ -54,6 +57,7 @@ class ScriptedCompose:
     """Compose over a table of service -> container state; records every call."""
 
     containers: dict[str, str] = field(default_factory=dict)
+    volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
     starts_nothing: bool = False
     calls: list[list[str]] = field(default_factory=list)
@@ -77,10 +81,12 @@ class ScriptedCompose:
         )
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
+        one_shots = compose.one_shot_services(self.config)
         for service in arguments[1:]:
-            restarts = self.config["services"][service].get("restart", "no") != "no"
             if not self.starts_nothing:
-                self.containers[service] = "running" if restarts else "exited"
+                self.containers[service] = "exited" if service in one_shots else "running"
+                for volume in compose.named_volumes(self.config["services"][service]):
+                    self.volumes.setdefault(volume, "created by up")
         return ""
 
     def verb_stop(self, _profile: str, arguments: list[str]) -> str:
@@ -269,19 +275,37 @@ def test_a_failed_removal_is_partial_and_never_reported_as_applied(switch, scrip
     assert "is off" not in out
 
 
-def test_a_profile_of_services_without_a_restart_policy_is_not_on_before_it_runs(
+def test_a_profile_of_servers_without_a_restart_policy_is_on_only_while_they_run(
     switch, scripted, repository
 ):
-    """#52 P15: an enabled unit whose services have no restart policy is not reported as on."""
+    """#52 P15: servers that exited 0 are stopped, not done; only a one-shot may be done."""
     scripted.config["services"]["hello"] = {"profiles": ["probe"]}
     scripted.config["services"]["hello-mcp"] = {"profiles": ["probe"]}
     write_fleet(repository, "services:\n  probe:\n    run: {enabled: true}\n")
+    scripted.containers = {"hello": "exited", "hello-mcp": "exited"}
 
     exit_code, out, _ = switch()
 
     assert exit_code == 0
     assert "nothing to change" not in out
-    assert set(scripted.containers) == {"hello", "hello-mcp"}
+    assert scripted.containers == {"hello": "running", "hello-mcp": "running"}
+
+
+def test_switching_on_off_on_keeps_the_volumes_and_what_they_hold(switch, scripted, repository):
+    """#52 R1 / rule 3: off removes containers only, so on serves the same volume contents."""
+    scripted.volumes = {"step-ca": "intermediate-A", "traefik-mcp-acme": "issued-B"}
+    held = dict(scripted.volumes)
+
+    switch()
+    write_fleet(repository, DISABLED)
+    switch()
+    assert scripted.containers == {} and scripted.volumes == held
+    write_fleet(repository, ENABLED)
+    exit_code, _, _ = switch()
+
+    assert exit_code == 0
+    assert scripted.volumes == held
+    assert scripted.containers["step-ca"] == "running"
 
 
 def test_a_start_that_leaves_the_unit_down_is_partial(switch, scripted):
