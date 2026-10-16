@@ -10,7 +10,7 @@ import signal
 import sys
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -121,7 +121,7 @@ def _hold_lock(lock: Path) -> int:
 
 
 @contextmanager
-def _private_plan_file(home: Path) -> Iterator[Path]:
+def private_plan_file(home: Path) -> Iterator[Path]:
     directory = home / PLANS_DIRECTORY
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory.chmod(0o700)
@@ -152,13 +152,17 @@ def _terminate_like_interrupt() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
-def apply_plan(home: Path, token_values: dict[str, str]) -> int:
+def apply_plan(
+    home: Path,
+    token_values: dict[str, str],
+    plan_file_scope: Callable[[Path], AbstractContextManager[Path]] = private_plan_file,
+) -> int:
     progress = Progress()
     try:
         with (
             _terminate_like_interrupt(),
             tofu.session(home, token_values) as session,
-            _private_plan_file(home) as plan_file,
+            plan_file_scope(home) as plan_file,
         ):
             result = _show_confirm_apply(session, plan_file, token_values, progress)
             progress.step = Step.CLEANUP
