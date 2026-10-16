@@ -158,15 +158,16 @@ class GoLive:
         return [name for name in SECRET_FILES if not (self.secrets_dir / name).exists()]
 
     def secrets_are_complete(self) -> bool:
-        """All three, or none (to be created). Only the bootstrap file may be missing, and only
-        once Keycloak has been started: step 7 deletes it. Whether temp-admin is really gone is
-        step 7's question, asked when Keycloak answers."""
+        """All three, or none (to be created). Only the bootstrap file may be missing: step 7
+        deletes it, and `docker compose down` leaves the database behind. Whether temp-admin is
+        really gone is step 7's question, and a master that has not moved without the file is
+        step 4's refusal."""
         missing = self.missing_secrets()
         if not missing:
             return True
         if len(missing) == len(SECRET_FILES):
             return False
-        if missing == [BOOTSTRAP_SECRET] and self.keycloak_container_exists():
+        if missing == [BOOTSTRAP_SECRET]:
             return True
         raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
 
@@ -202,13 +203,6 @@ class GoLive:
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
-
-    def keycloak_container_exists(self) -> bool:
-        """Stopped or running: a container is left behind once Keycloak was started."""
-        container = self.compose(
-            "ps", "-aq", "keycloak", bootstrap=False, timeout=SHORT_COMMAND_SECONDS
-        )
-        return container.returncode == 0 and bool(container.stdout.strip())
 
     def compose(
         self,
@@ -336,7 +330,7 @@ class GoLive:
         client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
         reply = self.compose(
             "exec", "-T", "keycloak", "bash", "-c", CONTAINER_REALM_ATTRIBUTES, "bash",
-            PUBLIC_REALM, bootstrap=False, timeout=SHORT_COMMAND_SECONDS, stdin=client_secret,
+            PUBLIC_REALM, bootstrap=False, timeout=SHORT_COMMAND_SECONDS, stdin=client_secret + "\n",
         )  # fmt: skip
         if reply.returncode != 0:
             return False
@@ -410,13 +404,22 @@ class GoLive:
         return not found
 
     def retire_bootstrap(self) -> None:
+        if self.bootstrap_present():
+            start = (
+                f"open {ADMIN_URL}/admin/ and sign in as {BOOTSTRAP_ADMIN} (password: the file "
+                f"{self.secrets_dir / BOOTSTRAP_SECRET}; enrol TOTP when asked). Create"
+            )
+        else:
+            start = (
+                f"the {BOOTSTRAP_SECRET} file is gone, so only the second-admin check and the "
+                f"deletion of {BOOTSTRAP_ADMIN} remain. Unless your own admin is ready, open "
+                f"{ADMIN_URL}/admin/ and create"
+            )
         self.tools.say(
-            f"Your part, in the browser: open {ADMIN_URL}/admin/ and sign in as "
-            f"{BOOTSTRAP_ADMIN} (password: the file {self.secrets_dir / BOOTSTRAP_SECRET}; enrol "
-            f"TOTP when asked). Create your own admin in the master realm with the realm role "
-            f"{ADMIN_ROLE}, sign out, sign in as that admin, enrol TOTP and add a passkey. It "
-            "worked when that second sign-in asked for the TOTP code and the account page lists "
-            "a passkey."
+            f"Your part, in the browser: {start} your own admin in the master realm with the "
+            f"realm role {ADMIN_ROLE}, sign out, sign in as that admin, enrol TOTP and add a "
+            "passkey. It worked when that second sign-in asked for the TOTP code and the "
+            "account page lists a passkey."
         )
         try:
             self.tools.ask("Press Enter when your admin has TOTP and a passkey. ")

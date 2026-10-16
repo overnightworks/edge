@@ -39,7 +39,6 @@ class Keycloak:
     """What compose and Keycloak have done so far, answering the way the real ones do."""
 
     running: bool = False
-    container_exists: bool = False  # left behind by the first start, also when stopped
     with_overlay: bool = False
     master_moved: bool = False
     master_applied: bool = False
@@ -53,6 +52,7 @@ class Keycloak:
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
     stdin_seen: str | None = None
+    stdin_of_this_command: str | None = None
     deleted: list[str] = field(default_factory=list)
 
     def add_admin(self, username: str, *, otp: bool) -> None:
@@ -67,12 +67,14 @@ class Keycloak:
 
     # --- docker ---------------------------------------------------------------------------
 
-    def stop(self) -> None:
+    def down(self) -> None:
+        """`docker compose down`: the containers are gone, the database volume stays."""
         self.running = self.edge_up = False
 
     def run(
         self, command: list[str], _timeout: int, stdin: str | None = None
     ) -> subprocess.CompletedProcess[str]:
+        self.stdin_of_this_command = stdin
         if stdin is not None:
             self.stdin_seen = stdin
         self.commands.append(command)
@@ -91,8 +93,7 @@ class Keycloak:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
     def compose_ps(self, command: list[str]):
-        listed = self.container_exists if "-aq" in command else self.running
-        return self.done("abc123\n" if listed else "")
+        return self.done("abc123\n" if self.running else "")
 
     def compose_up(self, command: list[str]):
         if "--force-recreate" in command:
@@ -102,7 +103,7 @@ class Keycloak:
         elif "keycloak" in command:
             if self.never_answers:
                 return self.done()
-            self.running = self.container_exists = True
+            self.running = True
             self.with_overlay = OVERLAY in command
         else:
             self.with_overlay = OVERLAY in command
@@ -135,10 +136,24 @@ class Keycloak:
 
     def kcadm_realm_attributes(self, command: list[str]):
         assert command[-1] == "hallucinai"
+        if not self.script_reads_secret(command, self.stdin_of_this_command):
+            return self.done(returncode=1)
         if not self.realm_exists:
             return self.done(returncode=1, stderr="Resource not found for url")
         attributes = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
         return self.done(json.dumps({"attributes": attributes if self.import_completed else {}}))
+
+    @staticmethod
+    def script_reads_secret(command: list[str], stdin: str | None) -> bool:
+        """Runs the real shell script of the command with kcadm swapped for a no-op: whether it
+        gets as far as kcadm depends on how the secret arrives on standard input."""
+        script = command[command.index("-c") + 1].replace(
+            "exec /opt/keycloak/bin/kcadm.sh", "true #"
+        )
+        shell = subprocess.run(
+            ["bash", "-c", script, "bash", command[-1]], input=stdin, text=True, check=False
+        )
+        return shell.returncode == 0
 
     def container_answer(self, path: str) -> tuple[int, str]:
         if path == "/realms/master" or (path == "/realms/hallucinai" and self.realm_exists):
@@ -359,7 +374,7 @@ def test_the_apply_check_hands_the_client_secret_over_on_standard_input(
     assert go_live.run() == 0
 
     secret = (secrets_dir / "config-cli-secret").read_text()
-    assert keycloak.stdin_seen == secret
+    assert keycloak.stdin_seen == secret + "\n"
     assert not any(secret in part for command in keycloak.commands for part in command)
 
 
@@ -378,12 +393,13 @@ def test_a_bootstrap_file_removed_by_hand_does_not_retire_temp_admin(
     assert not (secrets_dir / "bootstrap-admin-password").exists()
 
 
-def test_a_finished_installation_resumes_after_keycloak_was_stopped(
+def test_a_finished_installation_resumes_after_docker_compose_down(
     go_live, keycloak, session, secrets_dir
 ):
-    """#19 rules 2, 3: a retired bootstrap file is no partial set; the run restarts Keycloak."""
+    """#19 rules 2, 3: a retired bootstrap file is no partial set; the run restarts Keycloak
+    from the kept database without applying anything again."""
     assert go_live.run() == 0
-    keycloak.stop()
+    keycloak.down()
     keycloak.commands.clear()
     session.answers = ["yes"]
 
@@ -413,18 +429,31 @@ def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_e
     assert len(session.asked) == 2
 
 
-def test_a_partial_set_missing_only_the_bootstrap_password_is_refused_on_a_fresh_install(
+def test_a_missing_bootstrap_password_on_a_master_that_has_not_moved_is_refused_by_name(
     go_live, keycloak, secrets_dir, session
 ):
-    """#19 rule 2: only some files exist, so one line names the missing one and nothing starts."""
+    """#19 rule 3: step 4 cannot move master without the file and says so; nothing is applied."""
     write_secrets(secrets_dir, "db-password", "config-cli-secret")
 
     assert go_live.run() == 1
 
-    assert session.printed[-1] == (
-        "go-live FAILED at secrets: some secret files exist, missing: bootstrap-admin-password"
-    )
-    assert not keycloak.changed_something()
+    assert "bootstrap-admin-password is gone but master is not on" in session.printed[-1]
+    assert not keycloak.master_applied
+
+
+def test_the_prompt_for_a_hand_removed_bootstrap_file_does_not_point_at_it(
+    go_live, keycloak, session, secrets_dir
+):
+    """#19 rule 3: the instruction never sends the operator to a password file that is gone."""
+    assert go_live.run() == 0
+    keycloak.add_admin("temp-admin", otp=True)
+    session.printed.clear()
+    session.answers = ["yes", ""]
+
+    assert go_live.run() == 0
+
+    assert "password: the file" not in session.output
+    assert "bootstrap-admin-password file is gone" in session.output
 
 
 def test_the_backup_is_asked_even_when_the_secret_files_were_made_by_hand(
