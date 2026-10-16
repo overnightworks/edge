@@ -200,8 +200,12 @@ services:
     restart: unless-stopped
     # Traefik asks the CA once when it starts and does not ask again if the CA was not there; with
     # an empty ACME storage nothing is left to renew. service_started does not wait for the CA and
-    # the daemon starts containers unordered after its own restart, so the wait is here.
-    entrypoint: [sh, -c, "until nc -z step-ca 9000; do sleep 1; done; exec traefik"]
+    # the daemon starts containers unordered after its own restart, so the wait is here. With a
+    # stored certificate it starts at once and renews later.
+    entrypoint:
+      - sh
+      - -c
+      - grep -qs '"certificate"' /acme/acme.json || until nc -z step-ca 9000; do sleep 1; done; exec traefik
     depends_on:
       step-ca: {condition: service_started}
       traefik-mcp-acme-owner: {condition: service_completed_successfully}

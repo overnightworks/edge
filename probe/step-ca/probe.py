@@ -12,7 +12,8 @@ stack: the project name and HOME are set in the environment of every command.
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal: the run takes about 15 minutes.
+--scratch directory. Proof 9 waits for a renewal: the run takes about 15 minutes. Needs `uv`:
+proof 8 runs `edge-check` through it.
 """
 
 from __future__ import annotations
@@ -60,12 +61,15 @@ REFUSAL = "will not issue certificates for the identifier"  # ACME rejectedIdent
 ROOT_IN_CLIENT = "/root.crt"
 ORIGIN = "hello.mcp.internal"
 ORIGIN_URL = f"https://{ORIGIN}/"
-ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"
+ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"  # NOSONAR(python:S5332) proof 6: plain http must fail
 ORIGIN_ANSWER = f"Host: {ORIGIN}"  # the backend (whoami) echoes the request's Host header
-BACKEND_URL = "http://hello-mcp/"
+BACKEND_URL = "http://hello-mcp/"  # NOSONAR(python:S5332) the backend speaks plain http by design
 CA_HEALTH_URL = f"{CA_URL}/health"
 TRAEFIK_USER = "65534:65534"
+TRAEFIK_UID = 65534
 ACME_STORAGE = "/acme/acme.json"
+EDGE_CHECK = ["uv", "run", "--quiet", "edge-check", "--json"]
+BOOT_WITHOUT_CA_SECONDS = 10  # how long the gateway has to sit idle before the CA appears
 LISTENER_PORTS_OF_THE_PROBE = (9000, 443)  # the CA and the gateway: container ports only
 CA_DEFAULT_LIFETIME_SECONDS = 24 * 3600
 CA_BACKDATE_SECONDS = 60  # step-ca starts a certificate one minute before it was issued
@@ -119,7 +123,7 @@ class Probe:
     def compose(self, *args: str, check: bool = True, own_session: bool = False):
         files = [flag for file in self.compose_files for flag in ("--file", file)]
         return self.run(
-            ["docker", "compose", *files, "--profile", "probe", *args],
+            ["docker", "compose", *files, "--profile", "probe", "--profile", "step-ca", *args],
             check=check, own_session=own_session,
         )  # fmt: skip
 
@@ -358,11 +362,17 @@ class Probe:
 
     def edge_check_findings(self) -> list[dict]:
         """What edge-check reports about the whole host; exit 1 only means it found something."""
-        result = self.run(
-            [sys.executable, "-m", "edge_check.cli", "--json"], check=False
-        )  # fmt: skip
-        expect(result.returncode in (0, 1), f"edge-check exited {result.returncode}")
-        return json.loads(result.stdout or b"[]")
+        result = self.run(EDGE_CHECK, check=False)
+        try:
+            findings = json.loads(result.stdout)
+        except ValueError:
+            findings = None
+        stderr_tail = result.stderr.decode(errors="replace").strip().splitlines()[-1:]
+        expect(
+            result.returncode in (0, 1) and isinstance(findings, list),
+            f"edge-check exited {result.returncode} without a JSON list: {stderr_tail}",
+        )
+        return findings
 
     def intermediate_certificate(self) -> dict:
         output = self.in_volume(
@@ -399,12 +409,60 @@ class Probe:
         expected = lifetime_seconds + CA_BACKDATE_SECONDS
         expect(length == expected, f"the certificate is valid for {length} s, not {expected} s")
 
+    def boot_gateway_before_the_ca(self) -> dict:
+        """Traefik asks the CA once at start; the gateway must wait for the CA, not stay without."""
+        self.compose("stop", "step-ca")
+        self.compose("run", "--rm", "--no-deps", "traefik-mcp-acme-owner")
+        self.compose("up", "--detach", "--no-deps", "traefik-mcp", "hello-mcp")
+        time.sleep(BOOT_WITHOUT_CA_SECONDS)
+        answer = self.client("mcp", ORIGIN_URL, root=self.secrets_dir / ROOT_CERTIFICATE)
+        expect(ORIGIN_ANSWER not in answer.stdout.decode(errors="replace"), "served without a CA")
+        self.compose("start", "step-ca")
+        self.wait_until_answering()
+        return self.wait_until_served()
+
+    def acme_storage(self) -> tuple[int, int]:
+        """Size and owner of the stored certificates in the volume; raises OSError until written."""
+        traefik = self.composed["services"]["traefik-mcp"]["image"]
+        volume = self.composed["volumes"]["traefik-mcp-acme"]["name"]
+        result = self.run(
+            ["docker", "run", "--rm", "--network", "none", "--read-only", "--user", TRAEFIK_USER,
+             "--volume", f"{volume}:{Path(ACME_STORAGE).parent}:ro", "--entrypoint", "stat",
+             traefik, "-c", "%s %u", ACME_STORAGE],
+            check=False,
+        )  # fmt: skip
+        if result.returncode != 0:
+            raise FileNotFoundError(ACME_STORAGE)
+        size, owner = result.stdout.split()
+        return int(size), int(owner)
+
+    def wait_until_stored(self) -> None:
+        """The volume is persistent and uid 65534 can write it: Traefik only logs when it cannot."""
+
+        def written() -> bool:
+            size, owner = self.acme_storage()
+            expect(owner == TRAEFIK_UID, f"{ACME_STORAGE} belongs to uid {owner}")
+            return size > 0
+
+        self.poll_until(f"{ACME_STORAGE} written", READY_SECONDS, written)
+
+    def expect_certificate_survives_gateway_restart(self, served: dict) -> None:
+        """A restart with the CA down serves the stored certificate; it is not issued again."""
+        self.compose("stop", "step-ca")
+        self.compose("restart", "traefik-mcp")
+        restarted = self.wait_until_served()
+        self.compose("start", "step-ca")
+        self.wait_until_answering()
+        expect(
+            restarted["serial_number"] == served["serial_number"],
+            "the restarted gateway served another certificate than the stored one",
+        )
+
     def proof_6_gateway(self) -> None:
         self.listeners_before = self.host_listeners()
         self.edge_check_before = self.edge_check_findings()
-        self.compose("up", "--detach", "traefik-mcp", "hello-mcp")
         root = self.secrets_dir / ROOT_CERTIFICATE
-        served = self.wait_until_served()
+        served = self.boot_gateway_before_the_ca()
         intermediate = self.intermediate_certificate()
         expect(served["issuer_dn"] == intermediate["subject_dn"], "not issued by the intermediate")
         self.expect_certificate_length(served, CA_DEFAULT_LIFETIME_SECONDS)
@@ -418,11 +476,15 @@ class Probe:
             ORIGIN_ANSWER not in plain.stdout.decode(errors="replace"),
             "plain HTTP reached the backend",
         )
+        self.wait_until_stored()
+        self.expect_certificate_survives_gateway_restart(served)
         length, issuer = served["validity"]["length"], intermediate["subject_dn"]
         print(
-            f"proof 6 held: {ORIGIN_URL} -> backend answer with the probe root; certificate of "
-            f"{length} s from `{issuer}`; without the root curl exit {unverified.returncode}; "
-            f"plain http on 443: exit {plain.returncode}, no backend answer"
+            f"proof 6 held: gateway booted before the CA and issued once it listened; {ORIGIN_URL} "
+            f"-> backend answer with the probe root; certificate of {length} s from `{issuer}`; "
+            f"without the root curl exit {unverified.returncode}; plain http on 443: exit "
+            f"{plain.returncode}, no backend answer; acme.json kept by uid {TRAEFIK_UID} and "
+            f"the same certificate served after a restart with the CA down"
         )
 
     def proof_7_network_split(self) -> None:
