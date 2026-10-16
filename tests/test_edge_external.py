@@ -43,10 +43,10 @@ with (here / "calls.jsonl").open("a") as calls:
         "env": dict(os.environ),
         "tmpdir_mode": os.stat(os.environ["TMPDIR"]).st_mode & 0o777,
     }}) + "\\n")
-locked = Path(os.environ["TMPDIR"]) / "locked"
+locked = Path(os.environ["TMPDIR"]) / config["locked_name"]
 if config["leave_undeletable"] and not locked.exists():
     locked.mkdir()
-    (locked / "artifact").write_text("x")
+    (locked / config["locked_name"]).write_text("x")
     locked.chmod(0o500)
 if command == "version":
     print("OpenTofu v" + config["version"])
@@ -66,13 +66,15 @@ class FakeTofu:
         version=None,
         echo_environment=False,
         leave_undeletable=False,
-                **exit_codes,
+        locked_name="locked",
+        **exit_codes,
     ) -> None:
         config = {
             "version": version or tofu.pinned_version(),
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
-                "exit_codes": exit_codes,
+            "locked_name": locked_name,
+            "exit_codes": exit_codes,
         }
         (self.directory / "fake.json").write_text(json.dumps(config))
 
@@ -345,6 +347,19 @@ def test_a_temporary_directory_that_cannot_be_removed_exits_2(home, fake_tofu, c
         assert "PermissionError" in capsys.readouterr().err
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
+
+
+def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(home, fake_tofu, capsys):
+    """#40 rule 1: a child-controlled name in a cleanup failure is redacted."""
+    fake_tofu.configure(leave_undeletable=True, locked_name="github-token")
+    try:
+        assert edge_external_plan() == 2
+        printed = capsys.readouterr()
+        assert "PermissionError" in printed.err
+        assert "github-token" not in printed.out + printed.err
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/github-token"):
             locked.chmod(0o700)
 
 

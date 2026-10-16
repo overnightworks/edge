@@ -31,31 +31,33 @@ def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
 
 
 def plan_command(home: Path) -> int:
+    token_values: dict[str, str] = {}
     try:
-        return _plan(home)
+        token_values = secrets.read_secrets(home)
+        return _plan(home, token_values)
     except (secrets.SecretFileError, tofu.TofuError) as error:
-        _report(f"edge external plan: {error}", error)
+        _report(f"edge external plan: {error}", error, token_values)
     except OSError as error:
-        # strerror and filename are fixed text and a path, never token content.
+        # The filename can be child-controlled (a failed cleanup names what the child left).
         where = f" ({error.filename})" if error.filename else ""
         _report(
             f"edge external plan: cannot plan, {type(error).__name__}: {error.strerror}{where}",
             error,
+            token_values,
         )
     except ValueError as error:
         # Only the type: a decode error's message can quote bytes of a token file.
-        _report(f"edge external plan: cannot plan, {type(error).__name__}", error)
+        _report(f"edge external plan: cannot plan, {type(error).__name__}", error, token_values)
     return ExitCode.CANNOT_PLAN
 
 
-def _report(message: str, error: Exception) -> None:
-    print(message, file=sys.stderr)
+def _report(message: str, error: Exception, token_values: dict[str, str]) -> None:
+    print(secrets.redact(message, token_values), file=sys.stderr)
     for note in getattr(error, "__notes__", []):
-        print(f"edge external plan: {note}", file=sys.stderr)
+        print(secrets.redact(f"edge external plan: {note}", token_values), file=sys.stderr)
 
 
-def _plan(home: Path) -> int:
-    token_values = secrets.read_secrets(home)
+def _plan(home: Path, token_values: dict[str, str]) -> int:
     tofu_path = tofu.locate_tofu()
     with secrets.private_temporary_directory(home) as temporary_directory:
         environment = secrets.child_environment(
