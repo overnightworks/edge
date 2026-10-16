@@ -1,8 +1,0 @@
-claim_id = "652518ac7bef45b69f136145368e65ac"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "43e6eec1bb85f36e82e8957fa7e0b8ec93c49e82"
-branch = "claude/issue-45-x1c-external-apply"
-scope = ["README.md", "src/edge/external", "tests/test_edge_external.py"]
-opened_commit = "b9e85951b6299354984b1aa80bb27a5013a3ff46"
-whole_reason = "The apply step and its guards against accidental runs."
