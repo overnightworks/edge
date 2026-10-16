@@ -27,6 +27,7 @@ own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check and `keycloak/go-live`, with their locked dependencies |
 | `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
+| [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
 ## Threat model
 
