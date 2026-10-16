@@ -42,7 +42,8 @@ class Keycloak:
     with_overlay: bool = False
     master_moved: bool = False
     master_applied: bool = False
-    realm_applied: bool = False
+    realm_exists: bool = False  # created first by the apply
+    import_completed: bool = False  # the checksum the apply records last
     edge_up: bool = False
     fail_apply_after_master: bool = False
     fail_edge_start: bool = False
@@ -105,7 +106,7 @@ class Keycloak:
         if self.fail_apply_after_master:
             quoted = self.echo_secret_file.read_text() if self.echo_secret_file else ""
             return self.done(returncode=1, stderr=f"realm.yaml: import failed {quoted}".strip())
-        self.realm_applied = True
+        self.realm_exists = self.import_completed = True
         return self.done()
 
     def compose_exec(self, command: list[str]):
@@ -140,6 +141,12 @@ class Keycloak:
         if url.endswith("/protocol/openid-connect/token"):
             assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
             return from_script(200, json.dumps({"access_token": "token"}).encode())
+        if url.endswith("/admin/realms/hallucinai"):
+            if not self.realm_exists:
+                return from_script(404, b"")
+            attributes = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
+            body = {"attributes": attributes if self.import_completed else {}}
+            return from_script(200, json.dumps(body).encode())
         return self.admin_api(method, url.split("/admin/realms/master")[1], from_script)
 
     def admin_api(self, method: str, path: str, reply):
@@ -242,7 +249,7 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
     """#19 rules 1, 2, 4: one run creates the secrets, applies, and retires the bootstrap."""
     assert go_live.run() == 0
 
-    assert keycloak.realm_applied
+    assert keycloak.import_completed
     assert keycloak.deleted == ["temp-admin"]
     assert sorted(path.name for path in secrets_dir.iterdir()) == [
         "config-cli-secret",
@@ -302,9 +309,21 @@ def test_a_run_whose_apply_failed_applies_again_and_goes_on(go_live, keycloak, s
 
     assert go_live.run() == 0
 
-    assert keycloak.realm_applied
+    assert keycloak.import_completed
     assert not any("/opt/edge/admin-frontend.sh" in command for command in keycloak.commands)
     assert len(session.asked) == 2  # the backup question of the first run, Enter of the second
+
+
+def test_a_realm_whose_import_never_completed_is_applied_again(go_live, keycloak, session):
+    """#19 rule 3: a realm that exists is not an import that finished."""
+    assert go_live.run() == 0
+    keycloak.import_completed = False
+    keycloak.commands.clear()
+
+    assert go_live.run() == 0
+
+    assert keycloak.import_completed
+    assert any("keycloak-config-cli" in command for command in keycloak.commands)
 
 
 def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_edge(
@@ -314,7 +333,7 @@ def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_e
     keycloak.fail_edge_start = True
     assert go_live.run() == 1
     assert "FAILED at edge without the overlay" in session.output
-    assert keycloak.realm_applied
+    assert keycloak.import_completed
     keycloak.fail_edge_start = False
     keycloak.commands.clear()
 

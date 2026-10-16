@@ -36,7 +36,10 @@ ADMIN_URL = "http://localhost:8090"
 EDGE_URL = "http://127.0.0.1:8081"
 MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
 MASTER_TOKEN_URL = f"{MASTER_ISSUER}/protocol/openid-connect/token"
-ADMIN_API = f"{ADMIN_URL}/admin/realms/master"
+ADMIN_REALMS = f"{ADMIN_URL}/admin/realms"
+IMPORT_CHECKSUM_PREFIX = (
+    "de.adorsys.keycloak.config.import-checksum"  # keycloak-config-cli writes it last
+)
 PUBLIC_HOST = "auth.hallucinai.de"
 PUBLIC_REALM = "hallucinai"
 CONFIG_CLIENT = "config-cli"
@@ -299,6 +302,15 @@ class GoLive:
                 return
         self.compose_must(*args)
 
+    def realm_import_completed(self) -> bool:
+        """The realm existing proves nothing: keycloak-config-cli creates it first and records its
+        import checksum as a realm attribute only after the clients, scopes and groups are in."""
+        try:
+            realm = self.admin_call(self.admin_token(), "GET", "", PUBLIC_REALM)
+        except (OSError, StepFailure):
+            return False
+        return any(key.startswith(IMPORT_CHECKSUM_PREFIX) for key in realm.get("attributes", {}))
+
     def edge_runs_without_overlay(self) -> bool:
         return not self.keycloak_runs_with_overlay() and self.edge_is_ready()
 
@@ -309,9 +321,9 @@ class GoLive:
 
     # --- step 7: retire the bootstrap -----------------------------------------------------
 
-    def admin_call(self, token: str, method: str, path: str) -> object:
+    def admin_call(self, token: str, method: str, path: str, realm: str = "master") -> object:
         reply = self.tools.fetch(
-            method, f"{ADMIN_API}{path}", headers={"Authorization": f"Bearer {token}"}
+            method, f"{ADMIN_REALMS}/{realm}{path}", headers={"Authorization": f"Bearer {token}"}
         )
         if reply.status not in (200, 204):
             raise StepFailure(f"the admin API answered {reply.status} to {method} {path}")
@@ -419,9 +431,7 @@ class GoLive:
             Step(
                 "4",
                 "realms applied",
-                # The apply is idempotent, and a realm that exists may still lack its clients,
-                # scopes or groups: only a started edge proves the apply ran to its end.
-                self.edge_runs_without_overlay,
+                self.realm_import_completed,
                 self.apply_realms,
                 "Apply keycloak/master.yaml and keycloak/realm.yaml: the realms are code, and this "
                 "is the first time that code becomes a running Keycloak.",
