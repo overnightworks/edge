@@ -20,10 +20,13 @@ own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
 | `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay and its master step, the secret check's rules |
+| `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
+| `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check and `keycloak/go-live`, with their locked dependencies |
+| `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
 
 ## Threat model
 
@@ -405,6 +408,34 @@ after the first successful backup and restore test (home-tools#20).
 
 ## Keycloak (auth)
 
+### In plain words
+
+Keycloak is the one login for all the apps behind this edge: a person signs in
+once and every app asks Keycloak who they are, so no app keeps its own
+passwords.
+
+It has two doors. The **public door** is the login page at
+`auth.<EDGE_DOMAIN>`; it comes through the Cloudflare tunnel and shows only
+what a login needs. The **admin door** is `http://localhost:8090`; it reaches
+the admin console and the master realm, works on this PC only and is never
+routed through the tunnel.
+
+The secrets (the database password, the password of the tool that applies the
+configuration, and a temporary admin password) are three files in
+`~/.secrets/keycloak/`. No file of this repository holds one.
+
+"Realm as code" means the settings of the logins (groups, clients, login rules)
+are YAML files in `keycloak/`, applied by a tool, not clicked together in the
+console. Only the people and their group memberships are managed in the
+console. Change the YAML and apply it again, and the running Keycloak follows.
+
+Going live needs you in two places only: in the browser, to create your own
+admin with a second factor (a machine must not hold that), and in Cloudflare, to
+open the public door. Everything else is `keycloak/go-live` (see
+[Keycloak go-live](#keycloak-go-live)). The sections below are the reference.
+
+### Doors, issuers and configuration
+
 The one login for the apps: Keycloak with its own Postgres (`keycloak-db`,
 volume `keycloak-db`), both on the `keycloak` network (`172.31.253.0/24`, which
 `KC_PROXY_TRUSTED_ADDRESSES` names). Traefik reaches Keycloak on port 8080 in
@@ -445,7 +476,7 @@ No secret is in any file of this repository or in any container's `Config.Env`.
 Compose mounts three files from `${HOME}/.secrets/keycloak/`; Postgres reads its
 password through `POSTGRES_PASSWORD_FILE`, and `keycloak/entrypoint.sh` exports
 the others from `/run/secrets` into the process and `exec`s Keycloak or
-keycloak-config-cli. Create them once:
+keycloak-config-cli. `keycloak/go-live` creates them; by hand, once:
 
 ```sh
 install -d -m 0700 ~/.secrets/keycloak
@@ -482,17 +513,58 @@ It skips a realm whose file has not changed since the last apply; add
 
 ### Keycloak go-live
 
-The operator does these himself, in this order; an agent never holds an admin
-credential.
+Run it from the checkout, as the operator (an agent never runs it against the
+live project and never holds an admin credential):
 
-1. **Backup.** K11b (Keycloak in the B1 backup) has landed, or the operator
-   accepts running without a backup until it lands.
-2. **Secrets.** Create the three files (above).
-3. **First start**, with the temporary bootstrap admin `temp-admin`:
-   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
-4. **Master on the admin entrypoint, then the first apply**, both signed in as
-   `temp-admin`. The apply cannot move the master realm itself: that move
+```sh
+keycloak/go-live
+```
+
+It explains each step before it runs (`keycloak/go-live --help` lists them) and
+can be run again after any interruption: every step first checks whether it is
+done and the run continues at the first unfinished one. A failure ends with one
+line naming the step and exit code 1. It never prints a secret.
+
+1. **Backup.** It asks once whether to continue without the Keycloak backup
+   (K11b has not landed). There is no default; the answer is yours.
+2. **Secrets.** It creates the three files with random values, in a 0700
+   directory with 0644 files. An existing file is never overwritten; if only
+   some of the files exist it refuses and names the missing ones.
+3. **First start** with the temporary admin `temp-admin`.
+4. **Master on the admin entrypoint, then the first apply**, both with
+   `temp-admin`. The apply cannot move the master realm itself, because the move
    changes the issuer of the token it signs in with.
+5. **Leave the bootstrap overlay and start the edge**, then wait until the
+   readiness check prints `ready`.
+6. **Your part, in the browser.** The script stops and says what to do: sign in
+   at `http://localhost:8090/admin/` as `temp-admin` (password in the bootstrap
+   file; enrol TOTP when asked), create your own admin in the master realm with
+   the realm role `admin`, sign in as that admin, enrol TOTP and add a passkey.
+   Press Enter when done.
+7. **Retire the bootstrap.** The script checks through the admin API that
+   another master user with the realm role `admin` has a TOTP credential. Only
+   then it deletes `temp-admin` and the `bootstrap-admin-password` file;
+   otherwise it refuses and says what is missing.
+8. **Your part, in Cloudflare.** The script ends by printing the steps (A8, steps
+   3 to 5, for `auth.hallucinai.de`) and the check:
+
+   ```sh
+   curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
+     | grep -o '"issuer":"[^"]*"'
+   # "issuer":"https://auth.hallucinai.de/realms/hallucinai"
+   ```
+
+   The operator's own browser is no proof: it holds an Access session and
+   passes the wildcard app either way.
+
+#### Fallback: the steps by hand
+
+If the script cannot be used, the same steps by hand, in this order:
+
+1. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
+2. **First start**, with the temporary bootstrap admin `temp-admin`:
+   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
+3. **Master on the admin entrypoint, then the first apply**, both with the overlay:
 
    ```sh
    docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
@@ -503,32 +575,14 @@ credential.
    overlay gets a 401: master now demands TOTP for `temp-admin`'s password
    grant. Re-run it without the overlay, `docker compose run --rm
    keycloak-config-cli`, because the `config-cli` client exists by then.
-5. **Leave the bootstrap overlay and start the edge.** Start as in
+4. **Leave the overlay and start the edge** as in
    [Start, readiness, stop](#start-readiness-stop): the plain `up -d` recreates
    Keycloak without the overlay, and the forced recreate starts Traefik with
-   the current `traefik.yml`, `admin` entrypoint included. Step 6 needs
-   `http://localhost:8090`, so wait until the readiness check prints `ready`.
-   Every later apply uses the `config-cli` client.
-6. **Permanent admin.** Sign in at `http://localhost:8090/admin/` as
-   `temp-admin` (enrol TOTP when asked), create the permanent admin in the
-   master realm with the realm role `admin`, sign in as that admin, enrol TOTP
-   and add a passkey.
-7. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
+   the current `traefik.yml`. Wait until the readiness check prints `ready`.
+5. **Permanent admin** in the browser, as in step 6 above.
+6. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
    `rm ~/.secrets/keycloak/bootstrap-admin-password`.
-8. **Public login.** The operator approves the `auth.hallucinai.de` bypass
-   app and tunnel line, then applies them (A8, steps 3 and 4) and, if not done
-   yet, the DNS wildcard (A8, step 5). Ready when a request without any
-   Cloudflare cookie gets the discovery document, not a 302 to
-   `cloudflareaccess.com`:
-
-   ```sh
-   curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
-     | grep -o '"issuer":"[^"]*"'
-   # "issuer":"https://auth.hallucinai.de/realms/hallucinai"
-   ```
-
-   The operator's own browser is no proof: it holds an Access session and
-   passes the wildcard app either way.
+7. **Public login** in Cloudflare, as in step 8 above.
 
 ### Patch upgrade
 
@@ -620,7 +674,7 @@ what makes the edge reachable.
    operator only. Note its AUD tag and the team name.
 3. **Login bypass app.** Only after the operator has approved it and the
    Keycloak go-live above holds through its step 7 (until then skip this step
-   and the `auth` line in step 4; go-live step 8 returns here): create a second
+   and the `auth` line in step 4; the go-live's Cloudflare step returns here): create a second
    Access app for `auth.hallucinai.de` alone, with exactly one policy, action
    **Bypass**, include **Everyone**. Cloudflare enforces Access at its own
    edge, per hostname, before a request reaches the tunnel; without this more
