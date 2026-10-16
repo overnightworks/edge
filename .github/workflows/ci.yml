@@ -20,6 +20,8 @@ jobs:
       DOCKER_GID: "127"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
@@ -34,7 +36,16 @@ jobs:
       - name: edge-check tests
         env:
           PYTHONPATH: src
-        run: uv run --no-sync --no-build pytest
+        # pytest and pytest-cov come from the lock file, installed by the sync step above.
+        run: uv run --no-sync --no-build pytest --cov=src --cov-report=xml:coverage.xml
+
+      # The quality gate never runs tests; it scans the report this job hands over.
+      - name: Upload the coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.xml
 
       # The wheel must ship both packages, not only the one the editable install happens to find.
       - name: The wheel installs edge-check and edge-backup
@@ -247,17 +258,21 @@ jobs:
           grep -q "successfully initialized" "$fake_home/guarded.txt"
           echo OVERRIDE-BLOCKED
 
-      - name: Install pinned gitleaks
-        run: |
-          cd "$RUNNER_TEMP"
-          curl --proto '=https' --proto-redir '=https' -sSfLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check
-          tar -xzf gitleaks.tar.gz gitleaks
-
-      # gitleaks finds literal-looking secrets anywhere; the structural rule (a literal in
-      # keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.
+      # The quality gate scans the history for literal-looking secrets; the structural rule (a
+      # literal in keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.
       # tests/test_secret_check.py plants each style, so a check that stops matching turns it red.
       - name: No secret in any file
         run: |
-          "$RUNNER_TEMP/gitleaks" dir --no-banner --redact .
           uv run --locked --no-build --script keycloak/secret-check/secret_check.py .
+
+  quality:
+    needs: [check]
+    if: always()
+    permissions:
+      contents: read
+      actions: read
+    uses: overnightworks/quality/.github/workflows/gate.yml@75467b7888ab8158dda370c770d3323dfc1f594e # v0.1.1
+    with:
+      coverage-artifact: coverage
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
