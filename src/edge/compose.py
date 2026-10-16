@@ -17,6 +17,7 @@ READ_SECONDS = 60
 CHANGE_SECONDS = 600
 _NO_RESTART = "no"
 _RUNNING = "running"
+_COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
@@ -35,7 +36,7 @@ def profile_services(config: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
 
 
 def is_long_running(service: Mapping[str, Any]) -> bool:
-    """A service that restarts is meant to stay up; the others (restart "no") run once."""
+    """A service that restarts is meant to stay up; the others (restart "no") may run once."""
     return service.get("restart", _NO_RESTART) != _NO_RESTART
 
 
@@ -75,7 +76,7 @@ class Compose:
         output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
         states: dict[str, set[str]] = {}
         for container in _containers(output):
-            states.setdefault(container["Service"], set()).add(container["State"])
+            states.setdefault(container["Service"], set()).add(_state_of(container))
         return states
 
     def start(self, unit: str, services: tuple[str, ...]) -> None:
@@ -101,12 +102,21 @@ class Compose:
 def is_up(
     states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
 ) -> bool:
-    """Every long-running service of the unit has only running containers."""
+    """Every service of the unit has a container: running, or for a one-shot also completed."""
     return all(
-        states.get(name) == {_RUNNING}
+        states.get(name, set()) and states[name] <= _accepted_states(config["services"][name])
         for name in services
-        if is_long_running(config["services"][name])
     )
+
+
+def _accepted_states(service: Mapping[str, Any]) -> set[str]:
+    return {_RUNNING} if is_long_running(service) else {_RUNNING, _COMPLETED}
+
+
+def _state_of(container: Mapping[str, Any]) -> str:
+    if container["State"] == "exited" and container.get("ExitCode") == 0:
+        return _COMPLETED
+    return container["State"]
 
 
 def is_gone(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
