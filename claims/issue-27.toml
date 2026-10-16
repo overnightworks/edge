@@ -1,8 +1,0 @@
-claim_id = "90c40e29fbbc4e52b3a7e97c39b078da"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "09b76427b18d39d281473f629dcff506b62c0243"
-branch = "claude/issue-27-architecture-doc"
-scope = ["README.md", "docs/architecture.md"]
-opened_commit = "c8d43ac2adf12b1ecd282312af8903a46db30f67"
-whole_reason = "One architecture document and its single README link."
