@@ -45,14 +45,20 @@ class Progress:
 class StepFailed(Exception):
     """A step after the plan failed on the machine; `cause` is the OSError."""
 
+    exit_code = ApplyExit.REFUSED
+
     def __init__(self, step: Step, cause: OSError) -> None:
         super().__init__(step)
         self.step = step
         self.cause = cause
 
 
-def has_terminal() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
+def refusal_without_terminal() -> ApplyExit | None:
+    """The refusal of a run that is not at a terminal; asked before any token is read."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return None
+    print("edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr)
+    return ApplyExit.REFUSED
 
 
 def remove_leftover_plans(home: Path) -> None:
@@ -61,20 +67,31 @@ def remove_leftover_plans(home: Path) -> None:
     stems = {entry.stem for entry in directory.glob("*") if entry.suffix in _OWNED_SUFFIXES}
     for stem in sorted(stems):
         lock = directory / f"{stem}{_LOCK_SUFFIX}"
-        descriptor = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            descriptor = os.open(lock, os.O_RDWR)
+        except FileNotFoundError:
+            continue  # a live run deleted its lock after the glob
         try:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
-            for leftover in (directory / f"{stem}{_PLAN_SUFFIX}", lock):
-                if leftover.exists():
-                    leftover.unlink()
-                    print(
-                        f"edge external: removed the leftover plan file {leftover}", file=sys.stderr
-                    )
+            if not _names_the_open_file(descriptor, lock):
+                continue  # the lock was replaced after the open: a live run owns the new one
+            plan_file = directory / f"{stem}{_PLAN_SUFFIX}"
+            if plan_file.exists():
+                plan_file.unlink()
+                print(f"edge external: removed the leftover plan file {plan_file}", file=sys.stderr)
+            lock.unlink()
         finally:
             os.close(descriptor)
+
+
+def _names_the_open_file(descriptor: int, path: Path) -> bool:
+    try:
+        return os.fstat(descriptor).st_ino == path.stat().st_ino
+    except FileNotFoundError:
+        return False
 
 
 def _hold_lock(lock: Path) -> int:
@@ -82,11 +99,8 @@ def _hold_lock(lock: Path) -> int:
     while True:
         descriptor = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        try:
-            if os.fstat(descriptor).st_ino == lock.stat().st_ino:
-                return descriptor
-        except FileNotFoundError:
-            pass
+        if _names_the_open_file(descriptor, lock):
+            return descriptor
         os.close(descriptor)  # a cleanup deleted the lock between open and flock
 
 
@@ -123,9 +137,6 @@ def _terminate_like_interrupt() -> Iterator[None]:
 
 
 def apply_plan(home: Path, token_values: dict[str, str]) -> int:
-    if not has_terminal():
-        print("edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr)
-        return ApplyExit.REFUSED
     progress = Progress()
     try:
         with (
@@ -133,7 +144,9 @@ def apply_plan(home: Path, token_values: dict[str, str]) -> int:
             tofu.session(home, token_values) as session,
             _private_plan_file(home) as plan_file,
         ):
-            return _show_confirm_apply(session, plan_file, token_values, progress)
+            result = _show_confirm_apply(session, plan_file, token_values, progress)
+            progress.step = Step.CLEANUP
+            return result
     except tofu.Interrupted as interrupted:
         print(secrets.redact(interrupted.completed.output, token_values), file=sys.stderr)
         _report_interrupt(progress.step)

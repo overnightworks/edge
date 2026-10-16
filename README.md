@@ -170,7 +170,10 @@ pty oeffnen und `yes` tippen; erst D14 (eigener Nutzer fuer Agenten) macht
 daraus "nur der Betreiber". Die Plan-Datei liegt verschluesselt (X1a) in
 `~/.secrets/opentofu/plans/` (0700) und wird nach Erfolg, Abbruch, Fehler und
 SIGINT/SIGTERM geloescht; eine nach SIGKILL uebrig gebliebene Datei loescht und
-nennt der naechste `edge external`-Aufruf. Exit 0 angewendet, 1 verweigert,
+nennt der naechste `edge external`-Aufruf. Strg-C oder SIGTERM waehrend
+`apply` geht genau einmal als SIGINT an `tofu`; der Wrapper wartet, bis `tofu`
+sauber beendet ist, weitere Strg-C werden ignoriert, und die Meldung verweist
+auf `edge external plan`, um den Live-Zustand zu pruefen. Exit 0 angewendet, 1 verweigert,
 abgebrochen oder fehlgeschlagen, 2 nicht planbar.
 
 ```bash

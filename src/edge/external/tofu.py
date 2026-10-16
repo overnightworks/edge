@@ -72,6 +72,7 @@ def init_arguments(home: Path) -> list[str]:
     ]
 
 
+_FORWARDED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
 PLAN_ARGUMENTS = ["plan", "-refresh=true", "-detailed-exitcode"]
 
 
@@ -81,20 +82,27 @@ def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Comple
     tofu leads its own session so a terminal Ctrl-C does not also reach it: a second SIGINT
     makes tofu abort instead of finishing its in-flight provider calls and writing its state.
     """
-    with subprocess.Popen(
-        [str(tofu), *arguments],
-        cwd=EXTERNAL_ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    ) as process:
-        try:
-            stdout, stderr = process.communicate()
-        except KeyboardInterrupt:
-            process.send_signal(signal.SIGINT)
-            raise Interrupted(_finish_after_interrupt(process)) from None
+    # Between the fork and the try below an interrupt would find no tofu to forward to.
+    outside_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _FORWARDED_SIGNALS)
+    try:
+        with subprocess.Popen(
+            [str(tofu), *arguments],
+            cwd=EXTERNAL_ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask),
+        ) as process:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask)
+                stdout, stderr = process.communicate()
+            except KeyboardInterrupt:
+                process.send_signal(signal.SIGINT)
+                raise Interrupted(_finish_after_interrupt(process)) from None
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask)
     return Completed(process.returncode, stdout + stderr)
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from edge import cli
+from edge.external import apply as external_apply
 from edge.external import secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
@@ -63,6 +64,10 @@ if plan_file:
     Path(plan_file).write_text("encrypted plan")
 if command == "apply" and config["hang_in_apply"]:
     def stop_gracefully(*_):
+        with (here / "sigints").open("a") as received:
+            received.write("x")
+        while config["drain_until_released"] and not (here / "released").exists():
+            time.sleep(0.05)
         (here / "stopped gracefully").write_text("stopped")
         print("tofu stopped gracefully", flush=True)
         sys.exit(130)
@@ -95,6 +100,7 @@ class FakeTofu:
         leave_undeletable=False,
         locked_name="locked",
         hang_in_apply=False,
+        drain_until_released=False,
         **exit_codes,
     ) -> None:
         config = {
@@ -103,6 +109,7 @@ class FakeTofu:
             "leave_undeletable": leave_undeletable,
             "locked_name": locked_name,
             "hang_in_apply": hang_in_apply,
+            "drain_until_released": drain_until_released,
             "exit_codes": exit_codes,
         }
         (self.directory / "fake.json").write_text(json.dumps(config))
@@ -124,6 +131,14 @@ class FakeTofu:
             yield wait_until_applying
         finally:
             os.close(descriptor)
+
+    @property
+    def sigints_received(self) -> int:
+        received = self.directory / "sigints"
+        return len(received.read_text()) if received.exists() else 0
+
+    def release_draining_apply(self) -> None:
+        (self.directory / "released").write_text("go")
 
     @property
     def stopped_gracefully(self) -> bool:
@@ -511,6 +526,17 @@ def test_apply_without_a_terminal_exits_1_before_any_tofu_call(home, fake_tofu, 
     assert fake_tofu.calls() == []
 
 
+def test_apply_without_a_terminal_exits_1_even_when_the_write_tokens_are_missing(
+    home, fake_tofu, capsys
+):
+    """#45 rule 2: the refusal comes before any token file is read."""
+    for write_file in WRITE_TOKEN_FILES:
+        (home / write_file).unlink()
+    assert cli.main(["external", "apply"]) == 1
+    assert "terminal" in capsys.readouterr().err
+    assert fake_tofu.calls() == []
+
+
 @pytest.mark.parametrize(
     "terminals",
     [
@@ -653,6 +679,29 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     assert "interrupted during tofu apply, live services may be partly changed" in apply.output
 
 
+def test_a_second_interrupt_does_not_cut_short_a_tofu_that_is_still_draining(
+    home, fake_tofu, terminal
+):
+    """#45 rule 4/5: tofu gets one SIGINT and is waited for however long it drains."""
+    fake_tofu.configure(plan=2, hang_in_apply=True, drain_until_released=True)
+    apply = terminal()
+    with fake_tofu.watch_apply() as wait_until_applying:
+        apply.read_until(PROMPT)
+        apply.type("yes\n")
+        wait_until_applying()
+        apply.signal(signal.SIGINT)
+        deadline = time.monotonic() + 20
+        while fake_tofu.sigints_received < 1:
+            assert time.monotonic() < deadline, "tofu never received the forwarded SIGINT"
+        apply.signal(signal.SIGINT)
+        apply.signal(signal.SIGTERM)
+        assert apply.process.poll() is None
+        fake_tofu.release_draining_apply()
+        assert apply.finish() == 1
+    assert fake_tofu.sigints_received == 1
+    assert fake_tofu.stopped_gracefully
+
+
 def test_a_second_plan_command_keeps_the_plan_file_of_an_apply_awaiting_confirmation(
     home, fake_tofu, terminal
 ):
@@ -681,17 +730,51 @@ def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_e
     assert plan_files(home) == []
 
 
-@pytest.mark.parametrize("command", ["plan", "apply"])
-def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_start(
-    home, fake_tofu, capsys, command
-):
-    """#45 rule 4: a plan file left by a killed run is removed and named at the next start."""
+def leave_a_killed_run_behind(home) -> Path:
     leftover = home / PLANS_DIRECTORY / "killed.tfplan"
     leftover.parent.mkdir(mode=0o700)
     leftover.write_text("encrypted plan")
-    cli.main(["external", command])
-    assert not leftover.exists()
-    assert str(leftover) in capsys.readouterr().err
+    leftover.with_suffix(".lock").write_text("")
+    return leftover
+
+
+def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_plan(home, fake_tofu, capsys):
+    """#45 rule 4: a plan file left by a killed run is removed and named at the next start."""
+    leftover = leave_a_killed_run_behind(home)
+    cli.main(["external", "plan"])
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+
+
+def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_apply(home, fake_tofu, terminal):
+    """#45 rule 4: the same sweep runs at the start of apply, naming only the plan file."""
+    leftover = leave_a_killed_run_behind(home)
+    apply = terminal()
+    assert apply.finish() == 0
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in apply.output
+    assert ".lock" not in apply.output
+
+
+def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home, monkeypatch):
+    """#45 rule 4: the sweep deletes only what the lock it holds still names."""
+    directory = home / PLANS_DIRECTORY
+    directory.mkdir(mode=0o700)
+    stale_lock = directory / "run.lock"
+    stale_lock.write_text("")
+    live_plan = directory / "run.tfplan"
+    real_flock = external_apply.fcntl.flock
+
+    def replace_the_lock_then_flock(descriptor, operation):
+        stale_lock.unlink()
+        stale_lock.write_text("live run's replacement")
+        live_plan.write_text("live plan")
+        real_flock(descriptor, operation)
+
+    monkeypatch.setattr(external_apply.fcntl, "flock", replace_the_lock_then_flock)
+    external_apply.remove_leftover_plans(home)
+    assert stale_lock.exists()
+    assert live_plan.exists()
 
 
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):

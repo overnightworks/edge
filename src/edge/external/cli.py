@@ -40,6 +40,9 @@ def plan_command(home: Path) -> int:
 
 
 def apply_command(home: Path) -> int:
+    refusal = apply.refusal_without_terminal()
+    if refusal is not None:
+        return refusal
     return _guarded(
         "apply", home, secrets.Access.WRITE, apply.apply_plan, apply.ApplyExit.CANNOT_PLAN
     )
@@ -67,7 +70,7 @@ def _guarded(
             token_values,
             command,
         )
-        return apply.ApplyExit.REFUSED
+        return failure.exit_code
     except OSError as error:
         _report(
             f"edge external {command}: cannot plan, {_describe(error)}",
