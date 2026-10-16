@@ -12,8 +12,9 @@ stack: the project name and HOME are set in the environment of every command.
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal: the run takes about 15 minutes. Needs `uv`:
-proof 8 runs `edge-check` through it.
+--scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies: the run takes
+about 15 to 20 minutes, bounded by the 1500 s timeout above. Needs `uv`: proof 8 runs `edge-check` through it,
+proof 10 runs `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import signal
 import stat
@@ -597,7 +599,13 @@ class Probe:
             if (REPO / name).is_file():
                 (copy / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(REPO / name, copy / name)
-        subprocess.run(["uv", "sync", "--quiet"], cwd=copy, check=True, timeout=APPLY_SECONDS)
+        synced = subprocess.run(
+            ["uv", "sync", "--quiet"], capture_output=True, cwd=copy, check=False,
+            timeout=APPLY_SECONDS,
+        )  # fmt: skip
+        if synced.returncode != 0:
+            tail = synced.stderr.decode(errors="replace").strip().splitlines()
+            raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1:]}")
         return copy
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
@@ -609,8 +617,9 @@ class Probe:
                 *((FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF))
             )
         )
+        command = shlex.join([str(copy / ".venv" / "bin" / "edge"), "apply", "--closed"])
         result = subprocess.run(
-            ["script", "-qec", f"{copy / '.venv' / 'bin' / 'edge'} apply --closed", "/dev/null"],
+            ["script", "-qec", command, "/dev/null"],
             input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
             timeout=APPLY_SECONDS,
         )  # fmt: skip
@@ -628,7 +637,11 @@ class Probe:
         served_before = self.wait_until_served()
         before = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
         self.edge_apply(copy, enabled=False)
-        left = self.compose("ps", "--all", "-q", "step-ca", "traefik-mcp").stdout.decode().strip()
+        left = (
+            self.compose("ps", "--all", "-q", "step-ca", "traefik-mcp", "traefik-mcp-acme-owner")
+            .stdout.decode()
+            .strip()
+        )
         expect(not left, f"containers of the unit are left after off: {left}")
         for volume in self.volume_names():
             self.run(["docker", "volume", "inspect", volume])  # a missing volume exits 1
@@ -638,7 +651,8 @@ class Probe:
         after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
         expect(after == before, f"intermediate changed across off and on: {before} -> {after}")
         expect(
-            served_after["issuer_dn"] == served_before["issuer_dn"]
+            served_after["issuer_dn"]
+            == served_before["issuer_dn"]
             == self.intermediate_certificate()["subject_dn"],
             "not served by the same intermediate",
         )

@@ -827,14 +827,16 @@ switching on again serves the same intermediate. Removing the volumes (`docker v
 <project>_traefik-mcp-acme`, `<project>_step-ca`) stays a manual command.
 
 Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1500 python3 probe/step-ca/probe.py
---scratch DIR` starts a throwaway project under a throwaway `HOME` and holds nine proofs. Proofs 1
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds ten proofs. Proofs 1
 to 5 are the CA's (init modes and silence, the ACME directory verifies only with the probe root, the
 volume holds no root key, a restart keeps the intermediate, a partial state is completed, also with
 a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on `mcp` reaches
 `https://hello.mcp.internal` only with the root and is served a 24-hour certificate from the
 intermediate; plain http gets no answer from the backend; the three networks split as ruled; the
 host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
-CA copy is renewed within 12 minutes without a restart. The run takes about 15 minutes. Every
+CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on, off and on in a copy of the repository: both volumes and the
+same intermediate survive, and a repeated apply changes nothing. The run takes about 15 to 20
+minutes, within the 1500 s timeout. Every
 call runs from a throwaway container on the network a client would sit on.
 
 The switch is one for the CA and the gateway together (`enabled: false`, then
