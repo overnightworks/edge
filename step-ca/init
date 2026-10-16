@@ -3,7 +3,8 @@
 
 Runs in one-off containers of the pinned step-ca image without a network. It makes the root
 (key and certificate) and the intermediate (key and certificate) and installs the intermediate
-and a copy of the root certificate into the `step-ca` volume. The root key stays in
+and a copy of the root certificate into the `step-ca` volume, and creates the empty
+`traefik-mcp-acme` volume, so `edge apply` never creates one. The root key stays in
 ~/.secrets/step-ca and is never mounted into the running service. Every step checks its own
 done-state first: a second run changes nothing, and a partial state completes what is missing
 without ever overwriting a key. No secret is printed: command output is captured and a failure

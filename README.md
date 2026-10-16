@@ -796,7 +796,8 @@ true` in `fleet.yaml` (a pull request), then run `edge apply --closed`
 secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
 running container), `root_ca.crt` (0644) and `password` (0644, protects the root and the
 intermediate key), and puts the intermediate and a copy of the root certificate into the
-`step-ca` volume. A second run changes nothing; after an interruption it completes what is
+`step-ca` volume, and creates the empty `traefik-mcp-acme` volume, so `edge apply` never creates one.
+A second run changes nothing; after an interruption it completes what is
 missing and never overwrites a key. Back up `~/.secrets/step-ca/` and the `step-ca` volume. The
 root certificate is what other services trust.
 
