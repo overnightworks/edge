@@ -35,7 +35,14 @@ CERTIFICATE_UNVERIFIED = 60  # curl exit code
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
-ALLOWED_FILES = {"certs/root_ca.crt", "certs/intermediate_ca.crt", "secrets/intermediate_ca_key"}
+ROOT_CERTIFICATE = "root_ca.crt"
+INTERMEDIATE_IN_VOLUME = "/home/step/certs/intermediate_ca.crt"
+WORK_DIRECTORY = "/work"  # private tmpfs for the ACME client, not world-writable
+ALLOWED_FILES = {
+    f"certs/{ROOT_CERTIFICATE}",
+    "certs/intermediate_ca.crt",
+    "secrets/intermediate_ca_key",
+}
 ALLOWED_DIRECTORY = "db/"
 OUTSIDE_NAME = "outside.example.com"
 INSIDE_NAME = "probe.mcp.internal"
@@ -132,10 +139,13 @@ class Probe:
     def order_outcome(self, name: str) -> tuple[int, str]:
         """Asks the CA for a certificate for `name` with the pinned image's own ACME client."""
         image, _ = self.image_and_volume()
+        private_tmpfs = f"{WORK_DIRECTORY}:uid=1000,gid=1000,mode=0700"
+        root_mount = f"{self.secrets_dir / ROOT_CERTIFICATE}:/root.crt:ro"
+        certificate_path, key_path = f"{WORK_DIRECTORY}/c.crt", f"{WORK_DIRECTORY}/c.key"
         result = self.run(
-            ["docker", "run", "--rm", "--network", NETWORK, "--tmpfs", "/tmp", "--read-only",
-             "--user", "1000:1000", "--volume", f"{self.secrets_dir / 'root_ca.crt'}:/root.crt:ro",
-             "--entrypoint", "step", image, "ca", "certificate", name, "/tmp/c.crt", "/tmp/c.key",
+            ["docker", "run", "--rm", "--network", NETWORK, "--tmpfs", private_tmpfs,
+             "--read-only", "--user", "1000:1000", "--volume", root_mount,
+             "--entrypoint", "step", image, "ca", "certificate", name, certificate_path, key_path,
              "--acme", DIRECTORY_URL, "--root", "/root.crt", "--force"],
             check=False,
         )  # fmt: skip
@@ -155,7 +165,7 @@ class Probe:
         )
 
     def wait_until_answering(self) -> None:
-        root = self.secrets_dir / "root_ca.crt"
+        root = self.secrets_dir / ROOT_CERTIFICATE
         deadline = time.monotonic() + READY_SECONDS
         while time.monotonic() < deadline:
             try:
@@ -183,12 +193,12 @@ class Probe:
         password = (self.secrets_dir / "password").read_text()
         modes = {
             name: stat.S_IMODE((self.secrets_dir / name).stat().st_mode)
-            for name in ("root_ca_key", "root_ca.crt", "password")
+            for name in ("root_ca_key", ROOT_CERTIFICATE, "password")
         }
         directory_mode = stat.S_IMODE(self.secrets_dir.stat().st_mode)
         expect(directory_mode == 0o700, f"directory mode {oct(directory_mode)}")
         expect(
-            modes == {"root_ca_key": 0o600, "root_ca.crt": 0o644, "password": 0o644},
+            modes == {"root_ca_key": 0o600, ROOT_CERTIFICATE: 0o644, "password": 0o644},
             f"modes {modes}",
         )
         self.expect_volume_has_compose_labels()
@@ -204,7 +214,7 @@ class Probe:
     def proof_2_directory(self) -> None:
         self.compose("up", "--detach", "step-ca")
         self.wait_until_answering()
-        status = self.directory_status(self.secrets_dir / "root_ca.crt")
+        status = self.directory_status(self.secrets_dir / ROOT_CERTIFICATE)
         expect(status == 200, f"directory answered {status}")
         expect(self.directory_status(None) == -1, "the system trust store verified the CA")
         self.expect_outside_name_rejected()
@@ -218,7 +228,7 @@ class Probe:
         stray = {f for f in files if f not in ALLOWED_FILES and not f.startswith(ALLOWED_DIRECTORY)}
         expect(not stray, f"files outside the allow-list: {sorted(stray)}")
         expect(files >= ALLOWED_FILES, f"missing: {sorted(ALLOWED_FILES - files)}")
-        root_certificate = (self.secrets_dir / "root_ca.crt").read_bytes()
+        root_certificate = (self.secrets_dir / ROOT_CERTIFICATE).read_bytes()
         root_public = self.public_key(["openssl", "x509", "-noout", "-pubkey"], root_certificate)
         password = self.secrets_dir / "password"
         for name in sorted(files):
@@ -232,11 +242,11 @@ class Probe:
         print(f"proof 3 held: {len(files)} files, all allow-listed; no key in it matches the root")
 
     def proof_4_restart(self) -> None:
-        intermediate = self.in_volume("cat", "/home/step/certs/intermediate_ca.crt")
+        intermediate = self.in_volume("cat", INTERMEDIATE_IN_VOLUME)
         before = (self.certificate_fingerprint(intermediate), self.volume_files())
         self.compose("restart", "step-ca")
         self.wait_until_answering()
-        intermediate = self.in_volume("cat", "/home/step/certs/intermediate_ca.crt")
+        intermediate = self.in_volume("cat", INTERMEDIATE_IN_VOLUME)
         after = (self.certificate_fingerprint(intermediate), self.volume_files())
         expect(after[0] == before[0], f"intermediate changed: {before[0]} -> {after[0]}")
         expect(before[1] <= after[1], f"db files lost: {sorted(before[1] - after[1])}")
@@ -246,7 +256,7 @@ class Probe:
         self.compose("stop", "step-ca")
         root_key = (self.secrets_dir / "root_ca_key").read_bytes()
         self.in_volume(
-            "rm", "/home/step/certs/intermediate_ca.crt", "/home/step/secrets/intermediate_ca_key",
+            "rm", INTERMEDIATE_IN_VOLUME, "/home/step/secrets/intermediate_ca_key",
             writable=True,
         )  # fmt: skip
         expect("certs/intermediate_ca.crt" not in self.volume_files(), "the intermediate stayed")
