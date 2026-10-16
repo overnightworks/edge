@@ -1,0 +1,204 @@
+# The master realm holds only administration. Applied by keycloak-config-cli (README, "Apply").
+# People are managed in the admin console; this file never lists a human user.
+realm: master
+# Master logins and tokens live on the loopback admin entrypoint, never on the public hostname.
+# compose.yaml owns the value (KC_HOSTNAME_ADMIN) and hands it to Keycloak and to the apply; the
+# first start sets it with keycloak/admin-frontend.sh.
+attributes:
+  frontendUrl: $(env:KC_HOSTNAME_ADMIN)
+bruteForceProtected: true
+# Every administrator signs in with a password and a second factor: the passkey when one is
+# registered, TOTP otherwise. An administrator with neither must enrol TOTP before the login
+# completes, so no admin session ever rests on the password alone.
+browserFlow: browser-mfa
+# A password grant (admin-cli, kcadm.sh) demands a TOTP code too, with no exception. Keycloak's
+# built-in direct grant asks for one only from an administrator who already has TOTP, so one
+# without it (created in the console and not yet signed in, or passkey-only) would get a token on
+# the password alone; here such an administrator is denied (401). The bootstrap signs in before
+# the first apply binds this flow.
+directGrantFlow: direct-grant-mfa
+authenticationFlows:
+  - alias: browser-mfa
+    description: Password plus a required second factor (passkey or TOTP)
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-cookie
+        requirement: ALTERNATIVE
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-forms
+        requirement: ALTERNATIVE
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-forms
+    description: Username and password, then the second factor
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-username-password-form
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-second-factor
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-second-factor
+    description: Exactly one of the two sub-flows runs
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - flowAlias: browser-mfa-passkey
+        requirement: CONDITIONAL
+        priority: 10
+        autheticatorFlow: true
+        userSetupAllowed: false
+      - flowAlias: browser-mfa-totp
+        requirement: CONDITIONAL
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: browser-mfa-passkey
+    description: The passkey, for an administrator who has registered one
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-user-configured
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: webauthn-authenticator
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+  - alias: browser-mfa-totp
+    description: TOTP, enrolled on the spot if missing, whenever the passkey sub-flow did not run
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-sub-flow-executed
+        authenticatorConfig: browser-mfa-without-passkey
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: auth-otp-form
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+  - alias: direct-grant-mfa
+    description: Username, password and a TOTP code, for every administrator
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: direct-grant-validate-username
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: direct-grant-validate-password
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - flowAlias: direct-grant-mfa-second-factor
+        requirement: REQUIRED
+        priority: 30
+        autheticatorFlow: true
+        userSetupAllowed: false
+  # A REQUIRED OTP step alone would answer an administrator without TOTP with a server error (500),
+  # so the TOTP sub-flow runs for one who has it and everyone else is denied.
+  - alias: direct-grant-mfa-second-factor
+    description: Exactly one of the two sub-flows runs
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - flowAlias: direct-grant-mfa-totp
+        requirement: CONDITIONAL
+        priority: 10
+        autheticatorFlow: true
+        userSetupAllowed: false
+      - flowAlias: direct-grant-mfa-deny
+        requirement: CONDITIONAL
+        priority: 20
+        autheticatorFlow: true
+        userSetupAllowed: false
+  - alias: direct-grant-mfa-totp
+    description: The TOTP code, for an administrator who has TOTP
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-user-configured
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: direct-grant-validate-otp
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+  - alias: direct-grant-mfa-deny
+    description: Denies an administrator without TOTP
+    providerId: basic-flow
+    topLevel: false
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: conditional-sub-flow-executed
+        authenticatorConfig: direct-grant-mfa-without-totp
+        requirement: REQUIRED
+        priority: 10
+        autheticatorFlow: false
+        userSetupAllowed: false
+      - authenticator: deny-access-authenticator
+        requirement: REQUIRED
+        priority: 20
+        autheticatorFlow: false
+        userSetupAllowed: false
+authenticatorConfig:
+  - alias: browser-mfa-without-passkey
+    config:
+      flow_to_check: browser-mfa-passkey
+      check_result: not-executed
+  - alias: direct-grant-mfa-without-totp
+    config:
+      flow_to_check: direct-grant-mfa-totp
+      check_result: not-executed
+# A passkey for the admin console binds to the console's host name.
+webAuthnPolicyRpId: localhost
+webAuthnPolicyRpEntityName: hallucinai admin
+clients:
+  # Every apply after the first signs in with this service client (client credentials).
+  - clientId: config-cli
+    name: keycloak-config-cli
+    enabled: true
+    publicClient: false
+    clientAuthenticatorType: client-secret
+    secret: $(env:CONFIG_CLI_CLIENT_SECRET)
+    serviceAccountsEnabled: true
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    frontchannelLogout: false
+users:
+  - username: service-account-config-cli
+    enabled: true
+    serviceAccountClientId: config-cli
+    realmRoles:
+      - admin

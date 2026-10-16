@@ -19,62 +19,129 @@ jobs:
       EDGE_DOMAIN: hallucinai.de
       DOCKER_GID: "127"
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
       - name: edge-check installs from the lock file
-        run: uv sync --locked
+        run: uv sync --locked --no-build --no-install-project
 
       - name: edge-check lint
         run: |
-          uv run ruff check
-          uv run ruff format --check
+          uv run --no-sync --no-build ruff check
+          uv run --no-sync --no-build ruff format --check
 
       - name: edge-check tests
-        run: uv run pytest
+        env:
+          PYTHONPATH: src
+        run: uv run --no-sync --no-build pytest
 
       # The wheel must ship both packages, not only the one the editable install happens to find.
       - name: The wheel installs edge-check and edge-backup
         run: |
           uv build --wheel --out-dir dist
-          uv run --isolated --no-project --with dist/*.whl edge-backup --help
-          uv run --isolated --no-project --with dist/*.whl edge-check --help
+          uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
+          uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
 
-      - name: Compose renders (default and probe profile)
+      - name: Compose renders (default, probe profile, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
           docker compose --profile probe config -q
+          docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
+            --profile apply config -q
+          PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
+            docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
+            --file probe/keycloak/compose.probe.yaml --profile apply config -q
 
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
-            traefik.yml cloudflared-config.example.yml
+            traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
+            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml
 
-      # The gatekeeper must listen on loopback only and expose no implicit listener.
-      - name: No published ports, no extra Traefik listeners
+      # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
+      # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,
+      # and each Keycloak router names its own.
+      - name: No published ports, Traefik listens on 8081 and 8090 only, routers bind as declared
         run: |
           python3 - <<'PY'
           import re, sys, yaml
           compose = open("compose.yaml").read()
           if re.search(r"^\s*ports:", compose, re.M) or "0.0.0.0" in compose:
               sys.exit("compose.yaml publishes ports or binds 0.0.0.0")
-          forbidden = {"api", "ping", "metrics"} & set(yaml.safe_load(open("traefik.yml")))
+          traefik = yaml.safe_load(open("traefik.yml"))
+          forbidden = {"api", "ping", "metrics"} & set(traefik)
           if forbidden:
               sys.exit(f"traefik.yml enables {sorted(forbidden)}")
+          addresses = sorted(e["address"] for e in traefik["entryPoints"].values())
+          if addresses != ["127.0.0.1:8081", "127.0.0.1:8090"]:
+              sys.exit(f"traefik.yml listens on {addresses}")
+          flags = {n: e.get("asDefault", False) for n, e in traefik["entryPoints"].items()}
+          not_boolean = sorted(n for n, flag in flags.items() if not isinstance(flag, bool))
+          if not_boolean:
+              sys.exit(f"asDefault is not a boolean on {not_boolean}")
+          defaults = sorted(n for n, flag in flags.items() if flag)
+          if defaults != ["edge"]:
+              sys.exit(f"the default entrypoints are {defaults}, not exactly edge")
+          bindings = {}
+          for service_name, service in yaml.safe_load(compose)["services"].items():
+              labels = service.get("labels") or {}
+              routers = {k.split(".")[3] for k in labels if k.startswith("traefik.http.routers.")}
+              for router in routers:
+                  entrypoints = labels.get(f"traefik.http.routers.{router}.entrypoints")
+                  bindings.setdefault(router, []).append((service_name, entrypoints))
+          shared = sorted(r for r, owners in bindings.items() if len(owners) > 1)
+          if shared:
+              sys.exit(f"routers defined by more than one service: {shared}")
+          unnamed = sorted(r for r, [(_, entrypoints)] in bindings.items() if not entrypoints)
+          if unnamed:
+              sys.exit(f"routers without an entrypoint: {unnamed}")
+          for router, entrypoint in {"auth": "edge", "auth-admin": "admin"}.items():
+              owner = bindings.get(router, [(None, None)])[0]
+              if owner != ("keycloak", entrypoint):
+                  sys.exit(f"router {router} is {owner}, not keycloak on {entrypoint}")
           PY
 
-      # Unmatched hosts must end at 404, and the wildcard must demand an Access token.
+      # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login
+      # line alone is public: ahead of the wildcard, without Access, to the edge entrypoint. No
+      # line targets the local admin entrypoint 8090.
       - name: Tunnel template denies by default
         run: |
           python3 - <<'PY'
-          import sys, yaml
+          import re, sys, yaml
           ingress = yaml.safe_load(open("cloudflared-config.example.yml"))["ingress"]
           if ingress[-1].get("service") != "http_status:404":
               sys.exit("last ingress rule is not http_status:404")
-          wildcard = next(r for r in ingress if str(r.get("hostname", "")).startswith("*."))
+          hostnames = [str(r.get("hostname", "")) for r in ingress]
+          wildcard = ingress[next(i for i, h in enumerate(hostnames) if h.startswith("*."))]
           access = wildcard.get("originRequest", {}).get("access", {})
           missing = [k for k in ("required", "teamName", "audTag") if not access.get(k)]
           if missing:
               sys.exit(f"wildcard access rule lacks {missing}")
+          if hostnames.count("auth.hallucinai.de") != 1:
+              sys.exit("there is not exactly one auth.hallucinai.de line")
+          auth_index = hostnames.index("auth.hallucinai.de")
+          auth = ingress[auth_index]
+          if auth_index > hostnames.index(wildcard["hostname"]):
+              sys.exit("the auth line comes after the wildcard")
+          if auth != {"hostname": "auth.hallucinai.de", "service": "http://127.0.0.1:8081"}:
+              sys.exit(f"the auth line is not the bare edge route: {auth}")
+          admin_targets = [r for r in ingress if re.search(r":8090\b", str(r.get("service", "")))]
+          if admin_targets:
+              sys.exit(f"an ingress line targets the admin entrypoint 8090: {admin_targets}")
           PY
+
+      - name: Install pinned gitleaks
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --proto '=https' --proto-redir '=https' -sSfLo gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      # gitleaks finds literal-looking secrets anywhere; the structural rule (a literal in
+      # keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.
+      # tests/test_secret_check.py plants each style, so a check that stops matching turns it red.
+      - name: No secret in any file
+        run: |
+          "$RUNNER_TEMP/gitleaks" dir --no-banner --redact .
+          uv run --locked --no-build --script keycloak/secret-check/secret_check.py .

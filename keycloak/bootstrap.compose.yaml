@@ -1,0 +1,26 @@
+# First start and first apply only (README, "Keycloak go-live"). Keycloak creates the temporary
+# admin when it initialises an empty database, keycloak/admin-frontend.sh moves the master realm
+# to the admin entrypoint, and the first apply signs in as that admin because the config-cli
+# client does not exist yet. Never use this overlay afterwards.
+services:
+  keycloak:
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: temp-admin
+    secrets:
+      - source: keycloak_bootstrap_admin_password
+        target: KC_BOOTSTRAP_ADMIN_PASSWORD
+    volumes:
+      - ./keycloak/admin-frontend.sh:/opt/edge/admin-frontend.sh:ro
+
+  keycloak-config-cli:
+    environment:
+      KEYCLOAK_GRANTTYPE: password
+      KEYCLOAK_CLIENTID: admin-cli
+      KEYCLOAK_USER: temp-admin
+    secrets:
+      - source: keycloak_bootstrap_admin_password
+        target: KEYCLOAK_PASSWORD
+
+secrets:
+  keycloak_bootstrap_admin_password:
+    file: ${HOME}/.secrets/keycloak/bootstrap-admin-password

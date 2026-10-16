@@ -1,0 +1,16 @@
+{
+  "clientId": "probe-rp",
+  "name": "probe test relying party",
+  "enabled": true,
+  "publicClient": false,
+  "clientAuthenticatorType": "client-secret",
+  "standardFlowEnabled": false,
+  "directAccessGrantsEnabled": true,
+  "serviceAccountsEnabled": false,
+  "frontchannelLogout": false,
+  "attributes": {
+    "backchannel.logout.url": "http://probe-rp:8000/backchannel-logout",
+    "backchannel.logout.session.required": "true"
+  },
+  "defaultClientScopes": ["basic", "profile", "groups", "agent-service-audience"]
+}

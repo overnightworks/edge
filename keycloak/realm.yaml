@@ -1,0 +1,79 @@
+# The hallucinai realm: the one login for the apps. Applied by keycloak-config-cli (README, "Apply").
+# People and memberships are managed in the admin console, never here. Groups are managed in full
+# and created or renamed only here: removing or renaming a group below deletes it, and every
+# membership in it, on the next apply, and so does the apply to any subgroup under /apps or /ki-abo
+# that this file lacks, even one made in the admin console. Renaming in the console first is safe
+# only if no apply runs before the matching change here lands.
+# App clients arrive with each app's cutover, together with its live redirect and logout URLs.
+realm: hallucinai
+enabled: true
+accessTokenLifespan: 300          # 5 minutes
+ssoSessionMaxLifespan: 2592000    # 30 days
+ssoSessionIdleTimeout: 604800     # 7 days
+bruteForceProtected: true
+# Passkeys are offered to every user and bound to the apex domain, so every app subdomain shares them.
+webAuthnPolicyRpId: hallucinai.de
+webAuthnPolicyPasswordlessRpId: hallucinai.de
+webAuthnPolicyPasswordlessPasskeysEnabled: true
+eventsEnabled: true
+eventsExpiration: 2592000         # login events: 30 days
+adminEventsEnabled: true
+attributes:
+  adminEventsExpiration: "31536000"   # admin events: 1 year
+groups:
+  - name: apps
+    subGroups:
+      - name: songmaker
+      - name: presentator
+      - name: hopin
+      - name: aco-board
+  - name: ki-abo
+clientScopes:
+  - name: groups
+    description: The user's groups as full paths, for example /apps/songmaker
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: groups
+        protocol: openid-connect
+        protocolMapper: oidc-group-membership-mapper
+        consentRequired: false
+        config:
+          claim.name: groups
+          full.path: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+          introspection.token.claim: "true"
+  - name: agent-service-audience
+    description: Adds agent-service to the access token audience
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      - name: agent-service-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.client.audience: agent-service
+          id.token.claim: "false"
+          access.token.claim: "true"
+          # Stated, because Keycloak would otherwise default it on create and the next apply flip it.
+          userinfo.token.claim: "false"
+          introspection.token.claim: "true"
+clients:
+  # Audience only: the agent service accepts tokens issued for it and never signs anyone in.
+  - clientId: agent-service
+    name: agent-service
+    enabled: true
+    bearerOnly: true
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false

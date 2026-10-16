@@ -46,6 +46,105 @@ services:
       edge.name: hello
       traefik.http.services.hello.loadbalancer.server.port: "80"
 
+
+  keycloak-db:
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    # The alpine image's postgres user; the named volume inherits the image's ownership of the data directory.
+    user: "70:70"
+    read_only: true
+    tmpfs: [/var/run/postgresql, /tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [keycloak]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/keycloak_db_password
+    secrets: [keycloak_db_password]
+    volumes:
+      - keycloak-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "--username=keycloak", "--dbname=keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+    restart: unless-stopped
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    # No read_only: `start` without --optimized rebuilds the server into the image's lib directory at boot.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [keycloak]
+    # Secrets reach the process from /run/secrets, never through the container's Config.Env.
+    entrypoint: ["/opt/edge/entrypoint.sh", "/opt/keycloak/bin/kc.sh"]
+    command: ["start"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HOSTNAME: https://auth.${EDGE_DOMAIN:?set EDGE_DOMAIN}
+      # The one owner of the admin front end; the apply reads it for master.yaml's frontendUrl.
+      KC_HOSTNAME_ADMIN: &admin-hostname http://localhost:8090
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+      # TLS ends at Cloudflare; Traefik forwards plain HTTP from the host side of the keycloak network.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      # The keycloak network's subnet (networks.keycloak below takes it from here).
+      KC_PROXY_TRUSTED_ADDRESSES: &keycloak-subnet 172.31.253.0/24
+    secrets:
+      - source: keycloak_db_password
+        target: KC_DB_PASSWORD
+    volumes:
+      - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
+    labels:
+      traefik.enable: "true"
+      edge.name: auth
+      traefik.http.services.auth.loadbalancer.server.port: "8080"
+      # The tunnel reaches only the hallucinai realm, its localization and the static resources
+      # under Keycloak's five-character resources version. Any wider /resources/ prefix admits
+      # /resources/master/…, the master realm's localization texts.
+      traefik.http.routers.auth.entrypoints: edge
+      traefik.http.routers.auth.service: auth
+      traefik.http.routers.auth.rule: >-
+        Host(`auth.${EDGE_DOMAIN}`) && (PathPrefix(`/realms/hallucinai/`)
+        || PathPrefix(`/resources/hallucinai/`) || PathRegexp(`^/resources/[a-z0-9]{5}/`))
+      # The admin console and the master realm answer on the loopback-only admin entrypoint.
+      traefik.http.routers.auth-admin.entrypoints: admin
+      traefik.http.routers.auth-admin.service: auth
+      traefik.http.routers.auth-admin.rule: Host(`localhost`)
+
+  keycloak-config-cli:
+    image: adorsys/keycloak-config-cli:6.5.1-26.5.5@sha256:0955d98c8a341898b7aa177477edf8a1e90569ae50bbe7598141c1270b773274
+    profiles: [apply]
+    depends_on: [keycloak]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [keycloak]
+    entrypoint: ["/opt/edge/entrypoint.sh", "java", "-jar", "/app/keycloak-config-cli.jar"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_AVAILABILITYCHECK_ENABLED: "true"
+      KEYCLOAK_AVAILABILITYCHECK_TIMEOUT: 180s
+      KEYCLOAK_GRANTTYPE: client_credentials
+      KEYCLOAK_CLIENTID: config-cli
+      IMPORT_FILES_LOCATIONS: file:/config/master.yaml,file:/config/realm.yaml
+      IMPORT_VARSUBSTITUTION_ENABLED: "true"
+      IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR: "true"
+      KC_HOSTNAME_ADMIN: *admin-hostname
+    secrets:
+      - source: keycloak_config_cli_secret
+        target: KEYCLOAK_CLIENTSECRET
+      - source: keycloak_config_cli_secret
+        target: CONFIG_CLI_CLIENT_SECRET
+    volumes:
+      - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
+      - ./keycloak:/config:ro
 volumes:
   socket-proxy-run:
     driver: local
@@ -53,7 +152,21 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: "uid=65534,gid=65534,mode=0700"
+  keycloak-db:
+
+secrets:
+  # Files only, outside the repository; README "Keycloak secrets" names how to create them.
+  keycloak_db_password:
+    file: ${HOME}/.secrets/keycloak/db-password
+  keycloak_config_cli_secret:
+    file: ${HOME}/.secrets/keycloak/config-cli-secret
 
 networks:
   edge-probe:
     driver: bridge
+  keycloak:
+    driver: bridge
+    ipam:
+      config:
+        # Pinned so KC_PROXY_TRUSTED_ADDRESSES names exactly the network Traefik reaches Keycloak through.
+        - subnet: *keycloak-subnet

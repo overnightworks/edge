@@ -5,13 +5,17 @@ global:
 log:
   level: INFO
 
-# One entrypoint only. The api, ping and metrics blocks stay absent, so those features are disabled.
+# Two loopback entrypoints: `edge` is the tunnel target, `admin` serves the Keycloak admin console
+# locally and is never a tunnel target. The api, ping and metrics blocks stay absent, so those
+# features are disabled.
 entryPoints:
   edge:
     address: "127.0.0.1:8081"
+    # A router that names no entrypoint binds only here, never to `admin`.
+    asDefault: true
     forwardedHeaders:
       trustedIPs: ["127.0.0.1/32"]
-    http:
+    http: &hardening
       # Drop headers like X_Forwarded_For that CGI/WSGI-style backends read as the header Traefik manages.
       aliasHeadersStrategy: delete
       # Traefik 3.7 allows encoded path characters by default; reject them so no app sees a traversal.
@@ -24,6 +28,10 @@ entryPoints:
         allowEncodedPercent: false
         allowEncodedQuestionMark: false
         allowEncodedHash: false
+  admin:
+    address: "127.0.0.1:8090"
+    # No trusted forwarders: a browser talks to this entrypoint directly.
+    http: *hardening
 
 providers:
   docker:
