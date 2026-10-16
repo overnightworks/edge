@@ -115,7 +115,7 @@ class Keycloak:
             if self.fail_edge_start:
                 return self.done(returncode=1, stderr="traefik: port 8081 is in use")
             self.edge_up = True
-        elif "keycloak" in command:
+        elif "keycloak" in command[command.index("up") + 1 :]:
             if self.never_answers:
                 return self.done()
             self.running = self.database_volume = True
@@ -318,6 +318,19 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
     ]
     assert "curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known" in session.output
     assert len(session.asked) == 2
+
+
+def test_every_compose_call_names_the_keycloak_profile(go_live, keycloak):
+    """#54 rule 2: the services live behind the profile, so no call may leave it out."""
+    go_live.run()
+
+    profiles = [
+        command[command.index("--profile") + 1] if "--profile" in command else None
+        for command in keycloak.commands
+        if command[:2] == ["docker", "compose"]
+    ]
+    assert profiles
+    assert set(profiles) == {"keycloak"}
 
 
 def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):

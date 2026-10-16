@@ -48,6 +48,7 @@ from urllib.request import (
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "edge-kc-probe"
+KEYCLOAK_PROFILE = "keycloak"
 PROJECT_LABEL = f"com.docker.compose.project={PROJECT}"
 DOMAIN = "hallucinai.de"
 REALM = "hallucinai"
@@ -227,7 +228,16 @@ class Stack:
         if bootstrap:
             files.append("keycloak/bootstrap.compose.yaml")
         files.append("probe/keycloak/compose.probe.yaml")
-        command = ["docker", "compose", "--project-name", PROJECT, "--project-directory", str(REPO)]
+        command = [
+            "docker",
+            "compose",
+            "--project-name",
+            PROJECT,
+            "--project-directory",
+            str(REPO),
+            "--profile",
+            KEYCLOAK_PROFILE,
+        ]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
         result = subprocess.run(
@@ -1143,7 +1153,7 @@ def keep_stack_until_told_to_stop(ready_line: str) -> None:
     sys.stdin.read()
 
 
-def main() -> int:
+def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "mode",
@@ -1153,9 +1163,6 @@ def main() -> int:
         help="run: the proofs (default); hold: keep the stack up for another repository's proof",
     )
     parser.add_argument("--scratch", type=Path, required=True, help="an empty or new directory")
-    parser.add_argument(
-        "--admin-url", default=ADMIN_URL, help="where Keycloak's admin port answers (default)"
-    )
     arguments = parser.parse_args()
     scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
@@ -1164,7 +1171,7 @@ def main() -> int:
     if taken:
         print(f"probe refused: 127.0.0.1 port(s) {taken} in use; stop the live edge first")
         return PORT_TAKEN_EXIT
-    stack = Stack(scratch, arguments.admin_url)
+    stack = make_stack(scratch)
     # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
     # below still runs and the probe ends with its one FAILED line.
     for stopping in STOP_SIGNALS:

@@ -31,6 +31,7 @@ SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 BOOTSTRAP_SECRET = "bootstrap-admin-password"
 BOOTSTRAP_ADMIN = "temp-admin"
 BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
+KEYCLOAK_PROFILE = "keycloak"
 BOOTSTRAP_ENV = "KC_BOOTSTRAP_ADMIN_USERNAME"
 DATABASE_VOLUME = "keycloak-db"
 ADMIN_URL = "http://localhost:8090"
@@ -229,6 +230,7 @@ class GoLive:
         stdin: str | None = None,
     ):
         command = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
+        command += ["--profile", KEYCLOAK_PROFILE]
         if bootstrap:
             command += ["--file", BOOTSTRAP_OVERLAY]
         return self.tools.run([*command, *args], timeout, stdin)

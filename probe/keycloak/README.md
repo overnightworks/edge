@@ -8,8 +8,8 @@ directory, no live data) from this checkout. Both modes need 127.0.0.1:8081 and 
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
 
 An exported `DOCKER_GID` overrides the host's `docker` group id in the compose environment; unset
-it if it is stale. `--admin-url` (default `http://localhost:8090`) is where the probe reaches
-Keycloak's admin port; only tests set it, to talk to a fake.
+it if it is stale. The probe reaches Keycloak's admin port on `http://localhost:8090`; it has no flag
+for another address.
 
 The `timeout` caps the whole command, bring-up included. When the cap is reached after `READY`,
 its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown succeeded, while
