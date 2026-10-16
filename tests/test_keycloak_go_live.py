@@ -60,8 +60,8 @@ class Keycloak:
     stdin_of_this_command: str | None = None
     deleted: list[str] = field(default_factory=list)
 
-    def add_admin(self, username: str, *, otp: bool) -> None:
-        self.users[username] = {"otp": otp}
+    def add_admin(self, username: str, *, otp: bool, enabled: bool = True) -> None:
+        self.users[username] = {"otp": otp, "enabled": enabled}
 
     def changed_something(self) -> bool:
         return any(
@@ -521,20 +521,21 @@ def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, sessi
 
 
 @pytest.mark.parametrize(
-    ("second_admin_otp", "reason"),
+    ("second_admin", "reason"),
     [
-        (None, "no other master user has the realm role admin"),
-        (False, "alice has the role admin but no TOTP credential"),
+        (None, "no other enabled master user has the realm role admin"),
+        ({"otp": False}, "alice has the role admin but no TOTP credential"),
+        ({"otp": True, "enabled": False}, "no other enabled master user has the realm role admin"),
     ],
 )
 def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
-    go_live, keycloak, session, secrets_dir, second_admin_otp, reason
+    go_live, keycloak, session, secrets_dir, second_admin, reason
 ):
     """#19 rule 4: no retirement without a second admin who has TOTP."""
     session.on_enter = (
         None
-        if second_admin_otp is None
-        else lambda: keycloak.add_admin(OTP_ADMIN, otp=second_admin_otp)
+        if second_admin is None
+        else lambda: keycloak.add_admin(OTP_ADMIN, **second_admin)
     )
 
     assert go_live.run() == 1

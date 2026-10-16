@@ -410,11 +410,13 @@ class GoLive:
         people = [
             user
             for user in holders
-            if user["username"] != BOOTSTRAP_ADMIN and not user.get("serviceAccountClientId")
+            if user["username"] != BOOTSTRAP_ADMIN
+            and not user.get("serviceAccountClientId")
+            and user["enabled"]
         ]
         if not people:
             raise StepFailure(
-                f"refusing to retire {BOOTSTRAP_ADMIN}: no other master user has the "
+                f"refusing to retire {BOOTSTRAP_ADMIN}: no other enabled master user has the "
                 f"realm role {ADMIN_ROLE}"
             )
         for person in people:
