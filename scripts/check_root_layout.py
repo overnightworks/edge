@@ -36,7 +36,7 @@ ROOT_FILES = CONTAINER_FILES | frozenset(
         "uv.lock",
     }
 )
-ROOT_DIRECTORIES = frozenset({".aco", ".github", "scripts", "src", "systemd", "tests"})
+ROOT_DIRECTORIES = frozenset({".aco", ".github", "quality", "scripts", "src", "systemd", "tests"})
 HOME_BY_SUFFIX = {
     ".py": "a module belongs in the package under src/home_tools/, a helper under scripts/",
     ".service": "a systemd unit belongs under systemd/",

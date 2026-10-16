@@ -16,6 +16,14 @@ its test, a helper under `scripts/`. No catch-all directory (`tooling/`,
 `misc/`) and no deeper hierarchy than the owner needs. A root allowlist check in
 CI keeps the rule, so nobody has to remember it (operator ruling 06.09.2026).
 
+## Checks
+
+CI runs the `Lint and test` job and, after it, the `quality` job: the shared
+gate of overnightworks/quality (`quality/config.toml` names the mandatory
+jobs). Its required check is `quality / verdict`; the gate's SonarCloud scan is
+the one scanner, and it reads `sonar-project.properties` and the tests job's
+`coverage` artifact.
+
 ## Commits
 
 Never pass `--no-verify` to `git commit` or `git merge`. The global hook that

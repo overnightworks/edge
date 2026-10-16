@@ -127,6 +127,7 @@ def test_an_allowlisted_listing_carries_no_problem() -> None:
         "uv.lock",
         ".aco/board.toml",
         ".github/workflows/ci.yml",
+        "quality/config.toml",
         "scripts/check_root_layout.py",
         "src/home_tools/tidy_home.py",
         "systemd/tidy-home.service",
