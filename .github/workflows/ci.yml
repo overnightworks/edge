@@ -63,12 +63,14 @@ jobs:
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
             docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --file probe/keycloak/compose.probe.yaml --profile apply config -q
+          PROBE_CA_JSON=/nonexistent docker compose --file compose.yaml \
+            --file probe/step-ca/compose.probe.yaml --profile probe config -q
 
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
             traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
-            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml step-ca/ca.json \
+            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml probe/step-ca/compose.probe.yaml step-ca/ca.json \
             traefik-mcp.yml mcp/dynamic/*
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin

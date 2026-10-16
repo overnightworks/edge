@@ -17,7 +17,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 
 | File | Owns |
 |---|---|
-| `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database and `step-ca` volumes, the Keycloak secrets and `step_ca_password` |
+| `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database, `step-ca` and `traefik-mcp-acme` volumes, the Keycloak secrets and `step_ca_password` |
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
@@ -25,7 +25,8 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
 | `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
-| `probe/step-ca/` | the probe of the internal CA, re-run for every step-ca upgrade |
+| `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
+| `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge/`, `external/` | the `edge` command (so far `edge external plan`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
@@ -117,6 +118,7 @@ What the entrypoint answers without a route:
 
 `hello` (traefik/whoami, labelled `edge.name=hello`) lives under the compose
 profile `probe`, so a plain `docker compose up -d` never starts it.
+`hello-mcp` (the same image on `mcp-backends`, the MCP origin `hello.mcp.internal`) lives there too.
 
 ```sh
 docker compose --profile probe up -d hello
@@ -692,7 +694,7 @@ included), in any compose, apply or service log output, or in its own output
 `https://<app>.mcp.internal` that the agent service calls over https only. It listens on
 `step-ca:9000` on the internal network `mcp-ca` (no route out, no published port), has one ACME provisioner that accepts only
 `*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
-configuration. Traefik fetching certificates from it is the next slice (edge#37).
+configuration. `traefik-mcp` fetches its certificates from it (below).
 
 Go live, once, as the operator (uid 1000):
 
@@ -709,15 +711,42 @@ intermediate key), and puts the intermediate and a copy of the root certificate 
 missing and never overwrites a key. Back up `~/.secrets/step-ca/` and the `step-ca` volume. The
 root certificate is what other services trust.
 
-Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 420 python3 probe/step-ca/probe.py
---scratch DIR` starts a throwaway project under a throwaway `HOME` and holds proofs 1 to 5 (init
-modes and silence, the ACME directory verifies only with the probe root, the volume holds no root
-key, a restart keeps the intermediate, a partial state is completed). The curl runs from a throwaway container on `mcp-ca`.
+### traefik-mcp
 
-Switch it off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
+`traefik-mcp` is a second Traefik, the gateway to the MCP origins. It has no host networking and
+no Docker API, and listens on 443 inside three internal networks, none of which has a route out:
+`mcp-ca` (step-ca and `traefik-mcp`), `mcp` (`traefik-mcp`, later the agent service) and
+`mcp-backends` (`traefik-mcp` and the apps' MCP servers). It is the only container on all three.
+It answers to `<app>.mcp.internal` on `mcp-ca` and `mcp`, gets a 24-hour certificate per name from
+step-ca over TLS-ALPN-01 (trusting only the CA's root, `~/.secrets/step-ca/root_ca.crt`) and renews
+it by itself. `traefik-mcp.yml` is its static configuration; `mcp/dynamic/` holds one router file
+per app (`hello.yml` is the probe's). The certificates live in the volume `traefik-mcp-acme`,
+which is not backed up because they are issued again.
+
+A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router file under
+`mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
+(`docs/naming.md`).
+
+Switch it on: run `step-ca/init`, then `docker compose up -d step-ca traefik-mcp`; a plain
+`docker compose up -d` starts it too. Switch it off: `docker compose stop traefik-mcp` (the CA and
+the certificates stay). Remove it: `docker compose rm -f traefik-mcp traefik-mcp-acme-owner` and
+`docker volume rm <project>_traefik-mcp-acme`.
+
+Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1500 python3 probe/step-ca/probe.py
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds nine proofs. Proofs 1
+to 5 are the CA's (init modes and silence, the ACME directory verifies only with the probe root, the
+volume holds no root key, a restart keeps the intermediate, a partial state is completed, also with
+a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on `mcp` reaches
+`https://hello.mcp.internal` only with the root and is served a 24-hour certificate from the
+intermediate; plain http gets no answer from the backend; the three networks split as ruled; the
+host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
+CA copy is renewed within 12 minutes without a restart. The run takes about 15 minutes. Every
+call runs from a throwaway container on the network a client would sit on.
+
+Switch the CA off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
 `docker compose up -d` starts it again. To remove it, also `docker compose rm -f step-ca`;
-`docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away
-(nothing else depends on it until the Traefik slice lands).
+`docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away. Stop
+`traefik-mcp` first: it holds certificates from this CA.
 
 ## Rollback
 
