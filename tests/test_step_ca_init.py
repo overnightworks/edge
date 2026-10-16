@@ -215,7 +215,7 @@ def test_the_root_key_is_never_written_into_the_volume(init, docker, secrets_dir
     init.run()
 
     root_key = (secrets_dir / ROOT_KEY).read_bytes()
-    assert list(fingerprint_of_files(docker.volume_dir).values()).count(root_key) == 0
+    assert root_key not in fingerprint_of_files(docker.volume_dir).values()
 
 
 def test_every_container_runs_without_a_network_from_the_composed_image(init, docker):
@@ -415,7 +415,7 @@ def test_the_volume_is_created_with_compose_labels_before_any_container_mounts_i
         i for i, c in enumerate(docker.commands) if c[1] == "run" and VOLUME in " ".join(c)
     )
     created = next(i for i, c in enumerate(docker.commands) if c[1] == "volume")
-    assert first_mount - created > 0
+    assert first_mount > created
 
 
 @pytest.mark.parametrize(

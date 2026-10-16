@@ -36,12 +36,17 @@ PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
-INTERMEDIATE_IN_VOLUME = "/home/step/certs/intermediate_ca.crt"
+INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
+INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
+STEP_HOME = "/home/step"
+INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
+CONTAINER_USER_ID = 1000  # the step user of the smallstep image
+CONTAINER_USER = f"{CONTAINER_USER_ID}:{CONTAINER_USER_ID}"
 WORK_DIRECTORY = "/work"  # private tmpfs for the ACME client, not world-writable
 ALLOWED_FILES = {
     f"certs/{ROOT_CERTIFICATE}",
-    "certs/intermediate_ca.crt",
-    "secrets/intermediate_ca_key",
+    INTERMEDIATE_CERTIFICATE,
+    INTERMEDIATE_KEY,
 }
 ALLOWED_DIRECTORY = "db/"
 OUTSIDE_NAME = "outside.example.com"
@@ -98,15 +103,15 @@ class Probe:
 
     def in_volume(self, *tool: str, writable: bool = False) -> bytes:
         image, volume = self.image_and_volume()
-        mount = f"{volume}:/home/step" + ("" if writable else ":ro")
+        mount = f"{volume}:{STEP_HOME}" + ("" if writable else ":ro")
         return self.run(
-            ["docker", "run", "--rm", "--network", "none", "--user", "1000:1000", "--entrypoint",
+            ["docker", "run", "--rm", "--network", "none", "--user", CONTAINER_USER, "--entrypoint",
              tool[0], "--volume", mount, image, *tool[1:]]
         ).stdout  # fmt: skip
 
     def volume_files(self) -> set[str]:
-        listing = self.in_volume("find", "/home/step", "-type", "f").decode().splitlines()
-        return {line.removeprefix("/home/step/") for line in listing}
+        listing = self.in_volume("find", STEP_HOME, "-type", "f").decode().splitlines()
+        return {line.removeprefix(f"{STEP_HOME}/") for line in listing}
 
     def expect_volume_has_compose_labels(self) -> None:
         _, volume = self.image_and_volume()
@@ -125,7 +130,7 @@ class Probe:
         trust = ["--volume", f"{cafile}:/root.crt:ro"] if cafile else []
         curl = ["--cacert", "/root.crt"] if cafile else []
         result = self.run(
-            ["docker", "run", "--rm", "--network", NETWORK, "--read-only", "--user", "1000:1000",
+            ["docker", "run", "--rm", "--network", NETWORK, "--read-only", "--user", CONTAINER_USER,
              *trust, "--entrypoint", "curl", image, "--silent", "--max-time", "5",
              "--output", "/dev/null", "--write-out", "%{http_code}", *curl, DIRECTORY_URL],
             check=False,
@@ -139,12 +144,12 @@ class Probe:
     def order_outcome(self, name: str) -> tuple[int, str]:
         """Asks the CA for a certificate for `name` with the pinned image's own ACME client."""
         image, _ = self.image_and_volume()
-        private_tmpfs = f"{WORK_DIRECTORY}:uid=1000,gid=1000,mode=0700"
+        private_tmpfs = f"{WORK_DIRECTORY}:uid={CONTAINER_USER_ID},gid={CONTAINER_USER_ID},mode=0700"
         root_mount = f"{self.secrets_dir / ROOT_CERTIFICATE}:/root.crt:ro"
         certificate_path, key_path = f"{WORK_DIRECTORY}/c.crt", f"{WORK_DIRECTORY}/c.key"
         result = self.run(
             ["docker", "run", "--rm", "--network", NETWORK, "--tmpfs", private_tmpfs,
-             "--read-only", "--user", "1000:1000", "--volume", root_mount,
+             "--read-only", "--user", CONTAINER_USER, "--volume", root_mount,
              "--entrypoint", "step", image, "ca", "certificate", name, certificate_path, key_path,
              "--acme", DIRECTORY_URL, "--root", "/root.crt", "--force"],
             check=False,
@@ -232,7 +237,7 @@ class Probe:
         root_public = self.public_key(["openssl", "x509", "-noout", "-pubkey"], root_certificate)
         password = self.secrets_dir / "password"
         for name in sorted(files):
-            content = self.in_volume("cat", f"/home/step/{name}")
+            content = self.in_volume("cat", f"{STEP_HOME}/{name}")
             if b"PRIVATE KEY" not in content:
                 continue
             public = self.public_key(
@@ -256,10 +261,10 @@ class Probe:
         self.compose("stop", "step-ca")
         root_key = (self.secrets_dir / "root_ca_key").read_bytes()
         self.in_volume(
-            "rm", INTERMEDIATE_IN_VOLUME, "/home/step/secrets/intermediate_ca_key",
+            "rm", INTERMEDIATE_IN_VOLUME, f"{STEP_HOME}/{INTERMEDIATE_KEY}",
             writable=True,
         )  # fmt: skip
-        expect("certs/intermediate_ca.crt" not in self.volume_files(), "the intermediate stayed")
+        expect(INTERMEDIATE_CERTIFICATE not in self.volume_files(), "the intermediate stayed")
         output = self.init()
         expect("intermediate" in output, f"init did not report the intermediate: {output[-120:]}")
         expect((self.secrets_dir / "root_ca_key").read_bytes() == root_key, "root key changed")
