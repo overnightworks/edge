@@ -24,7 +24,7 @@ own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
-| `docs/naming.md` | the naming rule: how every overnightworks repo, tool, package and unit is named |
+| [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
 ## Threat model
 
