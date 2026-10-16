@@ -153,6 +153,9 @@ services:
     user: "1000:1000"
     read_only: true
     cap_drop: [ALL]
+    # The image's step-ca binary carries a file capability for low ports; without it in the
+    # bounding set the kernel refuses to exec it. The CA itself listens on 9000.
+    cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
     # Host network so the CA answers on 127.0.0.1:9000 (ca.json) without a published port.
     network_mode: host
