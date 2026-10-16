@@ -39,6 +39,7 @@ class Keycloak:
     """What compose and Keycloak have done so far, answering the way the real ones do."""
 
     running: bool = False
+    container_exists: bool = False  # left behind by the first start, also when stopped
     with_overlay: bool = False
     master_moved: bool = False
     master_applied: bool = False
@@ -51,6 +52,7 @@ class Keycloak:
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
+    stdin_seen: str | None = None
     deleted: list[str] = field(default_factory=list)
 
     def add_admin(self, username: str, *, otp: bool) -> None:
@@ -65,7 +67,14 @@ class Keycloak:
 
     # --- docker ---------------------------------------------------------------------------
 
-    def run(self, command: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
+    def stop(self) -> None:
+        self.running = self.edge_up = False
+
+    def run(
+        self, command: list[str], _timeout: int, stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        if stdin is not None:
+            self.stdin_seen = stdin
         self.commands.append(command)
         if command[:2] == ["docker", "inspect"]:
             env = ["KC_DB=postgres"] + (
@@ -81,8 +90,9 @@ class Keycloak:
     ) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
-    def compose_ps(self, _command: list[str]):
-        return self.done("abc123\n" if self.running else "")
+    def compose_ps(self, command: list[str]):
+        listed = self.container_exists if "-aq" in command else self.running
+        return self.done("abc123\n" if listed else "")
 
     def compose_up(self, command: list[str]):
         if "--force-recreate" in command:
@@ -92,7 +102,8 @@ class Keycloak:
         elif "keycloak" in command:
             if self.never_answers:
                 return self.done()
-            self.running, self.with_overlay = True, OVERLAY in command
+            self.running = self.container_exists = True
+            self.with_overlay = OVERLAY in command
         else:
             self.with_overlay = OVERLAY in command
         return self.done()
@@ -116,12 +127,21 @@ class Keycloak:
             return self.done()
         if not self.running:
             return self.done(returncode=1, stderr="service keycloak is not running")
+        if any("kcadm.sh" in argument for argument in command):
+            return self.kcadm_realm_attributes(command)
         path = command[-1]
         status, body = self.container_answer(path)
         return self.done(f"HTTP/1.0 {status} X\nContent-Type: x\n\n{body}")
 
+    def kcadm_realm_attributes(self, command: list[str]):
+        assert command[-1] == "hallucinai"
+        if not self.realm_exists:
+            return self.done(returncode=1, stderr="Resource not found for url")
+        attributes = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
+        return self.done(json.dumps({"attributes": attributes if self.import_completed else {}}))
+
     def container_answer(self, path: str) -> tuple[int, str]:
-        if path == "/realms/master":
+        if path == "/realms/master" or (path == "/realms/hallucinai" and self.realm_exists):
             return 200, "{}"
         if path.endswith("/.well-known/openid-configuration"):
             host = "http://localhost:8090" if self.master_moved else "https://auth.hallucinai.de"
@@ -141,12 +161,6 @@ class Keycloak:
         if url.endswith("/protocol/openid-connect/token"):
             assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
             return from_script(200, json.dumps({"access_token": "token"}).encode())
-        if url.endswith("/admin/realms/hallucinai"):
-            if not self.realm_exists:
-                return from_script(404, b"")
-            attributes = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
-            body = {"attributes": attributes if self.import_completed else {}}
-            return from_script(200, json.dumps(body).encode())
         return self.admin_api(method, url.split("/admin/realms/master")[1], from_script)
 
     def admin_api(self, method: str, path: str, reply):
@@ -324,6 +338,61 @@ def test_a_realm_whose_import_never_completed_is_applied_again(go_live, keycloak
 
     assert keycloak.import_completed
     assert any("keycloak-config-cli" in command for command in keycloak.commands)
+
+
+def test_a_completed_apply_is_recognised_before_the_edge_stands(go_live, keycloak, session):
+    """#19 rule 3: the run killed between the apply and the edge continues at the edge."""
+    keycloak.fail_edge_start = True
+    assert go_live.run() == 1
+    keycloak.fail_edge_start = False
+    keycloak.commands.clear()
+
+    assert go_live.run() == 0
+
+    assert not any("keycloak-config-cli" in command for command in keycloak.commands)
+
+
+def test_the_apply_check_hands_the_client_secret_over_on_standard_input(
+    go_live, keycloak, secrets_dir
+):
+    """#19 rule 2: the secret is in no command line."""
+    assert go_live.run() == 0
+
+    secret = (secrets_dir / "config-cli-secret").read_text()
+    assert keycloak.stdin_seen == secret
+    assert not any(secret in part for command in keycloak.commands for part in command)
+
+
+def test_a_bootstrap_file_removed_by_hand_does_not_retire_temp_admin(
+    go_live, keycloak, session, secrets_dir
+):
+    """#19 rule 3: the done-state is temp-admin gone, not the password file gone."""
+    assert go_live.run() == 0
+    keycloak.add_admin("temp-admin", otp=True)
+    keycloak.deleted.clear()
+    session.answers = ["yes", ""]
+
+    assert go_live.run() == 0
+
+    assert keycloak.deleted == ["temp-admin"]
+    assert not (secrets_dir / "bootstrap-admin-password").exists()
+
+
+def test_a_finished_installation_resumes_after_keycloak_was_stopped(
+    go_live, keycloak, session, secrets_dir
+):
+    """#19 rules 2, 3: a retired bootstrap file is no partial set; the run restarts Keycloak."""
+    assert go_live.run() == 0
+    keycloak.stop()
+    keycloak.commands.clear()
+    session.answers = ["yes"]
+
+    assert go_live.run() == 0
+
+    assert keycloak.running
+    assert keycloak.edge_up
+    assert not any("keycloak-config-cli" in command for command in keycloak.commands)
+    assert not any("some secret files exist" in line for line in session.printed)
 
 
 def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_edge(
