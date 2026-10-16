@@ -61,13 +61,18 @@ class FakeTofu:
     directory: Path
 
     def configure(
-        self, *, version=None, echo_environment=False, leave_undeletable=False, **exit_codes
+        self,
+        *,
+        version=None,
+        echo_environment=False,
+        leave_undeletable=False,
+                **exit_codes,
     ) -> None:
         config = {
             "version": version or tofu.pinned_version(),
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
-            "exit_codes": exit_codes,
+                "exit_codes": exit_codes,
         }
         (self.directory / "fake.json").write_text(json.dumps(config))
 
@@ -269,6 +274,7 @@ def test_the_only_new_script_is_edge():
     "version", [version.values[0] for version in TOFU_VERSIONS], ids=["pinned", "other"]
 )
 @pytest.mark.parametrize("family", DROPPED_VARIABLE_FAMILIES)
+@pytest.mark.parametrize("credential_inherited", [True, False], ids=["inherited", "absent"])
 @pytest.mark.parametrize(
     "token_file,variable",
     [
@@ -278,12 +284,24 @@ def test_the_only_new_script_is_edge():
     ],
 )
 def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
-    home, fake_tofu, monkeypatch, tmp_path, capsys, token_file, variable, family, version
+    home,
+    fake_tofu,
+    monkeypatch,
+    tmp_path,
+    capsys,
+    token_file,
+    variable,
+    family,
+    version,
+    credential_inherited,
 ):
     """#40 rule 1: an inherited credential never stands in for an absent token file."""
     fake_tofu.configure(version=version)
     inherit(monkeypatch, tmp_path, family)
-    monkeypatch.setenv(variable, SENTINEL)
+    if credential_inherited:
+        monkeypatch.setenv(variable, SENTINEL)
+    else:
+        monkeypatch.delenv(variable, raising=False)
     (home / token_file).unlink()
     assert edge_external_plan() == 2
     printed = capsys.readouterr()
