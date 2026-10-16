@@ -1,0 +1,7 @@
+claim_id = "dcb24e0d55b845a3b08cc818218e7b9e"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "71dbdb1d1efef6cfeb6ee0e109cc57e6fd32224a"
+branch = "claude/issue-53-architecture-harvest"
+scope = ["docs/architecture.md"]
+opened_commit = "a52b74938b582e937270b2a45102497fb73594b6"
