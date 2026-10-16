@@ -40,9 +40,6 @@ def plan_command(home: Path) -> int:
 
 
 def apply_command(home: Path) -> int:
-    if not apply.has_terminal():
-        print("edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr)
-        return apply.REFUSED
     return _guarded("apply", home, secrets.Access.WRITE, apply.apply_plan)
 
 
@@ -53,6 +50,11 @@ def _guarded(
     token_values: dict[str, str] = {}
     try:
         apply.remove_leftover_plans(home)
+        if access is secrets.Access.WRITE and not apply.has_terminal():
+            print(
+                "edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr
+            )
+            return apply.REFUSED
         token_values = secrets.read_secrets(home, access)
         return run(home, token_values)
     except (secrets.SecretFileError, tofu.TofuError) as error:

@@ -25,7 +25,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
-| `src/edge/`, `external/` | the `edge` command (so far `edge external plan`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
+| `src/edge/`, `external/` | the `edge` command (so far `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check and `keycloak/go-live`, with their locked dependencies |
@@ -138,8 +138,8 @@ Der State liegt nie im Checkout, sondern verschluesselt in
 `~/.secrets/opentofu/fleet.tfstate`.
 
 `edge external plan` zeigt, was von den Live-Diensten abweicht (Exit 0 keine
-Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien, jede
-0600, und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine
+Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien (erwartet
+wird je 0600, geprueft wird das hier nicht) und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine
 Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
 `GH_*`, Proxy aus der Shell):
 
@@ -155,6 +155,26 @@ Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
 
 ```bash
 uv run edge external plan
+```
+
+`edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
+Schreib-Tokens `~/.secrets/cloudflare/fleet-write` und
+`~/.secrets/github/fleet-admin` (dieselbe Allowlist-Umgebung, dieselbe
+State-Passphrase). Es laeuft nur an einem Terminal (stdin und stdout; sonst
+Exit 1, bevor `tofu` aufgerufen wird), plant in eine Datei, zeigt den Plan
+und wendet genau diese Datei erst nach der Eingabe `yes` an (`y`, `Yes`,
+leer: Abbruch, Exit 1). Ein Plan ohne Aenderungen endet mit Exit 0 ohne
+Frage. Das ist ein Schutz gegen versehentliche und nicht-interaktive Laeufe
+(CI, Skript, `-auto-approve`), keine Identitaetspruefung: ein Agent kann ein
+pty oeffnen und `yes` tippen; erst D14 (eigener Nutzer fuer Agenten) macht
+daraus "nur der Betreiber". Die Plan-Datei liegt verschluesselt (X1a) in
+`~/.secrets/opentofu/plans/` (0700) und wird nach Erfolg, Abbruch, Fehler und
+SIGINT/SIGTERM geloescht; eine nach SIGKILL uebrig gebliebene Datei loescht und
+nennt der naechste `edge external`-Aufruf. Exit 0 angewendet, 1 verweigert,
+abgebrochen oder fehlgeschlagen, 2 nicht planbar.
+
+```bash
+uv run edge external apply
 ```
 
 ## edge-check
