@@ -53,6 +53,8 @@ class Keycloak:
     fail_apply_after_master: bool = False
     fail_edge_start: bool = False
     never_answers: bool = False
+    compose_without_database_volume: bool = False
+    edge_restarting: bool = False  # step 5's recreate: kcadm is refused, 8090 does not answer yet
     docker_daemon_down: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
@@ -105,6 +107,8 @@ class Keycloak:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
     def compose_config(self, command: list[str]):
+        if self.compose_without_database_volume:
+            return self.done("{}")
         return self.done(json.dumps({"volumes": {"keycloak-db": {"name": PROJECT_VOLUME}}}))
 
     def compose_ps(self, command: list[str]):
@@ -115,7 +119,7 @@ class Keycloak:
             if self.fail_edge_start:
                 return self.done(returncode=1, stderr="traefik: port 8081 is in use")
             self.edge_up = True
-        elif "keycloak" in command:
+        elif "keycloak" in command[command.index("up") + 1 :]:
             if self.never_answers:
                 return self.done()
             self.running = self.database_volume = True
@@ -144,7 +148,9 @@ class Keycloak:
         if not self.running:
             return self.done(returncode=1, stderr="service keycloak is not running")
         if any("kcadm.sh" in argument for argument in command):
-            if self.edge_up:  # the real kcadm is refused with 401 once the edge stands
+            if (
+                self.edge_up or self.edge_restarting
+            ):  # the real kcadm is refused with 401 once the edge stands
                 return self.done(returncode=1, stderr="HTTP 401 Unauthorized")
             return self.kcadm_realm_attributes(command)
         path = command[-1]
@@ -320,6 +326,19 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
     assert len(session.asked) == 2
 
 
+def test_every_compose_call_names_the_keycloak_profile(go_live, keycloak):
+    """#54 rule 2: the services live behind the profile, so no call may leave it out."""
+    go_live.run()
+
+    compose_commands = [
+        command for command in keycloak.commands if command[:2] == ["docker", "compose"]
+    ]
+    assert compose_commands
+    for command in compose_commands:
+        profiles = {command[at + 1] for at, word in enumerate(command) if word == "--profile"}
+        assert profiles == {"keycloak"}
+
+
 def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):
     """#19 rule 2: random hex files, 0644, in a 0700 directory."""
     keycloak.fail_apply_after_master = True  # stops with the bootstrap password still on disk
@@ -438,12 +457,12 @@ def test_a_bootstrap_file_removed_by_hand_does_not_retire_temp_admin(
 def test_a_finished_installation_resumes_after_docker_compose_down(
     go_live, keycloak, session, secrets_dir
 ):
-    """#19 rules 2, 3: a retired bootstrap file is no partial set; the run restarts Keycloak
-    from the kept database without applying anything again."""
+    """#19 rules 2, 3 and #55 rule 3: a retired bootstrap file is no partial set; the run
+    restarts Keycloak from the kept database, applies nothing again and asks no backup question."""
     assert go_live.run() == 0
     keycloak.down()
     keycloak.commands.clear()
-    session.answers = ["yes"]
+    session.asked.clear()
 
     assert go_live.run() == 0
 
@@ -451,6 +470,7 @@ def test_a_finished_installation_resumes_after_docker_compose_down(
     assert keycloak.edge_up
     assert not any("keycloak-config-cli" in command for command in keycloak.commands)
     assert not any("some secret files exist" in line for line in session.printed)
+    assert session.asked == []
 
 
 def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_edge(
@@ -508,7 +528,7 @@ def test_a_docker_failure_while_looking_for_the_database_volume_is_reported_as_i
     assert go_live.run() == 1
 
     assert session.printed[-1] == (
-        "go-live FAILED at secrets: `docker volume inspect` exited 1: "
+        "go-live FAILED at backup: `docker volume inspect` exited 1: "
         "Cannot connect to the Docker daemon"
     )
     assert not keycloak.changed_something()
@@ -655,8 +675,8 @@ def test_each_step_says_what_happens_and_why_before_it_runs(go_live, session):
         "Step 1",
         "Step 2",
         "Step 3",
-        "Step 4",
-        "Step 4",
+        "Step 4a",
+        "Step 4b",
         "Step 5",
         "Step 6-7",
     ]
@@ -681,3 +701,183 @@ def test_help_lists_the_steps_in_plain_words():
 
     assert result.returncode == 0
     assert "3. keycloak start: Start Keycloak with a temporary admin" in result.stdout
+
+
+def numbers_in(lines: list[str], pattern: str) -> list[str]:
+    return [match.group(1) for line in lines if (match := re.match(pattern, line))]
+
+
+def test_the_readme_and_help_number_the_go_live_steps_alike():
+    """#55 rule 5: every number the script prints is in the README once, and no other."""
+    help_text = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
+    ).stdout
+    readme = (SCRIPT.parents[1] / "README.md").read_text()
+    go_live_section = readme.split("### Keycloak go-live")[1].split("####")[0]
+    fallback_section = readme.split("#### Fallback: the steps by hand")[1].split("###")[0]
+
+    help_steps = numbers_in(help_text.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. ")
+    readme_pattern = (
+        r"- \*\*(\d+[ab]?(?:-\d+)?)\. "  # a bullet keeps "4a." literal; "4a. " is no list marker
+    )
+
+    assert help_steps == numbers_in(go_live_section.splitlines(), readme_pattern)
+    assert help_steps == numbers_in(fallback_section.splitlines(), readme_pattern)
+    assert help_steps[0] == "1"
+
+
+def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, session, secrets_dir):
+    """#55 rule 3: a no created nothing, so the question stands."""
+    session.answers = ["no", "no"]
+
+    go_live.run()
+    go_live.run()
+
+    assert len(session.asked) == 2
+    assert not keycloak.database_volume
+    assert not secrets_dir.exists()
+    assert not keycloak.changed_something()
+
+
+def test_a_completed_apply_is_not_repeated_while_step_5_restarts_keycloak(
+    go_live, keycloak, session
+):
+    """#55 rule 4: the run waits for 8090 and reads the import there, not through kcadm (401)."""
+    assert go_live.run() == 0
+    keycloak.edge_up, keycloak.edge_restarting = False, True
+
+    def edge_comes_up(_seconds: float) -> None:
+        keycloak.edge_up, keycloak.edge_restarting = True, False
+
+    go_live.tools = dataclasses.replace(go_live.tools, sleep=edge_comes_up)
+    keycloak.commands.clear()
+
+    assert go_live.run() == 0
+
+    assert not any("keycloak-config-cli" in command for command in keycloak.commands)
+
+
+@pytest.fixture
+def finished(go_live, keycloak, session):
+    assert go_live.run() == 0
+    keycloak.down()
+    keycloak.commands.clear()
+    session.printed.clear()
+    session.asked.clear()
+
+
+CHECK_PREFIX = "keycloak/go-live --check"
+
+
+def test_check_says_set_up_for_a_finished_installation_with_keycloak_stopped(
+    go_live, keycloak, session, finished
+):
+    """#55 rule 2: Keycloak need not run."""
+    assert go_live.check() == 0
+
+    assert session.printed == [f"{CHECK_PREFIX}: set up"]
+
+
+def test_check_changes_nothing_asks_nothing_and_prints_no_secret(
+    go_live, keycloak, session, secrets_dir, finished
+):
+    """#55 rule 1: only read-only docker questions, no prompt, no file change."""
+    files_before = {path.name: path.read_bytes() for path in secrets_dir.iterdir()}
+
+    go_live.check()
+
+    assert not keycloak.changed_something()
+    assert not any("exec" in command for command in keycloak.commands)
+    assert session.asked == []
+    assert {path.name: path.read_bytes() for path in secrets_dir.iterdir()} == files_before
+    assert [value for value in secret_values(secrets_dir) if value in session.output] == []
+
+
+def test_check_on_a_fresh_home_says_not_set_up_and_creates_nothing(
+    go_live, keycloak, session, secrets_dir
+):
+    """#55 rule 2, counterexample 1."""
+    assert go_live.check() == 1
+
+    assert session.printed == [
+        f"{CHECK_PREFIX}: not set up: no secrets in ~/.secrets/keycloak; run keycloak/go-live"
+    ]
+    assert not secrets_dir.exists()
+    assert keycloak.commands == []
+
+
+def test_check_with_the_bootstrap_file_present_names_steps_6_and_7(
+    go_live, keycloak, session, secrets_dir
+):
+    """#55 rule 2, counterexample 2: go-live stopped before step 7."""
+    keycloak.database_volume = True
+    write_secrets(secrets_dir, *SECRET_FILES)
+
+    assert go_live.check() == 1
+
+    assert "steps 6-7" in session.printed[-1]
+    assert session.printed[-1].startswith(f"{CHECK_PREFIX}: not set up: ")
+
+
+@pytest.mark.parametrize(
+    ("present", "line"),
+    [
+        (
+            ("db-password",),
+            "some secret files exist, missing: config-cli-secret, bootstrap-admin-password",
+        ),
+        (
+            ("db-password", "config-cli-secret"),
+            "some secret files exist, missing: bootstrap-admin-password",
+        ),
+    ],
+)
+def test_check_on_a_partial_set_repeats_go_lives_own_line(
+    go_live, keycloak, session, secrets_dir, present, line
+):
+    """#55 rule 2: a partial set that go-live refuses is not set up."""
+    write_secrets(secrets_dir, *present)
+
+    assert go_live.check() == 1
+
+    assert session.printed == [f"{CHECK_PREFIX}: not set up: {line}"]
+
+
+def test_check_cannot_tell_when_docker_does_not_answer(go_live, keycloak, session, secrets_dir):
+    """#55 rule 2: exit 2, and the line carries docker's error."""
+    keycloak.docker_daemon_down = True
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+
+    assert go_live.check() == 2
+
+    assert session.printed == [
+        f"{CHECK_PREFIX}: cannot tell: `docker volume inspect` exited 1: "
+        "Cannot connect to the Docker daemon"
+    ]
+
+
+def test_check_cannot_tell_when_compose_answers_without_the_database_volume(
+    go_live, keycloak, session, secrets_dir
+):
+    """#55 rule 2: an unexpected answer is exit 2 and one line, never a traceback."""
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+    keycloak.compose_without_database_volume = True
+
+    assert go_live.check() == 2
+
+    assert session.printed == [f"{CHECK_PREFIX}: cannot tell: unexpected answer (KeyError)"]
+
+
+def test_check_through_the_command_line_exits_with_the_answer(tmp_path):
+    """#55 rule 1: the real entry point on a fresh HOME exits 1 and writes nothing."""
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"HOME": str(tmp_path), "PATH": "/nonexistent"},
+    )
+
+    assert result.returncode == 1
+    assert result.stdout.startswith(f"{CHECK_PREFIX}: not set up: no secrets")
+    assert list(tmp_path.iterdir()) == []

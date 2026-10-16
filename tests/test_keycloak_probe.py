@@ -175,7 +175,7 @@ def run_main(
                 os.kill(os.getpid(), run_signal)
 
     class FakeStack:
-        def __init__(self, _scratch: Path, _admin_url: str) -> None: ...
+        def __init__(self, _scratch: Path) -> None: ...
 
         def down(self) -> bool:
             if down_signal:
@@ -186,8 +186,7 @@ def run_main(
     monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(scratch)])
     monkeypatch.setattr(probe, "ports_free", lambda *_: [])
     monkeypatch.setattr(probe, "Probe", FakeProbe)
-    monkeypatch.setattr(probe, "Stack", FakeStack)
-    return probe.main()
+    return probe.main(FakeStack)
 
 
 @pytest.mark.parametrize("signal_name", [signal.SIGTERM, signal.SIGINT])
@@ -347,13 +346,26 @@ def run_hold(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["probe.py", "hold", "--scratch", str(scratch), "--admin-url", admin_url],
+        ["probe.py", "hold", "--scratch", str(scratch)],
     )
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
     monkeypatch.setattr(probe, "ports_free", lambda *_: [])
     if while_ready_is_written:
         monkeypatch.setattr(sys, "stdout", SignallingStdout(sys.stdout, while_ready_is_written))
-    return probe.main()
+    return probe.main(lambda stack_scratch: probe.Stack(stack_scratch, admin_url))
+
+
+def test_the_admin_url_is_not_part_of_the_command_line(
+    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#34 finding 2: a caller passing the test-only flag gets a usage error."""
+    argv = ["probe.py", "hold", "--scratch", str(tmp_path / "s"), "--admin-url", "http://x:1"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as refused:
+        probe.main()
+
+    assert refused.value.code == 2
 
 
 def ready_lines(output: str) -> list[str]:
