@@ -1,7 +1,0 @@
-claim_id = "bd40d8aa719d4774be953ea13d3323b6"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "5a187ab32cf40345c17608edc97e38003345f396"
-branch = "claude/issue-55-go-live-check"
-scope = ["README.md", "keycloak/go-live", "tests/test_keycloak_go_live.py"]
-opened_commit = "50a3bfedcfbd4efb52142050d7da384529640b32"
