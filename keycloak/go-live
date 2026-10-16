@@ -160,11 +160,14 @@ class GoLive:
                 secret_file.write(secrets.token_hex(32))
 
     def secret_values(self) -> list[str]:
-        return [
-            path.read_text().strip()
-            for name in SECRET_FILES
-            if (path := self.secrets_dir / name).exists()
-        ]
+        """What can be read: a file that cannot be read cannot leak into a failure line either."""
+        values = []
+        for name in SECRET_FILES:
+            try:
+                values.append((self.secrets_dir / name).read_text().strip())
+            except OSError:
+                continue
+        return values
 
     def scrubbed(self, text: str) -> str:
         for value in self.secret_values():
@@ -451,7 +454,7 @@ class GoLive:
         except StepFailure as failure:
             self.tools.say(f"go-live FAILED at {current}: {self.scrubbed(str(failure))}")
             return 1
-        except (OSError, ValueError, KeyError) as unexpected:
+        except Exception as unexpected:  # the one boundary: a failure is a line, never a traceback
             self.tools.say(
                 f"go-live FAILED at {current}: unexpected answer ({type(unexpected).__name__})"
             )

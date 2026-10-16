@@ -1,5 +1,6 @@
 """keycloak/go-live against a scripted compose project and Keycloak: no containers, no sleeping."""
 
+import dataclasses
 import importlib.machinery
 import importlib.util
 import json
@@ -325,6 +326,29 @@ def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
     )
     assert keycloak.deleted == []
     assert (secrets_dir / "bootstrap-admin-password").exists()
+
+
+def test_a_failure_with_an_unreadable_secret_file_is_still_one_line(go_live, secrets_dir, session):
+    """defect:#19 - reporting a failure must not itself raise (rule 2: never a traceback)."""
+    secrets_dir.mkdir(parents=True, mode=0o700)
+    (secrets_dir / "db-password").mkdir()  # exists, cannot be read as a file
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1].startswith("go-live FAILED at secrets: some secret files exist")
+
+
+def test_an_unexpected_answer_ends_in_one_line_not_a_traceback(go_live, session):
+    """defect:#19 - any exception at the boundary is one line naming the step and its type."""
+
+    def answer_of_the_wrong_shape(*_args, **_kwargs):
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    go_live.tools = dataclasses.replace(go_live.tools, fetch=answer_of_the_wrong_shape)
+
+    assert go_live.run() == 1
+
+    assert "unexpected answer (AttributeError)" in session.printed[-1]
 
 
 def test_the_run_ends_at_the_failed_step_with_one_line_and_exit_one(go_live, keycloak, session):
