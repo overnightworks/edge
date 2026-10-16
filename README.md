@@ -13,6 +13,8 @@ for every name except `auth`: the login service must be public, so it gets its
 own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 (see [Keycloak](#keycloak-auth)). Until A8 the edge is a local service only.
 
+The platform picture (layers, services, secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs/architecture.md).
+
 | File | Owns |
 |---|---|
 | `compose.yaml` | the services, image pins (version and digest), the socket directory and Keycloak database volumes, the Keycloak secrets |
@@ -24,6 +26,7 @@ own Access app whose one policy is Bypass, and its tunnel line has no JWT check
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
+| [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
 ## Threat model
 
