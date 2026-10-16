@@ -131,6 +131,74 @@ jobs:
               sys.exit(f"an ingress line targets the admin entrypoint 8090: {admin_targets}")
           PY
 
+      # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same pinned tofu.
+      - name: Install pinned tofu
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --proto '=https' --proto-redir '=https' -sSfLO https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_amd64.zip
+          echo "8ccbc6f8ee21d2827715f3c6e08a9b3e0209b1e62057c05067ef117e047c1a80  tofu_1.13.1_linux_amd64.zip" | sha256sum --check
+          unzip -q tofu_1.13.1_linux_amd64.zip tofu
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: OpenTofu root is formatted, pinned by the lock file and valid
+        working-directory: external
+        run: |
+          tofu fmt -check
+          tofu init -backend=false -lockfile=readonly
+          tofu validate
+
+      # With enforced encryption neither the state nor the plan file may carry a sentinel in plaintext,
+      # and without the passphrase neither can be read or produced.
+      - name: OpenTofu state and plan files are encrypted
+        run: |
+          set -euo pipefail
+          must_fail() { if "$@"; then echo "unexpectedly succeeded: $*" >&2; exit 1; fi; }
+          work=$(mktemp -d)
+          cp external/main.tf external/.terraform.lock.hcl fleet.yaml "$work/"
+          mkdir "$work/external" && mv "$work/main.tf" "$work/.terraform.lock.hcl" "$work/external/"
+          cd "$work/external"
+          cat > sentinel.tf <<'TF'
+          resource "terraform_data" "sentinel" {
+            input = "SENTINEL-plaintext-marker"
+          }
+          TF
+          export TF_VAR_state_passphrase=throwaway-test-passphrase
+          tofu init -input=false -lockfile=readonly -backend-config=path="$work/test.tfstate"
+          tofu apply -input=false -auto-approve
+          grep -q encrypted_data "$work/test.tfstate"
+          must_fail grep -q SENTINEL-plaintext-marker "$work/test.tfstate"
+          tofu plan -input=false -out=p.tfplan
+          must_fail grep -aq SENTINEL-plaintext-marker p.tfplan
+          must_fail unzip -tq p.tfplan
+          unset TF_VAR_state_passphrase
+          must_fail tofu show p.tfplan
+          must_fail tofu plan -input=false
+          echo ENCRYPTION-PROVEN
+
+      # The wrapper passes external/tofurc as TF_CLI_CONFIG_FILE; a planted ~/.tofurc must not swap a provider.
+      - name: A home-directory dev_overrides cannot swap a provider
+        run: |
+          set -euo pipefail
+          fake_home=$(mktemp -d)
+          mkdir "$fake_home/override"
+          cat > "$fake_home/.tofurc" <<RC
+          provider_installation {
+            dev_overrides {
+              "integrations/github" = "$fake_home/override"
+            }
+            direct {}
+          }
+          RC
+          cd external
+          rm -rf .terraform
+          HOME="$fake_home" tofu init -no-color -backend=false -lockfile=readonly > "$fake_home/planted.txt" 2>&1 || true
+          grep -qi "development overrides" "$fake_home/planted.txt"
+          rm -rf .terraform
+          HOME="$fake_home" TF_CLI_CONFIG_FILE="$PWD/tofurc" tofu init -no-color -backend=false -lockfile=readonly > "$fake_home/guarded.txt" 2>&1
+          if grep -qi "development overrides" "$fake_home/guarded.txt"; then echo "override leaked" >&2; exit 1; fi
+          grep -q "successfully initialized" "$fake_home/guarded.txt"
+          echo OVERRIDE-BLOCKED
+
       - name: Install pinned gitleaks
         run: |
           cd "$RUNNER_TEMP"
