@@ -78,9 +78,12 @@ def remove_leftover_plans(
         try:
             descriptor = os.open(lock, os.O_RDWR)
         except FileNotFoundError:
-            # A live run takes its lock before its plan exists and deletes the plan first.
-            _remove_leftover(plan_file)
-            continue
+            # A live run takes its lock before its plan exists and deletes the plan first, so
+            # a bare plan is dead; claim the stem before deleting it, as a live run would block.
+            try:
+                descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            except FileExistsError:
+                continue  # a run created the lock since the glob
         try:
             try:
                 take_lock(descriptor)
