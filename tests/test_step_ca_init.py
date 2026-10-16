@@ -1,6 +1,7 @@
 """step-ca/init and step-ca/ca.json against a scripted Docker host: no containers.
 
-The key material is generated at run time; nothing PEM-shaped is committed (gitleaks runs in CI).
+The key material is generated at run time; nothing PEM-shaped is committed (the quality gate scans
+the history for secrets).
 """
 
 import hashlib

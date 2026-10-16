@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Probe of the internal CA (#38 proofs 1-5): a throwaway compose project and a throwaway HOME.
+"""Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9): a throwaway
+compose project and a throwaway HOME.
 
-It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca` service from
-compose.yaml and ca.json under its own compose project name, checks the five proofs and always
-removes its containers and volume. It never touches the live stack: the project name and HOME are
-set in the environment of every command.
+It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
+and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
+the proofs and always removes its containers, networks and volumes. It never touches the live
+stack: the project name and HOME are set in the environment of every command.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 420 \\
+    flock /tmp/probe-stack.lock timeout --kill-after=30 1500 \\
         python3 probe/step-ca/probe.py --scratch DIR
 
-The CA is only reachable on its internal compose network, so every call to it runs from a
-throwaway container on that network. Needs an empty or new --scratch directory.
+The CA and the gateway are only reachable on their internal compose networks, so every call to
+them runs from a throwaway container on the network a client would sit on. Needs an empty or new
+--scratch directory. Proof 9 waits for a renewal: the run takes about 15 minutes.
 """
 
 from __future__ import annotations
@@ -23,15 +25,18 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
+from functools import cached_property
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "edge-stepca-probe"
 CA_URL = "https://step-ca:9000"
 NETWORK = f"{PROJECT}_mcp-ca"
-CERTIFICATE_UNVERIFIED = 60  # curl exit code
+CERTIFICATE_UNVERIFIED = 60  # curl exit codes
+COULD_NOT_RESOLVE = 6
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
@@ -52,6 +57,23 @@ ALLOWED_DIRECTORY = "db/"
 OUTSIDE_NAME = "outside.example.com"
 INSIDE_NAME = "probe.mcp.internal"
 REFUSAL = "will not issue certificates for the identifier"  # ACME rejectedIdentifier
+ROOT_IN_CLIENT = "/root.crt"
+ORIGIN = "hello.mcp.internal"
+ORIGIN_URL = f"https://{ORIGIN}/"
+ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"
+ORIGIN_ANSWER = f"Host: {ORIGIN}"  # the backend (whoami) echoes the request's Host header
+BACKEND_URL = "http://hello-mcp/"
+CA_HEALTH_URL = f"{CA_URL}/health"
+TRAEFIK_USER = "65534:65534"
+ACME_STORAGE = "/acme/acme.json"
+LISTENER_PORTS_OF_THE_PROBE = (9000, 443)  # the CA and the gateway: container ports only
+CA_DEFAULT_LIFETIME_SECONDS = 24 * 3600
+CA_BACKDATE_SECONDS = 60  # step-ca starts a certificate one minute before it was issued
+SHORT_LIFETIME_MINUTES = 20  # probe-only: renewal inside the poll
+RENEWAL_POLL_SECONDS = 12 * 60
+RENEWAL_POLL_INTERVAL = 15
+FOREIGN_UID = 12345
+OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 
 
 class ProbeFailed(Exception):
@@ -76,6 +98,10 @@ class Probe:
             "DOCKER_GID": "0",
         }
         self.environment.pop("DOCKER_STEPCA_INIT_PASSWORD", None)
+        self.scratch = scratch
+        self.compose_files: list[str] = []
+        self.listeners_before: set[str] = set()
+        self.edge_check_before: list[dict] = []
 
     def run(
         self, command: list[str], *, stdin: bytes | None = None, check: bool = True,
@@ -91,15 +117,25 @@ class Probe:
         return result
 
     def compose(self, *args: str, check: bool = True, own_session: bool = False):
-        return self.run(["docker", "compose", *args], check=check, own_session=own_session)
+        files = [flag for file in self.compose_files for flag in ("--file", file)]
+        return self.run(
+            ["docker", "compose", *files, "--profile", "probe", *args],
+            check=check, own_session=own_session,
+        )  # fmt: skip
 
-    def init(self) -> str:
-        result = self.run([str(REPO / "step-ca" / "init")])
+    def init(self, *, check: bool = True) -> str:
+        result = self.run([str(REPO / "step-ca" / "init")], check=check)
         return result.stdout.decode() + result.stderr.decode()
 
+    @cached_property
+    def composed(self) -> dict:
+        """What compose resolves once per run: the images and the volumes' real names."""
+        return json.loads(self.compose("config", "--format", "json").stdout)
+
     def image_and_volume(self) -> tuple[str, str]:
-        config = json.loads(self.compose("config", "--format", "json").stdout)
-        return config["services"]["step-ca"]["image"], config["volumes"]["step-ca"]["name"]
+        return self.composed["services"]["step-ca"]["image"], self.composed["volumes"]["step-ca"][
+            "name"
+        ]
 
     def in_volume(self, *tool: str, writable: bool = False) -> bytes:
         image, volume = self.image_and_volume()
@@ -123,17 +159,24 @@ class Probe:
 
     # --- the CA over TLS ----------------------------------------------------------------------
 
+    def client(self, network: str, *curl_arguments: str, root: Path | None = None):
+        """curl as a throwaway client on one of the project's networks; `root` is the only trust."""
+        image, _ = self.image_and_volume()
+        trust = ["--volume", f"{root}:{ROOT_IN_CLIENT}:ro"] if root else []
+        cacert = ["--cacert", ROOT_IN_CLIENT] if root else []
+        return self.run(
+            ["docker", "run", "--rm", "--network", f"{PROJECT}_{network}", "--read-only",
+             "--user", CONTAINER_USER, *trust, "--entrypoint", "curl", image,
+             "--silent", "--max-time", "5", *cacert, *curl_arguments],
+            check=False,
+        )  # fmt: skip
+
     def directory_status(self, cafile: Path | None) -> int:
         """The directory's HTTP status as a throwaway container on the CA's network sees it, or -1
         when the certificate does not verify; raises OSError while the CA is not answering."""
-        image, _ = self.image_and_volume()
-        trust = ["--volume", f"{cafile}:/root.crt:ro"] if cafile else []
-        curl = ["--cacert", "/root.crt"] if cafile else []
-        result = self.run(
-            ["docker", "run", "--rm", "--network", NETWORK, "--read-only", "--user", CONTAINER_USER,
-             *trust, "--entrypoint", "curl", image, "--silent", "--max-time", "5",
-             "--output", "/dev/null", "--write-out", "%{http_code}", *curl, DIRECTORY_URL],
-            check=False,
+        result = self.client(
+            "mcp-ca", "--output", "/dev/null", "--write-out", "%{http_code}", DIRECTORY_URL,
+            root=cafile,
         )  # fmt: skip
         if result.returncode == CERTIFICATE_UNVERIFIED:
             return -1
@@ -170,18 +213,26 @@ class Probe:
             f"the CA refused {INSIDE_NAME}: {inside_text.strip()[-160:]}",
         )
 
-    def wait_until_answering(self) -> None:
-        root = self.secrets_dir / ROOT_CERTIFICATE
-        deadline = time.monotonic() + READY_SECONDS
+    def poll_until(self, what: str, seconds: float, attempt: Callable[[], bool]) -> None:
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
-                if self.directory_status(root) == 200:
+                if attempt():
                     return
             except OSError:
                 pass
             time.sleep(1)
-        logs = self.compose("logs", "--no-color", "--tail", "5", "step-ca", check=False)
-        raise ProbeFailed(f"the CA never answered: {logs.stdout.decode()[-300:]}")
+        raise ProbeFailed(f"{what} did not happen within {seconds:.0f} s")
+
+    def wait_until_answering(self) -> None:
+        root = self.secrets_dir / ROOT_CERTIFICATE
+        try:
+            self.poll_until(
+                "the CA answering", READY_SECONDS, lambda: self.directory_status(root) == 200
+            )
+        except ProbeFailed as failure:
+            logs = self.compose("logs", "--no-color", "--tail", "5", "step-ca", check=False)
+            raise ProbeFailed(f"{failure}: {logs.stdout.decode()[-300:]}") from failure
 
     def certificate_fingerprint(self, certificate: bytes) -> str:
         result = self.run(
@@ -258,6 +309,29 @@ class Probe:
         expect(before[1] <= after[1], f"db files lost: {sorted(before[1] - after[1])}")
         print(f"proof 4 held after restart: {after[0]}; {len(after[1])} files, none lost")
 
+    def chown_root_key(self, owner_id: int) -> None:
+        image, _ = self.image_and_volume()
+        self.run(
+            ["docker", "run", "--rm", "--network", "none", "--user", "0", "--cap-drop", "ALL",
+             "--cap-add", "CHOWN", "--volume", f"{self.secrets_dir}:/secrets", "--entrypoint",
+             "chown", image, f"{owner_id}:{owner_id}", "/secrets/root_ca_key"]
+        )  # fmt: skip
+
+    def expect_foreign_owned_root_key_refused(self, root_key: bytes) -> None:
+        """A root key the image's user cannot read ends init in one line, with the key untouched."""
+        self.chown_root_key(FOREIGN_UID)
+        try:
+            output = self.init(check=False)
+            owner = (self.secrets_dir / "root_ca_key").stat().st_uid
+        finally:
+            self.chown_root_key(os.getuid())
+        expect(owner == FOREIGN_UID, "the foreign owner of the root key was changed")
+        expect("FAILED" in output and "permission denied" in output, f"init said: {output[-160:]}")
+        expect("PRIVATE KEY" not in output, "the refusal shows a private key")
+        expect(len(output.strip().splitlines()) <= 2, f"more than one line: {output[-160:]}")
+        expect((self.secrets_dir / "root_ca_key").read_bytes() == root_key, "root key changed")
+        expect(INTERMEDIATE_CERTIFICATE not in self.volume_files(), "an intermediate was made")
+
     def proof_5_partial(self) -> None:
         self.compose("stop", "step-ca")
         root_key = (self.secrets_dir / "root_ca_key").read_bytes()
@@ -266,6 +340,7 @@ class Probe:
             writable=True,
         )  # fmt: skip
         expect(INTERMEDIATE_CERTIFICATE not in self.volume_files(), "the intermediate stayed")
+        self.expect_foreign_owned_root_key_refused(root_key)
         output = self.init()
         expect("intermediate" in output, f"init did not report the intermediate: {output[-120:]}")
         expect((self.secrets_dir / "root_ca_key").read_bytes() == root_key, "root key changed")
@@ -273,6 +348,160 @@ class Probe:
         self.compose("start", "step-ca")
         self.wait_until_answering()
         print("proof 5 held: init completed the intermediate; root key byte-for-byte unchanged")
+
+    # --- traefik-mcp ---------------------------------------------------------------------------
+
+    def host_listeners(self) -> set[str]:
+        lines = self.run(["ss", "-Hltn"]).stdout.decode().splitlines()
+        return {line.split()[3] for line in lines}
+
+    def edge_check_findings(self) -> list[dict]:
+        """What edge-check reports about the whole host; exit 1 only means it found something."""
+        result = self.run(
+            [sys.executable, "-m", "edge_check.cli", "--json"], check=False
+        )  # fmt: skip
+        expect(result.returncode in (0, 1), f"edge-check exited {result.returncode}")
+        return json.loads(result.stdout or b"[]")
+
+    def intermediate_certificate(self) -> dict:
+        output = self.in_volume(
+            "step", "certificate", "inspect", "--format", "json", INTERMEDIATE_IN_VOLUME
+        )  # fmt: skip
+        return json.loads(output)
+
+    def served_certificate(self) -> dict:
+        """What a client on `mcp` is served for the origin, verified against the probe root."""
+        image, _ = self.image_and_volume()
+        root_mount = f"{self.secrets_dir / ROOT_CERTIFICATE}:{ROOT_IN_CLIENT}:ro"
+        result = self.run(
+            ["docker", "run", "--rm", "--network", f"{PROJECT}_mcp", "--read-only", "--user",
+             CONTAINER_USER, "--volume", root_mount, "--entrypoint", "step", image,
+             "certificate", "inspect", "--format", "json", "--roots", ROOT_IN_CLIENT, ORIGIN_URL],
+            check=False,
+        )  # fmt: skip
+        if result.returncode != 0:
+            raise ConnectionError(f"step exited {result.returncode}")
+        return json.loads(result.stdout)
+
+    def wait_until_served(self) -> dict:
+        root = self.secrets_dir / ROOT_CERTIFICATE
+
+        def answers() -> bool:
+            result = self.client("mcp", ORIGIN_URL, root=root)
+            return ORIGIN_ANSWER in result.stdout.decode(errors="replace")
+
+        self.poll_until(f"{ORIGIN_URL} answering with the backend", READY_SECONDS, answers)
+        return self.served_certificate()
+
+    def expect_certificate_length(self, certificate: dict, lifetime_seconds: int) -> None:
+        length = certificate["validity"]["length"]
+        expected = lifetime_seconds + CA_BACKDATE_SECONDS
+        expect(length == expected, f"the certificate is valid for {length} s, not {expected} s")
+
+    def proof_6_gateway(self) -> None:
+        self.listeners_before = self.host_listeners()
+        self.edge_check_before = self.edge_check_findings()
+        self.compose("up", "--detach", "traefik-mcp", "hello-mcp")
+        root = self.secrets_dir / ROOT_CERTIFICATE
+        served = self.wait_until_served()
+        intermediate = self.intermediate_certificate()
+        expect(served["issuer_dn"] == intermediate["subject_dn"], "not issued by the intermediate")
+        self.expect_certificate_length(served, CA_DEFAULT_LIFETIME_SECONDS)
+        unverified = self.client("mcp", ORIGIN_URL)
+        expect(
+            unverified.returncode == CERTIFICATE_UNVERIFIED,
+            f"without the root: {unverified.returncode}",
+        )
+        plain = self.client("mcp", "--include", ORIGIN_PLAIN_URL, root=root)
+        expect(
+            ORIGIN_ANSWER not in plain.stdout.decode(errors="replace"),
+            "plain HTTP reached the backend",
+        )
+        length, issuer = served["validity"]["length"], intermediate["subject_dn"]
+        print(
+            f"proof 6 held: {ORIGIN_URL} -> backend answer with the probe root; certificate of "
+            f"{length} s from `{issuer}`; without the root curl exit {unverified.returncode}; "
+            f"plain http on 443: exit {plain.returncode}, no backend answer"
+        )
+
+    def proof_7_network_split(self) -> None:
+        reachable = {
+            ("mcp-backends", BACKEND_URL): True,
+            ("mcp-backends", CA_HEALTH_URL): False,
+            ("mcp-backends", ORIGIN_URL): False,
+            ("mcp", BACKEND_URL): False,
+            ("mcp", CA_HEALTH_URL): False,
+            ("mcp-ca", BACKEND_URL): False,
+        }
+        for (network, url), expected in reachable.items():
+            result = self.client(network, "--insecure", "--output", "/dev/null", url)
+            outcome = "answered" if result.returncode == 0 else f"curl exit {result.returncode}"
+            wanted = 0 if expected else COULD_NOT_RESOLVE
+            expect(result.returncode == wanted, f"{network} -> {url}: {outcome}")
+        print(f"proof 7 held: {len(reachable)} network pairs as ruled; only the control answers")
+
+    def proof_8_no_host_listener(self) -> None:
+        new_listeners = self.host_listeners() - self.listeners_before
+        expect(not new_listeners, f"new host listeners: {sorted(new_listeners)}")
+        ports = {listener.rsplit(":", 1)[1] for listener in self.host_listeners()}
+        taken = ports & {str(port) for port in LISTENER_PORTS_OF_THE_PROBE}
+        expect(not taken, f"the host listens on {sorted(taken)}")
+        new_findings = [f for f in self.edge_check_findings() if f not in self.edge_check_before]
+        expect(not new_findings, f"edge-check reports something new: {new_findings}")
+        print(
+            f"proof 8 held: ss -ltn unchanged ({len(self.listeners_before)} listeners), none on "
+            f"{LISTENER_PORTS_OF_THE_PROBE}; edge-check reports nothing new"
+        )
+
+    def remove_stored_certificates(self) -> None:
+        traefik = self.composed["services"]["traefik-mcp"]["image"]
+        volume = self.composed["volumes"]["traefik-mcp-acme"]["name"]
+        self.run(
+            ["docker", "run", "--rm", "--network", "none", "--read-only", "--user", TRAEFIK_USER,
+             "--volume", f"{volume}:{Path(ACME_STORAGE).parent}", "--entrypoint", "rm", traefik,
+             "-f", ACME_STORAGE]
+        )  # fmt: skip
+
+    def use_short_lived_certificates(self) -> None:
+        """Probe-only ca.json: the repository's, plus a 20 minute default certificate lifetime."""
+        ca = json.loads((REPO / "step-ca" / "ca.json").read_text())
+        ca["authority"]["provisioners"][0]["claims"] = {
+            "defaultTLSCertDuration": f"{SHORT_LIFETIME_MINUTES}m"
+        }
+        short_ca = self.scratch / "ca-short-lived.json"
+        short_ca.write_text(json.dumps(ca))
+        self.environment["PROBE_CA_JSON"] = str(short_ca)
+        self.compose_files = ["compose.yaml", str(OVERRIDE)]
+
+    def traefik_started_at(self) -> str:
+        container = self.compose("ps", "--quiet", "traefik-mcp").stdout.decode().strip()
+        started = self.run(["docker", "inspect", "--format", "{{.State.StartedAt}}", container])
+        return started.stdout.decode().strip()
+
+    def proof_9_renewal(self) -> None:
+        self.compose("stop", "traefik-mcp")
+        self.remove_stored_certificates()
+        self.use_short_lived_certificates()
+        self.compose("up", "--detach", "step-ca")
+        self.wait_until_answering()
+        self.compose("up", "--detach", "traefik-mcp")
+        first = self.wait_until_served()
+        self.expect_certificate_length(first, SHORT_LIFETIME_MINUTES * 60)
+        started_at = self.traefik_started_at()
+        waited = time.monotonic()
+        renewed = first
+        while renewed["serial_number"] == first["serial_number"]:
+            expect(time.monotonic() - waited < RENEWAL_POLL_SECONDS, "no renewal within 12 minutes")
+            time.sleep(RENEWAL_POLL_INTERVAL)
+            renewed = self.served_certificate()
+        expiry = datetime.fromisoformat(first["validity"]["end"])
+        expect(datetime.now(UTC) < expiry, "the old certificate had expired before the renewal")
+        expect(self.traefik_started_at() == started_at, "traefik-mcp restarted")
+        old, new = first["serial_number"][-8:], renewed["serial_number"][-8:]
+        print(
+            f"proof 9 held: serial ...{old} -> ...{new} after {time.monotonic() - waited:.0f} s, "
+            f"the old one valid until {first['validity']['end']}, traefik-mcp not restarted"
+        )
 
     def teardown(self) -> None:
         # Own session: a signal to the probe's process group must not reach these.
@@ -327,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-5 hold")
+        print("PROBE PASSED: proofs 1-9 hold")
     return exit_code
 
 
@@ -342,6 +571,10 @@ def prove(probe: Probe) -> int:
         probe.proof_3_volume()
         probe.proof_4_restart()
         probe.proof_5_partial()
+        probe.proof_6_gateway()
+        probe.proof_7_network_split()
+        probe.proof_8_no_host_listener()
+        probe.proof_9_renewal()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
