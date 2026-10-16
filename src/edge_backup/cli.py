@@ -12,7 +12,7 @@ from edge_backup import host, restic, runner
 from edge_backup.apps import App, AppsError, parse_apps
 from edge_backup.runner import Run, StepFailed
 from edge_backup.settings import Settings
-from edge_backup.status import ExitCategory, StatusFileError, first_attempt, read_status
+from edge_backup.status import ExitCategory, first_attempt
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -54,14 +54,23 @@ def _parser() -> argparse.ArgumentParser:
     for name, command, help_text in (
         ("init", _init, "create the restic repository once"),
         ("backup", _backup, "dump, scan and back up every app, then forget, prune and check"),
-        ("restore-test", _restore_test, "restore the latest snapshots and prove they are good"),
+        (
+            "restore-test",
+            _restore_test,
+            "restore the last successful backup's snapshot and prove it is good",
+        ),
         ("snapshots", _snapshots, "list the repository's snapshots"),
         ("unlock", _unlock, "remove stale restic locks"),
     ):
         commands.add_parser(name, help=help_text).set_defaults(command=command)
-    restore = commands.add_parser("restore", help="restore one app's latest snapshot")
+    restore = commands.add_parser("restore", help="restore one app's last successful backup")
     restore.add_argument("app", help="the app's name in apps.toml")
     restore.add_argument("--target", type=Path, required=True, help="a directory to create")
+    restore.add_argument(
+        "--snapshot",
+        help="restore this snapshot of the app (ID from `snapshots`) instead of the last "
+        "successful backup's: the way when no status file survives",
+    )
     restore.set_defaults(command=_restore)
     return parser
 
@@ -99,7 +108,7 @@ def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
     apps = {app.name: app for app in _apps(arguments.apps)}
     if (app := apps.get(arguments.app)) is None:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
-    snapshot_id = _command(runner.restore, settings, app, arguments.target)
+    snapshot_id = _command(runner.restore, settings, app, arguments.target, arguments.snapshot)
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
 
@@ -112,10 +121,10 @@ def _recorded(
     """Every outcome lands in the status file; only a full run is `ok`."""
     started = host.now()
     try:
-        previous = read_status(settings.status_file)
-        unreadable_status = None
-    except StatusFileError as error:
-        previous, unreadable_status = None, StepFailed(ExitCategory.CONFIGURATION, str(error))
+        previous = runner.previous_status(settings)
+    except StepFailed:
+        runner.sweep_leftover_staging(settings.work_dir)
+        raise
     run = Run(
         settings.status_file,
         first_attempt(started) if previous is None else previous.attempt(started),
@@ -123,8 +132,6 @@ def _recorded(
     try:
         # Even a run that fails at once sweeps first, so a killed run's plaintext never waits.
         runner.sweep_leftover_staging(settings.work_dir)
-        if unreadable_status is not None:
-            raise unreadable_status
         step(settings, _apps(arguments.apps), run)
     except StepFailed as failure:
         run.failed(failure.category)
