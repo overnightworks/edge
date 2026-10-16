@@ -140,43 +140,66 @@ jobs:
           unzip -q tofu_1.13.1_linux_amd64.zip tofu
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
-      - name: OpenTofu root is formatted, pinned by the lock file and valid
+      - name: "#32 X1a rule 1: OpenTofu root is formatted, pinned by the lock file and valid"
         working-directory: external
         run: |
           tofu fmt -check
           tofu init -backend=false -lockfile=readonly
           tofu validate
 
-      # With enforced encryption neither the state nor the plan file may carry a sentinel in plaintext,
-      # and without the passphrase neither can be read or produced.
-      - name: OpenTofu state and plan files are encrypted
+      # With enforced encryption neither the state nor the plan file may carry a sentinel in plaintext.
+      # Matrix per home (clean, and with a planted ~/.tofurc under the wrapper's TF_CLI_CONFIG_FILE):
+      # with the passphrase both artifacts show the sentinel; without it neither can be read, planned or applied;
+      # a wrong passphrase fails too, so the failure comes from decryption and not from the missing variable.
+      - name: "#32 X1a rule 2: OpenTofu state and plan files are encrypted"
         run: |
           set -euo pipefail
           must_fail() { if "$@"; then echo "unexpectedly succeeded: $*" >&2; exit 1; fi; }
-          work=$(mktemp -d)
-          cp external/main.tf external/.terraform.lock.hcl fleet.yaml "$work/"
-          mkdir "$work/external" && mv "$work/main.tf" "$work/.terraform.lock.hcl" "$work/external/"
-          cd "$work/external"
-          cat > sentinel.tf <<'TF'
-          resource "terraform_data" "sentinel" {
-            input = "SENTINEL-plaintext-marker"
+          sentinel=SENTINEL-plaintext-marker
+          fake_home=$(mktemp -d)
+          mkdir "$fake_home/override"
+          cat > "$fake_home/.tofurc" <<RC
+          provider_installation {
+            dev_overrides {
+              "integrations/github" = "$fake_home/override"
+            }
+            direct {}
           }
-          TF
-          export TF_VAR_state_passphrase=throwaway-test-passphrase
-          tofu init -input=false -lockfile=readonly -backend-config=path="$work/test.tfstate"
-          tofu apply -input=false -auto-approve
-          grep -q encrypted_data "$work/test.tfstate"
-          must_fail grep -q SENTINEL-plaintext-marker "$work/test.tfstate"
-          tofu plan -input=false -out=p.tfplan
-          must_fail grep -aq SENTINEL-plaintext-marker p.tfplan
-          must_fail unzip -tq p.tfplan
-          unset TF_VAR_state_passphrase
-          must_fail tofu show p.tfplan
-          must_fail tofu plan -input=false
-          echo ENCRYPTION-PROVEN
+          RC
+          guard="$PWD/external/tofurc"
+          prove_encryption() {
+            local scenario=$1 work
+            work=$(mktemp -d)
+            cp external/main.tf external/.terraform.lock.hcl fleet.yaml "$work/"
+            mkdir "$work/external" && mv "$work/main.tf" "$work/.terraform.lock.hcl" "$work/external/"
+            (
+              cd "$work/external"
+              printf 'resource "terraform_data" "sentinel" {\n  input = "%s"\n}\n' "$sentinel" > sentinel.tf
+              export TF_VAR_state_passphrase=throwaway-test-passphrase
+              tofu init -input=false -lockfile=readonly -backend-config=path="$work/test.tfstate"
+              tofu apply -input=false -auto-approve
+              grep -q encrypted_data "$work/test.tfstate"
+              must_fail grep -q "$sentinel" "$work/test.tfstate"
+              tofu plan -input=false -out=p.tfplan
+              must_fail grep -aq "$sentinel" p.tfplan
+              must_fail unzip -tq p.tfplan
+              tofu show -json p.tfplan | grep -q "$sentinel"
+              tofu show -json | grep -q "$sentinel"
+              TF_VAR_state_passphrase=a-different-wrong-passphrase must_fail tofu show -json p.tfplan
+              TF_VAR_state_passphrase=a-different-wrong-passphrase must_fail tofu show -json
+              unset TF_VAR_state_passphrase
+              must_fail tofu show -json p.tfplan
+              must_fail tofu show -json
+              must_fail tofu plan -input=false
+            )
+            echo "ENCRYPTION-PROVEN ($scenario)"
+          }
+          unset TF_CLI_CONFIG_FILE
+          prove_encryption "home override absent"
+          HOME="$fake_home" TF_CLI_CONFIG_FILE="$guard" prove_encryption "home override present"
 
       # The wrapper passes external/tofurc as TF_CLI_CONFIG_FILE; a planted ~/.tofurc must not swap a provider.
-      - name: A home-directory dev_overrides cannot swap a provider
+      - name: "#32 X1a rule 3: A home-directory dev_overrides cannot swap a provider"
         run: |
           set -euo pipefail
           fake_home=$(mktemp -d)
