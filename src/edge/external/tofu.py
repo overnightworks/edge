@@ -2,7 +2,11 @@
 
 import re
 import shutil
+import signal
 import subprocess
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -36,6 +40,14 @@ class Completed:
     output: str
 
 
+class Interrupted(Exception):
+    """The operator interrupted the wrapper; tofu was asked to stop and has exited."""
+
+    def __init__(self, completed: Completed) -> None:
+        super().__init__()
+        self.completed = completed
+
+
 def pinned_version() -> str:
     """The version `external/main.tf` requires: the pin is stated once, there."""
     match = _PIN.search((EXTERNAL_ROOT / "main.tf").read_text())
@@ -60,19 +72,47 @@ def init_arguments(home: Path) -> list[str]:
     ]
 
 
+_FORWARDED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
 PLAN_ARGUMENTS = ["plan", "-refresh=true", "-detailed-exitcode"]
 
 
 def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Completed:
-    result = subprocess.run(
-        [str(tofu), *arguments],
-        cwd=EXTERNAL_ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return Completed(result.returncode, result.stdout + result.stderr)
+    """Run tofu to its end. An interrupt reaches tofu once, as SIGINT, and tofu is awaited.
+
+    tofu leads its own session so a terminal Ctrl-C does not also reach it: a second SIGINT
+    makes tofu abort instead of finishing its in-flight provider calls and writing its state.
+    """
+    # Between the fork and the try below an interrupt would find no tofu to forward to.
+    outside_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _FORWARDED_SIGNALS)
+    try:
+        with subprocess.Popen(
+            [str(tofu), *arguments],
+            cwd=EXTERNAL_ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask),
+        ) as process:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask)
+                stdout, stderr = process.communicate()
+            except KeyboardInterrupt:
+                process.send_signal(signal.SIGINT)
+                raise Interrupted(_finish_after_interrupt(process)) from None
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask)
+    return Completed(process.returncode, stdout + stderr)
+
+
+def _finish_after_interrupt(process: subprocess.Popen) -> Completed:
+    while True:
+        try:
+            stdout, stderr = process.communicate()
+        except KeyboardInterrupt:
+            continue  # tofu was told once; only its exit ends the wait
+        return Completed(process.returncode, stdout + stderr)
 
 
 def require_pinned_version(tofu: Path, environment: dict[str, str]) -> None:
@@ -82,3 +122,32 @@ def require_pinned_version(tofu: Path, environment: dict[str, str]) -> None:
     found = match.group(1) if match else None
     if reported.exit_code != 0 or found != pinned:
         raise TofuError(f"tofu is {found or 'of unknown version'}, the pin is {pinned}")
+
+
+@dataclass(frozen=True)
+class Session:
+    tofu: Path
+    environment: dict[str, str]
+
+
+@contextmanager
+def session(home: Path, token_values: dict[str, str]) -> Iterator[Session]:
+    """The pinned, initialised tofu with its allowlisted environment; TMPDIR lives as long."""
+    tofu_path = locate_tofu()
+    with secrets.private_temporary_directory(home) as temporary_directory:
+        environment = secrets.child_environment(
+            tofu=tofu_path,
+            home=home,
+            temporary_directory=temporary_directory,
+            tofurc=TOFURC,
+            secrets=token_values,
+        )
+        try:
+            require_pinned_version(tofu_path, environment)
+        except TofuError as error:
+            raise TofuError(secrets.redact(str(error), token_values)) from None
+        init = run(tofu_path, init_arguments(home), environment)
+        if init.exit_code != 0:
+            print(secrets.redact(init.output, token_values), file=sys.stderr)
+            raise TofuError("tofu init failed")
+        yield Session(tofu_path, environment)
