@@ -39,6 +39,7 @@ class Keycloak:
     """What compose and Keycloak have done so far, answering the way the real ones do."""
 
     running: bool = False
+    database_volume: bool = False  # created by the first start, kept by `down`
     with_overlay: bool = False
     master_moved: bool = False
     master_applied: bool = False
@@ -78,6 +79,8 @@ class Keycloak:
         if stdin is not None:
             self.stdin_seen = stdin
         self.commands.append(command)
+        if command[:3] == ["docker", "volume", "ls"]:
+            return self.done("edge_keycloak-db\n" if self.database_volume else "")
         if command[:2] == ["docker", "inspect"]:
             env = ["KC_DB=postgres"] + (
                 ["KC_BOOTSTRAP_ADMIN_USERNAME=temp-admin"] * self.with_overlay
@@ -103,7 +106,7 @@ class Keycloak:
         elif "keycloak" in command:
             if self.never_answers:
                 return self.done()
-            self.running = True
+            self.running = self.database_volume = True
             self.with_overlay = OVERLAY in command
         else:
             self.with_overlay = OVERLAY in command
@@ -429,10 +432,25 @@ def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_e
     assert len(session.asked) == 2
 
 
+def test_a_partial_set_missing_only_the_bootstrap_password_is_refused_on_a_fresh_install(
+    go_live, keycloak, secrets_dir, session
+):
+    """#19 rule 2: no database yet, so one line names the missing file and nothing starts."""
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at secrets: some secret files exist, missing: bootstrap-admin-password"
+    )
+    assert not keycloak.changed_something()
+
+
 def test_a_missing_bootstrap_password_on_a_master_that_has_not_moved_is_refused_by_name(
     go_live, keycloak, secrets_dir, session
 ):
     """#19 rule 3: step 4 cannot move master without the file and says so; nothing is applied."""
+    keycloak.database_volume = True
     write_secrets(secrets_dir, "db-password", "config-cli-secret")
 
     assert go_live.run() == 1

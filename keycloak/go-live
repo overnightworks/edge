@@ -32,6 +32,8 @@ BOOTSTRAP_SECRET = "bootstrap-admin-password"
 BOOTSTRAP_ADMIN = "temp-admin"
 BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
 BOOTSTRAP_ENV = "KC_BOOTSTRAP_ADMIN_USERNAME"
+COMPOSE_PROJECT = "edge"  # compose.yaml `name:`
+DATABASE_VOLUME = "keycloak-db"
 ADMIN_URL = "http://localhost:8090"
 EDGE_URL = "http://127.0.0.1:8081"
 MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
@@ -158,16 +160,18 @@ class GoLive:
         return [name for name in SECRET_FILES if not (self.secrets_dir / name).exists()]
 
     def secrets_are_complete(self) -> bool:
-        """All three, or none (to be created). Only the bootstrap file may be missing: step 7
-        deletes it, and `docker compose down` leaves the database behind. Whether temp-admin is
-        really gone is step 7's question, and a master that has not moved without the file is
-        step 4's refusal."""
+        """All three, or none (to be created). Only the bootstrap file may be missing, and only
+        once the database volume exists: step 7 deletes the file, and `docker compose down`
+        leaves the database behind. On a fresh install Keycloak would set up the empty database
+        without temp-admin, which nothing recovers from. Whether temp-admin is really gone is
+        step 7's question, and a master that has not moved without the file is step 4's
+        refusal."""
         missing = self.missing_secrets()
         if not missing:
             return True
         if len(missing) == len(SECRET_FILES):
             return False
-        if missing == [BOOTSTRAP_SECRET]:
+        if missing == [BOOTSTRAP_SECRET] and self.database_volume_exists():
             return True
         raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
 
@@ -200,6 +204,17 @@ class GoLive:
         return text
 
     # --- docker compose -------------------------------------------------------------------
+
+    def database_volume_exists(self) -> bool:
+        result = self.tools.run(
+            ["docker", "volume", "ls", "-q",
+             "--filter", f"label=com.docker.compose.project={COMPOSE_PROJECT}",
+             "--filter", f"label=com.docker.compose.volume={DATABASE_VOLUME}"],
+            SHORT_COMMAND_SECONDS,
+        )  # fmt: skip
+        if result.returncode != 0:
+            raise StepFailure(self.failure_line("volume ls", result))
+        return bool(result.stdout.strip())
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
@@ -330,7 +345,8 @@ class GoLive:
         client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
         reply = self.compose(
             "exec", "-T", "keycloak", "bash", "-c", CONTAINER_REALM_ATTRIBUTES, "bash",
-            PUBLIC_REALM, bootstrap=False, timeout=SHORT_COMMAND_SECONDS, stdin=client_secret + "\n",
+            PUBLIC_REALM, bootstrap=False, timeout=SHORT_COMMAND_SECONDS,
+            stdin=client_secret + "\n",
         )  # fmt: skip
         if reply.returncode != 0:
             return False
