@@ -40,7 +40,9 @@ def units(
     document: Any, profile_services: Mapping[str, tuple[str, ...]], repository: Path
 ) -> tuple[Unit, ...]:
     """The units of the repository's catalog, each checked against the compose profiles."""
-    entries = (document or {}).get("services") or {}
+    if not isinstance(document, dict):
+        raise CatalogError(f"{FLEET_FILE}: must be a map")
+    entries = document.get("services", {})
     if not isinstance(entries, dict):
         raise CatalogError("services: must be a map of entries")
     return tuple(
