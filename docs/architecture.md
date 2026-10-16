@@ -135,6 +135,22 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 - What `edge apply`, `edge start` and the watcher may do in each state: section 8 state table.
 - `home check` only reads. It runs every checker: tidy, secrets, edge-check, external drift.
 
+### The agent service (A1d) in the layers
+
+The agent service is an L4 service: the one place that holds the subscription logins and runs the provider CLIs for every app (overnightworks/agent-providers#18). It sits behind Keycloak (its client `agent-service`), reaches MCP servers only over https through `traefik-mcp` (edge#37 slice 2), and trusts the internal CA's root (section 4). Six rulings of 16.10.2026 shape it. The library contract stays owned by agent-providers; each line here only states the ruling and links its owner.
+
+1. **Closed environment.** Every CLI child is started by the library's one spawn owner with an explicit environment, an absolute binary and an explicit cwd, and inherits nothing from the host (overnightworks/agent-providers#10, PR #51).
+2. **One private root.** Everything a child may write lives below the host's `cli_working_directory_root` (0700): the private credential homes, `TMPDIR` and the Codex sandbox directories. The library owns the layout below the root, the host owns the root (overnightworks/agent-providers#10, overnightworks/agent-providers#49 slice 4).
+3. **Sandbox policy from that root.** The host derives its AppArmor profile and Bubblewrap mounts from the root and allows writes only below it, for songmaker today and for the agent-service container in A1d. A closed environment is not access control: hiding the operator's real `~/.claude` is a deployment matter, one volume per profile, because a child with the same UID can write to `~/.claude` by absolute path (overnightworks/agent-providers#10, overnightworks/agent-providers#18).
+4. **MCP origins: https only, with step-ca** (edge#37, option d).
+5. **No provider text in logs.** Provider text never reaches a service or library log or an exception chain; the host receives a sealed excerpt (`SecretStr`, at most 1,024 characters) and alone decides whether to write it down (overnightworks/agent-providers#9).
+6. **The library defines its contract, hosts adapt to it** (overnightworks/agent-providers#56).
+
+**What this means for the platform (A1d):**
+- The container mounts only its profile volumes and its `cli_working_directory_root` (section 4).
+- Its AppArmor/Bubblewrap policy permits writes only below that root.
+- Its egress covers the registered MCP origins, LiteLLM and the provider endpoints the Claude CLI calls directly.
+
 ---
 
 ## 3. The service catalog
@@ -250,6 +266,13 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 | `~/.secrets/step-ca/root_ca.crt` | 0644 | Traefik (uid 65534) and the agent service as the trusted root | planned (Block 9) |
 | `~/.secrets/step-ca/password` | 0644 in the 0700 directory | the CA, through `/run/secrets/step_ca_password`; it protects the root and the intermediate key alike | planned (Block 9) |
 | volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | planned (Block 9) |
+
+**The agent service's volumes (A1d).** Its container mounts two things and nothing else from the host; the rulings are in section 2.
+
+| Mount | Holds | Mode | In the backup |
+|---|---|---|---|
+| one volume per profile | that profile's subscription login | the container user only; no other profile and not the operator's `~/.claude` | planned (Block 9) |
+| `cli_working_directory_root` | the private credential homes (read-only 0400 copies of the login), `TMPDIR`, the Codex sandbox directories | 0700, owned by the host; the library owns the layout below it | no: rebuilt on start |
 
 **One split keeps it single.** The manifest owns *what a secret is and where an app receives it*. `fleet.yaml` owns *where GitHub installs it and which repos see it*: the org secret name and its reach (E3, X5). The value is set by `home secrets --rotate` (home-tools#10 line 19). Its reach is checked by `edge external check`. home-tools#10 line 19's own "repo list drift" view is therefore dropped; the reach check lives once, in X5.
 
