@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -56,13 +57,14 @@ def private_temporary_directory(home: Path) -> Iterator[Path]:
     directory = Path(tempfile.mkdtemp(dir=parent))
     try:
         yield directory
-    except BaseException as in_flight:
+    finally:
+        in_flight = sys.exception()
         try:
             shutil.rmtree(directory)
         except OSError as cleanup_failure:
+            if in_flight is None:
+                raise
             in_flight.add_note(f"also cannot remove {directory}: {cleanup_failure.strerror}")
-        raise
-    shutil.rmtree(directory)
 
 
 def child_environment(
