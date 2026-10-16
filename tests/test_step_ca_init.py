@@ -88,7 +88,10 @@ class DockerHost:
                 return self.done(returncode=1, stderr=self.failure_text)
             if command[-1] in self.volumes:
                 return self.done("[]")
-            return self.done(returncode=1, stderr=f"Error response from daemon: get {command[-1]}: no such volume")
+            return self.done(
+                returncode=1,
+                stderr=f"Error response from daemon: get {command[-1]}: no such volume",
+            )
         if command[1] == "volume":
             self.volumes[command[-1]] = dict(
                 argument.split("=", 1) for argument in command[2:-1] if "=" in argument
@@ -738,7 +741,7 @@ def test_check_with_secrets_but_no_volume_never_creates_the_volume(
 def test_check_without_the_acme_volume_is_not_set_up_and_never_creates_it(
     init, check, docker, session
 ):
-    """#52 rule 2/8: apply never creates a volume, so setup owns the ACME volume and --check asks."""
+    """#52 rule 2: apply never creates a volume, so setup owns the ACME volume and --check asks."""
     init.run()
     del docker.volumes[ACME_VOLUME]
     session.printed.clear()

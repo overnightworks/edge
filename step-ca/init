@@ -34,7 +34,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "step-ca"
-ACME_VOLUME_KEY = "traefik-mcp-acme"  # traefik-mcp mounts it; apply must not be the one to create it
+ACME_VOLUME_KEY = (
+    "traefik-mcp-acme"  # traefik-mcp mounts it; apply must not be the one to create it
+)
 PROFILE = "step-ca"  # compose.yaml puts step-ca and traefik-mcp behind it
 ROOT_NAME = "edge internal CA"
 INTERMEDIATE_NAME = "edge internal CA intermediate"

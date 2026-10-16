@@ -72,13 +72,13 @@ class ScriptedCompose:
 
     def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
         return "\n".join(
-            json.dumps({"Service": service, "State": state})
+            json.dumps({"Service": service, "State": state, "ExitCode": 0})
             for service, state in self.containers.items()
         )
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
         for service in arguments[1:]:
-            restarts = self.config["services"][service]["restart"] != "no"
+            restarts = self.config["services"][service].get("restart", "no") != "no"
             if not self.starts_nothing:
                 self.containers[service] = "running" if restarts else "exited"
         return ""
@@ -166,6 +166,7 @@ def write_fleet(repository: Path, text: str) -> None:
 
 
 def test_switching_on_starts_exactly_the_profiles_services(switch, scripted):
+    """#52 rule 2: on names exactly the services of the profile."""
     exit_code, out, _ = switch()
 
     assert exit_code == 0
@@ -179,6 +180,7 @@ def test_switching_on_starts_exactly_the_profiles_services(switch, scripted):
 
 
 def test_switching_on_asks_the_setup_check_first(switch, setup_check, repository):
+    """#52 rule 5: a unit that would be switched on is checked with `<setup> --check` first."""
     switch()
 
     assert setup_check.commands == [[str(repository / "step-ca/init"), "--check"]]
@@ -187,6 +189,7 @@ def test_switching_on_asks_the_setup_check_first(switch, setup_check, repository
 def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
     switch, scripted, repository
 ):
+    """#52 rules 2, 3, 6: off removes the containers and the plan names the volumes that stay."""
     write_fleet(repository, DISABLED)
     scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "running")
 
@@ -201,6 +204,7 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
     switch, scripted, setup_check
 ):
+    """#52 rule 6 / P15: a second run changes nothing and asks no `yes`."""
     switch()
     scripted.calls.clear()
 
@@ -213,6 +217,7 @@ def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
 
 
 def test_switching_off_what_is_not_there_changes_nothing(switch, scripted, repository):
+    """#52 rule 6: off with no container left is "nothing to change"."""
     write_fleet(repository, DISABLED)
 
     exit_code, out, _ = switch()
@@ -225,6 +230,7 @@ def test_switching_off_what_is_not_there_changes_nothing(switch, scripted, repos
 def test_a_one_shot_container_left_behind_is_removed_when_switched_off(
     switch, scripted, repository
 ):
+    """#52 rule 6: a unit is off only when no container of its services exists."""
     write_fleet(repository, DISABLED)
     scripted.containers = {"traefik-mcp-acme-owner": "exited"}
 
@@ -235,6 +241,7 @@ def test_a_one_shot_container_left_behind_is_removed_when_switched_off(
 def test_off_never_takes_a_volume_or_a_project_down_and_never_names_the_core(
     switch, scripted, repository
 ):
+    """#52 rule 2: no `down`, `-v` or volume command; traefik and socket-proxy are never named."""
     switch()
     write_fleet(repository, DISABLED)
     switch()
@@ -249,6 +256,7 @@ def test_off_never_takes_a_volume_or_a_project_down_and_never_names_the_core(
 
 
 def test_a_failed_removal_is_partial_and_never_reported_as_applied(switch, scripted, repository):
+    """#52 rule 6: a failed `rm -f` is partial (exit 1), never applied."""
     write_fleet(repository, DISABLED)
     scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "running")
     scripted.failing_verb = "rm"
@@ -261,7 +269,23 @@ def test_a_failed_removal_is_partial_and_never_reported_as_applied(switch, scrip
     assert "is off" not in out
 
 
+def test_a_profile_of_services_without_a_restart_policy_is_not_on_before_it_runs(
+    switch, scripted, repository
+):
+    """#52 P15: an enabled unit whose services have no restart policy is not reported as on."""
+    scripted.config["services"]["hello"] = {"profiles": ["probe"]}
+    scripted.config["services"]["hello-mcp"] = {"profiles": ["probe"]}
+    write_fleet(repository, "services:\n  probe:\n    run: {enabled: true}\n")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" not in out
+    assert set(scripted.containers) == {"hello", "hello-mcp"}
+
+
 def test_a_start_that_leaves_the_unit_down_is_partial(switch, scripted):
+    """#52 rule 6 / P15: success only for observed state."""
     scripted.starts_nothing = True
 
     exit_code, out, err = switch()
@@ -272,6 +296,8 @@ def test_a_start_that_leaves_the_unit_down_is_partial(switch, scripted):
 
 
 def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, scripted, capsys):
+    """#52 rule 6: an interrupt names the unit and says its state may be partial (exit 1)."""
+
     def interrupted_start(*_arguments):
         raise KeyboardInterrupt
 
@@ -284,6 +310,7 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
 
 
 def test_a_missing_setup_refuses_before_yes_and_changes_nothing(switch, scripted, setup_check):
+    """#52 rule 5: not set up refuses before the `yes` (exit 1) and names `step-ca/init`."""
     setup_check.exit_code, setup_check.line = 1, "FAILED at password: password is missing"
 
     exit_code, out, err = switch()
@@ -298,6 +325,7 @@ def test_a_missing_setup_refuses_before_yes_and_changes_nothing(switch, scripted
 def test_a_setup_check_that_cannot_tell_is_cannot_plan_and_quotes_its_line(
     switch, scripted, setup_check
 ):
+    """#52 rule 5: a setup check that cannot tell is exit 2 and quoted."""
     setup_check.exit_code, setup_check.line = 2, "Cannot connect to the Docker daemon"
 
     exit_code, _, err = switch()
@@ -308,6 +336,7 @@ def test_a_setup_check_that_cannot_tell_is_cannot_plan_and_quotes_its_line(
 
 
 def test_the_setup_command_is_only_ever_run_with_check(switch, setup_check):
+    """#52 rule 5: apply never runs a setup command without `--check`."""
     switch()
 
     assert all(command[-1] == "--check" for command in setup_check.commands)
@@ -316,6 +345,7 @@ def test_the_setup_command_is_only_ever_run_with_check(switch, setup_check):
 def test_without_a_terminal_it_refuses_before_anything_else(
     repository, scripted, setup_check, monkeypatch, capsys
 ):
+    """#52 rule 4: no terminal refuses first (exit 1)."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
 
     exit_code = apply.apply_closed(
@@ -329,6 +359,7 @@ def test_without_a_terminal_it_refuses_before_anything_else(
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", "yes please"])
 def test_only_the_exact_yes_applies(switch, scripted, answer):
+    """#52 rule 4: any answer but the exact `yes` aborts with nothing changed."""
     exit_code, _, err = switch(answer)
 
     assert exit_code == 1
@@ -337,6 +368,7 @@ def test_only_the_exact_yes_applies(switch, scripted, answer):
 
 
 def test_plain_apply_says_the_publish_phase_is_not_built_and_names_closed(capsys):
+    """#52 rule 7: plain `edge apply` exits 2 and names `--closed`."""
     exit_code = cli.main(["apply"])
 
     assert exit_code == 2
@@ -347,6 +379,9 @@ def test_plain_apply_says_the_publish_phase_is_not_built_and_names_closed(capsys
 @pytest.mark.parametrize(
     ("fleet", "named"),
     [
+        ("- a\n- b\n", "fleet.yaml: must be a map"),
+        ("services: false\n", "services: must be a map"),
+        ("services: []\n", "services: must be a map"),
         ("services:\n  stepca:\n    run: {enabled: true}\n", "services.stepca"),
         ("services:\n  step-ca:\n    run: {enabled: 'yes'}\n", "services.step-ca.run.enabled"),
         ("services:\n  step-ca:\n    run: {}\n", "services.step-ca.run.enabled"),
@@ -371,6 +406,7 @@ def test_plain_apply_says_the_publish_phase_is_not_built_and_names_closed(capsys
 def test_an_invalid_catalog_is_cannot_plan_with_one_line_naming_the_key(
     switch, scripted, repository, fleet, named
 ):
+    """#52 rule 1: each catalog counterexample is exit 2 with a line that names the key."""
     write_fleet(repository, fleet)
 
     exit_code, _, err = switch()
@@ -381,6 +417,7 @@ def test_an_invalid_catalog_is_cannot_plan_with_one_line_naming_the_key(
 
 
 def test_the_line_for_an_unknown_profile_lists_the_profiles_that_exist(switch, repository):
+    """#52 rule 1: the unknown-profile line lists the profiles that exist."""
     write_fleet(repository, "services:\n  stepca:\n    run: {enabled: true}\n")
 
     _, _, err = switch()
@@ -389,6 +426,7 @@ def test_the_line_for_an_unknown_profile_lists_the_profiles_that_exist(switch, r
 
 
 def test_an_entry_without_run_is_ignored(switch, scripted, repository):
+    """#52 rule 1: an entry without `run` belongs to other readers."""
     write_fleet(repository, "services:\n  songmaker:\n    repo: overnightworks/songmaker\n")
 
     exit_code, out, _ = switch()
@@ -397,6 +435,7 @@ def test_an_entry_without_run_is_ignored(switch, scripted, repository):
 
 
 def test_compose_that_cannot_be_read_is_cannot_plan(switch, scripted):
+    """#52 rule 6: unreadable Compose configuration is exit 2."""
     scripted.failing_verb = "config"
 
     exit_code, _, err = switch()
@@ -413,6 +452,7 @@ def repository_profiles() -> dict[str, tuple[str, ...]]:
 
 
 def test_every_unit_of_the_repositorys_catalog_names_a_compose_profile_with_services():
+    """#52 rule 9: the repository's catalog and compose.yaml do not drift."""
     document = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())
 
     units = catalog.units(document, repository_profiles(), REPOSITORY)
@@ -421,6 +461,7 @@ def test_every_unit_of_the_repositorys_catalog_names_a_compose_profile_with_serv
 
 
 def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
+    """#52 rule 9: the drift check fails on a key without a profile."""
     document = {"services": {"keycloack": {"run": {"enabled": False}}}}
 
     with pytest.raises(catalog.CatalogError, match=r"services\.keycloack"):
