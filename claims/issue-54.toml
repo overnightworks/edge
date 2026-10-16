@@ -1,8 +1,0 @@
-claim_id = "4ae393ce587f4ef7b4afddde6e8da149"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "71dbdb1d1efef6cfeb6ee0e109cc57e6fd32224a"
-branch = "claude/issue-54-keycloak-profile"
-scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "keycloak/go-live", "probe/keycloak/README.md", "probe/keycloak/probe.py", "tests/test_keycloak_go_live.py", "tests/test_keycloak_probe.py"]
-opened_commit = "3bd556d5848a4071fa36bfe33f18bea332dfa13a"
-whole_reason = "Moving Keycloak behind a profile is one change: compose.yaml, every caller of compose for Keycloak (go-live, the probe, CI) and the README commands must move together or a start breaks."
