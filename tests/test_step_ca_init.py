@@ -682,8 +682,10 @@ def test_the_probe_fails_loud_when_edge_check_cannot_run(
     """defect:#48 proof (e): a missing edge-check is a failure, not 'no findings'."""
     fake_uv_on_path(tmp_path, monkeypatch, uv_script)
 
+    scratch_probe = probe.Probe(tmp_path / "scratch")
+
     with pytest.raises(probe.ProbeFailed):
-        probe.Probe(tmp_path / "scratch").edge_check_findings()
+        scratch_probe.edge_check_findings()
 
 
 # --- step-ca/init --check: the setup contract of `edge apply` (#52 rule 8) ----------------------
