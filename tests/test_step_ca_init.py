@@ -233,7 +233,8 @@ def test_the_intermediate_is_made_with_the_password_of_the_root(init, docker, se
     init.run()
 
     key = (docker.volume_dir / "secrets/intermediate_ca_key").read_text()
-    assert docker.key_fingerprint((secrets_dir / PASSWORD).read_text()) in key
+    password = (secrets_dir / PASSWORD).read_text()
+    assert key.count(docker.key_fingerprint(password)) == 1
 
 
 def test_a_second_run_changes_nothing(init, docker, secrets_dir, session):
