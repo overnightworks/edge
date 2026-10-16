@@ -18,6 +18,7 @@ lives only in the property `role`.
 | Python import | `<stem>` with `-` to `_`; component `<stem>_<component>` | a valid identifier. The prefix does not prevent import clashes, so each change checks for them (below) |
 | CLI | `<stem>`, and features are subcommands. A component with its own distribution has the entry point `<stem>-<component>` | one command per repo; a separately installed process stays visibly part of it |
 | systemd unit, compose service | `<stem>` or `<stem>-<job>` | `systemctl list-units '<stem>*'` finds them all |
+| platform unit in `fleet.yaml` | the catalog key equals the compose profile name (`step-ca`, later `keycloak`) | `edge apply --closed` switches the profile of that name; a key without a profile is refused |
 | Sonar project key | `overnightworks_<stem>` | SonarCloud's org-key form |
 | MCP origin host | `<stem>.mcp.internal`, the stem of the app's repository | the name `traefik-mcp` routes on and answers to, and the only suffix `step-ca/ca.json` issues for (edge#37) |
 | CSS / release asset | `<stem>.css`, `<stem>-<version>...` | |
@@ -26,7 +27,8 @@ lives only in the property `role`.
 
 GitHub topics are to be derived from the planned service catalog `fleet.yaml`
 by OpenTofu and never set by hand (overnightworks/edge#20, building block 5).
-The file does not exist yet; until it does, topics are not set at all.
+The file exists (`fleet.yaml`); its topics follow with overnightworks/edge#30, and until then
+topics are not set at all.
 
 ### Import clashes
 

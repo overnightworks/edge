@@ -28,10 +28,11 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
-| `src/edge/`, `external/` | the `edge` command (so far `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
+| `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
+| `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
-| `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live` and `step-ca/init`, with their locked dependencies |
+| `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live`, `step-ca/init`, `edge apply` (`tests/test_edge_apply.py`) and the external edge tests (`tests/test_edge_external.py`), with their locked dependencies |
 | `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
 | [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
@@ -186,6 +187,43 @@ abgebrochen oder fehlgeschlagen, 2 nicht planbar.
 ```bash
 uv run edge external apply
 ```
+
+## Dienste an und aus
+
+`fleet.yaml` ist der Katalog. Ein Eintrag mit `run` und ohne `repo` ist eine Einheit
+dieses Repositorys; sein Schluessel ist der Name des Compose-Profils (`docs/naming.md`):
+
+```yaml
+services:
+  step-ca:
+    run:
+      enabled: false        # true schaltet das Profil `step-ca` an
+      setup: step-ca/init   # optional: der Befehl, der den Schluessel macht
+```
+
+`edge apply --closed` bringt jede Einheit in den Zustand, den `enabled` sagt. An:
+`docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann
+`rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1), und es fasst
+`socket-proxy` und `traefik` nicht an. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
+wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
+Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt; sonst
+verweigert `edge apply --closed` und nennt den Befehl. Schluessel macht `edge apply` nie.
+
+"An" heisst: jeder Dienst der Einheit hat seinen Container laufen (oder ein Einmal-Dienst ist
+fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `docker compose ps`.
+
+Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
+oder nur teilweise angewendet, 2 nicht planbar (Katalog ungueltig, Compose unlesbar, ein
+Setup-Check, der es nicht sagen kann). Ein blosses `edge apply` endet mit Exit 2: die
+Publish-Phase gibt es noch nicht.
+
+Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt nichts an und
+braucht keinen laufenden Dienst. Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was
+fehlt), 2 es kann es nicht sagen (Docker oder Compose antworten nicht).
+
+Regel R4: Agenten rufen `edge apply` nie auf. Die Terminalpruefung und das `yes` halten
+versehentliche und nicht-interaktive Laeufe auf; sie erkennen den Betreiber nicht (D14).
 
 ## edge-check
 
@@ -752,18 +790,17 @@ included), in any compose, apply or service log output, or in its own output
 `*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
 configuration. `traefik-mcp` fetches its certificates from it (below).
 
-Go live, once, as the operator (uid 1000):
-
-```sh
-step-ca/init
-docker compose --profile step-ca up -d step-ca
-```
+Go live, once, as the operator (uid 1000): run `step-ca/init`, set `services.step-ca.run.enabled:
+true` in `fleet.yaml` (a pull request), then run `edge apply --closed`
+([Dienste an und aus](#dienste-an-und-aus)). `edge apply` makes no key material; it refuses until
+`step-ca/init --check` passes.
 
 `step-ca/init` makes the key material in one-off containers without a network and prints no
 secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
 running container), `root_ca.crt` (0644) and `password` (0644, protects the root and the
 intermediate key), and puts the intermediate and a copy of the root certificate into the
-`step-ca` volume. A second run changes nothing; after an interruption it completes what is
+`step-ca` volume, and creates the empty `traefik-mcp-acme` volume, so `edge apply` never creates one.
+A second run changes nothing; after an interruption it completes what is
 missing and never overwrites a key. Back up `~/.secrets/step-ca/` and the `step-ca` volume. The
 root certificate is what other services trust.
 
@@ -783,30 +820,32 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: run `step-ca/init`, then `docker compose --profile step-ca up -d`. `step-ca`,
-`traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind the compose profile `step-ca`, so
-a plain `docker compose up -d` (as `keycloak/go-live` runs it) starts none of them. `traefik-mcp`
-waits for the CA to listen before it starts Traefik, so the order of the two does not matter, also
-after a restart of the Docker daemon. Switch it off: `docker compose stop traefik-mcp` (the CA and
-the certificates stay). Remove it: `docker compose rm -f traefik-mcp traefik-mcp-acme-owner` and
-`docker volume rm <project>_traefik-mcp-acme`.
+Switch it on: run `step-ca/init`, set `enabled: true` in `fleet.yaml`, then run
+`edge apply --closed`. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
+the one switch, the compose profile `step-ca`, so a plain `docker compose up -d` starts none of
+them. `traefik-mcp` waits for the CA to listen before it starts Traefik, so the order of the two
+does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false` and
+`edge apply --closed`; the containers go, the volumes `step-ca` and `traefik-mcp-acme` stay, and
+switching on again serves the same intermediate. Removing the volumes (`docker volume rm
+<project>_traefik-mcp-acme`, `<project>_step-ca`) stays a manual command.
 
 Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1500 python3 probe/step-ca/probe.py
---scratch DIR` starts a throwaway project under a throwaway `HOME` and holds nine proofs. Proofs 1
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds ten proofs. Proofs 1
 to 5 are the CA's (init modes and silence, the ACME directory verifies only with the probe root, the
 volume holds no root key, a restart keeps the intermediate, a partial state is completed, also with
 a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on `mcp` reaches
 `https://hello.mcp.internal` only with the root and is served a 24-hour certificate from the
 intermediate; plain http gets no answer from the backend; the three networks split as ruled; the
 host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
-CA copy is renewed within 12 minutes without a restart. The run takes about 15 minutes. Every
-call runs from a throwaway container on the network a client would sit on.
+CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on,
+off and on in a copy of the repository: both volumes and the same intermediate survive, and a
+repeated apply changes nothing. The run takes about 15 to 20 minutes, within the 1500 s timeout.
+Every call runs from a throwaway container on the network a client would sit on.
 
-Switch the CA off: `docker compose stop step-ca`. A plain `docker compose up -d` does not start
-it again, only `docker compose --profile step-ca up -d` does. To remove it, also
-`docker compose --profile step-ca rm -f step-ca`;
-`docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away. Stop
-`traefik-mcp` first: it holds certificates from this CA.
+The switch is one for the CA and the gateway together (`enabled: false`, then
+`edge apply --closed`). `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/`
+throw the CA away; they stay manual commands, and the gateway must be off first: it holds
+certificates from this CA.
 
 ## Rollback
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9): a throwaway
-compose project and a throwaway HOME.
+"""Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10):
+a throwaway compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
@@ -12,8 +12,9 @@ stack: the project name and HOME are set in the environment of every command.
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal: the run takes about 15 minutes. Needs `uv`:
-proof 8 runs `edge-check` through it.
+--scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies: the run takes
+about 15 to 20 minutes, bounded by the 1500 s timeout above. Needs `uv`: proof 8 runs
+`edge-check` through it, proof 10 runs `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -43,6 +46,7 @@ DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
+DISCARD_OUTPUT = "/dev/null"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
 INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
@@ -80,6 +84,9 @@ SHORT_LIFETIME_MINUTES = 20  # probe-only: renewal inside the poll
 RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
+APPLY_SECONDS = 600
+FLEET_OFF = "enabled: false"
+FLEET_ON = "enabled: true"
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 
 
@@ -182,7 +189,7 @@ class Probe:
         """The directory's HTTP status as a throwaway container on the CA's network sees it, or -1
         when the certificate does not verify; raises OSError while the CA is not answering."""
         result = self.client(
-            "mcp-ca", "--output", "/dev/null", "--write-out", "%{http_code}", DIRECTORY_URL,
+            "mcp-ca", "--output", DISCARD_OUTPUT, "--write-out", "%{http_code}", DIRECTORY_URL,
             root=cafile,
         )  # fmt: skip
         if result.returncode == CERTIFICATE_UNVERIFIED:
@@ -512,7 +519,7 @@ class Probe:
             ("mcp-ca", BACKEND_URL): False,
         }
         for (network, url), expected in reachable.items():
-            result = self.client(network, "--insecure", "--output", "/dev/null", url)
+            result = self.client(network, "--insecure", "--output", DISCARD_OUTPUT, url)
             outcome = "answered" if result.returncode == 0 else f"curl exit {result.returncode}"
             wanted = 0 if expected else COULD_NOT_RESOLVE
             expect(result.returncode == wanted, f"{network} -> {url}: {outcome}")
@@ -581,6 +588,80 @@ class Probe:
             f"the old one valid until {first['validity']['end']}, traefik-mcp not restarted"
         )
 
+    # --- edge apply --closed switches the unit and keeps its data (#52 rule 3) -----------------
+
+    def repository_copy(self) -> Path:
+        """The lane's files in the scratch, with its own venv: fleet.yaml is flipped there only."""
+        copy = self.scratch / "repository"
+        files = self.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]
+        ).stdout.decode()
+        for name in filter(None, files.split("\0")):
+            if (REPO / name).is_file():
+                (copy / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(REPO / name, copy / name)
+        synced = subprocess.run(
+            ["uv", "sync", "--quiet"], capture_output=True, cwd=copy, check=False,
+            timeout=APPLY_SECONDS,
+        )  # fmt: skip
+        if synced.returncode != 0:
+            tail = synced.stderr.decode(errors="replace").strip().splitlines()
+            raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1] if tail else ''}")
+        return copy
+
+    def edge_apply(self, copy: Path, enabled: bool) -> str:
+        """`edge apply --closed` at a pty, the operator typing `yes`; the output of a run that
+        exits 0."""
+        fleet = copy / "fleet.yaml"
+        fleet.write_text(
+            fleet.read_text().replace(
+                *((FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF))
+            )
+        )
+        command = shlex.join([str(copy / ".venv" / "bin" / "edge"), "apply", "--closed"])
+        result = subprocess.run(
+            ["script", "-qec", command, DISCARD_OUTPUT],
+            input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
+            timeout=APPLY_SECONDS,
+        )  # fmt: skip
+        output = result.stdout.decode(errors="replace")
+        expect(result.returncode == 0, f"edge apply exited {result.returncode}: {output[-200:]}")
+        return output
+
+    def volume_names(self) -> list[str]:
+        return [self.composed["volumes"][key]["name"] for key in ("step-ca", "traefik-mcp-acme")]
+
+    def proof_10_apply_cycle(self) -> None:
+        copy = self.repository_copy()
+        self.compose("up", "--detach", "--no-deps", "hello-mcp")  # the origin behind the gateway
+        self.edge_apply(copy, enabled=True)
+        served_before = self.wait_until_served()
+        before = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
+        self.edge_apply(copy, enabled=False)
+        left = (
+            self.compose("ps", "--all", "-q", "step-ca", "traefik-mcp", "traefik-mcp-acme-owner")
+            .stdout.decode()
+            .strip()
+        )
+        expect(not left, f"containers of the unit are left after off: {left}")
+        for volume in self.volume_names():
+            self.run(["docker", "volume", "inspect", volume])  # a missing volume exits 1
+        self.edge_apply(copy, enabled=True)
+        self.wait_until_answering()
+        served_after = self.wait_until_served()
+        after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
+        expect(after == before, f"intermediate changed across off and on: {before} -> {after}")
+        intermediate = self.intermediate_certificate()
+        expect(
+            served_before["extensions"]["authority_key_id"]
+            == served_after["extensions"]["authority_key_id"]
+            == intermediate["extensions"]["subject_key_id"],
+            "not served by the same intermediate",
+        )
+        again = self.edge_apply(copy, enabled=True)
+        expect("nothing to change" in again, f"a repeated apply said: {again[-120:]}")
+        print(f"proof 10 held: edge apply on/off/on keeps both volumes; same intermediate {after}")
+
     def teardown(self) -> None:
         # Own session: a signal to the probe's process group must not reach these.
         self.compose(
@@ -634,7 +715,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-9 hold")
+        print("PROBE PASSED: proofs 1-10 hold")
     return exit_code
 
 
@@ -653,6 +734,7 @@ def prove(probe: Probe) -> int:
         probe.proof_7_network_split()
         probe.proof_8_no_host_listener()
         probe.proof_9_renewal()
+        probe.proof_10_apply_cycle()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

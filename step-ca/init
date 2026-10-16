@@ -3,13 +3,19 @@
 
 Runs in one-off containers of the pinned step-ca image without a network. It makes the root
 (key and certificate) and the intermediate (key and certificate) and installs the intermediate
-and a copy of the root certificate into the `step-ca` volume. The root key stays in
+and a copy of the root certificate into the `step-ca` volume, and creates the empty
+`traefik-mcp-acme` volume, so `edge apply` never creates one. The root key stays in
 ~/.secrets/step-ca and is never mounted into the running service. Every step checks its own
 done-state first: a second run changes nothing, and a partial state completes what is missing
 without ever overwriting a key. No secret is printed: command output is captured and a failure
 shows one scrubbed line.
 
     step-ca/init
+    step-ca/init --check
+
+`--check` changes nothing and prints no secret: exit 0 when everything is in place, 1 when
+something is missing or half-made (one line says what), 2 when Docker did not answer. It is the
+setup contract `edge apply` asks before it switches the CA on.
 """
 
 from __future__ import annotations
@@ -24,10 +30,14 @@ import sys
 import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "step-ca"
+ACME_VOLUME_KEY = (
+    "traefik-mcp-acme"  # traefik-mcp mounts it; apply must not be the one to create it
+)
 PROFILE = "step-ca"  # compose.yaml puts step-ca and traefik-mcp behind it
 ROOT_NAME = "edge internal CA"
 INTERMEDIATE_NAME = "edge internal CA intermediate"
@@ -53,6 +63,7 @@ ROOT_COPY = "certs/root_ca.crt"
 INTERMEDIATE_FILES = {INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY}
 LONG_COMMAND_SECONDS = 300
 SHORT_COMMAND_SECONDS = 60
+NO_SUCH_VOLUME = "no such volume"  # the daemon says it in lower case; older ones capitalised
 REDACTED = "[redacted]"
 COMPOSE = [
     "docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml",
@@ -60,8 +71,18 @@ COMPOSE = [
 ]  # fmt: skip
 
 
+class Exit(IntEnum):
+    DONE = 0
+    REFUSED = 1
+    CANNOT_TELL = 2
+
+
 class StepFailure(Exception):
     """A step cannot finish; the message says why in one line."""
+
+
+class CannotTell(StepFailure):
+    """Docker, Compose or the host did not answer, so the state of a step is unknown."""
 
 
 def run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -70,9 +91,9 @@ def run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess
             command, capture_output=True, text=True, check=False, timeout=timeout, cwd=REPO
         )
     except subprocess.TimeoutExpired as error:
-        raise StepFailure(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
+        raise CannotTell(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
     except OSError as error:
-        raise StepFailure(f"cannot run {command[0]}: {error.strerror}") from error
+        raise CannotTell(f"cannot run {command[0]}: {error.strerror}") from error
 
 
 @dataclass(frozen=True)
@@ -96,13 +117,16 @@ class Step:
 class Deployment:
     image: str
     volume: str
+    acme_volume: str
     project: str
 
 
 class StepCaInit:
-    def __init__(self, tools: Tools, secrets_dir: Path) -> None:
+    def __init__(self, tools: Tools, secrets_dir: Path, read_only: bool = False) -> None:
         self.tools = tools
         self.secrets_dir = secrets_dir
+        self.read_only = read_only
+        self.current = "start"
         self.deployment: Deployment | None = None
         self.volume_exists = False
 
@@ -116,11 +140,12 @@ class StepCaInit:
                 SHORT_COMMAND_SECONDS,
             )
             if result.returncode != 0:
-                raise StepFailure(self.failure_line("docker compose config", result))
+                raise CannotTell(self.failure_line("docker compose config", result))
             config = json.loads(result.stdout)
             self.deployment = Deployment(
                 image=config["services"][SERVICE]["image"],
                 volume=config["volumes"][SERVICE]["name"],
+                acme_volume=config["volumes"][ACME_VOLUME_KEY]["name"],
                 project=config["name"],
             )
         return self.deployment
@@ -216,7 +241,7 @@ class StepCaInit:
         image = self.compose_deployment().image
         result = self.tools.run([*command, image, *arguments], LONG_COMMAND_SECONDS)
         if result.returncode != 0:
-            raise StepFailure(self.failure_line(f"{entrypoint} in the {SERVICE} image", result))
+            raise CannotTell(self.failure_line(f"{entrypoint} in the {SERVICE} image", result))
         return result
 
     def secrets_mount(self, mode: str) -> str:
@@ -225,26 +250,43 @@ class StepCaInit:
     def volume_mount(self) -> str:
         deployment = self.compose_deployment()
         if not self.volume_exists:
-            # Docker names an unknown volume on first mount without labels and cannot relabel it
-            # later; the backup finds the volume by compose's labels.
-            self.docker_must(
-                "volume", "create",
-                "--label", f"{COMPOSE_PROJECT_LABEL}={deployment.project}",
-                "--label", f"{COMPOSE_VOLUME_LABEL}={SERVICE}",
-                deployment.volume,
-            )  # fmt: skip
+            self.create_volume(deployment.volume, SERVICE)
             self.volume_exists = True
         return f"{deployment.volume}:{VOLUME_MOUNT}"
+
+    def create_volume(self, name: str, compose_key: str) -> None:
+        # Docker names an unknown volume on first mount without labels and cannot relabel it
+        # later; the backup finds the volume by compose's labels.
+        self.docker_must(
+            "volume", "create",
+            "--label", f"{COMPOSE_PROJECT_LABEL}={self.compose_deployment().project}",
+            "--label", f"{COMPOSE_VOLUME_LABEL}={compose_key}",
+            name,
+        )  # fmt: skip
 
     def docker_must(self, *arguments: str) -> None:
         result = self.tools.run(["docker", *arguments], SHORT_COMMAND_SECONDS)
         if result.returncode != 0:
-            raise StepFailure(self.failure_line(f"docker {arguments[0]} {arguments[1]}", result))
+            raise CannotTell(self.failure_line(f"docker {arguments[0]} {arguments[1]}", result))
+
+    def volume_found(self) -> bool:
+        if not self.volume_exists:
+            self.volume_exists = self.inspect_volume(self.compose_deployment().volume)
+        return self.volume_exists
+
+    def inspect_volume(self, name: str) -> bool:
+        """`docker volume inspect` is the only way a check looks at a volume: it never creates."""
+        result = self.tools.run(["docker", "volume", "inspect", name], SHORT_COMMAND_SECONDS)
+        if result.returncode != 0 and NO_SUCH_VOLUME not in result.stderr.lower():
+            raise CannotTell(self.failure_line("docker volume inspect", result))
+        return result.returncode == 0
 
     def password_mount(self) -> str:
         return f"{self.path(PASSWORD_FILE)}:{PASSWORD_MOUNT}:ro"
 
     def volume_files(self) -> set[str]:
+        if self.read_only and not self.volume_found():
+            return set()
         listing = self.one_off_must(
             "find", VOLUME_MOUNT, "-type", "f", mounts=[self.volume_mount() + ":ro"]
         )
@@ -340,6 +382,12 @@ class StepCaInit:
             "cp", f"{SECRETS_MOUNT}/{ROOT_CERTIFICATE_FILE}", ROOT_COPY, mounts=mounts
         )
 
+    def acme_volume_is_present(self) -> bool:
+        return self.inspect_volume(self.compose_deployment().acme_volume)
+
+    def create_acme_volume(self) -> None:
+        self.create_volume(self.compose_deployment().acme_volume, ACME_VOLUME_KEY)
+
     # --- the run ------------------------------------------------------------------------------
 
     def steps(self) -> list[Step]:
@@ -376,6 +424,13 @@ class StepCaInit:
                 "The service reads the public root certificate from its volume.",
             ),
             Step(
+                "ACME volume",
+                self.acme_volume_is_present,
+                self.create_acme_volume,
+                "traefik-mcp keeps its issued certificates in this volume; it is made here so "
+                "that switching on never creates a volume.",
+            ),
+            Step(
                 "file modes",
                 self.modes_are_right,
                 self.correct_modes,
@@ -384,53 +439,95 @@ class StepCaInit:
         ]
 
     def run(self) -> int:
-        current = "start"
+        """Make what is missing; a second run changes nothing."""
         changed = []
-        try:
-            if self.tools.host_uid() != IMAGE_USER:
-                raise StepFailure(
-                    f"run as uid {IMAGE_USER}: the {SERVICE} image's user must read the root key"
-                )
+
+        def make_missing() -> None:
             for step in self.steps():
-                current = step.name
+                self.current = step.name
                 if step.is_done():
                     continue
                 self.tools.say(f"step-ca/init: {step.name}: {step.why}")
                 step.do()
                 changed.append(step.name)
-        except StepFailure as failure:
-            self.tools.say(f"step-ca/init FAILED at {current}: {self.scrubbed(str(failure))}")
-            return 1
-        except Exception as unexpected:  # the one boundary: a failure is a line, never a traceback
+
+        exit_code = self.attempt(make_missing)
+        if exit_code == 0 and changed:
             self.tools.say(
-                f"step-ca/init FAILED at {current}: unexpected answer ({type(unexpected).__name__})"
+                "step-ca/init: done. Switch it on: set `services.step-ca.run.enabled: true` "
+                "in fleet.yaml, then run `edge apply --closed`."
             )
-            return 1
-        except KeyboardInterrupt:
-            self.tools.say(f"step-ca/init FAILED at {current}: interrupted")
-            return 1
-        if changed:
-            self.tools.say(
-                "step-ca/init: done. Start the CA: "
-                f"docker compose --profile {PROFILE} up -d {SERVICE}"
-            )
-        else:
+        elif exit_code == 0:
             self.tools.say("step-ca/init: nothing changed, the key material is all in place.")
-        return 0
+        return exit_code
+
+    def check(self) -> int:
+        """The setup contract of `edge apply`: 0 set up, 1 not set up, 2 cannot tell."""
+
+        def find_missing() -> None:
+            for step in self.steps():
+                self.current = step.name
+                if not step.is_done():
+                    raise StepFailure(f"{step.name} is not done")
+
+        exit_code = self.attempt(find_missing)
+        if exit_code == 0:
+            self.tools.say("step-ca/init --check: set up, the key material is all in place.")
+        return exit_code
+
+    def attempt(self, action: Callable[[], None]) -> int:
+        """Run `action` as the one boundary: a failure is a line and an exit code, no traceback."""
+        self.current = "start"
+        unclear = Exit.CANNOT_TELL if self.read_only else Exit.REFUSED
+        try:
+            if self.tools.host_uid() != IMAGE_USER:
+                raise CannotTell(
+                    f"run as uid {IMAGE_USER}: the {SERVICE} image's user must read the root key"
+                )
+            action()
+        except CannotTell as failure:
+            self.report_failure(failure)
+            return unclear
+        except StepFailure as failure:
+            if self.read_only:
+                self.tools.say(f"step-ca/init --check: not set up: {self.scrubbed(str(failure))}")
+            else:
+                self.report_failure(failure)
+            return Exit.REFUSED
+        except Exception as unexpected:
+            self.tools.say(
+                f"step-ca/init FAILED at {self.current}: "
+                f"unexpected answer ({type(unexpected).__name__})"
+            )
+            return unclear
+        except KeyboardInterrupt:
+            self.tools.say(f"step-ca/init FAILED at {self.current}: interrupted")
+            return unclear
+        return Exit.DONE
+
+    def report_failure(self, failure: StepFailure) -> None:
+        self.tools.say(f"step-ca/init FAILED at {self.current}: {self.scrubbed(str(failure))}")
 
 
 def main() -> int:
-    init = StepCaInit(Tools(), Path.home() / ".secrets" / "step-ca")
+    secrets_dir = Path.home() / ".secrets" / "step-ca"
     steps = "\n".join(
-        textwrap.fill(f"{step.name}: {step.why}", subsequent_indent="   ") for step in init.steps()
+        textwrap.fill(f"{step.name}: {step.why}", subsequent_indent="   ")
+        for step in StepCaInit(Tools(), secrets_dir).steps()
     )
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         epilog=f"Steps, each skipped when already done:\n{steps}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.parse_args()
-    return init.run()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="change nothing: exit 0 set up, 1 not set up (one line says what), 2 cannot tell",
+    )
+    arguments = parser.parse_args()
+    init = StepCaInit(Tools(), secrets_dir, read_only=arguments.check)
+    return init.check() if arguments.check else init.run()
 
 
 if __name__ == "__main__":
