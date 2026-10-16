@@ -192,7 +192,8 @@ secrets:
 networks:
   edge-probe:
     driver: bridge
-  # step-ca's own network: internal, so nothing on it reaches the host or the internet.
+  # step-ca's own network: internal, so it has no route to the internet or other networks (Docker
+  # still lets its containers reach host services through the gateway address).
   mcp-ca:
     internal: true
   keycloak:
