@@ -798,6 +798,27 @@ def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(
     assert live_plan.exists()
 
 
+def test_a_sweep_keeps_the_plan_of_a_live_run_that_takes_over_a_bare_plans_stem(home):
+    """#45 rule 4: the lock the sweep creates for a bare plan does not shield a replaced stem."""
+    directory = home / PLANS_DIRECTORY
+    directory.mkdir(mode=0o700)
+    live_plan = directory / "run.tfplan"
+    live_plan.write_text("dead plan")
+    lock = directory / "run.lock"
+
+    def let_a_live_run_replace_the_stem_then_take_the_lock(descriptor):
+        lock.unlink()
+        lock.write_text("live run's lock")
+        live_plan.write_text("live plan")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    external_apply.remove_leftover_plans(
+        home, take_lock=let_a_live_run_replace_the_stem_then_take_the_lock
+    )
+    assert live_plan.read_text() == "live plan"
+    assert lock.exists()
+
+
 @pytest.mark.parametrize(
     "plan_exit,typed",
     [pytest.param(0, None, id="no-changes"), pytest.param(2, "no\n", id="abort")],
@@ -834,18 +855,15 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
 ):
     """#45 rule 5: the interrupt consequence follows whether apply was reached, not the step."""
     fake_tofu.configure(plan=plan_exit)
-    plan_file_in_private_directory = external_apply._private_plan_file
 
     @contextmanager
     def interrupted_when_leaving(home_directory):
-        with plan_file_in_private_directory(home_directory) as plan_file:
+        with external_apply.private_plan_file(home_directory) as plan_file:
             yield plan_file
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(external_apply, "_private_plan_file", interrupted_when_leaving)
-    monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
     monkeypatch.setattr("builtins.input", lambda _prompt: typed)
-    assert cli.main(["external", "apply"]) == 1
+    assert external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving) == 1
     error = capsys.readouterr().err
     assert "interrupted during the cleanup" in error
     assert ("live services may be partly changed" in error) is live_services_may_have_changed
