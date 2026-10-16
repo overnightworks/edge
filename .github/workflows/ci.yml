@@ -144,4 +144,4 @@ jobs:
       - name: No secret in any file
         run: |
           "$RUNNER_TEMP/gitleaks" dir --no-banner --redact .
-          uv run --no-build --script keycloak/secret-check/secret_check.py .
+          uv run --locked --no-build --script keycloak/secret-check/secret_check.py .
