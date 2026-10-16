@@ -1,7 +1,0 @@
-claim_id = "e530153c96154f6ca2b1e29efe47709e"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "2d7627caeffd833b28bd1ab33417142e8c664b00"
-branch = "claude/issue-46-a1d-rulings-doc"
-scope = ["docs/architecture.md"]
-opened_commit = "5ab8d704467d872cf138600ec81311e1801e0c17"
