@@ -492,7 +492,8 @@ chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 070
 ```
 
 `bootstrap-admin-password` lives only until the go-live's step 7.
-CI's step "No secret in any file" runs gitleaks for literal-looking secrets and
+The quality gate (`quality / hygiene`) scans the whole history for literal-looking
+secrets; CI's step "No secret in any file" runs
 `keycloak/secret-check/secret_check.py`, which reads the YAML (block, flow and
 list style alike): a value whose key ends in `secret` or `password` in
 `keycloak/*.yaml` must be a `$(env:…)` reference, and a `PASSWORD`/`SECRET`
