@@ -7,9 +7,11 @@ directory, no live data) from this checkout. Both modes need 127.0.0.1:8081 and 
     flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
 
-The `timeout` caps the whole command, bring-up included. When the cap is reached its SIGTERM
-ends `hold` as a normal `HOLD ENDED` with exit 0 while `timeout` itself exits 124, so `HOLD ENDED`
-alone does not mean you asked for the stop: your proof window is bounded by that cap.
+The `timeout` caps the whole command, bring-up included. When the cap is reached after `READY`,
+its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown succeeded, while
+`timeout` itself exits 124, so `HOLD ENDED` alone does not mean you asked for the stop: your
+proof window is bounded by that cap. A cap reached before `READY`, or a teardown that leaves the
+stack behind, ends with `PROBE FAILED` and exit 1.
 
 - `run` (the default) proves proofs 1-8 and ends with `PROBE PASSED: proofs 1-8 hold`.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
