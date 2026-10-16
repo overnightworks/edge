@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from edge import cli
-from edge.external import tofu
+from edge.external import secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -361,6 +361,14 @@ def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(home, fake_to
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/github-token"):
             locked.chmod(0o700)
+
+
+def test_the_temporary_directory_is_removed_when_the_run_is_interrupted(home):
+    """#40 rule 2: Ctrl-C during tofu still removes TMPDIR."""
+    with pytest.raises(KeyboardInterrupt), secrets.private_temporary_directory(home) as directory:
+        (directory / "child-artifact").write_text("x")
+        raise KeyboardInterrupt
+    assert list((home / ".secrets/opentofu/tmp").iterdir()) == []
 
 
 def test_a_cleanup_failure_after_another_version_still_names_both_versions(home, fake_tofu, capsys):

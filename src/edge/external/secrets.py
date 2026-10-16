@@ -56,7 +56,7 @@ def private_temporary_directory(home: Path) -> Iterator[Path]:
     directory = Path(tempfile.mkdtemp(dir=parent))
     try:
         yield directory
-    except Exception as in_flight:
+    except BaseException as in_flight:
         try:
             shutil.rmtree(directory)
         except OSError as cleanup_failure:
