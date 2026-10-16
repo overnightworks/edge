@@ -111,8 +111,13 @@ def _report(message: str, error: Exception, token_values: dict[str, str], comman
 
 
 def _plan(home: Path, token_values: dict[str, str]) -> int:
-    with tofu.session(home, token_values) as session:
-        planned = tofu.run(session.tofu, tofu.PLAN_ARGUMENTS, session.environment)
+    try:
+        with apply.terminate_like_interrupt(), tofu.session(home, token_values) as session:
+            planned = tofu.run(session.tofu, tofu.PLAN_ARGUMENTS, session.environment)
+    except tofu.Interrupted as interrupted:
+        apply.print_interrupted_output(interrupted, token_values)
+        print("edge external plan: interrupted during the plan, no plan was made", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
     exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
     redacted_output = secrets.redact(planned.output, token_values)
     if exit_code is ExitCode.CANNOT_PLAN:

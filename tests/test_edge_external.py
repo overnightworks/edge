@@ -63,7 +63,7 @@ with (here / "calls.jsonl").open("a") as calls:
 plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
-if command == "apply" and config["hang_in_apply"]:
+if command == config["hang_in"]:
     def stop_gracefully(*_):
         with (here / "sigints").open("a") as received:
             received.write("x")
@@ -100,7 +100,7 @@ class FakeTofu:
         echo_environment=False,
         leave_undeletable=False,
         locked_name="locked",
-        hang_in_apply=False,
+        hang_in=None,
         drain_until_released=False,
         **exit_codes,
     ) -> None:
@@ -109,7 +109,7 @@ class FakeTofu:
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
             "locked_name": locked_name,
-            "hang_in_apply": hang_in_apply,
+            "hang_in": hang_in,
             "drain_until_released": drain_until_released,
             "exit_codes": exit_codes,
         }
@@ -491,11 +491,11 @@ def terminal(home, fake_tofu):
     """Start apply on a pty with a minimal environment and no session bus."""
     started = []
 
-    def start(*, stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
+    def start(*, command="apply", stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
         master, slave = pty.openpty()
         program = "import sys; from edge import cli; sys.exit(cli.main(sys.argv[1:]))"
         process = subprocess.Popen(
-            [sys.executable, "-c", program, "external", "apply"],
+            [sys.executable, "-c", program, "external", command],
             stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
             stdout=slave if stdout_is_terminal else subprocess.DEVNULL,
             stderr=slave,
@@ -635,8 +635,8 @@ CLEANUP_PATHS = [
     pytest.param({"plan": 2, "apply": 1}, "yes\n", 1, id="apply-failure"),
     pytest.param({"plan": 2}, signal.SIGINT, 1, id="sigint-at-prompt"),
     pytest.param({"plan": 2}, signal.SIGTERM, 1, id="sigterm-at-prompt"),
-    pytest.param({"plan": 2, "hang_in_apply": True}, signal.SIGINT, 1, id="sigint-in-apply"),
-    pytest.param({"plan": 2, "hang_in_apply": True}, signal.SIGTERM, 1, id="sigterm-in-apply"),
+    pytest.param({"plan": 2, "hang_in": "apply"}, signal.SIGINT, 1, id="sigint-in-apply"),
+    pytest.param({"plan": 2, "hang_in": "apply"}, signal.SIGTERM, 1, id="sigterm-in-apply"),
 ]
 
 
@@ -650,7 +650,7 @@ def test_the_plan_file_is_deleted_on_every_path(
     with fake_tofu.watch_apply() as wait_until_applying:
         if reaction is not None:
             apply.read_until(PROMPT)
-            if configuration.get("hang_in_apply"):
+            if configuration.get("hang_in") == "apply":
                 apply.type("yes\n")
                 wait_until_applying()
             if isinstance(reaction, signal.Signals):
@@ -663,11 +663,28 @@ def test_the_plan_file_is_deleted_on_every_path(
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_an_interrupt_during_plan_exits_2_names_the_step_and_shows_tofus_output(
+    home, fake_tofu, terminal, interrupt
+):
+    """X1b: an interrupted plan is `cannot plan` (2), never `changes pending` (1)."""
+    fake_tofu.configure(hang_in="plan")
+    plan = terminal(command="plan")
+    with fake_tofu.watch_apply() as wait_until_planning:
+        wait_until_planning()
+        plan.signal(interrupt)
+        assert plan.finish() == 2
+    assert fake_tofu.stopped_gracefully
+    assert "tofu stopped gracefully" in plan.output
+    assert "edge external plan: interrupted during the plan" in plan.output
+    assert "Traceback" not in plan.output
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     home, fake_tofu, terminal, interrupt
 ):
     """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed."""
-    fake_tofu.configure(plan=2, hang_in_apply=True)
+    fake_tofu.configure(plan=2, hang_in="apply")
     apply = terminal()
     with fake_tofu.watch_apply() as wait_until_applying:
         apply.read_until(PROMPT)
@@ -680,11 +697,9 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     assert "interrupted during tofu apply, live services may be partly changed" in apply.output
 
 
-def test_a_second_interrupt_does_not_cut_short_a_tofu_that_is_still_draining(
-    home, fake_tofu, terminal
-):
-    """#45 rule 4/5: tofu gets one SIGINT and is waited for however long it drains."""
-    fake_tofu.configure(plan=2, hang_in_apply=True, drain_until_released=True)
+def test_further_interrupts_while_tofu_drains_are_not_forwarded_to_it(home, fake_tofu, terminal):
+    """#45 rule 4/5: later interrupts while tofu drains are not forwarded as further SIGINTs."""
+    fake_tofu.configure(plan=2, hang_in="apply", drain_until_released=True)
     apply = terminal()
     with fake_tofu.watch_apply() as wait_until_applying:
         apply.read_until(PROMPT)

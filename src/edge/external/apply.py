@@ -144,12 +144,16 @@ def _raise_interrupt(_signal_number: int, _frame: object) -> None:
 
 
 @contextmanager
-def _terminate_like_interrupt() -> Iterator[None]:
+def terminate_like_interrupt() -> Iterator[None]:
     previous = signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
         yield
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+def print_interrupted_output(interrupted: tofu.Interrupted, token_values: dict[str, str]) -> None:
+    print(secrets.redact(interrupted.completed.output, token_values), file=sys.stderr)
 
 
 def apply_plan(
@@ -160,7 +164,7 @@ def apply_plan(
     progress = Progress()
     try:
         with (
-            _terminate_like_interrupt(),
+            terminate_like_interrupt(),
             tofu.session(home, token_values) as session,
             plan_file_scope(home) as plan_file,
         ):
@@ -168,7 +172,7 @@ def apply_plan(
             progress.step = Step.CLEANUP
             return result
     except tofu.Interrupted as interrupted:
-        print(secrets.redact(interrupted.completed.output, token_values), file=sys.stderr)
+        print_interrupted_output(interrupted, token_values)
         _report_interrupt(progress)
         return ApplyExit.REFUSED
     except KeyboardInterrupt:
