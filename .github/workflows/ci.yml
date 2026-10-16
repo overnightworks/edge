@@ -57,7 +57,7 @@ jobs:
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
             traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
-            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml
+            keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml step-ca/ca.json
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
       # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,
@@ -100,6 +100,18 @@ jobs:
               owner = bindings.get(router, [(None, None)])[0]
               if owner != ("keycloak", entrypoint):
                   sys.exit(f"router {router} is {owner}, not keycloak on {entrypoint}")
+          step_ca = yaml.safe_load(compose)["services"]["step-ca"]
+          if not re.search(r"@sha256:[0-9a-f]{64}$", step_ca["image"]):
+              sys.exit("the step-ca image is not pinned by digest")
+          hardening = (step_ca.get("read_only"), step_ca.get("cap_drop"), step_ca.get("network_mode"))
+          if hardening != (True, ["ALL"], "host") or "no-new-privileges:true" not in step_ca["security_opt"]:
+              sys.exit(f"step-ca is not read_only, cap_drop ALL, no-new-privileges on the host network: {hardening}")
+          if "DOCKER_STEPCA_INIT" in compose or "environment" in step_ca:
+              sys.exit("step-ca takes its password from /run/secrets only, never from the environment")
+          if "--password-file=/run/secrets/step_ca_password" not in step_ca["command"]:
+              sys.exit("step-ca does not read its password from /run/secrets")
+          if "./step-ca/ca.json:/etc/step-ca/ca.json:ro" not in step_ca["volumes"]:
+              sys.exit("step-ca/ca.json is not mounted read-only")
           PY
 
       # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login

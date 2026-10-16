@@ -58,6 +58,7 @@ flowchart TB
             TRF["Traefik 127.0.0.1:8081<br/>the tunnel's only target"]
             ADM["Traefik 127.0.0.1:8090<br/>this PC only"]
             KC["Keycloak + its database<br/>auth.hallucinai.de: the login page"]
+            CA["step-ca 127.0.0.1:9000<br/>internal CA for the MCP origins, *.mcp.internal"]
             BAK["edge-backup<br/>restic weekly, restore test monthly<br/>second copy off this disk (D3)"]
             LOOK["Traffic-light page, Gatus<br/>is it OK now?"]
             MON["Prometheus, Grafana, Alertmanager<br/>why, since when? every service"]
@@ -94,7 +95,7 @@ flowchart TB
     GH -->|"CI"| SC
 
     HOME -->|"installs"| CFD & l2 & AGT
-    SEC -.->|"files, never values in repos"| CFD & KC & SONG & BAK
+    SEC -.->|"files, never values in repos"| CFD & KC & SONG & BAK & CA
     BAK -.->|"dumps"| KC & SONG
     BAK --> DATA
 
@@ -120,7 +121,7 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 |---|---|---|---|---|---|
 | **L0 PC and tools** | Ubuntu packages (Docker with loopback default, cloudflared from apt, gh, uv, restic, the pinned `tofu`, Tailscale); `/etc/docker/daemon.json`; linger; auto-login off; the AppArmor profile; the agent user (only with D14); the `home` and `aco` tools; the work clones in `~/git` | home-tools: the setup playbook (home-tools#9; Ansible recommended there) | `~/git/home-tools/bootstrap` (new, home-tools#9), then `home setup --apply` (without `--apply`: dry run) | `home check` (daily timer, today) | OS install and disk encryption (the installer decides it); BIOS "power on after AC loss"; the first `gh auth login --web`, because cloning the private home-tools needs it |
 | **L1 secrets** | every token, password and key; values only in `~/.secrets`; tool logins in their tools' stores. Directories 0700. Files 0600, except a file a container user must read: 0644 inside its 0700 directory (edge README, Keycloak). Today every agent can read all of it (D14) | `home-tools/src/home_tools/secrets_manifest.toml` (names, purpose, reader, scope, bindings, rotation; never a value) | `home secrets --setup`: walks every missing secret page by page (home-tools#10) | `home secrets`, part of `home check` (today: local view; the remote check is section 4) | creating a token at the provider: a human logs in and clicks. The wizard opens the page, takes the value hidden, verifies it, stores it |
-| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, edge-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `keycloak/*.yaml` (realm as code), `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: the permanent admin with TOTP and passkey in the browser) |
+| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins; its Traefik side is edge#37 slice 2), edge-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `keycloak/*.yaml` (realm as code), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: the permanent admin with TOTP and passkey in the browser) |
 | **L3 external** | Cloudflare DNS, Access apps and policies, tunnel ingress (D6); GitHub repo settings, rulesets, Actions policy, org secret names and reach | edge `fleet.yaml` + OpenTofu (`ext-as-code.md`, epic E3, its slices listed in the epic's body) | the publish phase of `edge apply` (operator, TTY, the word `yes`) | `edge external check` → `home check` | secret values, the tunnel object and its credential, Access identity providers, the Access group's one member, SonarCloud projects, CodeQL default setup, GitHub App installs, the registrar. Each has no provider or would put a secret into state |
 | **L4 services** | songmaker, presentator, hopin, later the aco board | each service repo's `compose.yaml` (containers) + its entry in `fleet.yaml` (where it runs, who may use it, on or off) | the deploy watcher (newest `v*` tag) after `edge apply` turned the service on | the LOOK page (each service's health URL); Grafana for its metrics | creating a new repo's SonarCloud project (one click) |
 | **L5 data** | Docker volumes (songmaker DB and audio, Keycloak DB), the restic repository and its off-disk copy (D3), the encrypted OpenTofu state | edge `backup/apps.toml` | `edge-backup restore …` (section 6) | the restore test (monthly), the clean-machine drill (section 6), and the backup's freshness on the LOOK page | the restic password, the OpenTofu passphrase and the disk's recovery key live in the password manager: without them no backup, no state and no disk can be read |
@@ -128,7 +129,7 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 
 **Who calls whom (no step twice):**
 - `home setup` installs the tools and clones edge. It creates the agent user only after D14 is ordered; until then the user is D14's step, not setup's. It installs cloudflared disabled and never starts a service.
-- `home secrets --setup` creates secrets. Nothing else writes into `~/.secrets`, except `keycloak/go-live` for the three Keycloak service passwords (edge#19 rule 2) and `edge-backup restore` on a re-setup.
+- `home secrets --setup` creates secrets. Nothing else writes into `~/.secrets`, except `keycloak/go-live` for the three Keycloak service passwords (edge#19 rule 2), `step-ca/init` for `~/.secrets/step-ca/` (edge#38) and `edge-backup restore` on a re-setup.
 - `edge apply` is **the one publisher**. `edge apply --closed` runs only the local part: the platform and the enabled services. `edge apply` without `--closed` runs the local part, then its publish phase: `edge external apply` and its check of each host against the catalog. It never creates a secret. `keycloak/go-live` never publishes.
 - The deploy watcher deploys newer tags and nothing else.
 - What `edge apply`, `edge start` and the watcher may do in each state: section 8 state table.
@@ -240,6 +241,15 @@ services:
 Each app also gets one list of **plain keys**: the `.env` and `environment:` keys that are configuration, not secrets (example: `POSTGRES_USER`). Every key an app reads is then either a declared binding or a declared plain key. Nothing is judged by its name.
 
 Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`, `verify`, `retired_on`.
+
+**The internal CA's files (edge#38).** `step-ca/init` creates them once; the manifest entry belongs to home-tools#21.
+
+| File | Mode | Who reads it | In the backup |
+|---|---|---|---|
+| `~/.secrets/step-ca/root_ca_key` | 0600 | only `step-ca/init`, in a one-off container without a network; never mounted into the running CA | yes |
+| `~/.secrets/step-ca/root_ca.crt` | 0644 | Traefik (uid 65534) and the agent service as the trusted root | yes |
+| `~/.secrets/step-ca/password` | 0644 in the 0700 directory | the CA, through `/run/secrets/step_ca_password`; it protects the root and the intermediate key alike | yes |
+| volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | yes |
 
 **One split keeps it single.** The manifest owns *what a secret is and where an app receives it*. `fleet.yaml` owns *where GitHub installs it and which repos see it*: the org secret name and its reach (E3, X5). The value is set by `home secrets --rotate` (home-tools#10 line 19). Its reach is checked by `edge external check`. home-tools#10 line 19's own "repo list drift" view is therefore dropped; the reach check lives once, in X5.
 
