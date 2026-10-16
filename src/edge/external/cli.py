@@ -34,12 +34,24 @@ def plan_command(home: Path) -> int:
     try:
         return _plan(home)
     except (secrets.SecretFileError, tofu.TofuError) as error:
-        print(f"edge external plan: {error}", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
-    except (OSError, ValueError) as error:
+        _report(f"edge external plan: {error}", error)
+    except OSError as error:
+        # strerror and filename are fixed text and a path, never token content.
+        where = f" ({error.filename})" if error.filename else ""
+        _report(
+            f"edge external plan: cannot plan, {type(error).__name__}: {error.strerror}{where}",
+            error,
+        )
+    except ValueError as error:
         # Only the type: a decode error's message can quote bytes of a token file.
-        print(f"edge external plan: cannot plan, {type(error).__name__}", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
+        _report(f"edge external plan: cannot plan, {type(error).__name__}", error)
+    return ExitCode.CANNOT_PLAN
+
+
+def _report(message: str, error: Exception) -> None:
+    print(message, file=sys.stderr)
+    for note in getattr(error, "__notes__", []):
+        print(f"edge external plan: {note}", file=sys.stderr)
 
 
 def _plan(home: Path) -> int:

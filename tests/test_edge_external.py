@@ -43,8 +43,8 @@ with (here / "calls.jsonl").open("a") as calls:
         "env": dict(os.environ),
         "tmpdir_mode": os.stat(os.environ["TMPDIR"]).st_mode & 0o777,
     }}) + "\\n")
-if config["leave_undeletable"] and command == "plan":
-    locked = Path(os.environ["TMPDIR"]) / "locked"
+locked = Path(os.environ["TMPDIR"]) / "locked"
+if config["leave_undeletable"] and not locked.exists():
     locked.mkdir()
     (locked / "artifact").write_text("x")
     locked.chmod(0o500)
@@ -150,37 +150,49 @@ def test_the_tokens_never_reach_the_wrapper_output(home, fake_tofu, capsys):
     assert SENTINEL in json.dumps(fake_tofu.call("plan")["env"])
 
 
-@pytest.mark.parametrize(
-    "inherited",
-    [
-        {"TF_LOG": "TRACE", "TF_LOG_PATH": "{tmp}/trace", "TF_LOG_PROVIDER": "TRACE"},
-        {"TF_CLI_ARGS": "-lock=false", "TF_CLI_ARGS_plan": "-refresh=false"},
-        {"TF_ENCRYPTION": "unenforced-config"},
-        {"TF_VAR_state_passphrase": "wrong", "TF_VAR_other": "x"},
+DROPPED_VARIABLE_FAMILIES = [
+    pytest.param(
+        {"TF_LOG": "TRACE", "TF_LOG_PATH": "{tmp}/trace", "TF_LOG_PROVIDER": "TRACE"}, id="TF_LOG"
+    ),
+    pytest.param(
+        {"TF_CLI_ARGS": "-lock=false", "TF_CLI_ARGS_plan": "-refresh=false"}, id="TF_CLI_ARGS"
+    ),
+    pytest.param({"TF_ENCRYPTION": "unenforced-config"}, id="TF_ENCRYPTION"),
+    pytest.param({"TF_VAR_state_passphrase": "wrong", "TF_VAR_other": "x"}, id="TF_VAR"),
+    pytest.param(
         {"TF_DATA_DIR": "{tmp}/d", "TF_PLUGIN_CACHE_DIR": "{tmp}/c", "TF_WORKSPACE": "w"},
+        id="TF_DIRS",
+    ),
+    pytest.param(
         {"GITHUB_TOKEN": "wrong", "GITHUB_OWNER": "x", "GH_TOKEN": "x", "GH_HOST": "x"},
-        {"CLOUDFLARE_API_TOKEN": "wrong", "CLOUDFLARE_EMAIL": "x"},
-        {"HTTPS_PROXY": "http://p", "http_proxy": "http://p", "ALL_PROXY": "http://p"},
-    ],
-    ids=[
-        "TF_LOG",
-        "TF_CLI_ARGS",
-        "TF_ENCRYPTION",
-        "TF_VAR",
-        "TF_DIRS",
-        "GITHUB",
-        "CLOUDFLARE",
-        "PROXY",
-    ],
-)
+        id="GITHUB",
+    ),
+    pytest.param({"CLOUDFLARE_API_TOKEN": "wrong", "CLOUDFLARE_EMAIL": "x"}, id="CLOUDFLARE"),
+    pytest.param(
+        {"HTTPS_PROXY": "http://p", "http_proxy": "http://p", "ALL_PROXY": "http://p"}, id="PROXY"
+    ),
+]
+TOFU_VERSIONS = [
+    pytest.param(None, 0, id="pinned"),
+    pytest.param("1.12.0", 2, id="other"),
+]
+
+
+def inherit(monkeypatch, tmp_path, variables):
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value.format(tmp=tmp_path))
+
+
+@pytest.mark.parametrize("version,expected_exit", TOFU_VERSIONS)
+@pytest.mark.parametrize("inherited", DROPPED_VARIABLE_FAMILIES)
 def test_tofu_gets_exactly_the_allowlisted_variables(
-    home, fake_tofu, monkeypatch, tmp_path, inherited
+    home, fake_tofu, monkeypatch, tmp_path, inherited, version, expected_exit
 ):
     """#40 rule 2: tofu gets exactly the allowlisted variables, tokens from the files."""
-    for name, value in inherited.items():
-        monkeypatch.setenv(name, value.format(tmp=tmp_path))
-    assert edge_external_plan() == 0
-    environment = fake_tofu.call("plan")["env"]
+    fake_tofu.configure(version=version)
+    inherit(monkeypatch, tmp_path, inherited)
+    assert edge_external_plan() == expected_exit
+    environment = fake_tofu.call("version")["env"]
     assert set(environment) == ALLOWED_NAMES
     assert environment["TF_VAR_state_passphrase"] == "file-passphrase"
     assert environment["GITHUB_TOKEN"] == "github-token"
@@ -253,7 +265,10 @@ def test_the_only_new_script_is_edge():
     assert "edge-external" not in scripts
 
 
-@pytest.mark.parametrize("version", [None, "1.12.0"], ids=["pinned", "other"])
+@pytest.mark.parametrize(
+    "version", [version.values[0] for version in TOFU_VERSIONS], ids=["pinned", "other"]
+)
+@pytest.mark.parametrize("family", DROPPED_VARIABLE_FAMILIES)
 @pytest.mark.parametrize(
     "token_file,variable",
     [
@@ -263,10 +278,11 @@ def test_the_only_new_script_is_edge():
     ],
 )
 def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
-    home, fake_tofu, monkeypatch, capsys, token_file, variable, version
+    home, fake_tofu, monkeypatch, tmp_path, capsys, token_file, variable, family, version
 ):
     """#40 rule 1: an inherited credential never stands in for an absent token file."""
     fake_tofu.configure(version=version)
+    inherit(monkeypatch, tmp_path, family)
     monkeypatch.setenv(variable, SENTINEL)
     (home / token_file).unlink()
     assert edge_external_plan() == 2
@@ -284,11 +300,14 @@ def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tof
     assert fake_tofu.calls() == []
 
 
-def test_a_temporary_parent_that_is_a_file_exits_2_naming_the_error_type(home, fake_tofu, capsys):
-    """#40 rule 4: a filesystem failure while preparing the run is exit 2."""
-    (home / ".secrets/opentofu/tmp").write_text("in the way")
+def test_a_temporary_parent_that_is_a_file_exits_2_naming_error_and_path(home, fake_tofu, capsys):
+    """#40 rule 4: a filesystem failure while preparing the run is exit 2 naming what failed."""
+    in_the_way = home / ".secrets/opentofu/tmp"
+    in_the_way.write_text("in the way")
     assert edge_external_plan() == 2
-    assert "FileExistsError" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "FileExistsError" in error
+    assert str(in_the_way) in error
     assert fake_tofu.calls() == []
 
 
@@ -306,6 +325,20 @@ def test_a_temporary_directory_that_cannot_be_removed_exits_2(home, fake_tofu, c
     try:
         assert edge_external_plan() == 2
         assert "PermissionError" in capsys.readouterr().err
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
+
+
+def test_a_cleanup_failure_after_another_version_still_names_both_versions(home, fake_tofu, capsys):
+    """#40 rule 3: a failing cleanup does not hide the version mismatch already in flight."""
+    fake_tofu.configure(version="1.12.0", leave_undeletable=True)
+    try:
+        assert edge_external_plan() == 2
+        error = capsys.readouterr().err
+        assert "1.12.0" in error
+        assert tofu.pinned_version() in error
+        assert "cannot remove" in error
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
             locked.chmod(0o700)

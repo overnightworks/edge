@@ -56,8 +56,13 @@ def private_temporary_directory(home: Path) -> Iterator[Path]:
     directory = Path(tempfile.mkdtemp(dir=parent))
     try:
         yield directory
-    finally:
-        shutil.rmtree(directory)
+    except Exception as in_flight:
+        try:
+            shutil.rmtree(directory)
+        except OSError as cleanup_failure:
+            in_flight.add_note(f"also cannot remove {directory}: {cleanup_failure.strerror}")
+        raise
+    shutil.rmtree(directory)
 
 
 def child_environment(
