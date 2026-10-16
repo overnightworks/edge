@@ -123,7 +123,9 @@ REFERENCES = {
 
 def run_check(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["uv", "run", "--script", str(CHECK), str(root)], capture_output=True, text=True
+        ["uv", "run", "--no-build", "--script", str(CHECK), str(root)],
+        capture_output=True,
+        text=True,
     )
 
 

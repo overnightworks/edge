@@ -1,6 +1,9 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = ["pyyaml==6.0.2"]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-16T00:00:00Z"
 # ///
 """The repository's structural secret check (CI step "No secret in any file").
 
@@ -10,7 +13,7 @@ Reads the YAML structure, so block, flow and list style are one case:
   *_FILE path (an interpolation would put the value into Config.Env).
 Literal-looking secrets anywhere are gitleaks' job. Exit 1 names each offending file and key.
 
-    uv run --script keycloak/secret-check/secret_check.py [repository root]
+    uv run --no-build --script keycloak/secret-check/secret_check.py [repository root]
 """
 
 import re

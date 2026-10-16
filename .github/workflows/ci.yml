@@ -24,22 +24,24 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
 
       - name: edge-check installs from the lock file
-        run: uv sync --locked
+        run: uv sync --locked --no-build --no-install-project
 
       - name: edge-check lint
         run: |
-          uv run ruff check
-          uv run ruff format --check
+          uv run --no-sync --no-build ruff check
+          uv run --no-sync --no-build ruff format --check
 
       - name: edge-check tests
-        run: uv run pytest
+        env:
+          PYTHONPATH: src
+        run: uv run --no-sync --no-build pytest
 
       # The wheel must ship both packages, not only the one the editable install happens to find.
       - name: The wheel installs edge-check and edge-backup
         run: |
           uv build --wheel --out-dir dist
-          uv run --isolated --no-project --with dist/*.whl edge-backup --help
-          uv run --isolated --no-project --with dist/*.whl edge-check --help
+          uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
+          uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
 
       - name: Compose renders (default, probe profile, Keycloak bootstrap and probe overlays)
         run: |
@@ -142,4 +144,4 @@ jobs:
       - name: No secret in any file
         run: |
           "$RUNNER_TEMP/gitleaks" dir --no-banner --redact .
-          uv run --script keycloak/secret-check/secret_check.py .
+          uv run --no-build --script keycloak/secret-check/secret_check.py .
