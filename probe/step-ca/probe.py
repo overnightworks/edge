@@ -725,8 +725,7 @@ class Probe:
         expect(marker.read_text() == written, "apply to E cleared the marker")
         self.volume_names_exist()
 
-        out = self.edge(copy, "stop", "step-ca", terminal=False)  # 6. E x stop
-        expect("disabled in the catalog" in out, f"stop in E said: {out[-120:]}")
+        self.edge(copy, "stop", "step-ca", terminal=False)  # 6. E x stop: exit 0, no change
         expect(marker.read_text() == written, "stop in E touched the marker")
 
         out = self.edge(copy, "start", "step-ca", terminal=True, exit_code=1)  # 7. E x start

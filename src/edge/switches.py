@@ -17,6 +17,7 @@ from pathlib import Path
 
 STOPPED_DIRECTORY = "stopped"
 LOCK_FILE = "switch.lock"
+UNKNOWN_SWITCH_TIME = "unknown time"
 _PRIVATE_DIRECTORY = 0o700
 
 
@@ -45,9 +46,12 @@ class Switches:
         return self.directory / STOPPED_DIRECTORY
 
     def since(self, unit: str) -> str | None:
-        """The time the unit was switched off, or None when it is not switched off."""
+        """The time the unit was switched off, or None when it is not switched off.
+
+        The file is the record: an empty one still means switched off, at an unknown time.
+        """
         try:
-            return (self._stopped / unit).read_text().strip()
+            return (self._stopped / unit).read_text().strip() or UNKNOWN_SWITCH_TIME
         except FileNotFoundError:
             return None
         except OSError as error:
