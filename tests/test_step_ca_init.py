@@ -214,7 +214,7 @@ def test_the_root_key_is_never_written_into_the_volume(init, docker, secrets_dir
     init.run()
 
     root_key = (secrets_dir / ROOT_KEY).read_bytes()
-    assert all(root_key != content for content in fingerprint_of_files(docker.volume_dir).values())
+    assert all(content != root_key for content in fingerprint_of_files(docker.volume_dir).values())
 
 
 def test_every_container_runs_without_a_network_from_the_composed_image(init, docker):
@@ -314,7 +314,8 @@ def test_half_a_root_is_refused_by_name_and_the_survivor_is_untouched(
     assert init.run() == 1
 
     assert (secrets_dir / survivor).read_bytes() == content
-    assert survivor in session.printed[-1] and "restore" in session.printed[-1]
+    assert survivor in session.printed[-1]
+    assert "restore" in session.printed[-1]
 
 
 def test_a_missing_password_next_to_a_root_key_is_refused_and_not_replaced(
@@ -393,7 +394,8 @@ def test_the_password_reaches_the_containers_only_through_run_secrets(init, dock
 
     runs = [c for c in docker.commands if c[1] == "run"]
     password_mounts = [a for c in runs for a in c if a.endswith("/run/secrets/password:ro")]
-    assert password_mounts and set(password_mounts) == {
+    assert password_mounts
+    assert set(password_mounts) == {
         f"{secrets_dir / PASSWORD}:/run/secrets/password:ro"
     }
     assert not any("/secrets/password" in a and "/run" not in a for c in runs for a in c)
