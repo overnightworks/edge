@@ -338,7 +338,28 @@ class GoLive:
 
     def realm_import_completed(self) -> bool:
         """The realm existing proves nothing: keycloak-config-cli creates it first and records its
-        import checksum as a realm attribute only after the clients, scopes and groups are in."""
+        import checksum as a realm attribute only after the clients, scopes and groups are in.
+        Once the edge stands, the container's own kcadm is refused (401) and the admin door is
+        the way in; before that, only the container reaches Keycloak."""
+        if self.edge_is_ready():
+            attributes = self.realm_attributes_by_admin_api()
+        else:
+            attributes = self.realm_attributes_in_container()
+        return any(key.startswith(IMPORT_CHECKSUM_PREFIX) for key in attributes)
+
+    def realm_attributes_by_admin_api(self) -> dict[str, str]:
+        reply = self.tools.fetch(
+            "GET",
+            f"{ADMIN_REALMS}/{PUBLIC_REALM}",
+            headers={"Authorization": f"Bearer {self.admin_token()}"},
+        )
+        if reply.status == 404:
+            return {}
+        if reply.status != 200:
+            raise StepFailure(f"the admin API answered {reply.status} to GET realm {PUBLIC_REALM}")
+        return json.loads(reply.body).get("attributes", {})
+
+    def realm_attributes_in_container(self) -> dict[str, str]:
         client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
         reply = self.compose(
             "exec", "-T", "keycloak", "bash", "-c", CONTAINER_REALM_ATTRIBUTES, "bash",
@@ -346,9 +367,8 @@ class GoLive:
             stdin=client_secret + "\n",
         )  # fmt: skip
         if reply.returncode != 0:
-            return False
-        attributes = json.loads(reply.stdout).get("attributes", {})
-        return any(key.startswith(IMPORT_CHECKSUM_PREFIX) for key in attributes)
+            return {}
+        return json.loads(reply.stdout).get("attributes", {})
 
     def edge_runs_without_overlay(self) -> bool:
         return not self.keycloak_runs_with_overlay() and self.edge_is_ready()

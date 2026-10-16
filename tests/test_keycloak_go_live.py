@@ -140,6 +140,8 @@ class Keycloak:
         if not self.running:
             return self.done(returncode=1, stderr="service keycloak is not running")
         if any("kcadm.sh" in argument for argument in command):
+            if self.edge_up:  # the real kcadm is refused with 401 once the edge stands
+                return self.done(returncode=1, stderr="HTTP 401 Unauthorized")
             return self.kcadm_realm_attributes(command)
         path = command[-1]
         status, body = self.container_answer(path)
@@ -187,11 +189,22 @@ class Keycloak:
         if url.endswith("/protocol/openid-connect/token"):
             assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
             return from_script(200, json.dumps({"access_token": "token"}).encode())
+        if url == "http://localhost:8090/admin/realms/hallucinai":
+            return self.realm_representation(from_script)
         return self.admin_api(method, url.split("/admin/realms/master")[1], from_script)
+
+    def realm_representation(self, reply):
+        if not self.realm_exists:
+            return reply(404, b"")
+        checksum = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
+        return reply(200, json.dumps({"attributes": checksum if self.import_completed else {}}).encode())
 
     def admin_api(self, method: str, path: str, reply):
         if method == "GET" and path.startswith("/roles/admin/users"):
-            holders = [{"id": name, "username": name} for name in self.users]
+            holders = [
+                {"id": name, "username": name, "enabled": person.get("enabled", True)}
+                for name, person in self.users.items()
+            ]
             service = {"id": "sa", "username": "service-account-config-cli"}
             return reply(
                 200, json.dumps([*holders, {**service, "serviceAccountClientId": "x"}]).encode()
