@@ -945,6 +945,26 @@ def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
     assert marker(state) is not None
 
 
+def test_an_interrupt_for_an_enabled_unit_with_nothing_running_still_records_the_switch(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rule 2: the marker is recorded first, so the partial line never lies about it."""
+    put_unit_in("A", scripted, repository, state)
+    scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
+
+    def interrupted(_self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(switches.Switches, "lock", interrupted)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded" in err
+    assert "interrupted while waiting to stop it" in err
+    assert marker(state) is not None
+
+
 def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_exit_1(
     stop, scripted, repository, state, monkeypatch
 ):

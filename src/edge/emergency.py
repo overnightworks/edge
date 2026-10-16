@@ -91,6 +91,8 @@ def _confirmed_off(
     stop closes it, and reports the record itself.
     """
     try:
+        if marks.since(key) is None:
+            return None  # nothing is recorded yet: the stop records first, then waits for the lock
         with marks.lock():
             if compose.has_running_container(engine.states(), services):
                 return None
