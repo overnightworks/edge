@@ -3,6 +3,6 @@ agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
 role = "builder"
 base = "2d7627caeffd833b28bd1ab33417142e8c664b00"
 branch = "claude/issue-48-traefik-mcp"
-scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "docs/naming.md", "mcp", "probe/step-ca", "pyproject.toml", "tests/test_step_ca_init.py", "tests/test_traefik_mcp.py", "traefik-mcp.yml", "uv.lock"]
+scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "docs/naming.md", "mcp", "probe/step-ca", "pyproject.toml", "step-ca/init", "tests/test_step_ca_init.py", "tests/test_traefik_mcp.py", "traefik-mcp.yml", "uv.lock"]
 opened_commit = "606144e9dd1ab804bb0c60bfa894e8e1d6284b08"
 whole_reason = "The second Traefik, its three networks, its resolver against step-ca and the probe that proves them are one TLS path."
