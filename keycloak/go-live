@@ -89,7 +89,7 @@ def fetch(
     data = urlencode(form).encode() if form is not None else None
     request = Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urlopen(request, timeout=HTTP_SECONDS) as reply:  # noqa: S310 - fixed http:// URLs
+        with urlopen(request, timeout=HTTP_SECONDS) as reply:
             return Reply(reply.status, reply.read())
     except HTTPError as error:
         return Reply(error.code, error.read())
@@ -138,13 +138,15 @@ class GoLive:
         return [name for name in SECRET_FILES if not (self.secrets_dir / name).exists()]
 
     def secrets_are_complete(self) -> bool:
-        """Complete, or complete but for the bootstrap password that step 7 removes."""
+        """All three, or none (to be created). Only a retired bootstrap may leave its file out."""
         missing = self.missing_secrets()
-        if missing and missing != [BOOTSTRAP_SECRET]:
-            if len(missing) == len(SECRET_FILES):
-                return False
-            raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
-        return True
+        if not missing:
+            return True
+        if len(missing) == len(SECRET_FILES):
+            return False
+        if missing == [BOOTSTRAP_SECRET] and self.bootstrap_retired():
+            return True
+        raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
 
     def create_secrets(self) -> None:
         self.secrets_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -178,6 +180,10 @@ class GoLive:
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
+
+    def bootstrap_retired(self) -> bool:
+        """Step 7 ran: its password file is gone and Keycloak is past go-live (master moved)."""
+        return not self.bootstrap_present() and self.master_is_moved()
 
     def compose(self, *args: str, bootstrap: bool, timeout: int = LONG_COMMAND_SECONDS):
         command = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
@@ -220,10 +226,6 @@ class GoLive:
             return None
         return json.loads(reply.body).get("issuer")
 
-    def realm_applied(self) -> bool:
-        reply = self.container_get(f"/realms/{PUBLIC_REALM}")
-        return reply is not None and reply.status == 200
-
     def keycloak_runs_with_overlay(self) -> bool:
         container = self.compose(
             "ps", "-q", "keycloak", bootstrap=False, timeout=SHORT_COMMAND_SECONDS
@@ -247,7 +249,7 @@ class GoLive:
             self.tools.sleep(POLL_SECONDS)
 
     def edge_is_ready(self) -> bool:
-        """README "Readiness": an unknown host gets 404 on 8081, the master realm answers on 8090."""
+        """README "Readiness": an unknown host gets 404 on 8081, master answers on 8090."""
         try:
             unknown = self.tools.fetch("GET", f"{EDGE_URL}/", headers={"Host": "unknown.invalid"})
             master = self.tools.fetch("GET", f"{ADMIN_URL}/realms/master")
@@ -356,11 +358,12 @@ class GoLive:
 
     def retire_bootstrap(self) -> None:
         self.tools.say(
-            f"Your part, in the browser: open {ADMIN_URL}/admin/ and sign in as {BOOTSTRAP_ADMIN} "
-            f"(password: the file {self.secrets_dir / BOOTSTRAP_SECRET}; enrol TOTP when asked). "
-            f"Create your own admin in the master realm with the realm role {ADMIN_ROLE}, sign out, "
-            "sign in as that admin, enrol TOTP and add a passkey. It worked when that second "
-            "sign-in asked for the TOTP code and the account page lists a passkey."
+            f"Your part, in the browser: open {ADMIN_URL}/admin/ and sign in as "
+            f"{BOOTSTRAP_ADMIN} (password: the file {self.secrets_dir / BOOTSTRAP_SECRET}; enrol "
+            f"TOTP when asked). Create your own admin in the master realm with the realm role "
+            f"{ADMIN_ROLE}, sign out, sign in as that admin, enrol TOTP and add a passkey. It "
+            "worked when that second sign-in asked for the TOTP code and the account page lists "
+            "a passkey."
         )
         try:
             self.tools.ask("Press Enter when your admin has TOTP and a passkey. ")
@@ -382,10 +385,10 @@ class GoLive:
             Step(
                 "1",
                 "backup",
-                self.any_secret_exists,
+                self.keycloak_answers,
                 self.confirm_no_backup,
-                "Keycloak will hold every login. Its backup (K11b) is not built yet, so you decide "
-                "once whether to go live without one.",
+                "Keycloak will hold every login. Its backup (K11b) is not built yet, so you "
+                "decide once whether to go live without one.",
             ),
             Step(
                 "2",
@@ -393,7 +396,8 @@ class GoLive:
                 self.secrets_are_complete,
                 self.create_secrets,
                 "Create the three random passwords Keycloak and its database need, in "
-                "~/.secrets/keycloak/. They are never printed and an existing file is never replaced.",
+                "~/.secrets/keycloak/. They are never printed and an existing file is never "
+                "replaced.",
             ),
             Step(
                 "3",
@@ -408,14 +412,16 @@ class GoLive:
                 "master on the admin entrypoint",
                 self.master_is_moved,
                 self.move_master,
-                "Move the admin realm (master) to http://localhost:8090, the door that only this PC "
-                "can reach. The apply cannot do this itself, because the move changes the address "
-                "of the token it signs in with.",
+                "Move the admin realm (master) to http://localhost:8090, the door that only this "
+                "PC can reach. The apply cannot do this itself, because the move changes the "
+                "address of the token it signs in with.",
             ),
             Step(
                 "4",
                 "realms applied",
-                self.realm_applied,
+                # The apply is idempotent, and a realm that exists may still lack its clients,
+                # scopes or groups: only a started edge proves the apply ran to its end.
+                self.edge_runs_without_overlay,
                 self.apply_realms,
                 "Apply keycloak/master.yaml and keycloak/realm.yaml: the realms are code, and this "
                 "is the first time that code becomes a running Keycloak.",
@@ -431,15 +437,12 @@ class GoLive:
             Step(
                 "6-7",
                 "bootstrap retired",
-                lambda: not self.bootstrap_present(),
+                self.bootstrap_retired,
                 self.retire_bootstrap,
                 "You create your own admin in the browser. Only when that admin has a TOTP "
                 "credential does the script delete the temporary one and its password file.",
             ),
         ]
-
-    def any_secret_exists(self) -> bool:
-        return len(self.missing_secrets()) < len(SECRET_FILES)
 
     def run(self) -> int:
         current = "start"
@@ -475,7 +478,10 @@ def main() -> int:
     )
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
-        epilog=f"Steps (numbers as in the README), each skipped when already done:\n{steps}\n\n{CLOUDFLARE_STEPS}",
+        epilog=(
+            f"Steps (numbers as in the README), each skipped when already done:\n{steps}\n\n"
+            f"{CLOUDFLARE_STEPS}"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.parse_args()

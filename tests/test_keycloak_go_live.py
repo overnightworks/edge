@@ -45,6 +45,9 @@ class Keycloak:
     realm_applied: bool = False
     edge_up: bool = False
     fail_apply_after_master: bool = False
+    fail_edge_start: bool = False
+    never_answers: bool = False
+    echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
@@ -82,8 +85,12 @@ class Keycloak:
 
     def compose_up(self, command: list[str]):
         if "--force-recreate" in command:
+            if self.fail_edge_start:
+                return self.done(returncode=1, stderr="traefik: port 8081 is in use")
             self.edge_up = True
         elif "keycloak" in command:
+            if self.never_answers:
+                return self.done()
             self.running, self.with_overlay = True, OVERLAY in command
         else:
             self.with_overlay = OVERLAY in command
@@ -96,7 +103,8 @@ class Keycloak:
             return self.done(returncode=1, stderr="401 Unauthorized: no client config-cli")
         self.master_applied = True
         if self.fail_apply_after_master:
-            return self.done(returncode=1, stderr="realm.yaml: import failed")
+            quoted = self.echo_secret_file.read_text() if self.echo_secret_file else ""
+            return self.done(returncode=1, stderr=f"realm.yaml: import failed {quoted}".strip())
         self.realm_applied = True
         return self.done()
 
@@ -117,7 +125,7 @@ class Keycloak:
         if path.endswith("/.well-known/openid-configuration"):
             host = "http://localhost:8090" if self.master_moved else "https://auth.hallucinai.de"
             return 200, json.dumps({"issuer": f"{host}/realms/master"})
-        return (200, "{}") if path == "/realms/hallucinai" and self.realm_applied else (404, "")
+        return 404, ""
 
     # --- HTTP -----------------------------------------------------------------------------
 
@@ -231,6 +239,7 @@ def secret_values(secrets_dir: Path) -> list[str]:
 
 
 def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, session, secrets_dir):
+    """#19 rules 1, 2, 4: one run creates the secrets, applies, and retires the bootstrap."""
     assert go_live.run() == 0
 
     assert keycloak.realm_applied
@@ -244,6 +253,7 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
 
 
 def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):
+    """#19 rule 2: random hex files, 0644, in a 0700 directory."""
     keycloak.fail_apply_after_master = True  # stops with the bootstrap password still on disk
 
     assert go_live.run() == 1
@@ -257,14 +267,21 @@ def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets
         assert re.fullmatch(r"[0-9a-f]{64}", (secrets_dir / name).read_text())
 
 
-def test_no_secret_value_is_ever_printed(go_live, session, secrets_dir, keycloak):
+def test_a_secret_quoted_by_a_failing_command_is_printed_as_stars(
+    go_live, session, secrets_dir, keycloak
+):
+    """#19 rule 2: secrets are never printed, not even inside a failing command's own error."""
     keycloak.fail_apply_after_master = True
+    keycloak.echo_secret_file = secrets_dir / "config-cli-secret"
+
     go_live.run()
-    leaked = [value for value in secret_values(secrets_dir) if value in session.output]
-    assert leaked == []
+
+    assert session.printed[-1].endswith("realm.yaml: import failed ***")
+    assert [value for value in secret_values(secrets_dir) if value in session.output] == []
 
 
 def test_a_second_run_changes_nothing(go_live, keycloak, session, secrets_dir):
+    """#19 rule 3: a run after a finished one changes and asks nothing."""
     go_live.run()
     commands_before, asked_before = len(keycloak.commands), len(session.asked)
 
@@ -275,7 +292,8 @@ def test_a_second_run_changes_nothing(go_live, keycloak, session, secrets_dir):
     assert "curl -s https://auth.hallucinai.de" in session.output
 
 
-def test_a_run_stopped_after_the_apply_resumes_at_the_edge(go_live, keycloak, session):
+def test_a_run_whose_apply_failed_applies_again_and_goes_on(go_live, keycloak, session):
+    """#19 rule 3: a run stopped inside the apply resumes at the apply."""
     keycloak.fail_apply_after_master = True
     assert go_live.run() == 1
     assert "FAILED at realms applied" in session.output
@@ -289,7 +307,51 @@ def test_a_run_stopped_after_the_apply_resumes_at_the_edge(go_live, keycloak, se
     assert len(session.asked) == 2  # the backup question of the first run, Enter of the second
 
 
+def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_edge(
+    go_live, keycloak, session
+):
+    """#19 rule 3: a run killed after the apply goes on with the edge, not with step 4's move."""
+    keycloak.fail_edge_start = True
+    assert go_live.run() == 1
+    assert "FAILED at edge without the overlay" in session.output
+    assert keycloak.realm_applied
+    keycloak.fail_edge_start = False
+    keycloak.commands.clear()
+
+    assert go_live.run() == 0
+
+    assert keycloak.edge_up
+    assert not any("/opt/edge/admin-frontend.sh" in command for command in keycloak.commands)
+    assert len(session.asked) == 2
+
+
+def test_a_partial_set_missing_only_the_bootstrap_password_is_refused_on_a_fresh_install(
+    go_live, keycloak, secrets_dir, session
+):
+    """#19 rule 2: only some files exist, so one line names the missing one and nothing starts."""
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at secrets: some secret files exist, missing: bootstrap-admin-password"
+    )
+    assert not keycloak.changed_something()
+
+
+def test_the_backup_is_asked_even_when_the_secret_files_were_made_by_hand(
+    go_live, secrets_dir, session
+):
+    """#19 rule 6: existing secrets are no answer to the backup question."""
+    write_secrets(secrets_dir, *SECRET_FILES)
+
+    go_live.run()
+
+    assert session.asked[0].startswith("K11b")
+
+
 def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, session):
+    """#19 rule 2: an existing file stays; a partial set is refused naming the missing ones."""
     write_secrets(secrets_dir, "db-password")
 
     assert go_live.run() == 1
@@ -312,6 +374,7 @@ def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, sessi
 def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
     go_live, keycloak, session, secrets_dir, second_admin_otp, reason
 ):
+    """#19 rule 4: no retirement without a second admin who has TOTP."""
     session.on_enter = (
         None
         if second_admin_otp is None
@@ -352,6 +415,7 @@ def test_an_unexpected_answer_ends_in_one_line_not_a_traceback(go_live, session)
 
 
 def test_the_run_ends_at_the_failed_step_with_one_line_and_exit_one(go_live, keycloak, session):
+    """#19 rule 1: a failure is one line naming the step, exit 1."""
     keycloak.fail_apply_after_master = True
     keycloak.master_applied = True  # the overlay grant is refused, the client grant fails too
 
@@ -366,23 +430,26 @@ def test_the_run_ends_at_the_failed_step_with_one_line_and_exit_one(go_live, key
 def test_without_an_accepted_backup_nothing_is_created(
     go_live, secrets_dir, keycloak, session, answers
 ):
+    """#19 rule 6: no accepted backup, no change."""
     session.answers = answers
 
     assert go_live.run() == 1
 
     assert not secrets_dir.exists()
-    assert keycloak.commands == []
+    assert not keycloak.changed_something()
     assert "FAILED at backup" in session.printed[-1]
 
 
 def test_the_backup_question_has_no_default(go_live, session):
+    """#19 rule 6: only yes or no answers the backup question."""
     session.answers = ["", "maybe", "yes", ""]
     go_live.run()
     assert session.asked[:3].count(session.asked[0]) == 3
 
 
 def test_a_keycloak_that_never_answers_ends_the_step_after_the_timeout(go_live, keycloak, session):
-    keycloak.compose_up = lambda command: Keycloak.done()  # starts, never runs
+    """#19 rule 3: a Keycloak that never answers ends the step at the timeout."""
+    keycloak.never_answers = True
 
     assert go_live.run() == 1
 
@@ -391,6 +458,7 @@ def test_a_keycloak_that_never_answers_ends_the_step_after_the_timeout(go_live, 
 
 
 def test_each_step_says_what_happens_and_why_before_it_runs(go_live, session):
+    """#19 rule 7: every step is announced before it runs."""
     go_live.run()
 
     announcements = [line for line in session.printed if line.startswith("Step ")]
@@ -409,6 +477,7 @@ def test_each_step_says_what_happens_and_why_before_it_runs(go_live, session):
 
 
 def test_the_pause_says_what_to_do_and_how_to_check_it(go_live, session):
+    """#19 rule 7: the browser pause names the action and its check."""
     go_live.run()
 
     assert "It worked when" in session.output
@@ -416,6 +485,7 @@ def test_the_pause_says_what_to_do_and_how_to_check_it(go_live, session):
 
 
 def test_help_lists_the_steps_in_plain_words():
+    """#19 rule 7: --help lists the steps in plain words."""
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
     )
