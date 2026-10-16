@@ -7,12 +7,16 @@ stack down, volumes included. It needs 127.0.0.1:8081 and :8090 free, so the liv
 
     flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
         python3 probe/keycloak/probe.py --scratch DIR
+
+`hold --scratch DIR` instead brings the same stack up without the proofs, prints one READY line
+and keeps it until SIGTERM, SIGINT or EOF on stdin (see probe/keycloak/README.md).
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import grp
 import hashlib
 import hmac
@@ -592,18 +596,18 @@ class Probe:
         tokens = self.tokens_from("config-cli", http("POST", MASTER_TOKEN_URL, form=form))
         return Admin(tokens["access_token"])
 
-    def run(self) -> None:
+    def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
         self.stack.up(bootstrap=True)
         wait_until_ready()
         self.stack.move_master_to_admin_entrypoint()
         self.say("stack: up with the temporary bootstrap admin, master on the admin entrypoint")
-
-        bootstrap_admin = self.admin_with_password(
+        return self.admin_with_password(
             "temp-admin", self.secret_values["bootstrap-admin-password"]
         )
-        self.missing_variable_fails_loudly(bootstrap_admin)
+
+    def apply_and_restart(self) -> Admin:
         self.stack.must_apply("fresh apply", bootstrap=True)
         # The bootstrap keycloak container and its logs disappear when it is recreated below.
         self.stack.see_running()
@@ -613,6 +617,12 @@ class Probe:
         # The config-cli client exists only if the fresh apply created the master configuration.
         admin = self.admin_with_client(self.secret_values["config-cli-secret"])
         expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
+        return admin
+
+    def run(self) -> None:
+        bootstrap_admin = self.start_with_bootstrap_admin()
+        self.missing_variable_fails_loudly(bootstrap_admin)
+        admin = self.apply_and_restart()
         self.held(
             "3a",
             "a fresh apply created the master configuration (the config-cli client signs in "
@@ -629,6 +639,23 @@ class Probe:
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
         self.no_secret_leaked()
+
+    def hold(self) -> None:
+        """Brings the stack up as `run` does, runs no proof and keeps it until told to stop."""
+        self.start_with_bootstrap_admin()
+        self.apply_and_restart()
+        keep_stack_until_told_to_stop(self.ready_line())
+
+    def ready_line(self) -> str:
+        details = {
+            "admin_url": ADMIN_URL,
+            "edge_url": EDGE_URL,
+            "realm": REALM,
+            "public_issuer": PUBLIC_ISSUER,
+            "admin_client_id": "config-cli",
+            "admin_client_secret_file": str(self.stack.secrets_dir / "config-cli-secret"),
+        }
+        return f"{READY_MARK} {json.dumps(details)}"
 
     def missing_variable_fails_loudly(self, admin: Admin) -> None:
         broken = self.stack.copy_config(self.stack.scratch / "config-missing-variable")
@@ -1035,16 +1062,49 @@ class Probe:
 
 
 PORT_TAKEN_EXIT = 3
+READY_MARK = "READY"
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+class StopHolding(Exception):
+    """A held stack was told to stop; unlike ProbeFailure this is the normal end."""
 
 
 def stop_as_failure(signum: int, _frame: object) -> None:
     raise ProbeFailure(f"stopped by {signal.Signals(signum).name}")
 
 
+def stop_holding(_signum: int, _frame: object) -> None:
+    raise StopHolding
+
+
+def keep_stack_until_told_to_stop(ready_line: str) -> None:
+    """Prints the READY line, then blocks until SIGTERM, SIGINT or EOF on stdin."""
+    # A signal that arrives while the handler is swapped waits until READY is out, so one
+    # before READY is a failure and one after it is a stop, never the other way round.
+    signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+    try:
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, stop_holding)
+        print(ready_line, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
+    with contextlib.suppress(StopHolding):
+        sys.stdin.read()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=("run", "hold"),
+        default="run",
+        help="run: the proofs (default); hold: keep the stack up for another repository's proof",
+    )
     parser.add_argument("--scratch", type=Path, required=True, help="an empty or new directory")
-    scratch = parser.parse_args().scratch.resolve()
+    arguments = parser.parse_args()
+    scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
         parser.error(f"{scratch} is not an empty directory")
     taken = ports_free(8081, 8090)
@@ -1054,23 +1114,24 @@ def main() -> int:
     stack = Stack(scratch)
     # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
     # below still runs and the probe ends with its one FAILED line.
-    for stopping in (signal.SIGTERM, signal.SIGINT):
+    for stopping in STOP_SIGNALS:
         signal.signal(stopping, stop_as_failure)
     failures = []
+    probe = Probe(stack)
     try:
-        Probe(stack).run()
+        getattr(probe, arguments.mode)()
     except ProbeFailure as failure:
         failures.append(str(failure))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
-        for stopping in (signal.SIGTERM, signal.SIGINT):
+        for stopping in STOP_SIGNALS:
             signal.signal(stopping, signal.SIG_IGN)
         if not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1
-    print("PROBE PASSED: proofs 1-8 hold", flush=True)
+    print("HOLD ENDED" if arguments.mode == "hold" else "PROBE PASSED: proofs 1-8 hold", flush=True)
     return 0
 
 

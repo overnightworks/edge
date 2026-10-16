@@ -1,6 +1,7 @@
 """The Keycloak probe's credential bookkeeping and teardown, checked without a Keycloak stack."""
 
 import importlib.util
+import json
 import os
 import signal
 import subprocess
@@ -248,3 +249,161 @@ def test_a_taken_port_is_refused_with_its_own_exit_code(
     monkeypatch.setattr(probe, "ports_free", lambda *_: [8081])
 
     assert probe.main() == 3
+
+
+SECRET_VALUE = "s3cret-value-that-must-not-be-printed"
+FRESH_APPLY_LINE = "fresh apply done"
+
+
+class HeldStack:
+    """A stack whose bring-up is done and whose teardown only says so."""
+
+    def __init__(self, scratch: Path) -> None:
+        self.secrets_dir = scratch / "secrets"
+
+    def down(self) -> bool:
+        print("teardown: stack edge-kc-probe removed", flush=True)
+        return True
+
+
+class OperatorInput:
+    """Stdin that ends the way a caller would: by a signal or by closing the pipe."""
+
+    def __init__(self, signal_to_send: signal.Signals | None) -> None:
+        self.signal_to_send = signal_to_send
+
+    def read(self) -> str:
+        if self.signal_to_send:
+            os.kill(os.getpid(), self.signal_to_send)
+        return ""
+
+
+def run_hold(
+    probe: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    scratch: Path,
+    *,
+    before_ready: signal.Signals | None = None,
+    after_ready: signal.Signals | None = None,
+) -> int:
+    def start_with_bootstrap_admin(self: object) -> None:
+        self.secret_values = {"config-cli-secret": SECRET_VALUE}
+        print("stack: up with the temporary bootstrap admin", flush=True)
+
+    def apply_and_restart(_self: object) -> None:
+        if before_ready:
+            os.kill(os.getpid(), before_ready)
+
+    monkeypatch.setattr(sys, "argv", ["probe.py", "hold", "--scratch", str(scratch)])
+    monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
+    monkeypatch.setattr(probe, "ports_free", lambda *_: [])
+    monkeypatch.setattr(probe, "Stack", HeldStack)
+    monkeypatch.setattr(probe.Probe, "start_with_bootstrap_admin", start_with_bootstrap_admin)
+    monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
+    return probe.main()
+
+
+def ready_lines(output: str) -> list[str]:
+    return [line for line in output.splitlines() if line.startswith("READY ")]
+
+
+def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+) -> None:
+    scratch = tmp_path / "s"
+    run_hold(probe, monkeypatch, scratch)
+
+    output = capsys.readouterr().out
+    [ready] = ready_lines(output)
+    assert json.loads(ready.removeprefix("READY ")) == {
+        "admin_url": "http://localhost:8090",
+        "edge_url": "http://127.0.0.1:8081",
+        "realm": "hallucinai",
+        "public_issuer": "https://auth.hallucinai.de/realms/hallucinai",
+        "admin_client_id": "config-cli",
+        "admin_client_secret_file": str(scratch.resolve() / "secrets" / "config-cli-secret"),
+    }
+    assert SECRET_VALUE not in output
+
+
+@pytest.mark.parametrize(
+    "ending", [signal.SIGTERM, signal.SIGINT, None], ids=["sigterm", "sigint", "stdin-eof"]
+)
+def test_hold_ends_normally_when_told_to_stop_after_ready(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+    ending: signal.Signals | None,
+) -> None:
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", after_ready=ending)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == 0
+    assert [line.split(" ")[0] for line in lines] == ["stack:", "READY", "teardown:", "HOLD"]
+    assert lines[-2:] == ["teardown: stack edge-kc-probe removed", "HOLD ENDED"]
+
+
+def test_hold_stopped_by_a_signal_before_ready_tears_down_and_fails(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+) -> None:
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", before_ready=signal.SIGTERM)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert exit_code == 1
+    assert ready_lines("\n".join(lines)) == []
+    assert lines[-2:] == [
+        "teardown: stack edge-kc-probe removed",
+        "PROBE FAILED: stopped by SIGTERM",
+    ]
+
+
+def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
+    probe: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def start_with_bootstrap_admin(_self: object) -> object:
+        print("stack: up with the temporary bootstrap admin", flush=True)
+        return object()
+
+    def missing_variable_fails_loudly(self: object, _admin: object) -> None:
+        self.held("3b", "an undefined variable fails the apply")
+
+    def apply_and_restart(_self: object) -> object:
+        print(FRESH_APPLY_LINE, flush=True)
+        return object()
+
+    for later_proof in (
+        "seed_member",
+        "reapply_is_idempotent",
+        "public_issuer_and_paths",
+        "admin_console_only_on_loopback",
+        "changed_yaml_applies",
+        "create_probe_rp",
+        "member_token_carries_groups_and_audience",
+        "disabled_user_refused_on_refresh",
+        "backchannel_logout_reaches_rp",
+        "no_secret_leaked",
+    ):
+        monkeypatch.setattr(probe.Probe, later_proof, lambda *_: None)
+    monkeypatch.setattr(probe.Probe, "start_with_bootstrap_admin", start_with_bootstrap_admin)
+    monkeypatch.setattr(probe.Probe, "missing_variable_fails_loudly", missing_variable_fails_loudly)
+    monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
+
+    probe.Probe(stack=object()).run()
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split(" held:")[0] for line in lines] == [
+        "stack: up with the temporary bootstrap admin",
+        "PROOF 3b",
+        FRESH_APPLY_LINE,
+        "PROOF 3a",
+    ]
