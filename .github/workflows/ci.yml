@@ -37,7 +37,7 @@ jobs:
         env:
           PYTHONPATH: src
         # pytest and pytest-cov come from the lock file, installed by the sync step above.
-        run: uv run --no-sync --no-build pytest --cov=src --cov-report=xml:coverage.xml
+        run: uv run --no-sync --no-build pytest --cov=src --cov=probe/keycloak --cov-report=xml:coverage.xml
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -54,19 +54,23 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
 
-      - name: Compose renders (default, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
+      - name: Compose renders (default, keycloak, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
+          docker compose --profile keycloak config -q
           docker compose --profile step-ca config -q
           docker compose --profile probe config -q
           docker compose --profile step-ca config --services | grep -x step-ca
           docker compose --profile step-ca config --services | grep -x traefik-mcp
           docker compose --profile step-ca config --services | grep -x traefik-mcp-acme-owner
+          if docker compose config --services | grep -xE 'keycloak|keycloak-db'; then exit 1; fi
+          docker compose --profile keycloak config --services | grep -x keycloak
+          docker compose --profile keycloak config --services | grep -x keycloak-db
           docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
-            --profile apply config -q
+            --profile keycloak --profile apply config -q
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
             docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
-            --file probe/keycloak/compose.probe.yaml --profile apply config -q
+            --file probe/keycloak/compose.probe.yaml --profile keycloak --profile apply config -q
           PROBE_CA_JSON=/nonexistent docker compose --file compose.yaml \
             --file probe/step-ca/compose.probe.yaml --profile probe --profile step-ca config -q
 

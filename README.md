@@ -77,10 +77,11 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 ## Start, readiness, stop
 
 ```sh
-docker compose up -d
+# Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
+docker compose --profile keycloak up -d
 # Traefik reads traefik.yml (its entrypoints) only when it starts, and a plain `up -d`
 # keeps a running Traefik whose service definition did not change.
-docker compose up -d --force-recreate socket-proxy traefik
+docker compose --profile keycloak up -d --force-recreate socket-proxy traefik
 ```
 
 Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
@@ -101,12 +102,14 @@ timeout 240 sh -c '
 ' && echo ready
 ```
 
-Stop: `docker compose --profile probe down`. A plain `docker compose down` leaves
-a running probe `hello` behind. Neither removes a volume; never add `--volumes`,
+Stop: `docker compose --profile keycloak --profile probe down`. A `down` without
+`--profile keycloak` leaves Keycloak and its database running, and one without
+`--profile probe` leaves a running probe `hello` behind. Neither removes a volume; never add `--volumes`,
 because that deletes the Keycloak database.
 
 After a reboot, socket-proxy, traefik, keycloak-db and keycloak come back on
-their own (`restart: unless-stopped`); `hello` never does.
+their own (`restart: unless-stopped`), also without the profile on the command line;
+`hello` never does.
 
 What the entrypoint answers without a route:
 
@@ -562,7 +565,7 @@ included, and wait until the readiness check prints `ready`. Then apply
 `keycloak/*.yaml`:
 
 ```sh
-docker compose run --rm keycloak-config-cli
+docker compose --profile keycloak run --rm keycloak-config-cli
 ```
 
 The apply signs in as the `config-cli` service client and fails loudly on a
@@ -627,20 +630,20 @@ If the script cannot be used, the same steps by hand, in this order:
    (K11b has not landed); stop here if you do not accept that.
 2. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
 3. **First start**, with the temporary bootstrap admin `temp-admin`:
-   `docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
+   `docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
 4. **Master on the admin entrypoint, then the first apply**, both with the overlay:
 
    ```sh
-   docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
-   docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
+   docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
+   docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
    ```
 
    If the apply fails after it applied `master.yaml`, a second run with the
    overlay gets a 401: master now demands TOTP for `temp-admin`'s password
-   grant. Re-run it without the overlay, `docker compose run --rm
-   keycloak-config-cli`, because the `config-cli` client exists by then.
+   grant. Re-run it without the overlay, `docker compose --profile keycloak run
+   --rm keycloak-config-cli`, because the `config-cli` client exists by then.
 5. **Leave the overlay and start the edge** as in
-   [Start, readiness, stop](#start-readiness-stop): the plain `up -d` recreates
+   [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
    Keycloak without the overlay, and the forced recreate starts Traefik with
    the current `traefik.yml`. Wait until the readiness check prints `ready`.
 6. **Permanent admin** in the browser, as in step 6 above.
@@ -655,13 +658,13 @@ If the script cannot be used, the same steps by hand, in this order:
    checkout, and only its owner may read it:
 
    ```sh
-   (umask 077; docker compose exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak \
+   (umask 077; docker compose --profile keycloak exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak \
      > ~/.secrets/keycloak/keycloak-$(date +%F).dump)
    ```
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version
    and digest), and of keycloak-config-cli if a build for the new version exists.
 3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge
-   first with `docker compose --profile probe down` (volumes stay).
+   first with `docker compose --profile keycloak --profile probe down` (volumes stay).
 4. **Start** as in [Start, readiness, stop](#start-readiness-stop) and wait
    until the readiness check prints `ready`; Keycloak migrates its database on
    the first start of the new version.
@@ -778,7 +781,7 @@ it again, only `docker compose --profile step-ca up -d` does. To remove it, also
 ## Rollback
 
 ```sh
-docker compose --profile probe down
+docker compose --profile keycloak --profile probe down
 ```
 
 This removes every edge container and the `edge-probe` and `keycloak` networks;
