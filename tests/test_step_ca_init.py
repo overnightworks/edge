@@ -613,3 +613,36 @@ def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
 
     assert down_finished.exists()
     assert "teardown: project edge-stepca-probe removed" in probe_run.stdout
+
+
+@pytest.mark.parametrize(
+    ("uv_script", "outcome"),
+    [
+        ("echo '[]'; exit 0", []),
+        ('echo \'[{"kind": "listener"}]\'; exit 1', [{"kind": "listener"}]),
+        ("echo 'no such command' >&2; exit 1", "ProbeFailed"),
+        ("echo 'not json'; exit 0", "ProbeFailed"),
+        ("echo '[]'; exit 2", "ProbeFailed"),
+    ],
+)
+def test_the_probe_reads_edge_check_findings_and_fails_loud_when_it_cannot_run(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    uv_script: str,
+    outcome: object,
+) -> None:
+    """defect:#48 proof (e): a missing edge-check is a failure, not 'no findings'."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text(f"#!/bin/sh\n{uv_script}\n")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    running = probe.Probe(tmp_path / "scratch")
+
+    if outcome == "ProbeFailed":
+        with pytest.raises(probe.ProbeFailed):
+            running.edge_check_findings()
+    else:
+        assert running.edge_check_findings() == outcome
