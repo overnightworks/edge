@@ -540,7 +540,7 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
     capsys: pytest.CaptureFixture[str],
     stop_signal: str,
 ) -> None:
-    """defect:#38 PR 39 finding 2: teardown finishes when SIGTERM or Ctrl-C hits cleanup."""
+    """defect:#38 PR 39 round-2 finding 2: teardown finishes when SIGTERM or Ctrl-C hits cleanup."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     down_finished = tmp_path / "down-finished"
@@ -548,7 +548,7 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
     docker.write_text(
         "#!/bin/sh\n"
         'case "$*" in\n'
-        f'  *" down "*) kill -{stop_signal} $PPID; sleep 0.2; touch "{down_finished}" ;;\n'
+        f'  *" down "*) kill -{stop_signal} $PPID; touch "{down_finished}" ;;\n'
         "  ps*|volume*) ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n",
@@ -569,3 +569,44 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
     assert down_finished.exists()
     assert f"teardown: project {probe.PROJECT} removed" in capsys.readouterr().out
     assert exit_code == 1
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
+    tmp_path: Path, stop_signal: signal.Signals
+) -> None:
+    """defect:#38 PR 39 follow-up 1: cleanup commands run in their own session, so a signal to
+    the probe's process group (Ctrl-C, timeout) cannot kill them half-way."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    down_finished = tmp_path / "down-finished"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import os, signal, sys\n"
+        "args = ' '.join(sys.argv[1:]) + ' '\n"
+        "if ' down ' in ' ' + args:\n"
+        "    for number in (signal.SIGTERM, signal.SIGINT):\n"
+        "        signal.signal(number, signal.SIG_DFL)  # Go resets SIGTERM like this\n"
+        f"    os.killpg(os.getpgid(os.getppid()), {int(stop_signal)})\n"
+        f"    open({str(down_finished)!r}, 'w').close()\n"
+        "elif sys.argv[1:2] == ['ps'] or sys.argv[1:3] == ['volume', 'ls']:\n"
+        "    pass\n"
+        "else:\n"
+        "    sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    probe_run = subprocess.run(
+        [sys.executable, str(PROBE), "--scratch", str(tmp_path / "scratch")],
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        start_new_session=True,
+        check=False,
+    )
+
+    assert down_finished.exists()
+    assert "teardown: project edge-stepca-probe removed" in probe_run.stdout
