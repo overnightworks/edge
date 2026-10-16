@@ -17,7 +17,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 
 | File | Owns |
 |---|---|
-| `compose.yaml` | the services, image pins (version and digest), the socket directory and Keycloak database volumes, the Keycloak secrets |
+| `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database and `step-ca` volumes, the Keycloak secrets and `step_ca_password` |
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
@@ -685,7 +685,8 @@ Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 420 python3 probe/st
 modes and silence, the ACME directory verifies only with the probe root, the volume holds no root
 key, a restart keeps the intermediate, a partial state is completed). It needs 127.0.0.1:9000 free.
 
-Switch it off: `docker compose stop step-ca`. To remove it, also `docker compose rm -f step-ca`;
+Switch it off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
+`docker compose up -d` starts it again. To remove it, also `docker compose rm -f step-ca`;
 `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away
 (nothing else depends on it until the Traefik slice lands).
 

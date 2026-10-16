@@ -246,10 +246,10 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 
 | File | Mode | Who reads it | In the backup |
 |---|---|---|---|
-| `~/.secrets/step-ca/root_ca_key` | 0600 | only `step-ca/init`, in a one-off container without a network; never mounted into the running CA | yes |
-| `~/.secrets/step-ca/root_ca.crt` | 0644 | Traefik (uid 65534) and the agent service as the trusted root | yes |
-| `~/.secrets/step-ca/password` | 0644 in the 0700 directory | the CA, through `/run/secrets/step_ca_password`; it protects the root and the intermediate key alike | yes |
-| volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | yes |
+| `~/.secrets/step-ca/root_ca_key` | 0600 | only `step-ca/init`, in a one-off container without a network; never mounted into the running CA | planned (Block 9) |
+| `~/.secrets/step-ca/root_ca.crt` | 0644 | Traefik (uid 65534) and the agent service as the trusted root | planned (Block 9) |
+| `~/.secrets/step-ca/password` | 0644 in the 0700 directory | the CA, through `/run/secrets/step_ca_password`; it protects the root and the intermediate key alike | planned (Block 9) |
+| volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | planned (Block 9) |
 
 **One split keeps it single.** The manifest owns *what a secret is and where an app receives it*. `fleet.yaml` owns *where GitHub installs it and which repos see it*: the org secret name and its reach (E3, X5). The value is set by `home secrets --rotate` (home-tools#10 line 19). Its reach is checked by `edge external check`. home-tools#10 line 19's own "repo list drift" view is therefore dropped; the reach check lives once, in X5.
 
