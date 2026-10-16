@@ -144,7 +144,8 @@ class Probe:
     def order_outcome(self, name: str) -> tuple[int, str]:
         """Asks the CA for a certificate for `name` with the pinned image's own ACME client."""
         image, _ = self.image_and_volume()
-        private_tmpfs = f"{WORK_DIRECTORY}:uid={CONTAINER_USER_ID},gid={CONTAINER_USER_ID},mode=0700"
+        owner = f"uid={CONTAINER_USER_ID},gid={CONTAINER_USER_ID}"
+        private_tmpfs = f"{WORK_DIRECTORY}:{owner},mode=0700"
         root_mount = f"{self.secrets_dir / ROOT_CERTIFICATE}:/root.crt:ro"
         certificate_path, key_path = f"{WORK_DIRECTORY}/c.crt", f"{WORK_DIRECTORY}/c.key"
         result = self.run(
