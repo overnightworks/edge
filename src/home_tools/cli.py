@@ -8,11 +8,11 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from home_tools import check, secrets_view, tidy_home
+from home_tools import check, secrets_view, setup, tidy_home
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Layout, load_config, run_command
 
-SUBCOMMANDS = (check, tidy_home, secrets_view)
+SUBCOMMANDS = (check, tidy_home, secrets_view, setup)
 UNEXPECTED_ERROR_EXIT = 3
 
 EXAMPLES = """\
@@ -21,6 +21,8 @@ Beispiele:
   home tidy            zeigt, was im Home liegt, wo es nicht hingehört
   home tidy --apply    räumt die clean-Funde weg
   home secrets         zeigt jedes Geheimnis, nie einen Wert
+  home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht
+  home setup --apply   richtet quality, die Engines und den Hook ein
   home <befehl> --help Einzelheiten zu einem Befehl
 
 Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository home-tools.

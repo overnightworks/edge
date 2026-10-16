@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
+import stat
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from home_tools import secrets_view
 from home_tools.secrets_view import load_manifest
+from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout
 
 DAY_SECONDS = 24 * 60 * 60
@@ -138,3 +141,89 @@ class FakeProbe:
 @pytest.fixture
 def probe() -> FakeProbe:
     return FakeProbe()
+
+
+# What the stub scanner refuses; assembled from parts, as every fake key in these tests is.
+FAKE_KEY = "FAKE" + "KEY-" + "0000"
+
+STUB_QUALITY = """\
+#!/bin/sh
+case "$1" in
+scan-staged)
+    [ -n "$STUB_SCAN_EXIT" ] && exit "$STUB_SCAN_EXIT"
+    if git diff --cached | grep -q "FAKE""KEY-"; then
+        echo "quality: secret.txt fake-key sha256=0000 (Wert nicht gezeigt)"
+        exit 1
+    fi
+    ;;
+engines)
+    case "$2" in
+    install)
+        [ -n "$STUB_ENGINES_FAIL" ] && exit 1
+        mkdir -p "$3" && touch "$3/installed"
+        ;;
+    verify) [ -e "$3/installed" ] || exit 1 ;;
+    esac
+    ;;
+esac
+exit 0
+"""
+
+# The `git` value real uv 0.10.9 wrote to uv-receipt.toml after installing QUALITY_SOURCE's pinned SHA; only the revision follows the pin.
+RECORDED_RECEIPT_GIT = f"https://github.com/overnightworks/quality?rev={QUALITY_SOURCE.rpartition('@')[2]}"
+
+# Writes what `uv tool install` leaves behind: the quality executable and uv's receipt for the pinned source.
+STUB_UV = """\
+#!/bin/sh
+echo "$@" >> "$STUB_UV_LOG"
+[ -n "$STUB_UV_FAIL" ] && exit 1
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/uv/tools/overnightworks-quality"
+cp "$STUB_QUALITY" "$HOME/.local/bin/quality" && chmod 755 "$HOME/.local/bin/quality"
+printf '[tool]\\nrequirements = [{ name = "overnightworks-quality", git = "%s" }]\\n' "$STUB_RECEIPT_GIT" \\
+    > "$HOME/.local/share/uv/tools/overnightworks-quality/uv-receipt.toml"
+"""
+
+
+def _write_executable(path: Path, text: str) -> None:
+    path.write_text(text)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+@dataclass(frozen=True)
+class Sandbox:
+    """A throwaway HOME whose global git config, `uv` and scanner are stubs; nothing reaches the operator's own."""
+
+    home: Path
+    global_git_config: Path
+    uv_calls: Path
+
+    @property
+    def layout(self) -> Layout:
+        return Layout(self.home)
+
+
+@pytest.fixture
+def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
+    home = tmp_path / "home"
+    home.mkdir()
+    stub_bin = tmp_path / "stub-bin"
+    stub_bin.mkdir()
+    _write_executable(stub_bin / "uv", STUB_UV)
+    _write_executable(tmp_path / "stub-quality", STUB_QUALITY)
+    global_git_config = tmp_path / "global-gitconfig"
+    global_git_config.write_text("[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n")
+    uv_calls = tmp_path / "uv-calls"
+    for name, value in {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "GIT_CONFIG_GLOBAL": str(global_git_config),
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}",
+        "STUB_QUALITY": str(tmp_path / "stub-quality"),
+        "STUB_UV_LOG": str(uv_calls),
+        "STUB_RECEIPT_GIT": RECORDED_RECEIPT_GIT,
+    }.items():
+        monkeypatch.setenv(name, value)
+    for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
+        monkeypatch.delenv(name, raising=False)
+    return Sandbox(home, global_git_config, uv_calls)

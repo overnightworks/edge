@@ -186,6 +186,53 @@ Der Bericht listet außerdem, welche Regeln liefen und nichts fanden
 weil `docker` fehlt oder `du` fehlschlug („Nicht geprüft: docker (nicht
 installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
 
+## home setup
+
+Richtet den globalen Commit-Hook gegen Geheimnisse ein. `home setup` zeigt nur,
+was es ändern würde; `home setup --apply` führt es der Reihe nach aus und hält
+beim ersten Fehler an, mit dem Namen des Schritts:
+
+1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
+   `src/home_tools/setup.py`, einem Commit-SHA von overnightworks/quality (ein
+   Tag gibt es noch nicht; eine neue Version ist eine Zeile). Der Schritt
+   läuft auch, wenn `~/.local/bin/quality` fehlt oder nicht ausführbar ist.
+2. **Engines.** `quality engines install` nach
+   `~/.local/share/quality/engines`, wenn `quality engines verify` es verlangt;
+   danach gilt der Schritt erst, wenn `verify` besteht.
+3. **Hook-Dateien.** `pre-commit` und `pre-merge-commit` in
+   `~/.local/share/home/git-hooks/`, atomar geschrieben, Modus 755. Ein
+   Inhalt, der abweicht, ein verlorenes Ausführungsrecht oder ein anderer Modus als 755 wird
+   repariert.
+4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
+   Verzeichnis, zuletzt: ein Fehler davor aktiviert nie einen Hook, dessen
+   Scanner fehlt.
+
+Jeder Schritt meldet `geändert` oder `unverändert`; ein zweites `--apply` ändert
+nichts und lädt nichts. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
+(POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
+`.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
+`--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
+Dateien stagen kann. Exit `0` heißt sauber, `1` ein Geheimnis gefunden, `2` nicht
+beurteilbar; jeder Wert ungleich `0` bricht den Commit ab. Fehlt `quality`,
+bleibt der Commit gesperrt, bis `home setup --apply` es wieder einrichtet. Das
+ist gewollt.
+
+### Was der Hook nicht garantiert
+
+Die Zusage ist enger als „jeder Commit“:
+
+- Nicht erfasst: `--no-verify` bei `git commit` und `git merge`; Commits aus
+  rebase, cherry-pick, revert und `git am`; Plumbing wie `git commit-tree`; ein
+  einzelner Befehl mit `-c core.hooksPath=…` oder `GIT_CONFIG_*` (songmakers
+  Deploy-Skript tut das absichtlich); ein anderer OS-Benutzer oder ein anderes
+  HOME.
+- Rückhalt: die Agentenregel „nie `--no-verify`“ (`AGENTS.md`), Push Protection
+  auf den öffentlichen Repositories und das CI-History-Gate dort, wo es
+  eingeführt ist.
+- Eine Allowance im selben Commit gilt. Kontrolle ist das Review dieses Diffs:
+  ein Allow-Eintrag steht dort als sichtbare Zeile mit Hash und Grund.
+- Der Framework-Hook von hopin (`.pre-commit-config.yaml`) läuft hier nicht mit.
+
 ## Konfiguration
 
 Eine Datei für alle Befehle: `~/.config/home/config.toml`, eine Tabelle je

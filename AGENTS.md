@@ -15,3 +15,12 @@ its owner: a ratchet baseline next to the check that reads it, a fixture next to
 its test, a helper under `scripts/`. No catch-all directory (`tooling/`,
 `misc/`) and no deeper hierarchy than the owner needs. A root allowlist check in
 CI keeps the rule, so nobody has to remember it (operator ruling 06.09.2026).
+
+## Commits
+
+Never pass `--no-verify` to `git commit` or `git merge`. The global hook that
+`home setup` installs scans `git commit` and merge commits for secrets; the
+README section „Was der Hook nicht garantiert“ lists what it does not cover
+(rebase, cherry-pick, `--no-verify` and more), and the agent rule is the
+backstop for the flag git lets skip it. A refused commit is fixed by
+removing the secret, not by bypassing the hook.

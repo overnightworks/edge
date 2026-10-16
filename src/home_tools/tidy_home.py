@@ -231,14 +231,22 @@ class Layout:
         return (self.home, self.git, self.home / "Dokumente", self.home / "Schreibtisch")
 
     @property
+    def local_dir(self) -> Path:
+        return self.home / ".local"
+
+    @property
+    def data_dir(self) -> Path:
+        return self.local_dir / "share"
+
+    @property
     def trash_dirs(self) -> tuple[Path, ...]:
-        gnome = self.home / ".local" / "share" / "Trash"
+        gnome = self.data_dir / "Trash"
         vscode_snap = sorted((self.home / "snap" / "code").glob("*/.local/share/Trash"))
         return (gnome, *vscode_snap)
 
     @property
     def state_dir(self) -> Path:
-        return self.home / ".local" / "state" / "home"
+        return self.local_dir / "state" / "home"
 
     @property
     def tidy_report_file(self) -> Path:
@@ -255,6 +263,22 @@ class Layout:
     @property
     def secrets_dir(self) -> Path:
         return self.home / ".secrets"
+
+    @property
+    def git_hooks_dir(self) -> Path:
+        return self.data_dir / "home" / "git-hooks"
+
+    @property
+    def quality_executable(self) -> Path:
+        return self.local_dir / "bin" / "quality"
+
+    @property
+    def quality_engines_dir(self) -> Path:
+        return self.data_dir / "quality" / "engines"
+
+    @property
+    def quality_uv_receipt(self) -> Path:
+        return self.data_dir / "uv" / "tools" / "overnightworks-quality" / "uv-receipt.toml"
 
     @property
     def secrets_report_file(self) -> Path:
