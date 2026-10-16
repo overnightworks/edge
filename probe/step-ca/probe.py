@@ -61,9 +61,11 @@ REFUSAL = "will not issue certificates for the identifier"  # ACME rejectedIdent
 ROOT_IN_CLIENT = "/root.crt"
 ORIGIN = "hello.mcp.internal"
 ORIGIN_URL = f"https://{ORIGIN}/"
-ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"
+# Plain http is the point: proof 6 sends http to the TLS port and expects a refusal.
+ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"  # NOSONAR(S5332)
 ORIGIN_ANSWER = f"Host: {ORIGIN}"  # the backend (whoami) echoes the request's Host header
-BACKEND_URL = "http://hello-mcp/"
+# The backend speaks plain http by design, inside the compose network.
+BACKEND_URL = "http://hello-mcp/"  # NOSONAR(S5332)
 CA_HEALTH_URL = f"{CA_URL}/health"
 TRAEFIK_USER = "65534:65534"
 TRAEFIK_UID = 65534
