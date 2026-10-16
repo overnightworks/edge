@@ -1,14 +1,24 @@
-"""`edge external plan`: tokens only in the child, an allowlisted environment, the pinned tofu."""
+"""`edge external`: tokens only in the child, an allowlisted environment, the pinned tofu."""
 
+import fcntl
 import json
+import os
+import pty
+import select
+import signal
+import subprocess
 import sys
+import time
 import tomllib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from edge import cli
+from edge.external import apply as external_apply
 from edge.external import secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
@@ -29,9 +39,15 @@ TOKEN_FILES = {
     ".secrets/github/fleet-read": "github-token",
     ".secrets/opentofu/state-passphrase": "file-passphrase",
 }
+WRITE_TOKEN_FILES = {
+    ".secrets/cloudflare/fleet-write": "cloudflare-write-token",
+    ".secrets/github/fleet-admin": "github-admin-token",
+}
+PLANS_DIRECTORY = ".secrets/opentofu/plans"
+PROMPT = "to apply exactly this plan"
 
 FAKE_TOFU = f"""#!{sys.executable}
-import json, os, sys
+import json, os, signal, sys, time
 from pathlib import Path
 
 here = Path(__file__).parent
@@ -41,8 +57,25 @@ with (here / "calls.jsonl").open("a") as calls:
     calls.write(json.dumps({{
         "argv": sys.argv[1:],
         "env": dict(os.environ),
+        "plan_file_existed": Path(sys.argv[-1]).exists(),
         "tmpdir_mode": os.stat(os.environ["TMPDIR"]).st_mode & 0o777,
     }}) + "\\n")
+plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
+if plan_file:
+    Path(plan_file).write_text("encrypted plan")
+if command == config["hang_in"]:
+    def stop_gracefully(*_):
+        with (here / "sigints").open("a") as received:
+            received.write("x")
+        while config["drain_until_released"] and not (here / "released").exists():
+            time.sleep(0.05)
+        (here / "stopped gracefully").write_text("stopped")
+        print("tofu stopped gracefully", flush=True)
+        sys.exit(130)
+    signal.signal(signal.SIGINT, stop_gracefully)
+    with open(here / "applying", "w") as started:
+        started.write("applying")
+    time.sleep(60)
 locked = Path(os.environ["TMPDIR"]) / config["locked_name"]
 if config["leave_undeletable"] and not locked.exists():
     locked.mkdir()
@@ -67,6 +100,8 @@ class FakeTofu:
         echo_environment=False,
         leave_undeletable=False,
         locked_name="locked",
+        hang_in=None,
+        drain_until_released=False,
         **exit_codes,
     ) -> None:
         config = {
@@ -74,6 +109,8 @@ class FakeTofu:
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
             "locked_name": locked_name,
+            "hang_in": hang_in,
+            "drain_until_released": drain_until_released,
             "exit_codes": exit_codes,
         }
         (self.directory / "fake.json").write_text(json.dumps(config))
@@ -81,6 +118,32 @@ class FakeTofu:
     def calls(self) -> list[dict]:
         log = self.directory / "calls.jsonl"
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    @contextmanager
+    def watch_hang(self) -> Iterator[Callable[[], None]]:
+        """Yield a wait that returns once the hanging tofu run has installed its SIGINT handler."""
+        descriptor = os.open(self.directory / "applying", os.O_RDONLY | os.O_NONBLOCK)
+
+        def wait_until_hanging() -> None:
+            ready, _, _ = select.select([descriptor], [], [], 20)
+            assert ready, "hanging tofu command never started"
+
+        try:
+            yield wait_until_hanging
+        finally:
+            os.close(descriptor)
+
+    @property
+    def sigints_received(self) -> int:
+        received = self.directory / "sigints"
+        return len(received.read_text()) if received.exists() else 0
+
+    def release_draining_apply(self) -> None:
+        (self.directory / "released").write_text("go")
+
+    @property
+    def stopped_gracefully(self) -> bool:
+        return (self.directory / "stopped gracefully").exists()
 
     def call(self, command: str) -> dict:
         return next(call for call in self.calls() if call["argv"][0] == command)
@@ -94,6 +157,9 @@ def home(tmp_path, monkeypatch) -> Path:
         token_file.parent.mkdir(parents=True, exist_ok=True)
         token_file.write_text(value + "\n")
         token_file.chmod(0o600)
+    for relative, value in WRITE_TOKEN_FILES.items():
+        (home / relative).write_text(value + "\n")
+        (home / relative).chmod(0o600)
     monkeypatch.setenv("HOME", str(home))
     return home
 
@@ -105,6 +171,7 @@ def fake_tofu(tmp_path, monkeypatch) -> FakeTofu:
     executable = directory / "tofu"
     executable.write_text(FAKE_TOFU)
     executable.chmod(0o755)
+    os.mkfifo(directory / "applying")
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     fake = FakeTofu(directory)
     fake.configure()
@@ -383,3 +450,464 @@ def test_a_cleanup_failure_after_another_version_still_names_both_versions(home,
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
             locked.chmod(0o700)
+
+
+@dataclass
+class Terminal:
+    """`edge external apply` as a child on a pty, the way the operator runs it."""
+
+    process: subprocess.Popen
+    master: int
+    output: str = ""
+
+    def read_until(self, text: str, timeout: float = 20) -> None:
+        deadline = time.monotonic() + timeout
+        while text not in self.output:
+            assert time.monotonic() < deadline, f"never saw {text!r} in {self.output!r}"
+            if select.select([self.master], [], [], 0.2)[0]:
+                self.output += self._read()
+
+    def _read(self) -> str:
+        try:
+            return os.read(self.master, 65536).decode(errors="replace")
+        except OSError:
+            return ""
+
+    def type(self, text: str) -> None:
+        os.write(self.master, text.encode())
+
+    def signal(self, number: int) -> None:
+        self.process.send_signal(number)
+
+    def finish(self) -> int:
+        code = self.process.wait(timeout=20)
+        while chunk := self._read():
+            self.output += chunk
+        return code
+
+
+@pytest.fixture
+def terminal(home, fake_tofu):
+    """Start `command` on a pty with a minimal environment and no session bus."""
+    started = []
+
+    def start(*, command="apply", stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
+        master, slave = pty.openpty()
+        program = "import sys; from edge import cli; sys.exit(cli.main(sys.argv[1:]))"
+        process = subprocess.Popen(
+            [sys.executable, "-c", program, "external", command],
+            stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
+            stdout=slave if stdout_is_terminal else subprocess.DEVNULL,
+            stderr=slave,
+            env={
+                "HOME": str(home),
+                "PATH": f"{fake_tofu.directory}:/usr/bin:/bin",
+                "PYTHONPATH": os.pathsep.join(path for path in sys.path if path),
+            },
+            start_new_session=True,
+        )
+        os.close(slave)
+        started.append(process)
+        return Terminal(process, master)
+
+    yield start
+    for process in started:
+        process.kill()
+        process.wait()
+
+
+def plan_files(home) -> list[Path]:
+    return list((home / PLANS_DIRECTORY).glob("*"))
+
+
+def test_apply_without_a_terminal_exits_1_before_any_tofu_call(home, fake_tofu, capsys):
+    """#45 rule 2: stdin or stdout that is no terminal refuses before tofu."""
+    assert cli.main(["external", "apply"]) == 1
+    assert "terminal" in capsys.readouterr().err
+    assert fake_tofu.calls() == []
+
+
+def test_apply_without_a_terminal_exits_1_even_when_the_write_tokens_are_missing(
+    home, fake_tofu, capsys
+):
+    """#45 rule 2: the refusal comes before any token file is read."""
+    for write_file in WRITE_TOKEN_FILES:
+        (home / write_file).unlink()
+    assert cli.main(["external", "apply"]) == 1
+    assert "terminal" in capsys.readouterr().err
+    assert fake_tofu.calls() == []
+
+
+@pytest.mark.parametrize(
+    "terminals",
+    [
+        pytest.param({"stdout_is_terminal": False}, id="stdin-terminal-stdout-redirected"),
+        pytest.param({"stdin_is_terminal": False}, id="stdin-redirected-stdout-terminal"),
+    ],
+)
+def test_apply_with_only_one_of_stdin_and_stdout_a_terminal_exits_1_before_tofu(
+    home, fake_tofu, terminal, terminals
+):
+    """#45 rule 2: stdin and stdout must both be terminals."""
+    apply = terminal(**terminals)
+    assert apply.finish() == 1
+    assert "must be a terminal" in apply.output
+    assert fake_tofu.calls() == []
+
+
+def test_apply_reads_the_write_tokens_through_the_allowlist(home, fake_tofu, terminal):
+    """#45 rule 1: apply uses fleet-write and fleet-admin, same environment as plan."""
+    fake_tofu.configure(plan=2, echo_environment=True)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    environment = fake_tofu.call("apply")["env"]
+    assert set(environment) == ALLOWED_NAMES
+    assert environment["CLOUDFLARE_API_TOKEN"] == "cloudflare-write-token"
+    assert environment["GITHUB_TOKEN"] == "github-admin-token"
+    assert "write-token" not in apply.output
+    assert "admin-token" not in apply.output
+
+
+@pytest.mark.parametrize("write_file", WRITE_TOKEN_FILES)
+def test_a_missing_write_token_exits_2_naming_it_without_running_tofu(
+    home, fake_tofu, terminal, write_file
+):
+    """#45 rule 1: a missing write file stops apply before tofu; the read file is no stand-in."""
+    (home / write_file).unlink()
+    apply = terminal()
+    assert apply.finish() == 2
+    assert str(home / write_file) in apply.output
+    assert fake_tofu.calls() == []
+
+
+@pytest.mark.parametrize(
+    "typed,expected_exit,applied",
+    [
+        pytest.param("yes\n", 0, True, id="yes"),
+        pytest.param("y\n", 1, False, id="y"),
+        pytest.param("Yes\n", 1, False, id="Yes"),
+        pytest.param("\n", 1, False, id="empty"),
+        pytest.param(" yes\n", 1, False, id="padded"),
+        pytest.param("\x04", 1, False, id="end-of-input"),
+    ],
+)
+def test_only_the_exact_yes_applies(home, fake_tofu, terminal, typed, expected_exit, applied):
+    """#45 rule 2: only the exact input `yes` proceeds; anything else aborts with exit 1."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    apply.type(typed)
+    assert apply.finish() == expected_exit
+    assert ("apply" in [call["argv"][0] for call in fake_tofu.calls()]) is applied
+
+
+def test_a_plan_without_changes_exits_0_without_asking(home, fake_tofu, terminal):
+    """#45 rule 2: nothing to apply is exit 0 and no prompt."""
+    apply = terminal()
+    assert apply.finish() == 0
+    assert PROMPT not in apply.output
+    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
+
+
+def test_apply_applies_exactly_the_encrypted_plan_file_in_the_private_directory(
+    home, fake_tofu, terminal
+):
+    """#45 rules 2 and 3: the shown plan file is in the 0700 plans directory and is what applies."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    assert (home / PLANS_DIRECTORY).stat().st_mode & 0o777 == 0o700
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    out_argument = next(a for a in fake_tofu.call("plan")["argv"] if a.startswith("-out="))
+    plan_file = Path(out_argument.removeprefix("-out="))
+    assert plan_file.parent == home / PLANS_DIRECTORY
+    assert fake_tofu.call("apply")["argv"] == ["apply", str(plan_file)]
+    assert fake_tofu.call("apply")["plan_file_existed"]
+
+
+CLEANUP_PATHS = [
+    pytest.param({"plan": 2}, "yes\n", 0, id="success"),
+    pytest.param({"plan": 2}, "no\n", 1, id="abort"),
+    pytest.param({"plan": 1}, None, 2, id="plan-failure"),
+    pytest.param({"plan": 2, "apply": 1}, "yes\n", 1, id="apply-failure"),
+    pytest.param({"plan": 2}, signal.SIGINT, 1, id="sigint-at-prompt"),
+    pytest.param({"plan": 2}, signal.SIGTERM, 1, id="sigterm-at-prompt"),
+    pytest.param({"plan": 2, "hang_in": "apply"}, signal.SIGINT, 1, id="sigint-in-apply"),
+    pytest.param({"plan": 2, "hang_in": "apply"}, signal.SIGTERM, 1, id="sigterm-in-apply"),
+]
+
+
+@pytest.mark.parametrize("configuration,reaction,expected_exit", CLEANUP_PATHS)
+def test_the_plan_file_is_deleted_on_every_path(
+    home, fake_tofu, terminal, configuration, reaction, expected_exit
+):
+    """#45 rule 4: success, abort, failures and signals leave the plans directory empty."""
+    fake_tofu.configure(**configuration)
+    apply = terminal()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        if reaction is not None:
+            apply.read_until(PROMPT)
+            if configuration.get("hang_in") == "apply":
+                apply.type("yes\n")
+                wait_until_hanging()
+            if isinstance(reaction, signal.Signals):
+                apply.signal(reaction)
+            else:
+                apply.type(reaction)
+        assert apply.finish() == expected_exit
+    assert plan_files(home) == []
+    assert list((home / ".secrets/opentofu/tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_an_interrupt_during_plan_exits_2_names_the_step_and_shows_tofus_output(
+    home, fake_tofu, terminal, interrupt
+):
+    """#40 rule 4 / #45: an interrupted plan is `cannot plan` (2), never `changes pending` (1)."""
+    fake_tofu.configure(hang_in="plan")
+    plan = terminal(command="plan")
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        wait_until_hanging()
+        plan.signal(interrupt)
+        assert plan.finish() == 2
+    assert fake_tofu.stopped_gracefully
+    assert fake_tofu.sigints_received == 1
+    assert "tofu stopped gracefully" in plan.output
+    assert "edge external plan: interrupted during the plan" in plan.output
+    assert "Traceback" not in plan.output
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
+    home, fake_tofu, terminal, interrupt
+):
+    """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed."""
+    fake_tofu.configure(plan=2, hang_in="apply")
+    apply = terminal()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        apply.read_until(PROMPT)
+        apply.type("yes\n")
+        wait_until_hanging()
+        apply.signal(interrupt)
+        assert apply.finish() == 1
+    assert fake_tofu.stopped_gracefully
+    assert "tofu stopped gracefully" in apply.output
+    assert "interrupted during tofu apply, live services may be partly changed" in apply.output
+
+
+def test_further_interrupts_while_tofu_drains_are_not_forwarded_to_it(home, fake_tofu, terminal):
+    """#45 rule 4/5: later interrupts while tofu drains are not forwarded as further SIGINTs."""
+    fake_tofu.configure(plan=2, hang_in="apply", drain_until_released=True)
+    apply = terminal()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        apply.read_until(PROMPT)
+        apply.type("yes\n")
+        wait_until_hanging()
+        apply.signal(signal.SIGINT)
+        deadline = time.monotonic() + 20
+        while fake_tofu.sigints_received < 1:
+            assert time.monotonic() < deadline, "tofu never received the forwarded SIGINT"
+        apply.signal(signal.SIGINT)
+        apply.signal(signal.SIGTERM)
+        assert apply.process.poll() is None
+        fake_tofu.release_draining_apply()
+        assert apply.finish() == 1
+    assert fake_tofu.sigints_received == 1
+    assert fake_tofu.stopped_gracefully
+
+
+def test_a_second_plan_command_keeps_the_plan_file_of_an_apply_awaiting_confirmation(
+    home, fake_tofu, terminal
+):
+    """#45 rule 4: only leftovers of killed runs are deleted, not a live run's plan."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    edge_external_plan()
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    assert fake_tofu.call("apply")["plan_file_existed"]
+
+
+def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_exit_1(
+    home, fake_tofu, terminal
+):
+    """#45 rule 5: a failure after a good plan is exit 1 naming the step, not 'cannot plan'."""
+    fake_tofu.configure(plan=2)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    (fake_tofu.directory / "tofu").unlink()
+    apply.type("yes\n")
+    assert apply.finish() == 1
+    assert "tofu apply failed" in apply.output
+    assert "cannot plan" not in apply.output
+    assert plan_files(home) == []
+
+
+def leave_a_killed_run_behind(home) -> Path:
+    leftover = home / PLANS_DIRECTORY / "killed.tfplan"
+    leftover.parent.mkdir(mode=0o700)
+    leftover.write_text("encrypted plan")
+    leftover.with_suffix(".lock").write_text("")
+    return leftover
+
+
+def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_plan(home, fake_tofu, capsys):
+    """#45 rule 4: a plan file left by a killed run is removed and named at the next start."""
+    leftover = leave_a_killed_run_behind(home)
+    cli.main(["external", "plan"])
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+
+
+def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_apply(home, fake_tofu, terminal):
+    """#45 rule 4: the same sweep runs at the start of apply, naming only the plan file."""
+    leftover = leave_a_killed_run_behind(home)
+    apply = terminal()
+    assert apply.finish() == 0
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in apply.output
+    assert ".lock" not in apply.output
+
+
+def test_a_non_terminal_apply_still_deletes_and_names_a_leftover_before_refusing(
+    home, fake_tofu, capsys
+):
+    """#45 rule 4: the refusal comes after the sweep, so a killed run's plan is not kept."""
+    leftover = leave_a_killed_run_behind(home)
+    assert cli.main(["external", "apply"]) == 1
+    error = capsys.readouterr().err
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in error
+    assert "terminal" in error
+    assert fake_tofu.calls() == []
+
+
+def test_a_plan_file_whose_lock_is_gone_is_a_leftover(home, capsys):
+    """#45 rule 4: a live run holds its lock until the plan is deleted, so a bare plan is dead."""
+    leftover = leave_a_killed_run_behind(home)
+    leftover.with_suffix(".lock").unlink()
+    external_apply.remove_leftover_plans(home)
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+
+
+def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home):
+    """#45 rule 4: the sweep deletes only what the lock it holds still names."""
+    directory = home / PLANS_DIRECTORY
+    directory.mkdir(mode=0o700)
+    stale_lock = directory / "run.lock"
+    stale_lock.write_text("")
+    live_plan = directory / "run.tfplan"
+
+    def replace_the_lock_then_take_it(descriptor):
+        stale_lock.unlink()
+        stale_lock.write_text("live run's replacement")
+        live_plan.write_text("live plan")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    external_apply.remove_leftover_plans(home, take_lock=replace_the_lock_then_take_it)
+    assert stale_lock.exists()
+    assert live_plan.exists()
+
+
+def test_a_sweep_keeps_the_plan_of_a_live_run_that_takes_over_a_bare_plans_stem(home):
+    """#45 rule 4: the lock the sweep creates for a bare plan does not shield a replaced stem."""
+    directory = home / PLANS_DIRECTORY
+    directory.mkdir(mode=0o700)
+    live_plan = directory / "run.tfplan"
+    live_plan.write_text("dead plan")
+    lock = directory / "run.lock"
+
+    def let_a_live_run_replace_the_stem_then_take_the_lock(descriptor):
+        lock.unlink()
+        lock.write_text("live run's lock")
+        live_plan.write_text("live plan")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    external_apply.remove_leftover_plans(
+        home, take_lock=let_a_live_run_replace_the_stem_then_take_the_lock
+    )
+    assert live_plan.read_text() == "live plan"
+    assert lock.exists()
+
+
+@pytest.mark.parametrize(
+    "plan_exit,typed",
+    [pytest.param(0, None, id="no-changes"), pytest.param(2, "no\n", id="abort")],
+)
+def test_a_failed_cleanup_after_no_changes_or_an_abort_exits_1_naming_the_cleanup(
+    home, fake_tofu, terminal, plan_exit, typed
+):
+    """#45 rule 5: a cleanup that fails after a good plan is exit 1 naming it, not 'cannot plan'."""
+    fake_tofu.configure(plan=plan_exit, leave_undeletable=True)
+    apply = terminal()
+    try:
+        if typed is not None:
+            apply.read_until(PROMPT)
+            apply.type(typed)
+        assert apply.finish() == 1
+        assert "the cleanup failed" in apply.output
+        assert "cannot plan" not in apply.output
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
+
+
+@pytest.mark.parametrize(
+    "plan_exit,typed,live_services_may_have_changed",
+    [
+        pytest.param(0, None, False, id="no-changes"),
+        pytest.param(2, "no", False, id="abort"),
+        pytest.param(1, None, False, id="failed-plan"),
+        pytest.param(2, "yes", True, id="after-apply"),
+    ],
+)
+def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_apply(
+    home, fake_tofu, capsys, monkeypatch, plan_exit, typed, live_services_may_have_changed
+):
+    """#45 rule 5: the interrupt consequence follows whether apply was reached, not the step."""
+    fake_tofu.configure(plan=plan_exit)
+
+    @contextmanager
+    def interrupted_when_leaving(home_directory):
+        with external_apply.private_plan_file(home_directory) as plan_file:
+            yield plan_file
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: typed)
+    assert external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving) == 1
+    error = capsys.readouterr().err
+    assert "interrupted during the cleanup" in error
+    assert ("live services may be partly changed" in error) is live_services_may_have_changed
+
+
+def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):
+    """#34 finding 11 (a): the in-flight exception is the body's own, not an outer handled one."""
+
+    def leave_with_a_locked_directory():
+        with secrets.private_temporary_directory(home) as directory:
+            locked = directory / "locked"
+            locked.mkdir()
+            (locked / "file").write_text("x")
+            locked.chmod(0o500)
+
+    try:
+        try:
+            raise ValueError("handled elsewhere")
+        except ValueError:
+            with pytest.raises(PermissionError):
+                leave_with_a_locked_directory()
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
+
+
+def test_the_changes_pending_line_follows_the_plan_without_a_blank_line(home, fake_tofu, capsys):
+    """#34 finding 11 (c): the plan output ends in one newline, then the line."""
+    fake_tofu.configure(plan=2, echo_environment=True)
+    edge_external_plan()
+    assert "\n\n" not in capsys.readouterr().out
