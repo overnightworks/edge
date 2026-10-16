@@ -834,8 +834,8 @@ a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on 
 `https://hello.mcp.internal` only with the root and is served a 24-hour certificate from the
 intermediate; plain http gets no answer from the backend; the three networks split as ruled; the
 host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
-CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on, off and on in a copy of the repository: both volumes and the
-same intermediate survive, and a repeated apply changes nothing. The run takes about 15 to 20
+CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on, off and on in a copy of the repository: both volumes and
+the same intermediate survive, and a repeated apply changes nothing. The run takes about 15 to 20
 minutes, within the 1500 s timeout. Every
 call runs from a throwaway container on the network a client would sit on.
 

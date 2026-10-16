@@ -13,8 +13,8 @@ stack: the project name and HOME are set in the environment of every command.
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
 --scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies: the run takes
-about 15 to 20 minutes, bounded by the 1500 s timeout above. Needs `uv`: proof 8 runs `edge-check` through it,
-proof 10 runs `uv sync` in a copy of the repository.
+about 15 to 20 minutes, bounded by the 1500 s timeout above. Needs `uv`: proof 8 runs
+`edge-check` through it, proof 10 runs `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
