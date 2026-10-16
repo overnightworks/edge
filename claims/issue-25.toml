@@ -1,8 +1,0 @@
-claim_id = "6cc176f657904437bb288acf840e0fd7"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "09b76427b18d39d281473f629dcff506b62c0243"
-branch = "claude/issue-25-naming-0-docs"
-scope = ["README.md", "docs/naming.md"]
-opened_commit = "dd766f0d1c5cb3362d37c0d8e34a991da1eadeea"
-whole_reason = "One rule document and its single README link."
