@@ -159,7 +159,7 @@ def _notify(run: CommandRunner, summary: str, body: str) -> bool:
     return run(["notify-send", summary, body]) is not None
 
 
-def _run_error(failed: list[CheckResult]) -> Exception:
+def _run_error(failed: list[CheckResult]) -> secrets_view.ManifestError | CheckFailed:
     """An invalid manifest keeps its own exit code 2; any other broken check ends the run as an unexpected error."""
     manifest_errors = [result.error for result in failed if isinstance(result.error, secrets_view.ManifestError)]
     if len(manifest_errors) == len(failed):

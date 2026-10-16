@@ -266,10 +266,12 @@ def scan_secrets_tree(layout: Layout) -> tuple[PathFact, ...]:
 def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...] | None:
     """The paths a manifest pattern names, by stat; None when the filesystem refuses to say."""
     try:
-        if not _has_wildcard(pattern.name):
-            return (PathFact(pattern, (layout.home / pattern).stat().st_mode),)
-        names = sorted(name for name in os.listdir(layout.home / pattern.parent) if fnmatch.fnmatchcase(name, pattern.name))
-        return tuple(PathFact(pattern.parent / name, (layout.home / pattern.parent / name).stat().st_mode) for name in names)
+        if _has_wildcard(pattern.name):
+            names = sorted(name for name in os.listdir(layout.home / pattern.parent) if fnmatch.fnmatchcase(name, pattern.name))
+            matched = [pattern.parent / name for name in names]
+        else:
+            matched = [pattern]
+        return tuple(PathFact(relative, (layout.home / relative).stat().st_mode) for relative in matched)
     except FileNotFoundError:
         return ()
     except OSError:
@@ -345,7 +347,7 @@ class _StopsAroundTheProbe:
             raise _stopped(self._held[0])
 
 
-def _stopped(signum: int) -> BaseException:
+def _stopped(signum: int) -> KeyboardInterrupt | SystemExit:
     if signum == signal.SIGINT:
         return KeyboardInterrupt()
     return SystemExit(128 + signum)  # the shell's code for a run ended by that signal, e.g. 143 for SIGTERM

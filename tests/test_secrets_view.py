@@ -9,7 +9,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets
@@ -387,6 +387,29 @@ def test_an_invalid_manifest_is_refused_naming_the_file_and_the_key(tmp_path: Pa
     assert "hunter2" not in str(refused.value)
 
 
+@pytest.mark.parametrize(
+    ("pattern", "matched"),
+    [
+        ("one/file", ["one/file"]),
+        ("one/*.key", ["one/a.key", "one/b.key"]),
+        ("one/*.nothing", []),
+        ("absent/file", []),
+        ("absent/*", []),
+        ("one/file/x", None),
+        ("one/file/*", None),
+    ],
+)
+def test_stat_matches_returns_every_named_path_as_one_tuple_python_S8495(tmp_path: Path, pattern: str, matched: list[str] | None) -> None:
+    (tmp_path / "one").mkdir()
+    for name in ("file", "a.key", "b.key", "c.txt"):
+        (tmp_path / "one" / name).write_text("x")
+    layout = Layout(tmp_path)
+
+    facts = secrets_view.stat_matches(layout, PurePosixPath(pattern))
+
+    assert (None if facts is None else [str(fact.relative) for fact in facts]) == matched
+
+
 def test_a_missing_manifest_is_refused_naming_the_file(tmp_path: Path) -> None:
     with pytest.raises(ManifestError, match="secrets_manifest.toml"):
         load_manifest(tmp_path / "secrets_manifest.toml")
@@ -418,7 +441,9 @@ def probe_family(tmp_path: Path) -> Iterator[tuple[Path, int]]:
 
 def wait_until_the_family_started(reader: int) -> None:
     family_started, _, _ = select.select([reader], [], [], 10)
-    assert family_started and os.read(reader, 1) == b"s", "the run never started its probe"
+    assert family_started, "the run never started its probe"
+    first_byte = os.read(reader, 1)
+    assert first_byte == b"s", "the probe's first byte was not its start marker"
 
 
 def assert_every_family_member_gone(reader: int) -> None:

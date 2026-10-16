@@ -645,8 +645,10 @@ def test_notifications_can_be_switched_off(layout: Layout) -> None:
     ],
 )
 def test_config_rejects_a_bad_entry_naming_it(layout: Layout, config_text: str, named: str) -> None:
+    write_config(layout, config_text)
+
     with pytest.raises(ValueError, match=named):
-        tidy_home.load_config(write_config(layout, config_text))
+        tidy_home.load_config(layout)
 
 
 def test_a_left_behind_old_config_fails_loud_with_the_move_command(layout: Layout) -> None:
