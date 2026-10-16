@@ -1,0 +1,8 @@
+claim_id = "1717f4da992d46399ca438421a9e34de"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "09b76427b18d39d281473f629dcff506b62c0243"
+branch = "claude/issue-21-d1a-probe-hold"
+scope = ["probe/keycloak/README.md", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py"]
+opened_commit = "ea990f2f10e51f4beb75a148f4754769ebc2be3b"
+whole_reason = "The probe split, the hold entry point, its README next to the code and its tests are one documented interface."
