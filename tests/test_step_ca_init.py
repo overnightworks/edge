@@ -721,7 +721,8 @@ def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
     """#52 rule 8: a fresh home is exit 1 and --check creates no directory, file or volume."""
     assert check() == 1
 
-    assert "secrets directory is not done" in session.output
+    assert "not set up: secrets directory is not done" in session.output
+    assert "FAILED" not in session.output
     assert not secrets_dir.exists()
     assert docker.volumes == {}
     assert not [c for c in docker.commands if c[1:3] == ["volume", "create"]]

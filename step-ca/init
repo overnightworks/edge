@@ -489,7 +489,10 @@ class StepCaInit:
             self.report_failure(failure)
             return unclear
         except StepFailure as failure:
-            self.report_failure(failure)
+            if self.read_only:
+                self.tools.say(f"step-ca/init --check: not set up: {self.scrubbed(str(failure))}")
+            else:
+                self.report_failure(failure)
             return Exit.REFUSED
         except Exception as unexpected:
             self.tools.say(

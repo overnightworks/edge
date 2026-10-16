@@ -606,7 +606,7 @@ class Probe:
         )  # fmt: skip
         if synced.returncode != 0:
             tail = synced.stderr.decode(errors="replace").strip().splitlines()
-            raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1:]}")
+            raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1] if tail else ''}")
         return copy
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
@@ -651,10 +651,11 @@ class Probe:
         served_after = self.wait_until_served()
         after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
         expect(after == before, f"intermediate changed across off and on: {before} -> {after}")
+        intermediate = self.intermediate_certificate()
         expect(
-            served_after["issuer_dn"]
-            == served_before["issuer_dn"]
-            == self.intermediate_certificate()["subject_dn"],
+            served_before["extensions"]["authority_key_id"]
+            == served_after["extensions"]["authority_key_id"]
+            == intermediate["extensions"]["subject_key_id"],
             "not served by the same intermediate",
         )
         again = self.edge_apply(copy, enabled=True)

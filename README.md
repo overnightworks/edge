@@ -210,6 +210,9 @@ Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `not
 Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt; sonst
 verweigert `edge apply --closed` und nennt den Befehl. Schluessel macht `edge apply` nie.
 
+"An" heisst: jeder Dienst der Einheit hat seinen Container laufen (oder ein Einmal-Dienst ist
+fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `docker compose ps`.
+
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
 oder nur teilweise angewendet, 2 nicht planbar (Katalog ungueltig, Compose unlesbar, ein
 Setup-Check, der es nicht sagen kann). Ein blosses `edge apply` endet mit Exit 2: die
@@ -834,10 +837,10 @@ a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on 
 `https://hello.mcp.internal` only with the root and is served a 24-hour certificate from the
 intermediate; plain http gets no answer from the backend; the three networks split as ruled; the
 host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
-CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on, off and on in a copy of the repository: both volumes and
-the same intermediate survive, and a repeated apply changes nothing. The run takes about 15 to 20
-minutes, within the 1500 s timeout. Every
-call runs from a throwaway container on the network a client would sit on.
+CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on,
+off and on in a copy of the repository: both volumes and the same intermediate survive, and a
+repeated apply changes nothing. The run takes about 15 to 20 minutes, within the 1500 s timeout.
+Every call runs from a throwaway container on the network a client would sit on.
 
 The switch is one for the CA and the gateway together (`enabled: false`, then
 `edge apply --closed`). `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/`
