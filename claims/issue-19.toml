@@ -1,8 +1,0 @@
-claim_id = "53ba137944c142bfae996ae9b4f3b722"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "09b76427b18d39d281473f629dcff506b62c0243"
-branch = "claude/issue-19-keycloak-go-live-als-ein-befehl-script-f"
-scope = ["README.md", "keycloak/go-live", "pyproject.toml", "tests/test_keycloak_go_live.py"]
-opened_commit = "230cf342a8b9090ef180847871c348dd0c61a2a3"
-whole_reason = "The script, its tests, its README section and its lint coverage are one operator tool."
