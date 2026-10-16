@@ -45,6 +45,7 @@ PUBLIC_HOST = "auth.hallucinai.de"
 PUBLIC_REALM = "hallucinai"
 CONFIG_CLIENT = "config-cli"
 ADMIN_ROLE = "admin"
+NO_SUCH_VOLUME = "no such volume"  # docker's answer for a volume that is absent
 READY_TIMEOUT_SECONDS = 240
 LONG_COMMAND_SECONDS = 900
 SHORT_COMMAND_SECONDS = 60
@@ -211,7 +212,11 @@ class GoLive:
         inspected = self.tools.run(
             ["docker", "volume", "inspect", volume_name], SHORT_COMMAND_SECONDS
         )
-        return inspected.returncode == 0
+        if inspected.returncode == 0:
+            return True
+        if NO_SUCH_VOLUME in inspected.stderr.lower():
+            return False
+        raise StepFailure(self.failure_line("volume inspect", inspected, tool="docker"))
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
@@ -236,10 +241,12 @@ class GoLive:
             raise StepFailure(self.failure_line(args[0], result))
         return result
 
-    def failure_line(self, what: str, result: subprocess.CompletedProcess[str]) -> str:
+    def failure_line(
+        self, what: str, result: subprocess.CompletedProcess[str], tool: str = "docker compose"
+    ) -> str:
         lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
         last = self.scrubbed(lines[-1].strip()) if lines else "no output"
-        return f"`docker compose {what}` exited {result.returncode}: {last}"
+        return f"`{tool} {what}` exited {result.returncode}: {last}"
 
     def container_get(self, path: str) -> Reply | None:
         result = self.compose(

@@ -53,6 +53,7 @@ class Keycloak:
     fail_apply_after_master: bool = False
     fail_edge_start: bool = False
     never_answers: bool = False
+    docker_daemon_down: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
@@ -84,8 +85,11 @@ class Keycloak:
             self.stdin_seen = stdin
         self.commands.append(command)
         if command[:3] == ["docker", "volume", "inspect"]:
-            exists = self.database_volume and command[3] == PROJECT_VOLUME
-            return self.done(returncode=0 if exists else 1)
+            if self.docker_daemon_down:
+                return self.done(returncode=1, stderr="Cannot connect to the Docker daemon")
+            if self.database_volume and command[3] == PROJECT_VOLUME:
+                return self.done()
+            return self.done(returncode=1, stderr=f"Error: No such volume: {command[3]}")
         if command[:2] == ["docker", "inspect"]:
             env = ["KC_DB=postgres"] + (
                 ["KC_BOOTSTRAP_ADMIN_USERNAME=temp-admin"] * self.with_overlay
@@ -197,7 +201,9 @@ class Keycloak:
         if not self.realm_exists:
             return reply(404, b"")
         checksum = {"de.adorsys.keycloak.config.import-checksum-default": "x"}
-        return reply(200, json.dumps({"attributes": checksum if self.import_completed else {}}).encode())
+        return reply(
+            200, json.dumps({"attributes": checksum if self.import_completed else {}}).encode()
+        )
 
     def admin_api(self, method: str, path: str, reply):
         if method == "GET" and path.startswith("/roles/admin/users"):
@@ -480,6 +486,22 @@ def test_a_missing_bootstrap_password_on_a_master_that_has_not_moved_is_refused_
     assert not keycloak.master_applied
 
 
+def test_a_docker_failure_while_looking_for_the_database_volume_is_reported_as_it_is(
+    go_live, keycloak, secrets_dir, session
+):
+    """#19 rule 2: a stopped daemon is not an absent volume; the line carries docker's error."""
+    keycloak.docker_daemon_down = True
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at secrets: `docker volume inspect` exited 1: "
+        "Cannot connect to the Docker daemon"
+    )
+    assert not keycloak.changed_something()
+
+
 def test_the_prompt_for_a_hand_removed_bootstrap_file_does_not_point_at_it(
     go_live, keycloak, session, secrets_dir
 ):
@@ -533,9 +555,7 @@ def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
 ):
     """#19 rule 4: no retirement without a second admin who has TOTP."""
     session.on_enter = (
-        None
-        if second_admin is None
-        else lambda: keycloak.add_admin(OTP_ADMIN, **second_admin)
+        None if second_admin is None else lambda: keycloak.add_admin(OTP_ADMIN, **second_admin)
     )
 
     assert go_live.run() == 1
