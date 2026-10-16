@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""step-ca/init: creates the internal CA's key material (README "Interne CA"), the operator's tool.
+
+Runs in one-off containers of the pinned step-ca image without a network. It makes the root
+(key and certificate) and the intermediate (key and certificate) and installs the intermediate
+and a copy of the root certificate into the `step-ca` volume. The root key stays in
+~/.secrets/step-ca and is never mounted into the running service. Every step checks its own
+done-state first: a second run changes nothing, and a partial state completes what is missing
+without ever overwriting a key. No secret is printed: command output is captured and a failure
+shows one scrubbed line.
+
+    step-ca/init
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+import textwrap
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+SERVICE = "step-ca"
+ROOT_NAME = "edge internal CA"
+INTERMEDIATE_NAME = "edge internal CA intermediate"
+PASSWORD_FILE = "password"
+ROOT_KEY_FILE = "root_ca_key"
+ROOT_CERTIFICATE_FILE = "root_ca.crt"
+PENDING_DIRECTORY = ".pending-root"
+SECRETS_MODES = {
+    PASSWORD_FILE: 0o644,  # the service user reads it; the 0700 directory keeps everyone else out
+    ROOT_KEY_FILE: 0o600,
+    ROOT_CERTIFICATE_FILE: 0o644,  # Traefik reads it as uid 65534
+}
+DIRECTORY_MODE = 0o700
+IMAGE_USER = 1000  # the step-ca image's `step` user, who owns the volume and runs the service
+SECRETS_MOUNT = "/secrets"
+VOLUME_MOUNT = "/home/step"
+INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
+INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
+ROOT_COPY = "certs/root_ca.crt"
+INTERMEDIATE_FILES = {INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY}
+LONG_COMMAND_SECONDS = 300
+SHORT_COMMAND_SECONDS = 60
+REDACTED = "[redacted]"
+COMPOSE = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
+
+
+class StepFailure(Exception):
+    """A step cannot finish; the message says why in one line."""
+
+
+def run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=timeout, cwd=REPO
+        )
+    except subprocess.TimeoutExpired as error:
+        raise StepFailure(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
+    except OSError as error:
+        raise StepFailure(f"cannot run {command[0]}: {error.strerror}") from error
+
+
+@dataclass(frozen=True)
+class Tools:
+    """Everything outside the script's logic: processes, the operator's user, the terminal."""
+
+    run: Callable[[list[str], int], subprocess.CompletedProcess[str]] = run_command
+    say: Callable[[str], None] = print
+    host_uid: Callable[[], int] = os.getuid
+
+
+@dataclass(frozen=True)
+class Step:
+    name: str
+    is_done: Callable[[], bool]
+    do: Callable[[], None]
+    why: str  # what happens now and why, in plain words: printed before the step, listed by --help
+
+
+@dataclass(frozen=True)
+class Deployment:
+    image: str
+    volume: str
+
+
+class StepCaInit:
+    def __init__(self, tools: Tools, secrets_dir: Path) -> None:
+        self.tools = tools
+        self.secrets_dir = secrets_dir
+        self.deployment: Deployment | None = None
+
+    # --- what compose says --------------------------------------------------------------------
+
+    def compose_deployment(self) -> Deployment:
+        """The image pin and the volume name have one owner: compose.yaml and its project."""
+        if self.deployment is None:
+            result = self.tools.run(
+                [*COMPOSE, "config", "--format", "json"],
+                SHORT_COMMAND_SECONDS,
+            )
+            if result.returncode != 0:
+                raise StepFailure(self.failure_line("docker compose config", result))
+            config = json.loads(result.stdout)
+            self.deployment = Deployment(
+                image=config["services"][SERVICE]["image"],
+                volume=config["volumes"][SERVICE]["name"],
+            )
+        return self.deployment
+
+    # --- secrets ------------------------------------------------------------------------------
+
+    def secret_values(self) -> list[str]:
+        """What can be read: a file that cannot be read cannot leak into a failure line either."""
+        try:
+            return [(self.secrets_dir / PASSWORD_FILE).read_text().strip()]
+        except OSError:
+            return []
+
+    def scrubbed(self, text: str) -> str:
+        for value in self.secret_values():
+            text = text.replace(value, "***")
+        return REDACTED if "PRIVATE KEY" in text else text
+
+    def failure_line(self, what: str, result: subprocess.CompletedProcess[str]) -> str:
+        lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
+        last = self.scrubbed(lines[-1].strip()) if lines else "no output"
+        return f"`{what}` exited {result.returncode}: {last}"
+
+    # --- the host side: ~/.secrets/step-ca ----------------------------------------------------
+
+    def path(self, name: str) -> Path:
+        return self.secrets_dir / name
+
+    def directory_is_private(self) -> bool:
+        return (
+            self.secrets_dir.is_dir()
+            and (self.secrets_dir.stat().st_mode & 0o777) == DIRECTORY_MODE
+        )
+
+    def prepare_directory(self) -> None:
+        self.secrets_dir.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
+        self.secrets_dir.chmod(DIRECTORY_MODE)
+
+    def modes_are_right(self) -> bool:
+        return all(
+            (self.path(name).stat().st_mode & 0o777) == mode
+            for name, mode in SECRETS_MODES.items()
+            if self.path(name).exists()
+        )
+
+    def correct_modes(self) -> None:
+        for name, mode in SECRETS_MODES.items():
+            if self.path(name).exists():
+                self.path(name).chmod(mode)
+
+    def password_is_present(self) -> bool:
+        if self.path(PASSWORD_FILE).exists():
+            return True
+        if self.path(ROOT_KEY_FILE).exists():
+            raise StepFailure(
+                f"{ROOT_KEY_FILE} exists but {PASSWORD_FILE} is missing: restore {PASSWORD_FILE} "
+                "from the backup, a new one cannot decrypt the key"
+            )
+        return False
+
+    def create_password(self) -> None:
+        # O_EXCL: an existing file is never overwritten.
+        descriptor = os.open(
+            self.path(PASSWORD_FILE),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            SECRETS_MODES[PASSWORD_FILE],
+        )
+        with os.fdopen(descriptor, "w") as password_file:
+            os.fchmod(password_file.fileno(), SECRETS_MODES[PASSWORD_FILE])
+            password_file.write(secrets.token_hex(32))
+
+    # --- one-off containers -------------------------------------------------------------------
+
+    def one_off_must(
+        self, entrypoint: str, *arguments: str, mounts: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        command = [
+            "docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--user", str(IMAGE_USER), "--workdir", VOLUME_MOUNT, "--entrypoint", entrypoint,
+        ]  # fmt: skip
+        for mount in mounts:
+            command += ["--volume", mount]
+        image = self.compose_deployment().image
+        result = self.tools.run([*command, image, *arguments], LONG_COMMAND_SECONDS)
+        if result.returncode != 0:
+            raise StepFailure(self.failure_line(f"{entrypoint} in the {SERVICE} image", result))
+        return result
+
+    def secrets_mount(self, mode: str) -> str:
+        return f"{self.secrets_dir}:{SECRETS_MOUNT}:{mode}"
+
+    def volume_mount(self) -> str:
+        return f"{self.compose_deployment().volume}:{VOLUME_MOUNT}"
+
+    def volume_files(self) -> set[str]:
+        listing = self.one_off_must(
+            "find", VOLUME_MOUNT, "-type", "f", mounts=[self.volume_mount() + ":ro"]
+        )
+        prefix = f"{VOLUME_MOUNT}/"
+        return {line.removeprefix(prefix) for line in listing.stdout.splitlines()}
+
+    # --- root: key and certificate on the host --------------------------------------------------
+
+    def root_is_present(self) -> bool:
+        key, certificate = (
+            self.path(ROOT_KEY_FILE).exists(),
+            self.path(ROOT_CERTIFICATE_FILE).exists(),
+        )
+        if key != certificate:
+            present, missing = (
+                (ROOT_KEY_FILE, ROOT_CERTIFICATE_FILE)
+                if key
+                else (
+                    ROOT_CERTIFICATE_FILE,
+                    ROOT_KEY_FILE,
+                )
+            )
+            raise StepFailure(
+                f"{present} exists but {missing} is missing: restore it from the backup"
+            )
+        return key
+
+    def create_root(self) -> None:
+        if self.volume_files() & INTERMEDIATE_FILES:
+            raise StepFailure(
+                f"the {SERVICE} volume holds an intermediate but the root is missing: "
+                "restore the root from the backup, a new root would not match it"
+            )
+        pending = self.path(PENDING_DIRECTORY)
+        shutil.rmtree(pending, ignore_errors=True)  # only half-made files of an earlier run
+        pending.mkdir(mode=DIRECTORY_MODE)
+        in_pending = f"{SECRETS_MOUNT}/{PENDING_DIRECTORY}"
+        self.one_off_must(
+            "step", "certificate", "create", ROOT_NAME,
+            f"{in_pending}/{ROOT_CERTIFICATE_FILE}", f"{in_pending}/{ROOT_KEY_FILE}",
+            "--profile", "root-ca", "--password-file", f"{SECRETS_MOUNT}/{PASSWORD_FILE}",
+            mounts=[self.secrets_mount("rw")],
+        )  # fmt: skip
+        # The key first: a crash between the two leaves a key without a certificate, which
+        # root_is_present() refuses, never a certificate that looks complete.
+        (pending / ROOT_KEY_FILE).rename(self.path(ROOT_KEY_FILE))
+        (pending / ROOT_CERTIFICATE_FILE).rename(self.path(ROOT_CERTIFICATE_FILE))
+        pending.rmdir()
+        self.correct_modes()
+
+    # --- intermediate and the root copy in the volume -----------------------------------------
+
+    def intermediate_is_present(self) -> bool:
+        present = self.volume_files() & INTERMEDIATE_FILES
+        if present and present != INTERMEDIATE_FILES:
+            raise StepFailure(
+                f"the {SERVICE} volume holds only {', '.join(sorted(present))} of the intermediate"
+                ": restore the volume from the backup, or remove it to start over"
+            )
+        return bool(present)
+
+    def create_intermediate(self) -> None:
+        mounts = [self.secrets_mount("ro"), self.volume_mount()]
+        self.one_off_must("mkdir", "-p", "certs", "secrets", mounts=mounts)
+        password = f"{SECRETS_MOUNT}/{PASSWORD_FILE}"
+        self.one_off_must(
+            "step", "certificate", "create", INTERMEDIATE_NAME,
+            INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY,
+            "--profile", "intermediate-ca",
+            "--ca", f"{SECRETS_MOUNT}/{ROOT_CERTIFICATE_FILE}",
+            "--ca-key", f"{SECRETS_MOUNT}/{ROOT_KEY_FILE}",
+            "--ca-password-file", password, "--password-file", password,
+            mounts=mounts,
+        )  # fmt: skip
+
+    def root_copy_is_present(self) -> bool:
+        return ROOT_COPY in self.volume_files()
+
+    def copy_root(self) -> None:
+        mounts = [self.secrets_mount("ro"), self.volume_mount()]
+        self.one_off_must("mkdir", "-p", "certs", mounts=mounts)
+        self.one_off_must(
+            "cp", f"{SECRETS_MOUNT}/{ROOT_CERTIFICATE_FILE}", ROOT_COPY, mounts=mounts
+        )
+
+    # --- the run ------------------------------------------------------------------------------
+
+    def steps(self) -> list[Step]:
+        return [
+            Step(
+                "secrets directory",
+                self.directory_is_private,
+                self.prepare_directory,
+                f"{self.secrets_dir} is made private (mode 0700): it holds the root key.",
+            ),
+            Step(
+                "password",
+                self.password_is_present,
+                self.create_password,
+                "One random password protects the root and the intermediate key.",
+            ),
+            Step(
+                "root",
+                self.root_is_present,
+                self.create_root,
+                "The root key and certificate are made in a one-off container without a network. "
+                "The key stays here and is never mounted into the running service.",
+            ),
+            Step(
+                "intermediate",
+                self.intermediate_is_present,
+                self.create_intermediate,
+                f"The root signs the intermediate, which is stored in the {SERVICE} volume.",
+            ),
+            Step(
+                "root certificate in the volume",
+                self.root_copy_is_present,
+                self.copy_root,
+                "The service reads the public root certificate from its volume.",
+            ),
+            Step(
+                "file modes",
+                self.modes_are_right,
+                self.correct_modes,
+                "Root key 0600, root certificate and password 0644 (the service users read them).",
+            ),
+        ]
+
+    def run(self) -> int:
+        current = "start"
+        changed = []
+        try:
+            if self.tools.host_uid() != IMAGE_USER:
+                raise StepFailure(
+                    f"run as uid {IMAGE_USER}: the {SERVICE} image's user must read the root key"
+                )
+            for step in self.steps():
+                current = step.name
+                if step.is_done():
+                    continue
+                self.tools.say(f"step-ca/init: {step.name}: {step.why}")
+                step.do()
+                changed.append(step.name)
+        except StepFailure as failure:
+            self.tools.say(f"step-ca/init FAILED at {current}: {self.scrubbed(str(failure))}")
+            return 1
+        except Exception as unexpected:  # the one boundary: a failure is a line, never a traceback
+            self.tools.say(
+                f"step-ca/init FAILED at {current}: unexpected answer ({type(unexpected).__name__})"
+            )
+            return 1
+        except KeyboardInterrupt:
+            self.tools.say(f"step-ca/init FAILED at {current}: interrupted")
+            return 1
+        if changed:
+            self.tools.say("step-ca/init: done. Start the CA: docker compose up -d step-ca")
+        else:
+            self.tools.say("step-ca/init: nothing changed, the key material is all in place.")
+        return 0
+
+
+def main() -> int:
+    init = StepCaInit(Tools(), Path.home() / ".secrets" / "step-ca")
+    steps = "\n".join(
+        textwrap.fill(f"{step.name}: {step.why}", subsequent_indent="   ") for step in init.steps()
+    )
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=f"Steps, each skipped when already done:\n{steps}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args()
+    return init.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

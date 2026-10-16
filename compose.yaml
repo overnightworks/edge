@@ -145,6 +145,31 @@ services:
     volumes:
       - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
       - ./keycloak:/config:ro
+
+  step-ca:
+    image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270
+    restart: unless-stopped
+    # The image's own user; step-ca/init makes the volume's files for it.
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # Host network so the CA answers on 127.0.0.1:9000 (ca.json) without a published port.
+    network_mode: host
+    # Not the image's entrypoint: its init path would print an admin password into the log.
+    entrypoint: ["/usr/local/bin/step-ca"]
+    command:
+      - "--password-file=/run/secrets/step_ca_password"
+      # Slice 2's `mcp` entrypoint answers the TLS-ALPN-01 challenge on this port instead of 443;
+      # step-ca allows moving that port only together with --insecure.
+      - "--insecure"
+      - "--acme-tls-port=8443"
+      - "/etc/step-ca/ca.json"
+    secrets: [step_ca_password]
+    volumes:
+      - ./step-ca/ca.json:/etc/step-ca/ca.json:ro
+      # Intermediate certificate and key, the root certificate and the db; never the root key.
+      - step-ca:/home/step
 volumes:
   socket-proxy-run:
     driver: local
@@ -153,6 +178,7 @@ volumes:
       device: tmpfs
       o: "uid=65534,gid=65534,mode=0700"
   keycloak-db:
+  step-ca:
 
 secrets:
   # Files only, outside the repository; README "Keycloak secrets" names how to create them.
@@ -160,6 +186,9 @@ secrets:
     file: ${HOME}/.secrets/keycloak/db-password
   keycloak_config_cli_secret:
     file: ${HOME}/.secrets/keycloak/config-cli-secret
+  # step-ca/init creates it; README "Interne CA".
+  step_ca_password:
+    file: ${HOME}/.secrets/step-ca/password
 
 networks:
   edge-probe:
