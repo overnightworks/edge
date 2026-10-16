@@ -1,7 +1,0 @@
-claim_id = "617ae2f3ece5457f9f6a57382173f2a8"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "90f0c3ba25dff57f7b7121b1592fafc173065816"
-branch = "claude/issue-31-xa-architecture-docs"
-scope = ["docs/architecture.md"]
-opened_commit = "abb35e41287fabe4ecca4cc8ec6b42a9323ed0fc"
