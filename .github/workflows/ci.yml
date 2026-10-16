@@ -102,8 +102,8 @@ jobs:
                   sys.exit(f"router {router} is {owner}, not keycloak on {entrypoint}")
           PY
 
-      # step-ca runs on the host network, so its hardening and its password channel are pinned
-      # here rather than left to the port checks above.
+      # step-ca sits on the internal network mcp-ca alone, so its network, hardening and password
+      # channel are pinned here rather than left to the port checks above.
       - name: step-ca is pinned, hardened and takes its password from /run/secrets
         run: |
           python3 - <<'PY'
@@ -112,9 +112,15 @@ jobs:
           step_ca = yaml.safe_load(compose)["services"]["step-ca"]
           if not re.search(r"@sha256:[0-9a-f]{64}$", step_ca["image"]):
               sys.exit("the step-ca image is not pinned by digest")
-          hardening = (step_ca.get("read_only"), step_ca.get("cap_drop"), step_ca.get("network_mode"))
-          if hardening != (True, ["ALL"], "host") or "no-new-privileges:true" not in step_ca["security_opt"]:
-              sys.exit(f"step-ca is not read_only, cap_drop ALL, no-new-privileges on the host network: {hardening}")
+          hardening = (step_ca.get("read_only"), step_ca.get("cap_drop"))
+          if hardening != (True, ["ALL"]) or "no-new-privileges:true" not in step_ca["security_opt"]:
+              sys.exit(f"step-ca is not read_only, cap_drop ALL, no-new-privileges: {hardening}")
+          if step_ca.get("networks") != ["mcp-ca"] or "network_mode" in step_ca:
+              sys.exit(f"step-ca is not on mcp-ca alone: {step_ca.get('networks')} {step_ca.get('network_mode')}")
+          if yaml.safe_load(compose)["networks"]["mcp-ca"].get("internal") is not True:
+              sys.exit("the network mcp-ca is not internal")
+          if "--insecure" in step_ca["command"] or any(a.startswith("--acme-tls-port") for a in step_ca["command"]):
+              sys.exit("step-ca keeps its default challenge port 443")
           if step_ca.get("cap_add", []) != ["NET_BIND_SERVICE"]:
               sys.exit(f"step-ca cap_add is not exactly [NET_BIND_SERVICE]: {step_ca.get('cap_add')}")
           if "DOCKER_STEPCA_INIT" in compose or "environment" in step_ca:

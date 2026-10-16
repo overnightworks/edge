@@ -509,9 +509,9 @@ def test_the_ca_keeps_the_default_certificate_lifetime_of_24_hours(ca_config):
     assert "claims" not in ca_config["authority"]
 
 
-def test_the_ca_listens_on_loopback_and_has_no_remote_management(ca_config):
-    """#38 rule 2: loopback, no remote management."""
-    assert ca_config["address"] == "127.0.0.1:9000"
-    assert "127.0.0.1" in ca_config["dnsNames"]
+def test_the_ca_listens_on_9000_as_step_ca_with_no_remote_management(ca_config):
+    """#38 rule 2: address :9000, dnsNames step-ca, no remote management."""
+    assert ca_config["address"] == ":9000"
+    assert ca_config["dnsNames"] == ["step-ca"]
     assert not ca_config["authority"].get("enableAdmin")
     assert "insecureAddress" not in ca_config or not ca_config["insecureAddress"]

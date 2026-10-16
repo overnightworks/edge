@@ -661,7 +661,7 @@ included), in any compose, apply or service log output, or in its own output
 
 `step-ca` is the certificate authority for the MCP origins: the servers behind
 `https://<app>.mcp.internal` that the agent service calls over https only. It listens on
-`127.0.0.1:9000` (host network, no published port), has one ACME provisioner that accepts only
+`step-ca:9000` on the internal network `mcp-ca` (no route out, no published port), has one ACME provisioner that accepts only
 `*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
 configuration. Traefik fetching certificates from it is the next slice (edge#37).
 
@@ -683,7 +683,7 @@ root certificate is what other services trust.
 Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 420 python3 probe/step-ca/probe.py
 --scratch DIR` starts a throwaway project under a throwaway `HOME` and holds proofs 1 to 5 (init
 modes and silence, the ACME directory verifies only with the probe root, the volume holds no root
-key, a restart keeps the intermediate, a partial state is completed). It needs 127.0.0.1:9000 free.
+key, a restart keeps the intermediate, a partial state is completed). The curl runs from a throwaway container on `mcp-ca`.
 
 Switch it off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
 `docker compose up -d` starts it again. To remove it, also `docker compose rm -f step-ca`;

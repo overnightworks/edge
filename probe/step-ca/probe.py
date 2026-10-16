@@ -9,7 +9,8 @@ set in the environment of every command.
     flock /tmp/probe-stack.lock timeout --kill-after=30 420 \\
         python3 probe/step-ca/probe.py --scratch DIR
 
-Needs 127.0.0.1:9000 free (exit 3 when taken) and an empty or new --scratch directory.
+The CA is only reachable on its internal compose network, so every call to it runs from a
+throwaway container on that network. Needs an empty or new --scratch directory.
 """
 
 from __future__ import annotations
@@ -18,19 +19,17 @@ import argparse
 import json
 import os
 import signal
-import socket
-import ssl
 import stat
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = "edge-stepca-probe"
-CA_URL = "https://127.0.0.1:9000"
+CA_URL = "https://step-ca:9000"
+NETWORK = f"{PROJECT}_mcp-ca"
+CERTIFICATE_UNVERIFIED = 60  # curl exit code
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
@@ -108,20 +107,28 @@ class Probe:
     # --- the CA over TLS ----------------------------------------------------------------------
 
     def directory_status(self, cafile: Path | None) -> int:
-        context = ssl.create_default_context(cafile=str(cafile) if cafile else None)
-        try:
-            with urllib.request.urlopen(DIRECTORY_URL, context=context, timeout=5) as reply:
-                return reply.status
-        except urllib.error.URLError as error:
-            if isinstance(error.reason, ssl.SSLCertVerificationError):
-                return -1
-            raise
+        """The directory's HTTP status as a throwaway container on the CA's network sees it, or -1
+        when the certificate does not verify; raises OSError while the CA is not answering."""
+        image, _ = self.image_and_volume()
+        trust = ["--volume", f"{cafile}:/root.crt:ro"] if cafile else []
+        curl = ["--cacert", "/root.crt"] if cafile else []
+        result = self.run(
+            ["docker", "run", "--rm", "--network", NETWORK, "--read-only", "--user", "1000:1000",
+             *trust, "--entrypoint", "curl", image, "--silent", "--max-time", "5",
+             "--output", "/dev/null", "--write-out", "%{http_code}", *curl, DIRECTORY_URL],
+            check=False,
+        )  # fmt: skip
+        if result.returncode == CERTIFICATE_UNVERIFIED:
+            return -1
+        if result.returncode != 0:
+            raise ConnectionError(f"curl exited {result.returncode}")
+        return int(result.stdout)
 
     def order_outcome(self, name: str) -> tuple[int, str]:
         """Asks the CA for a certificate for `name` with the pinned image's own ACME client."""
         image, _ = self.image_and_volume()
         result = self.run(
-            ["docker", "run", "--rm", "--network", "host", "--tmpfs", "/tmp", "--read-only",
+            ["docker", "run", "--rm", "--network", NETWORK, "--tmpfs", "/tmp", "--read-only",
              "--user", "1000:1000", "--volume", f"{self.secrets_dir / 'root_ca.crt'}:/root.crt:ro",
              "--entrypoint", "step", image, "ca", "certificate", name, "/tmp/c.crt", "/tmp/c.key",
              "--acme", DIRECTORY_URL, "--root", "/root.crt", "--force"],
@@ -260,20 +267,12 @@ class Probe:
         print(f"teardown: project {PROJECT} removed (containers and volume)")
 
 
-def port_is_free() -> bool:
-    with socket.socket() as probe:
-        return probe.connect_ex(("127.0.0.1", 9000)) != 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
         print("PROBE FAILED: --scratch is not empty")
-        return 3
-    if not port_is_free():
-        print("PROBE FAILED: 127.0.0.1:9000 is taken")
         return 3
     arguments.scratch.mkdir(parents=True, exist_ok=True)
     probe = Probe(arguments.scratch)

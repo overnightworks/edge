@@ -2,8 +2,8 @@
   "root": "/home/step/certs/root_ca.crt",
   "crt": "/home/step/certs/intermediate_ca.crt",
   "key": "/home/step/secrets/intermediate_ca_key",
-  "address": "127.0.0.1:9000",
-  "dnsNames": ["127.0.0.1"],
+  "address": ":9000",
+  "dnsNames": ["step-ca"],
   "logger": {"format": "text"},
   "db": {"type": "badgerv2", "dataSource": "/home/step/db"},
   "authority": {

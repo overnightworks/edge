@@ -58,7 +58,7 @@ flowchart TB
             TRF["Traefik 127.0.0.1:8081<br/>the tunnel's only target"]
             ADM["Traefik 127.0.0.1:8090<br/>this PC only"]
             KC["Keycloak + its database<br/>auth.hallucinai.de: the login page"]
-            CA["step-ca 127.0.0.1:9000<br/>internal CA for the MCP origins, *.mcp.internal"]
+            CA["step-ca :9000, internal network mcp-ca<br/>internal CA for the MCP origins, *.mcp.internal"]
             BAK["edge-backup<br/>restic weekly, restore test monthly<br/>second copy off this disk (D3)"]
             LOOK["Traffic-light page, Gatus<br/>is it OK now?"]
             MON["Prometheus, Grafana, Alertmanager<br/>why, since when? every service"]
