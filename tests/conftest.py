@@ -101,7 +101,7 @@ def leave_pasted_image() -> Callable[[Path, int], Path]:
 
 
 class RecordingRunner:
-    """Delivers desktop notifications, stands in for every other tool as missing, and remembers what was asked of it."""
+    """Delivers notifications (systemd-run succeeds only if notify-send did), fails every other tool as missing, records calls."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
@@ -109,16 +109,21 @@ class RecordingRunner:
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         self.calls.append(list(argv))
-        return "" if argv[0] == "notify-send" and self.notify_delivers else None
+        return "" if argv[0] == "systemd-run" and self.notify_delivers else None
 
     @property
     def notifications(self) -> list[str]:
         """The summary line of every notification sent."""
-        return [call[1] for call in self.calls if call[0] == "notify-send"]
+        return [call[-3] for call in self.notification_calls]
 
     @property
     def notification_bodies(self) -> list[str]:
-        return [call[2] for call in self.calls if call[0] == "notify-send"]
+        return [call[-2] for call in self.notification_calls]
+
+    @property
+    def notification_calls(self) -> list[list[str]]:
+        """The detached waiter commands: [..., summary, body, report path]."""
+        return [call for call in self.calls if call[0] == "systemd-run"]
 
 
 @pytest.fixture

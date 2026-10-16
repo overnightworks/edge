@@ -34,6 +34,11 @@ home check 15.10.2026 09:00 | 3 Funde
 1 neu, 2 weg. Bericht: /home/felix/.local/state/home/check-report.md
 ```
 
+Die Benachrichtigung trägt den Knopf „Bericht öffnen“; ein Klick öffnet den
+Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
+losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
+der Timer-Dienst sofort enden.
+
 Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`.
 Ein Lauf ohne Funde benachrichtigt nur, wenn eine zerbrochene Prüfung wieder
 läuft; den sauberen Stand merkt er sich, sodass ein wiederkehrender Fund

@@ -154,9 +154,26 @@ def notification_body(current: frozenset[str], previous: frozenset[str] | None, 
     return f"{len(found - before)} neu, {len(before - found)} weg. Bericht: {report_file}"
 
 
-def _notify(run: CommandRunner, summary: str, body: str) -> bool:
-    """True once the desktop notification was delivered."""
-    return run(["notify-send", summary, body]) is not None
+OPEN_REPORT_ACTION = "open=Bericht öffnen"
+# Runs inside the detached unit. A printed notification ID above 0 proves delivery (0 is what a failed show prints),
+# so only then is the unit ready and systemd-run succeeds; afterwards the click is awaited and opens the report, a dismissal ends quietly.
+# notify-send holds its ID in a block buffer until it exits, which --action delays to the click, so it runs line-buffered.
+WAIT_FOR_CLICK_SCRIPT = (
+    f'stdbuf -oL notify-send --print-id --action="{OPEN_REPORT_ACTION}" "$1" "$2" | '
+    '{ read -r id && [ "$id" -gt 0 ] 2>/dev/null || exit 1; systemd-notify --ready; '
+    'read -r action; if [ "$action" = open ]; then exec xdg-open "$3"; fi; }'
+)
+DETACHED_UNIT_OPTIONS = ["systemd-run", "--user", "--collect", "-p", "Type=notify", "-p", "NotifyAccess=all"]
+
+
+def notification_command(summary: str, body: str, report_file: Path) -> list[str]:
+    """systemd-run returns once the unit reported the notification as delivered; the click is awaited by the unit, never by the check."""
+    return [*DETACHED_UNIT_OPTIONS, "sh", "-c", WAIT_FOR_CLICK_SCRIPT, "sh", summary, body, str(report_file)]
+
+
+def _notify(run: CommandRunner, summary: str, body: str, report_file: Path) -> bool:
+    """True once the notification was delivered and its click-waiting unit runs detached."""
+    return run(notification_command(summary, body, report_file)) is not None
 
 
 def _run_error(failed: list[CheckResult]) -> secrets_view.ManifestError | CheckFailed:
@@ -177,7 +194,8 @@ def check(ctx: CheckContext) -> int:
     sys.stdout.write(report)
     news = ctx.config.notify_enabled and _is_news(current, previous)
     summary = report.splitlines()[0].removeprefix("# ")
-    if news and not _notify(ctx.run, summary, notification_body(current, previous, layout.check_report_file)):
+    body = notification_body(current, previous, layout.check_report_file)
+    if news and not _notify(ctx.run, summary, body, layout.check_report_file):
         # The remembered set stays at the last delivered one, so the next run sends this news again.
         sys.stderr.write(NOTIFY_FAILED)
     else:
