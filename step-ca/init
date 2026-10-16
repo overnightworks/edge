@@ -42,6 +42,9 @@ SECRETS_MODES = {
 DIRECTORY_MODE = 0o700
 IMAGE_USER = 1000  # the step-ca image's `step` user, who owns the volume and runs the service
 SECRETS_MOUNT = "/secrets"
+PASSWORD_MOUNT = "/run/secrets/password"  # the one channel the password travels
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+COMPOSE_VOLUME_LABEL = "com.docker.compose.volume"
 VOLUME_MOUNT = "/home/step"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
@@ -89,6 +92,7 @@ class Step:
 class Deployment:
     image: str
     volume: str
+    project: str
 
 
 class StepCaInit:
@@ -96,6 +100,7 @@ class StepCaInit:
         self.tools = tools
         self.secrets_dir = secrets_dir
         self.deployment: Deployment | None = None
+        self.volume_exists = False
 
     # --- what compose says --------------------------------------------------------------------
 
@@ -112,6 +117,7 @@ class StepCaInit:
             self.deployment = Deployment(
                 image=config["services"][SERVICE]["image"],
                 volume=config["volumes"][SERVICE]["name"],
+                project=config["name"],
             )
         return self.deployment
 
@@ -125,7 +131,7 @@ class StepCaInit:
             return []
 
     def scrubbed(self, text: str) -> str:
-        for value in self.secret_values():
+        for value in filter(None, self.secret_values()):
             text = text.replace(value, "***")
         return REDACTED if "PRIVATE KEY" in text else text
 
@@ -162,12 +168,21 @@ class StepCaInit:
                 self.path(name).chmod(mode)
 
     def password_is_present(self) -> bool:
-        if self.path(PASSWORD_FILE).exists():
+        password = self.path(PASSWORD_FILE)
+        if password.exists():
+            if password.stat().st_size == 0:
+                raise StepFailure(
+                    f"{PASSWORD_FILE} is empty: restore it from the backup, "
+                    "or remove it when no key exists yet"
+                )
             return True
-        if self.path(ROOT_KEY_FILE).exists():
+        bound = [
+            name for name in (ROOT_KEY_FILE, ROOT_CERTIFICATE_FILE) if self.path(name).exists()
+        ] + sorted(self.volume_files() & INTERMEDIATE_FILES)
+        if bound:
             raise StepFailure(
-                f"{ROOT_KEY_FILE} exists but {PASSWORD_FILE} is missing: restore {PASSWORD_FILE} "
-                "from the backup, a new one cannot decrypt the key"
+                f"{PASSWORD_FILE} is missing but {', '.join(bound)} exists: restore "
+                f"{PASSWORD_FILE} from the backup, a new one cannot decrypt the key"
             )
         return False
 
@@ -204,7 +219,26 @@ class StepCaInit:
         return f"{self.secrets_dir}:{SECRETS_MOUNT}:{mode}"
 
     def volume_mount(self) -> str:
-        return f"{self.compose_deployment().volume}:{VOLUME_MOUNT}"
+        deployment = self.compose_deployment()
+        if not self.volume_exists:
+            # Docker names an unknown volume on first mount without labels and cannot relabel it
+            # later; the backup finds the volume by compose's labels.
+            self.docker_must(
+                "volume", "create",
+                "--label", f"{COMPOSE_PROJECT_LABEL}={deployment.project}",
+                "--label", f"{COMPOSE_VOLUME_LABEL}={SERVICE}",
+                deployment.volume,
+            )  # fmt: skip
+            self.volume_exists = True
+        return f"{deployment.volume}:{VOLUME_MOUNT}"
+
+    def docker_must(self, *arguments: str) -> None:
+        result = self.tools.run(["docker", *arguments], SHORT_COMMAND_SECONDS)
+        if result.returncode != 0:
+            raise StepFailure(self.failure_line(f"docker {arguments[0]} {arguments[1]}", result))
+
+    def password_mount(self) -> str:
+        return f"{self.path(PASSWORD_FILE)}:{PASSWORD_MOUNT}:ro"
 
     def volume_files(self) -> set[str]:
         listing = self.one_off_must(
@@ -220,6 +254,8 @@ class StepCaInit:
             self.path(ROOT_KEY_FILE).exists(),
             self.path(ROOT_CERTIFICATE_FILE).exists(),
         )
+        if key and not certificate and self.pending_certificate().exists():
+            return False  # an earlier run stopped between its two renames: create_root finishes it
         if key != certificate:
             present, missing = (
                 (ROOT_KEY_FILE, ROOT_CERTIFICATE_FILE)
@@ -234,7 +270,13 @@ class StepCaInit:
             )
         return key
 
+    def pending_certificate(self) -> Path:
+        return self.path(PENDING_DIRECTORY) / ROOT_CERTIFICATE_FILE
+
     def create_root(self) -> None:
+        if self.path(ROOT_KEY_FILE).exists():  # only reached with the certificate still pending
+            self.publish_pending_certificate()
+            return
         if self.volume_files() & INTERMEDIATE_FILES:
             raise StepFailure(
                 f"the {SERVICE} volume holds an intermediate but the root is missing: "
@@ -247,14 +289,17 @@ class StepCaInit:
         self.one_off_must(
             "step", "certificate", "create", ROOT_NAME,
             f"{in_pending}/{ROOT_CERTIFICATE_FILE}", f"{in_pending}/{ROOT_KEY_FILE}",
-            "--profile", "root-ca", "--password-file", f"{SECRETS_MOUNT}/{PASSWORD_FILE}",
-            mounts=[self.secrets_mount("rw")],
+            "--profile", "root-ca", "--password-file", PASSWORD_MOUNT,
+            mounts=[self.secrets_mount("rw"), self.password_mount()],
         )  # fmt: skip
-        # The key first: a crash between the two leaves a key without a certificate, which
-        # root_is_present() refuses, never a certificate that looks complete.
+        # The key first: a crash between the two leaves a key with its certificate still pending,
+        # which the next run finishes, never a certificate that looks complete.
         (pending / ROOT_KEY_FILE).rename(self.path(ROOT_KEY_FILE))
-        (pending / ROOT_CERTIFICATE_FILE).rename(self.path(ROOT_CERTIFICATE_FILE))
-        pending.rmdir()
+        self.publish_pending_certificate()
+
+    def publish_pending_certificate(self) -> None:
+        self.pending_certificate().rename(self.path(ROOT_CERTIFICATE_FILE))
+        self.path(PENDING_DIRECTORY).rmdir()
         self.correct_modes()
 
     # --- intermediate and the root copy in the volume -----------------------------------------
@@ -269,16 +314,15 @@ class StepCaInit:
         return bool(present)
 
     def create_intermediate(self) -> None:
-        mounts = [self.secrets_mount("ro"), self.volume_mount()]
+        mounts = [self.secrets_mount("ro"), self.password_mount(), self.volume_mount()]
         self.one_off_must("mkdir", "-p", "certs", "secrets", mounts=mounts)
-        password = f"{SECRETS_MOUNT}/{PASSWORD_FILE}"
         self.one_off_must(
             "step", "certificate", "create", INTERMEDIATE_NAME,
             INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY,
             "--profile", "intermediate-ca",
             "--ca", f"{SECRETS_MOUNT}/{ROOT_CERTIFICATE_FILE}",
             "--ca-key", f"{SECRETS_MOUNT}/{ROOT_KEY_FILE}",
-            "--ca-password-file", password, "--password-file", password,
+            "--ca-password-file", PASSWORD_MOUNT, "--password-file", PASSWORD_MOUNT,
             mounts=mounts,
         )  # fmt: skip
 

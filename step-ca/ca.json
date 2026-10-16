@@ -7,12 +7,12 @@
   "logger": {"format": "text"},
   "db": {"type": "badgerv2", "dataSource": "/home/step/db"},
   "authority": {
+    "policy": {"x509": {"allow": {"dns": ["*.mcp.internal"]}}},
     "provisioners": [
       {
         "type": "ACME",
         "name": "acme",
-        "challenges": ["tls-alpn-01"],
-        "policy": {"x509": {"allow": {"dns": ["*.mcp.internal"]}}}
+        "challenges": ["tls-alpn-01"]
       }
     ]
   },

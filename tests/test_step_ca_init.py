@@ -20,7 +20,8 @@ import pytest
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
 IMAGE = "smallstep/step-ca:0.30.2@sha256:" + "ab" * 32
-VOLUME = "operators-project_step-ca"
+PROJECT = "operators-project"
+VOLUME = f"{PROJECT}_step-ca"
 PRIVATE_KEY_HEADER = "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----"
 ROOT_KEY, ROOT_CERT, PASSWORD = "root_ca_key", "root_ca.crt", "password"
 INTERMEDIATE_FILES = {"certs/intermediate_ca.crt", "secrets/intermediate_ca_key"}
@@ -47,12 +48,13 @@ class DockerHost:
     commands: list[list[str]] = field(default_factory=list)
     failing_tool: str | None = None
     failure_text: str = ""
+    volumes: dict[str, dict[str, str]] = field(default_factory=dict)  # name -> labels
 
     def container_path(self, command: list[str], path: str) -> Path:
         for index, argument in enumerate(command):
             if argument == "--volume":
                 source, target = command[index + 1].split(":")[:2]
-                host = self.secrets_dir if source == str(self.secrets_dir) else self.volume_dir
+                host = Path(source) if source.startswith("/") else self.volume_dir
                 if path == target or path.startswith(target + "/"):
                     return host / path.removeprefix(target).lstrip("/")
         return self.volume_dir / path  # relative to --workdir /home/step
@@ -68,11 +70,19 @@ class DockerHost:
     def run(self, command: list[str], _timeout: int):
         self.commands.append(command)
         if command[1] == "compose":
+            if self.failing_tool == "compose":
+                return self.done(returncode=1, stderr=self.failure_text)
             config = {
+                "name": PROJECT,
                 "services": {"step-ca": {"image": IMAGE}},
                 "volumes": {"step-ca": {"name": VOLUME}},
             }
             return self.done(json.dumps(config))
+        if command[1] == "volume":
+            self.volumes[command[-1]] = dict(
+                argument.split("=", 1) for argument in command[2:-1] if "=" in argument
+            )
+            return self.done()
         tool = self.entrypoint(command)
         arguments = command[command.index(IMAGE) + 1 :]
         if tool == self.failing_tool:
@@ -174,6 +184,7 @@ def fingerprint_of_files(directory: Path) -> dict[str, bytes]:
 
 
 def test_a_fresh_run_makes_the_files_with_their_modes(init, docker, secrets_dir, session):
+    """#38 rule 3 / proof 1: the files and their modes."""
     assert init.run() == 0
 
     assert mode(secrets_dir) == 0o700
@@ -187,6 +198,7 @@ def test_a_fresh_run_makes_the_files_with_their_modes(init, docker, secrets_dir,
 def test_the_output_holds_neither_the_password_nor_a_private_key(
     init, docker, secrets_dir, session
 ):
+    """#38 rule 3 / proof 1: nothing secret is printed."""
     init.run()
     init.run()
 
@@ -195,6 +207,7 @@ def test_the_output_holds_neither_the_password_nor_a_private_key(
 
 
 def test_the_root_key_is_never_written_into_the_volume(init, docker, secrets_dir):
+    """#38 rule 3 / proof 3: the root key stays out of the volume."""
     init.run()
 
     root_key = (secrets_dir / ROOT_KEY).read_bytes()
@@ -202,6 +215,7 @@ def test_the_root_key_is_never_written_into_the_volume(init, docker, secrets_dir
 
 
 def test_every_container_runs_without_a_network_from_the_composed_image(init, docker):
+    """#38 rule 3: one-off containers have no network and use the pinned image."""
     init.run()
 
     runs = [command for command in docker.commands if command[1] == "run"]
@@ -212,6 +226,7 @@ def test_every_container_runs_without_a_network_from_the_composed_image(init, do
 
 
 def test_the_intermediate_is_made_with_the_password_of_the_root(init, docker, secrets_dir):
+    """#38 rule 3: one password protects root and intermediate."""
     init.run()
 
     key = (docker.volume_dir / "secrets/intermediate_ca_key").read_text()
@@ -219,6 +234,7 @@ def test_the_intermediate_is_made_with_the_password_of_the_root(init, docker, se
 
 
 def test_a_second_run_changes_nothing(init, docker, secrets_dir, session):
+    """#38 rule 3 / proof 1: a second run changes nothing."""
     init.run()
     before = (fingerprint_of_files(secrets_dir), fingerprint_of_files(docker.volume_dir))
     first_run_commands = len(docker.commands)
@@ -237,6 +253,7 @@ def test_a_second_run_changes_nothing(init, docker, secrets_dir, session):
 def test_a_partial_state_with_a_root_gets_its_intermediate_and_keeps_the_root_key(
     init, docker, secrets_dir
 ):
+    """#38 rule 3 / proof 5: a partial state is completed, the root key kept."""
     init.run()
     for path in (docker.volume_dir / "certs").iterdir():
         path.unlink()
@@ -253,6 +270,7 @@ def test_a_partial_state_with_a_root_gets_its_intermediate_and_keeps_the_root_ke
 def test_a_missing_root_copy_in_the_volume_is_copied_without_touching_the_intermediate(
     init, docker, secrets_dir
 ):
+    """#38 rule 3: a missing piece is completed, nothing else is touched."""
     init.run()
     (docker.volume_dir / "certs/root_ca.crt").unlink()
     intermediate = (docker.volume_dir / "secrets/intermediate_ca_key").read_bytes()
@@ -269,6 +287,7 @@ def test_a_missing_root_copy_in_the_volume_is_copied_without_touching_the_interm
 def test_half_an_intermediate_is_refused_and_nothing_is_overwritten(
     init, docker, secrets_dir, session, lost
 ):
+    """#38 rule 3: never overwrite an existing key."""
     init.run()
     (docker.volume_dir / lost).unlink()
     before = fingerprint_of_files(docker.volume_dir)
@@ -283,6 +302,7 @@ def test_half_an_intermediate_is_refused_and_nothing_is_overwritten(
 def test_half_a_root_is_refused_by_name_and_the_survivor_is_untouched(
     init, docker, secrets_dir, session, lost
 ):
+    """#38 rule 3: never overwrite an existing key."""
     init.run()
     (secrets_dir / lost).unlink()
     survivor = ROOT_CERT if lost == ROOT_KEY else ROOT_KEY
@@ -297,6 +317,7 @@ def test_half_a_root_is_refused_by_name_and_the_survivor_is_untouched(
 def test_a_missing_password_next_to_a_root_key_is_refused_and_not_replaced(
     init, secrets_dir, session
 ):
+    """#38 rule 3: never overwrite an existing key."""
     init.run()
     (secrets_dir / PASSWORD).unlink()
 
@@ -309,15 +330,87 @@ def test_a_missing_password_next_to_a_root_key_is_refused_and_not_replaced(
 def test_a_volume_with_an_intermediate_but_no_root_does_not_get_a_new_root(
     init, docker, secrets_dir, session
 ):
+    """defect:#38 PR 39 finding 1: a refusal comes before any write."""
     init.run()
-    (secrets_dir / ROOT_KEY).unlink()
-    (secrets_dir / ROOT_CERT).unlink()
-    (secrets_dir / PASSWORD).unlink()
+    for name in (ROOT_KEY, ROOT_CERT, PASSWORD):
+        (secrets_dir / name).unlink()
     session.printed.clear()
+
+    assert init.run() == 1
+
+    assert sorted(p.name for p in secrets_dir.iterdir()) == []
+    assert "FAILED at password" in session.printed[-1]
+
+
+def test_a_lone_root_certificate_without_password_is_refused_before_any_write(
+    init, secrets_dir, session
+):
+    """defect:#38 PR 39 finding 1: a restored root must meet its own password."""
+    init.run()
+    for name in (ROOT_KEY, PASSWORD):
+        (secrets_dir / name).unlink()
+    content = (secrets_dir / ROOT_CERT).read_bytes()
+
+    assert init.run() == 1
+
+    assert sorted(p.name for p in secrets_dir.iterdir()) == [ROOT_CERT]
+    assert (secrets_dir / ROOT_CERT).read_bytes() == content
+    assert "restore password" in session.printed[-1]
+
+
+def test_an_empty_password_file_is_refused(init, secrets_dir, session):
+    """#38 rule 3: an empty password is no password; a key is never made under it."""
+    init.run()
+    (secrets_dir / PASSWORD).write_text("")
+
+    assert init.run() == 1
+
+    assert "password is empty" in session.printed[-1]
+
+
+def test_a_root_pair_cut_between_its_two_renames_is_finished_without_a_new_key(init, secrets_dir):
+    """defect:#38 PR 39 finding 7: an interrupted run resumes; the key is not replaced."""
+    init.run()
+    pending = secrets_dir / ".pending-root"
+    pending.mkdir()
+    (secrets_dir / ROOT_CERT).rename(pending / ROOT_CERT)
+    root_key = (secrets_dir / ROOT_KEY).read_bytes()
+    root_certificate = (pending / ROOT_CERT).read_bytes()
+
+    assert init.run() == 0
+
+    assert (secrets_dir / ROOT_KEY).read_bytes() == root_key
+    assert (secrets_dir / ROOT_CERT).read_bytes() == root_certificate
+    assert not pending.exists()
+
+
+def test_the_password_reaches_the_containers_only_through_run_secrets(init, docker, secrets_dir):
+    """defect:#38 PR 39 finding 6: password only via /run/secrets."""
     init.run()
 
-    assert not (secrets_dir / ROOT_KEY).exists()
-    assert "FAILED at root" in session.printed[-1]
+    runs = [c for c in docker.commands if c[1] == "run"]
+    password_mounts = [a for c in runs for a in c if a.endswith("/run/secrets/password:ro")]
+    assert password_mounts and set(password_mounts) == {
+        f"{secrets_dir / PASSWORD}:/run/secrets/password:ro"
+    }
+    assert not any("/secrets/password" in a and "/run" not in a for c in runs for a in c)
+
+
+def test_the_volume_is_created_with_compose_labels_before_any_container_mounts_it(init, docker):
+    """defect:#38 PR 39 finding 2: the backup finds the volume by its compose labels."""
+    init.run()
+
+    assert docker.volumes == {
+        VOLUME: {
+            "com.docker.compose.project": PROJECT,
+            "com.docker.compose.volume": "step-ca",
+        }
+    }
+    first_mount = next(
+        i for i, c in enumerate(docker.commands) if c[1] == "run" and VOLUME in " ".join(c)
+    )
+    created = next(i for i, c in enumerate(docker.commands) if c[1] == "volume")
+    assert created < first_mount
 
 
 @pytest.mark.parametrize(
@@ -327,6 +420,7 @@ def test_a_volume_with_an_intermediate_but_no_root_does_not_get_a_new_root(
 def test_a_file_with_the_wrong_mode_gets_its_mode_back(
     init, secrets_dir, session, name, wrong, right
 ):
+    """#38 rule 3 / proof 1: modes are restored."""
     init.run()
     (secrets_dir / name).chmod(wrong)
     content = (secrets_dir / name).read_bytes()
@@ -339,6 +433,7 @@ def test_a_file_with_the_wrong_mode_gets_its_mode_back(
 
 
 def test_a_directory_with_the_wrong_mode_becomes_private(init, secrets_dir):
+    """#38 rule 3 / proof 1: the directory becomes private."""
     init.run()
     secrets_dir.chmod(0o755)
 
@@ -350,6 +445,7 @@ def test_a_directory_with_the_wrong_mode_becomes_private(init, secrets_dir):
 def test_a_failing_tool_shows_one_line_without_the_password_or_a_key(
     init, docker, secrets_dir, session
 ):
+    """#38 rule 3: a failure is one scrubbed line."""
     init.run()
     for relative in INTERMEDIATE_FILES:
         (docker.volume_dir / relative).unlink()
@@ -369,6 +465,7 @@ def test_a_failing_tool_shows_one_line_without_the_password_or_a_key(
 def test_another_user_than_the_images_is_refused_before_anything_is_made(
     init, secrets_dir, session
 ):
+    """#38 rule 3: the image's user must run the tool."""
     session.uid = 1001
 
     assert init.run() == 1
@@ -378,10 +475,9 @@ def test_another_user_than_the_images_is_refused_before_anything_is_made(
 
 
 def test_a_docker_failure_while_reading_compose_is_one_line(init, docker, session):
-    docker.run = lambda command, _timeout: docker.done(returncode=1, stderr="no docker daemon")
-    init.tools = init.tools.__class__(
-        run=docker.run, say=session.printed.append, host_uid=lambda: 1000
-    )
+    """#38 rule 3: a failure is one scrubbed line."""
+    docker.failing_tool = "compose"
+    docker.failure_text = "no docker daemon"
 
     assert init.run() == 1
 
@@ -397,13 +493,16 @@ def ca_config() -> dict:
 
 
 def test_the_ca_has_one_acme_provisioner_for_tls_alpn_01_and_mcp_internal_names(ca_config):
+    """#38 rule 2: one ACME provisioner; the name policy sits on the authority."""
     provisioners = ca_config["authority"]["provisioners"]
 
     assert [(p["type"], p["challenges"]) for p in provisioners] == [("ACME", ["tls-alpn-01"])]
-    assert provisioners[0]["policy"] == {"x509": {"allow": {"dns": ["*.mcp.internal"]}}}
+    assert "policy" not in provisioners[0]  # step-ca 0.30.2 ignores it there
+    assert ca_config["authority"]["policy"] == {"x509": {"allow": {"dns": ["*.mcp.internal"]}}}
 
 
 def test_the_ca_keeps_the_default_certificate_lifetime_of_24_hours(ca_config):
+    """#38 rule 2: default lifetime."""
     provisioner = ca_config["authority"]["provisioners"][0]
 
     assert "claims" not in provisioner
@@ -411,6 +510,7 @@ def test_the_ca_keeps_the_default_certificate_lifetime_of_24_hours(ca_config):
 
 
 def test_the_ca_listens_on_loopback_and_has_no_remote_management(ca_config):
+    """#38 rule 2: loopback, no remote management."""
     assert ca_config["address"] == "127.0.0.1:9000"
     assert "127.0.0.1" in ca_config["dnsNames"]
     assert not ca_config["authority"].get("enableAdmin")
