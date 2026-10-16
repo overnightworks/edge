@@ -871,6 +871,7 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
 
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):
     """#34 finding 11 (a): the in-flight exception is the body's own, not an outer handled one."""
+
     def leave_with_a_locked_directory():
         with secrets.private_temporary_directory(home) as directory:
             locked = directory / "locked"
