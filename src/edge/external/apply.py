@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
 
+from edge import terminal
 from edge.external import secrets, tofu
 
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
-CONFIRMATION = "yes"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
 _OWNED_SUFFIXES = {_PLAN_SUFFIX, _LOCK_SUFFIX}
@@ -56,10 +56,9 @@ class StepFailed(Exception):
 
 def refusal_without_terminal() -> ApplyExit | None:
     """The refusal of a run that is not at a terminal; asked before any token is read."""
-    if sys.stdin.isatty() and sys.stdout.isatty():
-        return None
-    print("edge external apply: refused, stdin and stdout must be a terminal", file=sys.stderr)
-    return ApplyExit.REFUSED
+    if terminal.refused_without_terminal("edge external apply"):
+        return ApplyExit.REFUSED
+    return None
 
 
 def _lock_without_waiting(descriptor: int) -> None:
@@ -214,7 +213,7 @@ def _show_confirm_apply(
         return ApplyExit.CANNOT_PLAN
     print(shown.rstrip("\n"))
     progress.step = Step.CONFIRMATION
-    if not _confirmed():
+    if not terminal.confirmed("apply exactly this plan"):
         print("edge external apply: aborted, nothing applied", file=sys.stderr)
         return ApplyExit.REFUSED
     progress.step = Step.APPLY
@@ -226,10 +225,3 @@ def _show_confirm_apply(
         print(f"edge external apply: tofu apply failed (exit {applied.exit_code})", file=sys.stderr)
         return ApplyExit.REFUSED
     return ApplyExit.APPLIED_OR_NOTHING
-
-
-def _confirmed() -> bool:
-    try:
-        return input(f"Type {CONFIRMATION!r} to apply exactly this plan: ") == CONFIRMATION
-    except EOFError:
-        return False

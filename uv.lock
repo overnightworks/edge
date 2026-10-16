@@ -114,22 +114,24 @@ wheels = [
 name = "edge-check"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pyyaml" },
+]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
-    { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.15" },
 ]
 

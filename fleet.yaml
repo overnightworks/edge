@@ -1,2 +1,7 @@
 cloudflare:
 github:
+services:
+  step-ca:
+    run:
+      enabled: false
+      setup: step-ca/init
