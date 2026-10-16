@@ -40,7 +40,7 @@ class Completed:
     output: str
 
 
-class Interrupted(KeyboardInterrupt):
+class Interrupted(Exception):
     """The operator interrupted the wrapper; tofu was asked to stop and has exited."""
 
     def __init__(self, completed: Completed) -> None:
