@@ -16,7 +16,7 @@ from home_tools.secrets_view import ExitCodeProbe
 from home_tools.tidy_home import CommandRunner, Config, Layout
 
 # A commit SHA cannot move and needs no tag; a bump is a one-line change here.
-QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@7b98bec49945c24a811177c8cfa0753550528785"
+QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@615764ea67b0f8e2f615ee23a2432c50e11e5e68"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
 HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
