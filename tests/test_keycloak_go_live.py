@@ -192,6 +192,8 @@ class Keycloak:
             return from_script(200, b"{}")
         if url.endswith("/protocol/openid-connect/token"):
             assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
+            if not self.master_applied:  # master.yaml creates the client during the first apply
+                return from_script(401, b"")
             return from_script(200, json.dumps({"access_token": "token"}).encode())
         if url == "http://localhost:8090/admin/realms/hallucinai":
             return self.realm_representation(from_script)
@@ -385,6 +387,16 @@ def test_a_realm_whose_import_never_completed_is_applied_again(go_live, keycloak
     assert any("keycloak-config-cli" in command for command in keycloak.commands)
 
 
+def test_a_first_installation_applies_when_the_edge_already_stands(go_live, keycloak, session):
+    """#19 rules 1 and 3: Traefik up before the first apply; config-cli does not exist yet."""
+    keycloak.edge_up = True
+
+    assert go_live.run() == 0
+
+    assert keycloak.master_applied
+    assert keycloak.import_completed
+
+
 def test_a_completed_apply_is_recognised_before_the_edge_stands(go_live, keycloak, session):
     """#19 rule 3: the run killed between the apply and the edge continues at the edge."""
     keycloak.fail_edge_start = True
@@ -489,7 +501,7 @@ def test_a_missing_bootstrap_password_on_a_master_that_has_not_moved_is_refused_
 def test_a_docker_failure_while_looking_for_the_database_volume_is_reported_as_it_is(
     go_live, keycloak, secrets_dir, session
 ):
-    """#19 rule 2: a stopped daemon is not an absent volume; the line carries docker's error."""
+    """#19 rule 3: a stopped daemon is not an absent volume; the line carries docker's error."""
     keycloak.docker_daemon_down = True
     write_secrets(secrets_dir, "db-password", "config-cli-secret")
 

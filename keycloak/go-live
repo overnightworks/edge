@@ -347,18 +347,20 @@ class GoLive:
         """The realm existing proves nothing: keycloak-config-cli creates it first and records its
         import checksum as a realm attribute only after the clients, scopes and groups are in.
         Once the edge stands, the container's own kcadm is refused (401) and the admin door is
-        the way in; before that, only the container reaches Keycloak."""
+        the way in. The config-cli client the door needs exists only after the first apply, so a
+        refused sign-in there means the import has not completed."""
         if self.edge_is_ready():
-            attributes = self.realm_attributes_by_admin_api()
+            token = self.config_cli_token()
+            if token is None:
+                return False
+            attributes = self.realm_attributes_by_admin_api(token)
         else:
             attributes = self.realm_attributes_in_container()
         return any(key.startswith(IMPORT_CHECKSUM_PREFIX) for key in attributes)
 
-    def realm_attributes_by_admin_api(self) -> dict[str, str]:
+    def realm_attributes_by_admin_api(self, token: str) -> dict[str, str]:
         reply = self.tools.fetch(
-            "GET",
-            f"{ADMIN_REALMS}/{PUBLIC_REALM}",
-            headers={"Authorization": f"Bearer {self.admin_token()}"},
+            "GET", f"{ADMIN_REALMS}/{PUBLIC_REALM}", headers={"Authorization": f"Bearer {token}"}
         )
         if reply.status == 404:
             return {}
@@ -396,8 +398,14 @@ class GoLive:
         return json.loads(reply.body) if reply.body else None
 
     def admin_token(self) -> str:
+        token = self.config_cli_token()
+        if token is None:
+            raise StepFailure(f"the {CONFIG_CLIENT} sign-in was refused")
+        return token
+
+    def config_cli_token(self) -> str | None:
         """The config-cli service account holds the admin role; temp-admin's own password grant
-        demands a TOTP code since the first apply, and the script has none."""
+        demands a TOTP code since the first apply, and the script has none. None: refused."""
         client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
         reply = self.tools.fetch(
             "POST",
@@ -408,6 +416,8 @@ class GoLive:
                 "client_secret": client_secret,
             },
         )
+        if reply.status == 401:
+            return None
         if reply.status != 200:
             raise StepFailure(f"the {CONFIG_CLIENT} sign-in answered {reply.status}")
         return json.loads(reply.body)["access_token"]
