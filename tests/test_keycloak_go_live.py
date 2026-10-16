@@ -1,0 +1,400 @@
+"""keycloak/go-live against a scripted compose project and Keycloak: no containers, no sleeping."""
+
+import importlib.machinery
+import importlib.util
+import json
+import re
+import stat
+import subprocess
+import sys
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import ModuleType
+from urllib.parse import parse_qs
+
+import pytest
+
+SCRIPT = Path(__file__).resolve().parents[1] / "keycloak" / "go-live"
+SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
+OVERLAY = "keycloak/bootstrap.compose.yaml"
+OTP_ADMIN = "alice"
+
+
+@pytest.fixture(scope="module")
+def golive() -> Iterator[ModuleType]:
+    loader = importlib.machinery.SourceFileLoader("keycloak_go_live", str(SCRIPT))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
+    loader.exec_module(module)
+    yield module
+    del sys.modules[spec.name]
+
+
+@dataclass
+class Keycloak:
+    """What compose and Keycloak have done so far, answering the way the real ones do."""
+
+    running: bool = False
+    with_overlay: bool = False
+    master_moved: bool = False
+    master_applied: bool = False
+    realm_applied: bool = False
+    edge_up: bool = False
+    fail_apply_after_master: bool = False
+    users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
+    commands: list[list[str]] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+
+    def add_admin(self, username: str, *, otp: bool) -> None:
+        self.users[username] = {"otp": otp}
+
+    def changed_something(self) -> bool:
+        return any(
+            {"up", "run", "--force-recreate"} & set(command)
+            or "/opt/edge/admin-frontend.sh" in command
+            for command in self.commands
+        )
+
+    # --- docker ---------------------------------------------------------------------------
+
+    def run(self, command: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        if command[:2] == ["docker", "inspect"]:
+            env = ["KC_DB=postgres"] + (
+                ["KC_BOOTSTRAP_ADMIN_USERNAME=temp-admin"] * self.with_overlay
+            )
+            return self.done(json.dumps(env))
+        verb = next(arg for arg in command if arg in {"up", "exec", "run", "ps"})
+        return getattr(self, f"compose_{verb}")(command)
+
+    @staticmethod
+    def done(
+        stdout: str = "", returncode: int = 0, stderr: str = ""
+    ) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def compose_ps(self, _command: list[str]):
+        return self.done("abc123\n" if self.running else "")
+
+    def compose_up(self, command: list[str]):
+        if "--force-recreate" in command:
+            self.edge_up = True
+        elif "keycloak" in command:
+            self.running, self.with_overlay = True, OVERLAY in command
+        else:
+            self.with_overlay = OVERLAY in command
+        return self.done()
+
+    def compose_run(self, command: list[str]):
+        if self.master_applied and OVERLAY in command:
+            return self.done(returncode=1, stderr="401 Unauthorized: TOTP required")
+        if not self.master_applied and OVERLAY not in command:
+            return self.done(returncode=1, stderr="401 Unauthorized: no client config-cli")
+        self.master_applied = True
+        if self.fail_apply_after_master:
+            return self.done(returncode=1, stderr="realm.yaml: import failed")
+        self.realm_applied = True
+        return self.done()
+
+    def compose_exec(self, command: list[str]):
+        if "/opt/edge/admin-frontend.sh" in command:
+            assert OVERLAY in command
+            self.master_moved = True
+            return self.done()
+        if not self.running:
+            return self.done(returncode=1, stderr="service keycloak is not running")
+        path = command[-1]
+        status, body = self.container_answer(path)
+        return self.done(f"HTTP/1.0 {status} X\nContent-Type: x\n\n{body}")
+
+    def container_answer(self, path: str) -> tuple[int, str]:
+        if path == "/realms/master":
+            return 200, "{}"
+        if path.endswith("/.well-known/openid-configuration"):
+            host = "http://localhost:8090" if self.master_moved else "https://auth.hallucinai.de"
+            return 200, json.dumps({"issuer": f"{host}/realms/master"})
+        return (200, "{}") if path == "/realms/hallucinai" and self.realm_applied else (404, "")
+
+    # --- HTTP -----------------------------------------------------------------------------
+
+    def fetch(self, method: str, url: str, *, headers=None, form=None):
+        from_script = sys.modules["keycloak_go_live"].Reply
+        if not self.edge_up:
+            raise ConnectionRefusedError
+        if url == "http://127.0.0.1:8081/":
+            return from_script(404, b"")
+        if url == "http://localhost:8090/realms/master":
+            return from_script(200, b"{}")
+        if url.endswith("/protocol/openid-connect/token"):
+            assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
+            return from_script(200, json.dumps({"access_token": "token"}).encode())
+        return self.admin_api(method, url.split("/admin/realms/master")[1], from_script)
+
+    def admin_api(self, method: str, path: str, reply):
+        if method == "GET" and path.startswith("/roles/admin/users"):
+            holders = [{"id": name, "username": name} for name in self.users]
+            service = {"id": "sa", "username": "service-account-config-cli"}
+            return reply(
+                200, json.dumps([*holders, {**service, "serviceAccountClientId": "x"}]).encode()
+            )
+        if method == "GET" and path.endswith("/credentials"):
+            user = self.users[path.split("/")[2]]
+            return reply(200, json.dumps([{"type": "otp" if user["otp"] else "password"}]).encode())
+        if method == "GET" and path.startswith("/users?username=temp-admin"):
+            found = [{"id": "temp-admin"}] if "temp-admin" in self.users else []
+            return reply(200, json.dumps(found).encode())
+        if method == "DELETE":
+            self.deleted.append(path.rsplit("/", 1)[1])
+            self.users.pop(path.rsplit("/", 1)[1])
+            return reply(204, b"")
+        raise AssertionError(f"unscripted {method} {path}")
+
+
+def form_text(form: dict[str, str]) -> str:
+    return "&".join(f"{key}={value}" for key, value in form.items())
+
+
+@dataclass
+class Session:
+    """One operator at the terminal: answers, and everything printed."""
+
+    answers: list[str]
+    printed: list[str] = field(default_factory=list)
+    asked: list[str] = field(default_factory=list)
+    on_enter: object = None
+    clock: float = 0.0
+
+    def ask(self, prompt: str) -> str:
+        self.asked.append(prompt)
+        if prompt.startswith("Press Enter") and self.on_enter:
+            self.on_enter()
+        if not self.answers:
+            raise EOFError
+        return self.answers.pop(0)
+
+    def sleep(self, seconds: float) -> None:
+        self.clock += seconds
+
+    def monotonic(self) -> float:
+        return self.clock
+
+    @property
+    def output(self) -> str:
+        return "\n".join(self.printed)
+
+
+@pytest.fixture
+def keycloak() -> Keycloak:
+    return Keycloak()
+
+
+@pytest.fixture
+def secrets_dir(tmp_path: Path) -> Path:
+    return tmp_path / ".secrets" / "keycloak"
+
+
+@pytest.fixture
+def session(keycloak: Keycloak) -> Session:
+    """Says yes to the backup question, creates the second admin on Enter."""
+    operator = Session(answers=["yes", ""])
+    operator.on_enter = lambda: keycloak.add_admin(OTP_ADMIN, otp=True)
+    return operator
+
+
+@pytest.fixture
+def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_dir: Path):
+    tools = golive.Tools(
+        run=keycloak.run,
+        fetch=keycloak.fetch,
+        ask=session.ask,
+        say=session.printed.append,
+        sleep=session.sleep,
+        monotonic=session.monotonic,
+    )
+    return golive.GoLive(tools, secrets_dir)
+
+
+def write_secrets(secrets_dir: Path, *names: str) -> None:
+    secrets_dir.mkdir(parents=True, mode=0o700)
+    for name in names:
+        (secrets_dir / name).write_text(f"value-of-{name}")
+
+
+def secret_values(secrets_dir: Path) -> list[str]:
+    return [
+        (secrets_dir / name).read_text() for name in SECRET_FILES if (secrets_dir / name).exists()
+    ]
+
+
+def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, session, secrets_dir):
+    assert go_live.run() == 0
+
+    assert keycloak.realm_applied
+    assert keycloak.deleted == ["temp-admin"]
+    assert sorted(path.name for path in secrets_dir.iterdir()) == [
+        "config-cli-secret",
+        "db-password",
+    ]
+    assert "curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known" in session.output
+    assert len(session.asked) == 2
+
+
+def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):
+    keycloak.fail_apply_after_master = True  # stops with the bootstrap password still on disk
+
+    assert go_live.run() == 1
+
+    assert stat.S_IMODE(secrets_dir.stat().st_mode) == 0o700
+    values = secret_values(secrets_dir)
+    assert len(values) == 3
+    assert len(set(values)) == 3
+    for name in SECRET_FILES:
+        assert stat.S_IMODE((secrets_dir / name).stat().st_mode) == 0o644
+        assert re.fullmatch(r"[0-9a-f]{64}", (secrets_dir / name).read_text())
+
+
+def test_no_secret_value_is_ever_printed(go_live, session, secrets_dir, keycloak):
+    keycloak.fail_apply_after_master = True
+    go_live.run()
+    leaked = [value for value in secret_values(secrets_dir) if value in session.output]
+    assert leaked == []
+
+
+def test_a_second_run_changes_nothing(go_live, keycloak, session, secrets_dir):
+    go_live.run()
+    commands_before, asked_before = len(keycloak.commands), len(session.asked)
+
+    assert go_live.run() == 0
+
+    assert not Keycloak.changed_something(Keycloak(commands=keycloak.commands[commands_before:]))
+    assert len(session.asked) == asked_before
+    assert "curl -s https://auth.hallucinai.de" in session.output
+
+
+def test_a_run_stopped_after_the_apply_resumes_at_the_edge(go_live, keycloak, session):
+    keycloak.fail_apply_after_master = True
+    assert go_live.run() == 1
+    assert "FAILED at realms applied" in session.output
+    keycloak.fail_apply_after_master = False
+    keycloak.commands.clear()
+
+    assert go_live.run() == 0
+
+    assert keycloak.realm_applied
+    assert not any("/opt/edge/admin-frontend.sh" in command for command in keycloak.commands)
+    assert len(session.asked) == 2  # the backup question of the first run, Enter of the second
+
+
+def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, session):
+    write_secrets(secrets_dir, "db-password")
+
+    assert go_live.run() == 1
+
+    assert (secrets_dir / "db-password").read_text() == "value-of-db-password"
+    assert sorted(path.name for path in secrets_dir.iterdir()) == ["db-password"]
+    assert session.printed[-1] == (
+        "go-live FAILED at secrets: some secret files exist, "
+        "missing: config-cli-secret, bootstrap-admin-password"
+    )
+
+
+@pytest.mark.parametrize(
+    ("second_admin_otp", "reason"),
+    [
+        (None, "no other master user has the realm role admin"),
+        (False, "alice has the role admin but no TOTP credential"),
+    ],
+)
+def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
+    go_live, keycloak, session, secrets_dir, second_admin_otp, reason
+):
+    session.on_enter = (
+        None
+        if second_admin_otp is None
+        else lambda: keycloak.add_admin(OTP_ADMIN, otp=second_admin_otp)
+    )
+
+    assert go_live.run() == 1
+
+    assert (
+        session.printed[-1]
+        == f"go-live FAILED at bootstrap retired: refusing to retire temp-admin: {reason}"
+    )
+    assert keycloak.deleted == []
+    assert (secrets_dir / "bootstrap-admin-password").exists()
+
+
+def test_the_run_ends_at_the_failed_step_with_one_line_and_exit_one(go_live, keycloak, session):
+    keycloak.fail_apply_after_master = True
+    keycloak.master_applied = True  # the overlay grant is refused, the client grant fails too
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at realms applied: `docker compose run` exited 1: realm.yaml: import failed"
+    )
+
+
+@pytest.mark.parametrize("answers", [["no"], []])
+def test_without_an_accepted_backup_nothing_is_created(
+    go_live, secrets_dir, keycloak, session, answers
+):
+    session.answers = answers
+
+    assert go_live.run() == 1
+
+    assert not secrets_dir.exists()
+    assert keycloak.commands == []
+    assert "FAILED at backup" in session.printed[-1]
+
+
+def test_the_backup_question_has_no_default(go_live, session):
+    session.answers = ["", "maybe", "yes", ""]
+    go_live.run()
+    assert session.asked[:3].count(session.asked[0]) == 3
+
+
+def test_a_keycloak_that_never_answers_ends_the_step_after_the_timeout(go_live, keycloak, session):
+    keycloak.compose_up = lambda command: Keycloak.done()  # starts, never runs
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == "go-live FAILED at keycloak start: Keycloak not ready after 240s"
+    assert session.clock >= 240
+
+
+def test_each_step_says_what_happens_and_why_before_it_runs(go_live, session):
+    go_live.run()
+
+    announcements = [line for line in session.printed if line.startswith("Step ")]
+    assert [line.split(",")[0] for line in announcements] == [
+        "Step 1",
+        "Step 2",
+        "Step 3",
+        "Step 4",
+        "Step 4",
+        "Step 5",
+        "Step 6-7",
+    ]
+    assert (
+        "only so the realms can be applied once; that admin is deleted in step 7" in session.output
+    )
+
+
+def test_the_pause_says_what_to_do_and_how_to_check_it(go_live, session):
+    go_live.run()
+
+    assert "It worked when" in session.output
+    assert "http://localhost:8090/admin/" in session.output
+
+
+def test_help_lists_the_steps_in_plain_words():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0
+    assert "3. keycloak start: Start Keycloak with a temporary admin" in result.stdout
