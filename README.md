@@ -588,7 +588,9 @@ done and the run continues at the first unfinished one. A failure ends with one
 line naming the step and exit code 1. It never prints a secret.
 
 1. **Backup.** It asks once whether to continue without the Keycloak backup
-   (K11b has not landed). There is no default; the answer is yours.
+   (K11b has not landed). There is no default; the answer is yours. It is done once
+   Keycloak's database volume exists (the first start creates it), so a "no"
+   is asked again and a finished install is never asked, even with Keycloak stopped.
 2. **Secrets.** It creates the three files with random values, in a 0700
    directory with 0644 files. An existing file is never overwritten; if only
    some of the files exist it refuses and names the missing ones.
@@ -596,9 +598,11 @@ line naming the step and exit code 1. It never prints a secret.
    `bootstrap-admin-password` alone means step 7 has already retired it, and the
    run goes on.
 3. **First start** with the temporary admin `temp-admin`.
-4. **Master on the admin entrypoint, then the first apply**, both with
+4. **Master on the admin entrypoint (4a), then the first apply (4b)**, both with
    `temp-admin`. The apply cannot move the master realm itself, because the move
-   changes the issuer of the token it signs in with.
+   changes the issuer of the token it signs in with. While step 5 restarts
+   Keycloak, a resumed run waits for the edge before it reads whether the apply
+   completed.
 5. **Leave the bootstrap overlay and start the edge.** The script waits by
    itself until the edge is ready.
 6. **Your part, in the browser.** The script stops and says what to do: sign in
@@ -622,6 +626,26 @@ line naming the step and exit code 1. It never prints a secret.
    The operator's own browser is no proof: it holds an Access session and
    passes the wildcard app either way.
 
+#### Is go-live finished? `--check`
+
+```sh
+keycloak/go-live --check
+```
+
+It reads only go-live's durable trace, so Keycloak need not run: it is done when
+`db-password` and `config-cli-secret` exist in `~/.secrets/keycloak/`,
+`bootstrap-admin-password` does not (only step 7 deletes it, after it deleted
+`temp-admin`), and the `keycloak-db` volume exists. It asks nothing, prints no
+secret and creates or changes no file, directory, volume or container. A
+bootstrap file deleted by hand reads as done; a full `keycloak/go-live` run still
+checks `temp-admin` through the admin API.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | it is set up |
+| 1 | it is not set up; one line names what is missing |
+| 2 | it cannot tell, because Docker or Compose did not answer |
+
 #### Fallback: the steps by hand
 
 If the script cannot be used, the same steps by hand, in this order:
@@ -631,7 +655,7 @@ If the script cannot be used, the same steps by hand, in this order:
 2. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
 3. **First start**, with the temporary bootstrap admin `temp-admin`:
    `docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
-4. **Master on the admin entrypoint, then the first apply**, both with the overlay:
+4. **Master on the admin entrypoint (4a), then the first apply (4b)**, both with the overlay:
 
    ```sh
    docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
