@@ -820,6 +820,37 @@ def test_a_failed_cleanup_after_no_changes_or_an_abort_exits_1_naming_the_cleanu
             locked.chmod(0o700)
 
 
+@pytest.mark.parametrize(
+    "plan_exit,typed,live_services_may_have_changed",
+    [
+        pytest.param(0, None, False, id="no-changes"),
+        pytest.param(2, "no", False, id="abort"),
+        pytest.param(1, None, False, id="failed-plan"),
+        pytest.param(2, "yes", True, id="after-apply"),
+    ],
+)
+def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_apply(
+    home, fake_tofu, capsys, monkeypatch, plan_exit, typed, live_services_may_have_changed
+):
+    """#45 rule 5: the interrupt consequence follows whether apply was reached, not the step."""
+    fake_tofu.configure(plan=plan_exit)
+    plan_file_in_private_directory = external_apply._private_plan_file
+
+    @contextmanager
+    def interrupted_when_leaving(home_directory):
+        with plan_file_in_private_directory(home_directory) as plan_file:
+            yield plan_file
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(external_apply, "_private_plan_file", interrupted_when_leaving)
+    monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: typed)
+    assert cli.main(["external", "apply"]) == 1
+    error = capsys.readouterr().err
+    assert "interrupted during the cleanup" in error
+    assert ("live services may be partly changed" in error) is live_services_may_have_changed
+
+
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):
     """#34 finding 11 (a): the in-flight exception is the body's own, not an outer handled one."""
     try:
