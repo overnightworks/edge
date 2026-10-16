@@ -700,7 +700,26 @@ def test_help_lists_the_steps_in_plain_words():
     assert "3. keycloak start: Start Keycloak with a temporary admin" in result.stdout
 
 
-def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, session):
+def numbers_in(lines: list[str], pattern: str) -> list[str]:
+    return [match.group(1) for line in lines if (match := re.match(pattern, line))]
+
+
+def test_the_readme_and_help_number_the_go_live_steps_alike():
+    """#55 rule 5: every number the script prints is in the README once, and no other."""
+    help_text = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
+    ).stdout
+    readme = (SCRIPT.parents[1] / "README.md").read_text()
+    section = readme.split("### Keycloak go-live")[1].split("####")[0]
+
+    help_steps = numbers_in(help_text.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. ")
+    readme_steps = numbers_in(section.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. \*\*")
+
+    assert help_steps == readme_steps
+    assert help_steps[0] == "1"
+
+
+def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, session, secrets_dir):
     """#55 rule 3: a no created nothing, so the question stands."""
     session.answers = ["no", "no"]
 
@@ -709,6 +728,8 @@ def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, sess
 
     assert len(session.asked) == 2
     assert not keycloak.database_volume
+    assert not secrets_dir.exists()
+    assert not keycloak.changed_something()
 
 
 def test_a_completed_apply_is_not_repeated_while_step_5_restarts_keycloak(
@@ -826,6 +847,18 @@ def test_check_cannot_tell_when_docker_does_not_answer(go_live, keycloak, sessio
         f"{CHECK_PREFIX}: cannot tell: `docker volume inspect` exited 1: "
         "Cannot connect to the Docker daemon"
     ]
+
+
+def test_check_cannot_tell_when_compose_answers_without_the_database_volume(
+    go_live, keycloak, session, secrets_dir, monkeypatch
+):
+    """#55 rule 2: an unexpected answer is exit 2 and one line, never a traceback."""
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+    monkeypatch.setattr(keycloak, "compose_config", lambda command: keycloak.done("{}"))
+
+    assert go_live.check() == 2
+
+    assert session.printed == [f"{CHECK_PREFIX}: cannot tell: unexpected answer (KeyError)"]
 
 
 def test_check_through_the_command_line_exits_with_the_answer(tmp_path):

@@ -172,7 +172,7 @@ class GoLive:
         once the database volume exists: step 7 deletes the file, and `docker compose down`
         leaves the database behind. On a fresh install Keycloak would set up the empty database
         without temp-admin, which nothing recovers from. Whether temp-admin is really gone is
-        step 7's question, and a master that has not moved without the file is step 4's
+        step 7's question, and a master that has not moved without the file is step 4a's
         refusal."""
         missing = self.missing_secrets()
         if not missing:
@@ -591,6 +591,9 @@ class GoLive:
             return 2
         except StepFailure as failure:
             reason = self.scrubbed(str(failure))
+        except Exception as unexpected:  # the one boundary, as in run(): never a traceback
+            self.tools.say(f"{prefix}: cannot tell: unexpected answer ({type(unexpected).__name__})")
+            return 2
         self.tools.say(f"{prefix}: not set up: {reason}")
         return 1
 

@@ -598,33 +598,33 @@ line naming the step and exit code 1. It never prints a secret.
    `bootstrap-admin-password` alone means step 7 has already retired it, and the
    run goes on.
 3. **First start** with the temporary admin `temp-admin`.
-4. **Master on the admin entrypoint (4a), then the first apply (4b)**, both with
-   `temp-admin`. The apply cannot move the master realm itself, because the move
-   changes the issuer of the token it signs in with. While step 5 restarts
+4a. **Master on the admin entrypoint**, with `temp-admin`. The apply cannot move the
+   master realm itself, because the move changes the issuer of the token it signs in with.
+4b. **First apply** of the realms, with `temp-admin`. While step 5 restarts
    Keycloak, a resumed run waits for the edge before it reads whether the apply
    completed.
 5. **Leave the bootstrap overlay and start the edge.** The script waits by
    itself until the edge is ready.
-6. **Your part, in the browser.** The script stops and says what to do: sign in
+6-7. **Your part, in the browser, then retire the bootstrap.** The script stops and says what to do: sign in
    at `http://localhost:8090/admin/` as `temp-admin` (password in the bootstrap
    file; enrol TOTP when asked), create your own admin in the master realm with
    the realm role `admin`, sign in as that admin, enrol TOTP and add a passkey.
-   Press Enter when done.
-7. **Retire the bootstrap.** The script checks through the admin API that
+   Press Enter when done. Step 7 (the script): it checks through the admin API that
    another master user with the realm role `admin` has a TOTP credential. Only
    then it deletes `temp-admin` and the `bootstrap-admin-password` file;
    otherwise it refuses and says what is missing.
-8. **Your part, in Cloudflare.** The script ends by printing the steps (A8, steps
-   3 to 5, for `auth.hallucinai.de`) and the check:
 
-   ```sh
-   curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
-     | grep -o '"issuer":"[^"]*"'
-   # "issuer":"https://auth.hallucinai.de/realms/hallucinai"
-   ```
+Last, **your part, in Cloudflare** (unnumbered). The script ends by printing the steps (A8, steps
+3 to 5, for `auth.hallucinai.de`) and the check:
 
-   The operator's own browser is no proof: it holds an Access session and
-   passes the wildcard app either way.
+```sh
+curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
+  | grep -o '"issuer":"[^"]*"'
+# "issuer":"https://auth.hallucinai.de/realms/hallucinai"
+```
+
+The operator's own browser is no proof: it holds an Access session and
+passes the wildcard app either way.
 
 #### Is go-live finished? `--check`
 
