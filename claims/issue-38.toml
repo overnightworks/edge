@@ -1,0 +1,8 @@
+claim_id = "70926bb14d88473c919a093df0c8da45"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "6612b0d0d4f644383e47b0a5b140f851759761db"
+branch = "claude/issue-38-step-ca-service"
+scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "probe/step-ca", "pyproject.toml", "step-ca", "tests/test_step_ca_init.py"]
+opened_commit = "c3abec61551ebd2a165200b42bd4256bf72fc49a"
+whole_reason = "The service, its one config file, the init tool that makes its keys and the probe proving them are one CA; none of them runs or proves anything alone."
