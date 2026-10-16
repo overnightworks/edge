@@ -295,11 +295,14 @@ class KeycloakAnswers(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self.rfile.read(int(self.headers["Content-Length"]))
-        self.reply({"access_token": "an-access-token"})
+        status = self.server.token_status
+        self.reply(
+            {"access_token": "an-access-token"} if status == 200 else {"error": "denied"}, status
+        )
 
-    def reply(self, body: dict[str, str]) -> None:
+    def reply(self, body: dict[str, str], status: int = 200) -> None:
         payload = json.dumps(body).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -309,9 +312,12 @@ class KeycloakAnswers(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def fake_keycloak() -> Iterator[str]:
-    """Keycloak on an ephemeral port; yields the admin URL the probe is told to use."""
+def fake_keycloak(request: pytest.FixtureRequest) -> Iterator[str]:
+    """Keycloak on an ephemeral port; yields the admin URL the probe is told to use.
+
+    Hands out tokens unless a test parametrizes this fixture with another token status."""
     server = ThreadingHTTPServer(("127.0.0.1", 0), KeycloakAnswers)
+    server.token_status = getattr(request, "param", 200)
     # Threads inherit the signal mask; a server thread must not take a stop signal meant for main.
     stop_signals = {signal.SIGTERM, signal.SIGINT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
@@ -599,9 +605,18 @@ def stop_signal_as_the_teardown_is_entered(
 
 
 @pytest.mark.parametrize(
-    ("bring_up_fails", "exit_code", "last_line"),
-    [(False, 0, "HOLD ENDED"), (True, 1, "PROBE FAILED: stopped by SIGTERM")],
+    ("fake_keycloak", "exit_code", "last_line"),
+    [
+        (200, 0, "HOLD ENDED"),
+        (
+            401,
+            1,
+            "PROBE FAILED: stopped by SIGTERM; "
+            'the token request for temp-admin answered 401: {"error": "denied"}',
+        ),
+    ],
     ids=["stdin-eof-after-ready", "bring-up-failure"],
+    indirect=["fake_keycloak"],
 )
 def test_hold_signalled_as_the_teardown_is_entered_without_a_prior_signal_still_tears_down(
     probe: ModuleType,
@@ -610,17 +625,10 @@ def test_hold_signalled_as_the_teardown_is_entered_without_a_prior_signal_still_
     capsys: pytest.CaptureFixture[str],
     hold_host: DockerHost,
     fake_keycloak: str,
-    bring_up_fails: bool,
     exit_code: int,
     last_line: str,
 ) -> None:
     """#21 D1a: a stop signal at teardown entry after stdin EOF or a failure cannot skip it."""
-    if bring_up_fails:
-
-        def break_bring_up(_self: object) -> None:
-            raise probe.ProbeFailure("bring-up broke")
-
-        monkeypatch.setattr(probe.Probe, "hold", break_bring_up)
     sent: list[signal.Signals] = []
     sys.setprofile(stop_signal_as_the_teardown_is_entered(probe, sent))
     try:
@@ -630,5 +638,7 @@ def test_hold_signalled_as_the_teardown_is_entered_without_a_prior_signal_still_
 
     assert sent
     assert result == exit_code
-    assert capsys.readouterr().out.splitlines()[-1] == last_line
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-1] == last_line
+    assert "teardown: stack edge-kc-probe removed" in lines
     assert hold_host.containers == set()

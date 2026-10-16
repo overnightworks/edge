@@ -1183,6 +1183,11 @@ def main() -> int:
         pass  # any stop signal after READY, however late, is the normal end of a hold
     except ProbeFailure as failure:
         failures.append(str(failure))
+        # A stop signal landing in the inner finally replaced the error it interrupted; name both.
+        # The same replacement turns a non-ProbeFailure raised after READY into a StopHolding,
+        # which ends the hold quietly; that error is not reported.
+        if isinstance(failure.__context__, ProbeFailure):
+            failures.append(str(failure.__context__))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
         if not stack.down():
