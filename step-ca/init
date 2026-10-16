@@ -468,7 +468,7 @@ class StepCaInit:
             for step in self.steps():
                 self.current = step.name
                 if not step.is_done():
-                    raise StepFailure(f"{step.name} is missing")
+                    raise StepFailure(f"{step.name} is not done")
 
         exit_code = self.attempt(find_missing)
         if exit_code == 0:

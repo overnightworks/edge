@@ -719,7 +719,7 @@ def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
     """#52 rule 8: a fresh home is exit 1 and --check creates no directory, file or volume."""
     assert check() == 1
 
-    assert "secrets directory is missing" in session.output
+    assert "secrets directory is not done" in session.output
     assert not secrets_dir.exists()
     assert docker.volumes == {}
     assert not [c for c in docker.commands if c[1:3] == ["volume", "create"]]
@@ -734,7 +734,7 @@ def test_check_with_secrets_but_no_volume_never_creates_the_volume(
 
     assert check() == 1
 
-    assert "intermediate is missing" in session.output
+    assert "intermediate is not done" in session.output
     assert docker.volumes == {}
 
 
@@ -748,7 +748,7 @@ def test_check_without_the_acme_volume_is_not_set_up_and_never_creates_it(
 
     assert check() == 1
 
-    assert "ACME volume is missing" in session.output
+    assert "ACME volume is not done" in session.output
     assert ACME_VOLUME not in docker.volumes
 
 
