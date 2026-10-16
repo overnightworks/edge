@@ -1,5 +1,6 @@
 """`edge external`: tokens only in the child, an allowlisted environment, the pinned tofu."""
 
+import fcntl
 import json
 import os
 import pty
@@ -756,25 +757,67 @@ def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_apply(home, fake_
     assert ".lock" not in apply.output
 
 
-def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home, monkeypatch):
+def test_a_non_terminal_apply_still_deletes_and_names_a_leftover_before_refusing(
+    home, fake_tofu, capsys
+):
+    """#45 rule 4: the refusal comes after the sweep, so a killed run's plan is not kept."""
+    leftover = leave_a_killed_run_behind(home)
+    assert cli.main(["external", "apply"]) == 1
+    error = capsys.readouterr().err
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in error
+    assert "terminal" in error
+    assert fake_tofu.calls() == []
+
+
+def test_a_plan_file_whose_lock_is_gone_is_a_leftover(home, capsys):
+    """#45 rule 4: a live run holds its lock until the plan is deleted, so a bare plan is dead."""
+    leftover = leave_a_killed_run_behind(home)
+    leftover.with_suffix(".lock").unlink()
+    external_apply.remove_leftover_plans(home)
+    assert plan_files(home) == []
+    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+
+
+def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home):
     """#45 rule 4: the sweep deletes only what the lock it holds still names."""
     directory = home / PLANS_DIRECTORY
     directory.mkdir(mode=0o700)
     stale_lock = directory / "run.lock"
     stale_lock.write_text("")
     live_plan = directory / "run.tfplan"
-    real_flock = external_apply.fcntl.flock
 
-    def replace_the_lock_then_flock(descriptor, operation):
+    def replace_the_lock_then_take_it(descriptor):
         stale_lock.unlink()
         stale_lock.write_text("live run's replacement")
         live_plan.write_text("live plan")
-        real_flock(descriptor, operation)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-    monkeypatch.setattr(external_apply.fcntl, "flock", replace_the_lock_then_flock)
-    external_apply.remove_leftover_plans(home)
+    external_apply.remove_leftover_plans(home, take_lock=replace_the_lock_then_take_it)
     assert stale_lock.exists()
     assert live_plan.exists()
+
+
+@pytest.mark.parametrize(
+    "plan_exit,typed",
+    [pytest.param(0, None, id="no-changes"), pytest.param(2, "no\n", id="abort")],
+)
+def test_a_failed_cleanup_after_no_changes_or_an_abort_exits_1_naming_the_cleanup(
+    home, fake_tofu, terminal, plan_exit, typed
+):
+    """#45 rule 5: a cleanup that fails after a good plan is exit 1 naming it, not 'cannot plan'."""
+    fake_tofu.configure(plan=plan_exit, leave_undeletable=True)
+    apply = terminal()
+    try:
+        if typed is not None:
+            apply.read_until(PROMPT)
+            apply.type(typed)
+        assert apply.finish() == 1
+        assert "the cleanup failed" in apply.output
+        assert "cannot plan" not in apply.output
+    finally:
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+            locked.chmod(0o700)
 
 
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):

@@ -9,7 +9,7 @@ import os
 import signal
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
@@ -40,6 +40,7 @@ class Step(StrEnum):
 @dataclass
 class Progress:
     step: Step = Step.PLAN
+    apply_reached: bool = False
 
 
 class StepFailed(Exception):
@@ -61,30 +62,42 @@ def refusal_without_terminal() -> ApplyExit | None:
     return ApplyExit.REFUSED
 
 
-def remove_leftover_plans(home: Path) -> None:
+def _lock_without_waiting(descriptor: int) -> None:
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def remove_leftover_plans(
+    home: Path, take_lock: Callable[[int], None] = _lock_without_waiting
+) -> None:
     """A plan file whose run is gone (SIGKILL) is named and deleted; a live run's is kept."""
     directory = home / PLANS_DIRECTORY
     stems = {entry.stem for entry in directory.glob("*") if entry.suffix in _OWNED_SUFFIXES}
     for stem in sorted(stems):
         lock = directory / f"{stem}{_LOCK_SUFFIX}"
+        plan_file = directory / f"{stem}{_PLAN_SUFFIX}"
         try:
             descriptor = os.open(lock, os.O_RDWR)
         except FileNotFoundError:
-            continue  # a live run deleted its lock after the glob
+            # A live run takes its lock before its plan exists and deletes the plan first.
+            _remove_leftover(plan_file)
+            continue
         try:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                take_lock(descriptor)
             except BlockingIOError:
                 continue
             if not _names_the_open_file(descriptor, lock):
                 continue  # the lock was replaced after the open: a live run owns the new one
-            plan_file = directory / f"{stem}{_PLAN_SUFFIX}"
-            if plan_file.exists():
-                plan_file.unlink()
-                print(f"edge external: removed the leftover plan file {plan_file}", file=sys.stderr)
+            _remove_leftover(plan_file)
             lock.unlink()
         finally:
             os.close(descriptor)
+
+
+def _remove_leftover(plan_file: Path) -> None:
+    if plan_file.exists():
+        plan_file.unlink()
+        print(f"edge external: removed the leftover plan file {plan_file}", file=sys.stderr)
 
 
 def _names_the_open_file(descriptor: int, path: Path) -> bool:
@@ -149,10 +162,10 @@ def apply_plan(home: Path, token_values: dict[str, str]) -> int:
             return result
     except tofu.Interrupted as interrupted:
         print(secrets.redact(interrupted.completed.output, token_values), file=sys.stderr)
-        _report_interrupt(progress.step)
+        _report_interrupt(progress)
         return ApplyExit.REFUSED
     except KeyboardInterrupt:
-        _report_interrupt(progress.step)
+        _report_interrupt(progress)
         return ApplyExit.REFUSED
     except OSError as error:
         if progress.step is Step.PLAN:
@@ -160,10 +173,11 @@ def apply_plan(home: Path, token_values: dict[str, str]) -> int:
         raise StepFailed(progress.step, error) from error
 
 
-def _report_interrupt(step: Step) -> None:
+def _report_interrupt(progress: Progress) -> None:
+    step = progress.step
     consequence = (
         "live services may be partly changed, check `edge external plan`"
-        if step in {Step.APPLY, Step.CLEANUP}
+        if progress.apply_reached
         else "nothing was applied"
     )
     print(
@@ -193,6 +207,7 @@ def _show_confirm_apply(
         print("edge external apply: aborted, nothing applied", file=sys.stderr)
         return ApplyExit.REFUSED
     progress.step = Step.APPLY
+    progress.apply_reached = True
     applied = tofu.run(session.tofu, ["apply", str(plan_file)], session.environment)
     progress.step = Step.CLEANUP
     print(secrets.redact(applied.output, token_values).rstrip("\n"))
