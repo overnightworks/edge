@@ -26,7 +26,8 @@ DAEMON_GONE = "Cannot connect to the Docker daemon"
 @pytest.fixture(scope="module")
 def probe() -> Iterator[ModuleType]:
     spec = importlib.util.spec_from_file_location("keycloak_probe", PROBE)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # Its dataclasses resolve their annotations through sys.modules.
     sys.modules[spec.name] = module
