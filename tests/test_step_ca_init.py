@@ -191,7 +191,8 @@ def test_a_fresh_run_makes_the_files_with_their_modes(init, docker, secrets_dir,
     assert init.run() == 0
 
     assert mode(secrets_dir) == 0o700
-    assert (mode(secrets_dir / ROOT_KEY), mode(secrets_dir / ROOT_CERT)) == (0o600, 0o644)
+    assert mode(secrets_dir / ROOT_KEY) == 0o600
+    assert mode(secrets_dir / ROOT_CERT) == 0o644
     assert mode(secrets_dir / PASSWORD) == 0o644
     assert volume_files(docker) == INTERMEDIATE_FILES | {"certs/root_ca.crt"}
     assert not (secrets_dir / ".pending-root").exists()
@@ -246,7 +247,8 @@ def test_a_second_run_changes_nothing(init, docker, secrets_dir, session):
 
     assert init.run() == 0
 
-    assert (fingerprint_of_files(secrets_dir), fingerprint_of_files(docker.volume_dir)) == before
+    assert fingerprint_of_files(secrets_dir) == before[0]
+    assert fingerprint_of_files(docker.volume_dir) == before[1]
     changing = {"mkdir", "cp", "step"}
     assert not changing & {
         docker.entrypoint(c) for c in docker.commands[first_run_commands:] if c[1] == "run"
@@ -281,9 +283,8 @@ def test_a_missing_root_copy_in_the_volume_is_copied_without_touching_the_interm
 
     assert init.run() == 0
 
-    assert (docker.volume_dir / "certs/root_ca.crt").read_bytes() == (
-        secrets_dir / ROOT_CERT
-    ).read_bytes()
+    restored_root = (docker.volume_dir / "certs/root_ca.crt").read_bytes()
+    assert restored_root == (secrets_dir / ROOT_CERT).read_bytes()
     assert (docker.volume_dir / "secrets/intermediate_ca_key").read_bytes() == intermediate
 
 
