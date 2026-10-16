@@ -7,7 +7,9 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 import secrets as random_secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -19,6 +21,7 @@ from types import ModuleType
 import pytest
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
+PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
 IMAGE = "smallstep/step-ca:0.30.2@sha256:" + "ab" * 32
 PROJECT = "operators-project"
 VOLUME = f"{PROJECT}_step-ca"
@@ -515,3 +518,43 @@ def test_the_ca_listens_on_9000_as_step_ca_with_no_remote_management(ca_config):
     assert ca_config["dnsNames"] == ["step-ca"]
     assert not ca_config["authority"].get("enableAdmin")
     assert "insecureAddress" not in ca_config or not ca_config["insecureAddress"]
+
+
+@pytest.fixture(scope="module")
+def probe() -> Iterator[ModuleType]:
+    spec = importlib.util.spec_from_file_location("step_ca_probe", PROBE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    yield module
+    del sys.modules[spec.name]
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
+    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop_signal: signal.Signals
+) -> None:
+    removed: list[str] = []
+
+    class SignalledDuringCleanup:
+        def __init__(self, _scratch: Path) -> None:
+            pass
+
+        def teardown(self) -> None:
+            os.kill(os.getpid(), stop_signal)
+            removed.append("containers and volume")
+
+    monkeypatch.setattr(probe, "Probe", SignalledDuringCleanup)
+    monkeypatch.setattr(probe, "prove", lambda _probe: 0)
+    monkeypatch.setattr(sys, "argv", ["probe", "--scratch", str(tmp_path / "scratch")])
+    handler_before = signal.getsignal(signal.SIGTERM)
+
+    try:
+        exit_code = probe.main()
+    finally:
+        signal.signal(signal.SIGTERM, handler_before)
+
+    assert removed == ["containers and volume"]
+    assert exit_code == 0
