@@ -17,18 +17,20 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 
 | File | Owns |
 |---|---|
-| `compose.yaml` | the services, image pins (version and digest), the socket directory and Keycloak database volumes, the Keycloak secrets |
+| `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database and `step-ca` volumes, the Keycloak secrets and `step_ca_password` |
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
 | `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay and its master step, the secret check's rules |
 | `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
+| `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
+| `probe/step-ca/` | the probe of the internal CA, re-run for every step-ca upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `src/edge/`, `external/` | the `edge` command (so far `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
-| `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check and `keycloak/go-live`, with their locked dependencies |
+| `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live` and `step-ca/init`, with their locked dependencies |
 | `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
 | [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
@@ -706,6 +708,39 @@ verifiers, authorization codes and session cookies) in the `Config.Env` of any
 container it ran (the bootstrap Keycloak and every keycloak-config-cli run
 included), in any compose, apply or service log output, or in its own output
 (7), and the realm settings as decided (8).
+
+## Interne CA
+
+`step-ca` is the certificate authority for the MCP origins: the servers behind
+`https://<app>.mcp.internal` that the agent service calls over https only. It listens on
+`step-ca:9000` on the internal network `mcp-ca` (no route out, no published port), has one ACME provisioner that accepts only
+`*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
+configuration. Traefik fetching certificates from it is the next slice (edge#37).
+
+Go live, once, as the operator (uid 1000):
+
+```sh
+step-ca/init
+docker compose up -d step-ca
+```
+
+`step-ca/init` makes the key material in one-off containers without a network and prints no
+secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
+running container), `root_ca.crt` (0644) and `password` (0644, protects the root and the
+intermediate key), and puts the intermediate and a copy of the root certificate into the
+`step-ca` volume. A second run changes nothing; after an interruption it completes what is
+missing and never overwrites a key. Back up `~/.secrets/step-ca/` and the `step-ca` volume. The
+root certificate is what other services trust.
+
+Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 420 python3 probe/step-ca/probe.py
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds proofs 1 to 5 (init
+modes and silence, the ACME directory verifies only with the probe root, the volume holds no root
+key, a restart keeps the intermediate, a partial state is completed). The curl runs from a throwaway container on `mcp-ca`.
+
+Switch it off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
+`docker compose up -d` starts it again. To remove it, also `docker compose rm -f step-ca`;
+`docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away
+(nothing else depends on it until the Traefik slice lands).
 
 ## Rollback
 

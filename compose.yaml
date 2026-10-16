@@ -145,6 +145,30 @@ services:
     volumes:
       - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
       - ./keycloak:/config:ro
+
+  step-ca:
+    image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270
+    restart: unless-stopped
+    # The image's own user; step-ca/init makes the volume's files for it.
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    # The image's step-ca binary carries a file capability for low ports; without it in the
+    # bounding set the kernel refuses to exec it (verified on 0.30.2). The CA itself listens on 9000.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    # Only the internal network: no route out, no published port. Slice 2's Traefik joins it.
+    networks: [mcp-ca]
+    # Not the image's entrypoint: its init path would print an admin password into the log.
+    entrypoint: ["/usr/local/bin/step-ca"]
+    command:
+      - "--password-file=/run/secrets/step_ca_password"
+      - "/etc/step-ca/ca.json"
+    secrets: [step_ca_password]
+    volumes:
+      - ./step-ca/ca.json:/etc/step-ca/ca.json:ro
+      # Intermediate certificate and key, the root certificate and the db; never the root key.
+      - step-ca:/home/step
 volumes:
   socket-proxy-run:
     driver: local
@@ -153,6 +177,7 @@ volumes:
       device: tmpfs
       o: "uid=65534,gid=65534,mode=0700"
   keycloak-db:
+  step-ca:
 
 secrets:
   # Files only, outside the repository; README "Keycloak secrets" names how to create them.
@@ -160,10 +185,17 @@ secrets:
     file: ${HOME}/.secrets/keycloak/db-password
   keycloak_config_cli_secret:
     file: ${HOME}/.secrets/keycloak/config-cli-secret
+  # step-ca/init creates it; README "Interne CA".
+  step_ca_password:
+    file: ${HOME}/.secrets/step-ca/password
 
 networks:
   edge-probe:
     driver: bridge
+  # step-ca's own network: internal, so it has no route to the internet or other networks (Docker
+  # still lets its containers reach host services through the gateway address).
+  mcp-ca:
+    internal: true
   keycloak:
     driver: bridge
     ipam:
