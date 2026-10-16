@@ -27,6 +27,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
 | `probe/step-ca/` | the probe of the internal CA, re-run for every step-ca upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
+| `src/edge/`, `external/` | the `edge` command (so far `edge external plan`) and the pinned OpenTofu root it plans (see [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live` and `step-ca/init`, with their locked dependencies |
@@ -130,6 +131,33 @@ docker compose --profile probe stop hello && docker compose --profile probe rm -
 
 Afterwards `hello.<EDGE_DOMAIN>` answers 404, and a plain `docker compose up -d`
 leaves hello absent.
+
+## Externe Dienste als Code
+
+Cloudflare und GitHub werden mit OpenTofu als Code verwaltet (`external/`);
+wo diese Schicht liegt, steht in [`docs/architecture.md`](docs/architecture.md).
+Der State liegt nie im Checkout, sondern verschluesselt in
+`~/.secrets/opentofu/fleet.tfstate`.
+
+`edge external plan` zeigt, was von den Live-Diensten abweicht (Exit 0 keine
+Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien, jede
+0600, und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine
+Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
+`GH_*`, Proxy aus der Shell):
+
+| Datei | Variable im Kind |
+|---|---|
+| `~/.secrets/cloudflare/fleet-read` | `CLOUDFLARE_API_TOKEN` |
+| `~/.secrets/github/fleet-read` | `GITHUB_TOKEN` |
+| `~/.secrets/opentofu/state-passphrase` | `TF_VAR_state_passphrase` |
+
+Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
+`plan` verweigert ein `tofu`, dessen Version nicht der Pin in
+`external/main.tf` entspricht.
+
+```bash
+uv run edge external plan
+```
 
 ## edge-check
 
