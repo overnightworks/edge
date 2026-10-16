@@ -587,69 +587,99 @@ can be run again after any interruption: every step first checks whether it is
 done and the run continues at the first unfinished one. A failure ends with one
 line naming the step and exit code 1. It never prints a secret.
 
-1. **Backup.** It asks once whether to continue without the Keycloak backup
-   (K11b has not landed). There is no default; the answer is yours.
-2. **Secrets.** It creates the three files with random values, in a 0700
+- **1. Backup.** It asks once whether to continue without the Keycloak backup
+   (K11b has not landed). There is no default; the answer is yours. It is done once
+   Keycloak's database volume exists (the first start creates it), so a "no"
+   is asked again and a finished install is never asked, even with Keycloak stopped.
+- **2. Secrets.** It creates the three files with random values, in a 0700
    directory with 0644 files. An existing file is never overwritten; if only
    some of the files exist it refuses and names the missing ones.
    The one exception: once Keycloak's database exists, a missing
    `bootstrap-admin-password` alone means step 7 has already retired it, and the
    run goes on.
-3. **First start** with the temporary admin `temp-admin`.
-4. **Master on the admin entrypoint, then the first apply**, both with
-   `temp-admin`. The apply cannot move the master realm itself, because the move
-   changes the issuer of the token it signs in with.
-5. **Leave the bootstrap overlay and start the edge.** The script waits by
+- **3. First start** with the temporary admin `temp-admin`.
+- **4a. Master on the admin entrypoint**, with `temp-admin`. The apply cannot move the
+   master realm itself, because the move changes the issuer of the token it signs in with.
+- **4b. First apply** of the realms, with `temp-admin`. While step 5 restarts
+   Keycloak, a resumed run waits for the edge before it reads whether the apply
+   completed.
+- **5. Leave the bootstrap overlay and start the edge.** The script waits by
    itself until the edge is ready.
-6. **Your part, in the browser.** The script stops and says what to do: sign in
+- **6-7. Your part, in the browser, then retire the bootstrap.** The script stops and says what to do: sign in
    at `http://localhost:8090/admin/` as `temp-admin` (password in the bootstrap
    file; enrol TOTP when asked), create your own admin in the master realm with
    the realm role `admin`, sign in as that admin, enrol TOTP and add a passkey.
-   Press Enter when done.
-7. **Retire the bootstrap.** The script checks through the admin API that
+   Press Enter when done. Step 7 (the script): it checks through the admin API that
    another master user with the realm role `admin` has a TOTP credential. Only
    then it deletes `temp-admin` and the `bootstrap-admin-password` file;
    otherwise it refuses and says what is missing.
-8. **Your part, in Cloudflare.** The script ends by printing the steps (A8, steps
-   3 to 5, for `auth.hallucinai.de`) and the check:
 
-   ```sh
-   curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
-     | grep -o '"issuer":"[^"]*"'
-   # "issuer":"https://auth.hallucinai.de/realms/hallucinai"
-   ```
+Last, **your part, in Cloudflare** (unnumbered). The script ends by printing the steps (A8, steps
+3 to 5, for `auth.hallucinai.de`) and the check:
 
-   The operator's own browser is no proof: it holds an Access session and
-   passes the wildcard app either way.
+```sh
+curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
+  | grep -o '"issuer":"[^"]*"'
+# "issuer":"https://auth.hallucinai.de/realms/hallucinai"
+```
+
+The operator's own browser is no proof: it holds an Access session and
+passes the wildcard app either way.
+
+#### Is go-live finished? `--check`
+
+```sh
+keycloak/go-live --check
+```
+
+It reads only go-live's durable trace, so Keycloak need not run: it is done when
+`db-password` and `config-cli-secret` exist in `~/.secrets/keycloak/`,
+`bootstrap-admin-password` does not (only step 7 deletes it, after it deleted
+`temp-admin`), and the `keycloak-db` volume exists. It asks nothing, prints no
+secret and creates or changes no file, directory, volume or container. A
+bootstrap file deleted by hand reads as done; a full `keycloak/go-live` run still
+checks `temp-admin` through the admin API.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | it is set up |
+| 1 | it is not set up; one line names what is missing |
+| 2 | it cannot tell, because Docker or Compose did not answer or answered something it cannot read |
 
 #### Fallback: the steps by hand
 
 If the script cannot be used, the same steps by hand, in this order:
 
-1. **Backup.** Decide once whether to continue without the Keycloak backup
+- **1. Backup.** Decide once whether to continue without the Keycloak backup
    (K11b has not landed); stop here if you do not accept that.
-2. **Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
-3. **First start**, with the temporary bootstrap admin `temp-admin`:
+- **2. Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
+- **3. First start**, with the temporary bootstrap admin `temp-admin`:
    `docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
-4. **Master on the admin entrypoint, then the first apply**, both with the overlay:
+- **4a. Master on the admin entrypoint**, with the overlay:
 
-   ```sh
-   docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
-   docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
-   ```
+  ```sh
+  docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml exec keycloak /opt/edge/admin-frontend.sh
+  ```
 
-   If the apply fails after it applied `master.yaml`, a second run with the
-   overlay gets a 401: master now demands TOTP for `temp-admin`'s password
-   grant. Re-run it without the overlay, `docker compose --profile keycloak run
-   --rm keycloak-config-cli`, because the `config-cli` client exists by then.
-5. **Leave the overlay and start the edge** as in
-   [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
-   Keycloak without the overlay, and the forced recreate starts Traefik with
-   the current `traefik.yml`. Wait until the readiness check prints `ready`.
-6. **Permanent admin** in the browser, as in step 6 above.
-7. **Retire the bootstrap.** Delete `temp-admin` in the admin console, then
-   `rm ~/.secrets/keycloak/bootstrap-admin-password`.
-8. **Public login** in Cloudflare, as in step 8 above.
+- **4b. First apply** of the realms, with the overlay:
+
+  ```sh
+  docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml run --rm keycloak-config-cli
+  ```
+
+  If the apply fails after it applied `master.yaml`, a second run with the
+  overlay gets a 401: master now demands TOTP for `temp-admin`'s password
+  grant. Re-run it without the overlay, `docker compose --profile keycloak run
+  --rm keycloak-config-cli`, because the `config-cli` client exists by then.
+- **5. Leave the overlay and start the edge** as in
+  [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
+  Keycloak without the overlay, and the forced recreate starts Traefik with
+  the current `traefik.yml`. Wait until the readiness check prints `ready`.
+- **6-7. Your part, then retire the bootstrap.** Create your permanent admin in the
+  browser, as in step 6-7 above. Then delete `temp-admin` in the admin console and run
+  `rm ~/.secrets/keycloak/bootstrap-admin-password`.
+
+Last, **public login in Cloudflare** (unnumbered), as in the Cloudflare part above.
 
 ### Patch upgrade
 
