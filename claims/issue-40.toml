@@ -1,8 +1,0 @@
-claim_id = "2153885eef494aaabf37b8dc97384f03"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "7e108bb84c0fe00ab248ab59b43ba9efd93bea6a"
-branch = "claude/issue-40-x1b-external-plan"
-scope = ["README.md", "pyproject.toml", "src/edge", "tests/test_edge_external.py", "uv.lock"]
-opened_commit = "6b8b26b86fbdf3f4142170cd652c62c85e68a936"
-whole_reason = "The first edge subcommand: plan, and how tokens and environment reach tofu."
