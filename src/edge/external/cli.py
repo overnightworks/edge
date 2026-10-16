@@ -40,11 +40,13 @@ def plan_command(home: Path) -> int:
 
 
 def apply_command(home: Path) -> int:
-    refusal = apply.refusal_without_terminal()
-    if refusal is not None:
-        return refusal
     return _guarded(
-        "apply", home, secrets.Access.WRITE, apply.apply_plan, apply.ApplyExit.CANNOT_PLAN
+        "apply",
+        home,
+        secrets.Access.WRITE,
+        apply.apply_plan,
+        apply.ApplyExit.CANNOT_PLAN,
+        refusal=apply.refusal_without_terminal,
     )
 
 
@@ -54,11 +56,18 @@ def _guarded(
     access: secrets.Access,
     run: Callable[[Path, dict[str, str]], int],
     cannot_plan: int,
+    refusal: Callable[[], int | None] = lambda: None,
 ) -> int:
-    """Run one command; every failure before the plan is `cannot_plan`, named, without a token."""
+    """Run one command; every failure before the plan is `cannot_plan`, named, without a token.
+
+    The leftover sweep runs first; a `refusal` is asked after it and before any token is read.
+    """
     token_values: dict[str, str] = {}
     try:
         apply.remove_leftover_plans(home)
+        refused = refusal()
+        if refused is not None:
+            return refused
         token_values = secrets.read_secrets(home, access)
         return run(home, token_values)
     except (secrets.SecretFileError, tofu.TofuError) as error:
