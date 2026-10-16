@@ -1,12 +1,13 @@
 [project]
 name = "edge-check"
 version = "0.1.0"
-description = "The edge tools: the loopback alarm edge-check and the backup runner edge-backup."
+description = "The edge tools: the edge command, the loopback alarm edge-check and the backup runner edge-backup."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
+edge = "edge.cli:main"
 edge-check = "edge_check.cli:main"
 edge-backup = "edge_backup.cli:main"
 
@@ -18,7 +19,7 @@ requires = ["uv_build>=0.10,<0.11"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["edge_check", "edge_backup"]
+module-name = ["edge", "edge_check", "edge_backup"]
 
 [tool.ruff]
 line-length = 100
