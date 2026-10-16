@@ -313,8 +313,9 @@ class Probe:
         image, _ = self.image_and_volume()
         self.run(
             ["docker", "run", "--rm", "--network", "none", "--user", "0", "--cap-drop", "ALL",
-             "--cap-add", "CHOWN", "--volume", f"{self.secrets_dir}:/secrets", "--entrypoint",
-             "chown", image, f"{owner_id}:{owner_id}", "/secrets/root_ca_key"]
+             "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--volume",
+             f"{self.secrets_dir}:/secrets", "--entrypoint", "chown", image,
+             f"{owner_id}:{owner_id}", "/secrets/root_ca_key"]
         )  # fmt: skip
 
     def expect_foreign_owned_root_key_refused(self, root_key: bytes) -> None:
