@@ -1,8 +1,0 @@
-claim_id = "9393fd555fd4411082c726f76df3a8d7"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "90f0c3ba25dff57f7b7121b1592fafc173065816"
-branch = "claude/issue-32-x1a-opentofu-root"
-scope = [".github/workflows/ci.yml", ".gitignore", "external", "fleet.yaml"]
-opened_commit = "0226c86eff12f81f7c4e1f34c384414c6da1163c"
-whole_reason = "The pinned OpenTofu root, its lock file, the enforced encryption, its CI proof and the ignore rules are one root."
