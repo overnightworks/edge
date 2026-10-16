@@ -205,7 +205,7 @@ class Stack:
         return {
             **os.environ,
             "EDGE_DOMAIN": DOMAIN,
-            "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
+            "DOCKER_GID": os.environ.get("DOCKER_GID") or str(grp.getgrnam("docker").gr_gid),
             "PROBE_SECRETS_DIR": str(self.secrets_dir),
             "PROBE_CONFIG_DIR": str(config_dir),
         }
@@ -1082,6 +1082,16 @@ def stop_holding(_signum: int, _frame: object) -> None:
     raise StopHolding
 
 
+def ignore_stop_signals() -> None:
+    """Ends the stop signals' effect; blocked meanwhile, so none can raise between the two."""
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+    try:
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, signal.SIG_IGN)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
 def keep_stack_until_told_to_stop(ready_line: str) -> None:
     """Prints the READY line, then blocks until SIGTERM, SIGINT or EOF on stdin."""
     # A signal that arrives while the handler is swapped waits until READY is out, so one
@@ -1131,8 +1141,7 @@ def main() -> int:
         failures.append(str(failure))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
-        for stopping in STOP_SIGNALS:
-            signal.signal(stopping, signal.SIG_IGN)
+        ignore_stop_signals()
         if not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:

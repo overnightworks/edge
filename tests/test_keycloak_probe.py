@@ -4,24 +4,23 @@ import importlib.util
 import json
 import os
 import signal
-import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import FrameType, ModuleType
 from urllib.request import Request
 from urllib.response import addinfourl
 
 import pytest
+from fake_docker import DAEMON_GONE, LATE_APPLY, RUNNING_APPLY, SERVICE_CONTAINER
 
 PROBE = Path(__file__).resolve().parents[1] / "probe" / "keycloak" / "probe.py"
 LOGIN_URL = "http://localhost:8090/realms/master/login-actions/authenticate"
-SERVICE_CONTAINER = "edge-kc-probe-keycloak-1"
-RUNNING_APPLY = "edge-kc-probe-apply-0a1b2c3d"
-LATE_APPLY = "edge-kc-probe-apply-4e5f6a7b"
-DAEMON_GONE = "Cannot connect to the Docker daemon"
+FAKE_DOCKER = Path(__file__).with_name("fake_docker.py")
 
 
 @pytest.fixture(scope="module")
@@ -69,30 +68,34 @@ def test_every_cookie_value_reaches_proof_7_although_a_later_response_replaces_o
     assert sorted(kept.values()) == ["restart-1", "session-1", "session-2"]
 
 
-class FakeDocker:
-    """The docker CLI as the teardown asks it, over the probe project's containers."""
+class DockerHost:
+    """The host the probe runs on: a docker executable on PATH over a state file."""
 
-    def __init__(self, *, apply_lands_during_down: bool, unlistable_kind: str | None) -> None:
-        self.containers = {SERVICE_CONTAINER, RUNNING_APPLY}
-        self.one_offs = {RUNNING_APPLY, LATE_APPLY}
-        self.apply_lands_during_down = apply_lands_during_down
-        self.unlistable_kind = unlistable_kind
+    def __init__(self, directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.state_file = directory / "docker-state.json"
+        self.configure(containers=[], one_offs=[])
+        executables = directory / "bin"
+        executables.mkdir()
+        docker = executables / "docker"
+        docker.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_DOCKER}" "$@"\n')
+        docker.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{executables}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv("FAKE_DOCKER_STATE", str(self.state_file))
+        # The compose environment names the docker group, which a host without Docker lacks.
+        monkeypatch.setenv("DOCKER_GID", "999")
 
-    def run(self, command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        listed = set()
-        if command[1:3] == [self.unlistable_kind, "ls"]:
-            return subprocess.CompletedProcess(command, 1, "", DAEMON_GONE)
-        if command[:2] == ["docker", "compose"] and "down" in command:
-            # Like Compose, down leaves a running one-off container alone.
-            self.containers -= {SERVICE_CONTAINER}
-            if self.apply_lands_during_down:
-                self.containers.add(LATE_APPLY)
-        elif command[1:3] == ["container", "rm"]:
-            self.containers -= set(command[3:])
-        elif command[1:3] == ["container", "ls"]:
-            one_offs_only = "label=com.docker.compose.oneoff=True" in command
-            listed = self.containers & self.one_offs if one_offs_only else self.containers
-        return subprocess.CompletedProcess(command, 0, "\n".join(sorted(listed)), "")
+    def configure(self, **changes: object) -> None:
+        state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+        self.state_file.write_text(json.dumps({**state, **changes}))
+
+    @property
+    def containers(self) -> set[str]:
+        return set(json.loads(self.state_file.read_text())["containers"])
+
+
+@pytest.fixture
+def docker_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DockerHost:
+    return DockerHost(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize(
@@ -125,24 +128,25 @@ def test_teardown_says_removed_only_when_nothing_of_the_stack_is_left(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    docker_host: DockerHost,
     apply_lands_during_down: bool,
     unlistable_kind: str | None,
     teardown_line: str,
     removed: bool,
     containers_left: set[str],
 ) -> None:
-    docker = FakeDocker(
-        apply_lands_during_down=apply_lands_during_down, unlistable_kind=unlistable_kind
+    docker_host.configure(
+        containers=[SERVICE_CONTAINER, RUNNING_APPLY],
+        one_offs=[RUNNING_APPLY, LATE_APPLY],
+        apply_lands_during_down=apply_lands_during_down,
+        unlistable_kind=unlistable_kind,
     )
-    monkeypatch.setattr(probe.subprocess, "run", docker.run)
-    # The compose environment names the docker group, which a host without Docker lacks.
-    monkeypatch.setattr(probe.grp, "getgrnam", lambda _: SimpleNamespace(gr_gid=999))
 
     said_removed = probe.Stack(tmp_path).down()
 
     assert capsys.readouterr().out.splitlines() == [teardown_line]
     assert said_removed == removed
-    assert docker.containers == containers_left
+    assert docker_host.containers == containers_left
 
 
 @pytest.fixture
@@ -251,7 +255,6 @@ def test_a_taken_port_is_refused_with_its_own_exit_code(
     assert probe.main() == 3
 
 
-SECRET_VALUE = "s3cret-value-that-must-not-be-printed"
 FRESH_APPLY_LINE = "fresh apply done"
 
 
@@ -284,34 +287,61 @@ class SignallingStdout:
         return getattr(self.real, name)
 
 
+class KeycloakAnswers(BaseHTTPRequestHandler):
+    """Keycloak as the bring-up asks it: ready, and handing out a token."""
+
+    def do_GET(self) -> None:
+        self.reply({"realm": "hallucinai"})
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.reply({"access_token": "an-access-token"})
+
+    def reply(self, body: dict[str, str]) -> None:
+        payload = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *_: object) -> None:
+        pass
+
+
+@pytest.fixture
+def fake_keycloak() -> Iterator[None]:
+    server = ThreadingHTTPServer(("127.0.0.1", 8090), KeycloakAnswers)
+    # Threads inherit the signal mask; a server thread must not take a stop signal meant for main.
+    stop_signals = {signal.SIGTERM, signal.SIGINT}
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+    yield
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture
+def hold_host(
+    docker_host: DockerHost, fake_keycloak: None, restored_signal_handlers: None
+) -> DockerHost:
+    """The host a hold runs on: fake docker, a Keycloak that answers, signal handlers restored."""
+    return docker_host
+
+
 def run_hold(
     probe: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     scratch: Path,
     *,
-    before_ready: signal.Signals | None = None,
     while_ready_is_written: signal.Signals | None = None,
     after_ready: signal.Signals | None = None,
-    teardown_leaves_container: bool = False,
 ) -> int:
-    def start_with_bootstrap_admin(self: object) -> None:
-        self.secret_values = {"config-cli-secret": SECRET_VALUE}
-        print("stack: up with the temporary bootstrap admin", flush=True)
-
-    def apply_and_restart(_self: object) -> None:
-        if before_ready:
-            os.kill(os.getpid(), before_ready)
-
     monkeypatch.setattr(sys, "argv", ["probe.py", "hold", "--scratch", str(scratch)])
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
     monkeypatch.setattr(probe, "ports_free", lambda *_: [])
-    docker = FakeDocker(apply_lands_during_down=teardown_leaves_container, unlistable_kind=None)
-    monkeypatch.setattr(probe.subprocess, "run", docker.run)
-    monkeypatch.setattr(probe.grp, "getgrnam", lambda _: SimpleNamespace(gr_gid=999))
     if while_ready_is_written:
         monkeypatch.setattr(sys, "stdout", SignallingStdout(sys.stdout, while_ready_is_written))
-    monkeypatch.setattr(probe.Probe, "start_with_bootstrap_admin", start_with_bootstrap_admin)
-    monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
     return probe.main()
 
 
@@ -324,7 +354,7 @@ def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    restored_signal_handlers: None,
+    hold_host: DockerHost,
 ) -> None:
     """#21 D1a: hold prints one READY line naming the secret file, never the secret value."""
     scratch = tmp_path / "s"
@@ -340,7 +370,8 @@ def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
         "admin_client_id": "config-cli",
         "admin_client_secret_file": str(scratch.resolve() / "secrets" / "config-cli-secret"),
     }
-    assert SECRET_VALUE not in output
+    secret_file = Path(json.loads(ready.removeprefix("READY "))["admin_client_secret_file"])
+    assert secret_file.read_text() not in output
 
 
 @pytest.mark.parametrize(
@@ -351,7 +382,7 @@ def test_hold_ends_normally_when_told_to_stop_after_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    restored_signal_handlers: None,
+    hold_host: DockerHost,
     ending: signal.Signals | None,
 ) -> None:
     """#21 D1a: SIGTERM, SIGINT or stdin EOF after READY tears down, prints HOLD ENDED, exits 0."""
@@ -368,10 +399,12 @@ def test_hold_stopped_by_a_signal_before_ready_tears_down_and_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    restored_signal_handlers: None,
+    hold_host: DockerHost,
 ) -> None:
     """#21 D1a: a stop signal before READY tears down and ends with PROBE FAILED, exit 1."""
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", before_ready=signal.SIGTERM)
+    hold_host.configure(signal_parent_on_run="SIGTERM")
+
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s")
 
     lines = capsys.readouterr().out.splitlines()
     assert exit_code == 1
@@ -388,7 +421,7 @@ def test_hold_stopped_while_ready_is_written_still_ends_normally(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    restored_signal_handlers: None,
+    hold_host: DockerHost,
     stop_signal: signal.Signals,
 ) -> None:
     """#21 D1a: a stop signal arriving as READY is flushed is a stop: HOLD ENDED, exit 0."""
@@ -399,15 +432,54 @@ def test_hold_stopped_while_ready_is_written_still_ends_normally(
     assert lines[-2:] == ["teardown: stack edge-kc-probe removed", "HOLD ENDED"]
 
 
+def test_hold_stopped_again_between_ignoring_the_two_stop_signals_still_tears_down(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hold_host: DockerHost,
+) -> None:
+    """#21 D1a: a SIGINT after SIGTERM, before SIGINT is ignored, cannot skip the teardown."""
+    sent = []
+
+    def sigint_once_sigterm_is_ignored(frame: FrameType, event: str, _arg: object) -> None:
+        sigterm_ignored = signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+        if (
+            event == "return"
+            and frame.f_code is signal.signal.__code__
+            and sigterm_ignored
+            and signal.getsignal(signal.SIGINT) != signal.SIG_IGN
+            and not sent
+        ):
+            sent.append(signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)
+
+    sys.setprofile(sigint_once_sigterm_is_ignored)
+    try:
+        exit_code = run_hold(probe, monkeypatch, tmp_path / "s", after_ready=signal.SIGTERM)
+    finally:
+        sys.setprofile(None)
+
+    assert sent
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == [
+        "teardown: stack edge-kc-probe removed",
+        "HOLD ENDED",
+    ]
+    assert hold_host.containers == set()
+
+
 def test_hold_whose_teardown_leaves_the_stack_after_ready_fails(
     probe: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    restored_signal_handlers: None,
+    hold_host: DockerHost,
 ) -> None:
     """#21 D1a: a teardown that leaves the stack after READY is PROBE FAILED, exit 1."""
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", teardown_leaves_container=True)
+    hold_host.configure(apply_lands_during_down=True)
+
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s")
 
     last_line = capsys.readouterr().out.splitlines()[-1]
     assert exit_code == 1
