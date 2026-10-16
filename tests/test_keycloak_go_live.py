@@ -53,6 +53,7 @@ class Keycloak:
     fail_apply_after_master: bool = False
     fail_edge_start: bool = False
     never_answers: bool = False
+    compose_without_database_volume: bool = False
     edge_restarting: bool = False  # step 5's recreate: kcadm is refused, 8090 does not answer yet
     docker_daemon_down: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
@@ -106,6 +107,8 @@ class Keycloak:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
     def compose_config(self, command: list[str]):
+        if self.compose_without_database_volume:
+            return self.done("{}")
         return self.done(json.dumps({"volumes": {"keycloak-db": {"name": PROJECT_VOLUME}}}))
 
     def compose_ps(self, command: list[str]):
@@ -710,12 +713,16 @@ def test_the_readme_and_help_number_the_go_live_steps_alike():
         [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
     ).stdout
     readme = (SCRIPT.parents[1] / "README.md").read_text()
-    section = readme.split("### Keycloak go-live")[1].split("####")[0]
+    go_live_section = readme.split("### Keycloak go-live")[1].split("####")[0]
+    fallback_section = readme.split("#### Fallback: the steps by hand")[1].split("###")[0]
 
     help_steps = numbers_in(help_text.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. ")
-    readme_steps = numbers_in(section.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. \*\*")
+    readme_pattern = (
+        r"- \*\*(\d+[ab]?(?:-\d+)?)\. "  # a bullet keeps "4a." literal; "4a. " is no list marker
+    )
 
-    assert help_steps == readme_steps
+    assert help_steps == numbers_in(go_live_section.splitlines(), readme_pattern)
+    assert help_steps == numbers_in(fallback_section.splitlines(), readme_pattern)
     assert help_steps[0] == "1"
 
 
@@ -850,11 +857,11 @@ def test_check_cannot_tell_when_docker_does_not_answer(go_live, keycloak, sessio
 
 
 def test_check_cannot_tell_when_compose_answers_without_the_database_volume(
-    go_live, keycloak, session, secrets_dir, monkeypatch
+    go_live, keycloak, session, secrets_dir
 ):
     """#55 rule 2: an unexpected answer is exit 2 and one line, never a traceback."""
     write_secrets(secrets_dir, "db-password", "config-cli-secret")
-    monkeypatch.setattr(keycloak, "compose_config", lambda command: keycloak.done("{}"))
+    keycloak.compose_without_database_volume = True
 
     assert go_live.check() == 2
 
