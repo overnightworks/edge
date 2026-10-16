@@ -7,6 +7,7 @@ continues at the first unfinished step. No secret is printed: command output is 
 failure shows one scrubbed line.
 
     keycloak/go-live
+    keycloak/go-live --check
 """
 
 from __future__ import annotations
@@ -88,6 +89,10 @@ class StepFailure(Exception):
     """A step cannot finish; the message says why in one line."""
 
 
+class DockerDidNotAnswer(StepFailure):
+    """Docker or Compose gave no usable answer: nothing can be said about the installation."""
+
+
 @dataclass(frozen=True)
 class Reply:
     status: int
@@ -124,9 +129,11 @@ def run_command(
             input=stdin,
         )
     except subprocess.TimeoutExpired as error:
-        raise StepFailure(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
+        raise DockerDidNotAnswer(
+            f"`{' '.join(command[:3])}` took longer than {timeout}s"
+        ) from error
     except OSError as error:
-        raise StepFailure(f"cannot run {command[0]}: {error.strerror}") from error
+        raise DockerDidNotAnswer(f"cannot run {command[0]}: {error.strerror}") from error
 
 
 @dataclass(frozen=True)
@@ -208,7 +215,9 @@ class GoLive:
 
     def database_volume_exists(self) -> bool:
         # Compose names the volume (project name, COMPOSE_PROJECT_NAME and all); ask it.
-        config = self.compose_must("config", "--format", "json")
+        config = self.compose("config", "--format", "json", bootstrap=False)
+        if config.returncode != 0:
+            raise DockerDidNotAnswer(self.failure_line("config", config))
         volume_name = json.loads(config.stdout)["volumes"][DATABASE_VOLUME]["name"]
         inspected = self.tools.run(
             ["docker", "volume", "inspect", volume_name], SHORT_COMMAND_SECONDS
@@ -217,7 +226,7 @@ class GoLive:
             return True
         if NO_SUCH_VOLUME in inspected.stderr.lower():
             return False
-        raise StepFailure(self.failure_line("volume inspect", inspected, tool="docker"))
+        raise DockerDidNotAnswer(self.failure_line("volume inspect", inspected, tool="docker"))
 
     def bootstrap_present(self) -> bool:
         return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
@@ -287,12 +296,17 @@ class GoLive:
             return True
         return any(entry.startswith(f"{BOOTSTRAP_ENV}=") for entry in json.loads(inspected.stdout))
 
-    def wait_until(self, condition: Callable[[], bool], what: str) -> None:
+    def becomes_true_in_time(self, condition: Callable[[], bool]) -> bool:
         deadline = self.tools.monotonic() + READY_TIMEOUT_SECONDS
         while not condition():
             if self.tools.monotonic() >= deadline:
-                raise StepFailure(f"{what} not ready after {READY_TIMEOUT_SECONDS}s")
+                return False
             self.tools.sleep(POLL_SECONDS)
+        return True
+
+    def wait_until(self, condition: Callable[[], bool], what: str) -> None:
+        if not self.becomes_true_in_time(condition):
+            raise StepFailure(f"{what} not ready after {READY_TIMEOUT_SECONDS}s")
 
     def edge_is_ready(self) -> bool:
         """README "Readiness": an unknown host gets 404 on 8081, master answers on 8090."""
@@ -351,6 +365,10 @@ class GoLive:
         Once the edge stands, the container's own kcadm is refused (401) and the admin door is
         the way in. The config-cli client the door needs exists only after the first apply, so a
         refused sign-in there means the import has not completed."""
+        if not self.keycloak_runs_with_overlay():
+            # Step 5 has begun, so 8090 is the door that is about to answer. A run that stopped
+            # because the edge would not start gets no answer: it reads the container's door.
+            self.becomes_true_in_time(self.edge_is_ready)
         if self.edge_is_ready():
             token = self.config_cli_token()
             if token is None:
@@ -495,10 +513,11 @@ class GoLive:
             Step(
                 "1",
                 "backup",
-                self.keycloak_answers,
+                self.database_volume_exists,
                 self.confirm_no_backup,
                 "Keycloak will hold every login. Its backup (K11b) is not built yet, so you "
-                "decide once whether to go live without one.",
+                "decide once whether to go live without one. The question is not asked again once "
+                "Keycloak's database exists.",
             ),
             Step(
                 "2",
@@ -518,7 +537,7 @@ class GoLive:
                 "that admin is deleted in step 7.",
             ),
             Step(
-                "4",
+                "4a",
                 "master on the admin entrypoint",
                 self.master_is_moved,
                 self.move_master,
@@ -527,7 +546,7 @@ class GoLive:
                 "address of the token it signs in with.",
             ),
             Step(
-                "4",
+                "4b",
                 "realms applied",
                 self.realm_import_completed,
                 self.apply_realms,
@@ -551,6 +570,29 @@ class GoLive:
                 "credential does the script delete the temporary one and its password file.",
             ),
         ]
+
+    def check(self) -> int:
+        """`--check`: exit 0 set up, 1 not set up (one line says what is missing), 2 cannot tell.
+        Reads go-live's durable trace only: it asks nothing, prints no secret, changes nothing."""
+        prefix = "keycloak/go-live --check"
+        try:
+            if not self.secrets_are_complete():
+                reason = "no secrets in ~/.secrets/keycloak; run keycloak/go-live"
+            elif self.bootstrap_present():
+                reason = (
+                    f"{BOOTSTRAP_SECRET} still exists, so steps 6-7 (retire {BOOTSTRAP_ADMIN}) "
+                    "are not done; run keycloak/go-live"
+                )
+            else:
+                self.tools.say(f"{prefix}: set up")
+                return 0
+        except DockerDidNotAnswer as failure:
+            self.tools.say(f"{prefix}: cannot tell: {self.scrubbed(str(failure))}")
+            return 2
+        except StepFailure as failure:
+            reason = self.scrubbed(str(failure))
+        self.tools.say(f"{prefix}: not set up: {reason}")
+        return 1
 
     def run(self) -> int:
         current = "start"
@@ -592,8 +634,14 @@ def main() -> int:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.parse_args()
-    return go_live.run()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="ask nothing and change nothing: exit 0 when go-live is finished, 1 when not "
+        "(one line says what is missing), 2 when Docker did not answer",
+    )
+    arguments = parser.parse_args()
+    return go_live.check() if arguments.check else go_live.run()
 
 
 if __name__ == "__main__":
