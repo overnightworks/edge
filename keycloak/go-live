@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""Keycloak go-live as one command (README "Keycloak go-live"): the operator's tool.
+
+Runs the runbook's steps 2-5 and 7 and stops for the two human parts, the browser (step 6) and
+Cloudflare (step 8). Every step checks its own done-state first, so a run after an interruption
+continues at the first unfinished step. No secret is printed: command output is captured and a
+failure shows one scrubbed line.
+
+    keycloak/go-live
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import subprocess
+import sys
+import textwrap
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+
+REPO = Path(__file__).resolve().parents[1]
+SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
+BOOTSTRAP_SECRET = "bootstrap-admin-password"
+BOOTSTRAP_ADMIN = "temp-admin"
+BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
+BOOTSTRAP_ENV = "KC_BOOTSTRAP_ADMIN_USERNAME"
+DATABASE_VOLUME = "keycloak-db"
+ADMIN_URL = "http://localhost:8090"
+EDGE_URL = "http://127.0.0.1:8081"
+MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
+MASTER_TOKEN_URL = f"{MASTER_ISSUER}/protocol/openid-connect/token"
+ADMIN_REALMS = f"{ADMIN_URL}/admin/realms"
+IMPORT_CHECKSUM_PREFIX = (
+    "de.adorsys.keycloak.config.import-checksum"  # keycloak-config-cli writes it last
+)
+PUBLIC_HOST = "auth.hallucinai.de"
+PUBLIC_REALM = "hallucinai"
+CONFIG_CLIENT = "config-cli"
+ADMIN_ROLE = "admin"
+NO_SUCH_VOLUME = "no such volume"  # docker's answer for a volume that is absent
+READY_TIMEOUT_SECONDS = 240
+LONG_COMMAND_SECONDS = 900
+SHORT_COMMAND_SECONDS = 60
+HTTP_SECONDS = 15
+POLL_SECONDS = 2
+YES = ("y", "yes")
+NO = ("n", "no")
+
+# Runs inside the keycloak container, which has bash but no curl: one plain HTTP/1.0 GET on
+# Keycloak's own port, before any Traefik entrypoint exists.
+CONTAINER_GET = (
+    "exec 3<>/dev/tcp/127.0.0.1/8080 && "
+    "printf 'GET %s HTTP/1.0\\r\\nHost: localhost:8080\\r\\n\\r\\n' \"$1\" >&3 && cat <&3"
+)
+
+# Also inside the container, for the same reason: the admin API is reachable from the host only
+# through the edge, which does not stand yet while the apply is being checked. The client secret
+# arrives on standard input, so it is in no command line.
+CONTAINER_REALM_ATTRIBUTES = (
+    "IFS= read -r KC_CLI_CLIENT_SECRET && export KC_CLI_CLIENT_SECRET && "
+    'exec /opt/keycloak/bin/kcadm.sh get "realms/$1" --no-config --server http://localhost:8080 '
+    "--realm master --client config-cli --fields attributes"
+)
+
+CLOUDFLARE_STEPS = f"""\
+Last, in Cloudflare (README, "Operator steps A8", steps 3 to 5), for {PUBLIC_HOST}:
+  3. Access app for {PUBLIC_HOST} alone, one policy: action Bypass, include Everyone.
+  4. Ingress line for {PUBLIC_HOST} ahead of the wildcard rule: no access block, service
+     {EDGE_URL}; then restart cloudflared.
+  5. DNS: the proxied * CNAME to the tunnel, if it is not there yet.
+Ready when a request without any Cloudflare cookie gets the discovery document:
+  curl -s https://{PUBLIC_HOST}/realms/{PUBLIC_REALM}/.well-known/openid-configuration \\
+    | grep -o '"issuer":"[^"]*"'
+  # "issuer":"https://{PUBLIC_HOST}/realms/{PUBLIC_REALM}"
+"""
+
+
+class StepFailure(Exception):
+    """A step cannot finish; the message says why in one line."""
+
+
+@dataclass(frozen=True)
+class Reply:
+    status: int
+    body: bytes
+
+
+def fetch(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    form: dict[str, str] | None = None,
+) -> Reply:
+    data = urlencode(form).encode() if form is not None else None
+    request = Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urlopen(request, timeout=HTTP_SECONDS) as reply:
+            return Reply(reply.status, reply.read())
+    except HTTPError as error:
+        return Reply(error.code, error.read())
+
+
+def run_command(
+    command: list[str], timeout: int, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            cwd=REPO,
+            input=stdin,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise StepFailure(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
+    except OSError as error:
+        raise StepFailure(f"cannot run {command[0]}: {error.strerror}") from error
+
+
+@dataclass(frozen=True)
+class Tools:
+    """Everything outside the script's logic: processes, HTTP, the operator, the clock."""
+
+    run: Callable[..., subprocess.CompletedProcess[str]] = run_command
+    fetch: Callable[..., Reply] = fetch
+    ask: Callable[[str], str] = input
+    say: Callable[[str], None] = print
+    sleep: Callable[[float], None] = time.sleep
+    monotonic: Callable[[], float] = time.monotonic
+
+
+@dataclass(frozen=True)
+class Step:
+    number: str  # the runbook step in the README
+    name: str
+    is_done: Callable[[], bool]
+    do: Callable[[], None]
+    why: str  # what happens now and why, in plain words: printed before the step, listed by --help
+
+
+class GoLive:
+    def __init__(self, tools: Tools, secrets_dir: Path) -> None:
+        self.tools = tools
+        self.secrets_dir = secrets_dir
+
+    # --- secrets (step 2) -----------------------------------------------------------------
+
+    def missing_secrets(self) -> list[str]:
+        return [name for name in SECRET_FILES if not (self.secrets_dir / name).exists()]
+
+    def secrets_are_complete(self) -> bool:
+        """All three, or none (to be created). Only the bootstrap file may be missing, and only
+        once the database volume exists: step 7 deletes the file, and `docker compose down`
+        leaves the database behind. On a fresh install Keycloak would set up the empty database
+        without temp-admin, which nothing recovers from. Whether temp-admin is really gone is
+        step 7's question, and a master that has not moved without the file is step 4's
+        refusal."""
+        missing = self.missing_secrets()
+        if not missing:
+            return True
+        if len(missing) == len(SECRET_FILES):
+            return False
+        if missing == [BOOTSTRAP_SECRET] and self.database_volume_exists():
+            return True
+        raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
+
+    def create_secrets(self) -> None:
+        self.secrets_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.secrets_dir.chmod(0o700)
+        for name in SECRET_FILES:
+            # O_EXCL: an existing file is never overwritten. The container users must read the
+            # file; the 0700 directory keeps everyone else out.
+            descriptor = os.open(
+                self.secrets_dir / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644
+            )
+            with os.fdopen(descriptor, "w") as secret_file:
+                os.fchmod(secret_file.fileno(), 0o644)
+                secret_file.write(secrets.token_hex(32))
+
+    def secret_values(self) -> list[str]:
+        """What can be read: a file that cannot be read cannot leak into a failure line either."""
+        values = []
+        for name in SECRET_FILES:
+            try:
+                values.append((self.secrets_dir / name).read_text().strip())
+            except OSError:
+                continue
+        return values
+
+    def scrubbed(self, text: str) -> str:
+        for value in self.secret_values():
+            text = text.replace(value, "***")
+        return text
+
+    # --- docker compose -------------------------------------------------------------------
+
+    def database_volume_exists(self) -> bool:
+        # Compose names the volume (project name, COMPOSE_PROJECT_NAME and all); ask it.
+        config = self.compose_must("config", "--format", "json")
+        volume_name = json.loads(config.stdout)["volumes"][DATABASE_VOLUME]["name"]
+        inspected = self.tools.run(
+            ["docker", "volume", "inspect", volume_name], SHORT_COMMAND_SECONDS
+        )
+        if inspected.returncode == 0:
+            return True
+        if NO_SUCH_VOLUME in inspected.stderr.lower():
+            return False
+        raise StepFailure(self.failure_line("volume inspect", inspected, tool="docker"))
+
+    def bootstrap_present(self) -> bool:
+        return (self.secrets_dir / BOOTSTRAP_SECRET).exists()
+
+    def compose(
+        self,
+        *args: str,
+        bootstrap: bool,
+        timeout: int = LONG_COMMAND_SECONDS,
+        stdin: str | None = None,
+    ):
+        command = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
+        if bootstrap:
+            command += ["--file", BOOTSTRAP_OVERLAY]
+        return self.tools.run([*command, *args], timeout, stdin)
+
+    def compose_must(
+        self, *args: str, bootstrap: bool = False, timeout: int = LONG_COMMAND_SECONDS
+    ):
+        result = self.compose(*args, bootstrap=bootstrap, timeout=timeout)
+        if result.returncode != 0:
+            raise StepFailure(self.failure_line(args[0], result))
+        return result
+
+    def failure_line(
+        self, what: str, result: subprocess.CompletedProcess[str], tool: str = "docker compose"
+    ) -> str:
+        lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
+        last = self.scrubbed(lines[-1].strip()) if lines else "no output"
+        return f"`{tool} {what}` exited {result.returncode}: {last}"
+
+    def container_get(self, path: str) -> Reply | None:
+        result = self.compose(
+            "exec", "-T", "keycloak", "bash", "-c", CONTAINER_GET, "bash", path,
+            bootstrap=False, timeout=SHORT_COMMAND_SECONDS,
+        )  # fmt: skip
+        # Text mode folds the CRLFs into newlines.
+        head, separator, body = result.stdout.partition("\n\n")
+        status_line = head.splitlines()[0].split() if head else []
+        if result.returncode != 0 or not separator or len(status_line) < 2:
+            return None
+        return Reply(int(status_line[1]), body.encode())
+
+    def keycloak_answers(self) -> bool:
+        reply = self.container_get("/realms/master")
+        return reply is not None and reply.status == 200
+
+    def master_issuer(self) -> str | None:
+        reply = self.container_get("/realms/master/.well-known/openid-configuration")
+        if reply is None or reply.status != 200:
+            return None
+        return json.loads(reply.body).get("issuer")
+
+    def keycloak_runs_with_overlay(self) -> bool:
+        container = self.compose(
+            "ps", "-q", "keycloak", bootstrap=False, timeout=SHORT_COMMAND_SECONDS
+        )
+        container_id = container.stdout.strip()
+        if container.returncode != 0 or not container_id:
+            return True
+        inspected = self.tools.run(
+            ["docker", "inspect", "--format", "{{json .Config.Env}}", container_id],
+            SHORT_COMMAND_SECONDS,
+        )
+        if inspected.returncode != 0:
+            return True
+        return any(entry.startswith(f"{BOOTSTRAP_ENV}=") for entry in json.loads(inspected.stdout))
+
+    def wait_until(self, condition: Callable[[], bool], what: str) -> None:
+        deadline = self.tools.monotonic() + READY_TIMEOUT_SECONDS
+        while not condition():
+            if self.tools.monotonic() >= deadline:
+                raise StepFailure(f"{what} not ready after {READY_TIMEOUT_SECONDS}s")
+            self.tools.sleep(POLL_SECONDS)
+
+    def edge_is_ready(self) -> bool:
+        """README "Readiness": an unknown host gets 404 on 8081, master answers on 8090."""
+        try:
+            unknown = self.tools.fetch("GET", f"{EDGE_URL}/", headers={"Host": "unknown.invalid"})
+            master = self.tools.fetch("GET", f"{ADMIN_URL}/realms/master")
+        except OSError:
+            return False
+        return unknown.status == 404 and master.status == 200
+
+    # --- steps ----------------------------------------------------------------------------
+
+    def ask_yes_no(self, question: str) -> bool:
+        while True:
+            try:
+                answer = self.tools.ask(f"{question} [yes/no] ").strip().lower()
+            except EOFError as error:
+                raise StepFailure("no answer on standard input") from error
+            if answer in YES + NO:
+                return answer in YES
+
+    def confirm_no_backup(self) -> None:
+        if not self.ask_yes_no(
+            "K11b (the Keycloak backup) has not landed. Continue without a backup?"
+        ):
+            raise StepFailure("stopped: no backup yet and you did not accept that")
+
+    def start_keycloak(self) -> None:
+        self.compose_must("up", "-d", "keycloak", bootstrap=self.bootstrap_present())
+        self.wait_until(self.keycloak_answers, "Keycloak")
+
+    def master_is_moved(self) -> bool:
+        return self.master_issuer() == MASTER_ISSUER
+
+    def move_master(self) -> None:
+        if not self.bootstrap_present():
+            raise StepFailure(f"{BOOTSTRAP_SECRET} is gone but master is not on {ADMIN_URL}")
+        self.compose_must(
+            "exec", "-T", "keycloak", "/opt/edge/admin-frontend.sh", bootstrap=True,
+            timeout=SHORT_COMMAND_SECONDS,
+        )  # fmt: skip
+
+    def apply_realms(self) -> None:
+        """First with temp-admin; once master.yaml is applied that grant demands TOTP (401), so
+        the second try signs in as the config-cli client, as every later apply does."""
+        args = ("run", "--rm", "keycloak-config-cli")
+        if self.bootstrap_present():
+            first = self.compose(*args, bootstrap=True)
+            if first.returncode == 0:
+                return
+        self.compose_must(*args)
+
+    def realm_import_completed(self) -> bool:
+        """The realm existing proves nothing: keycloak-config-cli creates it first and records its
+        import checksum as a realm attribute only after the clients, scopes and groups are in.
+        Once the edge stands, the container's own kcadm is refused (401) and the admin door is
+        the way in. The config-cli client the door needs exists only after the first apply, so a
+        refused sign-in there means the import has not completed."""
+        if self.edge_is_ready():
+            token = self.config_cli_token()
+            if token is None:
+                return False
+            attributes = self.realm_attributes_by_admin_api(token)
+        else:
+            attributes = self.realm_attributes_in_container()
+        return any(key.startswith(IMPORT_CHECKSUM_PREFIX) for key in attributes)
+
+    def realm_attributes_by_admin_api(self, token: str) -> dict[str, str]:
+        reply = self.tools.fetch(
+            "GET", f"{ADMIN_REALMS}/{PUBLIC_REALM}", headers={"Authorization": f"Bearer {token}"}
+        )
+        if reply.status == 404:
+            return {}
+        if reply.status != 200:
+            raise StepFailure(f"the admin API answered {reply.status} to GET realm {PUBLIC_REALM}")
+        return json.loads(reply.body).get("attributes", {})
+
+    def realm_attributes_in_container(self) -> dict[str, str]:
+        client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
+        reply = self.compose(
+            "exec", "-T", "keycloak", "bash", "-c", CONTAINER_REALM_ATTRIBUTES, "bash",
+            PUBLIC_REALM, bootstrap=False, timeout=SHORT_COMMAND_SECONDS,
+            stdin=client_secret + "\n",
+        )  # fmt: skip
+        if reply.returncode != 0:
+            return {}
+        return json.loads(reply.stdout).get("attributes", {})
+
+    def edge_runs_without_overlay(self) -> bool:
+        return not self.keycloak_runs_with_overlay() and self.edge_is_ready()
+
+    def start_edge(self) -> None:
+        self.compose_must("up", "-d")
+        self.compose_must("up", "-d", "--force-recreate", "socket-proxy", "traefik")
+        self.wait_until(self.edge_is_ready, "the edge")
+
+    # --- step 7: retire the bootstrap -----------------------------------------------------
+
+    def admin_call(self, token: str, method: str, path: str, realm: str = "master") -> object:
+        reply = self.tools.fetch(
+            method, f"{ADMIN_REALMS}/{realm}{path}", headers={"Authorization": f"Bearer {token}"}
+        )
+        if reply.status not in (200, 204):
+            raise StepFailure(f"the admin API answered {reply.status} to {method} {path}")
+        return json.loads(reply.body) if reply.body else None
+
+    def admin_token(self) -> str:
+        token = self.config_cli_token()
+        if token is None:
+            raise StepFailure(f"the {CONFIG_CLIENT} sign-in was refused")
+        return token
+
+    def config_cli_token(self) -> str | None:
+        """The config-cli service account holds the admin role; temp-admin's own password grant
+        demands a TOTP code since the first apply, and the script has none. None: refused."""
+        client_secret = (self.secrets_dir / "config-cli-secret").read_text().strip()
+        reply = self.tools.fetch(
+            "POST",
+            MASTER_TOKEN_URL,
+            form={
+                "grant_type": "client_credentials",
+                "client_id": CONFIG_CLIENT,
+                "client_secret": client_secret,
+            },
+        )
+        if reply.status == 401:
+            return None
+        if reply.status != 200:
+            raise StepFailure(f"the {CONFIG_CLIENT} sign-in answered {reply.status}")
+        return json.loads(reply.body)["access_token"]
+
+    def require_second_admin_with_otp(self, token: str) -> None:
+        holders = self.admin_call(token, "GET", f"/roles/{ADMIN_ROLE}/users?max=1000")
+        people = [
+            user
+            for user in holders
+            if user["username"] != BOOTSTRAP_ADMIN
+            and not user.get("serviceAccountClientId")
+            and user["enabled"]
+        ]
+        if not people:
+            raise StepFailure(
+                f"refusing to retire {BOOTSTRAP_ADMIN}: no other enabled master user has the "
+                f"realm role {ADMIN_ROLE}"
+            )
+        for person in people:
+            credentials = self.admin_call(token, "GET", f"/users/{person['id']}/credentials")
+            if any(credential["type"] == "otp" for credential in credentials):
+                return
+        names = ", ".join(person["username"] for person in people)
+        raise StepFailure(
+            f"refusing to retire {BOOTSTRAP_ADMIN}: {names} has the role {ADMIN_ROLE} "
+            "but no TOTP credential"
+        )
+
+    def bootstrap_retired(self) -> bool:
+        """Step 7 ran: the password file is gone and temp-admin no longer exists."""
+        if self.bootstrap_present():
+            return False
+        found = self.admin_call(
+            self.admin_token(), "GET", f"/users?username={quote(BOOTSTRAP_ADMIN)}&exact=true"
+        )
+        return not found
+
+    def retire_bootstrap(self) -> None:
+        if self.bootstrap_present():
+            start = (
+                f"open {ADMIN_URL}/admin/ and sign in as {BOOTSTRAP_ADMIN} (password: the file "
+                f"{self.secrets_dir / BOOTSTRAP_SECRET}; enrol TOTP when asked). Create"
+            )
+        else:
+            start = (
+                f"the {BOOTSTRAP_SECRET} file is gone, so only the second-admin check and the "
+                f"deletion of {BOOTSTRAP_ADMIN} remain. Unless your own admin is ready, open "
+                f"{ADMIN_URL}/admin/ and create"
+            )
+        self.tools.say(
+            f"Your part, in the browser: {start} your own admin in the master realm with the "
+            f"realm role {ADMIN_ROLE}, sign out, sign in as that admin, enrol TOTP and add a "
+            "passkey. It worked when that second sign-in asked for the TOTP code and the "
+            "account page lists a passkey."
+        )
+        try:
+            self.tools.ask("Press Enter when your admin has TOTP and a passkey. ")
+        except EOFError as error:
+            raise StepFailure("no answer on standard input") from error
+        token = self.admin_token()
+        self.require_second_admin_with_otp(token)
+        found = self.admin_call(
+            token, "GET", f"/users?username={quote(BOOTSTRAP_ADMIN)}&exact=true"
+        )
+        for user in found:
+            self.admin_call(token, "DELETE", f"/users/{user['id']}")
+        (self.secrets_dir / BOOTSTRAP_SECRET).unlink(missing_ok=True)
+
+    # --- the run --------------------------------------------------------------------------
+
+    def steps(self) -> list[Step]:
+        return [
+            Step(
+                "1",
+                "backup",
+                self.keycloak_answers,
+                self.confirm_no_backup,
+                "Keycloak will hold every login. Its backup (K11b) is not built yet, so you "
+                "decide once whether to go live without one.",
+            ),
+            Step(
+                "2",
+                "secrets",
+                self.secrets_are_complete,
+                self.create_secrets,
+                "Create the three random passwords Keycloak and its database need, in "
+                "~/.secrets/keycloak/. They are never printed and an existing file is never "
+                "replaced.",
+            ),
+            Step(
+                "3",
+                "keycloak start",
+                self.keycloak_answers,
+                self.start_keycloak,
+                "Start Keycloak with a temporary admin, only so the realms can be applied once; "
+                "that admin is deleted in step 7.",
+            ),
+            Step(
+                "4",
+                "master on the admin entrypoint",
+                self.master_is_moved,
+                self.move_master,
+                "Move the admin realm (master) to http://localhost:8090, the door that only this "
+                "PC can reach. The apply cannot do this itself, because the move changes the "
+                "address of the token it signs in with.",
+            ),
+            Step(
+                "4",
+                "realms applied",
+                self.realm_import_completed,
+                self.apply_realms,
+                "Apply keycloak/master.yaml and keycloak/realm.yaml: the realms are code, and this "
+                "is the first time that code becomes a running Keycloak.",
+            ),
+            Step(
+                "5",
+                "edge without the overlay",
+                self.edge_runs_without_overlay,
+                self.start_edge,
+                "Restart Keycloak without the temporary admin and start the edge (Traefik) with "
+                "both doors, then wait until it answers.",
+            ),
+            Step(
+                "6-7",
+                "bootstrap retired",
+                self.bootstrap_retired,
+                self.retire_bootstrap,
+                "You create your own admin in the browser. Only when that admin has a TOTP "
+                "credential does the script delete the temporary one and its password file.",
+            ),
+        ]
+
+    def run(self) -> int:
+        current = "start"
+        try:
+            for step in self.steps():
+                current = step.name
+                if step.is_done():
+                    continue
+                self.tools.say(f"Step {step.number}, {step.name}: {step.why}")
+                step.do()
+                self.tools.say(f"go-live: {step.name} done")
+        except StepFailure as failure:
+            self.tools.say(f"go-live FAILED at {current}: {self.scrubbed(str(failure))}")
+            return 1
+        except Exception as unexpected:  # the one boundary: a failure is a line, never a traceback
+            self.tools.say(
+                f"go-live FAILED at {current}: unexpected answer ({type(unexpected).__name__})"
+            )
+            return 1
+        except KeyboardInterrupt:
+            self.tools.say(f"go-live FAILED at {current}: interrupted")
+            return 1
+        self.tools.say("go-live: Keycloak is live on this PC.")
+        self.tools.say(CLOUDFLARE_STEPS)
+        return 0
+
+
+def main() -> int:
+    go_live = GoLive(Tools(), Path.home() / ".secrets" / "keycloak")
+    steps = "\n".join(
+        textwrap.fill(f"{step.number}. {step.name}: {step.why}", subsequent_indent="   ")
+        for step in go_live.steps()
+    )
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=(
+            f"Steps (numbers as in the README), each skipped when already done:\n{steps}\n\n"
+            f"{CLOUDFLARE_STEPS}"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args()
+    return go_live.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

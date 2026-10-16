@@ -23,6 +23,7 @@ module-name = ["edge_check", "edge_backup"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-include = ["keycloak/go-live"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
