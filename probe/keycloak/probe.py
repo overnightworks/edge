@@ -59,9 +59,6 @@ PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
 PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
 EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
-MASTER_ISSUER = f"{ADMIN_URL}/realms/master"
-MASTER_TOKEN_URL = f"{MASTER_ISSUER}/protocol/openid-connect/token"
-ADMIN_CONSOLE_REDIRECT = f"{ADMIN_URL}/admin/master/console/"
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 CONFIG_STATE_PREFIX = "de.adorsys.keycloak.config"
@@ -190,6 +187,7 @@ def claims(jwt: str) -> dict[str, Any]:
 @dataclass
 class Stack:
     scratch: Path
+    admin_url: str = ADMIN_URL
     secrets_dir: Path = field(init=False)
     config_dir: Path = field(init=False)
     # Everything a secret could leak into, for proof 7: each container's Config.Env as it was
@@ -200,6 +198,18 @@ class Stack:
     def __post_init__(self) -> None:
         self.secrets_dir = self.scratch / "secrets"
         self.config_dir = self.scratch / "config"
+
+    @property
+    def master_issuer(self) -> str:
+        return f"{self.admin_url}/realms/master"
+
+    @property
+    def master_token_url(self) -> str:
+        return f"{self.master_issuer}/protocol/openid-connect/token"
+
+    @property
+    def admin_console_redirect(self) -> str:
+        return f"{self.admin_url}/admin/master/console/"
 
     def environment(self, config_dir: Path) -> dict[str, str]:
         return {
@@ -376,16 +386,16 @@ def ports_free(*ports: int) -> list[int]:
     return taken
 
 
-def wait_until_ready() -> None:
+def wait_until_ready(admin_url: str) -> None:
     deadline = time.monotonic() + READY_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
-            if http("GET", f"{ADMIN_URL}/realms/master").status == 200:
+            if http("GET", f"{admin_url}/realms/master").status == 200:
                 return
         except OSError:
             pass
         time.sleep(2)
-    raise ProbeFailure(f"Keycloak was not ready on {ADMIN_URL} after {READY_TIMEOUT_SECONDS}s")
+    raise ProbeFailure(f"Keycloak was not ready on {admin_url} after {READY_TIMEOUT_SECONDS}s")
 
 
 # --- Admin API --------------------------------------------------------------------------------
@@ -394,10 +404,11 @@ def wait_until_ready() -> None:
 @dataclass(frozen=True)
 class Admin:
     token: str
+    admin_url: str
 
     def call(self, method: str, path: str, json_body: Any = None) -> Response:
         return http(
-            method, f"{ADMIN_URL}/admin/realms{path}", json_body=json_body, bearer=self.token
+            method, f"{self.admin_url}/admin/realms{path}", json_body=json_body, bearer=self.token
         )
 
     def get(self, path: str) -> Any:
@@ -530,12 +541,14 @@ def totp(secret: str, period_offset: int = 0) -> str:
     return f"{number % 1_000_000:06d}"
 
 
-def within_keycloak(response: Response, opener: OpenerDirector) -> Response:
+def within_keycloak(
+    response: Response, opener: OpenerDirector, admin_console_redirect: str
+) -> Response:
     """Follows Keycloak's own redirects (a required action, say) as a browser would, and stops
     at the redirect back to the admin console."""
     while response.status in (302, 303):
         location = response.headers["Location"]
-        if location.startswith(ADMIN_CONSOLE_REDIRECT):
+        if location.startswith(admin_console_redirect):
             break
         response = http("GET", location, opener=opener)
     return response
@@ -583,8 +596,8 @@ class Probe:
             "username": username,
             "password": password,
         }
-        tokens = self.tokens_from(username, http("POST", MASTER_TOKEN_URL, form=form))
-        return Admin(tokens["access_token"])
+        tokens = self.tokens_from(username, http("POST", self.stack.master_token_url, form=form))
+        return Admin(tokens["access_token"], self.stack.admin_url)
 
     def admin_with_client(self, secret: str) -> Admin:
         form = {
@@ -592,14 +605,16 @@ class Probe:
             "client_id": "config-cli",
             "client_secret": secret,
         }
-        tokens = self.tokens_from("config-cli", http("POST", MASTER_TOKEN_URL, form=form))
-        return Admin(tokens["access_token"])
+        tokens = self.tokens_from(
+            "config-cli", http("POST", self.stack.master_token_url, form=form)
+        )
+        return Admin(tokens["access_token"], self.stack.admin_url)
 
     def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
         self.stack.up(bootstrap=True)
-        wait_until_ready()
+        wait_until_ready(self.stack.admin_url)
         self.stack.move_master_to_admin_entrypoint()
         self.say("stack: up with the temporary bootstrap admin, master on the admin entrypoint")
         return self.admin_with_password(
@@ -612,7 +627,7 @@ class Probe:
         self.stack.see_running()
 
         self.stack.up("keycloak")
-        wait_until_ready()
+        wait_until_ready(self.stack.admin_url)
         # The config-cli client exists only if the fresh apply created the master configuration.
         admin = self.admin_with_client(self.secret_values["config-cli-secret"])
         expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
@@ -647,7 +662,7 @@ class Probe:
 
     def ready_line(self) -> str:
         details = {
-            "admin_url": ADMIN_URL,
+            "admin_url": self.stack.admin_url,
             "edge_url": EDGE_URL,
             "realm": REALM,
             "public_issuer": PUBLIC_ISSUER,
@@ -819,7 +834,7 @@ class Probe:
         query = urlencode(
             {
                 "client_id": "security-admin-console",
-                "redirect_uri": ADMIN_CONSOLE_REDIRECT,
+                "redirect_uri": self.stack.admin_console_redirect,
                 "response_type": "code",
                 "scope": "openid",
                 "state": secrets.token_urlsafe(8),
@@ -829,21 +844,29 @@ class Probe:
             }
         )
         login_page = http(
-            "GET", f"{MASTER_ISSUER}/protocol/openid-connect/auth?{query}", opener=opener
+            "GET", f"{self.stack.master_issuer}/protocol/openid-connect/auth?{query}", opener=opener
         )
         expect(login_page.status == 200, f"admin login page answered {login_page.status}")
         action, fields = form_with(login_page, "username")
         fields |= {"username": username, "password": password}
-        factor_page = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
+        factor_page = within_keycloak(
+            http("POST", action, form=fields, opener=opener),
+            opener,
+            self.stack.admin_console_redirect,
+        )
         expect(
             factor_page.status == 200,
             f"password step answered {factor_page.status}: {page_message(factor_page)}",
         )
         action, fields = second_factor(factor_page)
-        done = within_keycloak(http("POST", action, form=fields, opener=opener), opener)
+        done = within_keycloak(
+            http("POST", action, form=fields, opener=opener),
+            opener,
+            self.stack.admin_console_redirect,
+        )
         location = done.headers.get("Location", "")
         expect(
-            done.status == 302 and location.startswith(ADMIN_CONSOLE_REDIRECT),
+            done.status == 302 and location.startswith(self.stack.admin_console_redirect),
             f"second factor answered {done.status} without the console redirect: "
             f"{page_message(done)}",
         )
@@ -852,26 +875,30 @@ class Probe:
         token_form = {
             "grant_type": "authorization_code",
             "client_id": "security-admin-console",
-            "redirect_uri": ADMIN_CONSOLE_REDIRECT,
+            "redirect_uri": self.stack.admin_console_redirect,
             "code": code,
             "code_verifier": verifier,
         }
         return self.tokens_from(
-            holder, http("POST", MASTER_TOKEN_URL, form=token_form, opener=opener)
+            holder, http("POST", self.stack.master_token_url, form=token_form, opener=opener)
         )
 
     def admin_console_only_on_loopback(self, admin: Admin) -> None:
-        master_discovery = http("GET", f"{MASTER_ISSUER}/.well-known/openid-configuration")
+        master_discovery = http(
+            "GET", f"{self.stack.master_issuer}/.well-known/openid-configuration"
+        )
         expect(
             master_discovery.status == 200, f"master discovery answered {master_discovery.status}"
         )
         issuer = master_discovery.json()["issuer"]
-        expect(issuer == MASTER_ISSUER, f"master issuer is {issuer}")
-        foreign_host = http("GET", f"{ADMIN_URL}/realms/hallucinai/", headers={"Host": PUBLIC_HOST})
+        expect(issuer == self.stack.master_issuer, f"master issuer is {issuer}")
+        foreign_host = http(
+            "GET", f"{self.stack.admin_url}/realms/hallucinai/", headers={"Host": PUBLIC_HOST}
+        )
         expect(
             foreign_host.status == 404, f"8090 with the public host answered {foreign_host.status}"
         )
-        encoded = http("GET", f"{ADMIN_URL}/admin%2Fmaster/console/")
+        encoded = http("GET", f"{self.stack.admin_url}/admin%2Fmaster/console/")
         expect(encoded.status == 400, f"an encoded slash on 8090 answered {encoded.status}")
 
         password = self.keep_secret("probe-admin password", secrets.token_urlsafe(16))
@@ -880,7 +907,7 @@ class Probe:
         admin.must("POST", f"/master/users/{admin_id}/role-mappings/realm", [admin_role])
         password_only = http(
             "POST",
-            MASTER_TOKEN_URL,
+            self.stack.master_token_url,
             form={
                 "grant_type": "password",
                 "client_id": "admin-cli",
@@ -903,7 +930,7 @@ class Probe:
             "probe-admin console", "probe-admin", password, enrol_totp
         )
         first = claims(first_login["access_token"])
-        expect(first["iss"] == MASTER_ISSUER, f"admin token issuer is {first['iss']}")
+        expect(first["iss"] == self.stack.master_issuer, f"admin token issuer is {first['iss']}")
 
         def answer_otp(page: Response) -> tuple[str, dict[str, str]]:
             action, fields = form_with(page, "otp")
@@ -915,7 +942,10 @@ class Probe:
             "probe-admin second console", "probe-admin", password, answer_otp
         )
         second = claims(second_login["access_token"])
-        expect(second["iss"] == MASTER_ISSUER, f"second admin token issuer is {second['iss']}")
+        expect(
+            second["iss"] == self.stack.master_issuer,
+            f"second admin token issuer is {second['iss']}",
+        )
         self.held(
             "2b",
             f"on localhost:8090 the master issuer is {issuer}; a new admin's admin-cli password "
@@ -1075,15 +1105,20 @@ class StopHolding(Exception):
 
 
 def stop_as_failure(signum: int, _frame: object) -> None:
+    ignore_stop_signals()
     raise ProbeFailure(f"stopped by {signal.Signals(signum).name}")
 
 
 def stop_holding(_signum: int, _frame: object) -> None:
+    ignore_stop_signals()
     raise StopHolding
 
 
 def ignore_stop_signals() -> None:
-    """Ends the stop signals' effect; blocked meanwhile, so none can raise between the two."""
+    """Ends the stop signals' effect; blocked meanwhile, so none can raise between the two.
+
+    The stop handlers call it before they raise, so only the first stop signal acts and the
+    teardown that follows cannot be interrupted by a second one."""
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
     try:
         for stopping in STOP_SIGNALS:
@@ -1117,6 +1152,9 @@ def main() -> int:
         help="run: the proofs (default); hold: keep the stack up for another repository's proof",
     )
     parser.add_argument("--scratch", type=Path, required=True, help="an empty or new directory")
+    parser.add_argument(
+        "--admin-url", default=ADMIN_URL, help="where Keycloak's admin port answers (default)"
+    )
     arguments = parser.parse_args()
     scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
@@ -1125,7 +1163,7 @@ def main() -> int:
     if taken:
         print(f"probe refused: 127.0.0.1 port(s) {taken} in use; stop the live edge first")
         return PORT_TAKEN_EXIT
-    stack = Stack(scratch)
+    stack = Stack(scratch, arguments.admin_url)
     # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
     # below still runs and the probe ends with its one FAILED line.
     for stopping in STOP_SIGNALS:

@@ -73,6 +73,7 @@ class DockerHost:
 
     def __init__(self, directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.state_file = directory / "docker-state.json"
+        self.admin_url = ""  # set where a fake Keycloak answers, for the hold tests
         self.configure(containers=[], one_offs=[])
         executables = directory / "bin"
         executables.mkdir()
@@ -175,7 +176,7 @@ def run_main(
                 os.kill(os.getpid(), run_signal)
 
     class FakeStack:
-        def __init__(self, _scratch: Path) -> None: ...
+        def __init__(self, _scratch: Path, _admin_url: str) -> None: ...
 
         def down(self) -> bool:
             if down_signal:
@@ -309,23 +310,25 @@ class KeycloakAnswers(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def fake_keycloak() -> Iterator[None]:
-    server = ThreadingHTTPServer(("127.0.0.1", 8090), KeycloakAnswers)
+def fake_keycloak() -> Iterator[str]:
+    """Keycloak on an ephemeral port; yields the admin URL the probe is told to use."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), KeycloakAnswers)
     # Threads inherit the signal mask; a server thread must not take a stop signal meant for main.
     stop_signals = {signal.SIGTERM, signal.SIGINT}
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     signal.pthread_sigmask(signal.SIG_SETMASK, previous)
-    yield
+    yield f"http://127.0.0.1:{server.server_port}"
     server.shutdown()
     server.server_close()
 
 
 @pytest.fixture
 def hold_host(
-    docker_host: DockerHost, fake_keycloak: None, restored_signal_handlers: None
+    docker_host: DockerHost, fake_keycloak: str, restored_signal_handlers: None
 ) -> DockerHost:
     """The host a hold runs on: fake docker, a Keycloak that answers, signal handlers restored."""
+    docker_host.admin_url = fake_keycloak
     return docker_host
 
 
@@ -333,11 +336,16 @@ def run_hold(
     probe: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     scratch: Path,
+    hold_host: DockerHost,
     *,
     while_ready_is_written: signal.Signals | None = None,
     after_ready: signal.Signals | None = None,
 ) -> int:
-    monkeypatch.setattr(sys, "argv", ["probe.py", "hold", "--scratch", str(scratch)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["probe.py", "hold", "--scratch", str(scratch), "--admin-url", hold_host.admin_url],
+    )
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
     monkeypatch.setattr(probe, "ports_free", lambda *_: [])
     if while_ready_is_written:
@@ -358,12 +366,12 @@ def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
 ) -> None:
     """#21 D1a: hold prints one READY line naming the secret file, never the secret value."""
     scratch = tmp_path / "s"
-    run_hold(probe, monkeypatch, scratch)
+    run_hold(probe, monkeypatch, scratch, hold_host)
 
     output = capsys.readouterr().out
     [ready] = ready_lines(output)
     assert json.loads(ready.removeprefix("READY ")) == {
-        "admin_url": "http://localhost:8090",
+        "admin_url": hold_host.admin_url,
         "edge_url": "http://127.0.0.1:8081",
         "realm": "hallucinai",
         "public_issuer": "https://auth.hallucinai.de/realms/hallucinai",
@@ -386,7 +394,7 @@ def test_hold_ends_normally_when_told_to_stop_after_ready(
     ending: signal.Signals | None,
 ) -> None:
     """#21 D1a: SIGTERM, SIGINT or stdin EOF after READY tears down, prints HOLD ENDED, exits 0."""
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", after_ready=ending)
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", hold_host, after_ready=ending)
 
     lines = capsys.readouterr().out.splitlines()
     assert exit_code == 0
@@ -404,7 +412,7 @@ def test_hold_stopped_by_a_signal_before_ready_tears_down_and_fails(
     """#21 D1a: a stop signal before READY tears down and ends with PROBE FAILED, exit 1."""
     hold_host.configure(signal_parent_on_run="SIGTERM")
 
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s")
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", hold_host)
 
     lines = capsys.readouterr().out.splitlines()
     assert exit_code == 1
@@ -425,7 +433,9 @@ def test_hold_stopped_while_ready_is_written_still_ends_normally(
     stop_signal: signal.Signals,
 ) -> None:
     """#21 D1a: a stop signal arriving as READY is flushed is a stop: HOLD ENDED, exit 0."""
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", while_ready_is_written=stop_signal)
+    exit_code = run_hold(
+        probe, monkeypatch, tmp_path / "s", hold_host, while_ready_is_written=stop_signal
+    )
 
     lines = capsys.readouterr().out.splitlines()
     assert exit_code == 0
@@ -456,7 +466,9 @@ def test_hold_stopped_again_between_ignoring_the_two_stop_signals_still_tears_do
 
     sys.setprofile(sigint_once_sigterm_is_ignored)
     try:
-        exit_code = run_hold(probe, monkeypatch, tmp_path / "s", after_ready=signal.SIGTERM)
+        exit_code = run_hold(
+            probe, monkeypatch, tmp_path / "s", hold_host, after_ready=signal.SIGTERM
+        )
     finally:
         sys.setprofile(None)
 
@@ -479,7 +491,7 @@ def test_hold_whose_teardown_leaves_the_stack_after_ready_fails(
     """#21 D1a: a teardown that leaves the stack after READY is PROBE FAILED, exit 1."""
     hold_host.configure(apply_lands_during_down=True)
 
-    exit_code = run_hold(probe, monkeypatch, tmp_path / "s")
+    exit_code = run_hold(probe, monkeypatch, tmp_path / "s", hold_host)
 
     last_line = capsys.readouterr().out.splitlines()[-1]
     assert exit_code == 1
@@ -528,3 +540,35 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         FRESH_APPLY_LINE,
         "PROOF 3a",
     ]
+
+
+def test_hold_stopped_again_as_the_teardown_is_entered_still_tears_down(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hold_host: DockerHost,
+) -> None:
+    """#21 D1a: a second stop signal as the stop handling starts cannot skip the teardown."""
+    sent = []
+
+    def sigint_on_first_call_of_ignoring(frame: FrameType, event: str, _arg: object) -> None:
+        if event == "call" and frame.f_code is probe.ignore_stop_signals.__code__ and not sent:
+            sent.append(signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)
+
+    sys.setprofile(sigint_on_first_call_of_ignoring)
+    try:
+        exit_code = run_hold(
+            probe, monkeypatch, tmp_path / "s", hold_host, after_ready=signal.SIGTERM
+        )
+    finally:
+        sys.setprofile(None)
+
+    assert sent
+    assert exit_code == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == [
+        "teardown: stack edge-kc-probe removed",
+        "HOLD ENDED",
+    ]
+    assert hold_host.containers == set()
