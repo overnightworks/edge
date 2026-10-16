@@ -121,9 +121,9 @@ REFERENCES = {
 }
 
 
-def run_check(root: Path) -> subprocess.CompletedProcess[str]:
+def run_check(root: Path, script: Path = CHECK) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["uv", "run", "--no-build", "--script", str(CHECK), str(root)],
+        ["uv", "run", "--locked", "--no-build", "--script", str(script), str(root)],
         capture_output=True,
         text=True,
     )
@@ -157,3 +157,15 @@ def test_the_repository_files_pass() -> None:
     result = run_check(ROOT)
 
     assert result.returncode == 0, result.stdout
+
+
+def test_a_stale_script_lock_fails_the_check_and_stays_unwritten(tmp_path: Path) -> None:
+    script = tmp_path / CHECK.name
+    lock = tmp_path / f"{CHECK.name}.lock"
+    script.write_text(CHECK.read_text().replace('">=3.12"', '">=3.11"'))
+    lock.write_text(CHECK.with_name(lock.name).read_text())
+
+    result = run_check(tmp_path, script)
+
+    assert result.returncode != 0
+    assert lock.read_text() == CHECK.with_name(lock.name).read_text()

@@ -461,7 +461,9 @@ CI's step "No secret in any file" runs gitleaks for literal-looking secrets and
 list style alike): a value whose key ends in `secret` or `password` in
 `keycloak/*.yaml` must be a `$(env:…)` reference, and a `PASSWORD`/`SECRET`
 environment entry in any compose file Compose may load (`compose*.yaml`,
-`docker-compose*.yml`, overlays included) must be a `_FILE` path.
+`docker-compose*.yml`, overlays included) must be a `_FILE` path. The script's dependencies are locked in
+`keycloak/secret-check/secret_check.py.lock`; after changing them run
+`uv lock --script keycloak/secret-check/secret_check.py` (not `uv lock`).
 
 ### Start and apply
 
