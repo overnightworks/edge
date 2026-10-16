@@ -3,6 +3,9 @@
 import re
 import shutil
 import subprocess
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -82,3 +85,32 @@ def require_pinned_version(tofu: Path, environment: dict[str, str]) -> None:
     found = match.group(1) if match else None
     if reported.exit_code != 0 or found != pinned:
         raise TofuError(f"tofu is {found or 'of unknown version'}, the pin is {pinned}")
+
+
+@dataclass(frozen=True)
+class Session:
+    tofu: Path
+    environment: dict[str, str]
+
+
+@contextmanager
+def session(home: Path, token_values: dict[str, str]) -> Iterator[Session]:
+    """The pinned, initialised tofu with its allowlisted environment; TMPDIR lives as long."""
+    tofu_path = locate_tofu()
+    with secrets.private_temporary_directory(home) as temporary_directory:
+        environment = secrets.child_environment(
+            tofu=tofu_path,
+            home=home,
+            temporary_directory=temporary_directory,
+            tofurc=TOFURC,
+            secrets=token_values,
+        )
+        try:
+            require_pinned_version(tofu_path, environment)
+        except TofuError as error:
+            raise TofuError(secrets.redact(str(error), token_values)) from None
+        init = run(tofu_path, init_arguments(home), environment)
+        if init.exit_code != 0:
+            print(secrets.redact(init.output, token_values), file=sys.stderr)
+            raise TofuError("tofu init failed")
+        yield Session(tofu_path, environment)

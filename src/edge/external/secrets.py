@@ -1,12 +1,12 @@
-"""The token files `plan` reads, and the allowlisted environment that carries them to tofu."""
+"""The token files `plan` and `apply` read and the allowlisted environment that carries them."""
 
 import os
 import shutil
-import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 SECRETS_DIRECTORY = ".secrets"
@@ -22,21 +22,36 @@ class SecretFile:
     variable: str
 
 
-SECRET_FILES = (
-    SecretFile(Path(SECRETS_DIRECTORY) / "cloudflare" / "fleet-read", "CLOUDFLARE_API_TOKEN"),
-    SecretFile(Path(SECRETS_DIRECTORY) / "github" / "fleet-read", "GITHUB_TOKEN"),
-    SecretFile(OPENTOFU_DIRECTORY / "state-passphrase", "TF_VAR_state_passphrase"),
-)
+_STATE_PASSPHRASE = SecretFile(OPENTOFU_DIRECTORY / "state-passphrase", "TF_VAR_state_passphrase")
+
+
+class Access(Enum):
+    """`plan` reads with the read tokens; only `apply` is given the write tokens."""
+
+    READ = "fleet-read"
+    WRITE = "fleet-write"
+
+    @property
+    def secret_files(self) -> tuple[SecretFile, ...]:
+        secrets_root = Path(SECRETS_DIRECTORY)
+        return (
+            SecretFile(secrets_root / "cloudflare" / self.value, "CLOUDFLARE_API_TOKEN"),
+            SecretFile(
+                secrets_root / "github" / ("fleet-admin" if self is Access.WRITE else self.value),
+                "GITHUB_TOKEN",
+            ),
+            _STATE_PASSPHRASE,
+        )
 
 
 class SecretFileError(Exception):
     """A token file is missing or empty; the message names the file, never its content."""
 
 
-def read_secrets(home: Path) -> dict[str, str]:
+def read_secrets(home: Path, access: Access) -> dict[str, str]:
     """Variable name to value; a missing file stops the run so no provider falls back to `gh`."""
     values = {}
-    for secret_file in SECRET_FILES:
+    for secret_file in access.secret_files:
         path = home / secret_file.relative_path
         try:
             value = path.read_text().strip()
@@ -55,10 +70,13 @@ def private_temporary_directory(home: Path) -> Iterator[Path]:
     parent = home / TOFU_TEMPORARY_PARENT
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(dir=parent))
+    in_flight: BaseException | None = None
     try:
         yield directory
+    except BaseException as error:
+        in_flight = error
+        raise
     finally:
-        in_flight = sys.exception()
         try:
             shutil.rmtree(directory)
         except OSError as cleanup_failure:
