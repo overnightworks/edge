@@ -1,4 +1,4 @@
-"""The structural secret check refuses a literal in every YAML style, and passes the real files."""
+"""The structural secret check refuses a literal in every YAML style, passes the real files, and refuses a stale script lock."""
 
 import subprocess
 from pathlib import Path
@@ -160,6 +160,7 @@ def test_the_repository_files_pass() -> None:
 
 
 def test_a_stale_script_lock_fails_the_check_and_stays_unwritten(tmp_path: Path) -> None:
+    """defect:#12 - a script lock out of step with its script must fail, not be rewritten."""
     script = tmp_path / CHECK.name
     lock = tmp_path / f"{CHECK.name}.lock"
     script.write_text(CHECK.read_text().replace('">=3.12"', '">=3.11"'))
@@ -168,4 +169,5 @@ def test_a_stale_script_lock_fails_the_check_and_stays_unwritten(tmp_path: Path)
     result = run_check(tmp_path, script)
 
     assert result.returncode != 0
+    assert "--locked" in result.stderr
     assert lock.read_text() == CHECK.with_name(lock.name).read_text()
