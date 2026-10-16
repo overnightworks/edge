@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from home_tools import secrets_view, tidy_home
+from home_tools import hook_check, secrets_view, tidy_home
 from home_tools.report import findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe
 from home_tools.tidy_home import CommandRunner, Config, Layout
@@ -68,8 +68,17 @@ def _secrets_check(ctx: CheckContext) -> CheckFindings:
     return report, frozenset(finding.identity for finding in view.findings)
 
 
+def _hook_check(ctx: CheckContext) -> CheckFindings:
+    findings, report = hook_check.inspect(ctx.layout, ctx.run, ctx.now)
+    return report, frozenset(finding.identity for finding in findings)
+
+
 # The one place a check gets its name; the name prefixes every remembered finding identity.
-CHECKS: tuple[tuple[str, Callable[[CheckContext], CheckFindings]], ...] = (("tidy", _tidy_check), ("secrets", _secrets_check))
+CHECKS: tuple[tuple[str, Callable[[CheckContext], CheckFindings]], ...] = (
+    ("tidy", _tidy_check),
+    ("secrets", _secrets_check),
+    ("hook", _hook_check),
+)
 CHECK_FAILED_IDENTITY = "check-failed"
 
 

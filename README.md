@@ -18,7 +18,7 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 ```
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
-`home tidy` und die Ansicht von `home secrets` — und schreibt einen gemeinsamen
+`home tidy`, die Ansicht von `home secrets` und die Hook-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`. Eine
 Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
 wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
@@ -52,6 +52,40 @@ lesen darf), steht an ihrer Stelle eine Zeile „Prüfung secrets fehlgeschlagen
 (…)“, die Funde der anderen Prüfung bleiben im Bericht, die Benachrichtigung
 geht trotzdem raus, und der Lauf endet mit Exit-Code `3` — bei einem
 ungültigen Geheimnis-Manifest mit `2`, und stderr nennt Datei und Schlüssel.
+
+### Die Prüfung `hook`
+
+Git lässt einen Commit ungescannt durch, wenn der Hook-Pfad abdriftet. Die
+Prüfung `hook` fragt `setup.py` nach dem Soll und meldet je Fund die
+Korrektur:
+
+- **Hook greift nicht.** In jedem Repository unter `~/git` und jedem seiner
+  registrierten Worktrees (auch außerhalb von `~/git`) muss das wirksame
+  `core.hooksPath` das Hook-Verzeichnis sein und aus der globalen Config selbst
+  stammen (`~/.gitconfig` oder `$XDG_CONFIG_HOME/git/config`). Der Ursprung entscheidet,
+  nicht der Scope: lokale Config, Worktree-Config, System-Datei, `include` und
+  `includeIf` sind Funde, ebenso ein ungesetzter Wert. Die Korrektur nennt den
+  passenden Weg (`git config --local --unset`, `--worktree --unset`, die
+  genannte Datei bearbeiten oder `home setup --apply`).
+- **Hook-Datei falsch.** `pre-commit` oder `pre-merge-commit` fehlt, hat nicht den Modus 755
+  oder weicht vom gerenderten Text ab (`home setup --apply`).
+- **quality nicht wie festgelegt.** `~/.local/bin/quality` fehlt, ist nicht ausführbar oder uv hat
+  nicht `QUALITY_SOURCE` aufgezeichnet (`home setup --apply`).
+- **Engines.** `quality engines verify` scheitert (`home setup --apply`).
+- **Verdeckter Repository-Hook.** `.git/hooks` enthält eine Datei außer
+  `*.sample`, `pre-commit` und `pre-merge-commit`; der globale Pfad verdeckt sie.
+
+Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt:
+
+- ein einzelner Befehl mit `-c core.hooksPath=…`, `GIT_CONFIG_PARAMETERS`,
+  `GIT_CONFIG_COUNT` oder `GIT_CONFIG_GLOBAL`;
+- `--no-verify`;
+- Repositories außerhalb von `~/git`;
+- ein `includeIf "onbranch:…"`, das nur für den Branch gilt, der beim Lauf von
+  `home check` ausgecheckt ist.
+
+Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
+zerbrochen, nie als sauber.
 
 ## home secrets
 

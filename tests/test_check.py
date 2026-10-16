@@ -8,13 +8,40 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import FakeProbe
+from conftest import FakeProbe, RecordingRunner, Sandbox
 
 from home_tools import cli
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
-from home_tools.tidy_home import Layout
+from home_tools.tidy_home import Layout, run_command
 
 READY_DEADLINE_SECONDS = 30  # a pass returns at once; the deadline only bounds a hang under load
+
+
+@pytest.fixture
+def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
+    """The conftest's clean home, inside the sandbox's HOME so that `home setup` can install the hook there."""
+    return furnish_clean_home(sandbox.home)
+
+
+class RunnerWithRealGitAndQuality(RecordingRunner):
+    """The hook check reads git and the stub quality, so these two run for real; every other tool stays as in RecordingRunner."""
+
+    def __call__(self, argv):
+        if Path(argv[0]).name in {"git", "quality"}:
+            self.calls.append(list(argv))
+            return run_command(argv)
+        return super().__call__(argv)
+
+
+@pytest.fixture
+def runner() -> RunnerWithRealGitAndQuality:
+    return RunnerWithRealGitAndQuality()
+
+
+@pytest.fixture(autouse=True)
+def hook_installed(sandbox: Sandbox, clean_home: Path) -> None:
+    """These tests are about the check's reporting and news; a set-up hook keeps its check clean (its own tests: test_hook_check.py)."""
+    assert cli.main(["setup", "--apply"], home=clean_home) == 0
 
 
 def home_check(home: Path, runner, probe: FakeProbe | None = None) -> int:
@@ -312,7 +339,8 @@ def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone
 
     unchanged = f"0 neu, 0 weg. Bericht: {Layout(clean_home).check_report_file}"
     assert broken_codes == [3, 3]
-    assert runner.notifications[1].endswith("| 1 Fund | fehlgeschlagen: tidy")
+    # the locked ~/git also stops the hook check from scanning
+    assert runner.notifications[1].endswith("| 1 Fund | fehlgeschlagen: tidy, hook")
     assert runner.notification_bodies[0] != unchanged
     assert runner.notification_bodies[1:] == [unchanged, unchanged]  # one for the break, one for the recovery
 

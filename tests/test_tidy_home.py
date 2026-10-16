@@ -446,7 +446,7 @@ def test_worktrees_with_closed_issues_or_no_registration_are_reported(layout: La
         wt.mkdir(parents=True)
 
     def registered(argv):
-        return "\n".join(f"worktree {p.resolve()}" for p in (repo, closed, open_))
+        return "\0".join(f"worktree {p.resolve()}" for p in (repo, closed, open_))
 
     def issue_state(_repo: Path, number: int) -> str:
         return {461: "CLOSED", 689: "OPEN"}[number]

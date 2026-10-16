@@ -578,7 +578,7 @@ def unknown_home_entries(layout: Layout) -> list[Finding]:
     ]
 
 
-def _is_git_repo(path: Path) -> bool:
+def is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
@@ -586,10 +586,10 @@ def git_root_litter(layout: Layout) -> list[Finding]:
     """git/ holds repos and <repo>-worktrees, nothing else."""
     findings: list[Finding] = []
     for entry in sorted(layout.git.iterdir()) if layout.git.is_dir() else []:
-        if _is_git_repo(entry):
+        if is_git_repo(entry):
             continue
         owner = layout.git / entry.name.removesuffix("-worktrees")
-        if entry.name.endswith("-worktrees") and _is_git_repo(owner):
+        if entry.name.endswith("-worktrees") and is_git_repo(owner):
             continue
         findings.append(
             Finding(
@@ -604,9 +604,9 @@ def git_root_litter(layout: Layout) -> list[Finding]:
     return findings
 
 
-def _registered_worktrees(repo: Path, run: CommandRunner) -> set[Path]:
-    listing = run(["git", "-C", str(repo), "worktree", "list", "--porcelain"]) or ""
-    return {Path(line.removeprefix("worktree ")).resolve() for line in listing.splitlines() if line.startswith("worktree ")}
+def registered_worktrees(repo: Path, run: CommandRunner) -> set[Path]:
+    listing = run(["git", "-C", str(repo), "worktree", "list", "--porcelain", "-z"]) or ""
+    return {Path(field.removeprefix("worktree ")).resolve() for field in listing.split("\0") if field.startswith("worktree ")}
 
 
 def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandRunner) -> list[Finding]:
@@ -615,7 +615,7 @@ def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandR
     recommendation = "Claim freigeben, dann `git worktree remove`"
     for container in sorted(layout.git.glob("*-worktrees")) if layout.git.is_dir() else []:
         repo = layout.git / container.name.removesuffix("-worktrees")
-        registered = _registered_worktrees(repo, run)
+        registered = registered_worktrees(repo, run)
         for worktree in sorted(p for p in container.iterdir() if p.is_dir()):
             if worktree.resolve() not in registered:
                 findings.append(

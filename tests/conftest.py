@@ -75,14 +75,22 @@ def plant_secrets(home: Path) -> None:
 
 
 @pytest.fixture
-def clean_home(tmp_path: Path, use_manifest: Callable[[str], Path]) -> Path:
-    """A home with nothing to report: the README knows every entry and every secret of the test manifest is in place."""
-    use_manifest(TEST_MANIFEST)
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / "README.md").write_text(HOME_README)
-    plant_secrets(home)
-    return home
+def furnish_clean_home(use_manifest: Callable[[str], Path]) -> Callable[[Path], Path]:
+    """Makes a home directory one with nothing to report: the README knows every entry and every secret of the test manifest is in place."""
+
+    def furnish(home: Path) -> Path:
+        use_manifest(TEST_MANIFEST)
+        home.mkdir(exist_ok=True)
+        (home / "README.md").write_text(HOME_README)
+        plant_secrets(home)
+        return home
+
+    return furnish
+
+
+@pytest.fixture
+def clean_home(tmp_path: Path, furnish_clean_home: Callable[[Path], Path]) -> Path:
+    return furnish_clean_home(tmp_path / "home")
 
 
 @pytest.fixture
