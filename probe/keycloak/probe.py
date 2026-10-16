@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import contextlib
 import grp
 import hashlib
 import hmac
@@ -1087,16 +1086,15 @@ def keep_stack_until_told_to_stop(ready_line: str) -> None:
     """Prints the READY line, then blocks until SIGTERM, SIGINT or EOF on stdin."""
     # A signal that arrives while the handler is swapped waits until READY is out, so one
     # before READY is a failure and one after it is a stop, never the other way round.
-    # Unblocking delivers a pending signal inside pthread_sigmask, so it sits under the suppress.
+    # Unblocking delivers a pending signal inside pthread_sigmask; main ends the hold on it.
     signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
-    with contextlib.suppress(StopHolding):
-        try:
-            for stopping in STOP_SIGNALS:
-                signal.signal(stopping, stop_holding)
-            print(ready_line, flush=True)
-        finally:
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
-        sys.stdin.read()
+    try:
+        for stopping in STOP_SIGNALS:
+            signal.signal(stopping, stop_holding)
+        print(ready_line, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
+    sys.stdin.read()
 
 
 def main() -> int:
@@ -1128,7 +1126,7 @@ def main() -> int:
     try:
         getattr(probe, method_name)()
     except StopHolding:
-        pass  # a second stop signal before the handlers are ignored is still the normal end
+        pass  # any stop signal after READY, however late, is the normal end of a hold
     except ProbeFailure as failure:
         failures.append(str(failure))
     finally:
