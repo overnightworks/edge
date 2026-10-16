@@ -324,13 +324,13 @@ def test_every_compose_call_names_the_keycloak_profile(go_live, keycloak):
     """#54 rule 2: the services live behind the profile, so no call may leave it out."""
     go_live.run()
 
-    profiles = [
-        command[command.index("--profile") + 1] if "--profile" in command else None
-        for command in keycloak.commands
-        if command[:2] == ["docker", "compose"]
+    compose_commands = [
+        command for command in keycloak.commands if command[:2] == ["docker", "compose"]
     ]
-    assert profiles
-    assert set(profiles) == {"keycloak"}
+    assert compose_commands
+    for command in compose_commands:
+        profiles = {command[at + 1] for at, word in enumerate(command) if word == "--profile"}
+        assert profiles == {"keycloak"}
 
 
 def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):
