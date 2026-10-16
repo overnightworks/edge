@@ -59,9 +59,6 @@ jobs:
           docker compose config -q
           docker compose --profile step-ca config -q
           docker compose --profile probe config -q
-          # A plain `docker compose up -d` (keycloak/go-live) must start neither the CA nor the
-          # gateway: both need secret files that only step-ca/init creates.
-          ! docker compose config --services | grep -xE 'step-ca|traefik-mcp|traefik-mcp-acme-owner'
           docker compose --profile step-ca config --services | grep -x step-ca
           docker compose --profile step-ca config --services | grep -x traefik-mcp
           docker compose --profile step-ca config --services | grep -x traefik-mcp-acme-owner

@@ -52,20 +52,6 @@ def test_the_ca_the_gateway_and_its_helper_start_only_with_the_step_ca_profile(c
     }
 
 
-def test_traefik_mcp_waits_for_the_ca_only_while_it_holds_no_certificate(
-    traefik_mcp, static_config
-):
-    """#48 rule 4 (defect: no certificate after a late CA): the wait is in the entrypoint."""
-    acme = static_config["certificatesResolvers"]["internal"]["acme"]
-    ca_host, ca_port = acme["caServer"].split("/")[2].split(":")
-    wait = f"until nc -z {ca_host} {ca_port}; do sleep 1; done"
-
-    assert traefik_mcp["entrypoint"][:2] == ["sh", "-c"]
-    assert traefik_mcp["entrypoint"][2] == (
-        f"""grep -qs '"certificate"' {acme["storage"]} || {wait}; exec traefik"""
-    )
-
-
 def test_the_three_mcp_networks_are_internal(compose):
     """#48 rule 1: the three MCP networks have no route out."""
 

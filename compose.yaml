@@ -205,7 +205,13 @@ services:
     entrypoint:
       - sh
       - -c
-      - grep -qs '"certificate"' /acme/acme.json || until nc -z step-ca 9000; do sleep 1; done; exec traefik
+      - |
+        trap 'exit 143' TERM
+        grep -qs '"certificate"' /acme/acme.json || {
+          echo 'traefik-mcp: waiting for step-ca:9000' >&2
+          until nc -z step-ca 9000; do sleep 1; done
+        }
+        exec traefik
     depends_on:
       step-ca: {condition: service_started}
       traefik-mcp-acme-owner: {condition: service_completed_successfully}
