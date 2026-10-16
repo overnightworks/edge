@@ -3,7 +3,8 @@
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
 2 cannot plan. A unit is a compose profile: on starts its services, off removes their containers.
 Volumes are never touched, and no key material is made here: a unit that needs a setup is
-refused until its setup command says `--check` passes.
+refused until its setup command says `--check` passes. A unit with an emergency switch
+(`edge stop`) is never started and its switch is never cleared here: only `edge start` ends it.
 """
 
 import subprocess
@@ -14,7 +15,7 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, compose, terminal
+from edge import catalog, compose, switches, terminal
 
 COMMAND = "edge apply --closed"
 SETUP_CHECK_SECONDS = 300
@@ -29,6 +30,7 @@ class ApplyExit(IntEnum):
 class Action(StrEnum):
     ON = "on"
     OFF = "off"
+    STAYS_STOPPED = "stays stopped"
 
 
 class SetupCheckExit(IntEnum):
@@ -42,12 +44,36 @@ class UnitPlan:
     action: Action
     services: tuple[str, ...]
     volumes: tuple[str, ...]
+    switched_off_since: str | None = None
 
     def describe(self) -> str:
         touched = f"services {', '.join(self.services)}"
+        if self.action is Action.STAYS_STOPPED:
+            return f"{self.unit.key} stays stopped (switch since {self._since()})"
         if self.action is Action.OFF:
-            return f"{self.unit.key}: off ({touched}; volumes {', '.join(self.volumes)} stay)"
+            line = f"{self.unit.key}: off ({touched}; volumes {', '.join(self.volumes)} stay)"
+            if self.switched_off_since:
+                line += f"; its switch since {self._since()} stays"
+            return line
         return f"{self.unit.key}: on ({touched})"
+
+    def _since(self) -> str:
+        return switches.describe_since(self.switched_off_since or "")
+
+
+@dataclass(frozen=True)
+class Fleet:
+    """What `fleet.yaml` and Compose say about this repository's units."""
+
+    config: Mapping[str, Any]
+    profile_services: Mapping[str, tuple[str, ...]]
+    units: tuple[catalog.Unit, ...]
+
+
+def read_fleet(engine: compose.Compose, repository: Path) -> Fleet:
+    config = engine.resolved_configuration()
+    profile_services = compose.profile_services(config)
+    return Fleet(config, profile_services, catalog.load(repository, profile_services))
 
 
 class SetupUnclear(Exception):
@@ -68,12 +94,20 @@ def plan_switches(
     profile_services: Mapping[str, tuple[str, ...]],
     config: Mapping[str, Any],
     states: Mapping[str, set[str]],
+    switched_off: Mapping[str, str],
 ) -> list[UnitPlan]:
-    """What each unit needs to become what the catalog says; a unit already so is left out."""
+    """What each unit needs to become what the catalog says; a unit already so is left out.
+
+    `switched_off` maps a unit to the time of its switch: that unit is never started, and an
+    enabled one is listed as staying stopped.
+    """
     plans = []
     for unit in units:
         services = profile_services[unit.key]
-        if unit.enabled and not compose.is_up(states, config, services):
+        since = switched_off.get(unit.key)
+        if unit.enabled and since:
+            action = Action.STAYS_STOPPED
+        elif unit.enabled and not compose.is_up(states, config, services):
             action = Action.ON
         elif not unit.enabled and not compose.is_gone(states, services):
             action = Action.OFF
@@ -82,7 +116,7 @@ def plan_switches(
         volumes = sorted(
             {v for name in services for v in compose.named_volumes(config["services"][name])}
         )
-        plans.append(UnitPlan(unit, action, services, tuple(volumes)))
+        plans.append(UnitPlan(unit, action, services, tuple(volumes), since))
     return plans
 
 
@@ -116,16 +150,24 @@ class Progress:
     step: str = ""
 
 
-def _switch(engine: compose.Compose, plan: UnitPlan, progress: Progress) -> None:
+def _switch(
+    engine: compose.Compose, plan: UnitPlan, progress: Progress, marks: switches.Switches
+) -> str | None:
+    """Switch one unit; the time of a switch that appeared meanwhile when the unit stays down."""
     progress.unit = plan.unit.key
     if plan.action is Action.ON:
         progress.step = "start"
-        engine.start(plan.unit.key, plan.services)
-        return
+        with marks.lock():
+            switched_off_since = marks.since(plan.unit.key)
+            if switched_off_since:
+                return switched_off_since
+            engine.start(plan.unit.key, plan.services)
+        return None
     progress.step = "stop"
     engine.stop(plan.unit.key, plan.services)
     progress.step = "remove the containers"
     engine.remove_containers(plan.unit.key, plan.services)
+    return None
 
 
 def _unobserved(
@@ -144,6 +186,7 @@ def _unobserved(
 
 
 def apply_closed(
+    state_directory: Path,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
     check: SetupCheck = run_setup_check,
@@ -151,22 +194,31 @@ def apply_closed(
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
     engine = engine or compose.Compose(repository=repository)
+    marks = switches.Switches(state_directory)
     try:
-        config = engine.resolved_configuration()
-        profile_services = compose.profile_services(config)
-        units = catalog.load(repository, profile_services)
-        plans = plan_switches(units, profile_services, config, engine.states())
+        fleet = read_fleet(engine, repository)
+        switched_off = {unit.key: since for unit in fleet.units if (since := marks.since(unit.key))}
+        plans = plan_switches(
+            fleet.units, fleet.profile_services, fleet.config, engine.states(), switched_off
+        )
         refusal = _setup_refusal([p for p in plans if p.action is Action.ON], repository, check)
-    except (compose.ComposeError, catalog.CatalogError, SetupUnclear) as error:
+    except (
+        compose.ComposeError,
+        catalog.CatalogError,
+        SetupUnclear,
+        switches.SwitchError,
+    ) as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     if refusal:
         print(f"{COMMAND}: refused, {refusal}", file=sys.stderr)
         return ApplyExit.REFUSED
-    if not plans:
+    if all(plan.action is Action.STAYS_STOPPED for plan in plans):
+        for plan in plans:
+            print(f"{COMMAND}: {plan.describe()}")
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
-    return _confirm_and_switch(engine, plans, config)
+    return _confirm_and_switch(engine, plans, fleet.config, marks)
 
 
 def _setup_refusal(plans: Sequence[UnitPlan], repository: Path, check: SetupCheck) -> str | None:
@@ -178,7 +230,10 @@ def _setup_refusal(plans: Sequence[UnitPlan], repository: Path, check: SetupChec
 
 
 def _confirm_and_switch(
-    engine: compose.Compose, plans: Sequence[UnitPlan], config: Mapping[str, Any]
+    engine: compose.Compose,
+    plans: Sequence[UnitPlan],
+    config: Mapping[str, Any],
+    marks: switches.Switches,
 ) -> int:
     print(f"{COMMAND}: the plan")
     for plan in plans:
@@ -186,13 +241,17 @@ def _confirm_and_switch(
     if not terminal.confirmed("apply exactly this plan"):
         print(f"{COMMAND}: aborted, nothing changed", file=sys.stderr)
         return ApplyExit.REFUSED
+    changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()
+    withheld: dict[str, str] = {}
     try:
-        for plan in plans:
-            _switch(engine, plan, progress)
+        for plan in changes:
+            if since := _switch(engine, plan, progress, marks):
+                withheld[plan.unit.key] = since
         progress.step = "observe the result"
-        mismatched = _unobserved(engine, plans, config)
-    except compose.ComposeError as error:
+        started = [plan for plan in changes if plan.unit.key not in withheld]
+        mismatched = _unobserved(engine, started, config)
+    except (compose.ComposeError, switches.SwitchError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
             file=sys.stderr,
@@ -205,13 +264,19 @@ def _confirm_and_switch(
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
+    for unit, since in withheld.items():
+        print(
+            f"{COMMAND}: partial, {unit} was switched off meanwhile "
+            f"(since {switches.describe_since(since)}); not started",
+            file=sys.stderr,
+        )
     for plan in mismatched:
         print(
             f"{COMMAND}: partial, {plan.unit.key} is not {plan.action} after the change",
             file=sys.stderr,
         )
-    if mismatched:
+    if mismatched or withheld:
         return ApplyExit.REFUSED
-    for plan in plans:
+    for plan in changes:
         print(f"{COMMAND}: {plan.unit.key} is {plan.action}")
     return ApplyExit.APPLIED_OR_NOTHING
