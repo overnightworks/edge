@@ -23,8 +23,9 @@ lives only in the property `role`.
 | Hosts, Keycloak groups and clients | **not derived; unchanged** unless the job changes | external identities. keycloak-config-cli deletes a renamed group *with its memberships*, and a renamed client changes the token audience |
 | Ecosystem-dictated names | the ecosystem's form with the stem inside: Slidev `slidev-addon-<stem>`, Claude/Codex plugin `<stem>` | the ecosystem finds them only that way |
 
-GitHub topics are derived from the catalog `fleet.yaml` by OpenTofu and never
-set by hand.
+GitHub topics are to be derived from the planned service catalog `fleet.yaml`
+by OpenTofu and never set by hand (overnightworks/edge#20, building block 5).
+The file does not exist yet; until it does, topics are not set at all.
 
 ### Import clashes
 
@@ -38,8 +39,14 @@ files.
 ### Fixed points
 
 - songmaker and hopin keep every name they have, including their unprefixed
-  distributions. Both names are free on PyPI and run only from their own
-  checkout.
+  distributions `songmaker` and `hopin`. Both names are free on PyPI and run
+  only from their own checkout. Their Sonar keys `overnightworks_songmaker`
+  and `overnightworks_hopin` already follow the rule. songmaker's units
+  (`songmaker`, `songmaker-autodeploy`, `songmaker-cli-credentials-mirror`,
+  `songmaker-alert@`) and compose services (`songmaker-web`,
+  `songmaker-music-worker`, `songmaker-scoring-worker`) stay as they are. Their
+  clone and worktree paths (`~/git/songmaker`, `~/git/hopin`, `-worktrees/`)
+  already follow the rule.
 - ACE-Step-1.5 is upstream and keeps its upstream names.
 
 ## Target mapping per repository
@@ -55,13 +62,13 @@ always the stem.
 | `edge` ✓ | `overnightworks-edge` | `edge` (`edge.check`, `edge.backup`) | `edge check`, `edge backup ...` | `edge-backup`, `edge-backup-restore-test` ✓; compose `edge` ✓ | none yet | `auth.hallucinai.de` |
 | `atelier` (marketplace) | `overnightworks-atelier` (dev only) | none | plugin and marketplace `atelier` ✓ | none | `overnightworks_atelier` | none |
 | `webauth` ✓ | ✓ | ✓ | none | none | ✓ | none |
-| `agent-runtime` (agent-providers) | `overnightworks-agent-runtime`, `-client`, `-service` | `agent_runtime`, `agent_runtime_client`, `agent_runtime_service` | `agent-runtime-service` | none | `overnightworks_agent-runtime` | client `agent-service` |
+| `agent-runtime` (agent-providers) | `overnightworks-agent-runtime`, `overnightworks-agent-runtime-client`, `overnightworks-agent-runtime-service` | `agent_runtime`, `agent_runtime_client`, `agent_runtime_service` | `agent-runtime-service` | none | `overnightworks_agent-runtime` | client `agent-service` |
 | `ui-style` (ui-console) | asset `ui-style.css` | none | none | none | `overnightworks_ui-style` | none |
-| `presentator` (agent-presentator) | `overnightworks-presentator`, `-presentator-copresenter`, `-presentator-speech`, `-presentator-speech-<provider>`; npm `slidev-addon-presentator` ✓ | `presentator` ✓, `presentator_copresenter` | `presentator`, `presentator-copresenter`, `presentator-speech` ✓ | `presentator-copresenter`, `presentator-speech` ✓ | `overnightworks_presentator` | `presentator.hallucinai.de`, `/apps/presentator` |
+| `presentator` (agent-presentator) | `overnightworks-presentator`, `overnightworks-presentator-copresenter`, `overnightworks-presentator-speech`; npm `slidev-addon-presentator` ✓ | `presentator` ✓, `presentator_copresenter`, `presentator_speech` | `presentator`, `presentator-copresenter`, `presentator-speech` ✓ | `presentator-copresenter`, `presentator-speech` ✓ | `overnightworks_presentator` | `presentator.hallucinai.de`, `/apps/presentator` |
 | `redphone` (claudebot) | `overnightworks-redphone` | `redphone` | none | `redphone` (was `agent-telegram`) | `overnightworks_redphone` | none |
 | `gmail-cleanup` ✓ | `overnightworks-gmail-cleanup` | ✓ | none | none | ✓ | none |
 | `kiln` ✓ | unpublished Rust crates `kiln-<component>` ✓ | none | none | none | none | none |
-| `songmaker`, `hopin`, `ACE-Step-1.5` | unchanged (fixed point, upstream) | | | | | apex, `www`, `/apps/songmaker`, `/apps/hopin` |
+| `songmaker`, `hopin`, `ACE-Step-1.5` | unchanged (fixed point, upstream): `songmaker`, `hopin` | | | songmaker: see Fixed points | `overnightworks_songmaker`, `overnightworks_hopin` (already conform) | apex, `www`, `/apps/songmaker`, `/apps/hopin` |
 | `atelier-1` (the archived former atelier) | archived, renamed so marketplace can take `atelier` | none | none | none | none | none |
 | `atelier-2`, `foreman` (archived) | unchanged | none | none | none | none | none |
 
