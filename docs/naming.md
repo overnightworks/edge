@@ -58,7 +58,7 @@ always the stem.
 | `agent-runtime` (agent-providers) | `overnightworks-agent-runtime`, `-client`, `-service` | `agent_runtime`, `agent_runtime_client`, `agent_runtime_service` | `agent-runtime-service` | none | `overnightworks_agent-runtime` | client `agent-service` |
 | `ui-style` (ui-console) | asset `ui-style.css` | none | none | none | `overnightworks_ui-style` | none |
 | `presentator` (agent-presentator) | `overnightworks-presentator`, `-presentator-copresenter`, `-presentator-speech`, `-presentator-speech-<provider>`; npm `slidev-addon-presentator` ✓ | `presentator` ✓, `presentator_copresenter` | `presentator`, `presentator-copresenter`, `presentator-speech` ✓ | `presentator-copresenter`, `presentator-speech` ✓ | `overnightworks_presentator` | `presentator.hallucinai.de`, `/apps/presentator` |
-| `<to be chosen>` (claudebot) | `overnightworks-<stem>` | `<stem>` | none | `<stem>` (was `agent-telegram`) | `overnightworks_<stem>` | none |
+| `redphone` (claudebot) | `overnightworks-redphone` | `redphone` | none | `redphone` (was `agent-telegram`) | `overnightworks_redphone` | none |
 | `gmail-cleanup` ✓ | `overnightworks-gmail-cleanup` | ✓ | none | none | ✓ | none |
 | `kiln` ✓ | unpublished Rust crates `kiln-<component>` ✓ | none | none | none | none | none |
 | `songmaker`, `hopin`, `ACE-Step-1.5` | unchanged (fixed point, upstream) | | | | | apex, `www`, `/apps/songmaker`, `/apps/hopin` |
@@ -69,9 +69,8 @@ Rulings of overnightworks/edge#24 recorded in the table:
 
 - The archived `atelier` becomes `atelier-1`; `atelier-2` and `foreman` stay as
   they are.
-- claudebot gets a new stem because it bridges Codex too, not only Claude. The
-  name is to be chosen (the operator rejected `agent-telegram` as too long;
-  candidates: `walkie`, `handy`, `leash`).
+- claudebot becomes `redphone` (ruled 16.10.2026: the red telephone home, his
+  emergency chat with the PC). It bridges Codex too, so "claude" was wrong.
 - `presentator` stays as a deliberate brand: host, Keycloak group, units and
   import already use it, and renaming would lose group memberships.
 
