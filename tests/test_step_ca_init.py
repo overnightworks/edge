@@ -197,7 +197,7 @@ def test_a_fresh_run_makes_the_files_with_their_modes(init, docker, secrets_dir,
     assert mode(secrets_dir / PASSWORD) == 0o644
     assert volume_files(docker) == INTERMEDIATE_FILES | {"certs/root_ca.crt"}
     assert not (secrets_dir / ".pending-root").exists()
-    assert "docker compose up -d step-ca" in session.output
+    assert "docker compose --profile step-ca up -d step-ca" in session.output
 
 
 def test_the_output_holds_neither_the_password_nor_a_private_key(

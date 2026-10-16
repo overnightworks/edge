@@ -700,7 +700,7 @@ Go live, once, as the operator (uid 1000):
 
 ```sh
 step-ca/init
-docker compose up -d step-ca
+docker compose --profile step-ca up -d step-ca
 ```
 
 `step-ca/init` makes the key material in one-off containers without a network and prints no
@@ -727,8 +727,11 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: run `step-ca/init`, then `docker compose up -d step-ca traefik-mcp`; a plain
-`docker compose up -d` starts it too. Switch it off: `docker compose stop traefik-mcp` (the CA and
+Switch it on: run `step-ca/init`, then `docker compose --profile step-ca up -d`. `step-ca`,
+`traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind the compose profile `step-ca`, so
+a plain `docker compose up -d` (as `keycloak/go-live` runs it) starts none of them. `traefik-mcp`
+waits for the CA to listen before it starts Traefik, so the order of the two does not matter, also
+after a restart of the Docker daemon. Switch it off: `docker compose stop traefik-mcp` (the CA and
 the certificates stay). Remove it: `docker compose rm -f traefik-mcp traefik-mcp-acme-owner` and
 `docker volume rm <project>_traefik-mcp-acme`.
 
@@ -743,8 +746,9 @@ host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate
 CA copy is renewed within 12 minutes without a restart. The run takes about 15 minutes. Every
 call runs from a throwaway container on the network a client would sit on.
 
-Switch the CA off: `docker compose stop step-ca`. `step-ca` has no profile, so a plain
-`docker compose up -d` starts it again. To remove it, also `docker compose rm -f step-ca`;
+Switch the CA off: `docker compose stop step-ca`. A plain `docker compose up -d` does not start
+it again, only `docker compose --profile step-ca up -d` does. To remove it, also
+`docker compose --profile step-ca rm -f step-ca`;
 `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/` throw the CA away. Stop
 `traefik-mcp` first: it holds certificates from this CA.
 

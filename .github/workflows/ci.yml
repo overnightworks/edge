@@ -54,17 +54,24 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
 
-      - name: Compose renders (default, probe profile, Keycloak bootstrap and probe overlays)
+      - name: Compose renders (default, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
+          docker compose --profile step-ca config -q
           docker compose --profile probe config -q
+          # A plain `docker compose up -d` (keycloak/go-live) must start neither the CA nor the
+          # gateway: both need secret files that only step-ca/init creates.
+          ! docker compose config --services | grep -xE 'step-ca|traefik-mcp|traefik-mcp-acme-owner'
+          docker compose --profile step-ca config --services | grep -x step-ca
+          docker compose --profile step-ca config --services | grep -x traefik-mcp
+          docker compose --profile step-ca config --services | grep -x traefik-mcp-acme-owner
           docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --profile apply config -q
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
             docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --file probe/keycloak/compose.probe.yaml --profile apply config -q
           PROBE_CA_JSON=/nonexistent docker compose --file compose.yaml \
-            --file probe/step-ca/compose.probe.yaml --profile probe config -q
+            --file probe/step-ca/compose.probe.yaml --profile probe --profile step-ca config -q
 
       - name: YAML files parse
         run: |

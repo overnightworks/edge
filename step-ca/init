@@ -28,6 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "step-ca"
+PROFILE = "step-ca"  # compose.yaml puts step-ca and traefik-mcp behind it
 ROOT_NAME = "edge internal CA"
 INTERMEDIATE_NAME = "edge internal CA intermediate"
 PASSWORD_FILE = "password"
@@ -53,7 +54,10 @@ INTERMEDIATE_FILES = {INTERMEDIATE_CERTIFICATE, INTERMEDIATE_KEY}
 LONG_COMMAND_SECONDS = 300
 SHORT_COMMAND_SECONDS = 60
 REDACTED = "[redacted]"
-COMPOSE = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
+COMPOSE = [
+    "docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml",
+    "--profile", PROFILE,
+]  # fmt: skip
 
 
 class StepFailure(Exception):
@@ -406,7 +410,10 @@ class StepCaInit:
             self.tools.say(f"step-ca/init FAILED at {current}: interrupted")
             return 1
         if changed:
-            self.tools.say("step-ca/init: done. Start the CA: docker compose up -d step-ca")
+            self.tools.say(
+                "step-ca/init: done. Start the CA: "
+                f"docker compose --profile {PROFILE} up -d {SERVICE}"
+            )
         else:
             self.tools.say("step-ca/init: nothing changed, the key material is all in place.")
         return 0
