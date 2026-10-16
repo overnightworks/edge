@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SECRETS_DIRECTORY = ".secrets"
-TOFU_TEMPORARY_PARENT = Path(SECRETS_DIRECTORY) / "opentofu" / "tmp"
+OPENTOFU_DIRECTORY = Path(SECRETS_DIRECTORY) / "opentofu"
+TOFU_TEMPORARY_PARENT = OPENTOFU_DIRECTORY / "tmp"
 TOFU_LANG = "C.UTF-8"
 SYSTEM_PATH = "/usr/bin:/bin"
 
@@ -23,9 +24,7 @@ class SecretFile:
 SECRET_FILES = (
     SecretFile(Path(SECRETS_DIRECTORY) / "cloudflare" / "fleet-read", "CLOUDFLARE_API_TOKEN"),
     SecretFile(Path(SECRETS_DIRECTORY) / "github" / "fleet-read", "GITHUB_TOKEN"),
-    SecretFile(
-        Path(SECRETS_DIRECTORY) / "opentofu" / "state-passphrase", "TF_VAR_state_passphrase"
-    ),
+    SecretFile(OPENTOFU_DIRECTORY / "state-passphrase", "TF_VAR_state_passphrase"),
 )
 
 
@@ -42,6 +41,8 @@ def read_secrets(home: Path) -> dict[str, str]:
             value = path.read_text().strip()
         except OSError as error:
             raise SecretFileError(f"cannot read {path}: {error.strerror}") from error
+        except UnicodeDecodeError as error:
+            raise SecretFileError(f"{path} is not valid UTF-8") from error
         if not value:
             raise SecretFileError(f"{path} is empty")
         values[secret_file.variable] = value
@@ -56,7 +57,7 @@ def private_temporary_directory(home: Path) -> Iterator[Path]:
     try:
         yield directory
     finally:
-        shutil.rmtree(directory, ignore_errors=True)
+        shutil.rmtree(directory)
 
 
 def child_environment(

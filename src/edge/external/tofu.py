@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
+from edge.external import secrets
+
 # uv installs the project editable, so this file sits in the checkout: src/edge/external/tofu.py.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 EXTERNAL_ROOT = PROJECT_ROOT / "external"
 TOFURC = EXTERNAL_ROOT / "tofurc"
 _PIN = re.compile(r'required_version\s*=\s*"=\s*([\w.+-]+)"')
 _VERSION_LINE = re.compile(r"^OpenTofu v(\S+)")
-_STATE_FILE = Path(".secrets") / "opentofu" / "fleet.tfstate"
+_STATE_FILE = secrets.OPENTOFU_DIRECTORY / "fleet.tfstate"
 
 
 class TofuError(Exception):

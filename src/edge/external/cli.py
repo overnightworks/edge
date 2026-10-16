@@ -36,6 +36,10 @@ def plan_command(home: Path) -> int:
     except (secrets.SecretFileError, tofu.TofuError) as error:
         print(f"edge external plan: {error}", file=sys.stderr)
         return ExitCode.CANNOT_PLAN
+    except (OSError, ValueError) as error:
+        # Only the type: a decode error's message can quote bytes of a token file.
+        print(f"edge external plan: cannot plan, {type(error).__name__}", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
 
 
 def _plan(home: Path) -> int:
@@ -49,14 +53,22 @@ def _plan(home: Path) -> int:
             tofurc=tofu.TOFURC,
             secrets=token_values,
         )
-        tofu.require_pinned_version(tofu_path, environment)
+        try:
+            tofu.require_pinned_version(tofu_path, environment)
+        except tofu.TofuError as error:
+            raise tofu.TofuError(secrets.redact(str(error), token_values)) from None
         init = tofu.run(tofu_path, tofu.init_arguments(home), environment)
         if init.exit_code != 0:
             print(secrets.redact(init.output, token_values), file=sys.stderr)
             raise tofu.TofuError("tofu init failed")
         planned = tofu.run(tofu_path, tofu.PLAN_ARGUMENTS, environment)
-    print(secrets.redact(planned.output, token_values))
     exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
+    redacted_output = secrets.redact(planned.output, token_values)
+    if exit_code is ExitCode.CANNOT_PLAN:
+        print(redacted_output, file=sys.stderr)
+        print(f"edge external plan: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
+        return exit_code
+    print(redacted_output)
     if exit_code is ExitCode.CHANGES:
         print("edge external plan: changes pending, the live services differ from external/")
     return exit_code
