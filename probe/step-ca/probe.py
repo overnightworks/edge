@@ -69,6 +69,7 @@ TRAEFIK_USER = "65534:65534"
 TRAEFIK_UID = 65534
 ACME_STORAGE = "/acme/acme.json"
 EDGE_CHECK = ["uv", "run", "--quiet", "edge-check", "--json"]
+EXIT_AFTER_TERM = 143  # 128 + SIGTERM; a forced kill after the grace period is 137
 BOOT_WITHOUT_CA_SECONDS = 10  # how long the gateway has to sit idle before the CA appears
 LISTENER_PORTS_OF_THE_PROBE = (9000, 443)  # the CA and the gateway: container ports only
 CA_DEFAULT_LIFETIME_SECONDS = 24 * 3600
@@ -417,9 +418,21 @@ class Probe:
         time.sleep(BOOT_WITHOUT_CA_SECONDS)
         answer = self.client("mcp", ORIGIN_URL, root=self.secrets_dir / ROOT_CERTIFICATE)
         expect(ORIGIN_ANSWER not in answer.stdout.decode(errors="replace"), "served without a CA")
+        self.expect_waiting_gateway_stops_on_term()
+        self.compose("up", "--detach", "--no-deps", "traefik-mcp")
         self.compose("start", "step-ca")
         self.wait_until_answering()
         return self.wait_until_served()
+
+    def expect_waiting_gateway_stops_on_term(self) -> None:
+        """The wait is a shell, not Traefik: TERM must end it, not Docker's kill after the grace."""
+        logs = self.compose("logs", "--no-color", "traefik-mcp").stdout
+        expect(bool(logs.strip()), "the gateway waiting for the CA said nothing")
+        self.compose("stop", "traefik-mcp")
+        container = self.compose("ps", "--all", "--quiet", "traefik-mcp").stdout.decode().strip()
+        code = self.run(["docker", "inspect", "--format", "{{.State.ExitCode}}", container])
+        exit_code = int(code.stdout)
+        expect(exit_code == EXIT_AFTER_TERM, f"the waiting gateway exited {exit_code} on stop")
 
     def acme_storage(self) -> tuple[int, int]:
         """Size and owner of the stored certificates in the volume; raises OSError until written."""
