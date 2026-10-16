@@ -494,6 +494,7 @@ def test_every_unit_of_the_repositorys_catalog_names_a_compose_profile_with_serv
 def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
     """#52 rule 9: the drift check fails on a key without a profile."""
     document = {"services": {"keycloack": {"run": {"enabled": False}}}}
+    profiles = repository_profiles()
 
     with pytest.raises(catalog.CatalogError, match=r"services\.keycloack"):
-        catalog.units(document, repository_profiles(), REPOSITORY)
+        catalog.units(document, profiles, REPOSITORY)
