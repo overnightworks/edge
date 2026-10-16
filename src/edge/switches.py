@@ -38,6 +38,19 @@ def describe_since(since: str) -> str:
 
 
 @dataclass(frozen=True)
+class Mark:
+    """A marker as one reader saw it: its line and the file's identity.
+
+    A repeated stop rewrites the line unchanged into a new file, so only the identity tells a
+    start waiting at its prompt that a stop came in (rule 5).
+    """
+
+    since: str
+    inode: int
+    modified_ns: int
+
+
+@dataclass(frozen=True)
 class Switches:
     directory: Path
 
@@ -45,31 +58,39 @@ class Switches:
     def _stopped(self) -> Path:
         return self.directory / STOPPED_DIRECTORY
 
-    def since(self, unit: str) -> str | None:
-        """The time the unit was switched off, or None when it is not switched off.
+    def mark(self, unit: str) -> Mark | None:
+        """The marker as it is now, or None when the unit is not switched off.
 
         The file is the record: an empty one still means switched off, at an unknown time.
         """
         try:
-            return (self._stopped / unit).read_text().strip() or UNKNOWN_SWITCH_TIME
+            with (self._stopped / unit).open() as file:
+                status = os.fstat(file.fileno())
+                line = file.read().strip()
         except FileNotFoundError:
             return None
         except OSError as error:
             raise SwitchError(f"cannot read the switch of {unit} ({error.strerror})") from error
+        return Mark(line or UNKNOWN_SWITCH_TIME, status.st_ino, status.st_mtime_ns)
+
+    def since(self, unit: str) -> str | None:
+        """The time the unit was switched off, or None when it is not switched off."""
+        mark = self.mark(unit)
+        return mark.since if mark else None
 
     def record(self, unit: str, now: datetime) -> None:
-        """Write the marker unless one exists: a unit keeps the time of its first switch."""
-        if self.since(unit) is not None:
-            return
+        """Write the marker into a new file; a unit keeps the time of its first switch."""
+        recorded = self.since(unit)
+        line = recorded if recorded and recorded != UNKNOWN_SWITCH_TIME else None
         try:
             self._make_private_directories()
-            _write_atomically(self._stopped / unit, now.isoformat(timespec="seconds"))
+            _write_atomically(self._stopped / unit, line or now.isoformat(timespec="seconds"))
         except OSError as error:
             raise SwitchError(f"cannot record the switch of {unit} ({error.strerror})") from error
 
-    def clear(self, unit: str, expected_since: str) -> bool:
-        """Remove the marker only if it still holds the time the caller read."""
-        if self.since(unit) != expected_since:
+    def clear(self, unit: str, expected: Mark) -> bool:
+        """Remove the marker only if it is still the one the caller read."""
+        if self.mark(unit) != expected:
             return False
         try:
             (self._stopped / unit).unlink()

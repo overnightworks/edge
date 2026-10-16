@@ -850,24 +850,52 @@ def test_a_switch_renewed_during_a_start_is_kept(start, scripted, state):
     assert marker(state) == LATER_SWITCH_AT
 
 
-@pytest.mark.parametrize("meanwhile", ["a new stop", "another start"])
-def test_a_switch_changed_during_the_start_prompt_stops_the_start_before_up(
-    start, scripted, state, meanwhile
-):
+def test_a_new_stop_during_the_start_prompt_stops_the_start_before_up(start, scripted, state):
     """#60 rule 5: start reads the marker again after `yes`, immediately before its `up`."""
     switch_off(state)
-    changes = {
-        "a new stop": lambda: (state / "stopped" / "step-ca").write_text(LATER_SWITCH_AT),
-        "another start": lambda: (state / "stopped" / "step-ca").unlink(),
-    }
 
-    exit_code, out, err = start(while_prompt_waits=changes[meanwhile])
+    exit_code, out, err = start(
+        while_prompt_waits=lambda: (state / "stopped" / "step-ca").write_text(LATER_SWITCH_AT)
+    )
 
     assert exit_code == 1
     assert scripted.changing_verbs() == []
-    assert "partial" in err
+    assert "partial: step-ca was switched off meanwhile (since 17.10. 23:30); not started" in err
     assert "is on" not in out
-    assert marker(state) == (LATER_SWITCH_AT if meanwhile == "a new stop" else None)
+    assert marker(state) == LATER_SWITCH_AT
+
+
+def test_another_start_during_the_start_prompt_ends_this_start_without_up(start, scripted, state):
+    """#60 rule 5: a marker that is gone means another start ended the switch."""
+    switch_off(state)
+
+    exit_code, out, err = start(while_prompt_waits=lambda: (state / "stopped" / "step-ca").unlink())
+
+    assert exit_code == 0
+    assert scripted.changing_verbs() == []
+    assert "step-ca was started meanwhile" in out
+    assert "is on" not in out
+    assert err == ""
+
+
+@pytest.mark.parametrize("stops", [1, 2])
+def test_stops_of_a_switched_off_unit_during_the_start_prompt_win_over_the_start(
+    start, stop, scripted, repository, state, stops
+):
+    """#60 rules 2 and 5: a repeated stop on B changes nothing visible, yet the start sees it."""
+    put_unit_in("B", scripted, repository, state)
+
+    def stops_arrive():
+        for _ in range(stops):
+            assert stop()[0] == 0
+
+    exit_code, out, err = start(while_prompt_waits=stops_arrive)
+
+    assert exit_code == 1
+    assert scripted.changing_verbs() == []
+    assert "partial: step-ca was switched off meanwhile (since 17.10. 22:10); not started" in err
+    assert "is on" not in out
+    assert marker(state) == SWITCHED_OFF_AT
 
 
 def test_an_empty_marker_still_means_switched_off_for_apply(switch, scripted, state):

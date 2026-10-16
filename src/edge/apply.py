@@ -151,16 +151,20 @@ class Progress:
 
 
 def _switch(
-    engine: compose.Compose, plan: UnitPlan, progress: Progress, marks: switches.Switches
+    engine: compose.Compose,
+    plan: UnitPlan,
+    progress: Progress,
+    marks: switches.Switches,
+    read: Mapping[str, switches.Mark | None],
 ) -> str | None:
     """Switch one unit; the time of a switch that appeared meanwhile when the unit stays down."""
     progress.unit = plan.unit.key
     if plan.action is Action.ON:
         progress.step = "start"
         with marks.lock():
-            switched_off_since = marks.since(plan.unit.key)
-            if switched_off_since:
-                return switched_off_since
+            current = marks.mark(plan.unit.key)
+            if current != read[plan.unit.key]:
+                return current.since if current else switches.UNKNOWN_SWITCH_TIME
             engine.start(plan.unit.key, plan.services)
         return None
     progress.step = "stop"
@@ -197,7 +201,8 @@ def apply_closed(
     marks = switches.Switches(state_directory)
     try:
         fleet = read_fleet(engine, repository)
-        switched_off = {unit.key: since for unit in fleet.units if (since := marks.since(unit.key))}
+        read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
+        switched_off = {key: mark.since for key, mark in read.items() if mark}
         plans = plan_switches(
             fleet.units, fleet.profile_services, fleet.config, engine.states(), switched_off
         )
@@ -218,7 +223,7 @@ def apply_closed(
             print(f"{COMMAND}: {plan.describe()}")
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
-    return _confirm_and_switch(engine, plans, fleet.config, marks)
+    return _confirm_and_switch(engine, plans, fleet.config, marks, read)
 
 
 def _setup_refusal(plans: Sequence[UnitPlan], repository: Path, check: SetupCheck) -> str | None:
@@ -234,6 +239,7 @@ def _confirm_and_switch(
     plans: Sequence[UnitPlan],
     config: Mapping[str, Any],
     marks: switches.Switches,
+    read: Mapping[str, switches.Mark | None],
 ) -> int:
     print(f"{COMMAND}: the plan")
     for plan in plans:
@@ -246,7 +252,7 @@ def _confirm_and_switch(
     withheld: dict[str, str] = {}
     try:
         for plan in changes:
-            if since := _switch(engine, plan, progress, marks):
+            if since := _switch(engine, plan, progress, marks, read):
                 withheld[plan.unit.key] = since
         progress.step = "observe the result"
         started = [plan for plan in changes if plan.unit.key not in withheld]

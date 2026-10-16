@@ -61,7 +61,7 @@ def stop_unit(
     except compose.ComposeError as error:
         _complain(STOP, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
-    if not running and (since := _confirmed_off(engine, marks, key, services)):
+    if not running and (since := _confirmed_off(engine, marks, key, services, now)):
         _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
         return ApplyExit.APPLIED_OR_NOTHING
     if not running and not unit.enabled:
@@ -71,9 +71,15 @@ def stop_unit(
 
 
 def _confirmed_off(
-    engine: compose.Compose, marks: switches.Switches, key: str, services: tuple[str, ...]
+    engine: compose.Compose,
+    marks: switches.Switches,
+    key: str,
+    services: tuple[str, ...],
+    now: datetime,
 ) -> str | None:
     """The switch time of a unit that is off, decided under the lock so no start is mid-`up`.
+
+    The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in.
 
     None when the unit is not switched off, or when anything stops us from being sure: then the
     stop closes it, and reports the record itself.
@@ -82,6 +88,9 @@ def _confirmed_off(
         with marks.lock():
             if compose.has_running_container(engine.states(), services):
                 return None
+            if marks.since(key) is None:
+                return None
+            marks.record(key, now)
             return marks.since(key)
     except (compose.ComposeError, switches.SwitchError):
         return None
@@ -187,11 +196,11 @@ def start_unit(
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     try:
-        read = _read_unit(START, engine, repository, key)
-        if read is None:
+        planned = _read_unit(START, engine, repository, key)
+        if planned is None:
             return ApplyExit.CANNOT_PLAN
-        fleet, unit = read
-        since = marks.since(key)
+        fleet, unit = planned
+        read = marks.mark(key)
     except (compose.ComposeError, switches.SwitchError) as error:
         _complain(START, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
@@ -201,29 +210,42 @@ def start_unit(
             f"refused, {key} is disabled in the catalog; enable it by PR and `{apply.COMMAND}`",
         )
         return ApplyExit.REFUSED
-    if since is None:
+    if read is None:
         _say(START, f"no change, {key} is not switched off")
         return ApplyExit.APPLIED_OR_NOTHING
     services = fleet.profile_services[key]
     _say(
         START,
         f"{key}: start services {', '.join(services)}; "
-        f"end the switch since {switches.describe_since(since)}",
+        f"end the switch since {switches.describe_since(read.since)}",
     )
     if not terminal.confirmed(f"start {key}"):
         _complain(START, "aborted, nothing changed")
         return ApplyExit.REFUSED
-    return _open(engine, marks, key, services, since, fleet.config)
+    return _open(engine, marks, key, services, read, fleet.config)
 
 
-def _switch_changed_line(key: str, current: str | None) -> str:
-    """Rule 5: the switch is not the one start read, so the unit stays as it is."""
+def _switched_off_again_line(key: str, current: switches.Mark | None) -> str:
+    """The switch is not the one start read, after the start ran: the unit stays as it is."""
     if current is None:
         return f"partial: the switch of {key} was ended meanwhile; not started"
     return (
-        f"partial: {key} was switched off again (since {switches.describe_since(current)}); "
+        f"partial: {key} was switched off again (since {switches.describe_since(current.since)}); "
         "it stays switched off"
     )
+
+
+def _refused_before_up(key: str, current: switches.Mark | None) -> int:
+    """Rule 5: the switch is not the one start read; a stop wins, another start made it moot."""
+    if current is None:
+        _say(START, f"{key} was started meanwhile")
+        return ApplyExit.APPLIED_OR_NOTHING
+    _complain(
+        START,
+        f"partial: {key} was switched off meanwhile "
+        f"(since {switches.describe_since(current.since)}); not started",
+    )
+    return ApplyExit.REFUSED
 
 
 def _open(
@@ -231,22 +253,21 @@ def _open(
     marks: switches.Switches,
     key: str,
     services: tuple[str, ...],
-    since: str,
+    read: switches.Mark,
     config: dict,
 ) -> int:
     try:
         with marks.lock():
-            current = marks.since(key)
-            if current != since:
-                _complain(START, _switch_changed_line(key, current))
-                return ApplyExit.REFUSED
+            current = marks.mark(key)
+            if current != read:
+                return _refused_before_up(key, current)
             engine.start(key, services)
             observed_on = compose.is_up(engine.states(), config, services)
             if not observed_on:
                 _complain(START, f"partial, {key} is not on after the start; its switch stays")
                 return ApplyExit.REFUSED
-            if not marks.clear(key, since):
-                _complain(START, _switch_changed_line(key, marks.since(key)))
+            if not marks.clear(key, read):
+                _complain(START, _switched_off_again_line(key, marks.mark(key)))
                 return ApplyExit.REFUSED
     except (compose.ComposeError, switches.SwitchError) as error:
         _complain(START, f"partial, could not start {key}, {error}; its switch stays")
