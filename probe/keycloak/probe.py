@@ -1117,8 +1117,9 @@ def stop_holding(_signum: int, _frame: object) -> None:
 def ignore_stop_signals() -> None:
     """Ends the stop signals' effect; blocked meanwhile, so none can raise between the two.
 
-    The stop handlers call it before they raise, so only the first stop signal acts and the
-    teardown that follows cannot be interrupted by a second one."""
+    The stop handlers call it before they raise and main calls it as the run ends, inside the
+    try that catches their raise, so only the first stop signal acts and the teardown that
+    follows cannot be interrupted by a second one."""
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
     try:
         for stopping in STOP_SIGNALS:
@@ -1172,14 +1173,18 @@ def main() -> int:
     probe = Probe(stack)
     method_name, success_line = MODES[arguments.mode]
     try:
-        getattr(probe, method_name)()
+        try:
+            getattr(probe, method_name)()
+        finally:
+            # Inside the try whose handlers take a stop signal: one landing while this swaps
+            # the handlers still ends the run as a stop or a failure, never as a skipped teardown.
+            ignore_stop_signals()
     except StopHolding:
         pass  # any stop signal after READY, however late, is the normal end of a hold
     except ProbeFailure as failure:
         failures.append(str(failure))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
-        ignore_stop_signals()
         if not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:
