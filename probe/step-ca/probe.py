@@ -23,6 +23,8 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -267,6 +269,19 @@ class Probe:
         print(f"teardown: project {PROJECT} removed (containers and volume)")
 
 
+@contextmanager
+def stop_signals_ignored() -> Iterator[None]:
+    """Teardown is what removes the containers and the volume, so a late SIGTERM or Ctrl-C must
+    not cut it short."""
+    stop_signals = (signal.SIGTERM, signal.SIGINT)
+    previous = {number: signal.signal(number, signal.SIG_IGN) for number in stop_signals}
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True)
@@ -281,11 +296,12 @@ def main() -> int:
     try:
         exit_code = prove(probe)
     finally:
-        try:
-            probe.teardown()
-        except ProbeFailed as failure:
-            print(f"PROBE FAILED: {failure}")
-            exit_code = 1
+        with stop_signals_ignored():
+            try:
+                probe.teardown()
+            except ProbeFailed as failure:
+                print(f"PROBE FAILED: {failure}")
+                exit_code = 1
     if exit_code == 0:
         print("PROBE PASSED: proofs 1-5 hold")
     return exit_code
