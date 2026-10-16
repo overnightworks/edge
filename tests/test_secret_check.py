@@ -1,4 +1,7 @@
-"""The structural secret check refuses a literal in every YAML style, passes the real files, and refuses a stale script lock."""
+"""The structural secret check refuses a literal in every YAML style and passes the real files.
+
+It also refuses a stale script lock.
+"""
 
 import subprocess
 from pathlib import Path
