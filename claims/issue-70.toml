@@ -1,8 +1,0 @@
-claim_id = "6bbc7871774145bb84b86b2b8857ef09"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "0eeb5d57c5166a35d2d241fe0f796f6b57ba162b"
-branch = "claude/issue-70-global-stop"
-scope = ["README.md", "probe/switches/probe.py", "src/edge/cli.py", "src/edge/emergency.py", "src/edge/switches.py", "src/edge/terminal.py", "src/edge/tunnel.py", "tests/test_edge_global_stop.py"]
-opened_commit = "a66564f476506f78a4dabcf51bb6c743cd8b900a"
-whole_reason = "The global marker, the tunnel boundary, the one terminal decider and the two --all commands are one switch; the probe and the README prove and describe exactly it."
