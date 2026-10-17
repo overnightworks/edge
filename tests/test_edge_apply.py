@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import apply, barrier, catalog, cli, compose, emergency, switches
+from edge import apply, barrier, catalog, cli, compose, emergency, setup, switches
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -131,6 +131,26 @@ class Setup:
         return subprocess.CompletedProcess(command, self.exit_code, self.line, "")
 
 
+@dataclass
+class SetupRun:
+    """The scripted run of a setup in the terminal: a successful run makes `--check` pass."""
+
+    checks: Setup
+    exit_code: int = 0
+    interrupted: bool = False
+    cannot_start: bool = False
+    check_afterwards: tuple[int, str] = (0, "step-ca/init --check: set up")
+    commands: list[tuple[Path, Path]] = field(default_factory=list)
+
+    def __call__(self, command: Path, working_directory: Path) -> setup.SetupRun:
+        self.commands.append((command, working_directory))
+        if self.cannot_start:
+            raise PermissionError("not executable")
+        if self.exit_code == 0 and not self.interrupted:
+            self.checks.exit_code, self.checks.line = self.check_afterwards
+        return setup.SetupRun(self.exit_code, self.interrupted)
+
+
 class Terminal(io.StringIO):
     """A terminal; `while_prompt_waits` runs when the operator's answer is read."""
 
@@ -233,6 +253,11 @@ def setup_check() -> Setup:
 
 
 @pytest.fixture
+def setup_run(setup_check: Setup) -> SetupRun:
+    return SetupRun(setup_check)
+
+
+@pytest.fixture
 def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
     """Stdin and stdout are a terminal; the operator will type `answer`."""
 
@@ -246,13 +271,13 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 
 
 @pytest.fixture
-def switch(repository, scripted, setup_check, at_terminal, capsys, state):
+def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state):
     """Run `edge apply --closed`; the operator types `yes` unless told otherwise."""
 
     def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         exit_code = apply.apply_closed(
-            state, compose.Compose(scripted.run, repository), repository, setup_check
+            state, compose.Compose(scripted.run, repository), repository, setup_check, setup_run
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -468,18 +493,181 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
     assert "may be partial" in err
 
 
-def test_a_missing_setup_refuses_before_yes_and_changes_nothing(switch, scripted, setup_check):
-    """#52 rule 5: not set up refuses before the `yes` (exit 1) and names `step-ca/init`."""
-    setup_check.exit_code = 1
-    setup_check.line = "step-ca/init --check: not set up: password is not done"
+NOT_SET_UP_LINE = "step-ca/init --check: not set up: password is not done"
+QUESTION = "Type 'yes' to run `step-ca/init` now"
 
-    exit_code, out, err = switch()
+
+@pytest.fixture
+def missing_setup(setup_check: Setup) -> Setup:
+    setup_check.exit_code, setup_check.line = 1, NOT_SET_UP_LINE
+    return setup_check
+
+
+def test_a_missing_setup_is_asked_separately_before_the_plan(
+    switch, scripted, missing_setup, setup_run, repository
+):
+    """#69 rules 1, 4, 5: `yes` runs the setup, `--check` passes, the plan has its own yes."""
+    exit_code, out, _ = switch("yes\nyes")
+
+    assert exit_code == 0
+    assert f"step-ca is not set up: {NOT_SET_UP_LINE}" in out
+    assert out.index(QUESTION) < out.index("the plan") < out.index("apply exactly this plan")
+    assert setup_run.commands == [(repository / "step-ca/init", repository)]
+    assert missing_setup.commands[-1][-1] == "--check"
+    assert scripted.containers["step-ca"] == "running"
+
+
+def test_one_yes_does_not_cover_both_the_setup_and_the_plan(switch, scripted, missing_setup):
+    """#69 rule 1: the plan has its own question; a declined plan names the completed setup."""
+    exit_code, _, err = switch("yes\nno")
 
     assert exit_code == 1
-    assert "step-ca is not set up: run `step-ca/init`, then `edge apply --closed` again" in err
-    assert "password is not done" in err
-    assert "Type" not in out
+    assert "setup of step-ca completed; nothing switched" in err
+    assert "nothing changed" not in err
     assert scripted.changing_verbs() == []
+
+
+def test_declining_the_setup_aborts_everything_and_runs_nothing(
+    switch, scripted, missing_setup, setup_run
+):
+    """#69 rule 3: `no` aborts: nothing runs, nothing is switched."""
+    exit_code, _, err = switch("no")
+
+    assert exit_code == 1
+    assert "aborted, nothing changed; run `step-ca/init` yourself or answer yes" in err
+    assert setup_run.commands == []
+    assert scripted.changing_verbs() == []
+
+
+def test_a_closed_stdin_counts_as_no_to_the_setup(switch, missing_setup, setup_run):
+    """#69 rule 8: EOF is a no."""
+    exit_code, _, _ = switch("")
+
+    assert exit_code == 1
+    assert setup_run.commands == []
+
+
+def test_a_set_up_unit_is_not_asked(switch, setup_run):
+    """#69 rule 1: only a unit whose check says not set up is asked."""
+    _, out, _ = switch()
+
+    assert "not set up" not in out
+    assert setup_run.commands == []
+
+
+def test_a_unit_switched_off_is_never_asked_about_its_setup(
+    switch, repository, missing_setup, setup_run
+):
+    """#69 rule 2: switching a unit off needs no setup."""
+    write_fleet(repository, DISABLED)
+
+    switch()
+
+    assert setup_run.commands == []
+    assert missing_setup.commands == []
+
+
+def test_a_unit_kept_stopped_by_its_marker_is_never_asked(switch, state, missing_setup, setup_run):
+    """#69 rule 2: STAYS_STOPPED is not switched on."""
+    switch_off(state)
+
+    exit_code, _, _ = switch()
+
+    assert exit_code == 0
+    assert setup_run.commands == []
+
+
+@pytest.mark.parametrize(
+    ("setup_outcome", "expected_exit", "expected_words"),
+    [
+        ({"exit_code": 3}, 1, "failed (exit 3)"),
+        ({"exit_code": 130, "interrupted": True}, 1, "interrupted during `step-ca/init`"),
+        ({"cannot_start": True}, 2, "cannot start `step-ca/init`"),
+    ],
+)
+def test_a_failed_interrupted_or_unstartable_setup_switches_nothing(
+    switch, scripted, missing_setup, setup_run, setup_outcome, expected_exit, expected_words
+):
+    """#69 rules 5, 6: nothing is switched after a setup that did not succeed."""
+    for name, value in setup_outcome.items():
+        setattr(setup_run, name, value)
+
+    exit_code, _, err = switch("yes\nyes")
+
+    assert exit_code == expected_exit
+    assert expected_words in err
+    assert len(missing_setup.commands) == 1  # the first check only: no re-check
+    assert scripted.changing_verbs() == []
+
+
+def test_an_interrupted_setup_says_that_keys_may_exist_and_how_to_go_on(
+    switch, missing_setup, setup_run
+):
+    """#69 rule 6."""
+    setup_run.interrupted = True
+
+    _, _, err = switch("yes")
+
+    assert "nothing switched; keys may already exist; run `edge apply --closed` again" in err
+
+
+def test_a_setup_that_leaves_the_check_failing_is_exit_1(
+    switch, scripted, missing_setup, setup_run
+):
+    """#69 rule 5: --check still 1 after the setup."""
+    setup_run.check_afterwards = (1, "still no keys")
+
+    exit_code, _, err = switch("yes\nyes")
+
+    assert exit_code == 1
+    assert "`step-ca/init` ran, still not set up: still no keys" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_a_recheck_that_cannot_tell_after_the_setup_is_exit_2(
+    switch, scripted, missing_setup, setup_run
+):
+    """#69 rule 5: --check exits 2 after the setup."""
+    setup_run.check_afterwards = (2, "docker is down")
+
+    exit_code, _, err = switch("yes\nyes")
+
+    assert exit_code == 2
+    assert "docker is down" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_several_missing_setups_are_all_asked_first_and_a_no_stops_the_rest(
+    switch, repository, scripted, missing_setup, setup_run
+):
+    """#69 rule 14: all questions in catalog order, then the runs; a `no` runs none."""
+    scripted.config["services"]["keycloak"]["profiles"] = ["keycloak"]
+    write_fleet(
+        repository,
+        ENABLED + "  keycloak:\n    run: {enabled: true, setup: step-ca/init}\n",
+    )
+
+    exit_code, out, _ = switch("yes\nno")
+
+    assert exit_code == 1
+    assert out.count("is not set up") == 2
+    assert setup_run.commands == []
+
+
+def test_several_missing_setups_run_one_after_another_and_a_failure_stops_the_rest(
+    switch, repository, scripted, missing_setup, setup_run
+):
+    """#69 rule 14."""
+    write_fleet(
+        repository,
+        ENABLED + "  keycloak:\n    run: {enabled: true, setup: step-ca/init}\n",
+    )
+    setup_run.exit_code = 1
+
+    exit_code, _, _ = switch("yes\nyes")
+
+    assert exit_code == 1
+    assert len(setup_run.commands) == 1
 
 
 def test_a_setup_check_that_cannot_tell_is_cannot_plan_and_quotes_its_line(
@@ -495,27 +683,29 @@ def test_a_setup_check_that_cannot_tell_is_cannot_plan_and_quotes_its_line(
     assert scripted.changing_verbs() == []
 
 
-def test_the_setup_command_is_only_ever_run_with_check(switch, setup_check):
-    """#52 rule 5: apply never runs a setup command without `--check`."""
+def test_a_setup_that_is_set_up_is_only_ever_checked_never_run(switch, setup_check, setup_run):
+    """#69 rule 1: without a missing setup the command is only called with `--check`."""
     switch()
 
     assert all(command[-1] == "--check" for command in setup_check.commands)
+    assert setup_run.commands == []
 
 
 def test_without_a_terminal_it_refuses_before_anything_else(
-    repository, scripted, setup_check, monkeypatch, capsys, state
+    repository, scripted, missing_setup, setup_run, monkeypatch, capsys, state
 ):
     """#52 rule 4: no terminal refuses first (exit 1)."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
 
     exit_code = apply.apply_closed(
-        state, compose.Compose(scripted.run, repository), repository, setup_check
+        state, compose.Compose(scripted.run, repository), repository, missing_setup, setup_run
     )
 
     assert exit_code == 1
     assert "refused, stdin and stdout must be a terminal" in capsys.readouterr().err
     assert scripted.calls == []
-    assert setup_check.commands == []
+    assert missing_setup.commands == []
+    assert setup_run.commands == []
 
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", "yes please"])
