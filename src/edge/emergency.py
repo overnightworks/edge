@@ -237,6 +237,11 @@ def _report_close(
     return ApplyExit.APPLIED_OR_NOTHING
 
 
+def _switched_off(read: switches.Mark | None, ingress: barrier.Barrier) -> bool:
+    """A unit is switched off by its marker or by the barrier a stop left standing."""
+    return read is not None or ingress.present()
+
+
 def start_unit(
     marks: switches.Switches,
     key: str,
@@ -265,7 +270,7 @@ def start_unit(
             f"refused, {key} is disabled in the catalog; enable it by PR and `{apply.COMMAND}`",
         )
         return ApplyExit.REFUSED
-    if read is None and not ingress.present():
+    if not _switched_off(read, ingress):
         _say(START, f"no change, {key} is not switched off")
         return ApplyExit.APPLIED_OR_NOTHING
     try:
@@ -354,12 +359,19 @@ STOP_ALL = f"{STOP} --all"
 START_ALL = f"{START} --all"
 
 
-def _record_global(marks: switches.Switches, now: datetime) -> switches.SwitchError | None:
+def _record_global(
+    marks: switches.Switches, now: datetime, *, under_lock: bool
+) -> switches.SwitchError | None:
+    """Write the global switch; unlocked it never waits for a start that holds `switch.lock`."""
     try:
-        with marks.lock():
+        with ExitStack() as held:
+            if under_lock:
+                held.enter_context(marks.lock())
             marks.record_global(now)
     except switches.SwitchError as error:
         return error
+    except KeyboardInterrupt:
+        return switches.SwitchError("interrupted while waiting for the lock")
     return None
 
 
@@ -371,20 +383,40 @@ def _global_time(marks: switches.Switches) -> str:
     return switches.describe_since(mark.since if mark else switches.UNKNOWN_SWITCH_TIME)
 
 
-def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel | None = None) -> int:
-    """Record the global switch first, then stop the tunnel and report only what is observed.
-
-    The units keep running on loopback and their switches are not touched.
-    """
-    door = door or tunnel.Tunnel()
-    record_failure = _record_global(marks, now)
+def _stop_failure(door: tunnel.Tunnel) -> str | None:
+    """Ask the system to stop the tunnel; why it could not even be asked, if it could not."""
     try:
-        door.stop(may_ask_password=sys.stdin.isatty() and sys.stdout.isatty())
-        stopped = door.is_inactive()
-        boot_protected = door.has_boot_drop_in()
+        door.stop(may_ask_password=terminal.at_terminal())
     except tunnel.TunnelError as error:
-        _complain(STOP_ALL, f"partial: the tunnel was not stopped, {error}")
-        return ApplyExit.REFUSED
+        return f"the tunnel could not be stopped, {error}"
+    except KeyboardInterrupt:
+        return "interrupted while stopping the tunnel"
+    return None
+
+
+def _observed(door: tunnel.Tunnel) -> tuple[bool, bool, str | None]:
+    """(stopped, boot protected, why it could not be observed) of the tunnel as it is now."""
+    try:
+        stopped = door.is_inactive()
+        return stopped, door.has_boot_drop_in(), None
+    except tunnel.TunnelError as error:
+        return False, False, f"its state could not be read, {error}"
+
+
+def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> int:
+    """Record the global switch first, stop the tunnel, record again under the lock, then report
+    only what is observed.
+
+    The first record is unlocked, so a start holding `switch.lock` through `up` cannot delay the
+    stop; the second is under the lock, so a start that cleared the switch meanwhile cannot undo
+    it. The units keep running on loopback and their switches are not touched.
+    """
+    first_failure = _record_global(marks, now, under_lock=False)
+    stop_failure = _stop_failure(door)
+    lock_failure = _record_global(marks, now, under_lock=True)
+    record_failure = lock_failure if first_failure else None
+    stopped, boot_protected, observation_failure = _observed(door)
+    unit = door.unit.removesuffix(".service")
     if record_failure:
         _complain(
             STOP_ALL,
@@ -393,10 +425,12 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel | None
         )
         return ApplyExit.REFUSED
     if not stopped:
+        reason = stop_failure or observation_failure
+        still = f"is not confirmed stopped ({reason})" if reason else "still runs"
         _complain(
             STOP_ALL,
-            "partial: the global switch is recorded, but the tunnel still runs; "
-            f"`sudo systemctl stop {door.unit.removesuffix('.service')}`",
+            f"partial: the global switch is recorded, but the tunnel {still}; "
+            f"`sudo systemctl stop {unit}`",
         )
         return ApplyExit.REFUSED
     if not boot_protected:
@@ -406,9 +440,11 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel | None
             "yet; overnightworks/home-tools#9)",
         )
         return ApplyExit.REFUSED
+    named = "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
     _say(
         STOP_ALL,
-        f"the tunnel is stopped (since {_global_time(marks)}); services keep running locally",
+        f"the tunnel is stopped (since {_global_time(marks)}{named}); "
+        "services keep running locally",
     )
     return ApplyExit.APPLIED_OR_NOTHING
 
@@ -426,7 +462,7 @@ def _unproven_barrier(
             ingress = barrier.Barrier.of_unit(
                 fleet.config, services, repository, unit.key, verifier
             )
-            if marks.mark(unit.key) is None and not ingress.present():
+            if not _switched_off(marks.mark(unit.key), ingress):
                 continue
             if not ingress.names:
                 _say(START_ALL, f"{unit.key}: no host behind Traefik, so no barrier")
@@ -438,18 +474,27 @@ def _unproven_barrier(
     return None
 
 
-def _partial_closed(reason: str, recording_failure: switches.SwitchError | None) -> int:
-    if recording_failure:
-        _complain(
-            START_ALL,
-            f"partial: {reason}, and the global switch could not be recorded again "
-            f"({recording_failure}); check `systemctl is-active` of the tunnel",
-        )
-    else:
-        _complain(
-            START_ALL,
-            f"partial: {reason}; the global switch is recorded again, the tunnel stays closed",
-        )
+def _tunnel_closed_clause(door: tunnel.Tunnel) -> str:
+    """Stop the tunnel if it runs, then say what was observed; never claim a closed state unseen."""
+    try:
+        if not door.is_inactive():
+            door.stop(may_ask_password=terminal.at_terminal())
+        if door.is_inactive():
+            return "the tunnel is closed"
+    except (tunnel.TunnelError, KeyboardInterrupt):
+        pass  # the reply below says it was not observed
+    return f"the tunnel is not confirmed closed; check `systemctl is-active {door.unit}`"
+
+
+def _partial_closed(
+    reason: str, recording_failure: switches.SwitchError | None, door: tunnel.Tunnel
+) -> int:
+    recorded = (
+        f"the global switch could not be recorded again ({recording_failure})"
+        if recording_failure
+        else "the global switch is recorded again"
+    )
+    _complain(START_ALL, f"partial: {reason}; {recorded}; {_tunnel_closed_clause(door)}")
     return ApplyExit.REFUSED
 
 
@@ -469,7 +514,7 @@ def _stopped_during_prompt(current: switches.Mark | None) -> int:
 def start_all(
     marks: switches.Switches,
     now: datetime,
-    door: tunnel.Tunnel | None = None,
+    door: tunnel.Tunnel,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
@@ -481,7 +526,6 @@ def start_all(
     """
     if terminal.refused_without_terminal(START_ALL):
         return ApplyExit.REFUSED
-    door = door or tunnel.Tunnel()
     engine = engine or compose.Compose(repository=repository)
     fleet = _read_fleet(START_ALL, engine, repository)
     if fleet is None:
@@ -511,17 +555,23 @@ def _reopen(
     try:
         if not door.authorized_to_start(os.getpid()):
             return _partial_closed(
-                "the system did not authorize the start", _record_global(marks, now)
+                "the system did not authorize the start",
+                _record_global(marks, now, under_lock=True),
+                door,
             )
         with marks.lock():
             if changed := marks.global_changed(read):
                 return _stopped_during_prompt(changed.current)
             if read:
                 marks.clear_global(read)
-            if not (door.start() and door.is_active()):
-                marks.record_global(now)
-                return _partial_closed("the tunnel did not start", None)
+            started = door.start() and door.is_active()
+            failure = None if started else "the tunnel did not start"
     except (switches.SwitchError, tunnel.TunnelError) as error:
-        return _partial_closed(f"could not reopen the tunnel, {error}", _record_global(marks, now))
+        failure = f"could not reopen the tunnel, {error}"
+    except KeyboardInterrupt:
+        failure = "interrupted while reopening the tunnel"
+    if failure:
+        # the lock is released here, so recording again may take it
+        return _partial_closed(failure, _record_global(marks, now, under_lock=True), door)
     _say(START_ALL, "the tunnel is open; unit switches and barriers stay")
     return ApplyExit.APPLIED_OR_NOTHING

@@ -9,6 +9,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Self
 
 CLOUDFLARED_UNIT = "cloudflared.service"
@@ -53,10 +54,12 @@ class Tunnel:
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> Self:
         """`cloudflared.service` of the system manager unless the probe names a throwaway unit."""
-        return cls(
-            environment.get(UNIT_VARIABLE, CLOUDFLARED_UNIT),
-            Manager(environment.get(MANAGER_VARIABLE, Manager.SYSTEM)),
-        )
+        manager = environment.get(MANAGER_VARIABLE, Manager.SYSTEM)
+        try:
+            return cls(environment.get(UNIT_VARIABLE, CLOUDFLARED_UNIT), Manager(manager))
+        except ValueError:
+            known = " or ".join(Manager)
+            raise TunnelError(f"{MANAGER_VARIABLE} must be {known}, not {manager!r}") from None
 
     def stop(self, *, may_ask_password: bool) -> None:
         """Ask for the stop; whether it happened is for `is_inactive` to say. Without a terminal
@@ -75,16 +78,21 @@ class Tunnel:
         return self._state() == "inactive"
 
     def has_boot_drop_in(self) -> bool:
-        return BOOT_DROP_IN in self._systemctl("show", "-p", "DropInPaths").stdout
+        shown = self._systemctl("show", "-p", "DropInPaths").stdout.strip()
+        paths = shown.removeprefix("DropInPaths=").split()
+        return any(PurePosixPath(path).name == BOOT_DROP_IN for path in paths)
 
     def authorized_to_start(self, process_id: int) -> bool:
         """The system's authorization for `start`, asked before anything is cleared. The user
-        manager answers to its own user, so there is nothing to ask."""
+        manager answers to its own user, so there is nothing to ask.
+
+        The internal agent prompts on the terminal where no desktop agent is registered (an SSH
+        session); only stdout is captured, so the prompt stays visible."""
         if self.manager is Manager.USER:
             return True
         asked = self.run(
             ["pkcheck", "--action-id", MANAGE_UNITS_ACTION, "--process", str(process_id),
-             "--allow-user-interaction"]
+             "--allow-user-interaction", "--enable-internal-agent"]
         )  # fmt: skip
         return asked.returncode == 0
 

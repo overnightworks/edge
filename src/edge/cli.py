@@ -57,12 +57,24 @@ def add_unit_or_all(parser: argparse.ArgumentParser, all_help: str) -> None:
     choice.add_argument("--all", action="store_true", help=all_help)
 
 
+def tunnel_of_environment(command: str) -> tunnel.Tunnel | None:
+    """The tunnel the environment names; None, after saying why, when it names an invalid one."""
+    try:
+        return tunnel.Tunnel.from_environment(os.environ)
+    except tunnel.TunnelError as error:
+        print(f"{command}: cannot plan, {error}", file=sys.stderr)
+        return None
+
+
 def stop_command(arguments: argparse.Namespace) -> int:
     if arguments.all:
+        door = tunnel_of_environment(emergency.STOP_ALL)
+        if door is None:
+            return apply.ApplyExit.CANNOT_PLAN
         return emergency.stop_all(
             switches.Switches(switches.default_state_directory()),
             datetime.now().astimezone(),
-            tunnel.Tunnel.from_environment(os.environ),
+            door,
         )
     return emergency.stop_unit(
         switches.Switches(switches.default_state_directory()),
@@ -73,10 +85,13 @@ def stop_command(arguments: argparse.Namespace) -> int:
 
 def start_command(arguments: argparse.Namespace) -> int:
     if arguments.all:
+        door = tunnel_of_environment(emergency.START_ALL)
+        if door is None:
+            return apply.ApplyExit.CANNOT_PLAN
         return emergency.start_all(
             switches.Switches(switches.default_state_directory()),
             datetime.now().astimezone(),
-            tunnel.Tunnel.from_environment(os.environ),
+            door,
         )
     return emergency.start_unit(
         switches.Switches(switches.default_state_directory()), arguments.unit

@@ -12,8 +12,9 @@ from test_edge_apply import (
     NOW,
     SWITCHED_OFF_AT,
     Ingress,
+    InterruptedWaitForLock,
     ScriptedCompose,
-    Terminal,
+    at_terminal,  # noqa: F401 the fixture, requested by name below
     switch_off,
 )
 
@@ -21,7 +22,7 @@ from edge import barrier, cli, compose, emergency, switches, tunnel
 
 PROBE_FLEET = "services:\n  probe:\n    run: {enabled: true}\n"
 FIRST_STOP = "2026-10-17T22:10:04+02:00"
-DROP_IN_PATHS = f"DropInPaths=/etc/systemd/system/cloudflared.service.d/{tunnel.BOOT_DROP_IN}\n"
+DROP_IN_DIRECTORY = "/etc/systemd/system/cloudflared.service.d"
 
 
 @dataclass
@@ -30,10 +31,16 @@ class FakeSystemd:
 
     active: bool = True
     refuses_stop: bool = False
-    drop_in_installed: bool = True
+    drop_ins: list[str] = field(default_factory=lambda: [tunnel.BOOT_DROP_IN])
     authorizes: bool = True
     start_fails: bool = False
+    start_leaves_unit_activating: bool = False
+    state_unreadable_after_start: bool = False
+    activating: bool = False
+    started: bool = False
     while_asking: Callable[[], None] | None = None
+    while_stopping: Callable[[], None] | None = None
+    while_starting: Callable[[], None] | None = None
     calls: list[list[str]] = field(default_factory=list)
 
     def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -46,18 +53,30 @@ class FakeSystemd:
         return getattr(self, f"verb_{verb.replace('-', '_')}")()
 
     def verb_stop(self) -> subprocess.CompletedProcess[str]:
+        if self.while_stopping:
+            self.while_stopping()
         self.active = self.active and self.refuses_stop
+        self.activating = self.activating and self.refuses_stop
         return self._answer(1 if self.refuses_stop else 0)
 
     def verb_start(self) -> subprocess.CompletedProcess[str]:
-        self.active = self.active or not self.start_fails
+        if self.while_starting:
+            self.while_starting()
+        self.started = True
+        self.activating = self.start_leaves_unit_activating
+        self.active = (self.active or not self.start_fails) and not self.activating
         return self._answer(1 if self.start_fails else 0)
 
     def verb_is_active(self) -> subprocess.CompletedProcess[str]:
+        if self.started and self.state_unreadable_after_start:
+            raise tunnel.TunnelError("cannot run systemctl (timed out)")
+        if self.activating:
+            return self._answer(3, "activating\n")
         return self._answer(0 if self.active else 3, "active\n" if self.active else "inactive\n")
 
     def verb_show(self) -> subprocess.CompletedProcess[str]:
-        return self._answer(0, DROP_IN_PATHS if self.drop_in_installed else "DropInPaths=\n")
+        paths = " ".join(f"{DROP_IN_DIRECTORY}/{name}" for name in self.drop_ins)
+        return self._answer(0, f"DropInPaths={paths}\n")
 
     @staticmethod
     def _answer(code: int, output: str = "") -> subprocess.CompletedProcess[str]:
@@ -84,17 +103,6 @@ def systemd() -> FakeSystemd:
 
 
 @pytest.fixture
-def terminal_typing(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
-    def operator_types(answer: str = "yes", while_prompt_waits: Callable[[], None] | None = None):
-        keyboard = Terminal(f"{answer}\n")
-        keyboard.while_prompt_waits = while_prompt_waits
-        monkeypatch.setattr(sys, "stdin", keyboard)
-        monkeypatch.setattr(sys, "stdout", Terminal())
-
-    return operator_types
-
-
-@pytest.fixture
 def repository(tmp_path: Path) -> Path:
     (tmp_path / "fleet.yaml").write_text(PROBE_FLEET)
     (tmp_path / "dynamic").mkdir()
@@ -108,8 +116,10 @@ def ingress(repository: Path) -> Ingress:
 
 
 @pytest.fixture
-def stop_all(marks, systemd, capsys) -> Callable[[], tuple[int, str]]:
-    def run() -> tuple[int, str]:
+def stop_all(marks, systemd, at_terminal, capsys) -> Callable[..., tuple[int, str]]:  # noqa: F811
+    def run(typed_at_terminal: bool = False) -> tuple[int, str]:
+        if typed_at_terminal:
+            at_terminal("")
         exit_code = emergency.stop_all(marks, NOW, tunnel.Tunnel(run=systemd.run))
         captured = capsys.readouterr()
         return exit_code, captured.out + captured.err
@@ -118,9 +128,9 @@ def stop_all(marks, systemd, capsys) -> Callable[[], tuple[int, str]]:
 
 
 @pytest.fixture
-def start_all(marks, systemd, repository, ingress, terminal_typing, capsys):
+def start_all(marks, systemd, repository, ingress, at_terminal, capsys):  # noqa: F811
     def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str]:
-        terminal_typing(answer, while_prompt_waits)
+        at_terminal(answer, while_prompt_waits)
         exit_code = emergency.start_all(
             marks,
             NOW,
@@ -145,6 +155,7 @@ def switch_off_probe(marks: switches.Switches, ingress: Ingress, repository: Pat
 
 
 def test_stop_all_records_the_switch_stops_the_tunnel_and_says_so(stop_all, marks, systemd):
+    """#70 rule 2: record first, stop, report only the observed state."""
     exit_code, output = stop_all()
 
     assert exit_code == 0
@@ -154,24 +165,23 @@ def test_stop_all_records_the_switch_stops_the_tunnel_and_says_so(stop_all, mark
 
 
 def test_stop_all_without_a_terminal_never_waits_for_a_password(stop_all, systemd):
+    """#70 rule 2.2 and rule 9: an agent's stop never waits for a password."""
     stop_all()
 
     stop_command = next(call for call in systemd.calls if "stop" in call)
     assert "--no-ask-password" in stop_command
 
 
-def test_stop_all_at_a_terminal_lets_the_system_ask_for_the_password(
-    stop_all, systemd, terminal_typing
-):
-    terminal_typing()
-
-    stop_all()
+def test_stop_all_at_a_terminal_lets_the_system_ask_for_the_password(stop_all, systemd):
+    """#70 rule 2.2: at a terminal the system asks for the password."""
+    stop_all(typed_at_terminal=True)
 
     stop_command = next(call for call in systemd.calls if "stop" in call)
     assert "--no-ask-password" not in stop_command
 
 
 def test_a_refused_stop_is_partial_and_keeps_the_switch(stop_all, marks, systemd):
+    """#70 rule 3: a refused stop is partial, exit 1, and the marker stays."""
     systemd.refuses_stop = True
 
     exit_code, output = stop_all()
@@ -187,7 +197,8 @@ def test_a_refused_stop_is_partial_and_keeps_the_switch(stop_all, marks, systemd
 def test_a_missing_boot_drop_in_is_incomplete_though_the_tunnel_is_stopped(
     stop_all, marks, systemd
 ):
-    systemd.drop_in_installed = False
+    """#70 rule 3: a missing boot drop-in is incomplete, exit 1."""
+    systemd.drop_ins = []
 
     exit_code, output = stop_all()
 
@@ -199,6 +210,7 @@ def test_a_missing_boot_drop_in_is_incomplete_though_the_tunnel_is_stopped(
 
 
 def test_a_repeated_stop_all_keeps_the_first_time(stop_all, marks):
+    """#70 rule 1: a repeated stop keeps the first time."""
     marks.record_global(emergency.datetime.fromisoformat(FIRST_STOP))
 
     _, output = stop_all()
@@ -207,6 +219,7 @@ def test_a_repeated_stop_all_keeps_the_first_time(stop_all, marks):
 
 
 def test_stop_all_leaves_the_unit_switches_alone(stop_all, marks):
+    """#70 rule 2: unit switches are not touched by stop --all."""
     switch_off(marks.directory, unit="probe")
 
     stop_all()
@@ -215,6 +228,7 @@ def test_stop_all_leaves_the_unit_switches_alone(stop_all, marks):
 
 
 def test_the_global_switch_is_no_unit_marker(marks):
+    """#70 rule 1: the global switch is its own fact, no unit name can fake it."""
     marks.record_global(NOW)
 
     assert marks.global_mark() is not None
@@ -224,6 +238,7 @@ def test_the_global_switch_is_no_unit_marker(marks):
 def test_stop_all_still_stops_the_tunnel_when_the_switch_cannot_be_recorded(
     stop_all, marks, systemd
 ):
+    """#70 rule 2 and rule 3: a record failure never keeps the tunnel open."""
     marks.directory.mkdir(parents=True)
     (marks.directory / switches.GLOBAL_STOP_FILE).mkdir()
 
@@ -235,14 +250,76 @@ def test_stop_all_still_stops_the_tunnel_when_the_switch_cannot_be_recorded(
 
 
 def test_stop_all_reports_a_missing_systemctl_as_not_stopped(marks, capsys):
+    """#70 rule 3: a stop that could not even be asked is partial with the sudo hint."""
+
     def no_systemctl(_command):
         raise tunnel.TunnelError("cannot run systemctl (missing)")
 
     exit_code = emergency.stop_all(marks, NOW, tunnel.Tunnel(run=no_systemctl))
 
     assert exit_code == 1
-    assert "the tunnel was not stopped" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "is not confirmed stopped" in err
+    assert "`sudo systemctl stop cloudflared`" in err
     assert marks.global_mark() is not None
+
+
+def test_stop_all_stops_the_tunnel_though_a_start_holds_the_lock(marks, systemd, capsys):
+    """#70 rule 2: the stop never waits for switch.lock, which a start holds through `up`."""
+    busy = InterruptedWaitForLock(marks.directory)  # every wait for the lock ends in Ctrl-C
+
+    exit_code = emergency.stop_all(busy, NOW, tunnel.Tunnel(run=systemd.run))
+
+    assert exit_code == 0
+    assert not systemd.active
+    assert busy.global_mark() is not None
+
+
+def test_a_start_that_cleared_the_switch_during_the_stop_cannot_undo_it(stop_all, marks, systemd):
+    """#70 rule 2 and P7: the switch is recorded again under the lock, after the stop."""
+    systemd.while_stopping = lambda: marks.clear_global(marks.global_mark())
+
+    exit_code, _ = stop_all()
+
+    assert exit_code == 0
+    assert marks.global_mark() is not None
+
+
+def test_an_interrupt_at_the_password_prompt_of_the_stop_is_partial_with_the_sudo_hint(
+    stop_all, marks, systemd
+):
+    """#70 rule 3: a Ctrl-C is reported as partial, exit 1, never as a traceback."""
+
+    def ctrl_c():
+        raise KeyboardInterrupt
+
+    systemd.while_stopping = ctrl_c
+
+    exit_code, output = stop_all()
+
+    assert exit_code == 1
+    assert "interrupted while stopping the tunnel" in output
+    assert "`sudo systemctl stop cloudflared`" in output
+    assert marks.global_mark() is not None
+
+
+def test_a_tunnel_of_another_unit_is_named_in_the_success_line(marks, systemd, capsys):
+    """#70 rule 2 and Proof: the operator can tell a probe unit from cloudflared."""
+    probe_tunnel = tunnel.Tunnel("edge-probe-tunnel-1.service", run=systemd.run)
+
+    emergency.stop_all(marks, NOW, probe_tunnel)
+
+    assert "unit edge-probe-tunnel-1.service" in capsys.readouterr().out
+
+
+def test_an_unrelated_drop_in_does_not_certify_the_reboot_protection(stop_all, systemd):
+    """#70 rule 3: only the exact 30-edge-global-stop.conf counts as the boot drop-in."""
+    systemd.drop_ins = ["130-" + tunnel.BOOT_DROP_IN.removeprefix("30-")]
+
+    exit_code, output = stop_all()
+
+    assert exit_code == 1
+    assert "incomplete: a reboot would reopen the tunnel" in output
 
 
 # --- edge start --all ----------------------------------------------------------------------
@@ -257,6 +334,7 @@ def stopped_tunnel(marks, systemd):
 def test_start_all_reopens_the_tunnel_and_clears_only_the_global_switch(
     start_all, stopped_tunnel, marks, systemd, ingress, repository
 ):
+    """#70 rule 4 and rule 6: start --all lifts only the global switch."""
     switch_off_probe(marks, ingress, repository)
 
     exit_code, output = start_all()
@@ -272,6 +350,7 @@ def test_start_all_reopens_the_tunnel_and_clears_only_the_global_switch(
 def test_start_all_proves_each_standing_barrier_before_it_reopens(
     start_all, stopped_tunnel, marks, ingress, repository
 ):
+    """#70 rule 4.1, rule 7 and rule 10: every barrier is proven, one line each."""
     switch_off_probe(marks, ingress, repository)
     (repository / "dynamic" / "switch-probe.yml").unlink()  # a lost file is rendered again
 
@@ -285,6 +364,7 @@ def test_start_all_proves_each_standing_barrier_before_it_reopens(
 def test_a_barrier_that_cannot_be_proven_keeps_the_tunnel_closed(
     start_all, stopped_tunnel, marks, ingress, repository, systemd
 ):
+    """#70 rule 5: an unproven barrier keeps the tunnel closed."""
     switch_off_probe(marks, ingress, repository)
     ingress.rejecting = True
 
@@ -299,6 +379,7 @@ def test_a_barrier_that_cannot_be_proven_keeps_the_tunnel_closed(
 def test_authorization_that_fails_leaves_the_tunnel_closed_and_the_switch_recorded(
     start_all, stopped_tunnel, marks, systemd
 ):
+    """#70 rule 5: a failed authorization is partial, exit 1, marker recorded."""
     systemd.authorizes = False
 
     exit_code, output = start_all()
@@ -312,6 +393,7 @@ def test_authorization_that_fails_leaves_the_tunnel_closed_and_the_switch_record
 def test_authorization_is_asked_before_the_switch_is_cleared(
     start_all, stopped_tunnel, marks, systemd
 ):
+    """#70 rule 4.2: authorization comes before the marker is cleared."""
     seen = []
     systemd.while_asking = lambda: seen.append(marks.global_mark())
 
@@ -321,6 +403,7 @@ def test_authorization_is_asked_before_the_switch_is_cleared(
 
 
 def test_a_failed_start_records_the_global_switch_again(start_all, stopped_tunnel, marks, systemd):
+    """#70 rule 5: a failed start records the marker again."""
     systemd.start_fails = True
 
     exit_code, output = start_all()
@@ -332,6 +415,7 @@ def test_a_failed_start_records_the_global_switch_again(start_all, stopped_tunne
 
 
 def test_a_stop_during_the_prompt_wins(start_all, stopped_tunnel, marks, systemd):
+    """#70 rule 4.3 and rule 5: a stop during the prompt wins."""
     exit_code, output = start_all(while_prompt_waits=lambda: marks.record_global(NOW))
 
     assert exit_code == 1
@@ -340,8 +424,72 @@ def test_a_stop_during_the_prompt_wins(start_all, stopped_tunnel, marks, systemd
     assert marks.global_mark() is not None
 
 
+def test_a_start_that_leaves_the_unit_activating_stops_it_and_reports_what_is_observed(
+    start_all, stopped_tunnel, marks, systemd
+):
+    """#70 rule 5 and P15: a start systemd accepted but that is not active is stopped again."""
+    systemd.start_leaves_unit_activating = True
+
+    exit_code, output = start_all()
+
+    assert exit_code == 1
+    assert "the tunnel is closed" in output
+    assert systemd.verbs().count("stop") == 1
+    assert not systemd.activating
+    assert marks.global_mark() is not None
+
+
+def test_an_unreadable_state_after_the_start_never_claims_the_tunnel_closed(
+    start_all, stopped_tunnel, marks, systemd
+):
+    """#70 rule 5 and P15: a closed state is claimed only after it was observed."""
+    systemd.state_unreadable_after_start = True
+
+    exit_code, output = start_all()
+
+    assert exit_code == 1
+    assert "stays closed" not in output
+    assert "the tunnel is not confirmed closed; check `systemctl is-active" in output
+    assert marks.global_mark() is not None
+
+
+def test_an_interrupt_during_the_start_records_the_switch_again(
+    start_all, stopped_tunnel, marks, systemd
+):
+    """#70 rule 5: a Ctrl-C after the marker was cleared records it again, partial, exit 1."""
+
+    def ctrl_c():
+        raise KeyboardInterrupt
+
+    systemd.while_starting = ctrl_c
+
+    exit_code, output = start_all()
+
+    assert exit_code == 1
+    assert "interrupted while reopening the tunnel" in output
+    assert marks.global_mark() is not None
+
+
+def test_authorization_is_asked_with_the_internal_agent_so_an_ssh_session_can_answer(
+    start_all, stopped_tunnel, systemd
+):
+    """#70 rule 4.2 and rule 8: the system's own prompt appears where no desktop agent runs."""
+    start_all()
+
+    pkcheck = next(call for call in systemd.calls if call[0] == "pkcheck")
+    assert pkcheck[:5] == [
+        "pkcheck",
+        "--action-id",
+        tunnel.MANAGE_UNITS_ACTION,
+        "--process",
+        pkcheck[4],
+    ]
+    assert pkcheck[5:] == ["--allow-user-interaction", "--enable-internal-agent"]
+
+
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "yes please"])
 def test_only_the_exact_yes_reopens_the_tunnel(start_all, stopped_tunnel, marks, systemd, answer):
+    """#70 rule 4: start --all needs the exact `yes`."""
     exit_code, _ = start_all(answer)
 
     assert exit_code == 1
@@ -350,6 +498,7 @@ def test_only_the_exact_yes_reopens_the_tunnel(start_all, stopped_tunnel, marks,
 
 
 def test_start_all_refuses_without_a_terminal(marks, systemd, capsys, stopped_tunnel):
+    """#70 rule 9: start --all refuses without a terminal."""
     exit_code = emergency.start_all(marks, NOW, tunnel.Tunnel(run=systemd.run))
 
     assert exit_code == 1
@@ -359,6 +508,7 @@ def test_start_all_refuses_without_a_terminal(marks, systemd, capsys, stopped_tu
 
 
 def test_start_all_with_nothing_switched_off_changes_nothing(start_all, systemd):
+    """#70 rule 4: nothing switched off, nothing changes."""
     exit_code, output = start_all()
 
     assert exit_code == 0
@@ -373,6 +523,7 @@ def test_start_all_with_nothing_switched_off_changes_nothing(start_all, systemd)
     "arguments", [["stop", "probe", "--all"], ["start", "probe", "--all"], ["stop"], ["start"]]
 )
 def test_a_unit_and_all_exclude_each_other_and_one_is_required(arguments, capsys):
+    """#70 Files (cli.py): --all and <unit> are mutually exclusive."""
     with pytest.raises(SystemExit) as refused:
         cli.main(arguments)
 
@@ -381,6 +532,7 @@ def test_a_unit_and_all_exclude_each_other_and_one_is_required(arguments, capsys
 
 
 def test_the_tunnel_is_cloudflared_of_the_system_manager_unless_the_environment_names_another():
+    """#70 Files (tunnel.py): unit and manager are parameters for the probe."""
     default = tunnel.Tunnel.from_environment({})
     probe = tunnel.Tunnel.from_environment(
         {tunnel.UNIT_VARIABLE: "edge-probe-tunnel-1.service", tunnel.MANAGER_VARIABLE: "user"}
@@ -391,6 +543,7 @@ def test_the_tunnel_is_cloudflared_of_the_system_manager_unless_the_environment_
 
 
 def test_a_user_manager_tunnel_is_driven_with_systemctl_user_and_needs_no_authorization(systemd):
+    """#70 Proof (probe cell): a throwaway user unit stands in for the tunnel."""
     user_tunnel = tunnel.Tunnel("edge-probe-tunnel-1.service", tunnel.Manager.USER, systemd.run)
 
     user_tunnel.stop(may_ask_password=False)
@@ -399,3 +552,13 @@ def test_a_user_manager_tunnel_is_driven_with_systemctl_user_and_needs_no_author
         ["systemctl", "--user", "--no-ask-password", "stop", "edge-probe-tunnel-1.service"]
     ]
     assert user_tunnel.authorized_to_start(1)
+
+
+def test_an_invalid_tunnel_manager_is_a_plain_refusal_not_a_traceback(monkeypatch, capsys):
+    """#70 Files (tunnel.py): the environment names the manager; a wrong name is reported."""
+    monkeypatch.setenv(tunnel.MANAGER_VARIABLE, "bogus")
+
+    exit_code = cli.main(["stop", "--all"])
+
+    assert exit_code == 2
+    assert tunnel.MANAGER_VARIABLE in capsys.readouterr().err
