@@ -103,6 +103,8 @@ class Machine:
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
     status_seen_during_backup: dict | None = None
     status_file: Path | None = None
+    status_unwritable_after_backup: bool = False
+    """The status directory turns read-only once restic has answered a backup."""
     lock_free_during: set[str] = field(default_factory=set)
     """Labels of commands that ran while the host lock was free."""
     missing_images: set[str] = field(default_factory=set)
@@ -252,6 +254,8 @@ class Machine:
         self.private_modes["staging"] = mode_of(staging)
         self.private_modes |= {path.name: mode_of(path) for path in staging.iterdir()}
         snapshot_id = f"{len(self.snapshots) + 1:064x}"
+        if self.status_unwritable_after_backup:
+            self.status_file.parent.chmod(0o500)
         self.snapshots.append(
             {
                 "id": snapshot_id,

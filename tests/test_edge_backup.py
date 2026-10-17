@@ -29,7 +29,7 @@ from edge_backup_support import (
     removed_servers,
 )
 
-from edge_backup import cli, host, runner
+from edge_backup import cli, host
 from edge_backup.apps import AppsError, DumpKind, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
@@ -363,21 +363,28 @@ def test_a_repository_failure_stops_the_run_before_the_next_app(
     assert "restic forget" not in machine.labels()
 
 
-def test_a_status_write_failure_stops_the_run_before_the_next_app(
-    edge_backup, machine, home, monkeypatch
+@pytest.mark.parametrize("restic_like_exit_code", [10, 11, 12])
+def test_an_app_command_that_exits_like_restic_fails_only_its_app(
+    edge_backup, machine, home, restic_like_exit_code
 ):
+    """#71 rule 3: only restic's exit codes mean the repository; an app's own dump fails the app."""
+    machine.failing["pg_dump"] = restic_like_exit_code
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    assert outcome.exit_code == 1
+    assert (outcome.status["state"], outcome.status["failing_app"]) == ("failed", "songmaker")
+    assert machine.labels().count("pg_dump") == 2
+
+
+def test_a_status_write_failure_stops_the_run_before_the_next_app(edge_backup, machine, home):
     """#71 rule 3: a status failure aborts the run at once."""
-    real_write_status = runner.write_status
-
-    def write_status_until_first_backup(path, status):
-        if status.apps:
-            raise OSError("Status nicht schreibbar")
-        real_write_status(path, status)
-
-    monkeypatch.setattr(runner, "write_status", write_status_until_first_backup)
-
-    with pytest.raises(OSError, match="Status nicht schreibbar"):
-        edge_backup(*declare_two_apps(home), "backup")
+    machine.status_unwritable_after_backup = True
+    try:
+        with pytest.raises(PermissionError):
+            edge_backup(*declare_two_apps(home), "backup")
+    finally:
+        machine.status_file.parent.chmod(0o700)
 
     assert machine.labels().count("pg_dump") == 1
     assert "restic forget" not in machine.labels()

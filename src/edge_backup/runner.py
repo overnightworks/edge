@@ -59,17 +59,6 @@ class StepFailed(Exception):
         super().__init__(message)
 
 
-# restic's own exit codes for a repository that does not exist, is locked, or rejects the password.
-RESTIC_REPOSITORY_EXIT_CODES = frozenset({10, 11, 12})
-
-
-def _repository_unusable(error: host.HostError) -> bool:
-    """The repository, not the app being worked on, is why the command failed."""
-    return (
-        isinstance(error, host.HostCommandError) and error.exit_code in RESTIC_REPOSITORY_EXIT_CODES
-    )
-
-
 class Run:
     """The status file as this run's journal: every phase change is written at once."""
 
@@ -88,7 +77,9 @@ class Run:
             yield
         except host.HostError as error:
             raise StepFailed(
-                failing, f"Phase {phase}: {error}", shared=_repository_unusable(error)
+                failing,
+                f"Phase {phase}: {error}",
+                shared=isinstance(error, restic.RepositoryUnusableError),
             ) from error
         except VerificationError as error:
             raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"Phase {phase}: {error}") from error
