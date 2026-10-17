@@ -36,16 +36,19 @@ def keycloak_unit() -> catalog.Unit:
 
 
 def test_the_catalog_ships_keycloak_off_with_go_live_as_its_setup(keycloak_unit):
+    """#64 rule 1: the real catalog lists keycloak as off, with go-live as its setup."""
     assert (keycloak_unit.enabled, keycloak_unit.setup) == (False, "keycloak/go-live")
 
 
 def test_the_keycloak_profile_is_its_database_and_keycloak_and_not_the_config_cli():
+    """#64 rule 1: the keycloak profile resolves to its database and Keycloak, not the CLI."""
     profiles = compose.profile_services(compose_document())
 
     assert profiles["keycloak"] == KEYCLOAK_SERVICES
 
 
 def test_switching_keycloak_off_names_its_database_volume_as_staying(keycloak_unit):
+    """#64 rule 4: switching Keycloak off stops both services, names its database volume as staying."""
     document = resolved_like_compose(compose_document())
     profiles = compose.profile_services(document)
     running = {name: {"running"} for name in KEYCLOAK_SERVICES}
@@ -58,6 +61,7 @@ def test_switching_keycloak_off_names_its_database_volume_as_staying(keycloak_un
 
 
 def test_keycloak_that_is_off_and_gone_needs_no_change(keycloak_unit):
+    """#64 rules 1 and 5: Keycloak that is off and not running needs no change."""
     document = resolved_like_compose(compose_document())
     profiles = compose.profile_services(document)
 
