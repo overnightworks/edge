@@ -85,12 +85,14 @@ Fetch = Callable[
     [str, str, float, Callable[[], float]], Answer
 ]  # (address, Host, seconds allowed, clock) -> GET / answer
 
+Connect = Callable[[tuple[str, int], float], socket.socket]  # (address, seconds) -> open socket
+
 
 class _DeadlineSocket(socket.socket):
     """A socket whose every read, whatever http.client's parser asks for, ends at one deadline."""
 
     deadline = 0.0
-    clock: Callable[[], float] = time.monotonic
+    clock: Callable[[], float]
 
     def time_left(self) -> float:
         remaining = self.deadline - self.clock()
@@ -104,25 +106,32 @@ class _DeadlineSocket(socket.socket):
 
 
 class _DeadlineConnection(http.client.HTTPConnection):
-    def __init__(self, *args, clock: Callable[[], float], **kwargs) -> None:
+    def __init__(self, *args, clock: Callable[[], float], connect: Connect, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.clock = clock
+        self.open_socket = connect
 
     def connect(self) -> None:
         deadline = self.clock() + self.timeout
-        super().connect()
-        bounded = _DeadlineSocket(fileno=self.sock.detach())
+        opened = self.open_socket((self.host, self.port), self.timeout)
+        bounded = _DeadlineSocket(fileno=opened.detach())
         bounded.clock = self.clock
         bounded.deadline = deadline
         self.sock = bounded
         bounded.settimeout(bounded.time_left())
 
 
-def http_fetch(address: str, host: str, seconds: float, clock: Callable[[], float]) -> Answer:
+def http_fetch(
+    address: str,
+    host: str,
+    seconds: float,
+    clock: Callable[[], float],
+    connect: Connect = socket.create_connection,
+) -> Answer:
     """`GET /` within `seconds` in all, connect and every read together. Only a marked answer has
     its first body bytes read, which is all the comparison with Traefik's 404 needs; the headers
     alone show that a mark is absent."""
-    connection = _DeadlineConnection(address, timeout=seconds, clock=clock)
+    connection = _DeadlineConnection(address, timeout=seconds, clock=clock, connect=connect)
     try:
         connection.request("GET", "/", headers={"Host": host})
         response = connection.getresponse()

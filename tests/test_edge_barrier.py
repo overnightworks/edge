@@ -423,8 +423,9 @@ def test_headers_that_keep_coming_are_cut_off_at_the_time_allowed(serve):
     """#61 rule 3: endless headers cannot hold the stop past its deadline."""
     address = serve(flood(b"HTTP/1.1 200 OK\r\nX: "))
 
+    clock = TickingClock()
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED, TickingClock())
+        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock)
 
 
 def test_a_body_that_stalls_is_cut_off_at_the_time_allowed(serve):
@@ -440,7 +441,7 @@ def test_a_body_that_stalls_is_cut_off_at_the_time_allowed(serve):
     address = serve(stalls)
 
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED, TickingClock())
+        barrier.http_fetch(address, HOST, TIME_ALLOWED, lambda: 0.0)
 
 
 def test_chunk_framing_that_keeps_coming_is_cut_off_at_the_time_allowed(serve):
@@ -448,8 +449,9 @@ def test_chunk_framing_that_keeps_coming_is_cut_off_at_the_time_allowed(serve):
     head = b"HTTP/1.1 404 Not Found\r\nX-Edge-Barrier: probe\r\nTransfer-Encoding: chunked\r\n\r\n"
     address = serve(flood(head))
 
+    clock = TickingClock()
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED, TickingClock())
+        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock)
 
 
 def test_a_time_allowed_used_up_by_connecting_sends_no_request(serve):
@@ -461,14 +463,16 @@ def test_a_time_allowed_used_up_by_connecting_sends_no_request(serve):
         heard.append(connection.recv(4096))
         done.set()
 
-    looks = iter([0.0])
     address = serve(listens)
+    clock = TickingClock()
 
-    def clock_past_the_deadline_once_connected() -> float:
-        return next(looks, GENEROUS_TIME * 2)
+    def connecting_takes_the_whole_time(*args) -> socket.socket:
+        opened = socket.create_connection(*args)
+        clock.now += GENEROUS_TIME * 2
+        return opened
 
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, GENEROUS_TIME, clock_past_the_deadline_once_connected)
+        barrier.http_fetch(address, HOST, GENEROUS_TIME, clock, connecting_takes_the_whole_time)
 
     assert done.wait(timeout=5)
     assert heard == [b""]
