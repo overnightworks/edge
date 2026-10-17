@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from edge_backup_support import (
+    APP_HISTORY_KEYS,
     AUDIO,
     CANARY_PASSWORD,
     DUMP,
@@ -19,6 +20,8 @@ from edge_backup_support import (
     STATUS_KEYS,
     SYSTEMD,
     Machine,
+    app_history,
+    declare_two_apps,
     mode_of,
     mount_of,
     mount_source,
@@ -46,8 +49,8 @@ def test_backup_puts_dump_manifest_and_audio_into_one_snapshot(edge_backup, mach
     }
     assert snapshot["audio"] == AUDIO
     assert outcome.status["state"] == "ok"
-    assert outcome.status["last_snapshot_id"] == snapshot["id"]
-    assert outcome.status["last_successful_backup"] == "2026-10-18T03:00:00+00:00"
+    assert app_history(outcome.status)["last_snapshot_id"] == snapshot["id"]
+    assert app_history(outcome.status)["last_successful_backup"] == "2026-10-18T03:00:00+00:00"
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
 
@@ -99,15 +102,17 @@ def test_status_says_running_while_the_backup_runs(edge_backup, machine):
 
 def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backup, machine, home):
     edge_backup("backup")
-    backed_up = edge_backup("backup").status["last_successful_backup"]
+    backed_up = app_history(edge_backup("backup").status)["last_successful_backup"]
 
     outcome = edge_backup("restore-test")
 
     assert outcome.exit_code == 0, outcome.err
     assert outcome.status["state"] == "ok"
     # The throwaway server answered the second pg_isready poll, one second in.
-    assert outcome.status["last_successful_restore_test"] == "2026-10-18T03:00:01+00:00"
-    assert outcome.status["last_successful_backup"] == backed_up
+    assert (
+        app_history(outcome.status)["last_successful_restore_test"] == "2026-10-18T03:00:01+00:00"
+    )
+    assert app_history(outcome.status)["last_successful_backup"] == backed_up
     restore = machine.argv_of("restic restore")
     assert f"{machine.snapshots[-1]['id']}:/backup/songmaker" in restore
     assert machine.argv_of("pg_restore") == [
@@ -223,7 +228,7 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
     assert outcome.status["state"] == "failed"
     assert outcome.status["failing_phase"] == phase
     assert outcome.status["exit_category"] == "command-failed"
-    assert (outcome.status["last_successful_backup"] is not None) is backup_counts
+    assert ("last_successful_backup" in app_history(outcome.status)) is backup_counts
     if not backup_counts:
         assert "restic forget" not in machine.labels()
     assert list((home / ".cache/edge-backup").iterdir()) == []
@@ -301,13 +306,62 @@ def test_host_run_returns_stdout_or_writes_it_into_a_new_private_file(tmp_path):
     assert target.read_bytes() == b"filed"
 
 
+def _fail_radio_readiness(machine: Machine) -> None:
+    machine.other_db_containers["radio"] = ["beef01", "beef02"]
+
+
+def test_an_app_that_fails_to_back_up_keeps_the_others_and_every_earlier_success(
+    edge_backup, machine, home
+):
+    two_apps = declare_two_apps(home)
+    first = edge_backup(*two_apps, "backup")
+    assert first.exit_code == 0, first.err
+    assert first.status["failing_app"] is None
+    machine.calls.clear()
+    _fail_radio_readiness(machine)
+    machine.clock.moment += timedelta(days=7)
+
+    outcome = edge_backup(*two_apps, "backup")
+
+    assert outcome.exit_code == 1
+    assert (outcome.status["failing_app"], outcome.status["failing_phase"]) == (
+        "radio",
+        "readiness",
+    )
+    assert app_history(outcome.status, "radio") == app_history(first.status, "radio")
+    songmaker = app_history(outcome.status)
+    assert songmaker["last_snapshot_id"] == machine.snapshots[-1]["id"]
+    assert songmaker["last_successful_backup"] > app_history(first.status)["last_successful_backup"]
+    assert "restic forget" not in machine.labels()
+
+
+def test_backup_continues_with_the_next_app_after_one_failed(edge_backup, machine, home):
+    two_apps = declare_two_apps(home)
+    machine.db_containers = ["c0ffee", "c0ffee2"]
+
+    outcome = edge_backup(*two_apps, "backup")
+
+    assert outcome.status["failing_app"] == "songmaker"
+    assert list(outcome.status["apps"]) == ["radio"]
+    assert [snapshot["app"] for snapshot in machine.snapshots] == ["radio"]
+
+
+def test_an_app_removed_from_apps_toml_keeps_its_entry(edge_backup, machine, home):
+    radio = app_history(edge_backup(*declare_two_apps(home), "backup").status, "radio")
+
+    outcome = edge_backup("backup")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert app_history(outcome.status, "radio") == radio
+
+
 def test_a_failed_check_keeps_the_last_successful_backup(edge_backup, machine):
     machine.failing["restic check"] = 1
 
     outcome = edge_backup("backup")
 
     assert outcome.status["state"] == "failed"
-    assert outcome.status["last_snapshot_id"] == machine.snapshots[-1]["id"]
+    assert app_history(outcome.status)["last_snapshot_id"] == machine.snapshots[-1]["id"]
 
 
 def test_backup_waits_for_the_database_container_to_appear(edge_backup, machine):
@@ -431,7 +485,7 @@ def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
     assert outcome.status["state"] == "failed"
     assert outcome.status["failing_phase"] == "verify"
     assert outcome.status["exit_category"] == "verification-failed"
-    assert outcome.status["last_successful_restore_test"] is None
+    assert app_history(outcome.status)["last_successful_restore_test"] is None
     assert no_restore_server_left(machine)
     assert list((home / ".cache/edge-backup").iterdir()) == []
 
@@ -652,7 +706,7 @@ def test_a_broken_setup_fails_before_touching_docker(
 
 def _write_unknown_schema_status(edge_backup, machine) -> None:
     machine.status_file.parent.mkdir(parents=True)
-    machine.status_file.write_text(json.dumps({"schema": 2, "state": "ok"}))
+    machine.status_file.write_text(json.dumps({"schema": 3, "state": "ok"}))
 
 
 def _identity_of(path: Path) -> tuple[int, int, int, int]:
@@ -693,20 +747,24 @@ def test_an_unreadable_status_file_is_never_overwritten(
 
 def test_status_holds_the_contract_keys_and_no_paths_or_output(edge_backup, machine, home):
     machine.failing["restic check"] = 1
-    edge_backup("backup")
+    edge_backup(*declare_two_apps(home), "backup")
     status_text = machine.status_file.read_text()
+    status = json.loads(status_text)
 
-    assert set(json.loads(status_text)) == STATUS_KEYS
+    assert set(status) == STATUS_KEYS
+    assert list(status["apps"]) == ["radio", "songmaker"]
+    assert all(set(history) == APP_HISTORY_KEYS for history in status["apps"].values())
     assert str(home) not in status_text
     assert "u1/" not in status_text
     assert "docker" not in status_text
 
 
-def test_the_password_never_appears_in_argv_output_status_or_errors(edge_backup, machine):
-    edge_backup("backup")
-    edge_backup("restore-test")
+def test_the_password_never_appears_in_argv_output_status_or_errors(edge_backup, machine, home):
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+    edge_backup(*two_apps, "restore-test")
     machine.failing["restic backup"] = 3
-    failed = edge_backup("backup")
+    failed = edge_backup(*two_apps, "backup")
 
     every_argv = " ".join(argument for _, argv in machine.calls for argument in argv)
     assert CANARY_PASSWORD not in every_argv

@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import re
 import stat
 import sys
 from collections.abc import Sequence
@@ -19,17 +20,43 @@ DUMP = b"PGDMP custom archive"
 AUDIO = {"u1/one.mp3": b"ID3 one", "u1/two.mp3": b"ID3 two", "u2/cover.png": b"PNG"}
 SONGMAKER_CONTAINER = "c0ffee"
 RESTORE_SERVER_ID = "deadbeef" * 8
+RADIO_CONTAINER = "beef01"
 STATUS_KEYS = {
     "schema",
     "state",
     "phase",
     "failing_phase",
+    "failing_app",
     "exit_category",
     "last_attempt",
-    "last_successful_backup",
-    "last_successful_restore_test",
-    "last_snapshot_id",
+    "apps",
 }
+APP_HISTORY_KEYS = {"last_snapshot_id", "last_successful_backup", "last_successful_restore_test"}
+TWO_APPS_TOML = """
+[app.songmaker]
+compose_project = "songmaker"
+db_service = "postgres"
+dump = "pg_dump_custom"
+db_user = "songmaker"
+db_name = "songmaker"
+volume = "audiofiles"
+[app.songmaker.restore_test]
+count_table = "songs"
+audio_reference_table = "generations"
+audio_reference_column = "mp3_path"
+
+[app.radio]
+compose_project = "radio"
+db_service = "postgres"
+dump = "pg_dump_custom"
+db_user = "radio"
+db_name = "radio"
+volume = "audiofiles"
+[app.radio.restore_test]
+count_table = "songs"
+audio_reference_table = "generations"
+audio_reference_column = "mp3_path"
+"""
 SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 # The real boundary, kept before the `machine` fixture swaps it: exits and files go through it.
 REAL_HOST_RUN = host.run
@@ -43,6 +70,13 @@ class Machine:
     references: list[str] = field(default_factory=lambda: ["u1/one.mp3", "u1/two.mp3"])
     db_containers: list[str] = field(default_factory=lambda: [SONGMAKER_CONTAINER])
     volumes: list[str] = field(default_factory=lambda: ["songmaker_audiofiles"])
+    other_db_containers: dict[str, list[str]] = field(
+        default_factory=lambda: {"radio": [RADIO_CONTAINER]}
+    )
+    """The database containers of every project but songmaker, by compose project."""
+    other_volumes: dict[str, list[str]] = field(
+        default_factory=lambda: {"radio": ["radio_audiofiles"]}
+    )
     clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
@@ -182,13 +216,17 @@ class Machine:
         if self.absent_polls:
             self.absent_polls -= 1
             return b""
-        return "\n".join(self.db_containers).encode()
+        project = label_value(argv, "com.docker.compose.project")
+        found = self.db_containers if project == "songmaker" else self.other_db_containers[project]
+        return "\n".join(found).encode()
 
     def _state(self, argv, **_) -> bytes:
         return b"running healthy\n"
 
     def _volumes(self, argv, **_) -> bytes:
-        return "\n".join(self.volumes).encode()
+        project = label_value(argv, "com.docker.compose.project")
+        found = self.volumes if project == "songmaker" else self.other_volumes[project]
+        return "\n".join(found).encode()
 
     def _pg_dump(self, argv, **_) -> bytes:
         return DUMP
@@ -209,13 +247,15 @@ class Machine:
 
     def _backup(self, argv, **_) -> bytes:
         self.status_seen_during_backup = json.loads(self.status_file.read_text())
-        staging = Path(mount_source(argv, "/backup/songmaker/db"))
+        app = re.search(r"target=/backup/([^/,]+)/db", " ".join(argv))[1]
+        staging = Path(mount_source(argv, f"/backup/{app}/db"))
         self.private_modes["staging"] = mode_of(staging)
         self.private_modes |= {path.name: mode_of(path) for path in staging.iterdir()}
         snapshot_id = f"{len(self.snapshots) + 1:064x}"
         self.snapshots.append(
             {
                 "id": snapshot_id,
+                "app": app,
                 "db": {
                     path.name: path.read_bytes()
                     for path in staging.iterdir()
@@ -288,6 +328,37 @@ class Machine:
         if sql not in answers:
             pytest.fail(f"the throwaway server was asked an unexpected query: {sql}")
         return answers[sql]
+
+
+def declare_two_apps(home: Path) -> tuple[str, str]:
+    """The `--apps` arguments that declare songmaker and radio."""
+    declared = home / "two-apps.toml"
+    declared.write_text(TWO_APPS_TOML)
+    return "--apps", str(declared)
+
+
+def schema_one_status(snapshot_id: str) -> dict:
+    """What edge-backup wrote before the status kept history per app."""
+    return {
+        "schema": 1,
+        "state": "ok",
+        "phase": "check",
+        "failing_phase": None,
+        "exit_category": None,
+        "last_attempt": "2026-10-11T03:00:00+00:00",
+        "last_successful_backup": "2026-10-11T03:00:00+00:00",
+        "last_successful_restore_test": "2026-10-04T03:00:00+00:00",
+        "last_snapshot_id": snapshot_id,
+    }
+
+
+def app_history(status: dict, app: str = "songmaker") -> dict:
+    """One app's entry of the status; an app with no success yet has none."""
+    return status["apps"].get(app, {})
+
+
+def label_value(argv: list[str], key: str) -> str:
+    return next(a.split("=", 2)[2] for a in argv if a.startswith(f"label={key}="))
 
 
 def exit_with(label: str, exit_code: int) -> bytes:
