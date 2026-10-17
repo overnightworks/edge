@@ -502,7 +502,7 @@ They survive a dead PC because they live at the provider.
 | 14 | No catalog, no `edge apply`, no `edge check` | — | **new item in edge**: "catalog and `edge apply`" (with `--closed` and the publish phase). Its caller is this concept; it depends on E3 X1; E3's X1a creates `fleet.yaml` at the root, and this item owns the `run` blocks |
 | 15 | E3 not opened | the plan is a draft in `ext-as-code.md`; edge#1 row E3 is its placeholder | open E3 from that draft, with the four changes in section 3 |
 | 16 | Keycloak go-live not run | edge#11 go-live row; script in edge#19 | edge#19, then edge#11; D14 does not gate it (ruled 16.10.) |
-| 17 | Keycloak DB not in the backup | K11b, blocked by edge#13 finding 14 (status per app) | edge#13 finding 14, then K11b in edge#11 |
+| 17 | Keycloak DB not in the backup | K11b in edge#11; the status keeps the snapshot per app (edge#71) | edge#71, then K11b in edge#11 |
 | 18 | Live restore not scripted | songmaker's is a pasted shell block in the README; for Keycloak none exists; re-setup step 9 needs `restore <app> --live` | K11b (Keycloak, restored before Keycloak starts) plus **a new edge item** for songmaker's `--live` |
 | 19 | Backup on the same disk, and no restore without the local disk | the README says it: no protection against a dead disk. `Settings.for_home` fixes repository and password to local paths | **new item in edge**: "a second backup target off this disk, and the recovery form" (section 6); done when the clean-machine drill passes; its caller is D3 |
 | 20 | `~/.secrets` not backed up | ruled 14.10.2026 (home-tools#8 closed: a wizard instead) | D3 decides; if yes, edge-backup declares `~/.secrets` as an app in the same new item as 19 |
