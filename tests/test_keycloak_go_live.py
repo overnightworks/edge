@@ -1,9 +1,11 @@
 """keycloak/go-live against a scripted compose project and Keycloak: no containers, no sleeping."""
 
 import dataclasses
+import fcntl
 import importlib.machinery
 import importlib.util
 import json
+import os
 import re
 import stat
 import subprocess
@@ -949,18 +951,13 @@ def test_a_stop_made_before_a_start_wins_and_that_start_does_not_happen(
     """#64 rule 8: the marker is read again right before each of the three starts."""
     commands_at_the_stop: list[int] = []
 
-    def stopping(step):
-        def stop_then_start() -> None:
+    def stop_when_the_step_is_announced(line: str) -> None:
+        session.printed.append(line)
+        if re.match(rf"Step \w+(-\w+)?, {stopped_before}:", line):
             switch_off(marks)
             commands_at_the_stop.append(len(keycloak.commands))
-            step.do()
 
-        return dataclasses.replace(step, do=stop_then_start)
-
-    steps = go_live.steps
-    go_live.steps = lambda: [
-        stopping(step) if step.name == stopped_before else step for step in steps()
-    ]
+    go_live.tools = dataclasses.replace(go_live.tools, say=stop_when_the_step_is_announced)
 
     assert go_live.run() == 1
 
@@ -969,6 +966,78 @@ def test_a_stop_made_before_a_start_wins_and_that_start_does_not_happen(
         "`edge start keycloak` ends the switch"
     )
     assert not started_something_after(keycloak, commands_at_the_stop[0])
+
+
+def stopping_after_a_command(go_live, marks, is_the_one):
+    """Swaps the run port for one that writes the marker right after the command that matches."""
+    run = go_live.tools.run
+
+    def run_then_stop(command, timeout, stdin=None):
+        result = run(command, timeout, stdin)
+        if is_the_one(command):
+            switch_off(marks)
+        return result
+
+    go_live.tools = dataclasses.replace(go_live.tools, run=run_then_stop)
+
+
+def test_a_stop_made_during_the_edge_start_prevents_the_recreate(go_live, keycloak, session, marks):
+    """#64 rule 8: the marker is read again before the recreate, not once for both commands."""
+    stopping_after_a_command(go_live, marks, lambda command: command[-2:] == ["up", "-d"])
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1].startswith("go-live FAILED at edge without the overlay: keycloak is")
+    assert not any("--force-recreate" in command for command in keycloak.commands)
+
+
+def test_a_stop_made_between_the_two_realm_attempts_wins(
+    golive, go_live, keycloak, marks, secrets_dir
+):
+    """#64 rule 8: the fallback `run` reads the marker again after the first attempt failed."""
+    write_secrets(secrets_dir, *SECRET_FILES)
+    keycloak.master_applied = True  # the overlay attempt is refused with 401, as in life
+    stopping_after_a_command(go_live, marks, lambda command: "run" in command)
+
+    with pytest.raises(golive.StepFailure, match="switched off"):
+        go_live.apply_realms()
+
+    assert sum("run" in command for command in keycloak.commands) == 1
+
+
+def lock_is_free(marks: switches.Switches) -> bool:
+    marks.directory.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(marks.directory / switches.LOCK_FILE, os.O_CREAT | os.O_WRONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def test_starts_hold_the_switch_lock_and_prompts_leave_it_free(go_live, marks):
+    """#64 rule 8: every start runs under the switch lock; the operator's waits never do."""
+    run, ask = go_live.tools.run, go_live.tools.ask
+    free_during_starts: list[bool] = []
+    free_during_prompts: list[bool] = []
+
+    def watched_run(command, timeout, stdin=None):
+        if START_VERBS & set(command):
+            free_during_starts.append(lock_is_free(marks))
+        return run(command, timeout, stdin)
+
+    def watched_ask(prompt):
+        free_during_prompts.append(lock_is_free(marks))
+        return ask(prompt)
+
+    go_live.tools = dataclasses.replace(go_live.tools, run=watched_run, ask=watched_ask)
+
+    assert go_live.run() == 0
+
+    assert free_during_starts and not any(free_during_starts)
+    assert len(free_during_prompts) == 2 and all(free_during_prompts)
 
 
 def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, keycloak, marks):
