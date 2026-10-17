@@ -18,6 +18,7 @@ CHANGE_SECONDS = 600
 _COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
+_NOT_RUNNING = {"exited", _COMPLETED, "created", "dead"}
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
@@ -114,6 +115,11 @@ def is_up(
         and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
         for name in services
     )
+
+
+def has_running_container(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
+    """Some container of the unit's services is alive: running, restarting or paused."""
+    return any(states.get(name, set()) - _NOT_RUNNING for name in services)
 
 
 def _state_of(container: Mapping[str, Any]) -> str:

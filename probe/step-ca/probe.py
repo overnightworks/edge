@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10):
-a throwaway compose project and a throwaway HOME.
+"""Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
+#60 proof 11): a throwaway compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
 the proofs and always removes its containers, networks and volumes. It never touches the live
 stack: the project name and HOME are set in the environment of every command.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 1500 \\
+    flock /tmp/probe-stack.lock timeout --kill-after=30 1800 \\
         python3 probe/step-ca/probe.py --scratch DIR
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies: the run takes
-about 15 to 20 minutes, bounded by the 1500 s timeout above. Needs `uv`: proof 8 runs
-`edge-check` through it, proof 10 runs `uv sync` in a copy of the repository.
+--scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies and proof 11
+drives the emergency switch: the run takes about 20 to 25 minutes, bounded by the 1800 s timeout
+above. Needs `uv`: proof 8 runs
+`edge-check` through it, proofs 10 and 11 run `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
+NOTHING_TO_CHANGE = "nothing to change"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 DISCARD_OUTPUT = "/dev/null"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
@@ -116,6 +118,7 @@ class Probe:
         self.compose_files: list[str] = []
         self.listeners_before: set[str] = set()
         self.edge_check_before: list[dict] = []
+        self.intermediate_fingerprint = ""
 
     def run(
         self, command: list[str], *, stdin: bytes | None = None, check: bool = True,
@@ -609,24 +612,41 @@ class Probe:
             raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1] if tail else ''}")
         return copy
 
-    def edge_apply(self, copy: Path, enabled: bool) -> str:
-        """`edge apply --closed` at a pty, the operator typing `yes`; the output of a run that
-        exits 0."""
+    def set_enabled(self, copy: Path, enabled: bool) -> None:
         fleet = copy / "fleet.yaml"
         fleet.write_text(
             fleet.read_text().replace(
                 *((FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF))
             )
         )
-        command = shlex.join([str(copy / ".venv" / "bin" / "edge"), "apply", "--closed"])
-        result = subprocess.run(
-            ["script", "-qec", command, DISCARD_OUTPUT],
-            input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
-            timeout=APPLY_SECONDS,
-        )  # fmt: skip
-        output = result.stdout.decode(errors="replace")
-        expect(result.returncode == 0, f"edge apply exited {result.returncode}: {output[-200:]}")
+
+    def edge(self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0) -> str:
+        """`edge <arguments>` in the copy: at a pty with the operator typing `yes`, or with stdin
+        and stdout that are no terminal. The whitespace-normalised output of a run that exits
+        `exit_code`."""
+        command = [str(copy / ".venv" / "bin" / "edge"), *arguments]
+        if terminal:
+            result = subprocess.run(
+                ["script", "-qec", shlex.join(command), DISCARD_OUTPUT],
+                input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
+                timeout=APPLY_SECONDS,
+            )  # fmt: skip
+        else:
+            result = subprocess.run(
+                command, stdin=subprocess.DEVNULL, capture_output=True, env=self.environment,
+                cwd=copy, check=False, timeout=APPLY_SECONDS,
+            )  # fmt: skip
+        output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
+        expect(
+            result.returncode == exit_code,
+            f"edge {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
+            f"{output[-200:]}",
+        )
         return output
+
+    def edge_apply(self, copy: Path, enabled: bool) -> str:
+        self.set_enabled(copy, enabled)
+        return self.edge(copy, "apply", "--closed", terminal=True)
 
     def volume_names(self) -> list[str]:
         return [self.composed["volumes"][key]["name"] for key in ("step-ca", "traefik-mcp-acme")]
@@ -659,8 +679,83 @@ class Probe:
             "not served by the same intermediate",
         )
         again = self.edge_apply(copy, enabled=True)
-        expect("nothing to change" in again, f"a repeated apply said: {again[-120:]}")
+        expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
+        self.intermediate_fingerprint = after
         print(f"proof 10 held: edge apply on/off/on keeps both volumes; same intermediate {after}")
+
+    # --- the emergency switch survives apply and keeps the data (#60) --------------------------
+
+    def containers_of_unit(self, *, running_only: bool) -> list[str]:
+        status = ["--status", "running"] if running_only else []
+        return (
+            self.compose("ps", "--all", "-q", *status, "step-ca", "traefik-mcp")
+            .stdout.decode()
+            .split()
+        )
+
+    def proof_11_emergency_switch(self) -> None:
+        copy = self.repository_copy()
+        marker = self.home / ".local" / "state" / "edge" / "stopped" / "step-ca"
+        self.set_enabled(copy, True)
+
+        self.edge(copy, "stop", "step-ca", terminal=False)  # 1. A x stop: R4, no terminal
+        expect(marker.is_file(), "stop wrote no marker")
+        expect(not self.containers_of_unit(running_only=True), "a container runs after stop")
+        expect(len(self.containers_of_unit(running_only=False)) == 2, "stop removed a container")
+        self.volume_names_exist()
+        written = marker.read_text()
+
+        out = self.edge(copy, "stop", "step-ca", terminal=False)  # 2. B x stop
+        expect("already switched off" in out, f"a second stop said: {out[-120:]}")
+        expect(marker.read_text() == written, "a second stop rewrote the marker")
+
+        out = self.edge(copy, "apply", "--closed", terminal=True)  # 3. B x apply, enabled
+        expect("stays stopped" in out and NOTHING_TO_CHANGE in out, f"apply said: {out[-160:]}")
+        expect("Type" not in out, "apply asked for `yes` with nothing to change")
+        expect(not self.containers_of_unit(running_only=True), "apply started a switched-off unit")
+
+        self.edge(
+            copy, "start", "step-ca", terminal=False, exit_code=1
+        )  # 4. B x start, no terminal
+        expect(marker.read_text() == written, "a refused start touched the marker")
+
+        self.set_enabled(copy, False)  # 5. B x apply, disabled: to E, marker and volumes stay
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect("its switch since" in out, f"apply to E said: {out[-160:]}")
+        expect(not self.containers_of_unit(running_only=False), "off left containers")
+        expect(marker.read_text() == written, "apply to E cleared the marker")
+        self.volume_names_exist()
+
+        out = self.edge(copy, "stop", "step-ca", terminal=False)  # 6. E x stop
+        expect("disabled in the catalog" in out, f"stop in E said: {out[-120:]}")
+        expect(marker.read_text() == written, "stop in E touched the marker")
+
+        out = self.edge(copy, "start", "step-ca", terminal=True, exit_code=1)  # 7. E x start
+        expect("disabled in the catalog" in out, f"start in E said: {out[-120:]}")
+
+        self.set_enabled(copy, True)  # 8. E x apply, enabled, marker present: to B
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect("stays stopped" in out, f"apply to B said: {out[-160:]}")
+        expect(not self.containers_of_unit(running_only=False), "apply created a container")
+
+        self.edge(copy, "start", "step-ca", terminal=True)  # 9. B x start, yes: to A
+        expect(not marker.exists(), "start left the marker")
+        self.wait_until_answering()
+        expect(len(self.containers_of_unit(running_only=True)) == 2, "start did not run both")
+        served = self.wait_until_served()
+        after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
+        expect(after == self.intermediate_fingerprint, f"intermediate changed: {after}")
+        expect(served["extensions"]["authority_key_id"], "nothing served after start")
+
+        out = self.edge(copy, "start", "step-ca", terminal=True)  # 10. A x start
+        expect("no change" in out, f"start in A said: {out[-120:]}")
+        out = self.edge(copy, "apply", "--closed", terminal=True)  # 11. A x apply
+        expect(NOTHING_TO_CHANGE in out, f"apply in A said: {out[-120:]}")
+        print("proof 11 held: stop/start/apply cells A, B, E; switch kept across apply and off")
+
+    def volume_names_exist(self) -> None:
+        for volume in self.volume_names():
+            self.run(["docker", "volume", "inspect", volume])
 
     def teardown(self) -> None:
         # Own session: a signal to the probe's process group must not reach these.
@@ -715,7 +810,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-10 hold")
+        print("PROBE PASSED: proofs 1-11 hold")
     return exit_code
 
 
@@ -735,6 +830,7 @@ def prove(probe: Probe) -> int:
         probe.proof_8_no_host_listener()
         probe.proof_9_renewal()
         probe.proof_10_apply_cycle()
+        probe.proof_11_emergency_switch()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

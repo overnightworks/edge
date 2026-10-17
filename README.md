@@ -29,7 +29,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
-| `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
+| `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live`, `step-ca/init`, `edge apply` (`tests/test_edge_apply.py`) and the external edge tests (`tests/test_edge_external.py`), with their locked dependencies |
@@ -222,7 +222,31 @@ Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt n
 braucht keinen laufenden Dienst. Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was
 fehlt), 2 es kann es nicht sagen (Docker oder Compose antworten nicht).
 
-Regel R4: Agenten rufen `edge apply` nie auf. Die Terminalpruefung und das `yes` halten
+### Notschalter: `edge stop` und `edge start`
+
+`edge stop <Einheit>` schaltet eine Einheit sofort aus und haelt sie aus: Es schreibt zuerst den
+Schalter, dann `docker compose --profile <Einheit> stop` fuer genau die Dienste der Einheit, liest
+die Container noch einmal und meldet "switched off" nur, wenn nichts mehr laeuft. Container und
+Volumes bleiben (kein `rm`, kein `down`, nie `socket-proxy` oder `traefik`). Es braucht kein
+Terminal und kein `yes`: Agenten duerfen es aufrufen (R4, D12). `edge start <Einheit>` hebt den
+Schalter auf: nur an einem Terminal und nach dem exakten `yes` (der Betreiber; bis D14 eine Regel,
+keine Wand). Es loescht den Schalter erst, wenn die Einheit laeuft; eine im Katalog abgeschaltete
+Einheit (`enabled: false`) verweigert es.
+
+Der Schalter ist eine Datei pro Einheit, `~/.local/state/edge/stopped/<Einheit>`, mit der Zeit des
+Ausschaltens (ISO 8601). `edge apply --closed` startet eine ausgeschaltete Einheit nie und
+loescht ihren Schalter nie ("stays stopped"); das Ende des Schalters ist allein `edge start`. Ein
+`stop`, das waehrend der Rueckfrage von `apply` kommt, gewinnt: `apply` liest den Schalter nach dem
+`yes` noch einmal (`switch.lock`). Exit 0 ausgeschaltet oder schon so, 1 teilweise (der Schalter
+ist notiert, aber ein Container laeuft noch, oder er liess sich nicht notieren) oder verweigert,
+2 nicht planbar (unbekannte Einheit, Katalog oder Compose).
+
+Ueberleben eines Neustarts: Jeder lang laufende Dienst hat `restart: unless-stopped`; Docker
+startet einen ausdruecklich gestoppten Container auch nach einem Neustart nicht. Der Schalter
+bleibt auf der Platte. Eine ausgeschaltete Einheit bleibt also ohne Boot-Dienst aus.
+
+Regel R4: Agenten rufen `edge apply` und `edge start` nie auf; `edge stop`
+duerfen sie. Die Terminalpruefung und das `yes` halten
 versehentliche und nicht-interaktive Laeufe auf; sie erkennen den Betreiber nicht (D14).
 
 ## edge-check
@@ -829,8 +853,8 @@ does not matter, also after a restart of the Docker daemon. Switch it off: `enab
 switching on again serves the same intermediate. Removing the volumes (`docker volume rm
 <project>_traefik-mcp-acme`, `<project>_step-ca`) stays a manual command.
 
-Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1500 python3 probe/step-ca/probe.py
---scratch DIR` starts a throwaway project under a throwaway `HOME` and holds ten proofs. Proofs 1
+Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1800 python3 probe/step-ca/probe.py
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds eleven proofs. Proofs 1
 to 5 are the CA's (init modes and silence, the ACME directory verifies only with the probe root, the
 volume holds no root key, a restart keeps the intermediate, a partial state is completed, also with
 a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on `mcp` reaches
@@ -839,7 +863,10 @@ intermediate; plain http gets no answer from the backend; the three networks spl
 host gains no listener (`ss -ltn` and `edge-check` unchanged); and a certificate from a 20-minute
 CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge apply --closed` on,
 off and on in a copy of the repository: both volumes and the same intermediate survive, and a
-repeated apply changes nothing. The run takes about 15 to 20 minutes, within the 1500 s timeout.
+repeated apply changes nothing. Proof 11 drives the emergency switch through the cells A, B and E
+crossed with `edge stop`, `edge start` and `edge apply --closed`: the marker survives apply and
+the off, nothing is started past it, and `edge start` at a terminal ends it. The run takes about
+20 to 25 minutes, within the 1800 s timeout.
 Every call runs from a throwaway container on the network a client would sit on.
 
 The switch is one for the CA and the gateway together (`enabled: false`, then

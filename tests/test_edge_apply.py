@@ -1,4 +1,5 @@
-"""`edge apply --closed` against a scripted Compose and a scripted setup check: no containers."""
+"""`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
+setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
 import io
 import json
@@ -7,18 +8,22 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 import yaml
 
-from edge import apply, catalog, cli, compose
+from edge import apply, catalog, cli, compose, emergency, switches
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
 STEP_CA_SERVICES = ("step-ca", "traefik-mcp-acme-owner", "traefik-mcp")
 ENABLED = "services:\n  step-ca:\n    run: {enabled: true, setup: step-ca/init}\n"
 DISABLED = "services:\n  step-ca:\n    run: {enabled: false, setup: step-ca/init}\n"
+SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
+LATER_SWITCH_AT = "2026-10-17T23:30:00+02:00"
+NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 
 
 def resolved_configuration() -> dict:
@@ -118,8 +123,37 @@ class Setup:
 
 
 class Terminal(io.StringIO):
+    """A terminal; `while_prompt_waits` runs when the operator's answer is read."""
+
+    while_prompt_waits: Callable[[], None] | None = None
+
     def isatty(self) -> bool:
         return True
+
+    def readline(self, *arguments) -> str:
+        if self.while_prompt_waits:
+            self.while_prompt_waits()
+        return super().readline(*arguments)
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A stray real marker would keep a live unit down: every test gets its own HOME."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    return tmp_path / "home"
+
+
+@pytest.fixture
+def state(home: Path) -> Path:
+    return switches.default_state_directory()
+
+
+def marker(state: Path, unit: str = "step-ca") -> str | None:
+    return switches.Switches(state).since(unit)
+
+
+def switch_off(state: Path, since: str = SWITCHED_OFF_AT) -> None:
+    switches.Switches(state).record("step-ca", datetime.fromisoformat(since))
 
 
 @pytest.fixture
@@ -146,21 +180,53 @@ def setup_check() -> Setup:
 def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
     """Stdin and stdout are a terminal; the operator will type `answer`."""
 
-    def operator_types(answer: str) -> None:
-        monkeypatch.setattr(sys, "stdin", Terminal(f"{answer}\n"))
+    def operator_types(answer: str, while_prompt_waits: Callable[[], None] | None = None) -> None:
+        keyboard = Terminal(f"{answer}\n")
+        keyboard.while_prompt_waits = while_prompt_waits
+        monkeypatch.setattr(sys, "stdin", keyboard)
         monkeypatch.setattr(sys, "stdout", Terminal())
 
     return operator_types
 
 
 @pytest.fixture
-def switch(repository, scripted, setup_check, at_terminal, capsys):
+def switch(repository, scripted, setup_check, at_terminal, capsys, state):
     """Run `edge apply --closed`; the operator types `yes` unless told otherwise."""
 
-    def run(answer: str = "yes") -> tuple[int, str, str]:
-        at_terminal(answer)
+    def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str, str]:
+        at_terminal(answer, while_prompt_waits)
         exit_code = apply.apply_closed(
-            compose.Compose(scripted.run, repository), repository, setup_check
+            state, compose.Compose(scripted.run, repository), repository, setup_check
+        )
+        return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
+
+    return run
+
+
+@pytest.fixture
+def stop(repository, scripted, capsys, state):
+    """Run `edge stop <unit>` with no terminal: the path an agent takes."""
+
+    def run(unit: str = "step-ca") -> tuple[int, str, str]:
+        exit_code = emergency.stop_unit(
+            state, unit, NOW, compose.Compose(scripted.run, repository), repository
+        )
+        captured = capsys.readouterr()
+        return exit_code, captured.out, captured.err
+
+    return run
+
+
+@pytest.fixture
+def start(repository, scripted, at_terminal, capsys, state):
+    """Run `edge start <unit>`; the operator types `yes` unless told otherwise."""
+
+    def run(
+        answer: str = "yes", unit: str = "step-ca", while_prompt_waits=None
+    ) -> tuple[int, str, str]:
+        at_terminal(answer, while_prompt_waits)
+        exit_code = emergency.start_unit(
+            state, unit, compose.Compose(scripted.run, repository), repository
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -338,13 +404,14 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
 
 def test_a_missing_setup_refuses_before_yes_and_changes_nothing(switch, scripted, setup_check):
     """#52 rule 5: not set up refuses before the `yes` (exit 1) and names `step-ca/init`."""
-    setup_check.exit_code, setup_check.line = 1, "FAILED at password: password is missing"
+    setup_check.exit_code = 1
+    setup_check.line = "step-ca/init --check: not set up: password is not done"
 
     exit_code, out, err = switch()
 
     assert exit_code == 1
     assert "step-ca is not set up: run `step-ca/init`, then `edge apply --closed` again" in err
-    assert "password is missing" in err
+    assert "password is not done" in err
     assert "Type" not in out
     assert scripted.changing_verbs() == []
 
@@ -370,13 +437,13 @@ def test_the_setup_command_is_only_ever_run_with_check(switch, setup_check):
 
 
 def test_without_a_terminal_it_refuses_before_anything_else(
-    repository, scripted, setup_check, monkeypatch, capsys
+    repository, scripted, setup_check, monkeypatch, capsys, state
 ):
     """#52 rule 4: no terminal refuses first (exit 1)."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
 
     exit_code = apply.apply_closed(
-        compose.Compose(scripted.run, repository), repository, setup_check
+        state, compose.Compose(scripted.run, repository), repository, setup_check
     )
 
     assert exit_code == 1
@@ -498,3 +565,495 @@ def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
 
     with pytest.raises(catalog.CatalogError, match=r"services\.keycloack"):
         catalog.units(document, profiles, REPOSITORY)
+
+
+# --- the emergency switch (#60): marker, edge stop, edge start, apply's precedence ---------------
+
+
+def put_unit_in(situation: str, scripted, repository, state) -> None:
+    """A: on, no marker. B: switched off, stopped. E: disabled in the catalog, gone."""
+    if situation == "A":
+        scripted.containers = {
+            "step-ca": "running",
+            "traefik-mcp-acme-owner": "exited",
+            "traefik-mcp": "running",
+        }
+    if situation == "B":
+        scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
+        switch_off(state)
+    if situation == "E":
+        write_fleet(repository, DISABLED)
+
+
+# (exit, marker afterwards, changing verbs, asked for `yes`)
+STATE_TABLE = {
+    ("A", "stop"): (0, True, ["stop"], False),
+    ("B", "stop"): (0, True, [], False),
+    ("E", "stop"): (0, False, [], False),
+    ("A", "start"): (0, False, [], False),
+    ("B", "start"): (0, False, ["up"], True),
+    ("E", "start"): (1, False, [], False),
+    ("A", "switch"): (0, False, [], False),
+    ("B", "switch"): (0, True, [], False),
+    ("E", "switch"): (0, False, [], False),
+}
+
+
+@pytest.mark.parametrize(("situation", "command"), list(STATE_TABLE))
+def test_the_state_table_cells_of_stop_start_and_apply(
+    situation, command, request, scripted, repository, state
+):
+    """#60 proof (a) / §8: the states A, B, E crossed with the three commands."""
+    put_unit_in(situation, scripted, repository, state)
+    scripted.calls.clear()
+    run = request.getfixturevalue(command)
+
+    exit_code, out, _ = run()
+
+    exit_wanted, marker_wanted, verbs_wanted, asked_wanted = STATE_TABLE[(situation, command)]
+    assert exit_code == exit_wanted
+    assert (marker(state) is not None) is marker_wanted
+    assert scripted.changing_verbs() == verbs_wanted
+    assert ("Type 'yes'" in out) is asked_wanted
+
+
+def test_stop_records_the_time_in_a_private_marker_before_closing(
+    stop, scripted, repository, state
+):
+    """#60 rule 1 and 2: one 0600 file in a 0700 directory; it exists before the first `stop`."""
+    put_unit_in("A", scripted, repository, state)
+    seen_at_stop = []
+    closing = scripted.verb_stop
+
+    def stop_and_look(profile, arguments):
+        seen_at_stop.append(marker(state))
+        return closing(profile, arguments)
+
+    scripted.verb_stop = stop_and_look
+
+    exit_code, out, _ = stop()
+
+    assert exit_code == 0
+    assert seen_at_stop == [NOW.isoformat(timespec="seconds")]
+    assert "step-ca is switched off" in out
+    assert stat.S_IMODE((state / "stopped").stat().st_mode) == 0o700
+    assert stat.S_IMODE((state / "stopped" / "step-ca").stat().st_mode) == 0o600
+
+
+def test_stop_stops_exactly_the_units_services_and_removes_nothing(
+    stop, scripted, repository, state
+):
+    """#60 rule 2: never rm, down, -v or volume rm; never traefik or socket-proxy."""
+    put_unit_in("A", scripted, repository, state)
+    scripted.volumes = {"step-ca": "intermediate-A"}
+
+    stop()
+
+    assert ["--profile", "step-ca", "stop", *STEP_CA_SERVICES] in scripted.calls
+    assert scripted.volumes == {"step-ca": "intermediate-A"}
+    assert {"step-ca", "traefik-mcp"} <= set(scripted.containers)
+    words = {word for call in scripted.calls for word in call}
+    assert not words & {"down", "rm", "-v", "--volumes", "volume", "traefik", "socket-proxy"}
+
+
+def test_a_stop_that_fails_leaves_the_switch_and_says_partial(stop, scripted, repository, state):
+    """#60 rule 2 partial: the marker stays, exit 1, Compose's last line, never "switched off"."""
+    put_unit_in("A", scripted, repository, state)
+    scripted.failing_verb = "stop"
+
+    exit_code, out, err = stop()
+
+    assert exit_code == 1
+    assert marker(state) is not None
+    assert "partial: the switch is recorded (since " in err
+    assert "run `edge stop step-ca` again" in err
+    assert "last line" in err
+    assert "switched off" not in out
+
+
+def test_a_container_that_still_runs_after_the_stop_is_partial(stop, scripted, repository, state):
+    """#60 rule 2 partial: a container still running after the stop is exit 1."""
+    put_unit_in("A", scripted, repository, state)
+    scripted.verb_stop = lambda *_: ""
+
+    exit_code, out, err = stop()
+
+    assert exit_code == 1
+    assert "a container of it still runs" in err
+    assert "switched off" not in out
+
+
+def test_a_switch_that_cannot_be_written_still_closes_the_unit(stop, scripted, repository, state):
+    """#60 rule 2: closing wins over the record; exit 1 says apply would start it again."""
+    put_unit_in("A", scripted, repository, state)
+    state.mkdir(parents=True)
+    state.chmod(0o500)
+    try:
+        exit_code, _, err = stop()
+    finally:
+        state.chmod(0o700)
+
+    assert exit_code == 1
+    assert scripted.containers["step-ca"] == "exited"
+    assert "step-ca is stopped, but the switch could not be recorded" in err
+    assert "`edge apply` would start it again" in err
+
+
+def test_stop_stops_a_switched_off_unit_again_when_something_of_it_runs(
+    stop, scripted, repository, state
+):
+    """#60 rule 2 from B: someone started it by hand; the marker keeps its first time."""
+    put_unit_in("B", scripted, repository, state)
+    scripted.containers["traefik-mcp"] = "running"
+
+    exit_code, _, _ = stop()
+
+    assert exit_code == 0
+    assert scripted.containers["traefik-mcp"] == "exited"
+    assert marker(state) == SWITCHED_OFF_AT
+
+
+def test_stop_closes_a_disabled_unit_that_runs_anyway(stop, scripted, repository, state):
+    """#60 rule 2 from E: an emergency stop never refuses to close a running unit."""
+    write_fleet(repository, DISABLED)
+    scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "running")
+
+    exit_code, _, _ = stop()
+
+    assert exit_code == 0
+    assert marker(state) is not None
+    assert "running" not in scripted.containers.values()
+
+
+def test_stop_of_an_unknown_unit_is_cannot_plan_and_lists_the_units(stop, scripted, state):
+    """#60 rule 2: an unknown unit is exit 2, lists the units and changes nothing."""
+    exit_code, _, err = stop("stepca")
+
+    assert exit_code == 2
+    assert "units: step-ca" in err
+    assert scripted.changing_verbs() == []
+    assert marker(state, "step-ca") is None
+
+
+def test_start_without_a_terminal_refuses_before_anything_else(
+    start, scripted, state, monkeypatch, repository, capsys
+):
+    """#60 rule 3: start is the operator's step; without a terminal nothing happens."""
+    switch_off(state)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
+
+    exit_code = emergency.start_unit(state, "step-ca", compose.Compose(scripted.run, repository))
+
+    assert exit_code == 1
+    assert "refused, stdin and stdout must be a terminal" in capsys.readouterr().err
+    assert scripted.calls == []
+    assert marker(state) == SWITCHED_OFF_AT
+
+
+@pytest.mark.parametrize("answer", ["no", "", "Yes", "y"])
+def test_start_with_any_answer_but_yes_aborts_and_keeps_the_switch(start, scripted, state, answer):
+    """#60 rule 3: only the exact `yes` ends a switch."""
+    switch_off(state)
+
+    exit_code, _, err = start(answer)
+
+    assert exit_code == 1
+    assert "aborted, nothing changed" in err
+    assert marker(state) == SWITCHED_OFF_AT
+    assert scripted.changing_verbs() == []
+
+
+@pytest.mark.parametrize("failure", ["failing_verb", "starts_nothing"])
+def test_a_start_that_fails_or_is_not_observed_keeps_the_switch(start, scripted, state, failure):
+    """#60 rule 3: the marker is cleared only after the unit is observed on."""
+    switch_off(state)
+    setattr(scripted, failure, "up" if failure == "failing_verb" else True)
+
+    exit_code, out, err = start()
+
+    assert exit_code == 1
+    assert "partial" in err
+    assert marker(state) == SWITCHED_OFF_AT
+    assert "is on" not in out
+
+
+def test_start_of_a_disabled_unit_is_refused_and_keeps_its_switch(start, repository, state):
+    """#60 rule 3 from E: a re-enabled unit stays closed until `edge start`."""
+    write_fleet(repository, DISABLED)
+    switch_off(state)
+
+    exit_code, _, err = start()
+
+    assert exit_code == 1
+    assert "step-ca is disabled in the catalog; enable it by PR and `edge apply --closed`" in err
+    assert marker(state) == SWITCHED_OFF_AT
+
+
+def test_apply_to_a_disabled_switched_off_unit_removes_the_containers_and_keeps_the_switch(
+    switch, scripted, repository, state
+):
+    """#60 rule 4 B to E: the usual off; the volumes and the switch stay."""
+    put_unit_in("B", scripted, repository, state)
+    write_fleet(repository, DISABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert scripted.containers == {}
+    assert "its switch since 17.10. 22:10 stays" in out
+    assert marker(state) == SWITCHED_OFF_AT
+
+
+def test_a_re_enabled_unit_with_a_switch_stays_stopped_and_nothing_is_created(
+    switch, scripted, repository, state
+):
+    """#60 rule 4 E with a marker to B: nothing is created or started."""
+    write_fleet(repository, DISABLED)
+    switch_off(state)
+    write_fleet(repository, ENABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "step-ca stays stopped (switch since 17.10. 22:10)" in out
+    assert "nothing to change" in out
+    assert scripted.calls[-1][2] == "ps"
+    assert scripted.changing_verbs() == []
+
+
+def test_a_switch_that_appears_after_the_plan_keeps_the_unit_down(switch, scripted, state):
+    """#60 rule 5: apply reads the marker again after `yes`, before the `up`."""
+    exit_code, out, err = switch(while_prompt_waits=lambda: switch_off(state))
+
+    assert exit_code == 1
+    assert "step-ca was switched off meanwhile (since 17.10. 22:10); not started" in err
+    assert scripted.changing_verbs() == []
+    assert "is on" not in out
+
+
+def test_a_switch_renewed_during_a_start_is_kept(start, scripted, state):
+    """#60 rule 5: start clears the marker only if it still holds the time it read."""
+    switch_off(state)
+    starting = scripted.verb_up
+
+    def start_while_a_new_stop_arrives(profile, arguments):
+        output = starting(profile, arguments)
+        (state / "stopped" / "step-ca").write_text(LATER_SWITCH_AT)
+        return output
+
+    scripted.verb_up = start_while_a_new_stop_arrives
+
+    exit_code, _, err = start()
+
+    assert exit_code == 1
+    assert "switched off again (since 17.10. 23:30)" in err
+    assert marker(state) == LATER_SWITCH_AT
+
+
+def test_a_new_stop_during_the_start_prompt_stops_the_start_before_up(start, scripted, state):
+    """#60 rule 5: start reads the marker again after `yes`, immediately before its `up`."""
+    switch_off(state)
+
+    exit_code, out, err = start(
+        while_prompt_waits=lambda: (state / "stopped" / "step-ca").write_text(LATER_SWITCH_AT)
+    )
+
+    assert exit_code == 1
+    assert scripted.changing_verbs() == []
+    assert "partial: step-ca was switched off meanwhile (since 17.10. 23:30); not started" in err
+    assert "is on" not in out
+    assert marker(state) == LATER_SWITCH_AT
+
+
+def test_another_start_during_the_start_prompt_ends_this_start_without_up(start, scripted, state):
+    """#60 rule 5: a marker that is gone means another start ended the switch."""
+    switch_off(state)
+
+    exit_code, out, err = start(while_prompt_waits=lambda: (state / "stopped" / "step-ca").unlink())
+
+    assert exit_code == 0
+    assert scripted.changing_verbs() == []
+    assert "step-ca was started meanwhile" in out
+    assert "is on" not in out
+    assert err == ""
+
+
+@pytest.mark.parametrize("stops", [1, 2])
+def test_stops_of_a_switched_off_unit_during_the_start_prompt_win_over_the_start(
+    start, stop, scripted, repository, state, stops
+):
+    """#60 rules 2 and 5: a repeated stop on B changes nothing visible, yet the start sees it."""
+    put_unit_in("B", scripted, repository, state)
+
+    def stops_arrive():
+        for _ in range(stops):
+            assert stop()[0] == 0
+
+    exit_code, out, err = start(while_prompt_waits=stops_arrive)
+
+    assert exit_code == 1
+    assert scripted.changing_verbs() == []
+    assert "partial: step-ca was switched off meanwhile (since 17.10. 22:10); not started" in err
+    assert "is on" not in out
+    assert marker(state) == SWITCHED_OFF_AT
+
+
+def test_an_empty_marker_still_means_switched_off_for_apply(switch, scripted, state):
+    """#60 rule 1 and 4: the file is the record, whatever it holds."""
+    (state / "stopped").mkdir(parents=True)
+    (state / "stopped" / "step-ca").write_text("")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "step-ca stays stopped" in out
+    assert scripted.changing_verbs() == []
+    assert marker(state) is not None
+
+
+def test_an_unreadable_marker_directory_still_closes_a_running_unit(
+    stop, scripted, repository, state
+):
+    """#60 rule 2: closing wins over the record; exit 1, never a refusal to stop."""
+    put_unit_in("A", scripted, repository, state)
+    state.mkdir(parents=True)
+    (state / "stopped").write_text("not a directory")
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert scripted.containers["step-ca"] == "exited"
+    assert "partial" in err
+
+
+def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rule 2 partial: an interrupt exits 1 with the recorded switch, not a traceback."""
+    put_unit_in("A", scripted, repository, state)
+
+    def interrupted(_self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(switches.Switches, "lock", interrupted)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded" in err
+    assert "interrupted while waiting to stop it" in err
+    assert marker(state) is not None
+
+
+def test_an_interrupt_for_an_enabled_unit_with_nothing_running_still_records_the_switch(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rule 2: the marker is recorded first, so the partial line never lies about it."""
+    put_unit_in("A", scripted, repository, state)
+    scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
+
+    def interrupted(_self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(switches.Switches, "lock", interrupted)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded" in err
+    assert "interrupted while waiting to stop it" in err
+    assert marker(state) is not None
+
+
+def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_exit_1(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rule 2 partial from B with nothing running: Ctrl-C behind a start's `up` exits 1."""
+    put_unit_in("B", scripted, repository, state)
+
+    def interrupted(_self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(switches.Switches, "lock", interrupted)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded (since 17.10. 22:10), but interrupted" in err
+    assert "run `edge stop step-ca` again" in err
+
+
+def test_an_interrupt_after_a_start_cleared_the_marker_still_records_the_switch(
+    stop, scripted, repository, state, monkeypatch
+):
+    """#60 rules 2 and 5: a stop behind a start's `up` records before it says "recorded"."""
+    put_unit_in("B", scripted, repository, state)
+    marks = switches.Switches(state)
+    planned = scripted.verb_ps
+    plans = []
+
+    def start_finishes_then_interrupt(profile, arguments):
+        plans.append(profile)
+        if len(plans) == 1:
+            return planned(profile, arguments)
+        marks.clear("step-ca", marks.mark("step-ca"))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scripted, "verb_ps", start_finishes_then_interrupt)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert "partial: the switch is recorded" in err
+    assert marker(state) is not None
+
+
+def test_stop_of_a_disabled_stopped_unit_with_a_marker_changes_nothing(
+    stop, scripted, repository, state
+):
+    """#60 rule 2 from E: no marker is written, the same file stays."""
+    put_unit_in("E", scripted, repository, state)
+    switch_off(state)
+    inode = (state / "stopped" / "step-ca").stat().st_ino
+
+    exit_code, out, _ = stop()
+
+    assert exit_code == 0
+    assert "step-ca is disabled in the catalog and nothing of it runs" in out
+    assert (state / "stopped" / "step-ca").stat().st_ino == inode
+
+
+def test_a_lock_that_cannot_be_taken_does_not_blame_the_record(stop, scripted, repository, state):
+    """#60 rule 2: the partial line says the switch is recorded when only the lock failed."""
+    put_unit_in("A", scripted, repository, state)
+    (state / "switch.lock").mkdir(parents=True)
+
+    exit_code, _, err = stop()
+
+    assert exit_code == 1
+    assert scripted.containers["step-ca"] == "exited"
+    assert "the switch is recorded" in err
+    assert "could not be recorded" not in err
+
+
+def test_a_stop_of_a_switched_off_unit_looks_again_under_the_lock(
+    stop, scripted, repository, state
+):
+    """#60 rule 5: a start that brought the unit up before the lock opened is stopped again."""
+    put_unit_in("B", scripted, repository, state)
+    listing = scripted.verb_ps
+    looked = []
+
+    def unit_comes_up_after_the_first_look(profile, arguments):
+        output = listing(profile, arguments)
+        if not looked:
+            scripted.containers["step-ca"] = "running"
+        looked.append(output)
+        return output
+
+    scripted.verb_ps = unit_comes_up_after_the_first_look
+
+    exit_code, _, _ = stop()
+
+    assert exit_code == 0
+    assert scripted.containers["step-ca"] == "exited"
