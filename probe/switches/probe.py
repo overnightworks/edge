@@ -4,10 +4,10 @@ HOME and copy of the repository.
 
 It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml under their own
 project name, drives the real `edge stop`, `edge start` and `edge apply --closed` of a copy, and
-checks that `hello.<domain>` answers 404 on 127.0.0.1:8081 behind the barrier, also after a
-Traefik restart with the container up. It always removes its containers, networks and volumes. It
-never touches the live stack or the live state. It needs 127.0.0.1:8081 free, so the live Traefik
-is down while it runs.
+checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on 127.0.0.1:8081 behind
+the barrier, also after a Traefik restart with the container up. It always removes its
+containers, networks and volumes. It never touches the live stack or the live state. It needs
+127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
@@ -41,7 +41,7 @@ DOMAIN = "probe.invalid"
 HOST = f"hello.{DOMAIN}"
 EDGE_ADDRESS = ("127.0.0.1", 8081)
 FLEET = "cloudflare:\ngithub:\nservices:\n  probe:\n    run:\n      enabled: true\n"
-NOT_FOUND = (404, b"404 page not found\n")
+NOT_FOUND = (404, b"404 page not found\n", UNIT)  # status, body, X-Edge-Barrier
 WHOAMI_SEEN = b"Hostname:"
 NOTHING_TO_CHANGE = "nothing to change"
 READY_SECONDS = 90
@@ -99,13 +99,14 @@ class Probe:
 
     # --- what a client of the tunnel sees ----------------------------------------------------
 
-    def ask(self) -> tuple[int, bytes] | None:
-        """`GET /` with the unit's Host on the edge entrypoint; None when nothing listens."""
+    def ask(self) -> tuple[int, bytes, str | None] | None:
+        """`GET /` with the unit's Host on the edge entrypoint: status, body and the barrier mark;
+        None when nothing listens."""
         connection = http.client.HTTPConnection(*EDGE_ADDRESS, timeout=REQUEST_SECONDS)
         try:
             connection.request("GET", "/", headers={"Host": HOST})
             response = connection.getresponse()
-            return response.status, response.read()
+            return response.status, response.read(), response.getheader("X-Edge-Barrier")
         except OSError:
             return None
         finally:

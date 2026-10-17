@@ -25,7 +25,8 @@ SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
 LATER_SWITCH_AT = "2026-10-17T23:30:00+02:00"
 PROBE_ENABLED = ENABLED + "  probe:\n    run: {enabled: true}\n"
 PROBE_DISABLED = ENABLED + "  probe:\n    run: {enabled: false}\n"
-NOT_FOUND = barrier.Answer(404, b"404 page not found\n")
+NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
+PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-route answer
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
 NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 
@@ -178,8 +179,9 @@ def repository(tmp_path: Path) -> Path:
 
 @dataclass
 class Ingress:
-    """Traefik as the barrier tests see it: it answers 404 for `hello` while the unit's barrier
-    file is in `dynamic/`, unless it is `rejecting` the file or `down`. Time is a counter."""
+    """Traefik as the barrier tests see it: it answers a marked 404 for `hello` while the unit's
+    barrier file is in `dynamic/`; a file it is `rejecting` leaves its plain no-route 404; `down`
+    refuses the connection. Time is a counter."""
 
     repository: Path
     rejecting: bool = False
@@ -194,7 +196,9 @@ class Ingress:
         self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
         if self.down:
             raise ConnectionRefusedError
-        return NOT_FOUND if self.barrier_file().exists() and not self.rejecting else WHOAMI
+        if not self.barrier_file().exists():
+            return WHOAMI
+        return PLAIN_NOT_FOUND if self.rejecting else NOT_FOUND
 
     def sleep(self, seconds: float) -> None:
         self.now += seconds

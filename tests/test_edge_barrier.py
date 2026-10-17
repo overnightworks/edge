@@ -16,7 +16,8 @@ from edge import barrier
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 ADDRESS = "127.0.0.1:8081"
-NOT_FOUND = barrier.Answer(404, b"404 page not found\n")
+NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
+PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's ordinary no-route answer
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
 KEYCLOAK_RULE = "Host(`auth.probe.invalid`) && PathPrefix(`/realms`)"
 
@@ -94,6 +95,7 @@ def test_one_router_per_routed_host_on_the_edge_entrypoint_only(checkout):
         assert router["entryPoints"] == ["edge"]
         assert router["priority"] == 1_000_000
         assert router["service"] == "switch-probe-deny"
+        assert router["middlewares"] == ["switch-probe-mark"]
         host = name.removeprefix("switch-probe-")
         assert router["rule"] == f'Host(`{host}.{{{{ env "EDGE_DOMAIN" }}}}`)'
 
@@ -106,6 +108,15 @@ def test_the_deny_service_sends_the_request_back_to_traefik_without_its_host(che
 
     assert deny["passHostHeader"] is False
     assert deny["servers"] == [{"url": f"http://{ADDRESS}"}]
+
+
+def test_the_barrier_marks_its_answer_with_the_unit_by_a_middleware_in_the_same_file(checkout):
+    """#61 rule 1 / proof a: the same-file middleware adds `X-Edge-Barrier: <unit>`."""
+    barrier_of(checkout, "hello").close()
+
+    mark = parsed(checkout)["http"]["middlewares"]["switch-probe-mark"]
+
+    assert mark == {"headers": {"customResponseHeaders": {"X-Edge-Barrier": "probe"}}}
 
 
 def test_an_explicit_label_router_is_barred_by_its_host_alone(checkout):
@@ -236,10 +247,34 @@ def test_a_404_with_another_body_is_no_proof_of_the_barrier(checkout):
         barrier_of(checkout, "hello", fetch=lambda *_: other).close()
 
 
+def test_a_plain_404_without_the_mark_is_no_proof_of_the_barrier(checkout):
+    """#61 rule 3 / proof a: Traefik's no-route 404 is what a rejected file leaves, not proof."""
+    with pytest.raises(barrier.BarrierError):
+        barrier_of(checkout, "hello", fetch=lambda *_: PLAIN_NOT_FOUND).close()
+
+
+def test_the_mark_of_another_unit_is_no_proof_of_this_barrier(checkout):
+    """#61 rule 3 / proof a: the mark must name this unit."""
+    other = barrier.Answer(404, PLAIN_NOT_FOUND.body, "other")
+
+    with pytest.raises(barrier.BarrierError):
+        barrier_of(checkout, "hello", fetch=lambda *_: other).close()
+
+
 def test_opening_is_verified_only_once_the_host_stops_answering_the_barriers_404(checkout):
-    """#61 rule 4 / proof a: opening is verified once the 404 is gone."""
+    """#61 rule 4 / proof a: opening is verified once the mark is gone."""
     with pytest.raises(barrier.BarrierError, match=r"did not open hello\.probe\.invalid"):
         barrier_of(checkout, "hello", fetch=lambda *_: NOT_FOUND).open()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [PLAIN_NOT_FOUND, WHOAMI, barrier.Answer(302, b"")],
+    ids=["a path-prefixed router's plain 404", "whoami", "a redirect"],
+)
+def test_opening_is_verified_by_any_answer_without_the_mark(checkout, answer):
+    """#61 rule 4 / proof a: keycloak's `auth` answers `/` with a plain 404 once opened."""
+    barrier_of(checkout, "keycloak", fetch=lambda *_: answer).open()
 
 
 def test_the_host_domain_is_the_one_compose_gives_traefik():

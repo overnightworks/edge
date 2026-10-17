@@ -4,7 +4,9 @@ Traefik's file provider watches `dynamic/` but not its subdirectories, so the ba
 `dynamic/switch-<unit>.yml`, written through a `.tmp` name the provider never reads. One router per
 host the unit routes, on the `edge` entrypoint only, beats any label router by its priority and
 sends the request back to Traefik's own `edge` entrypoint without its `Host`; no router matches
-that, so Traefik itself answers `404 page not found`. The checkout is an argument; only the CLI
+that, so Traefik itself answers `404 page not found`. That 404 is also Traefik's ordinary no-route
+answer, so a same-file middleware marks the barrier's answer with `X-Edge-Barrier: <unit>`; only
+the mark proves Traefik loaded the file. The checkout is an argument; only the CLI
 entry resolves the real one.
 """
 
@@ -19,15 +21,15 @@ from typing import Any, Self
 
 import yaml
 
-from edge_check.docker import GO_TRUE_SPELLINGS
+from edge_check.docker import EDGE_NAME_LABEL, GO_TRUE_SPELLINGS
 
 DYNAMIC_DIRECTORY = "dynamic"
 TRAEFIK_FILE = "traefik.yml"
-EDGE_NAME_LABEL = "edge.name"
 _ROUTED_LABEL = "traefik.enable"
 _TRAEFIK_NAME = re.compile(r"[a-z0-9-]{1,63}")  # the provider constraint of traefik.yml
 _NOT_FOUND_BODY = b"404 page not found\n"
 _NOT_FOUND = 404
+MARK_HEADER = "X-Edge-Barrier"
 _PRIORITY = 1_000_000
 VERIFY_SECONDS = 15.0
 _POLL_SECONDS = 0.5
@@ -39,7 +41,12 @@ _TEMPLATE = (
     """\
 http:
   routers:
-{routers}  services:
+{routers}  middlewares:
+    switch-{unit}-mark:
+      headers:
+        customResponseHeaders:
+          {header}: {unit}
+  services:
     switch-{unit}-deny:
       loadBalancer:
         passHostHeader: false
@@ -52,6 +59,7 @@ _ROUTER = """\
       entryPoints: [edge]
       rule: Host(`{name}.{{{{ env "EDGE_DOMAIN" }}}}`)
       priority: {priority}
+      middlewares: [switch-{unit}-mark]
       service: switch-{unit}-deny
 """
 
@@ -64,10 +72,14 @@ class BarrierError(Exception):
 class Answer:
     status: int
     body: bytes
+    mark: str | None = None  # the `X-Edge-Barrier` header, None when the answer has none
+
+    def is_barrier_of(self, unit: str) -> bool:
+        return self.status == _NOT_FOUND and self.body == _NOT_FOUND_BODY and self.mark == unit
 
     @property
-    def is_barrier(self) -> bool:
-        return self.status == _NOT_FOUND and self.body == _NOT_FOUND_BODY
+    def is_unmarked(self) -> bool:
+        return self.mark is None
 
 
 Fetch = Callable[[str, str, float], Answer]  # (address, Host, seconds allowed) -> GET / answer
@@ -96,7 +108,7 @@ def http_fetch(address: str, host: str, seconds: float) -> Answer:
             if time.monotonic() > deadline:
                 raise TimeoutError("the answer took longer than the time allowed")
             body += chunk
-        return Answer(response.status, body)
+        return Answer(response.status, body, response.getheader(MARK_HEADER))
     finally:
         connection.close()
 
@@ -110,24 +122,28 @@ class Verifier:
     sleep: Callable[[float], None] = time.sleep
     seconds: float = VERIFY_SECONDS
 
-    def unreached(self, address: str, hosts: Iterable[str], *, barrier: bool) -> str | None:
-        """The first host that does not (or, for `barrier=False`, still does) answer the barrier's
-        404 when the time is up; None when every host does what is wanted."""
+    def unreached(
+        self, address: str, hosts: Iterable[str], wanted: Callable[[Answer], bool]
+    ) -> str | None:
+        """The first host whose answer is not `wanted` when the time is up; None when every host
+        answers as wanted."""
         deadline = self.clock() + self.seconds
         for host in hosts:
-            while not self._reached(address, host, barrier, deadline):
+            while not self._reached(address, host, wanted, deadline):
                 if self.clock() >= deadline:
                     return host
                 self.sleep(_POLL_SECONDS)
         return None
 
-    def _reached(self, address: str, host: str, barrier: bool, deadline: float) -> bool:
+    def _reached(
+        self, address: str, host: str, wanted: Callable[[Answer], bool], deadline: float
+    ) -> bool:
         """One request within the time the deadline leaves; a broken answer is no answer."""
         allowed = min(_REQUEST_SECONDS, deadline - self.clock())
         if allowed <= 0:
             return False
         try:
-            return self.fetch(address, host, allowed).is_barrier is barrier
+            return wanted(self.fetch(address, host, allowed))
         except (OSError, http.client.HTTPException):
             return False
 
@@ -158,6 +174,10 @@ def edge_address(checkout: Path) -> str:
         return document["entryPoints"]["edge"]["address"]
     except (OSError, yaml.YAMLError, KeyError, TypeError) as error:
         raise BarrierError(f"cannot read the edge address of {TRAEFIK_FILE}") from error
+
+
+def _is_unmarked(answer: Answer) -> bool:
+    return answer.is_unmarked
 
 
 PROVEN_OVER_HTTP = Verifier()
@@ -211,7 +231,8 @@ class Barrier:
         return self.path.exists()
 
     def _prove(self, address: str, *, barrier: bool) -> None:
-        unreached = self.verifier.unreached(address, self.hosts, barrier=barrier)
+        wanted = (lambda answer: answer.is_barrier_of(self.unit)) if barrier else _is_unmarked
+        unreached = self.verifier.unreached(address, self.hosts, wanted)
         if unreached:
             within = f"within {self.verifier.seconds:g} s"
             if barrier:
@@ -227,7 +248,9 @@ class Barrier:
         routers = "".join(
             _ROUTER.format(unit=self.unit, name=name, priority=_PRIORITY) for name in self.names
         )
-        text = _TEMPLATE.format(unit=self.unit, routers=routers, address=address)
+        text = _TEMPLATE.format(
+            unit=self.unit, routers=routers, address=address, header=MARK_HEADER
+        )
         temporary = self.path.with_name(f"{self.path.name}.tmp")
         try:
             temporary.write_text(text)
