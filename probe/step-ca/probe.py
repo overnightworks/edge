@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -90,8 +91,7 @@ SHORT_LIFETIME_MINUTES = 20  # probe-only: renewal inside the poll
 RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
-FLEET_OFF = "enabled: false"
-FLEET_ON = "enabled: true"
+STEP_CA_SWITCH = re.compile(r"(  step-ca:\n    run:\n      enabled: )(?:true|false)")
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 
 
@@ -592,10 +592,11 @@ class Probe:
         return edge_copy.repository_copy(REPO, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
-        """Flip step-ca only: it is the first unit of `fleet.yaml`, and keycloak stays off."""
+        """Set step-ca's switch only: keycloak stays off, so apply never asks for its setup."""
         fleet = copy / "fleet.yaml"
-        old, new = (FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF)
-        fleet.write_text(fleet.read_text().replace(old, new, 1))
+        fleet.write_text(
+            STEP_CA_SWITCH.sub(rf"\g<1>{str(enabled).lower()}", fleet.read_text(), count=1)
+        )
 
     def edge(
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
