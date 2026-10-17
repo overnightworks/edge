@@ -388,6 +388,11 @@ def _global_time(marks: switches.Switches) -> str:
     return switches.describe_since(mark.since if mark else switches.UNKNOWN_SWITCH_TIME)
 
 
+def _named_unit(door: tunnel.Tunnel) -> str:
+    """Empty for cloudflared; a probe's throwaway unit is named so the operator can tell."""
+    return "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
+
+
 def _stop_failure(door: tunnel.Tunnel) -> str | None:
     """Ask the system to stop the tunnel; why it could not even be asked, if it could not."""
     try:
@@ -445,10 +450,9 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
             "yet; overnightworks/home-tools#9)",
         )
         return ApplyExit.REFUSED
-    named = "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
     _say(
         STOP_ALL,
-        f"the tunnel is stopped (since {_global_time(marks)}{named}); "
+        f"the tunnel is stopped (since {_global_time(marks)}{_named_unit(door)}); "
         "services keep running locally",
     )
     return ApplyExit.APPLIED_OR_NOTHING
@@ -578,5 +582,5 @@ def _reopen(
     if failure:
         # the lock is released here, so recording again may take it
         return _partial_closed(failure, _record_global(marks, now, under_lock=True), door)
-    _say(START_ALL, "the tunnel is open; unit switches and barriers stay")
+    _say(START_ALL, f"the tunnel is open{_named_unit(door)}; unit switches and barriers stay")
     return ApplyExit.APPLIED_OR_NOTHING

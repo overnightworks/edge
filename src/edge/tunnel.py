@@ -17,6 +17,7 @@ BOOT_DROP_IN = "30-edge-global-stop.conf"
 MANAGE_UNITS_ACTION = "org.freedesktop.systemd1.manage-units"
 UNIT_VARIABLE = "EDGE_TUNNEL_UNIT"
 MANAGER_VARIABLE = "EDGE_TUNNEL_MANAGER"
+STOPPED_STATES = frozenset({"inactive", "failed"})
 _SECONDS = 120
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -75,7 +76,7 @@ class Tunnel:
         return self._state() == "active"
 
     def is_inactive(self) -> bool:
-        return self._state() == "inactive"
+        return self._state() in STOPPED_STATES
 
     def has_boot_drop_in(self) -> bool:
         shown = self._systemctl("show", "-p", "DropInPaths").stdout.strip()

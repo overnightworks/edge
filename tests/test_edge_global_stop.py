@@ -129,12 +129,14 @@ def stop_all(marks, systemd, at_terminal, capsys) -> Callable[..., tuple[int, st
 
 @pytest.fixture
 def start_all(marks, systemd, repository, ingress, at_terminal, capsys):  # noqa: F811
-    def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str]:
+    def run(
+        answer: str = "yes", while_prompt_waits=None, unit: str = tunnel.CLOUDFLARED_UNIT
+    ) -> tuple[int, str]:
         at_terminal(answer, while_prompt_waits)
         exit_code = emergency.start_all(
             marks,
             NOW,
-            tunnel.Tunnel(run=systemd.run),
+            tunnel.Tunnel(unit, run=systemd.run),
             compose.Compose(ScriptedCompose().run, repository),
             repository,
             ingress.verifier,
@@ -312,6 +314,15 @@ def test_a_tunnel_of_another_unit_is_named_in_the_success_line(marks, systemd, c
     assert "unit edge-probe-tunnel-1.service" in capsys.readouterr().out
 
 
+def test_a_failed_unit_counts_as_stopped():
+    """#70 head ruling: `is-active` printing failed means the process is not running."""
+
+    def failed(_command):
+        return subprocess.CompletedProcess([], 3, "failed\n")
+
+    assert tunnel.Tunnel(run=failed).is_inactive()
+
+
 def test_an_unrelated_drop_in_does_not_certify_the_reboot_protection(stop_all, systemd):
     """#70 rule 3: only the exact 30-edge-global-stop.conf counts as the boot drop-in."""
     systemd.drop_ins = ["130-" + tunnel.BOOT_DROP_IN.removeprefix("30-")]
@@ -345,6 +356,14 @@ def test_start_all_reopens_the_tunnel_and_clears_only_the_global_switch(
     assert marks.global_mark() is None
     assert marks.since("probe") == SWITCHED_OFF_AT
     assert (repository / "dynamic" / "switch-probe.yml").exists()
+
+
+def test_start_all_names_a_tunnel_of_another_unit(start_all, stopped_tunnel):
+    """#70 rule 2 and Proof: the operator can tell a probe unit from cloudflared."""
+    exit_code, output = start_all(unit="edge-probe-tunnel-1.service")
+
+    assert exit_code == 0
+    assert "the tunnel is open; unit edge-probe-tunnel-1.service" in output
 
 
 def test_start_all_proves_each_standing_barrier_before_it_reopens(
