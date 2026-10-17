@@ -444,6 +444,7 @@ class GoLive:
     def start_edge(self) -> None:
         with self.starting():
             self.compose_must("up", "-d")
+        with self.starting():  # a stop recorded during the first command must win here
             self.compose_must("up", "-d", "--force-recreate", "socket-proxy", "traefik")
         self.wait_until(self.edge_is_ready, "the edge")
 
