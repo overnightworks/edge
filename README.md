@@ -279,6 +279,31 @@ Ueberleben eines Neustarts: Jeder lang laufende Dienst hat `restart: unless-stop
 startet einen ausdruecklich gestoppten Container auch nach einem Neustart nicht. Der Schalter
 bleibt auf der Platte. Eine ausgeschaltete Einheit bleibt also ohne Boot-Dienst aus.
 
+Der globale Schalter: `edge stop --all` nimmt den PC sofort vom Internet. Es schreibt zuerst
+`~/.local/state/edge/global-stop` (eine eigene Datei neben `stopped/`; ein zweites Stop behaelt die
+erste Zeit), ohne auf `switch.lock` zu warten, stoppt dann `cloudflared.service`, schreibt den
+Schalter unter `switch.lock` noch einmal (ein `start`, der ihn inzwischen loeschte, macht ihn nicht
+rueckgaengig; scheitert dieses Schreiben und fehlt der Schalter danach, meldet es "partial: the
+global switch could not be recorded", Exit 1) und meldet Erfolg erst, wenn `systemctl is-active`
+den Tunnel als beendet (`inactive` oder `failed`) zeigt; ein Fehler des Stopps allein aendert das
+nicht. Die Einheiten laufen lokal weiter
+und ihre Schalter bleiben. An einem Terminal fragt das System selbst nach dem Passwort; ohne
+Terminal (Agent) laeuft `systemctl --no-ask-password`. Exit 1 heisst teilweise: "partial", wenn
+der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`; eine zweite Zeile
+`stop failed: <Grund>` nennt den Fehler des Stopps, etwa `cannot run systemctl (timed out)`), und "incomplete", wenn
+das Boot-Drop-in `30-edge-global-stop.conf` noch fehlt (ein Neustart oeffnete den Tunnel wieder;
+das bringt overnightworks/home-tools#9). `edge start --all` braucht ein Terminal und das exakte
+`yes` (Agenten nie, R4). Es beweist zuerst die Sperre jeder noch ausgeschalteten Einheit (eine
+Zeile je Sperre, bei Bedarf neu geschrieben, 404 mit `X-Edge-Barrier` auf `127.0.0.1:8081`), holt
+die Berechtigung des Systems (`pkcheck`) noch vor dem Loeschen des Schalters, liest ihn unter der
+Sperre noch einmal (ein `stop` waehrend der Rueckfrage gewinnt), loescht ihn, startet den Tunnel
+und prueft, dass er aktiv ist. Kann eine Sperre nicht bewiesen werden, bleibt der Tunnel zu; schlaegt
+die Berechtigung oder der Start fehl, steht der Schalter wieder und der Exit ist 1. Nur der globale
+Schalter faellt: Einheiten-Schalter und Sperren bleiben. Die Pruefung des Hosts davor ist noch nicht
+gebaut ("host check not built yet (#50 SW3)"). edge liest nie `/etc/cloudflared`, aendert den Tunnel
+nicht und ruft nie `sudo` auf. Fuer den Wegwerf-Beweis nehmen `EDGE_TUNNEL_UNIT` und
+`EDGE_TUNNEL_MANAGER=user` eine Wegwerf-Einheit des Benutzer-Managers statt `cloudflared.service`.
+
 Regel R4: Agenten rufen `edge apply` und `edge start` nie auf; `edge stop`
 duerfen sie. Die Terminalpruefung und das `yes` halten
 versehentliche und nicht-interaktive Laeufe auf; sie erkennen den Betreiber nicht (D14).
@@ -450,33 +475,59 @@ marked as its own; anything else in that directory stays.
 
 ### Status
 
-`~/.local/state/edge/backup-status.json`, written atomically at every phase:
+`~/.local/state/edge/backup-status.json`, written atomically at every phase.
+The run's verdict stands at the top; each app (its name, which is also its
+restic tag) has its own last good snapshot and times:
 
 ```json
-{"schema": 1, "state": "ok", "phase": "check", "failing_phase": null,
- "exit_category": null, "last_attempt": "2026-10-18T01:00:00+00:00",
- "last_successful_backup": "2026-10-18T01:12:40+00:00",
- "last_successful_restore_test": "2026-10-04T03:09:02+00:00",
- "last_snapshot_id": "4f1c…"}
+{"schema": 2, "state": "failed", "phase": "readiness", "failing_phase": "readiness",
+ "failing_app": "radio", "exit_category": "configuration",
+ "last_attempt": "2026-10-18T01:00:00+00:00",
+ "apps": {
+   "radio": {"last_snapshot_id": "9a0e…",
+             "last_successful_backup": "2026-10-11T01:12:40+00:00",
+             "last_successful_restore_test": "2026-10-04T03:09:02+00:00"},
+   "songmaker": {"last_snapshot_id": "4f1c…",
+                 "last_successful_backup": "2026-10-18T01:12:40+00:00",
+                 "last_successful_restore_test": "2026-10-04T03:09:02+00:00"}}}
 ```
 
 `state` is `running`, `ok` or `failed`. A `running` that outlasts the timer's
 6-hour limit means the run died: treat it as failed. `exit_category` is one of
 `configuration`, `not-ready`, `command-failed`, `verification-failed`,
-`interrupted`, `internal`. When the backup succeeded but prune or check failed,
-`last_successful_backup` moves on and `state` is `failed`. The file holds no
-output, command line, path or file name.
+`interrupted`, `internal`. `failing_app` names the app whose step failed and is
+`null` for a failure that belongs to none (the repository, a status failure).
+The file holds no output, command line, path or file name.
+
+An app that fails does not stop the others: every other app is still backed
+up, and each app's snapshot is recorded right after its own `restic backup`
+exits 0, so earlier successes stay. A run with any failure prunes nothing.
+When the backup succeeded but prune or check failed, the apps' backup times
+have moved on and `state` is `failed`. An app removed from `apps.toml` keeps
+its entry; nothing deletes one automatically, and renaming an app makes it a
+new app.
 
 A status file that cannot be read (mode 000, corrupt JSON, an unknown
 `schema`) is never overwritten: backup, restore test and restore fail with one
 German line and exit 1, and the file stays byte-identical. Past successes are
 never replaced by nulls; repair or remove the file by hand to go on.
 
+A schema-1 file (flat `last_snapshot_id` and times) is read into this shape.
+Its id and times go to the declared app only when exactly one app is declared
+and restic confirms the id in that app's tag scope. Otherwise they stay in an
+`unattributed` entry, and `restore` asks for `--snapshot`. `restore` never
+writes the file; the next backup or restore test writes it as schema 2.
+
+The way back to an older edge-backup: it refuses a schema-2 file like any
+unknown one. Move `backup-status.json` aside, then either
+`edge-backup restore <app> --snapshot <ID> --target <Ordner>` or run the next
+backup, which writes a fresh status.
+
 `state` describes the latest run of either command, backup or restore test: a
 failed Sunday backup followed two hours later by a passing restore test reads
 `ok`, and a timer that never fires leaves the last `ok` standing. A reader
-therefore also judges freshness: `last_successful_backup` no older than about
-8 days, `last_successful_restore_test` no older than about 5 weeks.
+therefore also judges freshness per app: `last_successful_backup` no older than
+about 8 days, `last_successful_restore_test` no older than about 5 weeks.
 
 | Exit | Meaning |
 |---|---|
@@ -489,12 +540,14 @@ therefore also judges freshness: `last_successful_backup` no older than about
 uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
-It restores the snapshot of the **last successful backup**
-(`last_snapshot_id` in the status) and prints its short ID, never a newer
-snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
-that snapshot is gone, or the status names none, `restore` refuses with one
-German line and exit 1, names the newest snapshot and says how to choose it.
-The restore test verifies the same snapshot and refuses the same way.
+It restores the snapshot of that app's **last successful backup**
+(`apps.<app>.last_snapshot_id` in the status) and prints its short ID, never a
+newer snapshot that a failed run left behind (restic exit 3 leaves a partial
+one). `restore` refuses with one German line and exit 1, names the newest
+snapshot and says how to choose it, in two cases: no successful backup of that
+app is recorded yet, or the recorded snapshot is missing in the repository.
+The restore test verifies each app against its own last good snapshot and
+refuses the same way; a failed `check --read-data` gives no app a new time.
 
 Disaster recovery on a machine without the status file: list the repository
 with `uv run edge-backup snapshots`, then choose a snapshot of that app by the

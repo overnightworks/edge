@@ -8,9 +8,14 @@ import sys
 CONFIRMATION = "yes"
 
 
+def at_terminal() -> bool:
+    """Whether somebody can answer a prompt: stdin and stdout are both a terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def refused_without_terminal(command: str) -> bool:
     """True, after saying so, when stdin and stdout are not both a terminal."""
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if at_terminal():
         return False
     print(f"{command}: refused, stdin and stdout must be a terminal", file=sys.stderr)
     return True
