@@ -1,0 +1,8 @@
+claim_id = "d20ff0afaf934ffb8079b154caaf405e"
+agent = "claude"
+role = "builder"
+base = "2f19ba7123aa54126e3a6485a1fb9b75208bef9c"
+branch = "claude/issue-79-live-checkout"
+scope = ["README.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/checkout.py", "tests/test_edge_apply.py", "tests/test_edge_checkout.py"]
+opened_commit = "b402d75e554c20bcc3834394a2ad6d3c7e72472e"
+whole_reason = "The check, its one caller and the probe copies that must satisfy it move together; split, the probes would fail."
