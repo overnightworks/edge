@@ -123,7 +123,9 @@ class Switches:
         first = recorded.since if recorded and recorded.since != UNKNOWN_SWITCH_TIME else None
         try:
             self._make_private_directories()
-            _write_atomically(path, first or now.isoformat(timespec="seconds"))
+            _write_atomically(
+                path, first or now.isoformat(timespec="seconds"), keep_existing=recorded is None
+            )
         except OSError as error:
             raise SwitchError(f"cannot record {what} ({error.strerror})") from error
 
@@ -166,17 +168,29 @@ def _unlink(path: Path, what: str) -> None:
         raise SwitchError(f"cannot clear {what} ({error.strerror})") from error
 
 
-def _write_atomically(path: Path, text: str) -> None:
+def _link_unless_present(source: str, path: Path) -> None:
+    try:
+        os.link(source, path)
+    except FileExistsError:
+        pass  # the first writer's time stands
+
+
+def _write_atomically(path: Path, text: str, *, keep_existing: bool) -> None:
+    """Publish the file whole; `keep_existing` leaves a file another writer published meanwhile."""
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(descriptor, "w") as file:
             file.write(f"{text}\n")
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary, path)
+        if keep_existing:
+            _link_unless_present(temporary, path)
+        else:
+            os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+    Path(temporary).unlink(missing_ok=True)
     directory = os.open(path.parent, os.O_RDONLY)
     try:
         os.fsync(directory)
