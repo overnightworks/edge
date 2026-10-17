@@ -3,6 +3,8 @@ recorded, their digests, and `applied.json`, over a `tmp_path` checkout and stat
 
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 
 import pytest
@@ -99,7 +101,7 @@ def test_a_missing_file_bind_cannot_be_planned_and_names_its_path(config, checko
     """#85 rule 1, cell U12: a deleted traefik.yml never passes silently."""
     (checkout / TRAEFIK_FILE).unlink()
 
-    with pytest.raises(core.CoreError, match=str(checkout / TRAEFIK_FILE)):
+    with pytest.raises(core.CoreError, match=re.escape(str(checkout / TRAEFIK_FILE))):
         core.plan_core(config, {"traefik": {"running"}}, checkout, record)
 
 
@@ -113,6 +115,7 @@ def locked_directory(tmp_path: Path):
     locked.chmod(0o700)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root enters a directory with mode 0")
 def test_a_file_bind_behind_a_directory_it_cannot_enter_cannot_be_planned_and_names_its_path(
     config, checkout, record, locked_directory
 ):
@@ -120,7 +123,7 @@ def test_a_file_bind_behind_a_directory_it_cannot_enter_cannot_be_planned_and_na
     (checkout / TRAEFIK_FILE).unlink()
     (checkout / TRAEFIK_FILE).symlink_to(locked_directory / TRAEFIK_FILE)
 
-    with pytest.raises(core.CoreError, match=str(checkout / TRAEFIK_FILE)):
+    with pytest.raises(core.CoreError, match=re.escape(str(checkout / TRAEFIK_FILE))):
         core.plan_core(config, {"traefik": {"running"}}, checkout, record)
 
 
