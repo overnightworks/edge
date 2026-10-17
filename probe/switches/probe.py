@@ -210,30 +210,36 @@ class Probe:
         print(f"proof 6 held: start removed barrier and marker; {HOST} answers whoami")
 
     def cell_8_global_stop(self) -> None:
-        tunnel = ThrowawayTunnel(self.home)
-        self.environment["EDGE_TUNNEL_UNIT"] = tunnel.name
+        throwaway = ThrowawayTunnel(self.home)
+        self.environment["EDGE_TUNNEL_UNIT"] = throwaway.name
         self.environment["EDGE_TUNNEL_MANAGER"] = "user"
         global_marker = self.home / ".local" / "state" / "edge" / "global-stop"
         try:
             self.edge(
                 "stop", UNIT, terminal=False
             )  # the unit barrier to be proven before reopening
-            tunnel.install()
+            throwaway.install()
             stopped = self.edge("stop", "--all", terminal=False)
             expect("the tunnel is stopped" in stopped, f"stop --all said: {stopped[-160:]}")
-            expect(tunnel.state() == "inactive", f"the tunnel is {tunnel.state()} after stop --all")
+            expect(
+                throwaway.state() == "inactive",
+                f"the tunnel is {throwaway.state()} after stop --all",
+            )
             expect(global_marker.is_file(), "stop --all wrote no global marker")
-            tunnel.start_is_skipped()
+            throwaway.start_is_skipped()
             self.barrier.unlink()  # start --all renders the barrier again before it proves it
             started = self.edge("start", "--all", terminal=True)
             expect(
                 f"the barrier of {UNIT} is proven" in started, f"start --all said: {started[-200:]}"
             )
-            expect(tunnel.state() == "active", f"the tunnel is {tunnel.state()} after start --all")
+            expect(
+                throwaway.state() == "active",
+                f"the tunnel is {throwaway.state()} after start --all",
+            )
             expect(not global_marker.exists(), "start --all left the global marker")
             expect(self.marker.is_file() and self.answers_the_barrier(), "the unit switch fell")
         finally:
-            tunnel.remove()
+            throwaway.remove()
             self.environment.pop("EDGE_TUNNEL_UNIT")
             self.environment.pop("EDGE_TUNNEL_MANAGER")
         self.edge("start", UNIT, terminal=True)

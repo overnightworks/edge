@@ -58,6 +58,14 @@ def key_value_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if "=" in line and not line.startswith("#")]
 
 
+def test_tunnel_holds_exactly_its_four_files():
+    """#76 rule 1: a stray file would escape the placeholder check, which walks ALL_FILES."""
+    shipped = sorted(
+        path.relative_to(TUNNEL_FILES) for path in TUNNEL_FILES.rglob("*") if path.is_file()
+    )
+    assert shipped == sorted(path.relative_to(TUNNEL_FILES) for path in ALL_FILES)
+
+
 def test_the_boot_drop_in_carries_the_name_edge_checks_for():
     """#76 rule 3, cell 1."""
     assert sorted(path.name for path in DROP_INS.iterdir()) == [
