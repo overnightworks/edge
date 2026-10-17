@@ -1,0 +1,8 @@
+claim_id = "11e56ec833584aedbf92265030b3abf8"
+agent = "claude"
+role = "builder"
+base = "381301db8c558433e4fc09413b67585526b0b4f1"
+branch = "claude/issue-85-traefik-follows-config"
+scope = ["README.md", "docs/architecture.md", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "src/edge/switches.py", "tests/test_edge_apply.py", "tests/test_edge_core.py"]
+opened_commit = "73c812d444ec06ae6b68fdb7a78579594fa46493"
+whole_reason = "Recreate, prove and record are one safety path (C3 with S9 and I2): split, a recreate could report success without the re-proof or record content the running Traefik never got."
