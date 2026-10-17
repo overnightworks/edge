@@ -216,7 +216,9 @@ services:
 `socket-proxy` und `traefik` nicht an. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
-Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
+Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
+einer anderen Kopie verweigert er mit Exit 2 und nennt den Pfad, denn sonst haengte er das
+Live-Projekt an diesen Baum. Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
 Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
 nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder

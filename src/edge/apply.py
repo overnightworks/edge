@@ -6,7 +6,8 @@ Volumes are never touched. A unit that would be switched on and is not set up is
 separately; on `yes` its own setup command runs in the operator's terminal (key material is made
 there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
 emergency switch (`edge stop`) is never started and its switch is never cleared here: only
-`edge start` ends it.
+`edge start` ends it. It runs only from the live checkout `~/git/edge`: from any other tree it
+would bind the live compose project to that tree, so it refuses there with exit 2 (#79).
 """
 
 import sys
@@ -16,7 +17,7 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, compose, setup, switches, terminal
+from edge import catalog, checkout, compose, setup, switches, terminal
 
 COMMAND = "edge apply --closed"
 
@@ -184,9 +185,17 @@ def apply_closed(
     repository: Path = compose.REPOSITORY,
     check: setup.SetupCheck = setup.run_setup_check,
     run_setup: setup.SetupRunner = setup.run_setup,
+    home: Path | None = None,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
+    if not checkout.is_live_checkout(repository, home or Path.home()):
+        print(
+            f"{COMMAND}: runs only from the live checkout {checkout.LIVE_CHECKOUT} "
+            f"(this is {repository})",
+            file=sys.stderr,
+        )
+        return ApplyExit.CANNOT_PLAN
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     try:
