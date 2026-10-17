@@ -20,7 +20,8 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError
@@ -28,8 +29,13 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "src"))  # the emergency switch has one owner: edge.switches
+
+from edge import switches  # noqa: E402
+
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 BOOTSTRAP_SECRET = "bootstrap-admin-password"
+UNIT = "keycloak"  # the catalog key of the unit, and so the name of its switch marker
 BOOTSTRAP_ADMIN = "temp-admin"
 BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
 KEYCLOAK_PROFILE = "keycloak"
@@ -158,9 +164,34 @@ class Step:
 
 
 class GoLive:
-    def __init__(self, tools: Tools, secrets_dir: Path) -> None:
+    def __init__(self, tools: Tools, secrets_dir: Path, marks: switches.Switches) -> None:
         self.tools = tools
         self.secrets_dir = secrets_dir
+        self.marks = marks
+
+    # --- the emergency switch (README "Keycloak: the emergency switch") ---------------------
+
+    def switched_off_reason(self) -> str | None:
+        since = self.marks.since(UNIT)
+        if since is None:
+            return None
+        return (
+            f"{UNIT} is switched off (since {switches.describe_since(since)}); "
+            f"`edge start {UNIT}` ends the switch"
+        )
+
+    @contextmanager
+    def starting(self) -> Iterator[None]:
+        """Around a command that starts containers: the marker is read under the switch lock, so
+        a stop made meanwhile wins. Never held while a prompt or the browser step waits."""
+        try:
+            with self.marks.lock():
+                reason = self.switched_off_reason()
+                if reason:
+                    raise StepFailure(reason)
+                yield
+        except switches.SwitchError as error:
+            raise StepFailure(str(error)) from error
 
     # --- secrets (step 2) -----------------------------------------------------------------
 
@@ -179,8 +210,13 @@ class GoLive:
             return True
         if len(missing) == len(SECRET_FILES):
             return False
-        if missing == [BOOTSTRAP_SECRET] and self.database_volume_exists():
-            return True
+        if missing == [BOOTSTRAP_SECRET]:
+            if self.database_volume_exists():
+                return True
+            raise StepFailure(
+                f"the database volume {DATABASE_VOLUME} is missing although {BOOTSTRAP_SECRET} "
+                "is gone: go-live cannot finish on an empty database; restore the volume"
+            )
         raise StepFailure(f"some secret files exist, missing: {', '.join(missing)}")
 
     def create_secrets(self) -> None:
@@ -335,7 +371,8 @@ class GoLive:
             raise StepFailure("stopped: no backup yet and you did not accept that")
 
     def start_keycloak(self) -> None:
-        self.compose_must("up", "-d", "keycloak", bootstrap=self.bootstrap_present())
+        with self.starting():
+            self.compose_must("up", "-d", "keycloak", bootstrap=self.bootstrap_present())
         self.wait_until(self.keycloak_answers, "Keycloak")
 
     def master_is_moved(self) -> bool:
@@ -354,10 +391,12 @@ class GoLive:
         the second try signs in as the config-cli client, as every later apply does."""
         args = ("run", "--rm", "keycloak-config-cli")
         if self.bootstrap_present():
-            first = self.compose(*args, bootstrap=True)
+            with self.starting():  # `run` starts keycloak through depends_on
+                first = self.compose(*args, bootstrap=True)
             if first.returncode == 0:
                 return
-        self.compose_must(*args)
+        with self.starting():
+            self.compose_must(*args)
 
     def realm_import_completed(self) -> bool:
         """The realm existing proves nothing: keycloak-config-cli creates it first and records its
@@ -403,8 +442,9 @@ class GoLive:
         return not self.keycloak_runs_with_overlay() and self.edge_is_ready()
 
     def start_edge(self) -> None:
-        self.compose_must("up", "-d")
-        self.compose_must("up", "-d", "--force-recreate", "socket-proxy", "traefik")
+        with self.starting():
+            self.compose_must("up", "-d")
+            self.compose_must("up", "-d", "--force-recreate", "socket-proxy", "traefik")
         self.wait_until(self.edge_is_ready, "the edge")
 
     # --- step 7: retire the bootstrap -----------------------------------------------------
@@ -602,6 +642,10 @@ class GoLive:
     def run(self) -> int:
         current = "start"
         try:
+            reason = self.switched_off_reason()
+            if reason:
+                self.tools.say(f"go-live: refused, {reason}")
+                return 1
             for step in self.steps():
                 current = step.name
                 if step.is_done():
@@ -609,7 +653,7 @@ class GoLive:
                 self.tools.say(f"Step {step.number}, {step.name}: {step.why}")
                 step.do()
                 self.tools.say(f"go-live: {step.name} done")
-        except StepFailure as failure:
+        except (StepFailure, switches.SwitchError) as failure:
             self.tools.say(f"go-live FAILED at {current}: {self.scrubbed(str(failure))}")
             return 1
         except Exception as unexpected:  # the one boundary: a failure is a line, never a traceback
@@ -626,7 +670,11 @@ class GoLive:
 
 
 def main() -> int:
-    go_live = GoLive(Tools(), Path.home() / ".secrets" / "keycloak")
+    go_live = GoLive(
+        Tools(),
+        Path.home() / ".secrets" / "keycloak",
+        switches.Switches(switches.default_state_directory()),
+    )
     steps = "\n".join(
         textwrap.fill(f"{step.number}. {step.name}: {step.why}", subsequent_indent="   ")
         for step in go_live.steps()

@@ -10,11 +10,14 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import parse_qs
 
 import pytest
+
+from edge import switches
 
 SCRIPT = Path(__file__).resolve().parents[1] / "keycloak" / "go-live"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
@@ -288,7 +291,12 @@ def session(keycloak: Keycloak) -> Session:
 
 
 @pytest.fixture
-def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_dir: Path):
+def marks(tmp_path: Path) -> switches.Switches:
+    return switches.Switches(tmp_path / "state" / "edge")
+
+
+@pytest.fixture
+def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_dir: Path, marks):
     tools = golive.Tools(
         run=keycloak.run,
         fetch=keycloak.fetch,
@@ -297,7 +305,7 @@ def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_di
         sleep=session.sleep,
         monotonic=session.monotonic,
     )
-    return golive.GoLive(tools, secrets_dir)
+    return golive.GoLive(tools, secrets_dir, marks)
 
 
 def write_secrets(secrets_dir: Path, *names: str) -> None:
@@ -499,8 +507,8 @@ def test_a_partial_set_missing_only_the_bootstrap_password_is_refused_on_a_fresh
 
     assert go_live.run() == 1
 
-    assert session.printed[-1] == (
-        "go-live FAILED at secrets: some secret files exist, missing: bootstrap-admin-password"
+    assert session.printed[-1].startswith(
+        "go-live FAILED at secrets: the database volume keycloak-db is missing"
     )
     assert not keycloak.changed_something()
 
@@ -819,28 +827,35 @@ def test_check_with_the_bootstrap_file_present_names_steps_6_and_7(
     assert session.printed[-1].startswith(f"{CHECK_PREFIX}: not set up: ")
 
 
-@pytest.mark.parametrize(
-    ("present", "line"),
-    [
-        (
-            ("db-password",),
-            "some secret files exist, missing: config-cli-secret, bootstrap-admin-password",
-        ),
-        (
-            ("db-password", "config-cli-secret"),
-            "some secret files exist, missing: bootstrap-admin-password",
-        ),
-    ],
-)
-def test_check_on_a_partial_set_repeats_go_lives_own_line(
-    go_live, keycloak, session, secrets_dir, present, line
-):
+def test_check_on_a_partial_set_repeats_go_lives_own_line(go_live, keycloak, session, secrets_dir):
     """#55 rule 2: a partial set that go-live refuses is not set up."""
-    write_secrets(secrets_dir, *present)
+    write_secrets(secrets_dir, "db-password")
 
     assert go_live.check() == 1
 
-    assert session.printed == [f"{CHECK_PREFIX}: not set up: {line}"]
+    assert session.printed == [
+        f"{CHECK_PREFIX}: not set up: "
+        "some secret files exist, missing: config-cli-secret, bootstrap-admin-password"
+    ]
+
+
+def test_check_names_the_missing_database_volume_when_only_the_bootstrap_file_is_gone(
+    go_live, keycloak, session, secrets_dir
+):
+    """#64 rule 11 (#34 finding 23 c): the line names the volume and deletes nothing."""
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+
+    assert go_live.check() == 1
+
+    assert session.printed == [
+        f"{CHECK_PREFIX}: not set up: the database volume keycloak-db is missing although "
+        "bootstrap-admin-password is gone: go-live cannot finish on an empty database; "
+        "restore the volume"
+    ]
+    assert sorted(path.name for path in secrets_dir.iterdir()) == [
+        "config-cli-secret",
+        "db-password",
+    ]
 
 
 def test_check_cannot_tell_when_docker_does_not_answer(go_live, keycloak, session, secrets_dir):
@@ -881,3 +896,83 @@ def test_check_through_the_command_line_exits_with_the_answer(tmp_path):
     assert result.returncode == 1
     assert result.stdout.startswith(f"{CHECK_PREFIX}: not set up: no secrets")
     assert list(tmp_path.iterdir()) == []
+
+
+# --- the emergency switch (#64 rule 8) ----------------------------------------------------------
+
+SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
+START_VERBS = {"up", "run"}
+
+
+def switch_off(marks: switches.Switches) -> None:
+    marks.record("keycloak", datetime.fromisoformat(SWITCHED_OFF_AT))
+
+
+def started_something_after(keycloak: Keycloak, command_count: int) -> bool:
+    return any(START_VERBS & set(command) for command in keycloak.commands[command_count:])
+
+
+def test_a_switched_off_keycloak_refuses_at_the_start_and_asks_and_starts_nothing(
+    go_live, keycloak, session, marks, secrets_dir
+):
+    """#64 rule 8: the marker stops the whole run before its first question."""
+    switch_off(marks)
+
+    assert go_live.run() == 1
+
+    assert session.printed == [
+        "go-live: refused, keycloak is switched off (since 17.10. 22:10); "
+        "`edge start keycloak` ends the switch"
+    ]
+    assert session.asked == []
+    assert keycloak.commands == []
+    assert not secrets_dir.exists()
+
+
+def test_the_check_ignores_the_marker(go_live, keycloak, session, marks, secrets_dir):
+    """#64 rule 8: --check starts nothing, so a switched-off unit is judged on its trace."""
+    switch_off(marks)
+    write_secrets(secrets_dir, "db-password", "config-cli-secret")
+    keycloak.database_volume = True
+
+    assert go_live.check() == 0
+
+    assert session.printed == [f"{CHECK_PREFIX}: set up"]
+
+
+@pytest.mark.parametrize(
+    "stopped_before", ["keycloak start", "realms applied", "edge without the overlay"]
+)
+def test_a_stop_made_before_a_start_wins_and_that_start_does_not_happen(
+    go_live, keycloak, session, marks, stopped_before
+):
+    """#64 rule 8: the marker is read again right before each of the three starts."""
+    commands_at_the_stop: list[int] = []
+
+    def stopping(step):
+        def stop_then_start() -> None:
+            switch_off(marks)
+            commands_at_the_stop.append(len(keycloak.commands))
+            step.do()
+
+        return dataclasses.replace(step, do=stop_then_start)
+
+    steps = go_live.steps
+    go_live.steps = lambda: [
+        stopping(step) if step.name == stopped_before else step for step in steps()
+    ]
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        f"go-live FAILED at {stopped_before}: keycloak is switched off (since 17.10. 22:10); "
+        "`edge start keycloak` ends the switch"
+    )
+    assert not started_something_after(keycloak, commands_at_the_stop[0])
+
+
+def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, keycloak, marks):
+    """#64 rule 8, counterexample: the guard costs a normal run nothing."""
+    assert go_live.run() == 0
+
+    assert marks.since("keycloak") is None
