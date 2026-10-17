@@ -200,7 +200,7 @@ def apply_closed(
             completed = [m.unit.key for m in missing]
             planned = _plan(engine, marks, repository)
             if unready := _missing_setups(planned.plans, repository, check):
-                _refuse_units_that_became_on(unready)
+                _refuse_units_still_not_set_up(unready)
                 return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
@@ -227,12 +227,12 @@ def _missing_setups(
     return missing
 
 
-def _refuse_units_that_became_on(missing: Sequence[MissingSetup]) -> None:
-    """The fresh plan after the setups has a unit the first one lacked: no question, no switch."""
+def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
+    """A unit the fresh plan switches on is still not set up after the setups ran: no question, no switch."""
     for item in missing:
         print(
-            f"{COMMAND}: {item.unit.key} is not set up, it became part of the plan while the "
-            f"setup ran; nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
+            f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
+            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
             f"{item.check_line}",
             file=sys.stderr,
         )

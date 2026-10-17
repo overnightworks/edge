@@ -91,7 +91,7 @@ SHORT_LIFETIME_MINUTES = 20  # probe-only: renewal inside the poll
 RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
-STEP_CA_SWITCH = re.compile(r"(  step-ca:\n    run:\n      enabled: )(?:true|false)")
+STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|false)")
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 
 

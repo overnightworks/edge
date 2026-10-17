@@ -718,7 +718,7 @@ def test_every_run_asks_again_until_the_check_says_set_up(
 def test_the_plan_is_made_again_after_the_setup_from_the_states_it_left(
     switch, state, missing_setup, setup_run
 ):
-    """#69 rule 6: states are re-read after the setup; a switch set meanwhile holds the unit."""
+    """#69 rule 1: states are re-read after the setup; a switch set meanwhile holds the unit."""
     setup_run.meanwhile = lambda: switch_off(state)
 
     exit_code, out, _ = switch("yes")
@@ -727,7 +727,7 @@ def test_the_plan_is_made_again_after_the_setup_from_the_states_it_left(
     assert "nothing to change" in out
 
 
-def test_a_unit_enabled_while_the_setup_runs_is_asked_before_it_is_switched_on(
+def test_a_unit_that_became_on_during_the_setup_is_refused_without_a_question_and_nothing_switches(
     switch, repository, scripted, missing_setup, setup_run
 ):
     """#69 rule 1: a unit that became ON during the setup still needs its own set-up check."""
