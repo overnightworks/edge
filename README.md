@@ -272,9 +272,11 @@ startet einen ausdruecklich gestoppten Container auch nach einem Neustart nicht.
 bleibt auf der Platte. Eine ausgeschaltete Einheit bleibt also ohne Boot-Dienst aus.
 
 Der globale Schalter: `edge stop --all` nimmt den PC sofort vom Internet. Es schreibt zuerst
-`~/.local/state/edge/global-stop` (eine eigene Datei neben `stopped/`, unter derselben
-`switch.lock`; ein zweites Stop behaelt die erste Zeit), stoppt dann `cloudflared.service` und
-meldet Erfolg erst, wenn `systemctl is-active` "inactive" sagt. Die Einheiten laufen lokal weiter
+`~/.local/state/edge/global-stop` (eine eigene Datei neben `stopped/`; ein zweites Stop behaelt die
+erste Zeit), ohne auf `switch.lock` zu warten, stoppt dann `cloudflared.service`, schreibt den
+Schalter unter `switch.lock` noch einmal (ein `start`, der ihn inzwischen loeschte, macht ihn nicht
+rueckgaengig) und meldet Erfolg erst, wenn `systemctl is-active` den Tunnel als beendet
+(`inactive` oder `failed`) zeigt; ein Fehler des Stopps allein aendert das nicht. Die Einheiten laufen lokal weiter
 und ihre Schalter bleiben. An einem Terminal fragt das System selbst nach dem Passwort; ohne
 Terminal (Agent) laeuft `systemctl --no-ask-password`. Exit 1 heisst teilweise: "partial", wenn
 der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`), und "incomplete", wenn
