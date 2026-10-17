@@ -700,6 +700,19 @@ def test_stop_stops_exactly_the_units_services_and_removes_nothing(
     assert not words & {"down", "rm", "-v", "--volumes", "volume", "traefik", "socket-proxy"}
 
 
+def test_stop_of_a_unit_without_a_host_says_there_is_no_barrier_and_writes_none(
+    stop, scripted, repository, state
+):
+    """#61 rule 1: step-ca has no router on `edge`, so no `dynamic/switch-step-ca.yml`."""
+    put_unit_in("A", scripted, repository, state)
+
+    exit_code, out, _ = stop()
+
+    assert exit_code == 0
+    assert "no host behind Traefik, so no barrier" in out
+    assert not (repository / "dynamic" / "switch-step-ca.yml").exists()
+
+
 def test_a_stop_that_fails_leaves_the_switch_and_says_partial(stop, scripted, repository, state):
     """#60 rule 2 partial: the marker stays, exit 1, Compose's last line, never "switched off"."""
     put_unit_in("A", scripted, repository, state)

@@ -145,6 +145,8 @@ def _close(
         except KeyboardInterrupt:
             stop_failure = "interrupted while waiting to stop it"
         barrier_failure: str | None = None
+        if stop_failure is None and not ingress.names:
+            _say(STOP, f"{key}: no host behind Traefik, so no barrier")
         if stop_failure is None:
             try:
                 ingress.close()
