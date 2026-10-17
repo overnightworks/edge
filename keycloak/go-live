@@ -169,7 +169,7 @@ class GoLive:
         self.secrets_dir = secrets_dir
         self.marks = marks
 
-    # --- the emergency switch (README "Keycloak: the emergency switch") ---------------------
+    # --- the emergency switch (README "Keycloak go-live") ---------------------
 
     def switched_off_reason(self) -> str | None:
         since = self.marks.since(UNIT)
