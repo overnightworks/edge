@@ -722,7 +722,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - It has no bind source outside the tracked files of its release checkout: no `~/…` binary or login, no host unix socket of another unit, no Docker socket, no per-machine uid, gid or path. The one exception is the always-on core's socket-proxy (section 3, "Entries, not repositories").
 - **Proof:** the planned clean-machine drill (section 6).
 - **What can be checked:** [edge#50](https://github.com/overnightworks/edge/issues/50)'s CAT row adds a check that flags, in the services an enabled entry resolves to (P13), any bind source that is not a tracked release path and any `docker.sock` mount, in `edge apply`'s plan and in `edge check` against the deployed tag. App compose files live in other repositories, so edge CI cannot see them.
-- **A move keeps every public host.** Renaming a host is its own item: it touches the redirect URIs in `keycloak/realm.yaml` and the app's `redirect_uri`, the Access app and the token audience (`docs/naming.md`). DNS and TLS need nothing new, because the hosts live at Cloudflare (D6).
+- **A move keeps every public host.** Renaming a host is its own item: it touches the redirect URIs in `keycloak/realm.yaml` and the app's `redirect_uri`, the Access app and the token audience (`docs/naming.md`). DNS and TLS need nothing new, because the hosts live at Cloudflare (L3, section 2).
 
 **§10 rule 2: peers are reached by a configured name.**
 - The database, Redis, the issuer, other apps and MCP origins come from a URL or DSN in configuration.
