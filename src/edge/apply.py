@@ -1,13 +1,17 @@
 """`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml`.
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
-2 cannot plan. A unit is a compose profile: on starts its services, off removes their containers.
-Volumes are never touched. A unit that would be switched on and is not set up is asked about
-separately; on `yes` its own setup command runs in the operator's terminal (key material is made
-there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
-emergency switch (`edge stop`) is never started and its switch is never cleared here: only
-`edge start` ends it. It runs only from the live checkout `~/git/edge`: from any other tree it
-would bind the live compose project to that tree, so it refuses there with exit 2 (#79).
+2 cannot plan. The core (socket-proxy and traefik) comes first: a core service whose recorded
+file, today `traefik.yml`, changed since it was last applied is recreated, observed running and
+every active barrier proven again before its record is written; one without a live container is
+named and never started (#85). A unit is a compose profile: on starts its services, off removes
+their containers. Volumes are never touched. A unit that would be switched on and is not set up
+is asked about separately; on `yes` its own setup command runs in the operator's terminal (key
+material is made there, never here) and `--check` must then pass before a fresh plan is shown. A
+unit with an emergency switch (`edge stop`) or a barrier a stop left is never started and its
+switch is never cleared here: only `edge start` ends it. It runs only from the live checkout
+`~/git/edge`: from any other tree it would bind the live compose project to that tree, so it
+refuses there with exit 2 (#79).
 """
 
 import sys
@@ -17,7 +21,7 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, checkout, compose, setup, switches, terminal
+from edge import barrier, catalog, checkout, compose, core, setup, switches, terminal
 
 COMMAND = "edge apply --closed"
 
@@ -44,6 +48,8 @@ class UnitPlan:
 
     def describe(self) -> str:
         touched = f"services {', '.join(self.services)}"
+        if self.action is Action.STAYS_STOPPED and self.switched_off_since is None:
+            return f"{self.unit.key} stays stopped (its barrier stands; no switch recorded)"
         if self.action is Action.STAYS_STOPPED:
             return f"{self.unit.key} stays stopped (switch since {self._since()})"
         if self.action is Action.OFF:
@@ -77,18 +83,18 @@ def plan_switches(
     profile_services: Mapping[str, tuple[str, ...]],
     config: Mapping[str, Any],
     states: Mapping[str, set[str]],
-    switched_off: Mapping[str, str],
+    switched_off: Mapping[str, str | None],
 ) -> list[UnitPlan]:
     """What each unit needs to become what the catalog says; a unit already so is left out.
 
-    `switched_off` maps a unit to the time of its switch: that unit is never started, and an
-    enabled one is listed as staying stopped.
+    `switched_off` maps a switched-off unit to the time of its switch, None when only its barrier
+    stands: that unit is never started, and an enabled one is listed as staying stopped.
     """
     plans = []
     for unit in units:
         services = profile_services[unit.key]
         since = switched_off.get(unit.key)
-        if unit.enabled and since:
+        if unit.enabled and unit.key in switched_off:
             action = Action.STAYS_STOPPED
         elif unit.enabled and not compose.is_up(states, config, services):
             action = Action.ON
@@ -151,6 +157,8 @@ def _unobserved(
 CANNOT_PLAN_ERRORS = (
     compose.ComposeError,
     catalog.CatalogError,
+    barrier.BarrierError,
+    core.CoreError,
     setup.SetupUnclear,
     switches.SwitchError,
 )
@@ -160,7 +168,17 @@ CANNOT_PLAN_ERRORS = (
 class Plan:
     fleet: Fleet
     read: Mapping[str, switches.Mark | None]
+    core: list[core.CorePlan]
     plans: list[UnitPlan]
+
+    @property
+    def changes_nothing(self) -> bool:
+        return all(plan.action is Action.STAYS_STOPPED for plan in self.plans) and all(
+            plan.action is core.CoreAction.NOT_STARTED for plan in self.core
+        )
+
+    def describe(self) -> list[str]:
+        return [plan.describe() for plan in (*self.core, *self.plans)]
 
 
 @dataclass(frozen=True)
@@ -169,14 +187,34 @@ class MissingSetup:
     check_line: str
 
 
-def _plan(engine: compose.Compose, marks: switches.Switches, repository: Path) -> Plan:
+def _plan(
+    engine: compose.Compose, marks: switches.Switches, record: core.Record, repository: Path
+) -> Plan:
     fleet = read_fleet(engine, repository)
+    states = engine.states()
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
-    switched_off = {key: mark.since for key, mark in read.items() if mark}
     plans = plan_switches(
-        fleet.units, fleet.profile_services, fleet.config, engine.states(), switched_off
+        fleet.units,
+        fleet.profile_services,
+        fleet.config,
+        states,
+        _switched_off(fleet, read, repository),
     )
-    return Plan(fleet, read, plans)
+    return Plan(fleet, read, core.plan_core(fleet.config, states, repository, record), plans)
+
+
+def _switched_off(
+    fleet: Fleet, read: Mapping[str, switches.Mark | None], repository: Path
+) -> dict[str, str | None]:
+    """Each unit switched off by its marker (its time) or by a barrier a stop left (None)."""
+    switched_off = {}
+    for unit in fleet.units:
+        mark = read[unit.key]
+        services = fleet.profile_services[unit.key]
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit.key)
+        if barrier.switched_off(mark, ingress):
+            switched_off[unit.key] = mark.since if mark else None
+    return switched_off
 
 
 def apply_closed(
@@ -186,6 +224,7 @@ def apply_closed(
     check: setup.SetupCheck = setup.run_setup_check,
     run_setup: setup.SetupRunner = setup.run_setup,
     home: Path | None = None,
+    verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -198,8 +237,9 @@ def apply_closed(
         return ApplyExit.CANNOT_PLAN
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
+    record = core.Record(state_directory)
     try:
-        planned = _plan(engine, marks, repository)
+        planned = _plan(engine, marks, record, repository)
         missing = _missing_setups(planned.plans, repository, check)
         completed: list[str] = []
         if missing:
@@ -207,20 +247,21 @@ def apply_closed(
             if exit_code is not None:
                 return exit_code
             completed = [m.unit.key for m in missing]
-            planned = _plan(engine, marks, repository)
+            planned = _plan(engine, marks, record, repository)
             if unready := _missing_setups(planned.plans, repository, check):
                 _refuse_units_still_not_set_up(unready)
                 return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
-    plans = planned.plans
-    if all(plan.action is Action.STAYS_STOPPED for plan in plans):
-        for plan in plans:
-            print(f"{COMMAND}: {plan.describe()}")
+    if planned.changes_nothing:
+        for line in planned.describe():
+            print(f"{COMMAND}: {line}")
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
-    return _confirm_and_switch(engine, plans, planned.fleet.config, marks, planned.read, completed)
+    return _confirm_and_switch(
+        engine, planned, marks, CorePhase(record, repository, verifier), completed
+    )
 
 
 def _missing_setups(
@@ -301,17 +342,72 @@ def _run_one_setup(
     return None
 
 
+@dataclass(frozen=True)
+class CorePhase:
+    """Recreate each changed core service with a live container before any unit is touched."""
+
+    record: core.Record
+    repository: Path
+    verifier: barrier.Verifier
+
+    def run(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        progress: Progress,
+    ) -> str | None:
+        """Recreate, observe running, prove every active barrier, and only then record each
+        service with its plan-time digests (rule 3); the failure line of the first step that
+        fails, whose service keeps its old entry (rule 5)."""
+        for plan in planned.core:
+            if plan.action is not core.CoreAction.RECREATE:
+                continue
+            progress.unit = plan.service
+            try:
+                progress.step = f"recreate {plan.service}"
+                engine.recreate(plan.service)
+                progress.step = f"observe {plan.service} running"
+                if not compose.is_up(engine.states(), planned.fleet.config, (plan.service,)):
+                    return f"{plan.service} is not running after the recreate"
+                progress.step = "prove the barriers"
+                if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
+                    return unproven
+                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+                self.record.write(plan.service, plan.digests)
+            except (compose.ComposeError, core.CoreError) as error:
+                return f"could not {progress.step}, {error}"
+            print(f"{COMMAND}: {plan.service} is recreated and runs the checked-out {plan.files}")
+        return None
+
+    def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
+        """Say each proven barrier; the failure line of the first one that is not (S9)."""
+        for proof in barrier.prove_active(
+            fleet.units, fleet.profile_services, fleet.config, marks, self.repository, self.verifier
+        ):
+            match proof:
+                case barrier.Proven(unit):
+                    print(f"{COMMAND}: the barrier of {unit} is proven")
+                case barrier.NoHost(unit):
+                    print(f"{COMMAND}: {unit}: no host behind Traefik, so no barrier")
+                case barrier.Unproven(unit, failure):
+                    return (
+                        f"the barrier of {unit} is not proven after the {service} recreate "
+                        f"({failure})"
+                    )
+        return None
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
-    plans: Sequence[UnitPlan],
-    config: Mapping[str, Any],
+    planned: Plan,
     marks: switches.Switches,
-    read: Mapping[str, switches.Mark | None],
+    core_phase: CorePhase,
     completed_setups: Sequence[str],
 ) -> int:
     print(f"{COMMAND}: the plan")
-    for plan in plans:
-        print(f"  {plan.describe()}")
+    for line in planned.describe():
+        print(f"  {line}")
     if not terminal.confirmed("apply exactly this plan"):
         outcome = (
             f"setup of {', '.join(completed_setups)} completed; nothing switched"
@@ -320,10 +416,17 @@ def _confirm_and_switch(
         )
         print(f"{COMMAND}: aborted, {outcome}", file=sys.stderr)
         return ApplyExit.REFUSED
+    plans, config, read = planned.plans, planned.fleet.config, planned.read
     changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()
     withheld: dict[str, str] = {}
     try:
+        if failure := core_phase.run(engine, planned, marks, progress):
+            print(
+                f"{COMMAND}: partial, {failure}; no unit switched; run `{COMMAND}` again",
+                file=sys.stderr,
+            )
+            return ApplyExit.REFUSED
         for plan in changes:
             if since := _switch(engine, plan, progress, marks, read):
                 withheld[plan.unit.key] = since
