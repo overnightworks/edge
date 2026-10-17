@@ -83,8 +83,11 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 # `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
 # fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
 edge apply --closed
-# Traefik reads traefik.yml (its entrypoints) only when it starts, and a plain `up -d`
-# keeps a running Traefik whose service definition did not change.
+# Traefik reads traefik.yml (its entrypoints) only when it starts. When traefik.yml changed
+# since it was last applied, the same `edge apply --closed` recreates a running Traefik, proves
+# every barrier again and only then records the file in ~/.local/state/edge/applied.json; a
+# stopped Traefik is named and not started. A changed definition of socket-proxy or traefik
+# (compose.yaml, its image, EDGE_DOMAIN in .env) still needs, until edge#50 S2.2d:
 docker compose --profile keycloak up -d --force-recreate socket-proxy traefik
 ```
 
@@ -92,7 +95,8 @@ Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and 
 `keycloak-db` and `keycloak` and keeps the volume `keycloak-db`, `~/.secrets/keycloak` and
 the `keycloak` network; switching it on again uses the same database. Removing the entry
 from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
-`127.0.0.1:8090` answer depends on Traefik, which `edge apply` does not touch.
+`127.0.0.1:8090` answer depends on Traefik, which `edge apply` recreates only for a changed
+`traefik.yml` and never starts.
 
 Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
 listen, an unknown host gets 404 on 8081, and Keycloak (with its database)
@@ -212,8 +216,14 @@ services:
 
 `edge apply --closed` bringt jede Einheit in den Zustand, den `enabled` sagt. An:
 `docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann
-`rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1), und es fasst
-`socket-proxy` und `traefik` nicht an. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
+`rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1). `socket-proxy`
+fasst es nicht an; `traefik` erstellt es vor allen Einheiten neu (`up -d --no-deps
+--force-recreate traefik`, im selben Plan, mit demselben `yes`), wenn `traefik.yml` sich seit dem
+letzten vollstaendigen Lauf geaendert hat oder dafuer kein Eintrag in
+`~/.local/state/edge/applied.json` steht. Erst wenn Traefik laeuft und jede aktive Sperre
+bewiesen ist, schreibt es den Eintrag; scheitert ein Schritt, ist der Lauf teilweise (Exit 1),
+keine Einheit wird geschaltet und der naechste Lauf versucht es wieder. Ein gestopptes Traefik
+nennt es nur ("traefik is not running and is not started") und startet es nie. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
@@ -233,7 +243,8 @@ laeuft nie ein Setup.
 fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `docker compose ps`.
 
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
-oder nur teilweise angewendet, 2 nicht planbar (Katalog ungueltig, Compose unlesbar, ein
+oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem Live-Checkout `~/git/edge`
+gestartet, Katalog ungueltig, Compose unlesbar, `traefik.yml` fehlt oder ist unlesbar, ein
 Setup-Check, der es nicht sagen kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
 Publish-Phase gibt es noch nicht.
 
@@ -270,7 +281,7 @@ bleibt offen. `edge stop` meldet Erfolg erst, wenn Traefik fuer jeden Host (inne
 mit dem Header `X-Edge-Barrier: <Einheit>` antwortet, sonst Exit 1 (teilweise; Schalter und Sperre bleiben). `edge start` entfernt die Sperre
 erst, wenn die Einheit laeuft, prueft, dass der Host den Header `X-Edge-Barrier` nicht mehr setzt, und loescht den
 Schalter zuletzt. Fand `edge stop` an einer schon ausgeschalteten Einheit die Sperre fehlend und stellt
-sie wieder her, sagt es "its barrier was missing and stands again". `edge apply` fasst die Sperre nie an. Sie ist eine Datei im Checkout und gilt
+sie wieder her, sagt es "its barrier was missing and stands again". `edge apply` schreibt und entfernt die Sperre nie; nur nach einem Neuerstellen von Traefik rendert es jede aktive Sperre neu und beweist sie, bevor es Erfolg meldet. Eine Einheit, deren Sperre ohne Schalter steht, bleibt bei `edge apply` aus. Sie ist eine Datei im Checkout und gilt
 nach einem Neustart von Traefik und des PCs weiter. Der Beweis auf einem Wegwerf-Stack (braucht
 `127.0.0.1:8081` frei, also bei ausgeschaltetem Live-Traefik):
 `flock /tmp/probe-stack.lock timeout --kill-after=30 900 python3 probe/switches/probe.py --scratch "$(mktemp -d)"`.
