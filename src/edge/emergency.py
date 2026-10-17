@@ -388,10 +388,15 @@ def _named_unit(door: tunnel.Tunnel) -> str:
     return "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
 
 
+def _at_terminal() -> bool:
+    """Whether somebody can answer the system's password prompt: stdin and stdout are a terminal."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _ask_to_stop(door: tunnel.Tunnel) -> None:
     """Ask the system to stop the tunnel; what happened is read from the observation after it."""
     try:
-        door.stop(may_ask_password=terminal.at_terminal())
+        door.stop(may_ask_password=_at_terminal())
     except (tunnel.TunnelError, KeyboardInterrupt):
         pass  # a refused or interrupted stop is judged by the state observed next, never assumed
 
@@ -492,7 +497,7 @@ def _tunnel_closed_clause(door: tunnel.Tunnel) -> str:
     """Stop the tunnel if it runs, then say what was observed; never claim a closed state unseen."""
     try:
         if not door.is_inactive():
-            door.stop(may_ask_password=terminal.at_terminal())
+            door.stop(may_ask_password=_at_terminal())
         if door.is_inactive():
             return "the tunnel is closed"
     except (tunnel.TunnelError, KeyboardInterrupt):
