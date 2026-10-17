@@ -51,8 +51,9 @@ MIN_SNAPSHOT_PREFIX = 8
 class StepFailed(Exception):
     """A handled failure: the run is over, the status says `failed`, the message is German."""
 
-    def __init__(self, category: ExitCategory, message: str) -> None:
+    def __init__(self, category: ExitCategory, message: str, *, shared: bool = False) -> None:
         self.category = category
+        self.shared = shared
         self.app: str | None = None
         self.phase: Phase | None = None
         super().__init__(message)
@@ -74,6 +75,8 @@ class Run:
         self._record(self._status.entering(phase))
         try:
             yield
+        except restic.RepositoryUnavailable as error:
+            raise StepFailed(failing, f"Phase {phase}: {error}", shared=True) from error
         except host.HostError as error:
             raise StepFailed(failing, f"Phase {phase}: {error}") from error
         except VerificationError as error:
@@ -85,6 +88,8 @@ class Run:
         try:
             yield
         except StepFailed as failure:
+            if failure.shared:
+                raise
             failure.app, failure.phase = app, self._status.phase
             self._first_app_failure = self._first_app_failure or failure
 

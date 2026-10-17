@@ -220,6 +220,7 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
 
 
 def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machine, home):
+    """#71 rule 4: restore takes the app's own last successful snapshot."""
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
     edge_backup(*two_apps, "backup")
@@ -236,6 +237,7 @@ def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machi
 
 
 def test_restore_test_verifies_each_app_against_its_own_snapshot(edge_backup, machine, home):
+    """#71 rule 5: the restore test verifies each app against its own snapshot."""
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
 
@@ -255,6 +257,7 @@ def test_restore_test_verifies_each_app_against_its_own_snapshot(edge_backup, ma
 def test_an_app_that_fails_its_restore_test_does_not_cost_the_others_their_time(
     edge_backup, machine, home
 ):
+    """#71 rule 5: a failed restore test costs the other apps nothing."""
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
     del machine.snapshots[-1]["db"]["db.dump"]
@@ -268,6 +271,7 @@ def test_an_app_that_fails_its_restore_test_does_not_cost_the_others_their_time(
 
 
 def test_a_failed_read_data_check_gives_no_app_a_new_restore_test_time(edge_backup, machine, home):
+    """#71 rule 5: a failed read-data check stamps no app."""
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
     machine.failing["restic check"] = 1
@@ -298,6 +302,7 @@ def _write_schema_one_status(machine: Machine, snapshot_id: str) -> bytes:
 def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
     edge_backup, machine, home, two_declared, recorded_snapshot_exists, attributed
 ):
+    """#71 rule 2: schema-1 evidence moves to an app only with restic evidence."""
     declared = declare_two_apps(home) if two_declared else ()
     edge_backup(*declared, "backup")
     legacy_id = machine.snapshots[0]["id"] if recorded_snapshot_exists else "f" * 64

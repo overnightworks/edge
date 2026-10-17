@@ -211,9 +211,12 @@ def _parse(document: dict) -> Status:
 
 
 def _parse_verdict(
-    document: dict, *, apps: dict[str, AppHistory], unattributed: AppHistory | None,
+    document: dict,
+    *,
+    apps: dict[str, AppHistory],
+    unattributed: AppHistory | None,
     failing_app: str | None,
-) -> Status:  # fmt: skip
+) -> Status:
     return Status(
         state=State(document["state"]),
         phase=Phase(document["phase"]),
