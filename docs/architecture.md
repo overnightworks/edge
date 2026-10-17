@@ -387,7 +387,7 @@ Every finding names the subject and a page to fix it, never a value.
 | Service | Today | Joins by |
 |---|---|---|
 | **songmaker** | system timer `songmaker-autodeploy.timer` (every 2 min) runs the 1,253-line `scripts/auto-deploy.sh` on `~/git/songmaker`, following `origin/main` once CI is green. The checkout is also the place `aco land` must not run (memory: land from `~/git/songmaker-land`) | the migration below |
-| **presentator** | manual. `~/presentator-live` is a separate checkout at `1f0422c` and runs a locally built image (`presentator-adoption-instance:ap112-e04e837a`) on 127.0.0.1:8100. Two host user units run from that checkout: `presentator-speech` and `presentator-copresenter`; speech is crash-looping (stale socket file, seen 16.10.2026). Offline publicly since 14.10.2026 | its go-public item #197 adds a catalog entry with `deploy: tags`, its first `edge release`, and a watcher that also restarts its two host units after the compose deploy |
+| **presentator** | manual. `~/presentator-live` is a separate checkout at `1f0422c` and runs a locally built image (`presentator-adoption-instance:ap112-e04e837a`) on 127.0.0.1:8100. Two host user units run from that checkout: `presentator-speech` and `presentator-copresenter`; speech is crash-looping (stale socket file, seen 16.10.2026). Offline publicly since 14.10.2026 | its go-public item agent-presentator#197 adds a catalog entry with `deploy: tags` and its first `edge release`. It joins under §10 rule 1: the two host units and their unix sockets (its `compose.yaml:52-53`) and the `docker.sock` mount (`:51`) leave its release, so the watcher deploys the compose release and nothing on the host |
 | **hopin** | not deployed; no container | section 3's example: a compose file, then its first tag |
 
 ### Migrating songmaker off main-deploy
@@ -691,3 +691,106 @@ These lines become true only after D14: agents under their own user, without Doc
 - the "secure the agents" item in home-tools, its own block, ordered independently of go-live;
 - the off-disk backup and recovery form in edge, if D3 is (a).
 
+
+---
+
+## 10. Platform rules: move, spread, scale
+
+**Caller:** the operator, 17.10.2026: „ich will nichts auf Vorrat bauen, aber ich will das system prinzipiell so gestalten, dass die umstellung vom prinzip ein knopfdruck wäre“, and „alles soll auch mehr oder weniger als komponente austauschbar sein mit vertretbarem aufwand! … push back wo ich falsch liege“. Drafted and counter-checked under the rule-change gate in [edge#83](https://github.com/overnightworks/edge/issues/83).
+
+The rules are labelled "§10 rule n", because [edge#50](https://github.com/overnightworks/edge/issues/50) already uses P1–P15 and R1–R4, and `docs/naming.md` uses P1–P3b. This section cites the facts it builds on and does not restate them.
+
+### Three goals, kept apart
+
+- **Move (relocation):** the whole platform goes to a new machine by a short, scripted runbook. Its proof is the planned clean-machine drill (section 6, "The off-disk restore path"), which runs the steps that section lists. D3 is still open (section 9).
+- **Spread:** one instance of a service runs on a second machine. It is an item each time, with the "Any second machine" checklist of §10 rule 4 as its done-when.
+- **Scale:** N instances of a service run. It is an item each time, and only when a caller needs it. Several rulings and facts make services singletons on purpose:
+  - agent-presentator ADR 0006 and its `compose.yaml:1`: SQLite and files, one instance;
+  - agent-providers#18 A1b: one replica;
+  - edge's `duplicate-edge-name` check (README, edge-check findings);
+  - hopin's rooms in process memory (`src/hopin/rooms/manager.py:11`).
+
+### The rules
+
+**§10 rule 1: five inputs, nothing else.**
+- A service runs from five things:
+  1. its release tag: the image, the compose file, and every plain configuration value as a compose default (section 5);
+  2. its catalog entry (section 3);
+  3. its secrets, as files from the inventory (section 4);
+  4. its data, from its backup record (`backup/apps.toml`);
+  5. artifacts it fetches itself at start (model weights, caches), declared rebuildable.
+- It has no bind source outside the tracked files of its release checkout: no `~/…` binary or login, no host unix socket of another unit, no Docker socket, no per-machine uid, gid or path. The one exception is the always-on core's socket-proxy (section 3, "Entries, not repositories").
+- **Proof:** the planned clean-machine drill (section 6).
+- **What can be checked:** [edge#50](https://github.com/overnightworks/edge/issues/50)'s CAT row adds a check that flags, in the services an enabled entry resolves to (P13), any bind source that is not a tracked release path and any `docker.sock` mount, in `edge apply`'s plan and in `edge check` against the deployed tag. App compose files live in other repositories, so edge CI cannot see them.
+- **A move keeps every public host.** Renaming a host is its own item: it touches the redirect URIs in `keycloak/realm.yaml` and the app's `redirect_uri`, the Access app and the token audience (`docs/naming.md`). DNS and TLS need nothing new, because the hosts live at Cloudflare (L3, section 2).
+
+**§10 rule 2: peers are reached by a configured name.**
+- The database, Redis, the issuer, other apps and MCP origins come from a URL or DSN in configuration.
+- Names come from compose service names, the catalog host, or `docs/naming.md` (the MCP origin host).
+- Never an IP, and never a vendor DNS name. A code default may point only inside its own container.
+- "Never an IP" is about reaching a peer. A trust list such as webauth's `trusted_proxies` names a network that the compose file owns.
+
+**§10 rule 3: each app owns its stores.**
+- No volume, database or Redis is shared across compose projects. The edge networks are the exception.
+- Integration goes through the owning app's API.
+- A call between apps carries a signed, short-lived token whose audience is the callee: an issuer token, or the agent-service capability (agent-providers decision record 0001). Never a static secret shared between apps.
+
+**§10 rule 4: singleton by default; spreading and scaling are items.**
+- Today's state is allowed: in-process state, SQLite, local files.
+- An item that spreads or scales a service has the matching checklist as its done-when.
+- **Any second machine** (spread or scale):
+  - encrypted links between machines;
+  - routing to a remote host, driven by the catalog (edge);
+  - peer names that resolve across machines;
+  - hardware placement (GPU, `runtime: nvidia`).
+- **More than one instance:**
+  - shared limiters and locks;
+  - files reachable from every instance (the S3 API, or the owning app's API);
+  - one leader for background loops, or loops that are safe to run twice;
+  - WebSocket and stream fan-out through a shared channel;
+  - expand/contract migrations;
+  - one clock for every time decision made across instances (webauth#189).
+- songmaker is the first expected caller: a second GPU machine. Its list is cut at that pull.
+
+**§10 rule 5: standards at the seams; vendor specifics live in edge, except those the swap table names.**
+- Identity: OIDC code flow with PKCE and static endpoints (webauth#49 ruled out discovery at login), W5/W9 logout, and W10 bearer or device login for CLIs.
+- Data and runtime: SQL over a DSN, the Redis protocol, the S3 API once files leave a host, OCI images with compose.
+- Operations: OpenMetrics `/metrics` where an app exposes metrics, X.509/ACME, secrets as files.
+- LLM vendors only behind agent-service.
+
+**§10 rule 6: logs go to stdout and stderr.** No app writes a log file to a volume or a host path.
+
+**Cited, not restated:**
+- backup and the restore test: section 2, L5, and `backup/apps.toml`;
+- health: `run.health` in the catalog (section 3);
+- secrets: section 2, L1, and section 4, owned by home-tools;
+- deploy and schema: section 5;
+- names: `docs/naming.md`.
+
+### The swap table: the real cost of swapping each component
+
+| Component | What apps see | Real swap cost |
+|---|---|---|
+| Keycloak | OIDC through webauth and agent-service | **A migration, not a configuration change.** Accounts are keyed to the issuer's `sub`, and passkeys live in the IdP, so every person re-enrols and every app remaps its accounts. edge rewrites realm-as-code, go-live, `edge lock` and the probes. The group path shape lives in webauth (`oidc_login.py`, `_require_group_path`) and in agent-service (`routing.py`, `APP_GROUP_PREFIX`). A flat-name mode waits until an IdP swap is pulled |
+| Tailscale | nothing; no app references it | home-tools (L0); also D13 |
+| Cloudflare DNS, tunnel and Access | HTTP behind a proxy, plus webauth's `trusted_proxies`; no `cf-*` header in any app | edge and OpenTofu (L3). Access also gates D4. The aco board's `access_jwt.py` is being retired (webauth#49 AC1) |
+| Traefik | the neutral `edge.name` label | edge only. A second machine needs routing that label discovery on this host cannot give; that is decided in that item (§10 rule 4) |
+| Postgres | DSN | configuration plus a dump and restore. presentator's SQLite sits behind ports (agent-presentator ADR 0006), so moving it is an adapter swap |
+| Redis | URL; songmaker runs its own | Valkey drops in. arq ties songmaker's queue to Redis, which is accepted |
+| Object storage | none today | arrives with a scale item (§10 rule 4) |
+| step-ca | one trusted root file | edge |
+| Prometheus, Grafana, Gatus, ntfy | `/metrics`, stdout | edge (edge#4) |
+| restic | per-app dumps | edge |
+| Docker Compose | OCI and compose | low for apps; high for edge (apply, check, backup labels, barrier, watchers and the Traefik provider all speak Compose). presentator's `docker.sock` stays a high cost until agent-presentator#197 removes it (section 5, "How each service joins") |
+| `~/.secrets` | files | home-tools (L1). Apps stay unchanged only once gap 21 (section 7) has moved their secrets to files |
+| GitHub | git | not a swap goal (accepted) |
+| LLM providers and LiteLLM | the agent-service API | behind agent-providers#18 |
+
+### Where the operator's wish overreaches
+
+- **„Alles austauschbar / perfekt“:** the target is a known swap cost with one owner, not cheap swaps. The IdP, Compose on edge's side, and GitHub are expensive by nature.
+- **„Ein Knopfdruck“:** this is a scripted runbook for moving the whole platform, once §10 rule 1 holds and D3 is ruled. Spreading or scaling a service is an item each time.
+- **„Alle Apps jetzt anpassen“:** this collides with „nichts auf Vorrat“ and with webauth#49's app freeze. Only hazards and relocation blockers with a caller go now.
+- **„Keycloak wechseln“:** the cost lies in people and accounts, not in claim names.
+- **„Tailscale wechseln“:** it is already cheap.
+- **„Konfigurationen überall konsistent“:** consistency means one owner per fact (the catalog, the inventory, `docs/naming.md`), not one config format for every app.
