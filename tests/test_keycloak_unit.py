@@ -48,7 +48,7 @@ def test_the_keycloak_profile_is_its_database_and_keycloak_and_not_the_config_cl
 
 
 def test_switching_keycloak_off_names_its_database_volume_as_staying(keycloak_unit):
-    """#64 rule 4: switching Keycloak off stops both services, names its database volume as staying."""
+    """#64 rule 4: switching Keycloak off stops both services and keeps its database volume."""
     document = resolved_like_compose(compose_document())
     profiles = compose.profile_services(document)
     running = {name: {"running"} for name in KEYCLOAK_SERVICES}
