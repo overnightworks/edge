@@ -228,7 +228,7 @@ def _missing_setups(
 
 
 def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
-    """A unit the fresh plan switches on is still not set up after the setups ran: no question, no switch."""
+    """A unit the fresh plan switches on is still not set up: no question, no switch."""
     for item in missing:
         print(
             f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
