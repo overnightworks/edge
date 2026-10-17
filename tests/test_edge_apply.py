@@ -227,17 +227,24 @@ def switch_off(state: Path, since: str = SWITCHED_OFF_AT, unit: str = "step-ca")
     switches.Switches(state).record(unit, datetime.fromisoformat(since))
 
 
-@pytest.fixture
-def repository(tmp_path: Path) -> Path:
+def edge_tree(tree: Path) -> Path:
+    """A tree of this repository's shape at `tree`, a main worktree (its `.git` is a directory)."""
+    (tree / ".git").mkdir(parents=True)
     for directory in ("step-ca", "keycloak"):
-        (tmp_path / directory).mkdir(exist_ok=True)
-        setup = tmp_path / directory / "init"
+        (tree / directory).mkdir(exist_ok=True)
+        setup = tree / directory / "init"
         setup.write_text("#!/bin/sh\n")
         setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
-    (tmp_path / "fleet.yaml").write_text(ENABLED)
-    (tmp_path / "dynamic").mkdir()
-    (tmp_path / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
-    return tmp_path
+    (tree / "fleet.yaml").write_text(ENABLED)
+    (tree / "dynamic").mkdir()
+    (tree / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
+    return tree
+
+
+@pytest.fixture
+def repository(home: Path) -> Path:
+    """The live checkout `$HOME/git/edge` of the test's own HOME (#79 cell 1)."""
+    return edge_tree(home / "git" / "edge")
 
 
 @dataclass
@@ -307,13 +314,19 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 
 
 @pytest.fixture
-def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state):
-    """Run `edge apply --closed`; the operator types `yes` unless told otherwise."""
+def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home):
+    """Run `edge apply --closed` from the live checkout; the operator types `yes` unless told
+    otherwise."""
 
     def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         exit_code = apply.apply_closed(
-            state, compose.Compose(scripted.run, repository), repository, setup_check, setup_run
+            state,
+            compose.Compose(scripted.run, repository),
+            repository,
+            setup_check,
+            setup_run,
+            home,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -846,14 +859,20 @@ def test_a_setup_that_is_set_up_is_only_ever_checked_never_run(switch, setup_che
     assert setup_run.commands == []
 
 
+@pytest.fixture(params=["live checkout", "another copy"])
+def any_tree(request, repository: Path, tmp_path: Path) -> Path:
+    return repository if request.param == "live checkout" else edge_tree(tmp_path / "x" / "edge")
+
+
 def test_without_a_terminal_it_refuses_before_anything_else(
-    repository, scripted, missing_setup, setup_run, monkeypatch, capsys, state
+    any_tree, scripted, missing_setup, setup_run, monkeypatch, capsys, state, home
 ):
-    """#52 rule 4: no terminal refuses first (exit 1)."""
+    """#52 rule 4: no terminal refuses first (exit 1); #79 cell 6: before the live-checkout check,
+    from any tree."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
 
     exit_code = apply.apply_closed(
-        state, compose.Compose(scripted.run, repository), repository, missing_setup, setup_run
+        state, compose.Compose(scripted.run, any_tree), any_tree, missing_setup, setup_run, home
     )
 
     assert exit_code == 1
@@ -861,6 +880,65 @@ def test_without_a_terminal_it_refuses_before_anything_else(
     assert scripted.calls == []
     assert missing_setup.commands == []
     assert setup_run.commands == []
+
+
+def linked_worktree(tree: Path) -> Path:
+    """`tree` turned into a linked worktree: its `.git` is a file pointing at the main one."""
+    (tree / ".git").rmdir()
+    (tree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/issue-9-y\n")
+    return tree
+
+
+@pytest.mark.parametrize(
+    "foreign_tree",
+    [
+        pytest.param(
+            lambda home, tmp: linked_worktree(edge_tree(tmp / "edge-worktrees" / "issue-9-y")),
+            id="cell 2: a linked worktree",
+        ),
+        pytest.param(lambda home, tmp: edge_tree(tmp / "x" / "edge"), id="cell 3: another copy"),
+        pytest.param(
+            lambda home, tmp: linked_worktree(home / "git" / "edge"),
+            id="cell 5: ~/git/edge with a .git file",
+        ),
+    ],
+)
+def test_outside_the_live_checkout_it_refuses_naming_the_tree_and_runs_nothing(
+    repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, tmp_path,
+    foreign_tree,
+):  # fmt: skip
+    """#79 rule 1, cells 2, 3 and 5: exit 2, one line naming the tree, no compose call."""
+    tree = foreign_tree(home, tmp_path)
+    at_terminal("yes")
+
+    exit_code = apply.apply_closed(
+        state, compose.Compose(scripted.run, tree), tree, setup_check, setup_run, home
+    )
+
+    assert exit_code == 2
+    assert capsys.readouterr().err.splitlines() == [
+        f"edge apply --closed: runs only from the live checkout ~/git/edge (this is {tree})"
+    ]
+    assert scripted.calls == []
+    assert setup_check.commands == []
+    assert setup_run.commands == []
+
+
+def test_the_live_checkout_reached_through_a_symlinked_home_applies(
+    repository, scripted, setup_check, setup_run, at_terminal, state, home, tmp_path
+):
+    """#79 cell 4: a HOME that resolves to the code tree's home proceeds as from the checkout."""
+    linked_home = tmp_path / "linked-home"
+    linked_home.symlink_to(home)
+    at_terminal("yes")
+
+    exit_code = apply.apply_closed(
+        state, compose.Compose(scripted.run, repository), repository, setup_check, setup_run,
+        linked_home,
+    )  # fmt: skip
+
+    assert exit_code == 0
+    assert scripted.containers["step-ca"] == "running"
 
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", "yes please"])
