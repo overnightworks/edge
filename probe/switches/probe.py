@@ -127,13 +127,22 @@ class Probe:
     def answers_the_barrier(self) -> bool:
         return self.ask() == NOT_FOUND
 
-    def stays_behind_the_barrier(self, seconds: int) -> int:
-        """Every request for `seconds` answers the barrier's 404; the number of requests."""
+    def stays_behind_the_barrier(self, seconds: int, *, may_not_listen_yet: bool = False) -> int:
+        """Every request for `seconds` answers the barrier's 404, from the first one; the number of
+        requests. With `may_not_listen_yet` the nothing-listens answers before the first answer
+        do not count, and the window starts at that first answer."""
         asked = 0
-        end = time.monotonic() + seconds
+        waiting_since = time.monotonic()
+        end = waiting_since + seconds
         while time.monotonic() < end:
             answer = self.ask()
+            if answer is None and may_not_listen_yet:
+                expect(time.monotonic() - waiting_since < READY_SECONDS, "traefik never listened")
+                end = time.monotonic() + seconds
+                time.sleep(POLL_SECONDS)
+                continue
             expect(answer == NOT_FOUND, f"a request behind the barrier answered {answer}")
+            may_not_listen_yet = False
             asked += 1
             time.sleep(POLL_SECONDS)
         return asked
@@ -160,16 +169,15 @@ class Probe:
 
     def cell_3_up_behind_the_barrier(self) -> None:
         self.compose("--profile", UNIT, "up", "--detach", "hello")
-        expect(self.hello_state() == "running", "hello is not running")
-        self.wait_until("the barrier answering", self.answers_the_barrier)
         asked = self.stays_behind_the_barrier(3)
+        expect(self.hello_state() == "running", "hello is not running")
         print(f"proof 3 held: hello up behind the barrier, {asked} requests answered 404")
 
     def cell_4_traefik_restart(self) -> None:
+        expect(self.hello_state() == "running", "hello is not running before the restart")
         self.compose("restart", "traefik")
-        self.wait_until("traefik listening", lambda: self.ask() is not None)
+        asked = self.stays_behind_the_barrier(BEHIND_BARRIER_SECONDS, may_not_listen_yet=True)
         expect(self.hello_state() == "running", "hello stopped across the restart")
-        asked = self.stays_behind_the_barrier(BEHIND_BARRIER_SECONDS)
         print(f"proof 4 held: after restarting traefik {asked} requests in 10 s all answered 404")
 
     def cell_5_apply(self) -> None:
