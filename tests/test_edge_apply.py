@@ -68,9 +68,15 @@ def resolved_configuration() -> dict:
 
 @dataclass
 class ScriptedCompose:
-    """Compose over a table of service -> container state; records every call."""
+    """Compose over a table of service -> container state; records every call.
+
+    Like Compose, `up` recreates a container whose service definition changed since it was
+    created (it gets a new id) unless `--no-recreate` is given."""
 
     containers: dict[str, str] = field(default_factory=dict)
+    container_ids: dict[str, int] = field(default_factory=dict)
+    changed_definitions: set[str] = field(default_factory=set)
+    containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
     starts_nothing: bool = False
@@ -95,13 +101,33 @@ class ScriptedCompose:
         )
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
+        if self.starts_nothing:
+            return ""
         one_shots = compose.one_shot_services(self.config)
-        for service in arguments[1:]:
-            if not self.starts_nothing:
-                self.containers[service] = "exited" if service in one_shots else "running"
-                for volume in compose.named_volumes(self.config["services"][service]):
-                    self.volumes.setdefault(volume, "created by up")
+        flags = {argument for argument in arguments if argument.startswith("-")}
+        for service in (argument for argument in arguments if argument not in flags):
+            if self.needs_a_new_container(service, flags):
+                self.create_container(service)
+            self.containers[service] = "exited" if service in one_shots else "running"
+            for volume in compose.named_volumes(self.config["services"][service]):
+                self.volumes.setdefault(volume, "created by up")
         return ""
+
+    def create_container(self, service: str) -> None:
+        self.containers_created += 1
+        self.container_ids[service] = self.containers_created
+        self.changed_definitions.discard(service)
+
+    def put_containers(self, states: dict[str, str]) -> None:
+        """Containers that exist before the command, each with its own id."""
+        for service, container_state in states.items():
+            self.create_container(service)
+            self.containers[service] = container_state
+
+    def needs_a_new_container(self, service: str, flags: set[str]) -> bool:
+        if service not in self.containers:
+            return True
+        return service in self.changed_definitions and "--no-recreate" not in flags
 
     def verb_stop(self, _profile: str, arguments: list[str]) -> str:
         for service in arguments:
@@ -112,6 +138,7 @@ class ScriptedCompose:
     def verb_rm(self, _profile: str, arguments: list[str]) -> str:
         for service in arguments[1:]:
             self.containers.pop(service, None)
+            self.container_ids.pop(service, None)
         return ""
 
     def changing_verbs(self) -> list[str]:
@@ -338,7 +365,7 @@ def write_fleet(repository: Path, text: str) -> None:
 
 
 def test_switching_on_starts_exactly_the_profiles_services(switch, scripted):
-    """#52 rule 2: on names exactly the services of the profile."""
+    """#52 rule 2: on names exactly the services of the profile; #75 rule 1: never recreating."""
     exit_code, out, _ = switch()
 
     assert exit_code == 0
@@ -347,7 +374,8 @@ def test_switching_on_starts_exactly_the_profiles_services(switch, scripted):
         "traefik-mcp-acme-owner": "exited",
         "traefik-mcp": "running",
     }
-    assert ["--profile", "step-ca", "up", "-d", *STEP_CA_SERVICES] in scripted.calls
+    starting = ["up", "-d", "--no-recreate", *STEP_CA_SERVICES]
+    assert ["--profile", "step-ca", *starting] in scripted.calls
     assert "step-ca is on" in out
 
 
@@ -484,6 +512,58 @@ def test_a_start_that_leaves_the_unit_down_is_partial(switch, scripted):
 
     assert exit_code == 1
     assert "partial, step-ca is not on after the change" in err
+    assert "is on" not in out
+
+
+# --- #75: switching on starts existing containers as they are, never recreates them -------------
+
+STEP_CA_ON = {"step-ca": "running", "traefik-mcp-acme-owner": "exited", "traefik-mcp": "running"}
+APP_EXITED = STEP_CA_ON | {"traefik-mcp": "exited"}
+SWITCH_ON_CELLS = {
+    # cell: (containers before, services whose definition changed, the line apply prints)
+    "cell 1, all running, nothing changed": (STEP_CA_ON, set(), "nothing to change"),
+    "cell 2, db running, app exited, db image changed": (APP_EXITED, {"step-ca"}, "step-ca is on"),
+    "cell 4, all exited, definitions changed": (
+        dict.fromkeys(STEP_CA_SERVICES, "exited"),
+        set(STEP_CA_SERVICES),
+        "step-ca is on",
+    ),
+    "cell 5, no containers, the unit was off": ({}, set(), "step-ca is on"),
+    "cell 6, one-shot already exited, nothing changed": (APP_EXITED, set(), "step-ca is on"),
+}
+
+
+@pytest.mark.parametrize(
+    ("before", "changed", "line"), SWITCH_ON_CELLS.values(), ids=SWITCH_ON_CELLS
+)
+def test_switching_on_keeps_every_existing_container_and_the_volumes(
+    switch, scripted, before, changed, line
+):
+    """#75 rule 1, cells 1, 2, 4, 5, 6: an existing container keeps its id, a missing one is
+    created, the volumes are untouched, and the unit is on."""
+    scripted.volumes = {"step-ca": "intermediate-A", "traefik-mcp-acme": "issued-B"}
+    held = dict(scripted.volumes)
+    scripted.put_containers(before)
+    scripted.changed_definitions = set(changed)
+    existing_ids = dict(scripted.container_ids)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert line in out
+    assert scripted.containers == STEP_CA_ON
+    assert {service: scripted.container_ids[service] for service in existing_ids} == existing_ids
+    assert scripted.volumes == held
+
+
+def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
+    """#75 cell 7 / #52 P15: a failed `up` is partial with Compose's last line, never on."""
+    scripted.failing_verb = "up"
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, step-ca: could not start, `docker compose up` exited 1: last line" in err
     assert "is on" not in out
 
 
@@ -1121,6 +1201,21 @@ def test_a_start_that_fails_or_is_not_observed_keeps_the_switch(start, scripted,
     assert "partial" in err
     assert marker(state) == SWITCHED_OFF_AT
     assert "is on" not in out
+
+
+def test_start_keeps_the_running_db_container_whose_image_changed(start, scripted, state):
+    """#75 rule 1, cell 3: `edge start` starts the exited app and leaves the running db as is."""
+    switch_off(state)
+    scripted.put_containers(APP_EXITED)
+    scripted.changed_definitions = {"step-ca"}
+    db_id = scripted.container_ids["step-ca"]
+
+    exit_code, out, _ = start()
+
+    assert exit_code == 0
+    assert "step-ca is on" in out
+    assert scripted.containers == STEP_CA_ON
+    assert scripted.container_ids["step-ca"] == db_id
 
 
 def test_start_of_a_disabled_unit_is_refused_and_keeps_its_switch(start, repository, state):
