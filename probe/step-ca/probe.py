@@ -46,6 +46,7 @@ PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
+NOTHING_TO_CHANGE = "nothing to change"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 DISCARD_OUTPUT = "/dev/null"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
@@ -678,7 +679,7 @@ class Probe:
             "not served by the same intermediate",
         )
         again = self.edge_apply(copy, enabled=True)
-        expect("nothing to change" in again, f"a repeated apply said: {again[-120:]}")
+        expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
         self.intermediate_fingerprint = after
         print(f"proof 10 held: edge apply on/off/on keeps both volumes; same intermediate {after}")
 
@@ -709,7 +710,7 @@ class Probe:
         expect(marker.read_text() == written, "a second stop rewrote the marker")
 
         out = self.edge(copy, "apply", "--closed", terminal=True)  # 3. B x apply, enabled
-        expect("stays stopped" in out and "nothing to change" in out, f"apply said: {out[-160:]}")
+        expect("stays stopped" in out and NOTHING_TO_CHANGE in out, f"apply said: {out[-160:]}")
         expect("Type" not in out, "apply asked for `yes` with nothing to change")
         expect(not self.containers_of_unit(running_only=True), "apply started a switched-off unit")
 
@@ -749,7 +750,7 @@ class Probe:
         out = self.edge(copy, "start", "step-ca", terminal=True)  # 10. A x start
         expect("no change" in out, f"start in A said: {out[-120:]}")
         out = self.edge(copy, "apply", "--closed", terminal=True)  # 11. A x apply
-        expect("nothing to change" in out, f"apply in A said: {out[-120:]}")
+        expect(NOTHING_TO_CHANGE in out, f"apply in A said: {out[-120:]}")
         print("proof 11 held: stop/start/apply cells A, B, E; switch kept across apply and off")
 
     def volume_names_exist(self) -> None:
