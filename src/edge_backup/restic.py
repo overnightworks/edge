@@ -24,17 +24,6 @@ DB_FOLDER = "db"
 AUDIO_FOLDER = "audio"
 
 
-# restic's own exit codes for a repository that does not exist, is locked, or rejects the password.
-REPOSITORY_EXIT_CODES = frozenset({10, 11, 12})
-
-
-class RepositoryUnavailable(host.HostCommandError):
-    """The repository, not the app being worked on, is why restic failed."""
-
-    def __init__(self, failure: host.HostCommandError) -> None:
-        super().__init__(str(failure), "(Repository nicht nutzbar)", failure.exit_code)
-
-
 class MountKind(StrEnum):
     BIND = "bind"
     VOLUME = "volume"
@@ -160,12 +149,7 @@ def unlock(settings: Settings) -> None:
 
 
 def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) -> bytes:
-    try:
-        return host.run(restic_argv(settings, command, *mounts), label=label)
-    except host.HostCommandError as failure:
-        if failure.exit_code in REPOSITORY_EXIT_CODES:
-            raise RepositoryUnavailable(failure) from failure
-        raise
+    return host.run(restic_argv(settings, command, *mounts), label=label)
 
 
 def _scope(app: str) -> list[str]:
