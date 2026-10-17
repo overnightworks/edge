@@ -145,6 +145,13 @@ class Terminal(io.StringIO):
         return super().readline(*arguments)
 
 
+class InterruptedWaitForLock(switches.Switches):
+    """Switches whose lock is taken by a Ctrl-C while it waits."""
+
+    def lock(self):
+        raise KeyboardInterrupt
+
+
 @pytest.fixture(autouse=True)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A stray real marker would keep a live unit down: every test gets its own HOME."""
@@ -256,11 +263,15 @@ def switch(repository, scripted, setup_check, at_terminal, capsys, state):
 def stop(repository, scripted, capsys, state, ingress):
     """Run `edge stop <unit>` with no terminal: the path an agent takes."""
 
-    def run(unit: str = "step-ca") -> tuple[int, str, str]:
+    def run(unit: str = "step-ca", marks: switches.Switches | None = None) -> tuple[int, str, str]:
         exit_code = emergency.stop_unit(
-            state, unit, NOW, compose.Compose(scripted.run, repository), repository,
+            marks or switches.Switches(state),
+            unit,
+            NOW,
+            compose.Compose(scripted.run, repository),
+            repository,
             ingress.verifier,
-        )  # fmt: skip
+        )
         captured = capsys.readouterr()
         return exit_code, captured.out, captured.err
 
@@ -268,7 +279,7 @@ def stop(repository, scripted, capsys, state, ingress):
 
 
 @pytest.fixture
-def start(repository, scripted, at_terminal, capsys, state, ingress):
+def start(repository, scripted, at_terminal, capsys, state, ingress, setup_check):
     """Run `edge start <unit>`; the operator types `yes` unless told otherwise."""
 
     def run(
@@ -276,7 +287,12 @@ def start(repository, scripted, at_terminal, capsys, state, ingress):
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         exit_code = emergency.start_unit(
-            state, unit, compose.Compose(scripted.run, repository), repository, ingress.verifier
+            switches.Switches(state),
+            unit,
+            compose.Compose(scripted.run, repository),
+            repository,
+            ingress.verifier,
+            setup_check,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -805,7 +821,9 @@ def test_start_without_a_terminal_refuses_before_anything_else(
     switch_off(state)
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
 
-    exit_code = emergency.start_unit(state, "step-ca", compose.Compose(scripted.run, repository))
+    exit_code = emergency.start_unit(
+        switches.Switches(state), "step-ca", compose.Compose(scripted.run, repository)
+    )
 
     assert exit_code == 1
     assert "refused, stdin and stdout must be a terminal" in capsys.readouterr().err
@@ -990,17 +1008,12 @@ def test_an_unreadable_marker_directory_still_closes_a_running_unit(
 
 
 def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
-    stop, scripted, repository, state, monkeypatch
+    stop, scripted, repository, state
 ):
     """#60 rule 2 partial: an interrupt exits 1 with the recorded switch, not a traceback."""
     put_unit_in("A", scripted, repository, state)
 
-    def interrupted(_self):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(switches.Switches, "lock", interrupted)
-
-    exit_code, _, err = stop()
+    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
     assert "partial: the switch is recorded" in err
@@ -1009,18 +1022,13 @@ def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
 
 
 def test_an_interrupt_for_an_enabled_unit_with_nothing_running_still_records_the_switch(
-    stop, scripted, repository, state, monkeypatch
+    stop, scripted, repository, state
 ):
     """#60 rule 2: the marker is recorded first, so the partial line never lies about it."""
     put_unit_in("A", scripted, repository, state)
     scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
 
-    def interrupted(_self):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(switches.Switches, "lock", interrupted)
-
-    exit_code, _, err = stop()
+    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
     assert "partial: the switch is recorded" in err
@@ -1029,17 +1037,12 @@ def test_an_interrupt_for_an_enabled_unit_with_nothing_running_still_records_the
 
 
 def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_exit_1(
-    stop, scripted, repository, state, monkeypatch
+    stop, scripted, repository, state
 ):
     """#60 rule 2 partial from B with nothing running: Ctrl-C behind a start's `up` exits 1."""
     put_unit_in("B", scripted, repository, state)
 
-    def interrupted(_self):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(switches.Switches, "lock", interrupted)
-
-    exit_code, _, err = stop()
+    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
     assert "partial: the switch is recorded (since 17.10. 22:10); interrupted" in err
@@ -1209,6 +1212,52 @@ def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_i
     assert scripted.changing_verbs() == []
 
 
+def test_stop_names_the_barrier_it_repaired_and_only_then(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#67 rule 3: a stop from B says when it had to put the barrier back."""
+    put_probe_in_b(scripted, state, ingress)
+    stop("probe")
+    _, standing, _ = stop("probe")
+    ingress.barrier_file().unlink()
+
+    _, repaired, _ = stop("probe")
+
+    assert "its barrier was missing" not in standing
+    assert "is already switched off (since" in repaired
+    assert "its barrier was missing and stands again" in repaired
+
+
+@pytest.mark.parametrize(
+    "damaged", [b"a rejected barrier", b"\xff\xfe"], ids=["differing", "not text"]
+)
+def test_stop_repairs_a_barrier_file_that_differs_or_cannot_be_decoded(
+    damaged, probe_unit, stop, scripted, ingress, state
+):
+    """#67 rule 3: a rejected barrier is repaired and named, never a traceback."""
+    put_probe_in_b(scripted, state, ingress)
+    stop("probe")
+    ingress.barrier_file().write_bytes(damaged)
+
+    exit_code, out, _ = stop("probe")
+
+    assert exit_code == 0
+    assert "stands again" in out
+    assert ingress.barrier_file().read_bytes() != damaged
+
+
+def test_stop_from_a_over_a_barrier_file_that_cannot_be_decoded_still_stops_the_unit(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#67 rule 3: a damaged barrier file does not keep the services running."""
+    ingress.barrier_file().write_bytes(b"\xff\xfe")
+
+    exit_code, _, _ = stop("probe")
+
+    assert exit_code == 0
+    assert scripted.changing_verbs() == ["stop"]
+
+
 def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
     probe_unit, stop, scripted, ingress, state
 ):
@@ -1302,3 +1351,84 @@ def test_apply_leaves_the_barrier_in_b_to_e_and_in_e_with_a_marker_to_b(
     assert ingress.barrier_file().read_text() == "the barrier"
     assert marker(state, "probe") is not None
     assert ingress.asked == []
+
+
+def standing_barrier(repository) -> Path:
+    barrier_file = repository / "dynamic" / "switch-step-ca.yml"
+    barrier_file.parent.mkdir(exist_ok=True)
+    barrier_file.write_text("the barrier")
+    return barrier_file
+
+
+def test_start_from_b_of_a_unit_that_is_not_set_up_is_refused_before_the_prompt(
+    start, scripted, repository, state, setup_check
+):
+    """#67 rule 2: the unit's `--check` is asked first; the marker stays, nothing is asked."""
+    put_unit_in("B", scripted, repository, state)
+    setup_check.exit_code = 1
+    setup_check.line = "step-ca/init --check: no keys"
+    barrier_file = standing_barrier(repository)
+    scripted.calls.clear()
+
+    exit_code, out, err = start()
+
+    assert exit_code == 1
+    assert "step-ca is not set up: run `step-ca/init`, then `edge start step-ca` again" in err
+    assert "step-ca/init --check: no keys" in err
+    assert "start step-ca" not in out
+    assert scripted.changing_verbs() == []
+    assert marker(state) == SWITCHED_OFF_AT
+    assert barrier_file.exists()
+
+
+def test_start_from_b_whose_setup_check_cannot_tell_exits_2(
+    start, scripted, repository, state, setup_check
+):
+    """#67 rule 2: an unclear check is `cannot plan`, with the same effect."""
+    put_unit_in("B", scripted, repository, state)
+    setup_check.exit_code = 3
+    barrier_file = standing_barrier(repository)
+
+    exit_code, out, err = start()
+
+    assert exit_code == 2
+    assert "cannot tell" in err
+    assert "start step-ca" not in out
+    assert scripted.changing_verbs() == []
+    assert marker(state) == SWITCHED_OFF_AT
+    assert barrier_file.exists()
+
+
+def test_start_from_b_asks_the_setup_check_of_a_set_up_unit_and_starts_it(
+    start, scripted, repository, state, setup_check
+):
+    """#67 rule 2: a set-up unit is checked once, then started and the marker cleared."""
+    put_unit_in("B", scripted, repository, state)
+
+    exit_code, _, _ = start()
+
+    assert exit_code == 0
+    assert setup_check.commands == [[str(repository / "step-ca" / "init"), "--check"]]
+    assert marker(state) is None
+
+
+def test_start_from_b_of_a_unit_without_a_setup_runs_no_check(
+    probe_unit, start, scripted, ingress, state, setup_check
+):
+    """#67 rule 2: a unit without run.setup is not checked."""
+    put_probe_in_b(scripted, state, ingress)
+
+    exit_code, _, _ = start(unit="probe")
+
+    assert exit_code == 0
+    assert setup_check.commands == []
+
+
+def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, setup_check):
+    """#67 rule 2: a start from A has no marker to clear, so nothing is checked."""
+    put_unit_in("A", scripted, repository, state)
+
+    exit_code, _, _ = start()
+
+    assert exit_code == 0
+    assert setup_check.commands == []

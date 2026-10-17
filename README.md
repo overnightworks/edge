@@ -239,7 +239,9 @@ Volumes bleiben (kein `rm`, kein `down`, nie `socket-proxy` oder `traefik`). Es 
 Terminal und kein `yes`: Agenten duerfen es aufrufen (R4, D12). `edge start <Einheit>` hebt den
 Schalter auf: nur an einem Terminal und nach dem exakten `yes` (der Betreiber; bis D14 eine Regel,
 keine Wand). Es loescht den Schalter erst, wenn die Einheit laeuft; eine im Katalog abgeschaltete
-Einheit (`enabled: false`) verweigert es.
+Einheit (`enabled: false`) verweigert es. Hat die Einheit ein `run.setup`, fragt `edge start` zuerst
+dessen `--check`, noch vor der Rueckfrage: Ist die Einheit nicht eingerichtet, verweigert es mit
+Exit 1 (bei unklarer Antwort Exit 2) und nennt das Setup; Schalter und Sperre bleiben.
 
 Der Schalter ist eine Datei pro Einheit, `~/.local/state/edge/stopped/<Einheit>`, mit der Zeit des
 Ausschaltens (ISO 8601). `edge apply --closed` startet eine ausgeschaltete Einheit nie und
@@ -256,7 +258,8 @@ Eingang `edge`, und Traefik antwortet `404 page not found`; der Eingang `admin` 
 bleibt offen. `edge stop` meldet Erfolg erst, wenn Traefik fuer jeden Host (innerhalb von 15 s) 404
 mit dem Header `X-Edge-Barrier: <Einheit>` antwortet, sonst Exit 1 (teilweise; Schalter und Sperre bleiben). `edge start` entfernt die Sperre
 erst, wenn die Einheit laeuft, prueft, dass der Host den Header `X-Edge-Barrier` nicht mehr setzt, und loescht den
-Schalter zuletzt. `edge apply` fasst die Sperre nie an. Sie ist eine Datei im Checkout und gilt
+Schalter zuletzt. Fand `edge stop` an einer schon ausgeschalteten Einheit die Sperre fehlend und stellt
+sie wieder her, sagt es "its barrier was missing and stands again". `edge apply` fasst die Sperre nie an. Sie ist eine Datei im Checkout und gilt
 nach einem Neustart von Traefik und des PCs weiter. Der Beweis auf einem Wegwerf-Stack (braucht
 `127.0.0.1:8081` frei, also bei ausgeschaltetem Live-Traefik):
 `flock /tmp/probe-stack.lock timeout --kill-after=30 900 python3 probe/switches/probe.py --scratch "$(mktemp -d)"`.
