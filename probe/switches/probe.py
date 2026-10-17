@@ -43,6 +43,7 @@ EDGE_ADDRESS = ("127.0.0.1", 8081)
 FLEET = "cloudflare:\ngithub:\nservices:\n  probe:\n    run:\n      enabled: true\n"
 NOT_FOUND = (404, b"404 page not found\n", UNIT)  # status, body, X-Edge-Barrier
 WHOAMI_SEEN = b"Hostname:"
+HELLO_ANSWERING = "hello answering"
 NOTHING_TO_CHANGE = "nothing to change"
 READY_SECONDS = 90
 BEHIND_BARRIER_SECONDS = 10
@@ -157,7 +158,7 @@ class Probe:
         self.edge("apply", "--closed", terminal=True)  # starts hello
 
     def cell_1_control(self) -> None:
-        self.wait_until("hello answering", self.serves_whoami)
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"proof 1 held: {HOST} answers whoami without a switch")
 
     def cell_2_stop(self) -> None:
@@ -194,7 +195,7 @@ class Probe:
         self.edge("start", UNIT, terminal=True)
         expect(not self.barrier.exists(), "start left the barrier")
         expect(not self.marker.exists(), "start left the marker")
-        self.wait_until("hello answering", self.serves_whoami)
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"proof 6 held: start removed barrier and marker; {HOST} answers whoami")
 
     def cell_7_traefik_down(self) -> None:
@@ -206,7 +207,7 @@ class Probe:
         self.compose("up", "--detach", "traefik")
         self.wait_until("the barrier answering", self.answers_the_barrier)
         self.edge("start", UNIT, terminal=True)
-        self.wait_until("hello answering", self.serves_whoami)
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print("proof 7 held: traefik down: stop exits 1 partial, both kept; start reopens")
 
 
