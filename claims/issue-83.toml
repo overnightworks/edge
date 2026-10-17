@@ -1,7 +1,0 @@
-claim_id = "2231235e20b0451296ab18777fc76ffb"
-agent = "claude"
-role = "builder"
-base = "381301db8c558433e4fc09413b67585526b0b4f1"
-branch = "claude/issue-83-platform-rules"
-scope = ["docs/architecture.md"]
-opened_commit = "d9da6f875e6b0f495c11100cc8ac1749a6bc567e"
