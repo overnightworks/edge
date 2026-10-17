@@ -8,6 +8,7 @@ run it (R4, D12). Start is the operator's step: a terminal and the exact `yes`. 
 
 import os
 import sys
+from collections.abc import Iterable
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
@@ -237,11 +238,6 @@ def _report_close(
     return ApplyExit.APPLIED_OR_NOTHING
 
 
-def _switched_off(read: switches.Mark | None, ingress: barrier.Barrier) -> bool:
-    """A unit is switched off by its marker or by the barrier a stop left standing."""
-    return read is not None or ingress.present()
-
-
 def start_unit(
     marks: switches.Switches,
     key: str,
@@ -270,7 +266,7 @@ def start_unit(
             f"refused, {key} is disabled in the catalog; enable it by PR and `{apply.COMMAND}`",
         )
         return ApplyExit.REFUSED
-    if not _switched_off(read, ingress):
+    if not barrier.switched_off(read, ingress):
         _say(START, f"no change, {key} is not switched off")
         return ApplyExit.APPLIED_OR_NOTHING
     try:
@@ -469,28 +465,19 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
     return ApplyExit.APPLIED_OR_NOTHING
 
 
-def _unproven_barrier(
-    fleet: apply.Fleet, marks: switches.Switches, repository: Path, verifier: barrier.Verifier
-) -> str | None:
-    """Prove the barrier of every unit that is switched off or still has one, one line each.
+def _said_until_unproven(proofs: Iterable[barrier.ActiveProof]) -> str | None:
+    """Say each proven barrier, one line each.
 
     The failure line (the tunnel stays closed) of the first barrier that cannot be proven.
     """
-    for unit in fleet.units:
-        services = fleet.profile_services[unit.key]
-        try:
-            ingress = barrier.Barrier.of_unit(
-                fleet.config, services, repository, unit.key, verifier
-            )
-            if not _switched_off(marks.mark(unit.key), ingress):
-                continue
-            if not ingress.names:
-                _say(START_ALL, f"{unit.key}: no host behind Traefik, so no barrier")
-                continue
-            ingress.close()
-        except (barrier.BarrierError, switches.SwitchError) as error:
-            return f"the tunnel stays closed: the barrier of {unit.key} is not proven ({error})"
-        _say(START_ALL, f"the barrier of {unit.key} is proven")
+    for proof in proofs:
+        match proof:
+            case barrier.Proven(unit):
+                _say(START_ALL, f"the barrier of {unit} is proven")
+            case barrier.NoHost(unit):
+                _say(START_ALL, f"{unit}: no host behind Traefik, so no barrier")
+            case barrier.Unproven(unit, failure):
+                return f"the tunnel stays closed: the barrier of {unit} is not proven ({failure})"
     return None
 
 
@@ -555,7 +542,11 @@ def start_all(
         if read is None and door.is_active():
             _say(START_ALL, "no change, the tunnel is not switched off")
             return ApplyExit.APPLIED_OR_NOTHING
-        unproven = _unproven_barrier(fleet, marks, repository, verifier)
+        unproven = _said_until_unproven(
+            barrier.prove_active(
+                fleet.units, fleet.profile_services, fleet.config, marks, repository, verifier
+            )
+        )
     except (switches.SwitchError, tunnel.TunnelError) as error:
         _complain(START_ALL, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
