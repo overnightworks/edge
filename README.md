@@ -271,6 +271,31 @@ Ueberleben eines Neustarts: Jeder lang laufende Dienst hat `restart: unless-stop
 startet einen ausdruecklich gestoppten Container auch nach einem Neustart nicht. Der Schalter
 bleibt auf der Platte. Eine ausgeschaltete Einheit bleibt also ohne Boot-Dienst aus.
 
+Der globale Schalter: `edge stop --all` nimmt den PC sofort vom Internet. Es schreibt zuerst
+`~/.local/state/edge/global-stop` (eine eigene Datei neben `stopped/`; ein zweites Stop behaelt die
+erste Zeit), ohne auf `switch.lock` zu warten, stoppt dann `cloudflared.service`, schreibt den
+Schalter unter `switch.lock` noch einmal (ein `start`, der ihn inzwischen loeschte, macht ihn nicht
+rueckgaengig; scheitert dieses Schreiben und fehlt der Schalter danach, meldet es "partial: the
+global switch could not be recorded", Exit 1) und meldet Erfolg erst, wenn `systemctl is-active`
+den Tunnel als beendet (`inactive` oder `failed`) zeigt; ein Fehler des Stopps allein aendert das
+nicht. Die Einheiten laufen lokal weiter
+und ihre Schalter bleiben. An einem Terminal fragt das System selbst nach dem Passwort; ohne
+Terminal (Agent) laeuft `systemctl --no-ask-password`. Exit 1 heisst teilweise: "partial", wenn
+der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`; eine zweite Zeile
+`stop failed: <Grund>` nennt den Fehler des Stopps, etwa `cannot run systemctl (timed out)`), und "incomplete", wenn
+das Boot-Drop-in `30-edge-global-stop.conf` noch fehlt (ein Neustart oeffnete den Tunnel wieder;
+das bringt overnightworks/home-tools#9). `edge start --all` braucht ein Terminal und das exakte
+`yes` (Agenten nie, R4). Es beweist zuerst die Sperre jeder noch ausgeschalteten Einheit (eine
+Zeile je Sperre, bei Bedarf neu geschrieben, 404 mit `X-Edge-Barrier` auf `127.0.0.1:8081`), holt
+die Berechtigung des Systems (`pkcheck`) noch vor dem Loeschen des Schalters, liest ihn unter der
+Sperre noch einmal (ein `stop` waehrend der Rueckfrage gewinnt), loescht ihn, startet den Tunnel
+und prueft, dass er aktiv ist. Kann eine Sperre nicht bewiesen werden, bleibt der Tunnel zu; schlaegt
+die Berechtigung oder der Start fehl, steht der Schalter wieder und der Exit ist 1. Nur der globale
+Schalter faellt: Einheiten-Schalter und Sperren bleiben. Die Pruefung des Hosts davor ist noch nicht
+gebaut ("host check not built yet (#50 SW3)"). edge liest nie `/etc/cloudflared`, aendert den Tunnel
+nicht und ruft nie `sudo` auf. Fuer den Wegwerf-Beweis nehmen `EDGE_TUNNEL_UNIT` und
+`EDGE_TUNNEL_MANAGER=user` eine Wegwerf-Einheit des Benutzer-Managers statt `cloudflared.service`.
+
 Regel R4: Agenten rufen `edge apply` und `edge start` nie auf; `edge stop`
 duerfen sie. Die Terminalpruefung und das `yes` halten
 versehentliche und nicht-interaktive Laeufe auf; sie erkennen den Betreiber nicht (D14).
