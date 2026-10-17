@@ -658,3 +658,39 @@ def test_a_stop_that_cannot_be_asked_names_edges_own_reason_beside_the_partial(s
     assert exit_code == 1
     assert "the tunnel still runs; `sudo systemctl stop cloudflared`" in output
     assert "stop failed: cannot run systemctl (timed out)" in output
+
+
+def test_a_failed_stop_and_failed_record_still_name_edges_own_reason(marks, systemd, capsys):
+    """#70 rule 3: with no switch recorded, the partial line keeps the stop error and sudo hint."""
+    marks.directory.mkdir(parents=True)
+    (marks.directory / switches.GLOBAL_STOP_FILE).mkdir()
+    systemd.refuses_stop = True
+    systemd.stop_times_out_after_stopping = True
+
+    exit_code = emergency.stop_all(marks, NOW, tunnel.Tunnel(run=systemd.run))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "could not be recorded" in err
+    assert "`sudo systemctl stop cloudflared`" in err
+    assert "stop failed: cannot run systemctl (timed out)" in err
+
+
+def test_an_older_switch_survives_two_failed_records_and_the_stop_is_a_success(
+    marks, systemd, capsys
+):
+    """#70 rule 2: a readable older switch stays the record, whatever the new writes did."""
+    earlier = NOW.replace(year=NOW.year - 1)
+    marks.record_global(earlier)
+
+    class WritesFail(switches.Switches):
+        def record_global(self, now):
+            raise switches.SwitchError("disk full")
+
+    exit_code = emergency.stop_all(WritesFail(marks.directory), NOW, tunnel.Tunnel(run=systemd.run))
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "the tunnel is stopped" in captured.out
+    assert "could not be recorded" not in captured.err
+    assert marks.global_mark().since == earlier.isoformat(timespec="seconds")

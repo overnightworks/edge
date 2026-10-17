@@ -281,7 +281,8 @@ den Tunnel als beendet (`inactive` oder `failed`) zeigt; ein Fehler des Stopps a
 nicht. Die Einheiten laufen lokal weiter
 und ihre Schalter bleiben. An einem Terminal fragt das System selbst nach dem Passwort; ohne
 Terminal (Agent) laeuft `systemctl --no-ask-password`. Exit 1 heisst teilweise: "partial", wenn
-der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`), und "incomplete", wenn
+der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`; eine zweite Zeile
+`stop failed: <Grund>` nennt den Fehler des Stopps, etwa `cannot run systemctl (timed out)`), und "incomplete", wenn
 das Boot-Drop-in `30-edge-global-stop.conf` noch fehlt (ein Neustart oeffnete den Tunnel wieder;
 das bringt overnightworks/home-tools#9). `edge start --all` braucht ein Terminal und das exakte
 `yes` (Agenten nie, R4). Es beweist zuerst die Sperre jeder noch ausgeschalteten Einheit (eine

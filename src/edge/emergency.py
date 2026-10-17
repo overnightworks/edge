@@ -440,21 +440,18 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
     record_failure = lock_failure if not _global_recorded(marks) else None
     stopped, boot_protected, observation_failure = _observed(door)
     unit = door.unit.removesuffix(".service")
+    tunnel_state = _tunnel_state(stopped, observation_failure)
     if record_failure:
-        _complain(
-            STOP_ALL,
-            f"partial: the global switch could not be recorded ({record_failure}); "
-            f"the tunnel {_tunnel_state(stopped, observation_failure)}, and a reboot reopens it",
+        report = (
+            f"the global switch could not be recorded ({record_failure}); "
+            f"the tunnel {tunnel_state}, and a reboot reopens it"
         )
-        return ApplyExit.REFUSED
-    if not stopped:
-        _complain(
-            STOP_ALL,
-            "partial: the global switch is recorded, but the tunnel "
-            f"{_tunnel_state(stopped, observation_failure)}; "
-            f"`sudo systemctl stop {unit}`",
-        )
-        if stop_failure:
+    else:
+        report = f"the global switch is recorded, but the tunnel {tunnel_state}"
+    if record_failure or not stopped:
+        hint = "" if stopped else f"; `sudo systemctl stop {unit}`"
+        _complain(STOP_ALL, f"partial: {report}{hint}")
+        if stop_failure and not stopped:
             _complain(STOP_ALL, f"stop failed: {stop_failure}")
         return ApplyExit.REFUSED
     if not boot_protected:
