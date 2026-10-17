@@ -7,18 +7,16 @@ refused until its setup command says `--check` passes. A unit with an emergency 
 (`edge stop`) is never started and its switch is never cleared here: only `edge start` ends it.
 """
 
-import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, compose, switches, terminal
+from edge import catalog, compose, setup, switches, terminal
 
 COMMAND = "edge apply --closed"
-SETUP_CHECK_SECONDS = 300
 
 
 class ApplyExit(IntEnum):
@@ -31,11 +29,6 @@ class Action(StrEnum):
     ON = "on"
     OFF = "off"
     STAYS_STOPPED = "stays stopped"
-
-
-class SetupCheckExit(IntEnum):
-    SET_UP = 0
-    NOT_SET_UP = 1
 
 
 @dataclass(frozen=True)
@@ -76,19 +69,6 @@ def read_fleet(engine: compose.Compose, repository: Path) -> Fleet:
     return Fleet(config, profile_services, catalog.load(repository, profile_services))
 
 
-class SetupUnclear(Exception):
-    """A setup check could not tell; the message is its own line."""
-
-
-SetupCheck = Callable[[list[str]], subprocess.CompletedProcess[str]]
-
-
-def run_setup_check(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command, capture_output=True, text=True, check=False, timeout=SETUP_CHECK_SECONDS
-    )
-
-
 def plan_switches(
     units: Sequence[catalog.Unit],
     profile_services: Mapping[str, tuple[str, ...]],
@@ -118,30 +98,6 @@ def plan_switches(
         )
         plans.append(UnitPlan(unit, action, services, tuple(volumes), since))
     return plans
-
-
-def _last_line(result: subprocess.CompletedProcess[str]) -> str:
-    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
-    return lines[-1].strip() if lines else "no output"
-
-
-def _check_setup(plan: UnitPlan, repository: Path, check: SetupCheck) -> str | None:
-    """None when the unit is set up, else the refusal; raises SetupUnclear when it cannot tell."""
-    setup = plan.unit.setup
-    if setup is None:
-        return None
-    try:
-        result = check([str(repository / setup), "--check"])
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise SetupUnclear(f"`{setup} --check` did not run ({type(error).__name__})") from error
-    if result.returncode == SetupCheckExit.SET_UP:
-        return None
-    if result.returncode == SetupCheckExit.NOT_SET_UP:
-        return (
-            f"{plan.unit.key} is not set up: run `{setup}`, then `{COMMAND}` again; "
-            f"{_last_line(result)}"
-        )
-    raise SetupUnclear(f"`{setup} --check` cannot tell: {_last_line(result)}")
 
 
 @dataclass
@@ -193,7 +149,7 @@ def apply_closed(
     state_directory: Path,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
-    check: SetupCheck = run_setup_check,
+    check: setup.SetupCheck = setup.run_setup_check,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -210,7 +166,7 @@ def apply_closed(
     except (
         compose.ComposeError,
         catalog.CatalogError,
-        SetupUnclear,
+        setup.SetupUnclear,
         switches.SwitchError,
     ) as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
@@ -226,9 +182,11 @@ def apply_closed(
     return _confirm_and_switch(engine, plans, fleet.config, marks, read)
 
 
-def _setup_refusal(plans: Sequence[UnitPlan], repository: Path, check: SetupCheck) -> str | None:
+def _setup_refusal(
+    plans: Sequence[UnitPlan], repository: Path, check: setup.SetupCheck
+) -> str | None:
     for plan in plans:
-        refusal = _check_setup(plan, repository, check)
+        refusal = setup.refusal(plan.unit, repository, check, COMMAND)
         if refusal:
             return refusal
     return None

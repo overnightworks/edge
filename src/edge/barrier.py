@@ -91,7 +91,7 @@ Connect = Callable[[tuple[str, int], float], socket.socket]  # (address, seconds
 class _DeadlineSocket(socket.socket):
     """A socket whose every read, whatever http.client's parser asks for, ends at one deadline."""
 
-    deadline = 0.0
+    deadline: float
     clock: Callable[[], float]
 
     def time_left(self) -> float:
@@ -242,13 +242,18 @@ class Barrier:
     def hosts(self) -> tuple[str, ...]:
         return tuple(f"{name}.{self.domain}" for name in self.names)
 
-    def close(self) -> None:
-        """Write the barrier and prove that every host answers 404 for it."""
+    def close(self) -> bool:
+        """Write the barrier and prove that every host answers 404 for it.
+
+        True when the file was missing or differed, so this close repaired it.
+        """
         if not self.names:
-            return
+            return False
         address = edge_address(self.checkout)
-        self._write(address)
+        standing = self.path.read_text() if self.path.is_file() else None
+        written = self._write(address)
         self._prove(address, barrier=True)
+        return written != standing
 
     def open(self) -> None:
         """Remove the barrier and prove that no host answers its 404 any more."""
@@ -273,7 +278,7 @@ class Barrier:
                 f"Traefik did not open {unreached} {within} (the barrier is removed)"
             )
 
-    def _write(self, address: str) -> None:
+    def _write(self, address: str) -> str:
         routers = "".join(
             _ROUTER.format(unit=self.unit, name=name, priority=_PRIORITY) for name in self.names
         )
@@ -287,6 +292,7 @@ class Barrier:
         except OSError as error:
             temporary.unlink(missing_ok=True)
             raise BarrierError(f"cannot write {self.path.name} ({error.strerror})") from error
+        return text
 
     def _remove(self) -> None:
         try:

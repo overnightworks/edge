@@ -50,12 +50,16 @@ def add_switch_subcommands(subcommands: argparse._SubParsersAction) -> None:
 
 def stop_command(arguments: argparse.Namespace) -> int:
     return emergency.stop_unit(
-        switches.default_state_directory(), arguments.unit, datetime.now().astimezone()
+        switches.Switches(switches.default_state_directory()),
+        arguments.unit,
+        datetime.now().astimezone(),
     )
 
 
 def start_command(arguments: argparse.Namespace) -> int:
-    return emergency.start_unit(switches.default_state_directory(), arguments.unit)
+    return emergency.start_unit(
+        switches.Switches(switches.default_state_directory()), arguments.unit
+    )
 
 
 def apply_command(arguments: argparse.Namespace) -> int:

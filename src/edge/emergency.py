@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
-from edge import apply, barrier, catalog, compose, switches, terminal
+from edge import apply, barrier, catalog, compose, setup, switches, terminal
 from edge.apply import ApplyExit
 
 STOP = "edge stop"
@@ -43,7 +43,7 @@ def _read_unit(
 
 
 def stop_unit(
-    state_directory: Path,
+    marks: switches.Switches,
     key: str,
     now: datetime,
     engine: compose.Compose | None = None,
@@ -51,7 +51,6 @@ def stop_unit(
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
-    marks = switches.Switches(state_directory)
     try:
         read = _read_unit(STOP, engine, repository, key)
         if read is None:
@@ -67,7 +66,7 @@ def stop_unit(
         _say(STOP, f"{key} is disabled in the catalog and nothing of it runs")
         return ApplyExit.APPLIED_OR_NOTHING
     try:
-        since = None if running else _confirmed_off(engine, marks, ingress, key, services, now)
+        off = None if running else _confirmed_off(engine, marks, ingress, key, services, now)
     except KeyboardInterrupt:
         return _report_close(
             marks,
@@ -77,8 +76,12 @@ def stop_unit(
             None,
             "interrupted while waiting to stop it",
         )
-    if since:
-        _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
+    if off:
+        since, repaired = off
+        line = f"{key} is already switched off (since {switches.describe_since(since)})"
+        if repaired:
+            line += "; its barrier was missing and stands again"
+        _say(STOP, line)
         return ApplyExit.APPLIED_OR_NOTHING
     return _close(engine, marks, ingress, key, services, now)
 
@@ -90,8 +93,9 @@ def _confirmed_off(
     key: str,
     services: tuple[str, ...],
     now: datetime,
-) -> str | None:
-    """The switch time of a unit that is off, decided under the lock so no start is mid-`up`.
+) -> tuple[str, bool] | None:
+    """(switch time, barrier repaired) of a unit that is off, decided under the lock so no start
+    is mid-`up`.
 
     The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in,
     and the barrier is rendered again from it and proven, in case the file was lost.
@@ -110,8 +114,9 @@ def _confirmed_off(
             if marks.since(key) is None:
                 return None
             marks.record(key, now)
-            ingress.close()
-            return marks.since(key)
+            repaired = ingress.close()
+            since = marks.since(key)
+            return (since, repaired) if since else None
     except (compose.ComposeError, switches.SwitchError, barrier.BarrierError):
         return None
 
@@ -224,16 +229,16 @@ def _report_close(
 
 
 def start_unit(
-    state_directory: Path,
+    marks: switches.Switches,
     key: str,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
+    check: setup.SetupCheck = setup.run_setup_check,
 ) -> int:
     if terminal.refused_without_terminal(START):
         return ApplyExit.REFUSED
     engine = engine or compose.Compose(repository=repository)
-    marks = switches.Switches(state_directory)
     try:
         planned = _read_unit(START, engine, repository, key)
         if planned is None:
@@ -254,6 +259,14 @@ def start_unit(
     if read is None and not ingress.present():
         _say(START, f"no change, {key} is not switched off")
         return ApplyExit.APPLIED_OR_NOTHING
+    try:
+        not_set_up = setup.refusal(unit, repository, check, f"{START} {key}")
+    except setup.SetupUnclear as error:
+        _complain(START, f"cannot start, {error}")
+        return ApplyExit.CANNOT_PLAN
+    if not_set_up:
+        _complain(START, f"refused, {not_set_up}")
+        return ApplyExit.REFUSED
     _say(
         START,
         f"{key}: start services {', '.join(services)}; "
