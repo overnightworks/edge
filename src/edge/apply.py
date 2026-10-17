@@ -2,9 +2,11 @@
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
 2 cannot plan. A unit is a compose profile: on starts its services, off removes their containers.
-Volumes are never touched, and no key material is made here: a unit that needs a setup is
-refused until its setup command says `--check` passes. A unit with an emergency switch
-(`edge stop`) is never started and its switch is never cleared here: only `edge start` ends it.
+Volumes are never touched. A unit that would be switched on and is not set up is asked about
+separately; on `yes` its own setup command runs in the operator's terminal (key material is made
+there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
+emergency switch (`edge stop`) is never started and its switch is never cleared here: only
+`edge start` ends it.
 """
 
 import sys
@@ -145,50 +147,148 @@ def _unobserved(
     ]
 
 
+CANNOT_PLAN_ERRORS = (
+    compose.ComposeError,
+    catalog.CatalogError,
+    setup.SetupUnclear,
+    switches.SwitchError,
+)
+
+
+@dataclass(frozen=True)
+class Plan:
+    fleet: Fleet
+    read: Mapping[str, switches.Mark | None]
+    plans: list[UnitPlan]
+
+
+@dataclass(frozen=True)
+class MissingSetup:
+    unit: catalog.Unit
+    check_line: str
+
+
+def _plan(engine: compose.Compose, marks: switches.Switches, repository: Path) -> Plan:
+    fleet = read_fleet(engine, repository)
+    read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
+    switched_off = {key: mark.since for key, mark in read.items() if mark}
+    plans = plan_switches(
+        fleet.units, fleet.profile_services, fleet.config, engine.states(), switched_off
+    )
+    return Plan(fleet, read, plans)
+
+
 def apply_closed(
     state_directory: Path,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
     check: setup.SetupCheck = setup.run_setup_check,
+    run_setup: setup.SetupRunner = setup.run_setup,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     try:
-        fleet = read_fleet(engine, repository)
-        read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
-        switched_off = {key: mark.since for key, mark in read.items() if mark}
-        plans = plan_switches(
-            fleet.units, fleet.profile_services, fleet.config, engine.states(), switched_off
-        )
-        refusal = _setup_refusal([p for p in plans if p.action is Action.ON], repository, check)
-    except (
-        compose.ComposeError,
-        catalog.CatalogError,
-        setup.SetupUnclear,
-        switches.SwitchError,
-    ) as error:
+        planned = _plan(engine, marks, repository)
+        missing = _missing_setups(planned.plans, repository, check)
+        completed: list[str] = []
+        if missing:
+            exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
+            if exit_code is not None:
+                return exit_code
+            completed = [m.unit.key for m in missing]
+            planned = _plan(engine, marks, repository)
+            if unready := _missing_setups(planned.plans, repository, check):
+                _refuse_units_still_not_set_up(unready)
+                return ApplyExit.REFUSED
+    except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
-    if refusal:
-        print(f"{COMMAND}: refused, {refusal}", file=sys.stderr)
-        return ApplyExit.REFUSED
+    plans = planned.plans
     if all(plan.action is Action.STAYS_STOPPED for plan in plans):
         for plan in plans:
             print(f"{COMMAND}: {plan.describe()}")
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
-    return _confirm_and_switch(engine, plans, fleet.config, marks, read)
+    return _confirm_and_switch(engine, plans, planned.fleet.config, marks, planned.read, completed)
 
 
-def _setup_refusal(
+def _missing_setups(
     plans: Sequence[UnitPlan], repository: Path, check: setup.SetupCheck
-) -> str | None:
+) -> list[MissingSetup]:
+    """The units that would be switched on and whose `--check` says not set up, in catalog order."""
+    missing = []
     for plan in plans:
-        refusal = setup.refusal(plan.unit, repository, check, COMMAND)
-        if refusal:
-            return refusal
+        if plan.action is Action.ON and (
+            line := setup.not_set_up_line(plan.unit, repository, check)
+        ):
+            missing.append(MissingSetup(plan.unit, line))
+    return missing
+
+
+def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
+    """A unit the fresh plan switches on is still not set up: no question, no switch."""
+    for item in missing:
+        print(
+            f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
+            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
+            f"{item.check_line}",
+            file=sys.stderr,
+        )
+
+
+def _ask_and_run_setups(
+    missing: Sequence[MissingSetup],
+    repository: Path,
+    check: setup.SetupCheck,
+    run_setup: setup.SetupRunner,
+) -> int | None:
+    """Ask for every setup first, then run them in turn; an exit code when the run ends here."""
+    for item in missing:
+        print(f"{item.unit.key} is not set up: {item.check_line}")
+        if not terminal.confirmed(f"run `{item.unit.setup}` now"):
+            print(
+                f"{COMMAND}: aborted, nothing changed; run `{item.unit.setup}` yourself "
+                "or answer yes",
+                file=sys.stderr,
+            )
+            return ApplyExit.REFUSED
+    for item in missing:
+        if (exit_code := _run_one_setup(item, repository, check, run_setup)) is not None:
+            return exit_code
+    return None
+
+
+def _run_one_setup(
+    item: MissingSetup,
+    repository: Path,
+    check: setup.SetupCheck,
+    run_setup: setup.SetupRunner,
+) -> int | None:
+    command = item.unit.setup
+    try:
+        ran = run_setup(repository / str(command), repository)
+    except OSError as error:
+        print(f"{COMMAND}: cannot start `{command}`, {error}", file=sys.stderr)
+        return ApplyExit.CANNOT_PLAN
+    if ran.interrupted:
+        print(
+            f"\n{COMMAND}: interrupted during `{command}`; nothing switched; keys may already "
+            f"exist; run `{COMMAND}` again",
+            file=sys.stderr,
+        )
+        return ApplyExit.REFUSED
+    if ran.exit_code:
+        print(
+            f"{COMMAND}: `{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
+            f"already exist; run `{COMMAND}` again",
+            file=sys.stderr,
+        )
+        return ApplyExit.REFUSED
+    if line := setup.not_set_up_line(item.unit, repository, check):
+        print(f"{COMMAND}: `{command}` ran, still not set up: {line}", file=sys.stderr)
+        return ApplyExit.REFUSED
     return None
 
 
@@ -198,12 +298,18 @@ def _confirm_and_switch(
     config: Mapping[str, Any],
     marks: switches.Switches,
     read: Mapping[str, switches.Mark | None],
+    completed_setups: Sequence[str],
 ) -> int:
     print(f"{COMMAND}: the plan")
     for plan in plans:
         print(f"  {plan.describe()}")
     if not terminal.confirmed("apply exactly this plan"):
-        print(f"{COMMAND}: aborted, nothing changed", file=sys.stderr)
+        outcome = (
+            f"setup of {', '.join(completed_setups)} completed; nothing switched"
+            if completed_setups
+            else "nothing changed"
+        )
+        print(f"{COMMAND}: aborted, {outcome}", file=sys.stderr)
         return ApplyExit.REFUSED
     changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()

@@ -54,15 +54,16 @@ def run_edge(
     *arguments: str,
     terminal: bool,
     exit_code: int = 0,
+    typed: bytes = b"yes\n",
 ) -> str:
-    """`edge <arguments>` in the copy: at a pty with the operator typing `yes`, or with stdin and
+    """`edge <arguments>` in the copy: at a pty with the operator typing `typed`, or with stdin and
     stdout that are no terminal. The whitespace-normalised output of a run that exits
     `exit_code`."""
     command = [str(copy / ".venv" / "bin" / "edge"), *arguments]
     if terminal:
         result = subprocess.run(
             ["script", "-qec", shlex.join(command), DISCARD_OUTPUT],
-            input=b"yes\n", capture_output=True, env=environment, cwd=copy, check=False,
+            input=typed, capture_output=True, env=environment, cwd=copy, check=False,
             timeout=APPLY_SECONDS,
         )  # fmt: skip
     else:

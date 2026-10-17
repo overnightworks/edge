@@ -80,7 +80,7 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 ```sh
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
 # `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
-# fleet.yaml; it refuses until `keycloak/go-live` is done.
+# fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
 edge apply --closed
 # Traefik reads traefik.yml (its entrypoints) only when it starts, and a plain `up -d`
 # keeps a running Traefik whose service definition did not change.
@@ -215,15 +215,23 @@ services:
 `socket-proxy` und `traefik` nicht an. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
-Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt; sonst
-verweigert `edge apply --closed` und nennt den Befehl. Schluessel macht `edge apply` nie.
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
+Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
+to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
+nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder
+`keycloak/go-live`, ohne Argumente, ohne Zeitlimit, Ausgabe ungefiltert); die Schluessel macht
+allein dieser Befehl, `edge apply` sieht sie nie. Dann prueft `--check` noch einmal, die Zustaende
+werden neu gelesen und der Plan folgt mit seinem eigenen `yes`. Ein Setup, das scheitert oder per
+Ctrl-C unterbrochen wird, schaltet nichts (Exit 1; "keys may already exist"); was ein Setup
+gemacht hat, bleibt auch nach einem `no` zum Plan (Loeschen bleibt Handarbeit). Ohne Terminal
+laeuft nie ein Setup.
 
 "An" heisst: jeder Dienst der Einheit hat seinen Container laufen (oder ein Einmal-Dienst ist
 fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `docker compose ps`.
 
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
 oder nur teilweise angewendet, 2 nicht planbar (Katalog ungueltig, Compose unlesbar, ein
-Setup-Check, der es nicht sagen kann). Ein blosses `edge apply` endet mit Exit 2: die
+Setup-Check, der es nicht sagen kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
 Publish-Phase gibt es noch nicht.
 
 Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt nichts an und
@@ -906,8 +914,9 @@ configuration. `traefik-mcp` fetches its certificates from it (below).
 
 Go live, once, as the operator (uid 1000): run `step-ca/init`, set `services.step-ca.run.enabled:
 true` in `fleet.yaml` (a pull request), then run `edge apply --closed`
-([Dienste an und aus](#dienste-an-und-aus)). `edge apply` makes no key material; it refuses until
-`step-ca/init --check` passes.
+([Dienste an und aus](#dienste-an-und-aus)). `edge apply` makes no key material itself: while
+`step-ca/init --check` fails it asks separately and, on `yes`, runs `step-ca/init` in your terminal,
+re-checks, and then shows the plan.
 
 `step-ca/init` makes the key material in one-off containers without a network and prints no
 secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
@@ -934,8 +943,8 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: run `step-ca/init`, set `enabled: true` in `fleet.yaml`, then run
-`edge apply --closed`. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
+Switch it on: set `enabled: true` in `fleet.yaml`, then run `edge apply --closed`, which asks
+for `step-ca/init` first when it is missing. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
 the one switch, the compose profile `step-ca`, so a plain `docker compose up -d` starts none of
 them. `traefik-mcp` waits for the CA to listen before it starts Traefik, so the order of the two
 does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false` and
