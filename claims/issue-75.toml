@@ -1,7 +1,0 @@
-claim_id = "6560ff37b67e4f9b85a55ed07da017e6"
-agent = "claude"
-role = "builder"
-base = "8cc18ecf50cfcd26fa2a029dc91ba2d156b2555f"
-branch = "claude/issue-75-no-recreate"
-scope = ["src/edge/compose.py", "tests/fake_docker.py", "tests/test_edge_apply.py"]
-opened_commit = "d09de054398348a188bf813a5e5a56703b0c1fdf"
