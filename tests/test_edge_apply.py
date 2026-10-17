@@ -1039,6 +1039,18 @@ def test_compose_that_cannot_be_read_is_cannot_plan(switch, scripted):
     assert "last line" in err
 
 
+def test_a_routed_unit_without_traefiks_edge_domain_is_cannot_plan(switch, scripted, repository):
+    """#85 rule 7: a barrier that cannot be named is cannot plan, exit 2, and changes nothing."""
+    write_fleet(repository, PROBE_ENABLED)
+    del scripted.config["services"]["traefik"]["environment"]["EDGE_DOMAIN"]
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert "cannot plan, compose.yaml gives traefik no EDGE_DOMAIN" in err
+    assert scripted.changing_verbs() == []
+
+
 # --- catalog and compose cannot drift (catalog -> compose) --------------------------------------
 
 
