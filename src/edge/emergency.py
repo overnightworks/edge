@@ -379,7 +379,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel | None
     door = door or tunnel.Tunnel()
     record_failure = _record_global(marks, now)
     try:
-        door.stop(may_ask_password=terminal.at_terminal())
+        door.stop(may_ask_password=sys.stdin.isatty() and sys.stdout.isatty())
         stopped = door.is_inactive()
         boot_protected = door.has_boot_drop_in()
     except tunnel.TunnelError as error:
