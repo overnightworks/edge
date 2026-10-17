@@ -1,8 +1,0 @@
-claim_id = "4dbae3a1e0a64e8ab07a3642fb16a936"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "0eeb5d57c5166a35d2d241fe0f796f6b57ba162b"
-branch = "claude/issue-69-apply-runs-setup"
-scope = ["README.md", "docs/architecture.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "src/edge/apply.py", "src/edge/setup.py", "tests/test_edge_apply.py", "tests/test_edge_setup_run.py"]
-opened_commit = "1b7edd7e2626592d8ab03ab09ed02aae8b782c40"
-whole_reason = "The question, the delegated run, its re-check and the fresh plan are one flow of edge apply; the tests, the probe cell and the two documents describe exactly that flow."
