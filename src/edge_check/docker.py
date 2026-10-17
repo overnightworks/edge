@@ -8,7 +8,7 @@ from edge_check.exposure import PortRange, Protocol, UnreadableOutputError, chec
 EDGE_NAME_LABEL = "edge.name"
 _TRAEFIK_ENABLE_LABEL = "traefik.enable"
 # Traefik reads the label with Go's strconv.ParseBool, so these are exactly the "true" spellings.
-_GO_TRUE_SPELLINGS = frozenset({"1", "t", "T", "true", "TRUE", "True"})
+GO_TRUE_SPELLINGS = frozenset({"1", "t", "T", "true", "TRUE", "True"})
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ def _parse_container(container: dict) -> Container:
     return Container(
         name=name,
         running=container["State"]["Running"],
-        routed=labels.get(_TRAEFIK_ENABLE_LABEL) in _GO_TRUE_SPELLINGS,
+        routed=labels.get(_TRAEFIK_ENABLE_LABEL) in GO_TRUE_SPELLINGS,
         edge_name=labels.get(EDGE_NAME_LABEL),
         publications=_publications(name, container),
     )

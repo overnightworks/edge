@@ -107,6 +107,23 @@ def test_an_explicit_label_router_is_barred_by_its_host_alone(checkout):
     assert rule.startswith("Host(`auth.")
 
 
+@pytest.mark.parametrize("spelling", ["1", "t", "T", "TRUE", "True"])
+def test_every_spelling_traefik_reads_as_true_gets_a_barrier(checkout, spelling):
+    """#61 rule 1: Traefik parses `traefik.enable` with Go's ParseBool, and so does the barrier."""
+    services = {"labels": {"traefik.enable": spelling, "edge.name": "hello"}}
+    ingress = barrier.Barrier.of_unit(
+        {"services": {**config()["services"], "spelled": services}},
+        ["spelled"],
+        checkout,
+        "probe",
+        verifier(lambda *_: NOT_FOUND),
+    )
+
+    ingress.close()
+
+    assert "switch-probe-hello" in parsed(checkout)["http"]["routers"]
+
+
 @pytest.mark.parametrize("service", ["keycloak-db", "internal", "stray", "unnamed"])
 def test_a_unit_without_a_routed_host_gets_no_file_and_is_never_asked(checkout, service):
     ingress = barrier_of(checkout, service, fetch=refused)

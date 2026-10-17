@@ -19,6 +19,8 @@ from typing import Any, Self
 
 import yaml
 
+from edge_check.docker import GO_TRUE_SPELLINGS
+
 DYNAMIC_DIRECTORY = "dynamic"
 TRAEFIK_FILE = "traefik.yml"
 EDGE_NAME_LABEL = "edge.name"
@@ -113,7 +115,7 @@ def routed_names(config: Mapping[str, Any], services: Iterable[str]) -> tuple[st
     for service in services:
         labels = config["services"][service].get("labels", {})
         name = labels.get(EDGE_NAME_LABEL, "")
-        if labels.get(_ROUTED_LABEL) == "true" and _TRAEFIK_NAME.fullmatch(name):
+        if labels.get(_ROUTED_LABEL) in GO_TRUE_SPELLINGS and _TRAEFIK_NAME.fullmatch(name):
             names[name] = None
     return tuple(names)
 
