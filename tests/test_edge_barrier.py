@@ -8,12 +8,13 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
 
-from edge import barrier
+from edge import barrier, catalog, switches
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 ADDRESS = "127.0.0.1:8081"
@@ -362,6 +363,121 @@ def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
 
     assert clock.now <= barrier.VERIFY_SECONDS + 0.5
     assert max(allowed) <= 3.0
+
+
+# prove_active: the one owner that re-proves every active barrier (#80)
+
+MOVED_ADDRESS = "127.0.0.1:9091"
+NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def marks(tmp_path: Path) -> switches.Switches:
+    return switches.Switches(tmp_path / "state")
+
+
+def proofs(
+    checkout: Path, marks: switches.Switches, fetch=lambda *_: NOT_FOUND, **units: tuple[str, ...]
+) -> Iterator[barrier.ActiveProof]:
+    return barrier.prove_active(
+        [catalog.Unit(key, enabled=True, setup=None) for key in units],
+        units,
+        config(),
+        marks,
+        checkout,
+        verifier(fetch),
+    )
+
+
+def test_a_switched_off_unit_with_a_routed_host_has_its_barrier_proven(checkout, marks):
+    """#80 rule 1: the barrier is written and proven, and the unit's outcome is proven."""
+    marks.record("probe", NOW)
+
+    assert list(proofs(checkout, marks, probe=("hello",))) == [barrier.Proven("probe")]
+    assert parsed(checkout)["http"]["routers"]["switch-probe-hello"]
+
+
+def test_a_switched_off_unit_without_a_routed_host_has_no_host_and_no_file(checkout, marks):
+    """#80 rule 1: no host behind Traefik is its own outcome, never asked over HTTP."""
+    marks.record("probe", NOW)
+
+    outcome = list(proofs(checkout, marks, fetch=refused, probe=("keycloak-db",)))
+
+    assert outcome == [barrier.NoHost("probe")]
+    assert not (checkout / "dynamic" / "switch-probe.yml").exists()
+
+
+def test_a_barrier_traefik_does_not_answer_for_is_unproven_with_its_line(checkout, marks):
+    """#80 rule 1: the failure carries the one line of the proof that failed."""
+    marks.record("probe", NOW)
+
+    (outcome,) = proofs(checkout, marks, fetch=lambda *_: PLAIN_NOT_FOUND, probe=("hello",))
+
+    assert outcome == barrier.Unproven(
+        "probe",
+        f"the barrier is written but Traefik did not answer the barrier's 404 "
+        f"({barrier.MARK_HEADER}: probe) for {HOST} within 15 s",
+    )
+
+
+def test_a_moved_edge_address_is_rendered_into_the_barrier_and_proven_there(checkout, marks):
+    """#80 rule 1: re-render and prove, at the edge address traefik.yml gives now."""
+    marks.record("probe", NOW)
+    barrier_of(checkout, "hello").close()
+    (checkout / "traefik.yml").write_text(f"entryPoints:\n  edge:\n    address: {MOVED_ADDRESS}\n")
+    asked = []
+
+    def fetch(
+        address: str, _host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        asked.append(address)
+        return NOT_FOUND
+
+    assert list(proofs(checkout, marks, fetch=fetch, probe=("hello",))) == [barrier.Proven("probe")]
+    deny = parsed(checkout)["http"]["services"]["switch-probe-deny"]["loadBalancer"]
+    assert deny["servers"] == [{"url": f"http://{MOVED_ADDRESS}"}]
+    assert asked == [MOVED_ADDRESS]
+
+
+@pytest.mark.parametrize(
+    ("marked", "standing", "active"),
+    [(True, False, True), (False, True, True), (False, False, False)],
+    ids=["marker only", "barrier a stop left", "neither"],
+)
+def test_a_barrier_is_active_by_its_marker_or_by_a_barrier_left_standing(
+    checkout, marks, marked, standing, active
+):
+    """#80 rule 2: switched off means the marker or the barrier a stop left standing."""
+    if marked:
+        marks.record("probe", NOW)
+    if standing:
+        barrier_of(checkout, "hello").close()
+
+    outcome = list(proofs(checkout, marks, probe=("hello",)))
+
+    assert outcome == ([barrier.Proven("probe")] if active else [])
+    assert (checkout / "dynamic" / "switch-probe.yml").exists() is active
+
+
+def test_outcomes_come_one_by_one_so_a_caller_that_stops_leaves_the_next_untouched(checkout, marks):
+    """#80 rule 1: each active barrier has its own outcome, yielded once its proof ends."""
+    marks.record("hello", NOW)
+    marks.record("auth", NOW)
+
+    def only_auth_is_barred(
+        _address: str, host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        return (
+            barrier.Answer(404, b"404 page not found\n", "auth")
+            if host.startswith("auth.")
+            else WHOAMI
+        )
+
+    outcomes = proofs(checkout, marks, only_auth_is_barred, hello=("hello",), auth=("keycloak",))
+
+    assert isinstance(next(outcomes), barrier.Unproven)
+    assert not (checkout / "dynamic" / "switch-auth.yml").exists()
+    assert list(outcomes) == [barrier.Proven("auth")]
 
 
 @pytest.fixture
