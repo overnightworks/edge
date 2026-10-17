@@ -592,12 +592,10 @@ class Probe:
         return edge_copy.repository_copy(REPO, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
+        """Flip step-ca only: it is the first unit of `fleet.yaml`, and keycloak stays off."""
         fleet = copy / "fleet.yaml"
-        fleet.write_text(
-            fleet.read_text().replace(
-                *((FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF))
-            )
-        )
+        old, new = (FLEET_OFF, FLEET_ON) if enabled else (FLEET_ON, FLEET_OFF)
+        fleet.write_text(fleet.read_text().replace(old, new, 1))
 
     def edge(
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
