@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
-#60 proof 11): a throwaway compose project and a throwaway HOME.
+#60 proof 11, #69 proof 12): a throwaway compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
@@ -12,8 +12,9 @@ stack: the project name and HOME are set in the environment of every command.
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies and proof 11
-drives the emergency switch: the run takes about 20 to 25 minutes, bounded by the 1800 s timeout
+--scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies, proof 11
+drives the emergency switch and proof 12 runs the setup from `edge apply`: the run takes about
+25 to 30 minutes, bounded by the 1800 s timeout
 above. Needs `uv`: proof 8 runs
 `edge-check` through it, proofs 10 and 11 run `uv sync` in a copy of the repository.
 """
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -597,9 +599,17 @@ class Probe:
             )
         )
 
-    def edge(self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0) -> str:
+    def edge(
+        self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
+        typed: bytes = b"yes\n",
+    ) -> str:  # fmt: skip
         return edge_copy.run_edge(
-            copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code
+            copy,
+            self.environment,
+            *arguments,
+            terminal=terminal,
+            exit_code=exit_code,
+            typed=typed,
         )
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
@@ -711,6 +721,45 @@ class Probe:
         expect(NOTHING_TO_CHANGE in out, f"apply in A said: {out[-120:]}")
         print("proof 11 held: stop/start/apply cells A, B, E; switch kept across apply and off")
 
+    # --- edge apply asks for a missing setup and runs it in the terminal (#69) ------------------
+
+    def start_without_keys(self) -> Path:
+        """No keys, no volumes, no containers; an enabled copy of the repository."""
+        self.compose(
+            "down", "--volumes", "--remove-orphans", "--timeout", "10", own_session=True
+        )  # fmt: skip
+        shutil.rmtree(self.secrets_dir, ignore_errors=False)
+        copy = self.repository_copy()
+        self.set_enabled(copy, True)
+        return copy
+
+    def volumes_that_exist(self) -> list[str]:
+        return [
+            volume
+            for volume in self.volume_names()
+            if self.run(["docker", "volume", "inspect", volume], check=False).returncode == 0
+        ]
+
+    def proof_12_apply_runs_the_setup(self) -> None:
+        copy = self.start_without_keys()
+
+        out = self.edge(copy, "apply", "--closed", terminal=True, exit_code=1, typed=b"no\n")
+        expect("aborted, nothing changed" in out, f"a no said: {out[-160:]}")  # (i)
+        expect(not self.secrets_dir.exists(), "keys exist after a no")
+        expect(not self.volumes_that_exist(), "a volume exists after a no")
+        expect(not self.containers_of_unit(running_only=False), "a container exists after a no")
+
+        out = self.edge(copy, "apply", "--closed", terminal=True, typed=b"yes\nyes\n")  # (ii)
+        expect("is not set up" in out and "the plan" in out, f"yes, yes said: {out[-200:]}")
+        expect(out.index("is not set up") < out.index("the plan"), "the plan came first")
+        expect((self.secrets_dir / "root_ca_key").is_file(), "the setup made no root key")
+        self.run([str(REPO / "step-ca" / "init"), "--check"])
+        self.wait_until_answering()
+        expect(len(self.containers_of_unit(running_only=True)) == 2, "step-ca is not on")
+        again = self.edge(copy, "apply", "--closed", terminal=True)
+        expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
+        print("proof 12 held: no changes nothing; yes, yes runs step-ca/init, re-checks, plans, on")
+
     def volume_names_exist(self) -> None:
         for volume in self.volume_names():
             self.run(["docker", "volume", "inspect", volume])
@@ -768,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-11 hold")
+        print("PROBE PASSED: proofs 1-12 hold")
     return exit_code
 
 
@@ -789,6 +838,7 @@ def prove(probe: Probe) -> int:
         probe.proof_9_renewal()
         probe.proof_10_apply_cycle()
         probe.proof_11_emergency_switch()
+        probe.proof_12_apply_runs_the_setup()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
