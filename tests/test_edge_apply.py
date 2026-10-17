@@ -1918,6 +1918,7 @@ def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, se
 RECREATE_TRAEFIK = ["--profile", "*", "up", "-d", "--no-deps", "--force-recreate", "traefik"]
 PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
+UNFINISHED = {"traefik": {}}
 
 
 @pytest.fixture
@@ -1993,7 +1994,6 @@ def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
 ):
     """#85 rules 2, 3, cell U3: `prove_active` runs before the record is written."""
     switch()
-    old_record = applied(state)
     probe_switched_off(scripted, repository, state)
     edit_traefik_yml(repository)
     records_seen = []
@@ -2004,7 +2004,7 @@ def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
     assert exit_code == 0
     assert "traefik: recreate (traefik.yml changed)" in out
     assert RECREATE_TRAEFIK in scripted.calls
-    assert records_seen[0] == old_record
+    assert records_seen[0] == UNFINISHED
     assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
 
 
@@ -2068,7 +2068,7 @@ def test_a_restarting_traefik_is_recreated(core_files, switch, scripted):
     assert RECREATED in out
 
 
-def test_a_failed_recreate_is_partial_keeps_the_record_and_touches_no_unit(
+def test_a_failed_recreate_is_partial_marks_the_record_unfinished_and_touches_no_unit(
     core_files, switch, scripted, repository, state
 ):
     """#85 rule 5, cells U7, U11: `could not recreate traefik`, exit 1, step-ca not started."""
@@ -2079,20 +2079,20 @@ def test_a_failed_recreate_is_partial_keeps_the_record_and_touches_no_unit(
 
     assert exit_code == 1
     assert "partial, could not recreate traefik, `docker compose up` exited 1" in err
-    assert applied(state) is None
+    assert applied(state) == UNFINISHED
     assert unit_calls(scripted) == []
     assert RECREATED not in out
 
 
 def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch, scripted, state):
-    """#85 rule 5, cell U8: not observed running, so partial, exit 1, record old."""
+    """#85 rule 5, cell U8: not observed running, so partial, exit 1, record unfinished."""
     scripted.after_up = lambda: scripted.containers.update(traefik="exited")
 
     exit_code, out, err = switch()
 
     assert exit_code == 1
     assert "partial, traefik is not running after the recreate" in err
-    assert applied(state) is None
+    assert applied(state) == UNFINISHED
     assert RECREATED not in out
 
 
@@ -2100,25 +2100,26 @@ def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_ru
     core_files, switch, scripted, state
 ):
     """#85 rule 3, rule 5: a traefik.yml Traefik cannot load lets it run for a moment, then it
-    restarts on every start; that is not running, so partial, exit 1, the record stays old and
-    the next run plans the recreate again."""
+    restarts on every start; that is not running, so partial, exit 1, the record says unfinished
+    and the next run plans the recreate again."""
     scripted.crash_loops.add("traefik")
 
     exit_code, out, err = switch()
 
     assert exit_code == 1
     assert "partial, traefik is not running after the recreate" in err
-    assert applied(state) is None
+    assert applied(state) == UNFINISHED
     assert RECREATED not in out
     assert scripted.containers["traefik"] == "restarting"
     _, again, _ = switch("no")
-    assert "traefik: recreate (traefik.yml has no applied record)" in again
+    assert "traefik: recreate (the last recreate did not finish)" in again
 
 
 def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recreates_again(
     core_files, switch, scripted, repository, state, ingress
 ):
-    """#85 rule 5, S9, cell U9: partial naming the unit, record old, the next run plans again."""
+    """#85 rule 5, S9, cell U9: partial naming the unit, record unfinished, the next run plans
+    again."""
     probe_switched_off(scripted, repository, state)
     ingress.rejecting = True
 
@@ -2126,12 +2127,40 @@ def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recr
 
     assert exit_code == 1
     assert "partial, the barrier of probe is not proven after the traefik recreate" in err
-    assert applied(state) is None
+    assert applied(state) == UNFINISHED
     assert RECREATED not in out
     ingress.rejecting = False
     exit_code, out, _ = switch()
     assert exit_code == 0
-    assert "traefik: recreate (traefik.yml has no applied record)" in out
+    assert "traefik: recreate (the last recreate did not finish)" in out
+
+
+@pytest.mark.parametrize("failure", ["unproven barrier", "traefik not running"])
+def test_a_recreate_that_did_not_finish_is_planned_again_after_traefik_yml_is_reverted(
+    failure, core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rule 5, S9: a partial recreate leaves no entry that the reverted file could match, so
+    the next run recreates again instead of saying `nothing to change`."""
+    probe_switched_off(scripted, repository, state)
+    assert switch()[0] == 0
+    recorded = (repository / "traefik.yml").read_text()
+    edit_traefik_yml(repository)
+    if failure == "unproven barrier":
+        ingress.rejecting = True
+    else:
+        scripted.after_up = lambda: scripted.containers.update(traefik="exited")
+    assert switch()[0] == 1
+    (repository / "traefik.yml").write_text(recorded)
+    ingress.rejecting = False
+    scripted.after_up = None
+    scripted.containers["traefik"] = "running"
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert RECREATED in out
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
 
 
 def test_a_traefik_yml_changed_during_the_recreate_is_recreated_again_by_the_next_run(

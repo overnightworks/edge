@@ -8,7 +8,9 @@ live through Traefik's watch and needs no record.
 `~/.local/state/edge/applied.json`, beside the switches, holds for each core service the sha256 of
 each file bind's bytes as last fully applied: `{service: {path in the checkout: sha256}}`. A
 service is changed when a file bind read now differs from its entry; a missing, unreadable or
-malformed record, a missing entry or an entry naming another file counts as changed.
+malformed record, a missing entry or an entry naming another file counts as changed. An empty entry
+`{service: {}}` is written before a recreate starts and replaced only when it finished, so a
+recreate that did not finish is planned again whatever the file holds now (rule 5).
 """
 
 import hashlib
@@ -102,6 +104,11 @@ class Record:
             return Reading({}, f"{APPLIED_FILE} is malformed")
         return Reading(entries)
 
+    def mark_unfinished(self, service: str) -> None:
+        """Empty the service's entry before its recreate starts, so a run that ends partial
+        leaves nothing that could match the file later."""
+        self.write(service, {})
+
     def write(self, service: str, applied: Digests) -> None:
         """Set the service's entry; an unreadable or malformed record is replaced whole."""
         entries = {**self.read().entries, service: dict(applied)}
@@ -170,6 +177,8 @@ def plan_core(
 def _why_changed(current: Digests, reading: Reading, service: str) -> str | None:
     if reading.problem:
         return reading.problem
+    if reading.entries.get(service) == {}:
+        return "the last recreate did not finish"
     applied = reading.entries.get(service, {})
     for name, digest in current.items():
         if name not in applied:

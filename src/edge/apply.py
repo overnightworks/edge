@@ -361,12 +361,14 @@ class CorePhase:
     ) -> str | None:
         """Recreate, observe running, prove every active barrier, and only then record each
         service with its plan-time digests (rule 3); the failure line of the first step that
-        fails, whose service keeps its old entry (rule 5)."""
+        fails, whose service is left marked unfinished, so the next run recreates it (rule 5)."""
         for plan in planned.core:
             if plan.action is not core.CoreAction.RECREATE:
                 continue
             progress.unit = plan.service
             try:
+                progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
+                self.record.mark_unfinished(plan.service)
                 progress.step = f"recreate {plan.service}"
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"

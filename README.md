@@ -220,9 +220,11 @@ services:
 fasst es nicht an; `traefik` erstellt es vor allen Einheiten neu (`up -d --no-deps
 --force-recreate traefik`, im selben Plan, mit demselben `yes`), wenn `traefik.yml` sich seit dem
 letzten vollstaendigen Lauf geaendert hat oder dafuer kein Eintrag in
-`~/.local/state/edge/applied.json` steht. Erst wenn Traefik laeuft und jede aktive Sperre
-bewiesen ist, schreibt es den Eintrag; scheitert ein Schritt, ist der Lauf teilweise (Exit 1),
-keine Einheit wird geschaltet und der naechste Lauf versucht es wieder. Ein gestopptes Traefik
+`~/.local/state/edge/applied.json` steht. Vor dem Neuerstellen leert es den Eintrag; erst wenn
+Traefik laeuft und jede aktive Sperre bewiesen ist, schreibt es ihn neu; scheitert ein Schritt,
+ist der Lauf teilweise (Exit 1), keine Einheit wird geschaltet und der naechste Lauf versucht es
+wieder ("traefik: recreate (the last recreate did not finish)"), auch wenn `traefik.yml`
+inzwischen wieder auf dem alten Stand ist. Ein gestopptes Traefik
 nennt es nur ("traefik is not running and is not started") und startet es nie. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
