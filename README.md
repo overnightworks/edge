@@ -275,8 +275,10 @@ Der globale Schalter: `edge stop --all` nimmt den PC sofort vom Internet. Es sch
 `~/.local/state/edge/global-stop` (eine eigene Datei neben `stopped/`; ein zweites Stop behaelt die
 erste Zeit), ohne auf `switch.lock` zu warten, stoppt dann `cloudflared.service`, schreibt den
 Schalter unter `switch.lock` noch einmal (ein `start`, der ihn inzwischen loeschte, macht ihn nicht
-rueckgaengig) und meldet Erfolg erst, wenn `systemctl is-active` den Tunnel als beendet
-(`inactive` oder `failed`) zeigt; ein Fehler des Stopps allein aendert das nicht. Die Einheiten laufen lokal weiter
+rueckgaengig; scheitert dieses Schreiben und fehlt der Schalter danach, meldet es "partial: the
+global switch could not be recorded", Exit 1) und meldet Erfolg erst, wenn `systemctl is-active`
+den Tunnel als beendet (`inactive` oder `failed`) zeigt; ein Fehler des Stopps allein aendert das
+nicht. Die Einheiten laufen lokal weiter
 und ihre Schalter bleiben. An einem Terminal fragt das System selbst nach dem Passwort; ohne
 Terminal (Agent) laeuft `systemctl --no-ask-password`. Exit 1 heisst teilweise: "partial", wenn
 der Tunnel noch laeuft (Schalter bleibt; `sudo systemctl stop cloudflared`), und "incomplete", wenn
