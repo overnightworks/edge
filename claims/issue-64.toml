@@ -1,8 +1,0 @@
-claim_id = "99b0184b161d41b3a2fc4880dbe52563"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "7ee057d4e9272b13f148d5732b6650ccf57e5f01"
-branch = "claude/issue-64-keycloak-unit"
-scope = ["README.md", "docs/naming.md", "fleet.yaml", "keycloak/go-live", "tests/test_keycloak_go_live.py", "tests/test_keycloak_unit.py"]
-opened_commit = "8966853a2e0a82f6420d9bddac27222745fbb382"
-whole_reason = "The catalog line, go-live's marker check and their tests are one switchable unit; the README and naming lines describe exactly that unit."
