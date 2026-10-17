@@ -19,6 +19,11 @@ STOP = "edge stop"
 START = "edge start"
 
 
+def _at_terminal() -> bool:
+    """True when stdin and stdout are both a terminal, so somebody can answer a prompt."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _say(command: str, line: str) -> None:
     print(f"{command}: {line}")
 
@@ -386,7 +391,7 @@ def _global_time(marks: switches.Switches) -> str:
 def _stop_failure(door: tunnel.Tunnel) -> str | None:
     """Ask the system to stop the tunnel; why it could not even be asked, if it could not."""
     try:
-        door.stop(may_ask_password=terminal.at_terminal())
+        door.stop(may_ask_password=_at_terminal())
     except tunnel.TunnelError as error:
         return f"the tunnel could not be stopped, {error}"
     except KeyboardInterrupt:
@@ -478,7 +483,7 @@ def _tunnel_closed_clause(door: tunnel.Tunnel) -> str:
     """Stop the tunnel if it runs, then say what was observed; never claim a closed state unseen."""
     try:
         if not door.is_inactive():
-            door.stop(may_ask_password=terminal.at_terminal())
+            door.stop(may_ask_password=_at_terminal())
         if door.is_inactive():
             return "the tunnel is closed"
     except (tunnel.TunnelError, KeyboardInterrupt):
