@@ -5,3 +5,7 @@ services:
     run:
       enabled: false
       setup: step-ca/init
+  keycloak:
+    run:
+      enabled: false
+      setup: keycloak/go-live

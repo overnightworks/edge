@@ -79,11 +79,19 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 
 ```sh
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
-docker compose --profile keycloak up -d
+# `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
+# fleet.yaml; it refuses until `keycloak/go-live` is done.
+edge apply --closed
 # Traefik reads traefik.yml (its entrypoints) only when it starts, and a plain `up -d`
 # keeps a running Traefik whose service definition did not change.
 docker compose --profile keycloak up -d --force-recreate socket-proxy traefik
 ```
+
+Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
+`keycloak-db` and `keycloak` and keeps the volume `keycloak-db`, `~/.secrets/keycloak` and
+the `keycloak` network; switching it on again uses the same database. Removing the entry
+from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
+`127.0.0.1:8090` answer depends on Traefik, which `edge apply` does not touch.
 
 Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
 listen, an unknown host gets 404 on 8081, and Keycloak (with its database)
@@ -637,8 +645,8 @@ environment entry in any compose file Compose may load (`compose*.yaml`,
 
 ### Start and apply
 
-Start the stack as in [Start, readiness, stop](#start-readiness-stop), Traefik
-included, and wait until the readiness check prints `ready`. Then apply
+Start the stack as in [Start, readiness, stop](#start-readiness-stop) (Keycloak with
+`edge apply --closed`), Traefik included, and wait until the readiness check prints `ready`. Then apply
 `keycloak/*.yaml`:
 
 ```sh
@@ -664,6 +672,13 @@ can be run again after any interruption: every step first checks whether it is
 done and the run continues at the first unfinished one. A failure ends with one
 line naming the step and exit code 1. It never prints a secret.
 
+**The emergency switch.** While `~/.local/state/edge/stopped/keycloak` exists (`edge stop
+keycloak`), go-live refuses at the start of its run, asks nothing and starts nothing:
+``go-live: refused, keycloak is switched off (since …); `edge start keycloak` ends the switch``
+(exit 1). It reads the marker again, under the switch lock, right before each start (step 3,
+step 4b, step 5), so a stop made during the run wins. `--check` starts nothing and ignores the
+marker. `edge apply --closed` runs only `keycloak/go-live --check`, never go-live itself.
+
 - **1. Backup.** It asks once whether to continue without the Keycloak backup
    (K11b has not landed). There is no default; the answer is yours. It is done once
    Keycloak's database volume exists (the first start creates it), so a "no"
@@ -673,7 +688,8 @@ line naming the step and exit code 1. It never prints a secret.
    some of the files exist it refuses and names the missing ones.
    The one exception: once Keycloak's database exists, a missing
    `bootstrap-admin-password` alone means step 7 has already retired it, and the
-   run goes on.
+   run goes on. If the database volume is missing as well, the line names the volume
+   `keycloak-db`; nothing is deleted.
 - **3. First start** with the temporary admin `temp-admin`.
 - **4a. Master on the admin entrypoint**, with `temp-admin`. The apply cannot move the
    master realm itself, because the move changes the issuer of the token it signs in with.
@@ -712,7 +728,8 @@ keycloak/go-live --check
 It reads only go-live's durable trace, so Keycloak need not run: it is done when
 `db-password` and `config-cli-secret` exist in `~/.secrets/keycloak/`,
 `bootstrap-admin-password` does not (only step 7 deletes it, after it deleted
-`temp-admin`), and the `keycloak-db` volume exists. It asks nothing, prints no
+`temp-admin`), and the `keycloak-db` volume exists. It is also the setup check of `edge apply
+--closed` for the unit `keycloak`. It asks nothing, prints no
 secret and creates or changes no file, directory, volume or container. A
 bootstrap file deleted by hand reads as done; a full `keycloak/go-live` run still
 checks `temp-admin` through the admin API.
@@ -725,7 +742,9 @@ checks `temp-admin` through the admin API.
 
 #### Fallback: the steps by hand
 
-If the script cannot be used, the same steps by hand, in this order:
+If the script cannot be used, the same steps by hand, in this order (they do not read the
+marker `stopped/keycloak`: check `ls ~/.local/state/edge/stopped` first and do not start a
+switched-off Keycloak):
 
 - **1. Backup.** Decide once whether to continue without the Keycloak backup
    (K11b has not landed); stop here if you do not accept that.
