@@ -379,12 +379,11 @@ def test_an_app_command_that_exits_like_restic_fails_only_its_app(
 
 def test_a_status_write_failure_stops_the_run_before_the_next_app(edge_backup, machine, home):
     """#71 rule 3: a status failure aborts the run at once."""
+    arguments = declare_two_apps(home)
     machine.status_unwritable_after_backup = True
-    try:
-        with pytest.raises(PermissionError):
-            edge_backup(*declare_two_apps(home), "backup")
-    finally:
-        machine.status_file.parent.chmod(0o700)
+
+    with pytest.raises(PermissionError):
+        edge_backup(*arguments, "backup")
 
     assert machine.labels().count("pg_dump") == 1
     assert "restic forget" not in machine.labels()

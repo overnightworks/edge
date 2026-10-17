@@ -121,8 +121,11 @@ class Status:
         return replace(self, phase=phase)
 
     def backed_up(self, app: str, at: datetime, snapshot_id: str) -> "Status":
-        history = replace(
-            self._history_of(app), last_successful_backup=at, last_snapshot_id=snapshot_id
+        previous = self._history_of(app)
+        history = AppHistory(
+            last_snapshot_id=snapshot_id,
+            last_successful_backup=at,
+            last_successful_restore_test=previous.last_successful_restore_test,
         )
         return self._with_history(app, history)
 

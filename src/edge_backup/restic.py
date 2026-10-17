@@ -161,9 +161,7 @@ def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) 
         return host.run(restic_argv(settings, command, *mounts), label=label)
     except host.HostCommandError as error:
         if error.exit_code in REPOSITORY_EXIT_CODES:
-            raise RepositoryUnusableError(
-                label, f"endete mit Exit {error.exit_code}", error.exit_code
-            ) from error
+            raise RepositoryUnusableError(label, error.reason, error.exit_code) from error
         raise
 
 

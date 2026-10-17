@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -23,13 +24,15 @@ def home(tmp_path, monkeypatch) -> Path:
 
 
 @pytest.fixture
-def machine(monkeypatch, home) -> Machine:
+def machine(monkeypatch, home) -> Iterator[Machine]:
     machine = Machine(status_file=home / ".local/state/edge/backup-status.json")
     monkeypatch.setattr(host, "run", machine.run)
     monkeypatch.setattr(host, "now", machine.clock.now)
     monkeypatch.setattr(host, "monotonic", machine.clock.monotonic)
     monkeypatch.setattr(host, "sleep", machine.clock.sleep)
-    return machine
+    yield machine
+    if machine.status_file.parent.exists():
+        machine.status_file.parent.chmod(0o700)
 
 
 def _status_if_readable(status_file: Path) -> dict | None:

@@ -22,6 +22,8 @@ class HostCommandError(HostError):
     """A command could not run, did not answer in time or exited non-zero; never names argv."""
 
     def __init__(self, label: str, reason: str, exit_code: int | None = None) -> None:
+        self.label = label
+        self.reason = reason
         self.exit_code = exit_code
         super().__init__(f"{label} {reason}")
 
