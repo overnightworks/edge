@@ -50,6 +50,7 @@ HOST = f"hello.{DOMAIN}"
 EDGE_ADDRESS = ("127.0.0.1", 8081)
 FLEET = "cloudflare:\ngithub:\nservices:\n  probe:\n    run:\n      enabled: true\n"
 NOT_FOUND = (404, b"404 page not found\n", UNIT)  # status, body, X-Edge-Barrier
+UNCONFIGURED = (404, b"404 page not found\n", None)  # a Traefik that has loaded no router yet
 WHOAMI_SEEN = b"Hostname:"
 HELLO_ANSWERING = "hello answering"
 NOTHING_TO_CHANGE = "nothing to change"
@@ -140,22 +141,27 @@ class Probe:
     def answers_the_barrier(self) -> bool:
         return self.ask() == NOT_FOUND
 
-    def stays_behind_the_barrier(self, seconds: int, *, may_not_listen_yet: bool = False) -> int:
+    def stays_behind_the_barrier(self, seconds: int, *, traefik_starting: bool = False) -> int:
         """Every request for `seconds` answers the barrier's 404, from the first one; the number of
-        requests. With `may_not_listen_yet` the nothing-listens answers before the first answer
-        do not count, and the window starts at that first answer."""
+        requests. With `traefik_starting` the answers of a starting Traefik before the
+        first barrier answer do not count, and the window starts at that answer: nothing listens
+        yet, or Traefik listens before its providers' first configuration and answers its plain
+        404, which reaches no backend either. Whoami answering always fails."""
         asked = 0
         waiting_since = time.monotonic()
         end = waiting_since + seconds
         while time.monotonic() < end:
             answer = self.ask()
-            if answer is None and may_not_listen_yet:
-                expect(time.monotonic() - waiting_since < READY_SECONDS, "traefik never listened")
+            if answer in (None, UNCONFIGURED) and traefik_starting:
+                expect(
+                    time.monotonic() - waiting_since < READY_SECONDS,
+                    f"traefik never served the barrier (last answer {answer})",
+                )
                 end = time.monotonic() + seconds
                 time.sleep(POLL_SECONDS)
                 continue
             expect(answer == NOT_FOUND, f"a request behind the barrier answered {answer}")
-            may_not_listen_yet = False
+            traefik_starting = False
             asked += 1
             time.sleep(POLL_SECONDS)
         return asked
@@ -189,7 +195,7 @@ class Probe:
     def cell_4_traefik_restart(self) -> None:
         expect(self.hello_state() == "running", "hello is not running before the restart")
         self.compose("restart", "traefik")
-        asked = self.stays_behind_the_barrier(BEHIND_BARRIER_SECONDS, may_not_listen_yet=True)
+        asked = self.stays_behind_the_barrier(BEHIND_BARRIER_SECONDS, traefik_starting=True)
         expect(self.hello_state() == "running", "hello stopped across the restart")
         print(f"proof 4 held: after restarting traefik {asked} requests in 10 s all answered 404")
 
