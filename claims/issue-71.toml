@@ -1,0 +1,8 @@
+claim_id = "490ecda497e54a02a8ed9a94c698d9c4"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "0eeb5d57c5166a35d2d241fe0f796f6b57ba162b"
+branch = "claude/issue-71-status-per-app"
+scope = ["README.md", "docs/architecture.md", "src/edge_backup/cli.py", "src/edge_backup/runner.py", "src/edge_backup/status.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_restore_safety.py"]
+opened_commit = "ce4a4084cb266d41e1e75dc8d509686eb0395339"
+whole_reason = "The schema, its migration, the per-app recording and the per-app reads are one status contract; splitting them leaves a status that one side cannot read."
