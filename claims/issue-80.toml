@@ -1,7 +1,0 @@
-claim_id = "a94fe06db028433698aaef5ad66af678"
-agent = "claude"
-role = "builder"
-base = "2f19ba7123aa54126e3a6485a1fb9b75208bef9c"
-branch = "claude/issue-80-barrier-proof-owner"
-scope = ["src/edge/barrier.py", "src/edge/emergency.py", "tests/test_edge_barrier.py"]
-opened_commit = "5debb08879582c993e8a6742a0bc6bd8a5a676e7"
