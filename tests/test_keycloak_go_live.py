@@ -1036,8 +1036,10 @@ def test_starts_hold_the_switch_lock_and_prompts_leave_it_free(go_live, marks):
 
     assert go_live.run() == 0
 
-    assert free_during_starts and not any(free_during_starts)
-    assert len(free_during_prompts) == 2 and all(free_during_prompts)
+    assert free_during_starts
+    assert not any(free_during_starts)
+    assert len(free_during_prompts) == 2
+    assert all(free_during_prompts)
 
 
 def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, keycloak, marks):
