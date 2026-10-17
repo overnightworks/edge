@@ -1,10 +1,11 @@
 """`edge`: dispatches to its subcommands (`apply`, `stop`, `start` and `external`)."""
 
 import argparse
+import os
 import sys
 from datetime import datetime
 
-from edge import apply, emergency, switches
+from edge import apply, emergency, switches, tunnel
 from edge.external import cli as external_cli
 
 PUBLISH_PHASE_MISSING = (
@@ -59,7 +60,9 @@ def add_unit_or_all(parser: argparse.ArgumentParser, all_help: str) -> None:
 def stop_command(arguments: argparse.Namespace) -> int:
     if arguments.all:
         return emergency.stop_all(
-            switches.Switches(switches.default_state_directory()), datetime.now().astimezone()
+            switches.Switches(switches.default_state_directory()),
+            datetime.now().astimezone(),
+            tunnel.Tunnel.from_environment(os.environ),
         )
     return emergency.stop_unit(
         switches.Switches(switches.default_state_directory()),
@@ -71,7 +74,9 @@ def stop_command(arguments: argparse.Namespace) -> int:
 def start_command(arguments: argparse.Namespace) -> int:
     if arguments.all:
         return emergency.start_all(
-            switches.Switches(switches.default_state_directory()), datetime.now().astimezone()
+            switches.Switches(switches.default_state_directory()),
+            datetime.now().astimezone(),
+            tunnel.Tunnel.from_environment(os.environ),
         )
     return emergency.start_unit(
         switches.Switches(switches.default_state_directory()), arguments.unit

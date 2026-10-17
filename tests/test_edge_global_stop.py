@@ -378,3 +378,24 @@ def test_a_unit_and_all_exclude_each_other_and_one_is_required(arguments, capsys
 
     assert refused.value.code == 2
     assert "usage:" in capsys.readouterr().err
+
+
+def test_the_tunnel_is_cloudflared_of_the_system_manager_unless_the_environment_names_another():
+    default = tunnel.Tunnel.from_environment({})
+    probe = tunnel.Tunnel.from_environment(
+        {tunnel.UNIT_VARIABLE: "edge-probe-tunnel-1.service", tunnel.MANAGER_VARIABLE: "user"}
+    )
+
+    assert (default.unit, default.manager) == ("cloudflared.service", tunnel.Manager.SYSTEM)
+    assert (probe.unit, probe.manager) == ("edge-probe-tunnel-1.service", tunnel.Manager.USER)
+
+
+def test_a_user_manager_tunnel_is_driven_with_systemctl_user_and_needs_no_authorization(systemd):
+    user_tunnel = tunnel.Tunnel("edge-probe-tunnel-1.service", tunnel.Manager.USER, systemd.run)
+
+    user_tunnel.stop(may_ask_password=False)
+
+    assert systemd.calls == [
+        ["systemctl", "--user", "--no-ask-password", "stop", "edge-probe-tunnel-1.service"]
+    ]
+    assert user_tunnel.authorized_to_start(1)

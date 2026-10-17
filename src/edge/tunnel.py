@@ -6,13 +6,16 @@ a throwaway user unit in place of `cloudflared.service`.
 """
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 CLOUDFLARED_UNIT = "cloudflared.service"
 BOOT_DROP_IN = "30-edge-global-stop.conf"
 MANAGE_UNITS_ACTION = "org.freedesktop.systemd1.manage-units"
+UNIT_VARIABLE = "EDGE_TUNNEL_UNIT"
+MANAGER_VARIABLE = "EDGE_TUNNEL_MANAGER"
 _SECONDS = 120
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -23,8 +26,12 @@ class TunnelError(Exception):
 
 
 class Manager(StrEnum):
-    SYSTEM = "--system"
-    USER = "--user"
+    SYSTEM = "system"
+    USER = "user"
+
+    @property
+    def flag(self) -> str:
+        return f"--{self.value}"
 
 
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -42,6 +49,14 @@ class Tunnel:
     unit: str = CLOUDFLARED_UNIT
     manager: Manager = Manager.SYSTEM
     run: Runner = run_command
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str]) -> Self:
+        """`cloudflared.service` of the system manager unless the probe names a throwaway unit."""
+        return cls(
+            environment.get(UNIT_VARIABLE, CLOUDFLARED_UNIT),
+            Manager(environment.get(MANAGER_VARIABLE, Manager.SYSTEM)),
+        )
 
     def stop(self, *, may_ask_password: bool) -> None:
         """Ask for the stop; whether it happened is for `is_inactive` to say. Without a terminal
@@ -77,4 +92,4 @@ class Tunnel:
         return self._systemctl("is-active").stdout.strip()
 
     def _systemctl(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        return self.run(["systemctl", str(self.manager), *arguments, self.unit])
+        return self.run(["systemctl", self.manager.flag, *arguments, self.unit])
