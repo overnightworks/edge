@@ -8,8 +8,10 @@ checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on 127.0.0
 the barrier, also after a Traefik restart with the container up. It always removes its
 containers, networks and volumes. Cell 8 (#70) drives `edge stop --all` and `edge start --all` on a
 throwaway `systemctl --user` unit `edge-probe-tunnel-<random>.service` (`sleep infinity`) that it
-removes again; the real `cloudflared.service` is never named. It never touches the live stack or
-the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
+removes again, with the real boot drop-in of `tunnel/`: a start while the global marker exists is
+skipped (#76 cells 7-8); the real `cloudflared.service` is never named. It never touches the
+live stack or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it
+runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
@@ -34,9 +36,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
+
+from edge import tunnel  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -55,7 +60,7 @@ POLL_SECONDS = 0.2
 COMPOSE_SECONDS = 300
 NOT_RUNNABLE = 3
 SYSTEMCTL_SECONDS = 60
-GLOBAL_STOP_DROP_IN = "30-edge-global-stop.conf"
+BOOT_DROP_IN_SOURCE = REPO / "tunnel" / f"{tunnel.CLOUDFLARED_UNIT}.d" / tunnel.BOOT_DROP_IN
 TUNNEL_UNIT_TEXT = "[Service]\nExecStart=/usr/bin/sleep infinity\n"
 
 
@@ -205,35 +210,43 @@ class Probe:
         print(f"proof 6 held: start removed barrier and marker; {HOST} answers whoami")
 
     def cell_8_global_stop(self) -> None:
-        tunnel = ThrowawayTunnel()
-        self.environment["EDGE_TUNNEL_UNIT"] = tunnel.name
+        throwaway = ThrowawayTunnel(self.home)
+        self.environment["EDGE_TUNNEL_UNIT"] = throwaway.name
         self.environment["EDGE_TUNNEL_MANAGER"] = "user"
         global_marker = self.home / ".local" / "state" / "edge" / "global-stop"
         try:
             self.edge(
                 "stop", UNIT, terminal=False
             )  # the unit barrier to be proven before reopening
-            tunnel.install()
+            throwaway.install()
             stopped = self.edge("stop", "--all", terminal=False)
             expect("the tunnel is stopped" in stopped, f"stop --all said: {stopped[-160:]}")
-            expect(tunnel.state() == "inactive", f"the tunnel is {tunnel.state()} after stop --all")
+            expect(
+                throwaway.state() == "inactive",
+                f"the tunnel is {throwaway.state()} after stop --all",
+            )
             expect(global_marker.is_file(), "stop --all wrote no global marker")
+            throwaway.start_is_skipped()
             self.barrier.unlink()  # start --all renders the barrier again before it proves it
             started = self.edge("start", "--all", terminal=True)
             expect(
                 f"the barrier of {UNIT} is proven" in started, f"start --all said: {started[-200:]}"
             )
-            expect(tunnel.state() == "active", f"the tunnel is {tunnel.state()} after start --all")
+            expect(
+                throwaway.state() == "active",
+                f"the tunnel is {throwaway.state()} after start --all",
+            )
             expect(not global_marker.exists(), "start --all left the global marker")
             expect(self.marker.is_file() and self.answers_the_barrier(), "the unit switch fell")
         finally:
-            tunnel.remove()
+            throwaway.remove()
             self.environment.pop("EDGE_TUNNEL_UNIT")
             self.environment.pop("EDGE_TUNNEL_MANAGER")
         self.edge("start", UNIT, terminal=True)
         print(
-            "PROOF 8 held: stop --all left the throwaway unit inactive with the marker; "
-            "start --all proved the unit barrier, reopened it and cleared only the marker"
+            "PROOF 8 held: stop --all left the throwaway unit inactive with the marker, and its "
+            "boot drop-in skipped a start; start --all proved the unit barrier, reopened it "
+            "and cleared only the marker"
         )
 
     def cell_7_traefik_down(self) -> None:
@@ -251,13 +264,15 @@ class Probe:
 
 class ThrowawayTunnel:
     """A user unit that stands in for the tunnel, in the user manager's runtime directory (a tmpfs
-    that is gone after a logout), with the boot drop-in the real unit gets from SW2c."""
+    that is gone after a logout), with the real boot drop-in of `tunnel/` rendered for the
+    probe's HOME (#76 cells 7-8)."""
 
-    def __init__(self) -> None:
+    def __init__(self, home: Path) -> None:
         self.name = f"edge-probe-tunnel-{secrets.token_hex(4)}.service"
         runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "systemd" / "user"
         self.unit_file = runtime / self.name
-        self.drop_in = runtime / f"{self.name}.d" / GLOBAL_STOP_DROP_IN
+        self.drop_in = runtime / f"{self.name}.d" / tunnel.BOOT_DROP_IN
+        self.drop_in_text = BOOT_DROP_IN_SOURCE.read_text().replace("@HOME@", str(home))
 
     def systemctl(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -268,11 +283,20 @@ class ThrowawayTunnel:
     def install(self) -> None:
         self.drop_in.parent.mkdir(parents=True)
         self.unit_file.write_text(TUNNEL_UNIT_TEXT)
-        self.drop_in.write_text("[Unit]\nDescription=edge probe tunnel\n")
+        self.drop_in.write_text(self.drop_in_text)
         self.systemctl("daemon-reload")
         expect(
             self.systemctl("start", self.name).returncode == 0, "the throwaway unit did not start"
         )
+        expect(self.state() == "active", f"without the marker the unit is {self.state()}")
+
+    def start_is_skipped(self) -> None:
+        """With the global marker present a start, as at boot, leaves the unit off."""
+        started = self.systemctl("start", self.name)
+        expect(started.returncode == 0, f"the skipped start failed: {started.stderr.strip()}")
+        expect(self.state() == "inactive", f"with the marker the unit is {self.state()}")
+        condition = self.systemctl("show", "--property=ConditionResult", "--value", self.name)
+        expect(condition.stdout.strip() == "no", "the boot drop-in's condition was not checked")
 
     def state(self) -> str:
         return self.systemctl("is-active", self.name).stdout.strip()
