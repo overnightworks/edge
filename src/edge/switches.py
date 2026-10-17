@@ -14,7 +14,7 @@ import fcntl
 import os
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -169,10 +169,9 @@ def _unlink(path: Path, what: str) -> None:
 
 
 def _link_unless_present(source: str, path: Path) -> None:
-    try:
+    # the first writer's time stands
+    with suppress(FileExistsError):
         os.link(source, path)
-    except FileExistsError:
-        pass  # the first writer's time stands
 
 
 def _write_atomically(path: Path, text: str, *, keep_existing: bool) -> None:
