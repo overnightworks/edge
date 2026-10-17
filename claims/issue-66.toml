@@ -1,0 +1,8 @@
+claim_id = "e5b2c8b9063b48739cf7e9df39464e28"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "d0fa24a8592a9e4fabf3390de45c199767751864"
+branch = "claude/issue-66-realm-reconcile"
+scope = ["README.md", "compose.yaml", "probe/keycloak/README.md", "probe/keycloak/probe.py", "src/edge/apply.py", "src/edge/compose.py", "src/edge/realm.py", "tests/test_realm_apply.py"]
+opened_commit = "954427a5ccad4b39e4240b0344e944c4342878eb"
+whole_reason = "The cache setting, the no-delete run, its place in apply's plan and the probe that proves U1 are one reconcile; none of them is useful alone."
