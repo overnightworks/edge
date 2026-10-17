@@ -3,6 +3,6 @@ agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
 role = "builder"
 base = "7ee057d4e9272b13f148d5732b6650ccf57e5f01"
 branch = "claude/issue-61-ingress-barrier"
-scope = [".gitignore", "README.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "sonar-project.properties", "src/edge/barrier.py", "src/edge/emergency.py", "tests/test_edge_apply.py", "tests/test_edge_barrier.py"]
+scope = [".gitignore", "README.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "sonar-project.properties", "src/edge/barrier.py", "src/edge/emergency.py", "src/edge_check/docker.py", "tests/test_edge_apply.py", "tests/test_edge_barrier.py"]
 opened_commit = "e0485bff635c5fcb065cd9ff65d8079df29e61af"
 whole_reason = "The barrier, its verification in stop and its removal in start are one guard; the probe and its shared helper prove it, and the gitignore line keeps it out of the live checkout's status."
