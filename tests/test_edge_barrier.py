@@ -6,6 +6,8 @@ import http.client
 import socket
 import subprocess
 import threading
+import time
+import types
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -19,7 +21,8 @@ ADDRESS = "127.0.0.1:8081"
 NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
 PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's ordinary no-route answer
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
-TIME_ALLOWED = 0.3
+TIME_ALLOWED = 0.3  # cut-off tests: slowness only makes them fail sooner
+GENEROUS_TIME = 10.0  # success tests return as soon as the answer is in
 HOST = "hello.probe.invalid"
 Script = Callable[[socket.socket, threading.Event], None]
 KEYCLOAK_RULE = "Host(`auth.probe.invalid`) && PathPrefix(`/realms`)"
@@ -371,48 +374,97 @@ def serve() -> Iterator[Callable[[Script], str]]:
 
     yield start
     ended.set()
-    server.close()  # an accept still waiting fails and ends its worker
+    # shutdown wakes an accept still waiting, which fails and ends its worker
+    server.shutdown(socket.SHUT_RDWR)
+    server.close()
     for worker in workers:
         worker.join(timeout=5)
         assert not worker.is_alive()
 
 
-def trickle(connection: socket.socket, ended: threading.Event, head: bytes) -> None:
-    """Send `head`, then one more byte as soon as the last was taken, until the test ends."""
-    connection.recv(4096)
-    connection.sendall(head)
-    while not ended.is_set():
+@pytest.fixture
+def clock_ticking_per_read(monkeypatch) -> None:
+    """Every look at the clock costs 0.1 s, so a deadline passes after a few reads however fast
+    the bytes arrive."""
+    now = [0.0]
+
+    def monotonic() -> float:
+        now[0] += 0.1
+        return now[0]
+
+    monkeypatch.setattr(barrier, "time", types.SimpleNamespace(monotonic=monotonic))
+
+
+def flood(head: bytes) -> Script:
+    """Send `head`, then bytes for as long as the client takes them; the send blocks while the
+    client does not read and fails once the client has closed."""
+
+    def script(connection: socket.socket, ended: threading.Event) -> None:
+        connection.recv(4096)
         try:
-            connection.sendall(b"x")
+            connection.sendall(head)
+            while not ended.is_set():
+                connection.sendall(b"x" * 64)
         except OSError:
             return
-        ended.wait(0.02)
+
+    return script
 
 
-def test_headers_that_trickle_in_are_cut_off_at_the_time_allowed(serve):
-    """#61 rule 3: trickled headers cannot hold the stop past its deadline."""
-    address = serve(lambda connection, ended: trickle(connection, ended, b"HTTP/1.1 200 OK\r\nX: "))
-
-    with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED)
-
-
-def test_a_body_that_trickles_in_is_cut_off_at_the_time_allowed(serve):
-    """#61 rule 3: a marked answer with a never-ending body cannot hold the stop either."""
-    head = b"HTTP/1.1 404 Not Found\r\nX-Edge-Barrier: probe\r\nContent-Length: 1000000\r\n\r\n"
-    address = serve(lambda connection, ended: trickle(connection, ended, head))
+def test_headers_that_keep_coming_are_cut_off_at_the_time_allowed(serve, clock_ticking_per_read):
+    """#61 rule 3: endless headers cannot hold the stop past its deadline."""
+    address = serve(flood(b"HTTP/1.1 200 OK\r\nX: "))
 
     with pytest.raises(OSError):
         barrier.http_fetch(address, HOST, TIME_ALLOWED)
 
 
-def test_chunk_framing_that_trickles_in_is_cut_off_at_the_time_allowed(serve):
+def test_a_body_that_stalls_is_cut_off_at_the_time_allowed(serve):
+    """#61 rule 3: a marked answer whose body stops short cannot hold the stop either."""
+
+    def stalls(connection: socket.socket, ended: threading.Event) -> None:
+        connection.recv(4096)
+        connection.sendall(
+            b"HTTP/1.1 404 Not Found\r\nX-Edge-Barrier: probe\r\nContent-Length: 1000000\r\n\r\nabc"
+        )
+        ended.wait()
+
+    with pytest.raises(OSError):
+        barrier.http_fetch(serve(stalls), HOST, TIME_ALLOWED)
+
+
+def test_chunk_framing_that_keeps_coming_is_cut_off_at_the_time_allowed(
+    serve, clock_ticking_per_read
+):
     """#61 rule 3: the framing of a chunked body is read within the deadline too."""
     head = b"HTTP/1.1 404 Not Found\r\nX-Edge-Barrier: probe\r\nTransfer-Encoding: chunked\r\n\r\n"
-    address = serve(lambda connection, ended: trickle(connection, ended, head))
+    address = serve(flood(head))
 
     with pytest.raises(OSError):
         barrier.http_fetch(address, HOST, TIME_ALLOWED)
+
+
+def test_the_time_allowed_covers_connecting_as_well_as_reading(serve, monkeypatch):
+    """#61 rule 3: what connecting used up is gone from the budget of every send and read."""
+    spent_connecting = 9.5
+    offset = [0.0]
+    real_monotonic = time.monotonic
+    real_create_connection = socket.create_connection
+
+    def slow_create_connection(*args, **kwargs):
+        offset[0] += spent_connecting
+        return real_create_connection(*args, **kwargs)
+
+    monkeypatch.setattr(
+        barrier, "time", types.SimpleNamespace(monotonic=lambda: real_monotonic() + offset[0])
+    )
+    monkeypatch.setattr(socket, "create_connection", slow_create_connection)
+    connection = barrier._DeadlineConnection(serve(lambda c, ended: ended.wait()), timeout=10.0)
+
+    connection.connect()
+
+    assert connection.sock.gettimeout() <= 10.0 - spent_connecting
+    connection.close()
 
 
 def test_an_unmarked_answer_is_complete_once_its_headers_are_in(serve):
@@ -423,7 +475,7 @@ def test_an_unmarked_answer_is_complete_once_its_headers_are_in(serve):
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
         ended.wait()
 
-    answer = barrier.http_fetch(serve(headers_only), HOST, TIME_ALLOWED)
+    answer = barrier.http_fetch(serve(headers_only), HOST, GENEROUS_TIME)
 
     assert answer.status == 200
     assert answer.is_unmarked
@@ -440,6 +492,6 @@ def test_a_marked_answer_carries_its_status_body_and_mark(serve):
         )
         ended.wait()
 
-    answer = barrier.http_fetch(serve(barrier_answer), HOST, TIME_ALLOWED)
+    answer = barrier.http_fetch(serve(barrier_answer), HOST, GENEROUS_TIME)
 
     assert answer.is_barrier_of("probe")

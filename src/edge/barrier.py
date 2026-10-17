@@ -89,20 +89,25 @@ class _DeadlineSocket(socket.socket):
 
     deadline = 0.0
 
-    def recv_into(self, buffer, nbytes=0, flags=0):
+    def time_left(self) -> float:
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("the answer took longer than the time allowed")
-        self.settimeout(remaining)
+        return remaining
+
+    def recv_into(self, buffer, nbytes=0, flags=0):
+        self.settimeout(self.time_left())
         return super().recv_into(buffer, nbytes, flags)
 
 
 class _DeadlineConnection(http.client.HTTPConnection):
     def connect(self) -> None:
+        deadline = time.monotonic() + self.timeout
         super().connect()
         bounded = _DeadlineSocket(fileno=self.sock.detach())
-        bounded.deadline = time.monotonic() + self.timeout
+        bounded.deadline = deadline
         self.sock = bounded
+        bounded.settimeout(bounded.time_left())
 
 
 def http_fetch(address: str, host: str, seconds: float) -> Answer:
