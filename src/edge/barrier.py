@@ -32,6 +32,7 @@ _PRIORITY = 1_000_000
 VERIFY_SECONDS = 15.0
 _POLL_SECONDS = 0.5
 _REQUEST_SECONDS = 3.0
+_SMALLEST_TIMEOUT_SECONDS = 0.01  # a socket timeout of 0 would mean non-blocking
 _TEMPLATE = (
     "# Written by `edge stop {unit}` from ~/.local/state/edge/stopped/{unit}; "
     "removed by `edge start {unit}`. Generated, git-ignored.\n"
@@ -69,15 +70,33 @@ class Answer:
         return self.status == _NOT_FOUND and self.body == _NOT_FOUND_BODY
 
 
-Fetch = Callable[[str, str], Answer]  # (entrypoint address, Host) -> the answer to GET /
+Fetch = Callable[[str, str, float], Answer]  # (address, Host, seconds allowed) -> GET / answer
 
 
-def http_fetch(address: str, host: str) -> Answer:
-    connection = http.client.HTTPConnection(address, timeout=_REQUEST_SECONDS)
+def http_fetch(address: str, host: str, seconds: float) -> Answer:
+    """`GET /` within `seconds` in all, connect and read together; only the first bytes of the body
+    are read, which is all the comparison with Traefik's 404 needs."""
+    deadline = time.monotonic() + seconds
+    connection = http.client.HTTPConnection(address, timeout=seconds)
     try:
+        connection.connect()
+        sock = connection.sock
+
+        def read_within_deadline(reader: Callable[[], bytes]) -> bytes:
+            sock.settimeout(max(deadline - time.monotonic(), _SMALLEST_TIMEOUT_SECONDS))
+            return reader()
+
         connection.request("GET", "/", headers={"Host": host})
-        response = connection.getresponse()
-        return Answer(response.status, response.read())
+        response = read_within_deadline(connection.getresponse)
+        body = b""
+        while len(body) <= len(_NOT_FOUND_BODY):
+            chunk = read_within_deadline(lambda: response.read1(len(_NOT_FOUND_BODY) + 1))
+            if not chunk:
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError("the answer took longer than the time allowed")
+            body += chunk
+        return Answer(response.status, body)
     finally:
         connection.close()
 
@@ -96,16 +115,20 @@ class Verifier:
         404 when the time is up; None when every host does what is wanted."""
         deadline = self.clock() + self.seconds
         for host in hosts:
-            while not self._reached(address, host, barrier):
+            while not self._reached(address, host, barrier, deadline):
                 if self.clock() >= deadline:
                     return host
                 self.sleep(_POLL_SECONDS)
         return None
 
-    def _reached(self, address: str, host: str, barrier: bool) -> bool:
+    def _reached(self, address: str, host: str, barrier: bool, deadline: float) -> bool:
+        """One request within the time the deadline leaves; a broken answer is no answer."""
+        allowed = min(_REQUEST_SECONDS, deadline - self.clock())
+        if allowed <= 0:
+            return False
         try:
-            return self.fetch(address, host).is_barrier is barrier
-        except OSError:
+            return self.fetch(address, host, allowed).is_barrier is barrier
+        except (OSError, http.client.HTTPException):
             return False
 
 

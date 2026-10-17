@@ -1,7 +1,11 @@
 """The ingress barrier (#61 proof a): rendering, atomic write, verification and the git rules.
 Nothing here starts a container or opens a socket; the checkout is always a `tmp_path`."""
 
+import http.client
+import socket
 import subprocess
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -51,13 +55,17 @@ class Clock:
         self.now += seconds
 
 
-def verifier(fetch: Callable[[str, str], barrier.Answer]) -> barrier.Verifier:
+def verifier(fetch: Callable[[str, str, float], barrier.Answer]) -> barrier.Verifier:
     clock = Clock()
     return barrier.Verifier(fetch=fetch, clock=clock, sleep=clock.sleep)
 
 
-def refused(_address: str, _host: str) -> barrier.Answer:
+def refused(_address: str, _host: str, _seconds: float) -> barrier.Answer:
     raise ConnectionRefusedError
+
+
+def garbled(_address: str, _host: str, _seconds: float) -> barrier.Answer:
+    raise http.client.IncompleteRead(b"404 page")
 
 
 @pytest.fixture
@@ -173,7 +181,7 @@ def test_a_write_that_fails_leaves_no_temporary_file(checkout):
 def test_the_barrier_is_verified_for_every_host_at_the_address_of_traefik_yml(checkout):
     asked = []
 
-    def fetch(address: str, host: str) -> barrier.Answer:
+    def fetch(address: str, host: str, _seconds: float) -> barrier.Answer:
         asked.append((address, host))
         return NOT_FOUND
 
@@ -183,16 +191,18 @@ def test_the_barrier_is_verified_for_every_host_at_the_address_of_traefik_yml(ch
 
 
 def test_a_barrier_that_answers_404_only_after_a_while_is_verified(checkout):
-    answers = iter([WHOAMI, refused, NOT_FOUND])
+    answers = iter([WHOAMI, refused, garbled, NOT_FOUND])
 
-    def fetch(address: str, host: str) -> barrier.Answer:
+    def fetch(address: str, host: str, seconds: float) -> barrier.Answer:
         answer = next(answers)
-        return answer(address, host) if callable(answer) else answer
+        return answer(address, host, seconds) if callable(answer) else answer
 
     barrier_of(checkout, "hello", fetch=fetch).close()
 
 
-@pytest.mark.parametrize("fetch", [lambda *_: WHOAMI, refused], ids=["answers 200", "refused"])
+@pytest.mark.parametrize(
+    "fetch", [lambda *_: WHOAMI, refused, garbled], ids=["answers 200", "refused", "garbled"]
+)
 def test_a_barrier_traefik_does_not_answer_404_for_is_not_verified_after_15_seconds(
     checkout, fetch
 ):
@@ -245,3 +255,57 @@ def test_the_barrier_names_are_ignored_by_git_but_the_directory_stays_tracked():
         ["git", "check-ignore", "-q", "dynamic/routes.yml"], cwd=REPOSITORY, check=False
     )
     assert hand_written.returncode == 1
+
+
+def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
+    """#61 rule 3: the verification ends within 15 s, whatever one request would take."""
+    allowed = []
+    clock = Clock()
+
+    def slow(_address: str, _host: str, seconds: float) -> barrier.Answer:
+        allowed.append(seconds)
+        clock.now += seconds  # a request that uses all the time it is given
+        raise TimeoutError
+
+    ingress = barrier.Barrier.of_unit(
+        config(),
+        ["hello"],
+        checkout,
+        "probe",
+        barrier.Verifier(fetch=slow, clock=clock, sleep=clock.sleep),
+    )
+
+    with pytest.raises(barrier.BarrierError):
+        ingress.close()
+
+    assert clock.now <= barrier.VERIFY_SECONDS + 0.5
+    assert max(allowed) <= 3.0
+
+
+def test_a_never_ending_answer_is_cut_off_at_the_time_allowed():
+    """#61 rule 3: a streaming body cannot hold the stop past its deadline."""
+    server = socket.create_server(("127.0.0.1", 0))
+    stop_serving = threading.Event()
+
+    def trickle() -> None:
+        connection, _ = server.accept()
+        with connection:
+            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
+            while not stop_serving.is_set():
+                try:
+                    connection.sendall(b"x")
+                except OSError:
+                    return
+                time.sleep(0.3)
+
+    serving = threading.Thread(target=trickle, daemon=True)
+    serving.start()
+    address = f"127.0.0.1:{server.getsockname()[1]}"
+    try:
+        started = time.monotonic()
+        with pytest.raises(OSError):
+            barrier.http_fetch(address, "hello.probe.invalid", 1.0)
+        assert time.monotonic() - started < 2.0
+    finally:
+        stop_serving.set()
+        server.close()

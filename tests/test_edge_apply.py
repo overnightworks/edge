@@ -190,7 +190,7 @@ class Ingress:
     def barrier_file(self) -> Path:
         return self.repository / "dynamic" / "switch-probe.yml"
 
-    def fetch(self, _address: str, _host: str) -> barrier.Answer:
+    def fetch(self, _address: str, _host: str, _seconds: float) -> barrier.Answer:
         self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
         if self.down:
             raise ConnectionRefusedError
@@ -1208,10 +1208,10 @@ def test_start_removes_the_barrier_after_the_up_is_observed_and_before_the_marke
     ingress.asked = seen
     fetching = ingress.fetch
 
-    def look_around(address, host):
+    def look_around(address, host, seconds):
         seen.append(f"marker {'kept' if marker(state, 'probe') else 'cleared'}")
         seen.append(f"hello {scripted.containers['hello']}")
-        return fetching(address, host)
+        return fetching(address, host, seconds)
 
     ingress.fetch = look_around
 
