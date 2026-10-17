@@ -8,13 +8,14 @@ import pytest
 from edge import checkout
 
 
-def tree(path: Path, git: str = "directory") -> Path:
-    """A tree at `path` whose `.git` is a directory (a main worktree) or a file (a linked one)."""
+def tree(path: Path, *, linked: bool = False) -> Path:
+    """A tree at `path` whose `.git` is a directory (a main worktree) or, when `linked`, a file (a
+    linked worktree)."""
     path.mkdir(parents=True)
-    if git == "directory":
-        (path / ".git").mkdir()
-    else:
+    if linked:
         (path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/issue-9-y\n")
+    else:
+        (path / ".git").mkdir()
     return path
 
 
@@ -31,7 +32,7 @@ def test_the_main_worktree_at_home_git_edge_is_the_live_checkout(home):
 def test_a_linked_worktree_of_edge_is_not_the_live_checkout(home, tmp_path):
     """#79 cell 2: a linked worktree (`.git` file) is refused while `$HOME/git/edge` exists."""
     tree(home / "git" / "edge")
-    worktree = tree(tmp_path / "edge-worktrees" / "issue-9-y", git="file")
+    worktree = tree(tmp_path / "edge-worktrees" / "issue-9-y", linked=True)
 
     assert not checkout.is_live_checkout(worktree, home)
 
@@ -63,7 +64,7 @@ def test_a_home_git_edge_symlink_to_the_code_tree_is_the_live_checkout(home, tmp
 
 def test_home_git_edge_as_a_linked_worktree_is_not_the_live_checkout(home):
     """#79 cell 5: `$HOME/git/edge` whose `.git` is a file is refused."""
-    assert not checkout.is_live_checkout(tree(home / "git" / "edge", git="file"), home)
+    assert not checkout.is_live_checkout(tree(home / "git" / "edge", linked=True), home)
 
 
 def test_a_tree_without_git_is_not_the_live_checkout(home):
