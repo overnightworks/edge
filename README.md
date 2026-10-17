@@ -92,6 +92,7 @@ zerbrochen, nie als sauber.
 ```
 home secrets                # jedes Geheimnis: Datei, Prüfung, Ablauf; nie ein Wert
 home secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
+home secrets --setup        # führt am Terminal durch jedes fehlende Geheimnis
 ```
 
 `home secrets` zeigt jedes Geheimnis, das das Manifest
@@ -101,7 +102,7 @@ Agenten dürfen es fahren.
 
 **Kein Wert, nirgends.** Das Manifest enthält nur Namen, Orte und Links.
 `home secrets` liest Geheimnisdateien nur per `stat` und öffnet sie nie. Die
-einzige Prüfung ist `gh auth status` (der Keyring-Login von `gh`): `home`
+einzige Prüfung der Ansicht ist `gh auth status` (der Keyring-Login von `gh`): `home`
 behält davon nur den Exit-Code, verwirft Ausgabe und Fehlerausgabe und bricht
 nach 20 Sekunden ab.
 
@@ -145,6 +146,82 @@ Eintrag nennt („unbekannt“; bleibt unangetastet), und Rechte lockerer als
 `600` für Dateien oder `700` für Ordner unter `~/.secrets`. `home` setzt nie
 Rechte; `chmod` bleibt ein Handgriff.
 
+### Einrichten: `home secrets --setup`
+
+`--setup` geht die fehlenden Einträge des Manifests der Reihe nach durch,
+zuerst die fünf, die `edge external` liest: `cloudflare/fleet-read`,
+`github/fleet-read` und `opentofu/state-passphrase` für `plan`, danach
+`cloudflare/fleet-write` und `github/fleet-admin` für `apply`. Es läuft nur am
+eigenen Terminal (stdin und stdout); ohne Terminal endet es mit Exit-Code `2`,
+bevor es etwas anfasst. Agenten fahren es nie.
+
+Ein Token legt nur an, wer mehr Rechte hat als das Token: GitHub hat für
+Fine-grained-Tokens keine API, und für Cloudflare bräuchte der Assistent
+einen Admin-Schlüssel auf der Platte. Den Login im Browser macht deshalb der
+Mensch, alles andere der Assistent. Je Token:
+
+1. Er sagt, was kommt: welche Seite, welcher Login, welche Rechte, wofür.
+2. Nach Enter öffnet er die Seite. GitHubs Formular ist über die dokumentierten
+   URL-Parameter vorausgefüllt (Name, Resource owner `overnightworks`, Ablauf,
+   Beschreibung, Rechte); „Repository access: All repositories“ kann kein Link
+   setzen und steht als Haken in der Liste. Cloudflare füllt nichts vor; die
+   Liste nennt jede Permission, die Zone und das TTL-Enddatum.
+3. Er nimmt den Wert unsichtbar entgegen. Leer lassen überspringt den Eintrag.
+4. Er fragt den Anbieter, bevor er speichert: Cloudflare
+   `GET /user/tokens/verify` muss `active` melden, GitHub muss
+   `GET /orgs/overnightworks/actions/secrets` beantworten (das braucht die
+   Org und das Secrets-Recht und liefert nur Namen). Ein abgelehnter Wert wird
+   mit einer Zeile abgewiesen und nicht geschrieben; danach darf man noch
+   einmal einfügen.
+5. Er schreibt die Datei mit `600` in einen Ordner mit `700` und geht zum
+   nächsten Eintrag. Ein Ordner, der lockerer ist oder ein Symlink, wird nicht
+   benutzt; `home` setzt keine Rechte.
+
+Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
+Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
+später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
+`recreate` genannt. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
+(Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
+Die letzte Zeile nennt den nächsten Schritt.
+
+Beispiel (gekürzt, ein abgelehnter Versuch):
+
+```
+== github/fleet-read (Token, fehlt)
+Wofür: edge external plan und check lesen damit Repo-Einstellungen, …
+Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org overnightworks.
+Der Link füllt vor: Name github/fleet-read, Resource owner overnightworks, Ablauf 366 Tage, die Beschreibung und diese Rechte:
+  - metadata: read
+  - organization_secrets: read
+Von Hand, das kann kein Link vorgeben:
+  [ ] Repository access: All repositories
+  [ ] die Rechte im Formular mit der Liste oben vergleichen
+  [ ] Generate token, dann den Wert kopieren
+Enter öffnet die Seite im Browser.
+Geöffnet: https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
+Token einfügen (unsichtbar; leer überspringt):
+abgelehnt: GitHub antwortet 401; nichts gespeichert. Noch einmal einfügen oder leer lassen.
+Token einfügen (unsichtbar; leer überspringt):
+geprüft und gespeichert: ~/.secrets/github/fleet-read (600)
+
+== opentofu/state-passphrase (Dienstpasswort, fehlt)
+Wofür: OpenTofu verschlüsselt damit State und Plan unter ~/.secrets/opentofu.
+Wird zufällig erzeugt und nie gezeigt.
+erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600)
+
+next: `uv run edge external plan` in ~/git/edge (expected: No changes)
+```
+
+Fehlt danach noch etwas, nennt die vorletzte Zeile die offenen Einträge und
+`home secrets --setup` für sie; die letzte bleibt der Plan-Schritt, denn er
+braucht nur die Lese-Einträge. Exit-Code: `0` nichts fehlt mehr,
+`1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
+verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
+Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
+Eintrag, nie seine Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
+Eintrag danach gespeichert ist, und `home secrets --setup` zum Weitermachen;
+vorher gespeicherte Einträge bleiben.
+
 `--by-service` dreht `read_by` des Manifests um: je Dienst die Geheimnisse,
 die er laut Manifest liest, dazu die abgeleiteten Kopien und ihre Quelle. Die
 Überschrift sagt „deklarierte Abhängigkeiten“: Das ist, was das Manifest
@@ -166,7 +243,12 @@ recreate = "wird beim Einrichten erzeugt"
 `paths` beginnt mit `~/`, nur der letzte Teil darf einen Platzhalter tragen
 (`~/.secrets/cloudflared/*.json`). Ein zurückgezogener Eintrag trägt
 `retired_on = 2026-10-14` und `revoke_url`, eine abgeleitete Kopie
-`mirror_of`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
+`mirror_of`. `purpose` sagt in einem Satz, wofür es da ist. Ein Token, durch
+das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
+`resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
+Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
+`expires_in_days` (1 bis 366), alle vier zusammen; ein `service-password`
+hat genau einen Pfad ohne Platzhalter und wird erzeugt. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 

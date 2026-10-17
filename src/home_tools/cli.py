@@ -8,11 +8,11 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from home_tools import check, secrets_view, setup, tidy_home
+from home_tools import check, secrets_setup, secrets_view, setup, tidy_home
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Layout, load_config, run_command
 
-SUBCOMMANDS = (check, tidy_home, secrets_view, setup)
+SUBCOMMANDS = (check, tidy_home, secrets_setup, setup)
 UNEXPECTED_ERROR_EXIT = 3
 
 EXAMPLES = """\
@@ -21,6 +21,7 @@ Beispiele:
   home tidy            zeigt, was im Home liegt, wo es nicht hingehört
   home tidy --apply    räumt die clean-Funde weg
   home secrets         zeigt jedes Geheimnis, nie einen Wert
+  home secrets --setup führt am Terminal durch jedes fehlende Geheimnis
   home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht
   home setup --apply   richtet quality, die Engines und den Hook ein
   home <befehl> --help Einzelheiten zu einem Befehl
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _with_german_help(parser)
+    parser.set_defaults(error_may_quote_a_secret=False)
     subcommands = parser.add_subparsers(title="Befehle", metavar="<befehl>", required=True)
     add_parser = _subcommand_adder(subcommands)
     for subcommand in SUBCOMMANDS:
@@ -78,5 +80,7 @@ def main(
         print(f"home: {error}", file=sys.stderr)
         return 2
     except Exception as error:
-        print(f"home: unerwarteter Fehler ({type(error).__name__}): {error}", file=sys.stderr)
+        # A subcommand that handles secrets never has an unexpected error's message shown: it may quote a value.
+        message = "" if args.error_may_quote_a_secret else f": {error}"
+        print(f"home: unerwarteter Fehler ({type(error).__name__}){message}", file=sys.stderr)
         return UNEXPECTED_ERROR_EXIT

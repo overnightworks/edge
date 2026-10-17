@@ -15,12 +15,20 @@ import pytest
 from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets
 
 from home_tools import cli, secrets_view
-from home_tools.secrets_view import ManifestError, load_manifest
+from home_tools.secrets_view import ManifestError, SecretKind, load_manifest
 from home_tools.tidy_home import Layout
 
 NOW = datetime(2026, 10, 15, 9, 0)
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
+EDGE_EXTERNAL_ENTRIES = (
+    "cloudflare/fleet-read",
+    "github/fleet-read",
+    "opentofu/state-passphrase",
+    "cloudflare/fleet-write",
+    "github/fleet-admin",
+)
 INVENTORY = {
+    *EDGE_EXTERNAL_ENTRIES,
     "github/token",
     "gitlab",
     "sonarcloud/token",
@@ -297,7 +305,8 @@ def test_a_directory_under_secrets_that_cannot_be_listed_breaks_the_run_with_exi
         locked.chmod(0o700)
 
     assert code == 3
-    assert capsys.readouterr().err.startswith("home: unerwarteter Fehler (PermissionError)")
+    # The secrets command names only the error's type: an unexpected error's message may quote a value.
+    assert capsys.readouterr().err == "home: unerwarteter Fehler (PermissionError)\n"
 
 
 def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_home: Path, probe: FakeProbe, capsys) -> None:
@@ -318,6 +327,24 @@ def test_the_packaged_manifest_names_every_inventory_entry_without_a_value() -> 
     assert {entry.name for entry in manifest} == INVENTORY
     assert {entry.name for entry in manifest if entry.retired} == {"github/token", "github/overnightworks-read-token"}
     assert {entry.name for entry in manifest if entry.verifier} == {"gh"}
+
+
+def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_with_its_place_and_rights() -> None:
+    """#36 rule 1 / rule 2: the five edge external entries come first, each with its place, and every token names its rights."""
+    manifest = load_manifest(PACKAGED_MANIFEST)
+
+    first = manifest[: len(EDGE_EXTERNAL_ENTRIES)]
+    assert tuple(entry.name for entry in first) == EDGE_EXTERNAL_ENTRIES
+    assert [f"~/{entry.place}" for entry in first] == [f"~/.secrets/{name}" for name in EDGE_EXTERNAL_ENTRIES]
+    tokens = [entry for entry in first if entry.kind is SecretKind.TOKEN]
+    assert [(entry.name, entry.source.provider.value) for entry in tokens] == [
+        ("cloudflare/fleet-read", "cloudflare"),
+        ("github/fleet-read", "github"),
+        ("cloudflare/fleet-write", "cloudflare"),
+        ("github/fleet-admin", "github"),
+    ]
+    assert all(entry.source.scope and entry.purpose for entry in tokens)
+    assert {entry.name: entry.kind for entry in first if entry.source is None} == {"opentofu/state-passphrase": SecretKind.SERVICE_PASSWORD}
 
 
 def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, probe: FakeProbe, capsys) -> None:
@@ -343,6 +370,7 @@ def test_an_invalid_manifest_exits_2_naming_the_file(use_manifest, clean_home: P
 
 
 ENTRY = '[[secret]]\nname = "e"\nkind = "token"\npaths = ["~/.secrets/e"]\nread_by = []\nrecreate = "r"\n'
+SOURCE = 'provider = "github"\nresource = "o"\nscope = ["metadata:read"]\nexpires_in_days = 366\n'
 
 
 @pytest.mark.parametrize(
@@ -373,6 +401,19 @@ ENTRY = '[[secret]]\nname = "e"\nkind = "token"\npaths = ["~/.secrets/e"]\nread_
         (ENTRY + 'retired_on = 2026-10-14\nrevoke_url = "http://x"\n', "revoke_url"),
         (ENTRY + ENTRY, "e"),
         (ENTRY.replace('"token"', '"derived-mirror"') + 'mirror_of = "gone"\n', "gone"),
+        # #36 rule 1 / rule 2.2: a token the wizard guides names its provider, resource, rights and expiry, and one place.
+        (ENTRY + 'provider = "github"\n', "provider"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace("github", "gitlab"), "provider"),
+        (ENTRY.replace('"token"', '"service-password"') + 'purpose = "p"\n' + SOURCE, "token entry only"),
+        (ENTRY + SOURCE, "purpose"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace('"metadata:read"', '"metadata"'), "scope"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace('"metadata:read"', '"metadata:own"'), "scope"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace('["metadata:read"]', "[]"), "scope"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace("366", "367"), "expires_in_days"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace("366", "0"), "expires_in_days"),
+        (ENTRY + 'purpose = "p"\n' + SOURCE.replace("366", "true"), "expires_in_days"),
+        (ENTRY.replace('["~/.secrets/e"]', '["~/.secrets/e", "~/.secrets/f"]') + 'purpose = "p"\n' + SOURCE, "exactly one place"),
+        (ENTRY.replace('"token"', '"service-password"').replace("~/.secrets/e", "~/.secrets/*.key"), "exactly one place"),
     ],
 )
 def test_an_invalid_manifest_is_refused_naming_the_file_and_the_key(tmp_path: Path, text: str, named: str) -> None:

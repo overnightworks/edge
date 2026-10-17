@@ -13,7 +13,6 @@ manifest is invalid, 3 when the run broke on an unexpected error.
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import fnmatch
 import os
@@ -30,7 +29,7 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 
 from home_tools.report import findings_count, markdown_table, write_state_file
-from home_tools.tidy_home import Config, Layout
+from home_tools.tidy_home import Layout
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
 
@@ -94,6 +93,23 @@ class Verifier(Enum):
         return tuple(self.value.split())
 
 
+class Provider(Enum):
+    """Where `home secrets --setup` sends the operator to create a token."""
+
+    GITHUB = "github"
+    CLOUDFLARE = "cloudflare"
+
+
+@dataclass(frozen=True)
+class TokenSource:
+    """Where and with which rights a token is created; the page and the check behind it belong to `home secrets --setup`."""
+
+    provider: Provider
+    resource: str
+    scope: tuple[str, ...]
+    expires_in_days: int
+
+
 @dataclass(frozen=True)
 class SecretEntry:
     """One manifest entry: names, places and links, never a value."""
@@ -107,10 +123,23 @@ class SecretEntry:
     retired_on: date | None = None
     revoke_url: str = ""
     mirror_of: str = ""
+    purpose: str = ""
+    source: TokenSource | None = None
 
     @property
     def retired(self) -> bool:
         return self.retired_on is not None
+
+    @property
+    def written_by_setup(self) -> bool:
+        """`--setup` writes a token it guides through and a service password it generates; every other entry is by hand."""
+        return self.source is not None or self.kind is SecretKind.SERVICE_PASSWORD
+
+    @property
+    def place(self) -> PurePosixPath:
+        """The one file of an entry `--setup` writes; the manifest guarantees one plain path for it."""
+        (path,) = self.paths
+        return path
 
 
 class ManifestError(ValueError):
@@ -120,7 +149,10 @@ class ManifestError(ValueError):
 # --- manifest --------------------------------------------------------------
 
 REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by", "recreate"})
-OPTIONAL_KEYS = frozenset({"verify", "retired_on", "revoke_url", "mirror_of"})
+SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
+OPTIONAL_KEYS = frozenset({"verify", "retired_on", "revoke_url", "mirror_of", "purpose"}) | SOURCE_KEYS
+GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
+LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
 
 def _fail(path: Path, where: str, message: str) -> ManifestError:
@@ -184,6 +216,33 @@ def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> tuple[date
     return retired_on, revoke_url
 
 
+def _is_github_right(right: str) -> bool:
+    permission, _, level = right.partition(":")
+    return bool(permission) and level in GITHUB_ACCESS_LEVELS
+
+
+def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: SecretKind) -> TokenSource | None:
+    """A token `--setup` guides through names its provider, resource, rights and expiry together; no other kind does."""
+    named = SOURCE_KEYS & set(raw)
+    if not named:
+        return None
+    if named != SOURCE_KEYS or kind is not SecretKind.TOKEN or "purpose" not in raw:
+        raise _fail(path, where, "provider, resource, scope, expires_in_days and purpose come together, on a token entry only")
+    provider = _enum_value(path, where, raw, "provider", Provider)
+    scope = _strings(path, where, raw, "scope")
+    if not scope or (provider is Provider.GITHUB and not all(_is_github_right(right) for right in scope)):
+        raise _fail(path, where, "scope must name the rights; a github right reads 'permission:read', ':write' or ':admin'")
+    days = raw["expires_in_days"]
+    if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= LONGEST_EXPIRY_DAYS:
+        raise _fail(path, where, f"expires_in_days must be a whole number from 1 to {LONGEST_EXPIRY_DAYS}")
+    return TokenSource(provider, _string(path, where, raw, "resource"), scope, days)
+
+
+def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
+    if len(patterns) != 1 or _has_wildcard(patterns[0].name):
+        raise _fail(path, where, "paths of an entry --setup writes must be exactly one place without a wildcard")
+
+
 def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     where = f"[[secret]] #{index + 1}"
     if not isinstance(raw, dict):
@@ -198,7 +257,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     if (kind is SecretKind.DERIVED_MIRROR) != ("mirror_of" in raw):
         raise _fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
     retired_on, revoke_url = _retirement(path, where, raw)
-    return SecretEntry(
+    source = _token_source(path, where, raw, kind)
+    entry = SecretEntry(
         name=_string(path, where, raw, "name"),
         kind=kind,
         paths=_patterns(path, where, raw),
@@ -208,7 +268,12 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         retired_on=retired_on,
         revoke_url=revoke_url,
         mirror_of=_string(path, where, raw, "mirror_of") if "mirror_of" in raw else "",
+        purpose=_string(path, where, raw, "purpose") if "purpose" in raw else "",
+        source=source,
     )
+    if entry.written_by_setup:
+        _require_one_plain_place(path, where, entry.paths)
+    return entry
 
 
 def _require_consistent(path: Path, entries: tuple[SecretEntry, ...]) -> None:
@@ -438,7 +503,8 @@ class SecretsView:
     findings: tuple[SecretFinding, ...]
 
 
-def _presence(entry: SecretEntry, matches: Mapping[PurePosixPath, tuple[PathFact, ...] | None]) -> Presence:
+def presence(entry: SecretEntry, matches: Mapping[PurePosixPath, tuple[PathFact, ...] | None]) -> Presence:
+    """Present when every pattern matches, unknown when the filesystem refuses to say for one of them."""
     found = [matches[pattern] for pattern in entry.paths]
     if any(facts is None for facts in found):
         return Presence.UNKNOWN
@@ -470,12 +536,18 @@ def _loosest_allowed(mode: int) -> int | None:
     return LOOSEST_FILE_MODE if stat.S_ISREG(mode) else None
 
 
+def too_loose(mode: int) -> int | None:
+    """The loosest mode allowed for this kind of path when `mode` grants more; None when it stays within it."""
+    allowed = _loosest_allowed(mode)
+    return allowed if allowed is not None and stat.S_IMODE(mode) & ~allowed else None
+
+
 def _mode_findings(tree: tuple[PathFact, ...]) -> Iterator[SecretFinding]:
     for fact in tree:
-        allowed = _loosest_allowed(fact.mode)
-        permissions = stat.S_IMODE(fact.mode)
-        if allowed is not None and permissions & ~allowed:
-            yield SecretFinding(FindingRule.LOOSE_MODE, f"{HOME_PREFIX}{fact.relative}", f"{permissions:o}, höchstens {allowed:o}")
+        if (allowed := too_loose(fact.mode)) is not None:
+            yield SecretFinding(
+                FindingRule.LOOSE_MODE, f"{HOME_PREFIX}{fact.relative}", f"{stat.S_IMODE(fact.mode):o}, höchstens {allowed:o}"
+            )
 
 
 def _entry_findings(status: SecretStatus) -> Iterator[SecretFinding]:
@@ -496,7 +568,7 @@ def _entry_findings(status: SecretStatus) -> Iterator[SecretFinding]:
 def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> SecretsView:
     """Pure: the statuses and findings follow from the manifest and what the boundaries saw, nothing else."""
     statuses = tuple(
-        SecretStatus(entry, _presence(entry, observation.matches), _verification(entry, observation.probe_codes)) for entry in manifest
+        SecretStatus(entry, presence(entry, observation.matches), _verification(entry, observation.probe_codes)) for entry in manifest
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     unknown = (
@@ -577,30 +649,3 @@ def show(layout: Layout, probe: ExitCodeProbe, now: datetime) -> int:
 def show_by_service() -> int:
     sys.stdout.write(render_by_service(load_manifest(MANIFEST_PATH)))
     return 0
-
-
-SECRETS_EXAMPLES = """\
-Beispiele:
-  home secrets                zeigt jedes Geheimnis des Manifests: Datei, Prüfung, Ablauf
-  home secrets --by-service   welcher Dienst welches Geheimnis liest (deklariert)
-
-Zeigt nie einen Wert und ändert nichts außer dem Bericht
-~/.local/state/home/secrets-report.md. Braucht kein Terminal, Agenten dürfen es fahren.
-Exit-Code: 0 sauber, 1 Funde, 2 Manifest ungültig, 3 unerwarteter Fehler.
-"""
-
-
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, _run: object, probe: ExitCodeProbe, now: datetime) -> int:
-    return show_by_service() if args.by_service else show(layout, probe, now)
-
-
-def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
-    parser = add_parser(
-        "secrets",
-        help="Geheimnisse zeigen: vorhanden, geprüft, Ablauf; nie ein Wert",
-        description="Zeigt jedes Geheimnis aus dem Manifest, liest Dateien nur per stat und ändert nichts.",
-        epilog=SECRETS_EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--by-service", action="store_true", help="gruppiert nach Dienst: deklarierte Abhängigkeiten")
-    parser.set_defaults(handler=_secrets_from_args)
