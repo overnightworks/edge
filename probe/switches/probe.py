@@ -6,8 +6,10 @@ It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml 
 project name, drives the real `edge stop`, `edge start` and `edge apply --closed` of a copy, and
 checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on 127.0.0.1:8081 behind
 the barrier, also after a Traefik restart with the container up. It always removes its
-containers, networks and volumes. It never touches the live stack or the live state. It needs
-127.0.0.1:8081 free, so the live Traefik is down while it runs.
+containers, networks and volumes. Cell 8 (#70) drives `edge stop --all` and `edge start --all` on a
+throwaway `systemctl --user` unit `edge-probe-tunnel-<random>.service` (`sleep infinity`) that it
+removes again; the real `cloudflared.service` is never named. It never touches the live stack or
+the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
@@ -22,6 +24,7 @@ import grp
 import http.client
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -51,6 +54,9 @@ REQUEST_SECONDS = 3
 POLL_SECONDS = 0.2
 COMPOSE_SECONDS = 300
 NOT_RUNNABLE = 3
+SYSTEMCTL_SECONDS = 60
+GLOBAL_STOP_DROP_IN = "30-edge-global-stop.conf"
+TUNNEL_UNIT_TEXT = "[Service]\nExecStart=/usr/bin/sleep infinity\n"
 
 
 class Probe:
@@ -198,6 +204,38 @@ class Probe:
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"proof 6 held: start removed barrier and marker; {HOST} answers whoami")
 
+    def cell_8_global_stop(self) -> None:
+        tunnel = ThrowawayTunnel()
+        self.environment["EDGE_TUNNEL_UNIT"] = tunnel.name
+        self.environment["EDGE_TUNNEL_MANAGER"] = "user"
+        global_marker = self.home / ".local" / "state" / "edge" / "global-stop"
+        try:
+            self.edge(
+                "stop", UNIT, terminal=False
+            )  # the unit barrier to be proven before reopening
+            tunnel.install()
+            stopped = self.edge("stop", "--all", terminal=False)
+            expect("the tunnel is stopped" in stopped, f"stop --all said: {stopped[-160:]}")
+            expect(tunnel.state() == "inactive", f"the tunnel is {tunnel.state()} after stop --all")
+            expect(global_marker.is_file(), "stop --all wrote no global marker")
+            self.barrier.unlink()  # start --all renders the barrier again before it proves it
+            started = self.edge("start", "--all", terminal=True)
+            expect(
+                f"the barrier of {UNIT} is proven" in started, f"start --all said: {started[-200:]}"
+            )
+            expect(tunnel.state() == "active", f"the tunnel is {tunnel.state()} after start --all")
+            expect(not global_marker.exists(), "start --all left the global marker")
+            expect(self.marker.is_file() and self.answers_the_barrier(), "the unit switch fell")
+        finally:
+            tunnel.remove()
+            self.environment.pop("EDGE_TUNNEL_UNIT")
+            self.environment.pop("EDGE_TUNNEL_MANAGER")
+        self.edge("start", UNIT, terminal=True)
+        print(
+            "PROOF 8 held: stop --all left the throwaway unit inactive with the marker; "
+            "start --all proved the unit barrier, reopened it and cleared only the marker"
+        )
+
     def cell_7_traefik_down(self) -> None:
         self.compose("stop", "traefik")
         out = self.edge("stop", UNIT, terminal=False, exit_code=1)
@@ -209,6 +247,43 @@ class Probe:
         self.edge("start", UNIT, terminal=True)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print("proof 7 held: traefik down: stop exits 1 partial, both kept; start reopens")
+
+
+class ThrowawayTunnel:
+    """A user unit that stands in for the tunnel, in the user manager's runtime directory (a tmpfs
+    that is gone after a logout), with the boot drop-in the real unit gets from SW2c."""
+
+    def __init__(self) -> None:
+        self.name = f"edge-probe-tunnel-{secrets.token_hex(4)}.service"
+        runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "systemd" / "user"
+        self.unit_file = runtime / self.name
+        self.drop_in = runtime / f"{self.name}.d" / GLOBAL_STOP_DROP_IN
+
+    def systemctl(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["systemctl", "--user", *arguments], capture_output=True, text=True, check=False,
+            timeout=SYSTEMCTL_SECONDS,
+        )  # fmt: skip
+
+    def install(self) -> None:
+        self.drop_in.parent.mkdir(parents=True)
+        self.unit_file.write_text(TUNNEL_UNIT_TEXT)
+        self.drop_in.write_text("[Unit]\nDescription=edge probe tunnel\n")
+        self.systemctl("daemon-reload")
+        expect(
+            self.systemctl("start", self.name).returncode == 0, "the throwaway unit did not start"
+        )
+
+    def state(self) -> str:
+        return self.systemctl("is-active", self.name).stdout.strip()
+
+    def remove(self) -> None:
+        self.systemctl("stop", self.name)
+        self.drop_in.unlink(missing_ok=True)
+        if self.drop_in.parent.exists():
+            self.drop_in.parent.rmdir()
+        self.unit_file.unlink(missing_ok=True)
+        self.systemctl("daemon-reload")
 
 
 def port_is_busy() -> bool:
@@ -230,6 +305,7 @@ def prove(probe: Probe) -> int:
         probe.cell_5_apply()
         probe.cell_6_start()
         probe.cell_7_traefik_down()
+        probe.cell_8_global_stop()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
@@ -260,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: cells 1-7 hold")
+        print("PROBE PASSED: cells 1-8 hold")
     return exit_code
 
 
