@@ -81,16 +81,19 @@ class Answer:
         return self.mark is None
 
 
-Fetch = Callable[[str, str, float], Answer]  # (address, Host, seconds allowed) -> GET / answer
+Fetch = Callable[
+    [str, str, float, Callable[[], float]], Answer
+]  # (address, Host, seconds allowed, clock) -> GET / answer
 
 
 class _DeadlineSocket(socket.socket):
     """A socket whose every read, whatever http.client's parser asks for, ends at one deadline."""
 
     deadline = 0.0
+    clock: Callable[[], float] = time.monotonic
 
     def time_left(self) -> float:
-        remaining = self.deadline - time.monotonic()
+        remaining = self.deadline - self.clock()
         if remaining <= 0:
             raise TimeoutError("the answer took longer than the time allowed")
         return remaining
@@ -101,20 +104,25 @@ class _DeadlineSocket(socket.socket):
 
 
 class _DeadlineConnection(http.client.HTTPConnection):
+    def __init__(self, *args, clock: Callable[[], float], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.clock = clock
+
     def connect(self) -> None:
-        deadline = time.monotonic() + self.timeout
+        deadline = self.clock() + self.timeout
         super().connect()
         bounded = _DeadlineSocket(fileno=self.sock.detach())
+        bounded.clock = self.clock
         bounded.deadline = deadline
         self.sock = bounded
         bounded.settimeout(bounded.time_left())
 
 
-def http_fetch(address: str, host: str, seconds: float) -> Answer:
+def http_fetch(address: str, host: str, seconds: float, clock: Callable[[], float]) -> Answer:
     """`GET /` within `seconds` in all, connect and every read together. Only a marked answer has
     its first body bytes read, which is all the comparison with Traefik's 404 needs; the headers
     alone show that a mark is absent."""
-    connection = _DeadlineConnection(address, timeout=seconds)
+    connection = _DeadlineConnection(address, timeout=seconds, clock=clock)
     try:
         connection.request("GET", "/", headers={"Host": host})
         response = connection.getresponse()
@@ -155,7 +163,7 @@ class Verifier:
         if allowed <= 0:
             return False
         try:
-            return wanted(self.fetch(address, host, allowed))
+            return wanted(self.fetch(address, host, allowed, self.clock))
         except (OSError, http.client.HTTPException):
             return False
 
