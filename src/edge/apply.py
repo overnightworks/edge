@@ -225,6 +225,7 @@ def apply_closed(
     run_setup: setup.SetupRunner = setup.run_setup,
     home: Path | None = None,
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
+    watch: compose.Watch = compose.SETTLED,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -260,7 +261,7 @@ def apply_closed(
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
     return _confirm_and_switch(
-        engine, planned, marks, CorePhase(record, repository, verifier), completed
+        engine, planned, marks, CorePhase(record, repository, verifier, watch), completed
     )
 
 
@@ -349,6 +350,7 @@ class CorePhase:
     record: core.Record
     repository: Path
     verifier: barrier.Verifier
+    watch: compose.Watch
 
     def run(
         self,
@@ -368,7 +370,7 @@ class CorePhase:
                 progress.step = f"recreate {plan.service}"
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"
-                if not compose.is_up(engine.states(), planned.fleet.config, (plan.service,)):
+                if not engine.stays_up(planned.fleet.config, (plan.service,), self.watch):
                     return f"{plan.service} is not running after the recreate"
                 progress.step = "prove the barriers"
                 if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):

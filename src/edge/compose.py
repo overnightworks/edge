@@ -7,6 +7,7 @@ names a volume, so a unit switched off loses containers and keeps its data.
 
 import json
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import Any
 REPOSITORY = Path(__file__).resolve().parents[2]
 READ_SECONDS = 60
 CHANGE_SECONDS = 600
+# A container that cannot load its configuration is running for a moment after `up`, then
+# exits and Docker restarts it with a backoff that starts at 100 ms; seconds of watching see it.
+SETTLE_SECONDS = 5.0
+_SETTLE_POLL_SECONDS = 0.5
 _COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
@@ -65,6 +70,18 @@ def run_docker(command: list[str], timeout: int) -> subprocess.CompletedProcess[
 
 
 @dataclass(frozen=True)
+class Watch:
+    """How long a started container is watched before it counts as running."""
+
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
+    seconds: float = SETTLE_SECONDS
+
+
+SETTLED = Watch()
+
+
+@dataclass(frozen=True)
 class Compose:
     run: Runner = run_docker
     repository: Path = REPOSITORY
@@ -92,6 +109,16 @@ class Compose:
         """A new container for one service, so it mounts its files as checked out now; the
         services it depends on are left as they are, and its volumes are kept."""
         self._call("*", "up", ["-d", "--no-deps", "--force-recreate", service], CHANGE_SECONDS)
+
+    def stays_up(self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch) -> bool:
+        """The services are up at every look until the watch is over: a container that dies
+        right after it started and is restarting is not running."""
+        deadline = watch.clock() + watch.seconds
+        while is_up(self.states(), config, services):
+            if watch.clock() >= deadline:
+                return True
+            watch.sleep(_SETTLE_POLL_SECONDS)
+        return False
 
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)

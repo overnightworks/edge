@@ -85,6 +85,10 @@ class ScriptedCompose:
     failing_verb: str | None = None
     starts_nothing: bool = False
     after_up: Callable[[], None] | None = None  # what changes in the world once `up` returned
+    # a container of these dies right after `up` starts it and Docker restarts it: the first `ps`
+    # after the `up` still sees it running, every later one restarting
+    crash_loops: set[str] = field(default_factory=set)
+    just_started: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
     config: dict = field(default_factory=resolved_configuration)
 
@@ -102,10 +106,14 @@ class ScriptedCompose:
         return json.dumps(self.config)
 
     def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
-        return "\n".join(
+        output = "\n".join(
             json.dumps({"Service": service, "State": state, "ExitCode": 0})
             for service, state in self.containers.items()
         )
+        for service in self.just_started & self.crash_loops:
+            self.containers[service] = "restarting"
+        self.just_started.clear()
+        return output
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
         if self.starts_nothing:
@@ -116,6 +124,7 @@ class ScriptedCompose:
             if self.needs_a_new_container(service, flags):
                 self.create_container(service)
             self.containers[service] = "exited" if service in one_shots else "running"
+            self.just_started.add(service)
             for volume in compose.named_volumes(self.config["services"][service]):
                 self.volumes.setdefault(volume, "created by up")
         if self.after_up:
@@ -291,6 +300,11 @@ class Ingress:
     def verifier(self) -> barrier.Verifier:
         return barrier.Verifier(self.fetch, lambda: self.now, self.sleep)
 
+    @property
+    def watch(self) -> compose.Watch:
+        """How a recreated Traefik is watched, on the same counter."""
+        return compose.Watch(lambda: self.now, self.sleep)
+
 
 @pytest.fixture
 def ingress(repository: Path) -> Ingress:
@@ -340,6 +354,7 @@ def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, st
             setup_run,
             home,
             ingress.verifier,
+            ingress.watch,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -2079,6 +2094,25 @@ def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch,
     assert "partial, traefik is not running after the recreate" in err
     assert applied(state) is None
     assert RECREATED not in out
+
+
+def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_run_recreates_again(
+    core_files, switch, scripted, state
+):
+    """#85 rule 3, rule 5: a traefik.yml Traefik cannot load lets it run for a moment, then it
+    restarts on every start; that is not running, so partial, exit 1, the record stays old and
+    the next run plans the recreate again."""
+    scripted.crash_loops.add("traefik")
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, traefik is not running after the recreate" in err
+    assert applied(state) is None
+    assert RECREATED not in out
+    assert scripted.containers["traefik"] == "restarting"
+    _, again, _ = switch("no")
+    assert "traefik: recreate (traefik.yml has no applied record)" in again
 
 
 def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recreates_again(
