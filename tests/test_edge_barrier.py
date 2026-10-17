@@ -84,6 +84,7 @@ def parsed(checkout: Path) -> dict:
 
 
 def test_one_router_per_routed_host_on_the_edge_entrypoint_only(checkout):
+    """#61 rule 1 / proof a: one router per routed host, on `edge` only."""
     barrier_of(checkout, "keycloak", "hello", "hello-twin", "keycloak-db").close()
 
     document = parsed(checkout)
@@ -98,6 +99,7 @@ def test_one_router_per_routed_host_on_the_edge_entrypoint_only(checkout):
 
 
 def test_the_deny_service_sends_the_request_back_to_traefik_without_its_host(checkout):
+    """#61 rule 1 / proof a: the deny service sits in the file and drops the Host."""
     barrier_of(checkout, "hello").close()
 
     deny = parsed(checkout)["http"]["services"]["switch-probe-deny"]["loadBalancer"]
@@ -107,6 +109,7 @@ def test_the_deny_service_sends_the_request_back_to_traefik_without_its_host(che
 
 
 def test_an_explicit_label_router_is_barred_by_its_host_alone(checkout):
+    """#61 rule 1 / proof a: keycloak's PathPrefix label router is barred by Host alone."""
     barrier_of(checkout, "keycloak").close()
 
     rule = parsed(checkout)["http"]["routers"]["switch-probe-auth"]["rule"]
@@ -134,6 +137,7 @@ def test_every_spelling_traefik_reads_as_true_gets_a_barrier(checkout, spelling)
 
 @pytest.mark.parametrize("service", ["keycloak-db", "internal", "stray", "unnamed"])
 def test_a_unit_without_a_routed_host_gets_no_file_and_is_never_asked(checkout, service):
+    """#61 rule 1 / proof a: no routed service, no file and no request."""
     ingress = barrier_of(checkout, service, fetch=refused)
 
     ingress.close()
@@ -143,12 +147,14 @@ def test_a_unit_without_a_routed_host_gets_no_file_and_is_never_asked(checkout, 
 
 
 def test_the_file_is_flat_and_leaves_no_temporary_name(checkout):
+    """#61 rule 1 / proof a: the atomic write leaves no `.tmp`."""
     barrier_of(checkout, "hello").close()
 
     assert [path.name for path in (checkout / "dynamic").iterdir()] == ["switch-probe.yml"]
 
 
 def test_closing_twice_renders_the_same_file(checkout):
+    """#61 rule 3 / proof a: a second close renders the same file."""
     ingress = barrier_of(checkout, "hello")
     ingress.close()
     first = ingress.path.read_text()
@@ -159,6 +165,7 @@ def test_closing_twice_renders_the_same_file(checkout):
 
 
 def test_opening_removes_the_file_and_is_idempotent(checkout):
+    """#61 rule 4 / proof a: removal is idempotent."""
     ingress = barrier_of(checkout, "hello", fetch=lambda *_: WHOAMI)
     ingress.path.write_text("leftover")
 
@@ -169,6 +176,7 @@ def test_opening_removes_the_file_and_is_idempotent(checkout):
 
 
 def test_a_write_that_fails_leaves_no_temporary_file(checkout):
+    """#61 rule 1 / proof a: a failed write leaves no `.tmp`."""
     ingress = barrier_of(checkout, "hello")
     ingress.path.mkdir()  # the rename onto a directory fails
 
@@ -179,6 +187,7 @@ def test_a_write_that_fails_leaves_no_temporary_file(checkout):
 
 
 def test_the_barrier_is_verified_for_every_host_at_the_address_of_traefik_yml(checkout):
+    """#61 rule 3 / proof a: every host is asked at the address of traefik.yml."""
     asked = []
 
     def fetch(address: str, host: str, _seconds: float) -> barrier.Answer:
@@ -191,6 +200,7 @@ def test_the_barrier_is_verified_for_every_host_at_the_address_of_traefik_yml(ch
 
 
 def test_a_barrier_that_answers_404_only_after_a_while_is_verified(checkout):
+    """#61 rule 3 / proof a: the verification polls until Traefik answers 404."""
     answers = iter([WHOAMI, refused, garbled, NOT_FOUND])
 
     def fetch(address: str, host: str, seconds: float) -> barrier.Answer:
@@ -206,6 +216,7 @@ def test_a_barrier_that_answers_404_only_after_a_while_is_verified(checkout):
 def test_a_barrier_traefik_does_not_answer_404_for_is_not_verified_after_15_seconds(
     checkout, fetch
 ):
+    """#61 rule 3 / proof a: 200, refused or a broken answer for 15 s is not verified."""
     ingress = barrier_of(checkout, "hello", fetch=fetch)
 
     with pytest.raises(barrier.BarrierError) as failure:
@@ -218,6 +229,7 @@ def test_a_barrier_traefik_does_not_answer_404_for_is_not_verified_after_15_seco
 
 
 def test_a_404_with_another_body_is_no_proof_of_the_barrier(checkout):
+    """#61 rule 3 / proof a: only Traefik's own 404 body proves the barrier."""
     other = barrier.Answer(404, b'{"error":"not found"}')
 
     with pytest.raises(barrier.BarrierError):
@@ -225,11 +237,13 @@ def test_a_404_with_another_body_is_no_proof_of_the_barrier(checkout):
 
 
 def test_opening_is_verified_only_once_the_host_stops_answering_the_barriers_404(checkout):
+    """#61 rule 4 / proof a: opening is verified once the 404 is gone."""
     with pytest.raises(barrier.BarrierError, match=r"did not open hello\.probe\.invalid"):
         barrier_of(checkout, "hello", fetch=lambda *_: NOT_FOUND).open()
 
 
 def test_the_host_domain_is_the_one_compose_gives_traefik():
+    """#61 rule 1 / proof a: the domain is the one Compose gives traefik."""
     broken = {"services": {"traefik": {}, **{"hello": config()["services"]["hello"]}}}
 
     with pytest.raises(barrier.BarrierError, match="no EDGE_DOMAIN"):
@@ -237,10 +251,12 @@ def test_the_host_domain_is_the_one_compose_gives_traefik():
 
 
 def test_the_address_is_read_from_the_real_traefik_yml():
+    """#61 rule 3 / proof a: the address comes from the real traefik.yml."""
     assert barrier.edge_address(REPOSITORY) == ADDRESS
 
 
 def test_the_barrier_names_are_ignored_by_git_but_the_directory_stays_tracked():
+    """#61 rule 2 / proof a: `switch-*` and its `.tmp` are ignored; `.gitkeep` stays."""
     for name in ("switch-keycloak.yml", "switch-keycloak.yml.tmp"):
         ignored = subprocess.run(
             ["git", "check-ignore", "-q", f"dynamic/{name}"], cwd=REPOSITORY, check=False

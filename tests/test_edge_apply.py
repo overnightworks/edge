@@ -1172,6 +1172,7 @@ def test_a_barrier_traefik_rejects_is_partial_and_still_stops_the_unit(
 def test_a_stop_while_traefik_is_down_is_partial_with_everything_kept(
     probe_unit, stop, scripted, ingress, state
 ):
+    """#61 rule 3: Traefik down, exit 1, containers stopped, marker and barrier kept."""
     ingress.down = True
 
     exit_code, _, err = stop("probe")
@@ -1202,6 +1203,7 @@ def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_i
 def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
     probe_unit, stop, scripted, ingress, state
 ):
+    """#61 rule 3 from B: a re-rendered barrier that is not proven is partial."""
     put_probe_in_b(scripted, state, ingress)
     ingress.rejecting = True
 
@@ -1268,6 +1270,7 @@ def test_start_removes_a_barrier_left_behind_without_a_marker(
 def test_start_of_a_running_unit_without_marker_or_barrier_changes_nothing(
     probe_unit, start, scripted, ingress, state
 ):
+    """#61 rule 4: nothing recorded and no barrier, so start changes nothing."""
     exit_code, out, _ = start(unit="probe")
 
     assert exit_code == 0
