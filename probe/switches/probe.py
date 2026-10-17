@@ -198,9 +198,7 @@ class Probe:
         self.wait_until("the barrier answering", self.answers_the_barrier)
         self.edge("start", UNIT, terminal=True)
         self.wait_until("hello answering", self.serves_whoami)
-        print(
-            "proof 7 held: traefik down: stop exits 1 partial, marker and barrier kept; start reopens"
-        )
+        print("proof 7 held: traefik down: stop exits 1 partial, both kept; start reopens")
 
 
 def port_is_busy() -> bool:
