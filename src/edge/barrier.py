@@ -250,10 +250,19 @@ class Barrier:
         if not self.names:
             return False
         address = edge_address(self.checkout)
-        standing = self.path.read_text() if self.path.is_file() else None
+        standing = self._standing()
         written = self._write(address)
         self._prove(address, barrier=True)
-        return written != standing
+        return written.encode() != standing
+
+    def _standing(self) -> bytes | None:
+        """The bytes on disk; a file that cannot be read counts as a rejected one."""
+        try:
+            return self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return b""
 
     def open(self) -> None:
         """Remove the barrier and prove that no host answers its 404 any more."""

@@ -1228,6 +1228,36 @@ def test_stop_names_the_barrier_it_repaired_and_only_then(
     assert "its barrier was missing and stands again" in repaired
 
 
+@pytest.mark.parametrize(
+    "damaged", [b"a rejected barrier", b"\xff\xfe"], ids=["differing", "not text"]
+)
+def test_stop_repairs_a_barrier_file_that_differs_or_cannot_be_decoded(
+    damaged, probe_unit, stop, scripted, ingress, state
+):
+    """#67 rule 3: a rejected barrier is repaired and named, never a traceback."""
+    put_probe_in_b(scripted, state, ingress)
+    stop("probe")
+    ingress.barrier_file().write_bytes(damaged)
+
+    exit_code, out, _ = stop("probe")
+
+    assert exit_code == 0
+    assert "stands again" in out
+    assert ingress.barrier_file().read_bytes() != damaged
+
+
+def test_stop_from_a_over_a_barrier_file_that_cannot_be_decoded_still_stops_the_unit(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#67 rule 3: a damaged barrier file does not keep the services running."""
+    ingress.barrier_file().write_bytes(b"\xff\xfe")
+
+    exit_code, _, _ = stop("probe")
+
+    assert exit_code == 0
+    assert scripted.changing_verbs() == ["stop"]
+
+
 def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
     probe_unit, stop, scripted, ingress, state
 ):
@@ -1323,6 +1353,13 @@ def test_apply_leaves_the_barrier_in_b_to_e_and_in_e_with_a_marker_to_b(
     assert ingress.asked == []
 
 
+def standing_barrier(repository) -> Path:
+    barrier_file = repository / "dynamic" / "switch-step-ca.yml"
+    barrier_file.parent.mkdir(exist_ok=True)
+    barrier_file.write_text("the barrier")
+    return barrier_file
+
+
 def test_start_from_b_of_a_unit_that_is_not_set_up_is_refused_before_the_prompt(
     start, scripted, repository, state, setup_check
 ):
@@ -1330,6 +1367,7 @@ def test_start_from_b_of_a_unit_that_is_not_set_up_is_refused_before_the_prompt(
     put_unit_in("B", scripted, repository, state)
     setup_check.exit_code = 1
     setup_check.line = "step-ca/init --check: no keys"
+    barrier_file = standing_barrier(repository)
     scripted.calls.clear()
 
     exit_code, out, err = start()
@@ -1340,6 +1378,7 @@ def test_start_from_b_of_a_unit_that_is_not_set_up_is_refused_before_the_prompt(
     assert "start step-ca" not in out
     assert scripted.changing_verbs() == []
     assert marker(state) == SWITCHED_OFF_AT
+    assert barrier_file.exists()
 
 
 def test_start_from_b_whose_setup_check_cannot_tell_exits_2(
@@ -1348,17 +1387,22 @@ def test_start_from_b_whose_setup_check_cannot_tell_exits_2(
     """#67 rule 2: an unclear check is `cannot plan`, with the same effect."""
     put_unit_in("B", scripted, repository, state)
     setup_check.exit_code = 3
+    barrier_file = standing_barrier(repository)
 
-    exit_code, _, err = start()
+    exit_code, out, err = start()
 
     assert exit_code == 2
     assert "cannot tell" in err
+    assert "start step-ca" not in out
+    assert scripted.changing_verbs() == []
     assert marker(state) == SWITCHED_OFF_AT
+    assert barrier_file.exists()
 
 
 def test_start_from_b_asks_the_setup_check_of_a_set_up_unit_and_starts_it(
     start, scripted, repository, state, setup_check
 ):
+    """#67 rule 2: a set-up unit is checked once, then started and the marker cleared."""
     put_unit_in("B", scripted, repository, state)
 
     exit_code, _, _ = start()
@@ -1371,6 +1415,7 @@ def test_start_from_b_asks_the_setup_check_of_a_set_up_unit_and_starts_it(
 def test_start_from_b_of_a_unit_without_a_setup_runs_no_check(
     probe_unit, start, scripted, ingress, state, setup_check
 ):
+    """#67 rule 2: a unit without run.setup is not checked."""
     put_probe_in_b(scripted, state, ingress)
 
     exit_code, _, _ = start(unit="probe")
@@ -1380,6 +1425,7 @@ def test_start_from_b_of_a_unit_without_a_setup_runs_no_check(
 
 
 def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, setup_check):
+    """#67 rule 2: a start from A has no marker to clear, so nothing is checked."""
     put_unit_in("A", scripted, repository, state)
 
     exit_code, _, _ = start()
