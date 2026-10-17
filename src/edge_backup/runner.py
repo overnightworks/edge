@@ -51,8 +51,11 @@ MIN_SNAPSHOT_PREFIX = 8
 class StepFailed(Exception):
     """A handled failure: the run is over, the status says `failed`, the message is German."""
 
-    def __init__(self, category: ExitCategory, message: str) -> None:
+    def __init__(self, category: ExitCategory, message: str, *, shared: bool = False) -> None:
         self.category = category
+        self.shared = shared
+        self.app: str | None = None
+        self.phase: Phase | None = None
         super().__init__(message)
 
 
@@ -62,6 +65,7 @@ class Run:
     def __init__(self, path: Path, status: Status) -> None:
         self._path = path
         self._status = status
+        self._first_app_failure: StepFailed | None = None
         write_status(path, status)
 
     @contextmanager
@@ -72,21 +76,50 @@ class Run:
         try:
             yield
         except host.HostError as error:
-            raise StepFailed(failing, f"Phase {phase}: {error}") from error
+            raise StepFailed(
+                failing,
+                f"Phase {phase}: {error}",
+                shared=isinstance(error, restic.RepositoryUnusableError),
+            ) from error
         except VerificationError as error:
             raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"Phase {phase}: {error}") from error
 
-    def backed_up(self, snapshot_id: str) -> None:
-        self._record(self._status.backed_up(host.now(), snapshot_id))
+    @contextmanager
+    def isolated(self, app: str) -> Iterator[None]:
+        """One app's failure is kept for the verdict while the other apps go on."""
+        try:
+            yield
+        except StepFailed as failure:
+            if failure.shared:
+                raise
+            failure.app, failure.phase = app, self._status.phase
+            self._first_app_failure = self._first_app_failure or failure
 
-    def restore_tested(self) -> None:
-        self._record(self._status.restore_tested(host.now()))
+    def raise_first_app_failure(self) -> None:
+        if self._first_app_failure is not None:
+            raise self._first_app_failure
+
+    def snapshot_of(self, app: str) -> str | None:
+        return self._status.snapshot_of(app)
+
+    def attribute_legacy_evidence(self, settings: Settings, apps: tuple[App, ...]) -> None:
+        attributed = attributed_status(settings, self._status, apps)
+        if attributed is not self._status:
+            self._record(attributed)
+
+    def backed_up(self, app: str, snapshot_id: str) -> None:
+        self._record(self._status.backed_up(app, host.now(), snapshot_id))
+
+    def restore_tested(self, apps: list[str]) -> None:
+        self._record(self._status.restore_tested(host.now(), apps))
 
     def succeeded(self) -> None:
         self._record(self._status.succeeded())
 
-    def failed(self, category: ExitCategory) -> None:
-        self._record(self._status.failed(category))
+    def failed(
+        self, category: ExitCategory, app: str | None = None, phase: Phase | None = None
+    ) -> None:
+        self._record(self._status.failed(category, app, phase))
 
     def _record(self, status: Status) -> None:
         self._status = status
@@ -133,11 +166,12 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
         require_secret_and_repository(settings)
     first_readiness = _Deadline.start(READINESS_TIMEOUT)
     _require_docker_with_pinned_images(run, first_readiness)
-    snapshot_ids = [
-        _back_up(settings, app, run, first_readiness if index == 0 else _Deadline.start())
-        for index, app in enumerate(apps)
-    ]
-    run.backed_up(snapshot_ids[-1])
+    with run.phase(Phase.PREPARE):
+        run.attribute_legacy_evidence(settings, apps)
+    for index, app in enumerate(apps):
+        with run.isolated(app.name):
+            _back_up(settings, app, run, first_readiness if index == 0 else _Deadline.start())
+    run.raise_first_app_failure()
     for app in apps:
         with run.phase(Phase.FORGET):
             restic.forget(settings, app.name)
@@ -149,11 +183,17 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     _require_docker_with_pinned_images(run, _Deadline.start())
+    with run.phase(Phase.PREPARE):
+        run.attribute_legacy_evidence(settings, apps)
+    verified = []
     for app in apps:
-        _restore_test(settings, app, run)
+        with run.isolated(app.name):
+            _restore_test(settings, app, run)
+            verified.append(app.name)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=True)
-    run.restore_tested()
+    run.restore_tested(verified)
+    run.raise_first_app_failure()
 
 
 def _require_docker_with_pinned_images(run: Run, readiness: _Deadline) -> None:
@@ -174,7 +214,26 @@ def previous_status(settings: Settings) -> Status | None:
         ) from error
 
 
-def restore(settings: Settings, app: App, target: Path, snapshot_prefix: str | None) -> str:
+def attributed_status(settings: Settings, status: Status, apps: tuple[App, ...]) -> Status:
+    """Legacy evidence belongs to the one declared app only if restic knows its snapshot there."""
+    legacy = status.unattributed
+    if legacy is None or legacy.last_snapshot_id is None or len(apps) != 1:
+        return status
+    [app] = apps
+    if app.name in status.apps or not restic.has_snapshot(
+        settings, app.name, legacy.last_snapshot_id
+    ):
+        return status
+    return status.attributed_to(app.name)
+
+
+def restore(
+    settings: Settings,
+    apps: tuple[App, ...],
+    app: App,
+    target: Path,
+    snapshot_prefix: str | None,
+) -> str:
     """The operator's restore into a new private directory: the last successful backup's snapshot,
     or the one of this app that the operator names.
 
@@ -188,7 +247,7 @@ def restore(settings: Settings, app: App, target: Path, snapshot_prefix: str | N
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
     require_secret_and_repository(settings)
     snapshot_id = (
-        _last_successful_snapshot(settings, app)
+        _last_successful_snapshot(settings, app, _recorded_snapshot(settings, apps, app))
         if snapshot_prefix is None
         else _chosen_snapshot(settings, app, snapshot_prefix)
     )
@@ -197,7 +256,7 @@ def restore(settings: Settings, app: App, target: Path, snapshot_prefix: str | N
     return snapshot_id
 
 
-def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> str:
+def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> None:
     with run.phase(Phase.READINESS):
         container = _wait_until_ready(
             lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
@@ -211,12 +270,12 @@ def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> st
             manifest = Manifest(app.name, audio_files)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
-            return restic.backup(settings, app.name, staging, volume)
+            run.backed_up(app.name, restic.backup(settings, app.name, staging, volume))
 
 
 def _restore_test(settings: Settings, app: App, run: Run) -> None:
     with run.phase(Phase.RESTORE):
-        snapshot_id = _last_successful_snapshot(settings, app)
+        snapshot_id = _last_successful_snapshot(settings, app, run.snapshot_of(app.name))
     with _private_directory(settings.work_dir) as restored:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)
@@ -249,19 +308,32 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     check_audio_references(references, restored_audio)
 
 
-def _last_successful_snapshot(settings: Settings, app: App) -> str:
-    """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
+def _recorded_snapshot(settings: Settings, apps: tuple[App, ...], app: App) -> str | None:
+    """A restore only reads the status: legacy evidence is attributed in memory, never written."""
     status = previous_status(settings)
+    if status is None:
+        return None
+    return attributed_status(settings, status, apps).snapshot_of(app.name)
+
+
+def _last_successful_snapshot(settings: Settings, app: App, recorded: str | None) -> str:
+    """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
     newest = _latest_snapshot(settings, app)
-    last_good = None if status is None else status.last_snapshot_id
-    if last_good is None or not restic.has_snapshot(settings, app.name, last_good):
+    named = f"der neueste Snapshot ist {newest[:8]}; wählbar mit: " + (
+        f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>"
+    )
+    if recorded is None:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"der Snapshot des letzten erfolgreichen Backups von {app.name} fehlt; "
-            f"der neueste Snapshot ist {newest[:8]}; wählbar mit: "
-            f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>",
+            f"kein erfolgreiches Backup von {app.name} aufgezeichnet; {named}",
         )
-    return last_good
+    if not restic.has_snapshot(settings, app.name, recorded):
+        raise StepFailed(
+            ExitCategory.CONFIGURATION,
+            f"der aufgezeichnete Snapshot {recorded[:8]} von {app.name} fehlt im Repository; "
+            f"{named}",
+        )
+    return recorded
 
 
 def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:

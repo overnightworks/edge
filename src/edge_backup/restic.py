@@ -148,8 +148,23 @@ def unlock(settings: Settings) -> None:
     _restic(settings, "restic unlock", ["unlock"])
 
 
+# restic's own exit codes for a repository that does not exist, is locked, or rejects the password.
+REPOSITORY_EXIT_CODES = frozenset({10, 11, 12})
+
+
+class RepositoryUnusableError(host.HostCommandError):
+    """restic says the repository, not the app being worked on, is why it failed."""
+
+
 def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) -> bytes:
-    return host.run(restic_argv(settings, command, *mounts), label=label)
+    try:
+        return host.run(restic_argv(settings, command, *mounts), label=label)
+    except host.HostCommandError as error:
+        if error.exit_code in REPOSITORY_EXIT_CODES:
+            raise RepositoryUnusableError(
+                label, str(error).removeprefix(f"{label} "), error.exit_code
+            ) from error
+        raise
 
 
 def _scope(app: str) -> list[str]:
