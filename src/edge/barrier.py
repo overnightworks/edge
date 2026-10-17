@@ -15,13 +15,14 @@ import os
 import re
 import socket
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
 import yaml
 
+from edge import catalog, switches
 from edge_check.docker import EDGE_NAME_LABEL, is_routed
 
 DYNAMIC_DIRECTORY = "dynamic"
@@ -308,3 +309,69 @@ class Barrier:
             self.path.unlink(missing_ok=True)
         except OSError as error:
             raise BarrierError(f"cannot remove {self.path.name} ({error.strerror})") from error
+
+
+def switched_off(read: switches.Mark | None, ingress: Barrier) -> bool:
+    """A unit is switched off by its marker or by the barrier a stop left standing."""
+    return read is not None or ingress.present()
+
+
+@dataclass(frozen=True)
+class Proven:
+    unit: str
+
+
+@dataclass(frozen=True)
+class NoHost:
+    """The unit is switched off, but Traefik routes no host of it, so it has no barrier."""
+
+    unit: str
+
+
+@dataclass(frozen=True)
+class Unproven:
+    unit: str
+    failure: str
+
+
+type ActiveProof = Proven | NoHost | Unproven
+
+
+def prove_active(
+    units: Iterable[catalog.Unit],
+    profile_services: Mapping[str, tuple[str, ...]],
+    config: Mapping[str, Any],
+    marks: switches.Switches,
+    checkout: Path,
+    verifier: Verifier = PROVEN_OVER_HTTP,
+) -> Iterator[ActiveProof]:
+    """Re-render and prove the barrier of every unit that is switched off or still has one.
+
+    One outcome per active barrier, yielded as its proof ends, so a caller that stops at the
+    first unproven barrier leaves the later ones untouched.
+    """
+    for unit in units:
+        proof = _proof_of(unit.key, profile_services[unit.key], config, marks, checkout, verifier)
+        if proof is not None:
+            yield proof
+
+
+def _proof_of(
+    unit: str,
+    services: Iterable[str],
+    config: Mapping[str, Any],
+    marks: switches.Switches,
+    checkout: Path,
+    verifier: Verifier,
+) -> ActiveProof | None:
+    """The outcome for one unit; None when its barrier is not active."""
+    try:
+        ingress = Barrier.of_unit(config, services, checkout, unit, verifier)
+        if not switched_off(marks.mark(unit), ingress):
+            return None
+        if not ingress.names:
+            return NoHost(unit)
+        ingress.close()
+    except (BarrierError, switches.SwitchError) as error:
+        return Unproven(unit, str(error))
+    return Proven(unit)
