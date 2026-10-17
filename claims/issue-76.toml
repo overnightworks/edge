@@ -1,0 +1,8 @@
+claim_id = "ad68fb5869144929904294eb16a7fb6f"
+agent = "claude"
+role = "builder"
+base = "8cc18ecf50cfcd26fa2a029dc91ba2d156b2555f"
+branch = "claude/issue-76-tunnel-files"
+scope = ["README.md", "docs/architecture.md", "probe/switches/probe.py", "tests/test_edge_tunnel_files.py", "tunnel"]
+opened_commit = "0f4b640c78ea51e081062f7e757045de8aeaede1"
+whole_reason = "One new folder of four static files plus their pins; the folder is the unit of ownership and does not split."
