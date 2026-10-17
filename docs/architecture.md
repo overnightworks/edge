@@ -702,7 +702,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 
 ### Three goals, kept apart
 
-- **Move (relocation):** the whole platform goes to a new machine by a short, scripted runbook. Its proof is the clean-machine drill (section 6, "The off-disk restore path"), which runs steps 4, 6, 8, 9 and 10. D3 is still open (section 9).
+- **Move (relocation):** the whole platform goes to a new machine by a short, scripted runbook. Its proof is the planned clean-machine drill (section 6, "The off-disk restore path"), which runs steps 4, 6, 8, 9 and 10. D3 is still open (section 9).
 - **Spread:** one instance of a service runs on a second machine. It is an item each time, with the "Any second machine" checklist of §10 rule 4 as its done-when.
 - **Scale:** N instances of a service run. It is an item each time, and only when a caller needs it. Several rulings and facts make services singletons on purpose:
   - agent-presentator ADR 0006 and its `compose.yaml:1`: SQLite and files, one instance;
@@ -720,8 +720,8 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
   4. its data, from its backup record (`backup/apps.toml`);
   5. artifacts it fetches itself at start (model weights, caches), declared rebuildable.
 - It has no bind source outside the tracked files of its release checkout: no `~/…` binary or login, no host unix socket of another unit, no Docker socket, no per-machine uid, gid or path. The one exception is the always-on core's socket-proxy (section 3, "Entries, not repositories").
-- **Proof:** the clean-machine drill (section 6).
-- **What can be checked:** the catalog check flags, in the services an enabled entry resolves to (P13), any bind source that is not a tracked release path and any `docker.sock` mount, in `edge apply`'s plan and in `edge check` against the deployed tag. App compose files live in other repositories, so edge CI cannot see them. The check is built in [edge#50](https://github.com/overnightworks/edge/issues/50)'s CAT row.
+- **Proof:** the planned clean-machine drill (section 6).
+- **What can be checked:** [edge#50](https://github.com/overnightworks/edge/issues/50)'s CAT row adds a check that flags, in the services an enabled entry resolves to (P13), any bind source that is not a tracked release path and any `docker.sock` mount, in `edge apply`'s plan and in `edge check` against the deployed tag. App compose files live in other repositories, so edge CI cannot see them.
 - **A move keeps every public host.** Renaming a host is its own item: it touches the redirect URIs in `keycloak/realm.yaml` and the app's `redirect_uri`, the Access app and the token audience (`docs/naming.md`). DNS and TLS need nothing new, because the hosts live at Cloudflare (D6).
 
 **§10 rule 2: peers are reached by a configured name.**
