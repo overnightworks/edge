@@ -241,13 +241,13 @@ loescht ihren Schalter nie ("stays stopped"); das Ende des Schalters ist allein 
 ist notiert, aber ein Container laeuft noch, oder er liess sich nicht notieren) oder verweigert,
 2 nicht planbar (unbekannte Einheit, Katalog oder Compose).
 
-Die Sperre vor Traefik: Hat die Einheit einen Dienst mit `traefik.enable: "true"` und einem
-`edge.name`, schreibt `edge stop` vor dem `stop` die Datei `dynamic/switch-<Einheit>.yml` (flach,
+Die Sperre vor Traefik: Hat die Einheit einen Dienst mit `traefik.enable` (jede Go-ParseBool-Schreibweise von wahr) und
+einem `edge.name`, schreibt `edge stop` vor dem `stop` die Datei `dynamic/switch-<Einheit>.yml` (flach,
 atomar, von git ignoriert). Sie haengt pro Host ein Router mit hoechster Prioritaet nur an den
 Eingang `edge`, und Traefik antwortet `404 page not found`; der Eingang `admin` auf `127.0.0.1:8090`
 bleibt offen. `edge stop` meldet Erfolg erst, wenn Traefik fuer jeden Host (innerhalb von 15 s) 404
-antwortet, sonst Exit 1 (teilweise; Schalter und Sperre bleiben). `edge start` entfernt die Sperre
-erst, wenn die Einheit laeuft, prueft, dass der Host sie nicht mehr beantwortet, und loescht den
+mit dem Header `X-Edge-Barrier: <Einheit>` antwortet, sonst Exit 1 (teilweise; Schalter und Sperre bleiben). `edge start` entfernt die Sperre
+erst, wenn die Einheit laeuft, prueft, dass der Host den Header `X-Edge-Barrier` nicht mehr setzt, und loescht den
 Schalter zuletzt. `edge apply` fasst die Sperre nie an. Sie ist eine Datei im Checkout und gilt
 nach einem Neustart von Traefik und des PCs weiter. Der Beweis auf einem Wegwerf-Stack (braucht
 `127.0.0.1:8081` frei, also bei ausgeschaltetem Live-Traefik):

@@ -1167,7 +1167,10 @@ def test_a_barrier_traefik_rejects_is_partial_and_still_stops_the_unit(
     assert exit_code == 1
     assert "switched off" not in out
     assert "partial" in err
-    assert "Traefik did not answer 404 for hello.probe.test within 15 s" in err
+    assert (
+        "Traefik did not answer the barrier's 404 (X-Edge-Barrier: probe) "
+        "for hello.probe.test within 15 s" in err
+    )
     assert scripted.containers == {"hello": "exited"}
     assert marker(state, "probe") is not None
     assert ingress.barrier_file().exists()
@@ -1215,7 +1218,7 @@ def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
 
     assert exit_code == 1
     assert "already switched off" not in out
-    assert "Traefik did not answer 404" in err
+    assert "Traefik did not answer the barrier's 404" in err
 
 
 def test_start_removes_the_barrier_after_the_up_is_observed_and_before_the_marker_clears(

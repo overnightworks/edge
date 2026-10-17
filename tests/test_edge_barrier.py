@@ -1,11 +1,9 @@
 """The ingress barrier (#61 proof a): rendering, atomic write, verification and the git rules.
-Nothing here starts a container or opens a socket; the checkout is always a `tmp_path`."""
+Nothing here starts a container or opens a socket (that is test_edge_barrier_socket.py); the
+checkout is always a `tmp_path`."""
 
 import http.client
-import socket
 import subprocess
-import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -234,37 +232,53 @@ def test_a_barrier_traefik_does_not_answer_404_for_is_not_verified_after_15_seco
         ingress.close()
 
     assert str(failure.value) == (
-        "the barrier is written but Traefik did not answer 404 for hello.probe.invalid within 15 s"
+        "the barrier is written but Traefik did not answer the barrier's 404 "
+        "(X-Edge-Barrier: probe) for hello.probe.invalid within 15 s"
     )
     assert ingress.present()
 
 
 def test_a_404_with_another_body_is_no_proof_of_the_barrier(checkout):
     """#61 rule 3 / proof a: only Traefik's own 404 body proves the barrier."""
-    other = barrier.Answer(404, b'{"error":"not found"}')
+    other = barrier.Answer(404, b'{"error":"not found"}', "probe")
+    ingress = barrier_of(checkout, "hello", fetch=lambda *_: other)
 
     with pytest.raises(barrier.BarrierError):
-        barrier_of(checkout, "hello", fetch=lambda *_: other).close()
+        ingress.close()
+
+
+def test_a_marked_answer_with_another_status_is_no_proof_of_the_barrier(checkout):
+    """#61 rule 3 / proof a: only status 404 proves the barrier, mark and body notwithstanding."""
+    other = barrier.Answer(200, PLAIN_NOT_FOUND.body, "probe")
+    ingress = barrier_of(checkout, "hello", fetch=lambda *_: other)
+
+    with pytest.raises(barrier.BarrierError):
+        ingress.close()
 
 
 def test_a_plain_404_without_the_mark_is_no_proof_of_the_barrier(checkout):
     """#61 rule 3 / proof a: Traefik's no-route 404 is what a rejected file leaves, not proof."""
+    ingress = barrier_of(checkout, "hello", fetch=lambda *_: PLAIN_NOT_FOUND)
+
     with pytest.raises(barrier.BarrierError):
-        barrier_of(checkout, "hello", fetch=lambda *_: PLAIN_NOT_FOUND).close()
+        ingress.close()
 
 
 def test_the_mark_of_another_unit_is_no_proof_of_this_barrier(checkout):
     """#61 rule 3 / proof a: the mark must name this unit."""
     other = barrier.Answer(404, PLAIN_NOT_FOUND.body, "other")
+    ingress = barrier_of(checkout, "hello", fetch=lambda *_: other)
 
     with pytest.raises(barrier.BarrierError):
-        barrier_of(checkout, "hello", fetch=lambda *_: other).close()
+        ingress.close()
 
 
 def test_opening_is_verified_only_once_the_host_stops_answering_the_barriers_404(checkout):
     """#61 rule 4 / proof a: opening is verified once the mark is gone."""
+    ingress = barrier_of(checkout, "hello", fetch=lambda *_: NOT_FOUND)
+
     with pytest.raises(barrier.BarrierError, match=r"did not open hello\.probe\.invalid"):
-        barrier_of(checkout, "hello", fetch=lambda *_: NOT_FOUND).open()
+        ingress.open()
 
 
 @pytest.mark.parametrize(
@@ -331,32 +345,3 @@ def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
 
     assert clock.now <= barrier.VERIFY_SECONDS + 0.5
     assert max(allowed) <= 3.0
-
-
-def test_a_never_ending_answer_is_cut_off_at_the_time_allowed():
-    """#61 rule 3: a streaming body cannot hold the stop past its deadline."""
-    server = socket.create_server(("127.0.0.1", 0))
-    stop_serving = threading.Event()
-
-    def trickle() -> None:
-        connection, _ = server.accept()
-        with connection:
-            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
-            while not stop_serving.is_set():
-                try:
-                    connection.sendall(b"x")
-                except OSError:
-                    return
-                time.sleep(0.3)
-
-    serving = threading.Thread(target=trickle, daemon=True)
-    serving.start()
-    address = f"127.0.0.1:{server.getsockname()[1]}"
-    try:
-        started = time.monotonic()
-        with pytest.raises(OSError):
-            barrier.http_fetch(address, "hello.probe.invalid", 1.0)
-        assert time.monotonic() - started < 2.0
-    finally:
-        stop_serving.set()
-        server.close()

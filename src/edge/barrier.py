@@ -13,6 +13,7 @@ entry resolves the real one.
 import http.client
 import os
 import re
+import socket
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -21,11 +22,10 @@ from typing import Any, Self
 
 import yaml
 
-from edge_check.docker import EDGE_NAME_LABEL, GO_TRUE_SPELLINGS
+from edge_check.docker import EDGE_NAME_LABEL, is_routed
 
 DYNAMIC_DIRECTORY = "dynamic"
 TRAEFIK_FILE = "traefik.yml"
-_ROUTED_LABEL = "traefik.enable"
 _TRAEFIK_NAME = re.compile(r"[a-z0-9-]{1,63}")  # the provider constraint of traefik.yml
 _NOT_FOUND_BODY = b"404 page not found\n"
 _NOT_FOUND = 404
@@ -34,7 +34,6 @@ _PRIORITY = 1_000_000
 VERIFY_SECONDS = 15.0
 _POLL_SECONDS = 0.5
 _REQUEST_SECONDS = 3.0
-_SMALLEST_TIMEOUT_SECONDS = 0.01  # a socket timeout of 0 would mean non-blocking
 _TEMPLATE = (
     "# Written by `edge stop {unit}` from ~/.local/state/edge/stopped/{unit}; "
     "removed by `edge start {unit}`. Generated, git-ignored.\n"
@@ -85,30 +84,38 @@ class Answer:
 Fetch = Callable[[str, str, float], Answer]  # (address, Host, seconds allowed) -> GET / answer
 
 
+class _DeadlineSocket(socket.socket):
+    """A socket whose every read, whatever http.client's parser asks for, ends at one deadline."""
+
+    deadline = 0.0
+
+    def recv_into(self, buffer, nbytes=0, flags=0):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("the answer took longer than the time allowed")
+        self.settimeout(remaining)
+        return super().recv_into(buffer, nbytes, flags)
+
+
+class _DeadlineConnection(http.client.HTTPConnection):
+    def connect(self) -> None:
+        super().connect()
+        bounded = _DeadlineSocket(fileno=self.sock.detach())
+        bounded.deadline = time.monotonic() + self.timeout
+        self.sock = bounded
+
+
 def http_fetch(address: str, host: str, seconds: float) -> Answer:
-    """`GET /` within `seconds` in all, connect and read together; only the first bytes of the body
-    are read, which is all the comparison with Traefik's 404 needs."""
-    deadline = time.monotonic() + seconds
-    connection = http.client.HTTPConnection(address, timeout=seconds)
+    """`GET /` within `seconds` in all, connect and every read together. Only a marked answer has
+    its first body bytes read, which is all the comparison with Traefik's 404 needs; the headers
+    alone show that a mark is absent."""
+    connection = _DeadlineConnection(address, timeout=seconds)
     try:
-        connection.connect()
-        sock = connection.sock
-
-        def read_within_deadline(reader: Callable[[], bytes]) -> bytes:
-            sock.settimeout(max(deadline - time.monotonic(), _SMALLEST_TIMEOUT_SECONDS))
-            return reader()
-
         connection.request("GET", "/", headers={"Host": host})
-        response = read_within_deadline(connection.getresponse)
-        body = b""
-        while len(body) <= len(_NOT_FOUND_BODY):
-            chunk = read_within_deadline(lambda: response.read1(len(_NOT_FOUND_BODY) + 1))
-            if not chunk:
-                break
-            if time.monotonic() > deadline:
-                raise TimeoutError("the answer took longer than the time allowed")
-            body += chunk
-        return Answer(response.status, body, response.getheader(MARK_HEADER))
+        response = connection.getresponse()
+        mark = response.getheader(MARK_HEADER)
+        body = response.read(len(_NOT_FOUND_BODY) + 1) if mark is not None else b""
+        return Answer(response.status, body, mark)
     finally:
         connection.close()
 
@@ -154,7 +161,7 @@ def routed_names(config: Mapping[str, Any], services: Iterable[str]) -> tuple[st
     for service in services:
         labels = config["services"][service].get("labels", {})
         name = labels.get(EDGE_NAME_LABEL, "")
-        if labels.get(_ROUTED_LABEL) in GO_TRUE_SPELLINGS and _TRAEFIK_NAME.fullmatch(name):
+        if is_routed(labels) and _TRAEFIK_NAME.fullmatch(name):
             names[name] = None
     return tuple(names)
 
@@ -237,8 +244,8 @@ class Barrier:
             within = f"within {self.verifier.seconds:g} s"
             if barrier:
                 raise BarrierError(
-                    f"the barrier is written but Traefik did not answer 404 for "
-                    f"{unreached} {within}"
+                    f"the barrier is written but Traefik did not answer the barrier's 404 "
+                    f"({MARK_HEADER}: {self.unit}) for {unreached} {within}"
                 )
             raise BarrierError(
                 f"Traefik did not open {unreached} {within} (the barrier is removed)"
