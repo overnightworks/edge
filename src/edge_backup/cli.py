@@ -105,10 +105,12 @@ def _unlock(settings: Settings, _: argparse.Namespace) -> int:
 
 
 def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
-    apps = {app.name: app for app in _apps(arguments.apps)}
-    if (app := apps.get(arguments.app)) is None:
+    apps = _apps(arguments.apps)
+    if (app := {app.name: app for app in apps}.get(arguments.app)) is None:
         raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
-    snapshot_id = _command(runner.restore, settings, app, arguments.target, arguments.snapshot)
+    snapshot_id = _command(
+        runner.restore, settings, apps, app, arguments.target, arguments.snapshot
+    )
     print(f"edge-backup: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
     return ExitCode.OK
 
@@ -134,7 +136,7 @@ def _recorded(
         runner.sweep_leftover_staging(settings.work_dir)
         step(settings, _apps(arguments.apps), run)
     except StepFailed as failure:
-        run.failed(failure.category)
+        run.failed(failure.category, failure.app, failure.phase)
         return _report(failure)
     except KeyboardInterrupt:
         run.failed(ExitCategory.INTERRUPTED)

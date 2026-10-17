@@ -1,7 +1,15 @@
 """What a restore may take, and what a run must check before it stages anything."""
 
+import json
+
 import pytest
-from edge_backup_support import DUMP, Machine
+from edge_backup_support import (
+    DUMP,
+    Machine,
+    app_history,
+    declare_two_apps,
+    schema_one_status,
+)
 
 from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
 
@@ -36,9 +44,15 @@ def _lose_the_status(machine: Machine) -> None:
     machine.status_file.unlink()
 
 
-@pytest.mark.parametrize("break_history", [_forget_the_recorded_snapshot, _lose_the_status])
+@pytest.mark.parametrize(
+    ("break_history", "refusal"),
+    [
+        (_forget_the_recorded_snapshot, "fehlt im Repository"),
+        (_lose_the_status, "kein erfolgreiches Backup von songmaker aufgezeichnet"),
+    ],
+)
 def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newest(
-    edge_backup, machine, home, break_history
+    edge_backup, machine, home, break_history, refusal
 ):
     edge_backup("backup")
     edge_backup("backup")
@@ -49,7 +63,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
 
     assert outcome.exit_code == 1
     [line] = outcome.err.splitlines()
-    assert "letzten erfolgreichen Backups" in line
+    assert refusal in line
     assert f"der neueste Snapshot ist {machine.snapshots[-1]['id'][:8]}" in line
     assert not target.exists()
 
@@ -202,4 +216,113 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
     outcome = edge_backup("restore-test")
 
     assert outcome.exit_code == 1
-    assert "letzten erfolgreichen Backups" in outcome.err
+    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
+
+
+def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machine, home):
+    """#71 rule 4: restore takes the app's own last successful snapshot."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+    edge_backup(*two_apps, "backup")
+    songmaker_snapshot = app_history(json.loads(machine.status_file.read_text()))[
+        "last_snapshot_id"
+    ]
+
+    first = edge_backup(*two_apps, "restore", "songmaker", "--target", str(home / "first"))
+    second = edge_backup(*two_apps, "restore", "radio", "--target", str(home / "second"))
+
+    assert (first.exit_code, second.exit_code) == (0, 0)
+    assert songmaker_snapshot[:8] in first.out
+    assert machine.snapshots[-1]["id"][:8] in second.out
+
+
+def test_restore_test_verifies_each_app_against_its_own_snapshot(edge_backup, machine, home):
+    """#71 rule 5: the restore test verifies each app against its own snapshot."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+
+    outcome = edge_backup(*two_apps, "restore-test")
+
+    assert outcome.exit_code == 0, outcome.err
+    restored = [argv for label, argv in machine.calls if label == "restic restore"]
+    assert [snapshot["id"] for snapshot in machine.snapshots] == [
+        argv[argv.index("restore") + 1].split(":")[0] for argv in restored
+    ]
+    assert all(
+        app_history(outcome.status, app)["last_successful_restore_test"] is not None
+        for app in ("songmaker", "radio")
+    )
+
+
+def test_an_app_that_fails_its_restore_test_does_not_cost_the_others_their_time(
+    edge_backup, machine, home
+):
+    """#71 rule 5: a failed restore test costs the other apps nothing."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+    del machine.snapshots[-1]["db"]["db.dump"]
+
+    outcome = edge_backup(*two_apps, "restore-test")
+
+    assert outcome.exit_code == 1
+    assert (outcome.status["failing_app"], outcome.status["failing_phase"]) == ("radio", "verify")
+    assert app_history(outcome.status)["last_successful_restore_test"] is not None
+    assert app_history(outcome.status, "radio")["last_successful_restore_test"] is None
+
+
+def test_a_failed_read_data_check_gives_no_app_a_new_restore_test_time(edge_backup, machine, home):
+    """#71 rule 5: a failed read-data check stamps no app."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+    machine.failing["restic check"] = 1
+
+    outcome = edge_backup(*two_apps, "restore-test")
+
+    assert outcome.status["failing_phase"] == "check"
+    assert all(
+        app_history(outcome.status, app)["last_successful_restore_test"] is None
+        for app in ("songmaker", "radio")
+    )
+
+
+def _write_schema_one_status(machine: Machine, snapshot_id: str) -> bytes:
+    machine.status_file.write_text(json.dumps(schema_one_status(snapshot_id)))
+    return machine.status_file.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("two_declared", "recorded_snapshot_exists", "attributed"),
+    [
+        (False, True, True),
+        (False, False, False),
+        (True, True, False),
+    ],
+    ids=["one app, confirmed", "one app, not confirmed", "two apps"],
+)
+def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
+    edge_backup, machine, home, two_declared, recorded_snapshot_exists, attributed
+):
+    """#71 rule 2: schema-1 evidence moves to an app only with restic evidence."""
+    declared = declare_two_apps(home) if two_declared else ()
+    edge_backup(*declared, "backup")
+    legacy_id = machine.snapshots[0]["id"] if recorded_snapshot_exists else "f" * 64
+    legacy_file = _write_schema_one_status(machine, legacy_id)
+    target = home / "restored"
+
+    restored = edge_backup(*declared, "restore", "songmaker", "--target", str(target))
+
+    assert (restored.exit_code == 0) is attributed
+    if not attributed:
+        assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in restored.err
+    assert machine.status_file.read_bytes() == legacy_file
+
+    migrated = edge_backup(*declared, "restore-test")
+
+    assert migrated.status["schema"] == 2
+    assert "last_successful_backup" not in migrated.status
+    if attributed:
+        assert app_history(migrated.status)["last_snapshot_id"] == legacy_id
+        assert "unattributed" not in migrated.status
+    else:
+        assert migrated.status["unattributed"]["last_snapshot_id"] == legacy_id
+        assert app_history(migrated.status).get("last_snapshot_id") != legacy_id

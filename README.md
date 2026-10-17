@@ -442,33 +442,59 @@ marked as its own; anything else in that directory stays.
 
 ### Status
 
-`~/.local/state/edge/backup-status.json`, written atomically at every phase:
+`~/.local/state/edge/backup-status.json`, written atomically at every phase.
+The run's verdict stands at the top; each app (its name, which is also its
+restic tag) has its own last good snapshot and times:
 
 ```json
-{"schema": 1, "state": "ok", "phase": "check", "failing_phase": null,
- "exit_category": null, "last_attempt": "2026-10-18T01:00:00+00:00",
- "last_successful_backup": "2026-10-18T01:12:40+00:00",
- "last_successful_restore_test": "2026-10-04T03:09:02+00:00",
- "last_snapshot_id": "4f1c…"}
+{"schema": 2, "state": "failed", "phase": "readiness", "failing_phase": "readiness",
+ "failing_app": "radio", "exit_category": "configuration",
+ "last_attempt": "2026-10-18T01:00:00+00:00",
+ "apps": {
+   "radio": {"last_snapshot_id": "9a0e…",
+             "last_successful_backup": "2026-10-11T01:12:40+00:00",
+             "last_successful_restore_test": "2026-10-04T03:09:02+00:00"},
+   "songmaker": {"last_snapshot_id": "4f1c…",
+                 "last_successful_backup": "2026-10-18T01:12:40+00:00",
+                 "last_successful_restore_test": "2026-10-04T03:09:02+00:00"}}}
 ```
 
 `state` is `running`, `ok` or `failed`. A `running` that outlasts the timer's
 6-hour limit means the run died: treat it as failed. `exit_category` is one of
 `configuration`, `not-ready`, `command-failed`, `verification-failed`,
-`interrupted`, `internal`. When the backup succeeded but prune or check failed,
-`last_successful_backup` moves on and `state` is `failed`. The file holds no
-output, command line, path or file name.
+`interrupted`, `internal`. `failing_app` names the app whose step failed and is
+`null` for a failure that belongs to none (the repository, a status failure).
+The file holds no output, command line, path or file name.
+
+An app that fails does not stop the others: every other app is still backed
+up, and each app's snapshot is recorded right after its own `restic backup`
+exits 0, so earlier successes stay. A run with any failure prunes nothing.
+When the backup succeeded but prune or check failed, the apps' backup times
+have moved on and `state` is `failed`. An app removed from `apps.toml` keeps
+its entry; nothing deletes one automatically, and renaming an app makes it a
+new app.
 
 A status file that cannot be read (mode 000, corrupt JSON, an unknown
 `schema`) is never overwritten: backup, restore test and restore fail with one
 German line and exit 1, and the file stays byte-identical. Past successes are
 never replaced by nulls; repair or remove the file by hand to go on.
 
+A schema-1 file (flat `last_snapshot_id` and times) is read into this shape.
+Its id and times go to the declared app only when exactly one app is declared
+and restic confirms the id in that app's tag scope. Otherwise they stay in an
+`unattributed` entry, and `restore` asks for `--snapshot`. `restore` never
+writes the file; the next backup or restore test writes it as schema 2.
+
+The way back to an older edge-backup: it refuses a schema-2 file like any
+unknown one. Move `backup-status.json` aside, then either
+`edge-backup restore <app> --snapshot <ID> --target <Ordner>` or run the next
+backup, which writes a fresh status.
+
 `state` describes the latest run of either command, backup or restore test: a
 failed Sunday backup followed two hours later by a passing restore test reads
 `ok`, and a timer that never fires leaves the last `ok` standing. A reader
-therefore also judges freshness: `last_successful_backup` no older than about
-8 days, `last_successful_restore_test` no older than about 5 weeks.
+therefore also judges freshness per app: `last_successful_backup` no older than
+about 8 days, `last_successful_restore_test` no older than about 5 weeks.
 
 | Exit | Meaning |
 |---|---|
@@ -481,12 +507,14 @@ therefore also judges freshness: `last_successful_backup` no older than about
 uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
-It restores the snapshot of the **last successful backup**
-(`last_snapshot_id` in the status) and prints its short ID, never a newer
-snapshot that a failed run left behind (restic exit 3 leaves a partial one). If
-that snapshot is gone, or the status names none, `restore` refuses with one
-German line and exit 1, names the newest snapshot and says how to choose it.
-The restore test verifies the same snapshot and refuses the same way.
+It restores the snapshot of that app's **last successful backup**
+(`apps.<app>.last_snapshot_id` in the status) and prints its short ID, never a
+newer snapshot that a failed run left behind (restic exit 3 leaves a partial
+one). `restore` refuses with one German line and exit 1, names the newest
+snapshot and says how to choose it, in two cases: no successful backup of that
+app is recorded yet, or the recorded snapshot is missing in the repository.
+The restore test verifies each app against its own last good snapshot and
+refuses the same way; a failed `check --read-data` gives no app a new time.
 
 Disaster recovery on a machine without the status file: list the repository
 with `uv run edge-backup snapshots`, then choose a snapshot of that app by the
