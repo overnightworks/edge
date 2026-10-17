@@ -698,11 +698,11 @@ These lines become true only after D14: agents under their own user, without Doc
 
 **Caller:** the operator, 17.10.2026: „ich will nichts auf Vorrat bauen, aber ich will das system prinzipiell so gestalten, dass die umstellung vom prinzip ein knopfdruck wäre“, and „alles soll auch mehr oder weniger als komponente austauschbar sein mit vertretbarem aufwand! … push back wo ich falsch liege“. Drafted and counter-checked under the rule-change gate in [edge#83](https://github.com/overnightworks/edge/issues/83).
 
-The rules are labelled "§10 rule n", because [edge#50](https://github.com/overnightworks/edge/issues/50) already uses P1–P15 and R1–R4, and `docs/naming.md` uses P1 and P2. This section cites the facts it builds on and does not restate them.
+The rules are labelled "§10 rule n", because [edge#50](https://github.com/overnightworks/edge/issues/50) already uses P1–P15 and R1–R4, and `docs/naming.md` uses P1–P3b. This section cites the facts it builds on and does not restate them.
 
 ### Three goals, kept apart
 
-- **Move (relocation):** the whole platform goes to a new machine by a short, scripted runbook. Its proof is the planned clean-machine drill (section 6, "The off-disk restore path"), which runs steps 4, 6, 8, 9 and 10. D3 is still open (section 9).
+- **Move (relocation):** the whole platform goes to a new machine by a short, scripted runbook. Its proof is the planned clean-machine drill (section 6, "The off-disk restore path"), which runs the steps that section lists. D3 is still open (section 9).
 - **Spread:** one instance of a service runs on a second machine. It is an item each time, with the "Any second machine" checklist of §10 rule 4 as its done-when.
 - **Scale:** N instances of a service run. It is an item each time, and only when a caller needs it. Several rulings and facts make services singletons on purpose:
   - agent-presentator ADR 0006 and its `compose.yaml:1`: SQLite and files, one instance;
