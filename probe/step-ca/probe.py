@@ -25,7 +25,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import shutil
 import signal
 import stat
@@ -603,23 +602,10 @@ class Probe:
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
         typed: bytes = b"yes\n",
     ) -> str:  # fmt: skip
-        if not terminal or typed == b"yes\n":
-            return edge_copy.run_edge(
-                copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code
-            )
-        command = shlex.join([str(copy / ".venv" / "bin" / "edge"), *arguments])
-        result = subprocess.run(
-            ["script", "-qec", command, DISCARD_OUTPUT],
-            input=typed, capture_output=True, env=self.environment, cwd=copy, check=False,
-            timeout=edge_copy.APPLY_SECONDS,
+        return edge_copy.run_edge(
+            copy, self.environment, *arguments,
+            terminal=terminal, exit_code=exit_code, typed=typed,
         )  # fmt: skip
-        output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
-        expect(
-            result.returncode == exit_code,
-            f"edge {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
-            f"{output[-200:]}",
-        )
-        return output
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
         self.set_enabled(copy, enabled)
