@@ -125,9 +125,14 @@ class Setup:
     exit_code: int = 0
     line: str = "step-ca/init --check: set up"
     commands: list[list[str]] = field(default_factory=list)
+    failing_command: str | None = None  # this command's check exits 1, whatever `exit_code` says
 
     def __call__(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
+        if self.failing_command and command[0].endswith(self.failing_command):
+            return subprocess.CompletedProcess(
+                command, 1, f"{self.failing_command}: not set up", ""
+            )
         return subprocess.CompletedProcess(command, self.exit_code, self.line, "")
 
 
@@ -141,9 +146,12 @@ class SetupRun:
     cannot_start: bool = False
     check_afterwards: tuple[int, str] = (0, "step-ca/init --check: set up")
     commands: list[tuple[Path, Path]] = field(default_factory=list)
+    meanwhile: Callable[[], None] | None = None  # what changes while the setup runs
 
     def __call__(self, command: Path, working_directory: Path) -> setup.SetupRun:
         self.commands.append((command, working_directory))
+        if self.meanwhile:
+            self.meanwhile()
         if self.cannot_start:
             raise PermissionError("not executable")
         if self.exit_code == 0 and not self.interrupted:
@@ -194,10 +202,11 @@ def switch_off(state: Path, since: str = SWITCHED_OFF_AT, unit: str = "step-ca")
 
 @pytest.fixture
 def repository(tmp_path: Path) -> Path:
-    (tmp_path / "step-ca").mkdir()
-    setup = tmp_path / "step-ca" / "init"
-    setup.write_text("#!/bin/sh\n")
-    setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
+    for directory in ("step-ca", "keycloak"):
+        (tmp_path / directory).mkdir(exist_ok=True)
+        setup = tmp_path / directory / "init"
+        setup.write_text("#!/bin/sh\n")
+        setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "fleet.yaml").write_text(ENABLED)
     (tmp_path / "dynamic").mkdir()
     (tmp_path / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
@@ -637,37 +646,103 @@ def test_a_recheck_that_cannot_tell_after_the_setup_is_exit_2(
     assert scripted.changing_verbs() == []
 
 
+TWO_SETUPS = (
+    ENABLED + "  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
+)  # catalog order: step-ca, keycloak
+
+
 def test_several_missing_setups_are_all_asked_first_and_a_no_stops_the_rest(
-    switch, repository, scripted, missing_setup, setup_run
+    switch, repository, missing_setup, setup_run
 ):
     """#69 rule 14: all questions in catalog order, then the runs; a `no` runs none."""
-    scripted.config["services"]["keycloak"]["profiles"] = ["keycloak"]
-    write_fleet(
-        repository,
-        ENABLED + "  keycloak:\n    run: {enabled: true, setup: step-ca/init}\n",
-    )
+    write_fleet(repository, TWO_SETUPS)
 
     exit_code, out, _ = switch("yes\nno")
 
     assert exit_code == 1
     assert out.count("is not set up") == 2
+    assert out.index("step-ca is not set up") < out.index("keycloak is not set up")
     assert setup_run.commands == []
 
 
-def test_several_missing_setups_run_one_after_another_and_a_failure_stops_the_rest(
-    switch, repository, scripted, missing_setup, setup_run
+def test_several_missing_setups_run_in_catalog_order_before_the_plans_own_question(
+    switch, repository, missing_setup, setup_run
 ):
-    """#69 rule 14."""
-    write_fleet(
-        repository,
-        ENABLED + "  keycloak:\n    run: {enabled: true, setup: step-ca/init}\n",
+    """#69 rule 14: questions in catalog order, the setups in turn, then the plan's own yes."""
+    write_fleet(repository, TWO_SETUPS)
+
+    exit_code, out, _ = switch("yes\nyes\nyes")
+
+    assert exit_code == 0
+    assert (
+        out.index("run `step-ca/init` now")
+        < out.index("run `keycloak/init` now")
+        < out.index("apply exactly this plan")
     )
+    assert setup_run.commands == [
+        (repository / "step-ca/init", repository),
+        (repository / "keycloak/init", repository),
+    ]
+
+
+def test_a_failing_setup_stops_the_rest(switch, repository, missing_setup, setup_run):
+    """#69 rule 14: a failed setup runs no later one."""
+    write_fleet(repository, TWO_SETUPS)
     setup_run.exit_code = 1
 
     exit_code, _, _ = switch("yes\nyes")
 
     assert exit_code == 1
-    assert len(setup_run.commands) == 1
+    assert setup_run.commands == [(repository / "step-ca/init", repository)]
+
+
+def test_every_run_asks_again_until_the_check_says_set_up(
+    switch, scripted, missing_setup, setup_run
+):
+    """#69 rule 9: nothing is remembered; a `no` is asked again, a passing check is not."""
+    exit_code, first, _ = switch("no")
+    assert exit_code == 1
+    assert "step-ca is not set up" in first
+
+    _, second, _ = switch("no")
+    assert "step-ca is not set up" in second
+
+    missing_setup.exit_code = 0
+    exit_code, third, _ = switch("yes")
+
+    assert exit_code == 0
+    assert "not set up" not in third
+    assert setup_run.commands == []
+
+
+def test_the_plan_is_made_again_after_the_setup_from_the_states_it_left(
+    switch, state, missing_setup, setup_run
+):
+    """#69 rule 6: states are re-read after the setup; a switch set meanwhile holds the unit."""
+    setup_run.meanwhile = lambda: switch_off(state)
+
+    exit_code, out, _ = switch("yes")
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+
+
+def test_a_unit_enabled_while_the_setup_runs_is_asked_before_it_is_switched_on(
+    switch, repository, scripted, missing_setup, setup_run
+):
+    """#69 rule 1: a unit that became ON during the setup still needs its own set-up check."""
+
+    def enable_keycloak_whose_check_fails() -> None:
+        write_fleet(repository, TWO_SETUPS)
+        missing_setup.failing_command = "keycloak/init"
+
+    setup_run.meanwhile = enable_keycloak_whose_check_fails
+
+    exit_code, _, err = switch("yes")
+
+    assert exit_code == 1
+    assert "keycloak is not set up" in err
+    assert scripted.changing_verbs() == []
 
 
 def test_a_setup_check_that_cannot_tell_is_cannot_plan_and_quotes_its_line(
