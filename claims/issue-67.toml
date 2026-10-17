@@ -1,0 +1,8 @@
+claim_id = "1e379b8daee7441a8cc9118b70c4ce67"
+agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
+role = "builder"
+base = "d0fa24a8592a9e4fabf3390de45c199767751864"
+branch = "claude/issue-67-start-setup-check"
+scope = ["README.md", "src/edge/apply.py", "src/edge/barrier.py", "src/edge/emergency.py", "src/edge/setup.py", "tests/test_edge_apply.py", "tests/test_edge_setup.py"]
+opened_commit = "9d5e658c947986feaeedacf884a266891336b24b"
+whole_reason = "The setup-check owner, its use in start, the repaired-barrier line and the Switches seam all change the same stop/start path and its state-table tests."
