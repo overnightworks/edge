@@ -90,7 +90,8 @@ def test_the_polkit_rule_grants_only_the_operators_stop_of_the_tunnel():
         assert condition in rule
     assert re.findall(r"polkit\.Result\.\w+", rule) == ["polkit.Result.YES"]
     assert rule.count("return") == 1
-    assert "subject.local" not in rule and "subject.active" not in rule
+    assert "subject.local" not in rule
+    assert "subject.active" not in rule
 
 
 def test_the_polkit_rule_is_es5():
