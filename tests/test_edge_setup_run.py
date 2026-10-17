@@ -39,6 +39,7 @@ def type_ctrl_c_when_ready(repository: Path) -> None:
 def test_an_interrupt_lets_the_setup_finish_its_own_handling_before_the_parent_goes_on(
     tmp_path: Path,
 ):
+    """#69 rule 6: Ctrl-C reaches the setup, which cleans up before the parent goes on."""
     command = write_setup(tmp_path)
     type_ctrl_c_when_ready(tmp_path)
 
@@ -49,6 +50,7 @@ def test_an_interrupt_lets_the_setup_finish_its_own_handling_before_the_parent_g
 
 
 def test_a_setup_runs_in_the_repository_with_the_inherited_environment(tmp_path: Path, monkeypatch):
+    """#69 rule 4: the setup runs in the repository with the caller's environment."""
     command = tmp_path / "init"
     command.write_text('#!/bin/sh\npwd > where\nprintf %s "$EDGE_TEST_MARK" > mark\n')
     command.chmod(command.stat().st_mode | stat.S_IXUSR)
