@@ -1,8 +1,0 @@
-claim_id = "3425163f197a47099f4086929066aceb"
-agent = "Claude fe12493e-3d52-442e-b01b-4ee4336de2f0"
-role = "builder"
-base = "6f1e420e73a87ade73c02ff27e7c88431a54b411"
-branch = "claude/issue-60-emergency-switch"
-scope = ["README.md", "probe/step-ca/probe.py", "src/edge/apply.py", "src/edge/cli.py", "src/edge/compose.py", "src/edge/emergency.py", "src/edge/switches.py", "tests/test_edge_apply.py"]
-opened_commit = "34247cc197b1b23ba864f26b37265876c04c1e61"
-whole_reason = "The marker, the two commands and apply's precedence are one switch path; a stop without apply's precedence would be undone by the next apply, and the probe cell table proves the path only as a whole."
