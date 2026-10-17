@@ -88,6 +88,11 @@ class Compose:
     def start(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "up", ["-d", "--no-recreate", *services], CHANGE_SECONDS)
 
+    def recreate(self, service: str) -> None:
+        """A new container for one service, so it mounts its files as checked out now; the
+        services it depends on are left as they are, and its volumes are kept."""
+        self._call("*", "up", ["-d", "--no-deps", "--force-recreate", service], CHANGE_SECONDS)
+
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)
 
