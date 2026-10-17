@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
-from edge import apply, catalog, compose, switches, terminal
+from edge import apply, barrier, catalog, compose, switches, terminal
 from edge.apply import ApplyExit
 
 STOP = "edge stop"
@@ -48,6 +48,7 @@ def stop_unit(
     now: datetime,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
+    verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -57,15 +58,16 @@ def stop_unit(
             return ApplyExit.CANNOT_PLAN
         fleet, unit = read
         services = fleet.profile_services[key]
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, key, verifier)
         running = compose.has_running_container(engine.states(), services)
-    except compose.ComposeError as error:
+    except (compose.ComposeError, barrier.BarrierError) as error:
         _complain(STOP, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
     if not running and not unit.enabled:
         _say(STOP, f"{key} is disabled in the catalog and nothing of it runs")
         return ApplyExit.APPLIED_OR_NOTHING
     try:
-        since = None if running else _confirmed_off(engine, marks, key, services, now)
+        since = None if running else _confirmed_off(engine, marks, ingress, key, services, now)
     except KeyboardInterrupt:
         return _report_close(
             marks,
@@ -78,19 +80,21 @@ def stop_unit(
     if since:
         _say(STOP, f"{key} is already switched off (since {switches.describe_since(since)})")
         return ApplyExit.APPLIED_OR_NOTHING
-    return _close(engine, marks, key, services, now)
+    return _close(engine, marks, ingress, key, services, now)
 
 
 def _confirmed_off(
     engine: compose.Compose,
     marks: switches.Switches,
+    ingress: barrier.Barrier,
     key: str,
     services: tuple[str, ...],
     now: datetime,
 ) -> str | None:
     """The switch time of a unit that is off, decided under the lock so no start is mid-`up`.
 
-    The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in.
+    The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in,
+    and the barrier is rendered again from it and proven, in case the file was lost.
 
     An unmarked unit is handed back to the stop unlocked, so the stop records before it waits.
 
@@ -106,8 +110,9 @@ def _confirmed_off(
             if marks.since(key) is None:
                 return None
             marks.record(key, now)
+            ingress.close()
             return marks.since(key)
-    except (compose.ComposeError, switches.SwitchError):
+    except (compose.ComposeError, switches.SwitchError, barrier.BarrierError):
         return None
 
 
@@ -119,9 +124,23 @@ def _recorded(marks: switches.Switches, key: str, now: datetime) -> switches.Swi
     return None
 
 
+def _close_ingress(ingress: barrier.Barrier, key: str) -> tuple[str | None, str | None]:
+    """(barrier failure, stop failure) of closing the ingress; the stop failure is an interrupt."""
+    if not ingress.names:
+        _say(STOP, f"{key}: no host behind Traefik, so no barrier")
+    try:
+        ingress.close()
+    except barrier.BarrierError as error:
+        return str(error), None
+    except KeyboardInterrupt:
+        return None, "interrupted while closing the ingress"
+    return None, None
+
+
 def _close(
     engine: compose.Compose,
     marks: switches.Switches,
+    ingress: barrier.Barrier,
     key: str,
     services: tuple[str, ...],
     now: datetime,
@@ -138,6 +157,9 @@ def _close(
             lock_failure = error
         except KeyboardInterrupt:
             stop_failure = "interrupted while waiting to stop it"
+        barrier_failure: str | None = None
+        if stop_failure is None:
+            barrier_failure, stop_failure = _close_ingress(ingress, key)
         if stop_failure is None:
             try:
                 engine.stop(key, services)
@@ -147,6 +169,7 @@ def _close(
                 stop_failure = f"could not stop it, {error}"
             except KeyboardInterrupt:
                 stop_failure = "interrupted while stopping it"
+    stop_failure = " and ".join(filter(None, [barrier_failure, stop_failure])) or None
     return _report_close(marks, key, services, record_failure, lock_failure, stop_failure)
 
 
@@ -182,8 +205,8 @@ def _report_close(
     if stop_failure:
         _complain(
             STOP,
-            f"partial: the switch is recorded (since {_recorded_time(marks, key)}), "
-            f"but {stop_failure}; run `{STOP} {key}` again",
+            f"partial: the switch is recorded (since {_recorded_time(marks, key)}); "
+            f"{stop_failure}; run `{STOP} {key}` again",
         )
         return ApplyExit.REFUSED
     if lock_failure:
@@ -205,6 +228,7 @@ def start_unit(
     key: str,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,
+    verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
 ) -> int:
     if terminal.refused_without_terminal(START):
         return ApplyExit.REFUSED
@@ -215,8 +239,10 @@ def start_unit(
         if planned is None:
             return ApplyExit.CANNOT_PLAN
         fleet, unit = planned
+        services = fleet.profile_services[key]
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, key, verifier)
         read = marks.mark(key)
-    except (compose.ComposeError, switches.SwitchError) as error:
+    except (compose.ComposeError, switches.SwitchError, barrier.BarrierError) as error:
         _complain(START, f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
     if not unit.enabled:
@@ -225,19 +251,22 @@ def start_unit(
             f"refused, {key} is disabled in the catalog; enable it by PR and `{apply.COMMAND}`",
         )
         return ApplyExit.REFUSED
-    if read is None:
+    if read is None and not ingress.present():
         _say(START, f"no change, {key} is not switched off")
         return ApplyExit.APPLIED_OR_NOTHING
-    services = fleet.profile_services[key]
     _say(
         START,
         f"{key}: start services {', '.join(services)}; "
-        f"end the switch since {switches.describe_since(read.since)}",
+        + (
+            f"end the switch since {switches.describe_since(read.since)}"
+            if read
+            else "remove the barrier a stop left behind"
+        ),
     )
     if not terminal.confirmed(f"start {key}"):
         _complain(START, "aborted, nothing changed")
         return ApplyExit.REFUSED
-    return _open(engine, marks, key, services, read, fleet.config)
+    return _open(engine, marks, ingress, key, services, read, fleet.config)
 
 
 def _switched_off_again_line(key: str, current: switches.Mark | None) -> str:
@@ -266,9 +295,10 @@ def _refused_before_up(key: str, current: switches.Mark | None) -> int:
 def _open(
     engine: compose.Compose,
     marks: switches.Switches,
+    ingress: barrier.Barrier,
     key: str,
     services: tuple[str, ...],
-    read: switches.Mark,
+    read: switches.Mark | None,
     config: dict,
 ) -> int:
     try:
@@ -280,7 +310,12 @@ def _open(
             if not observed_on:
                 _complain(START, f"partial, {key} is not on after the start; its switch stays")
                 return ApplyExit.REFUSED
-            if not marks.clear(key, read):
+            try:
+                ingress.open()
+            except barrier.BarrierError as error:
+                _complain(START, f"partial, {key} is on but {error}; its switch stays")
+                return ApplyExit.REFUSED
+            if read and not marks.clear(key, read):
                 _complain(START, _switched_off_again_line(key, marks.mark(key)))
                 return ApplyExit.REFUSED
     except (compose.ComposeError, switches.SwitchError) as error:

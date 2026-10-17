@@ -23,8 +23,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
-import shutil
 import signal
 import stat
 import subprocess
@@ -37,6 +35,11 @@ from functools import cached_property
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+
+import edge_copy  # noqa: E402
+from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect  # noqa: E402
+
 PROJECT = "edge-stepca-probe"
 CA_URL = "https://step-ca:9000"
 NETWORK = f"{PROJECT}_mcp-ca"
@@ -48,7 +51,6 @@ READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
-DISCARD_OUTPUT = "/dev/null"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
 INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
@@ -86,19 +88,9 @@ SHORT_LIFETIME_MINUTES = 20  # probe-only: renewal inside the poll
 RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
-APPLY_SECONDS = 600
 FLEET_OFF = "enabled: false"
 FLEET_ON = "enabled: true"
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
-
-
-class ProbeFailed(Exception):
-    pass
-
-
-def expect(condition: bool, message: str) -> None:
-    if not condition:
-        raise ProbeFailed(message)
 
 
 class Probe:
@@ -595,22 +587,7 @@ class Probe:
 
     def repository_copy(self) -> Path:
         """The lane's files in the scratch, with its own venv: fleet.yaml is flipped there only."""
-        copy = self.scratch / "repository"
-        files = self.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]
-        ).stdout.decode()
-        for name in filter(None, files.split("\0")):
-            if (REPO / name).is_file():
-                (copy / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(REPO / name, copy / name)
-        synced = subprocess.run(
-            ["uv", "sync", "--quiet"], capture_output=True, cwd=copy, check=False,
-            timeout=APPLY_SECONDS,
-        )  # fmt: skip
-        if synced.returncode != 0:
-            tail = synced.stderr.decode(errors="replace").strip().splitlines()
-            raise ProbeFailed(f"uv sync exited {synced.returncode}: {tail[-1] if tail else ''}")
-        return copy
+        return edge_copy.repository_copy(REPO, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         fleet = copy / "fleet.yaml"
@@ -621,28 +598,9 @@ class Probe:
         )
 
     def edge(self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0) -> str:
-        """`edge <arguments>` in the copy: at a pty with the operator typing `yes`, or with stdin
-        and stdout that are no terminal. The whitespace-normalised output of a run that exits
-        `exit_code`."""
-        command = [str(copy / ".venv" / "bin" / "edge"), *arguments]
-        if terminal:
-            result = subprocess.run(
-                ["script", "-qec", shlex.join(command), DISCARD_OUTPUT],
-                input=b"yes\n", capture_output=True, env=self.environment, cwd=copy, check=False,
-                timeout=APPLY_SECONDS,
-            )  # fmt: skip
-        else:
-            result = subprocess.run(
-                command, stdin=subprocess.DEVNULL, capture_output=True, env=self.environment,
-                cwd=copy, check=False, timeout=APPLY_SECONDS,
-            )  # fmt: skip
-        output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
-        expect(
-            result.returncode == exit_code,
-            f"edge {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
-            f"{output[-200:]}",
+        return edge_copy.run_edge(
+            copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code
         )
-        return output
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
         self.set_enabled(copy, enabled)

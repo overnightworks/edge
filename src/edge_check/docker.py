@@ -1,6 +1,7 @@
 """Docker containers, their port publications and edge labels, read from `docker inspect` JSON."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from edge_check.exposure import PortRange, Protocol, UnreadableOutputError, checked_address
@@ -8,7 +9,7 @@ from edge_check.exposure import PortRange, Protocol, UnreadableOutputError, chec
 EDGE_NAME_LABEL = "edge.name"
 _TRAEFIK_ENABLE_LABEL = "traefik.enable"
 # Traefik reads the label with Go's strconv.ParseBool, so these are exactly the "true" spellings.
-_GO_TRUE_SPELLINGS = frozenset({"1", "t", "T", "true", "TRUE", "True"})
+GO_TRUE_SPELLINGS = frozenset({"1", "t", "T", "true", "TRUE", "True"})
 
 
 @dataclass(frozen=True)
@@ -50,13 +51,18 @@ def _container(container: dict) -> Container:
         ) from error
 
 
+def is_routed(labels: Mapping[str, str]) -> bool:
+    """Whether Traefik routes the service that carries these labels."""
+    return labels.get(_TRAEFIK_ENABLE_LABEL) in GO_TRUE_SPELLINGS
+
+
 def _parse_container(container: dict) -> Container:
     name = container["Name"].lstrip("/")
     labels = container["Config"].get("Labels") or {}
     return Container(
         name=name,
         running=container["State"]["Running"],
-        routed=labels.get(_TRAEFIK_ENABLE_LABEL) in _GO_TRUE_SPELLINGS,
+        routed=is_routed(labels),
         edge_name=labels.get(EDGE_NAME_LABEL),
         publications=_publications(name, container),
     )

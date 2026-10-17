@@ -19,7 +19,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 |---|---|
 | `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database, `step-ca` and `traefik-mcp-acme` volumes, the Keycloak secrets and `step_ca_password` |
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
-| `dynamic/` | file-provider routes for host processes (empty for now) |
+| `dynamic/` | file-provider routes for host processes (empty for now) and the emergency barriers `switch-<unit>.yml`, written by `edge stop` and git-ignored |
 | `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
 | `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay and its master step, the secret check's rules |
 | `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
@@ -248,6 +248,21 @@ loescht ihren Schalter nie ("stays stopped"); das Ende des Schalters ist allein 
 `yes` noch einmal (`switch.lock`). Exit 0 ausgeschaltet oder schon so, 1 teilweise (der Schalter
 ist notiert, aber ein Container laeuft noch, oder er liess sich nicht notieren) oder verweigert,
 2 nicht planbar (unbekannte Einheit, Katalog oder Compose).
+
+Die Sperre vor Traefik: Hat die Einheit einen Dienst mit `traefik.enable` (jede Go-ParseBool-Schreibweise von wahr) und
+einem `edge.name`, schreibt `edge stop` vor dem `stop` die Datei `dynamic/switch-<Einheit>.yml` (flach,
+atomar, von git ignoriert). Sie haengt pro Host ein Router mit hoechster Prioritaet nur an den
+Eingang `edge`, und Traefik antwortet `404 page not found`; der Eingang `admin` auf `127.0.0.1:8090`
+bleibt offen. `edge stop` meldet Erfolg erst, wenn Traefik fuer jeden Host (innerhalb von 15 s) 404
+mit dem Header `X-Edge-Barrier: <Einheit>` antwortet, sonst Exit 1 (teilweise; Schalter und Sperre bleiben). `edge start` entfernt die Sperre
+erst, wenn die Einheit laeuft, prueft, dass der Host den Header `X-Edge-Barrier` nicht mehr setzt, und loescht den
+Schalter zuletzt. `edge apply` fasst die Sperre nie an. Sie ist eine Datei im Checkout und gilt
+nach einem Neustart von Traefik und des PCs weiter. Der Beweis auf einem Wegwerf-Stack (braucht
+`127.0.0.1:8081` frei, also bei ausgeschaltetem Live-Traefik):
+`flock /tmp/probe-stack.lock timeout --kill-after=30 900 python3 probe/switches/probe.py --scratch "$(mktemp -d)"`.
+
+Ein `stopped/`-Verzeichnis, das nicht 0700 ist, setzt `edge stop` auf 0700 zurueck und notiert den
+Schalter; nur ein Zustandsverzeichnis, das es nicht schreiben kann, gibt Exit 1.
 
 Ueberleben eines Neustarts: Jeder lang laufende Dienst hat `restart: unless-stopped`; Docker
 startet einen ausdruecklich gestoppten Container auch nach einem Neustart nicht. Der Schalter

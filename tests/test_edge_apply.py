@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import apply, catalog, cli, compose, emergency, switches
+from edge import apply, barrier, catalog, cli, compose, emergency, switches
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -23,6 +23,11 @@ ENABLED = "services:\n  step-ca:\n    run: {enabled: true, setup: step-ca/init}\
 DISABLED = "services:\n  step-ca:\n    run: {enabled: false, setup: step-ca/init}\n"
 SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
 LATER_SWITCH_AT = "2026-10-17T23:30:00+02:00"
+PROBE_ENABLED = ENABLED + "  probe:\n    run: {enabled: true}\n"
+PROBE_DISABLED = ENABLED + "  probe:\n    run: {enabled: false}\n"
+NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
+PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-route answer
+WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
 NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 
 
@@ -33,7 +38,11 @@ def resolved_configuration() -> dict:
     return {
         "services": {
             "socket-proxy": {"restart": "unless-stopped"},
-            "traefik": {"restart": "unless-stopped"},
+            "traefik": {"restart": "unless-stopped", "environment": {"EDGE_DOMAIN": "probe.test"}},
+            "hello": {
+                "profiles": ["probe"],
+                "labels": {"traefik.enable": "true", "edge.name": "hello"},
+            },
             "keycloak": {"restart": "unless-stopped", "profiles": ["keycloak"]},
             "step-ca": {
                 "restart": "unless-stopped",
@@ -152,8 +161,8 @@ def marker(state: Path, unit: str = "step-ca") -> str | None:
     return switches.Switches(state).since(unit)
 
 
-def switch_off(state: Path, since: str = SWITCHED_OFF_AT) -> None:
-    switches.Switches(state).record("step-ca", datetime.fromisoformat(since))
+def switch_off(state: Path, since: str = SWITCHED_OFF_AT, unit: str = "step-ca") -> None:
+    switches.Switches(state).record(unit, datetime.fromisoformat(since))
 
 
 @pytest.fixture
@@ -163,7 +172,47 @@ def repository(tmp_path: Path) -> Path:
     setup.write_text("#!/bin/sh\n")
     setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "fleet.yaml").write_text(ENABLED)
+    (tmp_path / "dynamic").mkdir()
+    (tmp_path / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
     return tmp_path
+
+
+@dataclass
+class Ingress:
+    """Traefik as the barrier tests see it: it answers a marked 404 for `hello` while the unit's
+    barrier file is in `dynamic/`; a file it is `rejecting` leaves its plain no-route 404; `down`
+    refuses the connection. Time is a counter."""
+
+    repository: Path
+    rejecting: bool = False
+    down: bool = False
+    asked: list[str] = field(default_factory=list)  # what the world looked like at each request
+    now: float = 0.0
+
+    def barrier_file(self) -> Path:
+        return self.repository / "dynamic" / "switch-probe.yml"
+
+    def fetch(
+        self, _address: str, _host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
+        if self.down:
+            raise ConnectionRefusedError
+        if not self.barrier_file().exists():
+            return WHOAMI
+        return PLAIN_NOT_FOUND if self.rejecting else NOT_FOUND
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    @property
+    def verifier(self) -> barrier.Verifier:
+        return barrier.Verifier(self.fetch, lambda: self.now, self.sleep)
+
+
+@pytest.fixture
+def ingress(repository: Path) -> Ingress:
+    return Ingress(repository)
 
 
 @pytest.fixture
@@ -204,13 +253,14 @@ def switch(repository, scripted, setup_check, at_terminal, capsys, state):
 
 
 @pytest.fixture
-def stop(repository, scripted, capsys, state):
+def stop(repository, scripted, capsys, state, ingress):
     """Run `edge stop <unit>` with no terminal: the path an agent takes."""
 
     def run(unit: str = "step-ca") -> tuple[int, str, str]:
         exit_code = emergency.stop_unit(
-            state, unit, NOW, compose.Compose(scripted.run, repository), repository
-        )
+            state, unit, NOW, compose.Compose(scripted.run, repository), repository,
+            ingress.verifier,
+        )  # fmt: skip
         captured = capsys.readouterr()
         return exit_code, captured.out, captured.err
 
@@ -218,7 +268,7 @@ def stop(repository, scripted, capsys, state):
 
 
 @pytest.fixture
-def start(repository, scripted, at_terminal, capsys, state):
+def start(repository, scripted, at_terminal, capsys, state, ingress):
     """Run `edge start <unit>`; the operator types `yes` unless told otherwise."""
 
     def run(
@@ -226,7 +276,7 @@ def start(repository, scripted, at_terminal, capsys, state):
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         exit_code = emergency.start_unit(
-            state, unit, compose.Compose(scripted.run, repository), repository
+            state, unit, compose.Compose(scripted.run, repository), repository, ingress.verifier
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -518,7 +568,7 @@ def test_the_line_for_an_unknown_profile_lists_the_profiles_that_exist(switch, r
 
     _, _, err = switch()
 
-    assert "profiles: keycloak, step-ca" in err
+    assert "profiles: keycloak, probe, step-ca" in err
 
 
 def test_an_entry_without_run_is_ignored(switch, scripted, repository):
@@ -654,6 +704,19 @@ def test_stop_stops_exactly_the_units_services_and_removes_nothing(
     assert {"step-ca", "traefik-mcp"} <= set(scripted.containers)
     words = {word for call in scripted.calls for word in call}
     assert not words & {"down", "rm", "-v", "--volumes", "volume", "traefik", "socket-proxy"}
+
+
+def test_stop_of_a_unit_without_a_host_says_there_is_no_barrier_and_writes_none(
+    stop, scripted, repository, state
+):
+    """#61 rule 1: step-ca has no router on `edge`, so no `dynamic/switch-step-ca.yml`."""
+    put_unit_in("A", scripted, repository, state)
+
+    exit_code, out, _ = stop()
+
+    assert exit_code == 0
+    assert "no host behind Traefik, so no barrier" in out
+    assert not (repository / "dynamic" / "switch-step-ca.yml").exists()
 
 
 def test_a_stop_that_fails_leaves_the_switch_and_says_partial(stop, scripted, repository, state):
@@ -979,7 +1042,7 @@ def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_ex
     exit_code, _, err = stop()
 
     assert exit_code == 1
-    assert "partial: the switch is recorded (since 17.10. 22:10), but interrupted" in err
+    assert "partial: the switch is recorded (since 17.10. 22:10); interrupted" in err
     assert "run `edge stop step-ca` again" in err
 
 
@@ -1057,3 +1120,185 @@ def test_a_stop_of_a_switched_off_unit_looks_again_under_the_lock(
 
     assert exit_code == 0
     assert scripted.containers["step-ca"] == "exited"
+
+
+# --- the ingress barrier of a unit with a host behind Traefik (#61 proof b) ----------------------
+
+
+@pytest.fixture
+def probe_unit(repository, scripted, state, ingress):
+    """`probe` is A: its `hello` runs, no marker, no barrier."""
+    write_fleet(repository, PROBE_ENABLED)
+    scripted.containers = {"hello": "running"}
+
+
+def put_probe_in_b(scripted, state, ingress) -> None:
+    scripted.containers = {"hello": "exited"}
+    switch_off(state, unit="probe")
+
+
+def test_stop_writes_the_barrier_before_the_stop_and_reports_only_what_was_verified(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#61 rule 3: marker, barrier, verification, then `docker compose stop`."""
+    events = []
+    closing = scripted.verb_stop
+    scripted.verb_stop = lambda profile, arguments: (
+        events.append(f"stop with {ingress.asked[-1]} verified"),
+        closing(profile, arguments),
+    )[1]
+
+    exit_code, out, _ = stop("probe")
+
+    assert exit_code == 0
+    assert events == ["stop with barrier verified"]
+    assert ingress.asked == ["barrier"]
+    assert "probe is switched off" in out
+    assert ingress.barrier_file().exists()
+    assert marker(state, "probe") == NOW.isoformat(timespec="seconds")
+
+
+def test_a_barrier_traefik_rejects_is_partial_and_still_stops_the_unit(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#61 rule 3: exit 1, containers stopped, marker and barrier kept."""
+    ingress.rejecting = True
+
+    exit_code, out, err = stop("probe")
+
+    assert exit_code == 1
+    assert "switched off" not in out
+    assert "partial" in err
+    assert (
+        "Traefik did not answer the barrier's 404 (X-Edge-Barrier: probe) "
+        "for hello.probe.test within 15 s" in err
+    )
+    assert scripted.containers == {"hello": "exited"}
+    assert marker(state, "probe") is not None
+    assert ingress.barrier_file().exists()
+
+
+def test_a_stop_while_traefik_is_down_is_partial_with_everything_kept(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#61 rule 3: Traefik down, exit 1, containers stopped, marker and barrier kept."""
+    ingress.down = True
+
+    exit_code, _, err = stop("probe")
+
+    assert exit_code == 1
+    assert "partial" in err
+    assert scripted.containers == {"hello": "exited"}
+    assert marker(state, "probe") is not None
+    assert ingress.barrier_file().exists()
+
+
+def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_it(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#61 rule 3 from B: a `git clean -x` took the file; the marker still stands."""
+    put_probe_in_b(scripted, state, ingress)
+    scripted.calls.clear()
+
+    exit_code, out, _ = stop("probe")
+
+    assert exit_code == 0
+    assert "already switched off" in out
+    assert ingress.barrier_file().exists()
+    assert ingress.asked == ["barrier"]
+    assert scripted.changing_verbs() == []
+
+
+def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
+    probe_unit, stop, scripted, ingress, state
+):
+    """#61 rule 3 from B: a re-rendered barrier that is not proven is partial."""
+    put_probe_in_b(scripted, state, ingress)
+    ingress.rejecting = True
+
+    exit_code, out, err = stop("probe")
+
+    assert exit_code == 1
+    assert "already switched off" not in out
+    assert "Traefik did not answer the barrier's 404" in err
+
+
+def test_start_removes_the_barrier_after_the_up_is_observed_and_before_the_marker_clears(
+    probe_unit, start, scripted, ingress, state
+):
+    """#61 rule 4: up, observe on, remove the barrier, verify it is gone, clear the marker."""
+    put_probe_in_b(scripted, state, ingress)
+    seen = []
+    ingress.asked = seen
+    fetching = ingress.fetch
+
+    def look_around(address, host, seconds, clock):
+        seen.append(f"marker {'kept' if marker(state, 'probe') else 'cleared'}")
+        seen.append(f"hello {scripted.containers['hello']}")
+        return fetching(address, host, seconds, clock)
+
+    ingress.fetch = look_around
+
+    exit_code, out, _ = start(unit="probe")
+
+    assert exit_code == 0
+    assert "probe is on" in out
+    assert [seen[0], seen[1]] == ["marker kept", "hello running"]
+    assert not ingress.barrier_file().exists()
+    assert marker(state, "probe") is None
+
+
+def test_a_start_that_leaves_the_barrier_answering_keeps_the_marker(
+    probe_unit, start, scripted, ingress, state
+):
+    """#61 rule 4: exit 1, partial; a second `edge start` finishes the job."""
+    put_probe_in_b(scripted, state, ingress)
+    ingress.fetch = lambda *_: NOT_FOUND  # the host still answers the barrier's 404
+
+    exit_code, out, err = start(unit="probe")
+
+    assert exit_code == 1
+    assert "probe is on" not in out
+    assert "Traefik did not open hello.probe.test within 15 s" in err
+    assert marker(state, "probe") is not None
+
+
+def test_start_removes_a_barrier_left_behind_without_a_marker(
+    probe_unit, start, scripted, ingress, state
+):
+    """#61 rule 4 from A: an interrupted start left the file; `yes` removes it."""
+    ingress.barrier_file().write_text("leftover")
+
+    exit_code, out, _ = start(unit="probe")
+
+    assert exit_code == 0
+    assert "remove the barrier a stop left behind" in out
+    assert not ingress.barrier_file().exists()
+
+
+def test_start_of_a_running_unit_without_marker_or_barrier_changes_nothing(
+    probe_unit, start, scripted, ingress, state
+):
+    """#61 rule 4: nothing recorded and no barrier, so start changes nothing."""
+    exit_code, out, _ = start(unit="probe")
+
+    assert exit_code == 0
+    assert "no change" in out
+    assert ingress.asked == []
+
+
+@pytest.mark.parametrize("catalog_text", [PROBE_DISABLED, PROBE_ENABLED])
+def test_apply_leaves_the_barrier_in_b_to_e_and_in_e_with_a_marker_to_b(
+    catalog_text, probe_unit, switch, scripted, ingress, state
+):
+    """#61 rule 5: apply never writes or removes a barrier."""
+    put_probe_in_b(scripted, state, ingress)
+    ingress.barrier_file().write_text("the barrier")
+    write_fleet(ingress.repository, catalog_text)
+
+    exit_code, _, _ = switch()
+
+    assert exit_code == 0
+    assert ingress.barrier_file().read_text() == "the barrier"
+    assert marker(state, "probe") is not None
+    assert ingress.asked == []
