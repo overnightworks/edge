@@ -124,6 +124,19 @@ def _recorded(marks: switches.Switches, key: str, now: datetime) -> switches.Swi
     return None
 
 
+def _close_ingress(ingress: barrier.Barrier, key: str) -> tuple[str | None, str | None]:
+    """(barrier failure, stop failure) of closing the ingress; the stop failure is an interrupt."""
+    if not ingress.names:
+        _say(STOP, f"{key}: no host behind Traefik, so no barrier")
+    try:
+        ingress.close()
+    except barrier.BarrierError as error:
+        return str(error), None
+    except KeyboardInterrupt:
+        return None, "interrupted while closing the ingress"
+    return None, None
+
+
 def _close(
     engine: compose.Compose,
     marks: switches.Switches,
@@ -145,15 +158,8 @@ def _close(
         except KeyboardInterrupt:
             stop_failure = "interrupted while waiting to stop it"
         barrier_failure: str | None = None
-        if stop_failure is None and not ingress.names:
-            _say(STOP, f"{key}: no host behind Traefik, so no barrier")
         if stop_failure is None:
-            try:
-                ingress.close()
-            except barrier.BarrierError as error:
-                barrier_failure = str(error)
-            except KeyboardInterrupt:
-                stop_failure = "interrupted while closing the ingress"
+            barrier_failure, stop_failure = _close_ingress(ingress, key)
         if stop_failure is None:
             try:
                 engine.stop(key, services)
