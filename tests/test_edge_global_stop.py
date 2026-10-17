@@ -646,3 +646,15 @@ def test_an_invalid_tunnel_manager_is_a_plain_refusal_not_a_traceback(monkeypatc
 
     assert exit_code == 2
     assert tunnel.MANAGER_VARIABLE in capsys.readouterr().err
+
+
+def test_a_stop_that_cannot_be_asked_names_edges_own_reason_beside_the_partial(stop_all, systemd):
+    """#70 rule 3: the partial line stays and the cause of the failed stop is not lost."""
+    systemd.refuses_stop = True
+    systemd.stop_times_out_after_stopping = True
+
+    exit_code, output = stop_all()
+
+    assert exit_code == 1
+    assert "the tunnel still runs; `sudo systemctl stop cloudflared`" in output
+    assert "stop failed: cannot run systemctl (timed out)" in output

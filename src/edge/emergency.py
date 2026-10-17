@@ -8,7 +8,7 @@ run it (R4, D12). Start is the operator's step: a terminal and the exact `yes`. 
 
 import os
 import sys
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -388,16 +388,19 @@ def _named_unit(door: tunnel.Tunnel) -> str:
     return "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
 
 
-def _at_terminal() -> bool:
-    """Whether somebody can answer the system's password prompt: stdin and stdout are a terminal."""
-    return sys.stdin.isatty() and sys.stdout.isatty()
+def _ask_to_stop(door: tunnel.Tunnel) -> str | None:
+    """Ask the system to stop the tunnel; what happened is read from the observation after it.
 
-
-def _ask_to_stop(door: tunnel.Tunnel) -> None:
-    """Ask the system to stop the tunnel; what happened is read from the observation after it."""
+    Returns edge's own reason when the stop could not be asked, so the report can keep it.
+    """
     # a refused or interrupted stop is judged by the state observed next, never assumed
-    with suppress(tunnel.TunnelError, KeyboardInterrupt):
-        door.stop(may_ask_password=_at_terminal())
+    try:
+        door.stop(may_ask_password=terminal.at_terminal())
+    except tunnel.TunnelError as error:
+        return str(error)
+    except KeyboardInterrupt:
+        pass
+    return None
 
 
 def _observed(door: tunnel.Tunnel) -> tuple[bool, bool, str | None]:
@@ -432,7 +435,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
     it. The units keep running on loopback and their switches are not touched.
     """
     _record_global(marks, now, under_lock=False)
-    _ask_to_stop(door)
+    stop_failure = _ask_to_stop(door)
     lock_failure = _record_global(marks, now, under_lock=True)
     record_failure = lock_failure if not _global_recorded(marks) else None
     stopped, boot_protected, observation_failure = _observed(door)
@@ -451,6 +454,8 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
             f"{_tunnel_state(stopped, observation_failure)}; "
             f"`sudo systemctl stop {unit}`",
         )
+        if stop_failure:
+            _complain(STOP_ALL, f"stop failed: {stop_failure}")
         return ApplyExit.REFUSED
     if not boot_protected:
         _complain(
@@ -496,7 +501,7 @@ def _tunnel_closed_clause(door: tunnel.Tunnel) -> str:
     """Stop the tunnel if it runs, then say what was observed; never claim a closed state unseen."""
     try:
         if not door.is_inactive():
-            door.stop(may_ask_password=_at_terminal())
+            door.stop(may_ask_password=terminal.at_terminal())
         if door.is_inactive():
             return "the tunnel is closed"
     except (tunnel.TunnelError, KeyboardInterrupt):
