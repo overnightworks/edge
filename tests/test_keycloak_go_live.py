@@ -991,17 +991,17 @@ def test_a_stop_made_during_the_edge_start_prevents_the_recreate(go_live, keyclo
     assert not any("--force-recreate" in command for command in keycloak.commands)
 
 
-def test_a_stop_made_between_the_two_realm_attempts_wins(
-    golive, go_live, keycloak, marks, secrets_dir
-):
+def test_a_stop_made_between_the_two_realm_attempts_wins(go_live, keycloak, marks, session):
     """#64 rule 8: the fallback `run` reads the marker again after the first attempt failed."""
-    write_secrets(secrets_dir, *SECRET_FILES)
     keycloak.master_applied = True  # the overlay attempt is refused with 401, as in life
     stopping_after_a_command(go_live, marks, lambda command: "run" in command)
 
-    with pytest.raises(golive.StepFailure, match="switched off"):
-        go_live.apply_realms()
+    assert go_live.run() == 1
 
+    assert session.printed[-1] == (
+        "go-live FAILED at realms applied: keycloak is switched off (since 17.10. 22:10); "
+        "`edge start keycloak` ends the switch"
+    )
     assert sum("run" in command for command in keycloak.commands) == 1
 
 
