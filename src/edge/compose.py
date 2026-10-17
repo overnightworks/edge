@@ -86,7 +86,7 @@ class Compose:
         return states
 
     def start(self, unit: str, services: tuple[str, ...]) -> None:
-        self._call(unit, "up", ["-d", *services], CHANGE_SECONDS)
+        self._call(unit, "up", ["-d", "--no-recreate", *services], CHANGE_SECONDS)
 
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)
