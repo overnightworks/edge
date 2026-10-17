@@ -4,6 +4,10 @@
 the record (P7): every start path of `edge` reads it, and only `edge start` clears it. A unit key
 reaches this module only after the catalog resolved it, so no path is built from unchecked text.
 The state directory is an argument; only the CLI entry resolves the real one.
+
+`~/.local/state/edge/global-stop` is the global switch (`edge stop --all`), a fact of its own
+beside `stopped/`, so no unit name can fake it. It is read, written and cleared the same way and
+under the same lock.
 """
 
 import fcntl
@@ -16,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 
 STOPPED_DIRECTORY = "stopped"
+GLOBAL_STOP_FILE = "global-stop"
+GLOBAL_STOP = "the global switch"
 LOCK_FILE = "switch.lock"
 UNKNOWN_SWITCH_TIME = "unknown time"
 _PRIVATE_DIRECTORY = 0o700
@@ -70,19 +76,20 @@ class Switches:
 
         The file is the record: an empty one still means switched off, at an unknown time.
         """
-        try:
-            with (self._stopped / unit).open() as file:
-                status = os.fstat(file.fileno())
-                line = file.read().strip()
-        except FileNotFoundError:
-            return None
-        except OSError as error:
-            raise SwitchError(f"cannot read the switch of {unit} ({error.strerror})") from error
-        return Mark(line or UNKNOWN_SWITCH_TIME, status.st_ino, status.st_mtime_ns)
+        return _read_mark(self._stopped / unit, f"the switch of {unit}")
+
+    def global_mark(self) -> Mark | None:
+        """The global switch as it is now, or None when the tunnel is not switched off."""
+        return _read_mark(self.directory / GLOBAL_STOP_FILE, GLOBAL_STOP)
 
     def changed(self, unit: str, read: Mark | None) -> Changed | None:
         """What the marker is now when it is no longer the one the caller read, else None."""
         current = self.mark(unit)
+        return Changed(current) if current != read else None
+
+    def global_changed(self, read: Mark | None) -> Changed | None:
+        """What the global switch is now when it is no longer the one the caller read, else None."""
+        current = self.global_mark()
         return Changed(current) if current != read else None
 
     def since(self, unit: str) -> str | None:
@@ -92,23 +99,33 @@ class Switches:
 
     def record(self, unit: str, now: datetime) -> None:
         """Write the marker into a new file; a unit keeps the time of its first switch."""
-        recorded = self.since(unit)
-        line = recorded if recorded and recorded != UNKNOWN_SWITCH_TIME else None
-        try:
-            self._make_private_directories()
-            _write_atomically(self._stopped / unit, line or now.isoformat(timespec="seconds"))
-        except OSError as error:
-            raise SwitchError(f"cannot record the switch of {unit} ({error.strerror})") from error
+        self._record(self._stopped / unit, f"the switch of {unit}", self.mark(unit), now)
+
+    def record_global(self, now: datetime) -> None:
+        """Write the global switch into a new file; it keeps the time of its first stop."""
+        self._record(self.directory / GLOBAL_STOP_FILE, GLOBAL_STOP, self.global_mark(), now)
 
     def clear(self, unit: str, expected: Mark) -> bool:
         """Remove the marker only if it is still the one the caller read."""
         if self.changed(unit, expected):
             return False
-        try:
-            (self._stopped / unit).unlink()
-        except OSError as error:
-            raise SwitchError(f"cannot clear the switch of {unit} ({error.strerror})") from error
+        _unlink(self._stopped / unit, f"the switch of {unit}")
         return True
+
+    def clear_global(self, expected: Mark) -> bool:
+        """Remove the global switch only if it is still the one the caller read."""
+        if self.global_changed(expected):
+            return False
+        _unlink(self.directory / GLOBAL_STOP_FILE, GLOBAL_STOP)
+        return True
+
+    def _record(self, path: Path, what: str, recorded: Mark | None, now: datetime) -> None:
+        first = recorded.since if recorded and recorded.since != UNKNOWN_SWITCH_TIME else None
+        try:
+            self._make_private_directories()
+            _write_atomically(path, first or now.isoformat(timespec="seconds"))
+        except OSError as error:
+            raise SwitchError(f"cannot record {what} ({error.strerror})") from error
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -128,6 +145,25 @@ class Switches:
         self.directory.mkdir(parents=True, exist_ok=True)
         self._stopped.mkdir(mode=_PRIVATE_DIRECTORY, exist_ok=True)
         self._stopped.chmod(_PRIVATE_DIRECTORY)
+
+
+def _read_mark(path: Path, what: str) -> Mark | None:
+    try:
+        with path.open() as file:
+            status = os.fstat(file.fileno())
+            line = file.read().strip()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise SwitchError(f"cannot read {what} ({error.strerror})") from error
+    return Mark(line or UNKNOWN_SWITCH_TIME, status.st_ino, status.st_mtime_ns)
+
+
+def _unlink(path: Path, what: str) -> None:
+    try:
+        path.unlink()
+    except OSError as error:
+        raise SwitchError(f"cannot clear {what} ({error.strerror})") from error
 
 
 def _write_atomically(path: Path, text: str) -> None:
