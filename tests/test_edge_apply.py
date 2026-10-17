@@ -84,6 +84,7 @@ class ScriptedCompose:
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
     starts_nothing: bool = False
+    after_up: Callable[[], None] | None = None  # what changes in the world once `up` returned
     calls: list[list[str]] = field(default_factory=list)
     config: dict = field(default_factory=resolved_configuration)
 
@@ -117,6 +118,8 @@ class ScriptedCompose:
             self.containers[service] = "exited" if service in one_shots else "running"
             for volume in compose.named_volumes(self.config["services"][service]):
                 self.volumes.setdefault(volume, "created by up")
+        if self.after_up:
+            self.after_up()
         return ""
 
     def create_container(self, service: str) -> None:
@@ -263,6 +266,7 @@ class Ingress:
     rejecting: bool = False
     down: bool = False
     asked: list[str] = field(default_factory=list)  # what the world looked like at each request
+    on_fetch: Callable[[], None] | None = None  # a look at the world as each request arrives
     now: float = 0.0
 
     def barrier_file(self) -> Path:
@@ -272,6 +276,8 @@ class Ingress:
         self, _address: str, _host: str, _seconds: float, _clock: Callable[[], float]
     ) -> barrier.Answer:
         self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
+        if self.on_fetch:
+            self.on_fetch()
         if self.down:
             raise ConnectionRefusedError
         if not self.barrier_file().exists():
@@ -1975,14 +1981,8 @@ def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
     old_record = applied(state)
     probe_switched_off(scripted, repository, state)
     edit_traefik_yml(repository)
-    fetching = ingress.fetch
     records_seen = []
-
-    def look_at_the_record(address, host, seconds, clock):
-        records_seen.append(applied(state))
-        return fetching(address, host, seconds, clock)
-
-    ingress.fetch = look_at_the_record
+    ingress.on_fetch = lambda: records_seen.append(applied(state))
 
     exit_code, out, _ = switch()
 
@@ -2071,14 +2071,7 @@ def test_a_failed_recreate_is_partial_keeps_the_record_and_touches_no_unit(
 
 def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch, scripted, state):
     """#85 rule 5, cell U8: not observed running, so partial, exit 1, record old."""
-    starting = scripted.verb_up
-
-    def up_and_exit(profile, arguments):
-        output = starting(profile, arguments)
-        scripted.containers["traefik"] = "exited"
-        return output
-
-    scripted.verb_up = up_and_exit
+    scripted.after_up = lambda: scripted.containers.update(traefik="exited")
 
     exit_code, out, err = switch()
 
@@ -2112,17 +2105,11 @@ def test_a_traefik_yml_changed_during_the_recreate_is_recreated_again_by_the_nex
 ):
     """#85 rule 3, cell U10: the record holds the plan-time digest, not the file's later one."""
     planned = sha256(repository / "traefik.yml")
-    starting = scripted.verb_up
-
-    def up_while_the_file_changes(profile, arguments):
-        edit_traefik_yml(repository)
-        return starting(profile, arguments)
-
-    scripted.verb_up = up_while_the_file_changes
+    scripted.after_up = lambda: edit_traefik_yml(repository)
 
     assert switch()[0] == 0
     assert applied(state) == {"traefik": {"traefik.yml": planned}}
-    scripted.verb_up = starting
+    scripted.after_up = None
     exit_code, out, _ = switch()
     assert exit_code == 0
     assert "traefik: recreate (traefik.yml changed)" in out
