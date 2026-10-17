@@ -388,15 +388,12 @@ def _named_unit(door: tunnel.Tunnel) -> str:
     return "" if door.unit == tunnel.CLOUDFLARED_UNIT else f"; unit {door.unit}"
 
 
-def _stop_failure(door: tunnel.Tunnel) -> str | None:
-    """Ask the system to stop the tunnel; why it could not even be asked, if it could not."""
+def _ask_to_stop(door: tunnel.Tunnel) -> None:
+    """Ask the system to stop the tunnel; what happened is read from the observation after it."""
     try:
         door.stop(may_ask_password=terminal.at_terminal())
-    except tunnel.TunnelError as error:
-        return f"the tunnel could not be stopped, {error}"
-    except KeyboardInterrupt:
-        return "interrupted while stopping the tunnel"
-    return None
+    except (tunnel.TunnelError, KeyboardInterrupt):
+        pass  # a refused or interrupted stop is judged by the state observed next, never assumed
 
 
 def _observed(door: tunnel.Tunnel) -> tuple[bool, bool, str | None]:
@@ -408,6 +405,20 @@ def _observed(door: tunnel.Tunnel) -> tuple[bool, bool, str | None]:
         return False, False, f"its state could not be read, {error}"
 
 
+def _global_recorded(marks: switches.Switches) -> bool:
+    try:
+        return marks.global_mark() is not None
+    except switches.SwitchError:
+        return False
+
+
+def _tunnel_state(stopped: bool, observation_failure: str | None) -> str:
+    """The tunnel as observed; a state nobody could read is never called stopped or running."""
+    if observation_failure:
+        return f"is not confirmed stopped ({observation_failure})"
+    return "is stopped" if stopped else "still runs"
+
+
 def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> int:
     """Record the global switch first, stop the tunnel, record again under the lock, then report
     only what is observed.
@@ -417,24 +428,23 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
     it. The units keep running on loopback and their switches are not touched.
     """
     first_failure = _record_global(marks, now, under_lock=False)
-    stop_failure = _stop_failure(door)
+    _ask_to_stop(door)
     lock_failure = _record_global(marks, now, under_lock=True)
-    record_failure = lock_failure if first_failure else None
+    record_failure = lock_failure if first_failure or not _global_recorded(marks) else None
     stopped, boot_protected, observation_failure = _observed(door)
     unit = door.unit.removesuffix(".service")
     if record_failure:
         _complain(
             STOP_ALL,
             f"partial: the global switch could not be recorded ({record_failure}); "
-            f"the tunnel is {'stopped' if stopped else 'not stopped'}, and a reboot reopens it",
+            f"the tunnel {_tunnel_state(stopped, observation_failure)}, and a reboot reopens it",
         )
         return ApplyExit.REFUSED
     if not stopped:
-        reason = stop_failure or observation_failure
-        still = f"is not confirmed stopped ({reason})" if reason else "still runs"
         _complain(
             STOP_ALL,
-            f"partial: the global switch is recorded, but the tunnel {still}; "
+            "partial: the global switch is recorded, but the tunnel "
+            f"{_tunnel_state(stopped, observation_failure)}; "
             f"`sudo systemctl stop {unit}`",
         )
         return ApplyExit.REFUSED

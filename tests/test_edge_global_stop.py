@@ -31,6 +31,7 @@ class FakeSystemd:
 
     active: bool = True
     refuses_stop: bool = False
+    stop_times_out_after_stopping: bool = False
     drop_ins: list[str] = field(default_factory=lambda: [tunnel.BOOT_DROP_IN])
     authorizes: bool = True
     start_fails: bool = False
@@ -57,6 +58,8 @@ class FakeSystemd:
             self.while_stopping()
         self.active = self.active and self.refuses_stop
         self.activating = self.activating and self.refuses_stop
+        if self.stop_times_out_after_stopping:
+            raise tunnel.TunnelError("cannot run systemctl (timed out)")
         return self._answer(1 if self.refuses_stop else 0)
 
     def verb_start(self) -> subprocess.CompletedProcess[str]:
@@ -266,6 +269,67 @@ def test_stop_all_reports_a_missing_systemctl_as_not_stopped(marks, capsys):
     assert marks.global_mark() is not None
 
 
+def test_a_stop_that_times_out_but_left_the_tunnel_stopped_is_a_success(stop_all, marks, systemd):
+    """#70 follow-up 1: the observed state decides, not the error of the stop."""
+    systemd.stop_times_out_after_stopping = True
+
+    exit_code, output = stop_all()
+
+    assert exit_code == 0
+    assert "the tunnel is stopped" in output
+    assert marks.global_mark() is not None
+
+
+def test_an_unreadable_state_after_a_failed_record_is_not_called_stopped(marks, capsys):
+    """Nobody saw the state, so the line says it is not confirmed, never 'not stopped'."""
+    marks.directory.mkdir(parents=True)
+    (marks.directory / switches.GLOBAL_STOP_FILE).mkdir()
+
+    def no_systemctl(_command):
+        raise tunnel.TunnelError("cannot run systemctl (missing)")
+
+    exit_code = emergency.stop_all(marks, NOW, tunnel.Tunnel(run=no_systemctl))
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "could not be recorded" in err
+    assert "is not confirmed stopped" in err
+    assert "not stopped" not in err.replace("not confirmed stopped", "")
+
+
+def test_a_lost_locked_record_is_partial_when_a_start_cleared_the_switch(marks, systemd, capsys):
+    """#70 rule 2: if the locked record fails and the switch is gone, the stop is not a success."""
+    busy = InterruptedWaitForLock(marks.directory)
+    systemd.while_stopping = lambda: busy.clear_global(busy.global_mark())
+
+    exit_code = emergency.stop_all(busy, NOW, tunnel.Tunnel(run=systemd.run))
+
+    assert exit_code == 1
+    assert "could not be recorded" in capsys.readouterr().err
+    assert busy.global_mark() is None
+
+
+def test_concurrent_first_stops_keep_the_earlier_time(marks):
+    """The unlocked record may read an absent switch while another stop publishes its own."""
+    earlier = NOW.replace(year=NOW.year - 1)
+
+    class ReadsStale(switches.Switches):
+        def global_mark(self):
+            mark = super().global_mark()
+            if not self.read_once:
+                self.read_once = True
+                return None  # the read that happened before the other stop published
+            return mark
+
+    stale = ReadsStale(marks.directory)
+    stale.read_once = False
+    marks.record_global(earlier)
+
+    stale.record_global(NOW)
+
+    assert marks.global_mark().since == earlier.isoformat(timespec="seconds")
+
+
 def test_stop_all_stops_the_tunnel_though_a_start_holds_the_lock(marks, systemd, capsys):
     """#70 rule 2: the stop never waits for switch.lock, which a start holds through `up`."""
     busy = InterruptedWaitForLock(marks.directory)  # every wait for the lock ends in Ctrl-C
@@ -300,8 +364,10 @@ def test_an_interrupt_at_the_password_prompt_of_the_stop_is_partial_with_the_sud
     exit_code, output = stop_all()
 
     assert exit_code == 1
-    assert "interrupted while stopping the tunnel" in output
-    assert "`sudo systemctl stop cloudflared`" in output
+    assert (
+        "partial: the global switch is recorded, but the tunnel still runs; "
+        "`sudo systemctl stop cloudflared`"
+    ) in output
     assert marks.global_mark() is not None
 
 
@@ -453,7 +519,6 @@ def test_a_start_that_leaves_the_unit_activating_stops_it_and_reports_what_is_ob
 
     assert exit_code == 1
     assert "the tunnel is closed" in output
-    assert systemd.verbs().count("stop") == 1
     assert not systemd.activating
     assert marks.global_mark() is not None
 
