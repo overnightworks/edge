@@ -223,7 +223,7 @@ def test_a_barrier_traefik_does_not_answer_404_for_is_not_verified_after_15_seco
         ingress.close()
 
     assert str(failure.value) == (
-        "Traefik did not answer 404 for hello.probe.invalid within 15 s (the barrier is written)"
+        "the barrier is written but Traefik did not answer 404 for hello.probe.invalid within 15 s"
     )
     assert ingress.present()
 

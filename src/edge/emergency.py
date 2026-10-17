@@ -199,8 +199,8 @@ def _report_close(
     if stop_failure:
         _complain(
             STOP,
-            f"partial: the switch is recorded (since {_recorded_time(marks, key)}), "
-            f"but {stop_failure}; run `{STOP} {key}` again",
+            f"partial: the switch is recorded (since {_recorded_time(marks, key)}); "
+            f"{stop_failure}; run `{STOP} {key}` again",
         )
         return ApplyExit.REFUSED
     if lock_failure:

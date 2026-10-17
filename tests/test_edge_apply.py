@@ -1036,7 +1036,7 @@ def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_ex
     exit_code, _, err = stop()
 
     assert exit_code == 1
-    assert "partial: the switch is recorded (since 17.10. 22:10), but interrupted" in err
+    assert "partial: the switch is recorded (since 17.10. 22:10); interrupted" in err
     assert "run `edge stop step-ca` again" in err
 
 

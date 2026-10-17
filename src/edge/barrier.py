@@ -216,7 +216,8 @@ class Barrier:
             within = f"within {self.verifier.seconds:g} s"
             if barrier:
                 raise BarrierError(
-                    f"Traefik did not answer 404 for {unreached} {within} (the barrier is written)"
+                    f"the barrier is written but Traefik did not answer 404 for "
+                    f"{unreached} {within}"
                 )
             raise BarrierError(
                 f"Traefik did not open {unreached} {within} (the barrier is removed)"
