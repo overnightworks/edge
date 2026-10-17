@@ -270,7 +270,7 @@ def test_stop_all_reports_a_missing_systemctl_as_not_stopped(marks, capsys):
 
 
 def test_a_stop_that_times_out_but_left_the_tunnel_stopped_is_a_success(stop_all, marks, systemd):
-    """#70 follow-up 1: the observed state decides, not the error of the stop."""
+    """#70 rule 2.3: success only once is-active says inactive, whatever the stop itself raised."""
     systemd.stop_times_out_after_stopping = True
 
     exit_code, output = stop_all()
@@ -281,7 +281,7 @@ def test_a_stop_that_times_out_but_left_the_tunnel_stopped_is_a_success(stop_all
 
 
 def test_an_unreadable_state_after_a_failed_record_is_not_called_stopped(marks, capsys):
-    """Nobody saw the state, so the line says it is not confirmed, never 'not stopped'."""
+    """#70 rule 2 and rule 3: an unseen state is reported as not confirmed, never as not stopped."""
     marks.directory.mkdir(parents=True)
     (marks.directory / switches.GLOBAL_STOP_FILE).mkdir()
 
@@ -310,7 +310,7 @@ def test_a_lost_locked_record_is_partial_when_a_start_cleared_the_switch(marks, 
 
 
 def test_concurrent_first_stops_keep_the_earlier_time(marks):
-    """The unlocked record may read an absent switch while another stop publishes its own."""
+    """#70 rule 1: a repeated stop keeps the first time, though the unlocked read missed it."""
     earlier = NOW.replace(year=NOW.year - 1)
 
     class ReadsStale(switches.Switches):
