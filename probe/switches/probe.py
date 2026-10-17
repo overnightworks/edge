@@ -41,7 +41,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import tunnel  # noqa: E402
+from edge import checkout, tunnel  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -77,7 +77,7 @@ class Probe:
             "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
-        self.copy = scratch / "repository"
+        self.copy = checkout.live_checkout(self.home)
         self.marker = self.home / ".local" / "state" / "edge" / "stopped" / UNIT
         self.barrier = self.copy / "dynamic" / f"switch-{UNIT}.yml"
 
@@ -163,7 +163,7 @@ class Probe:
     # --- the cells ---------------------------------------------------------------------------
 
     def bring_up(self) -> None:
-        self.copy = edge_copy.repository_copy(REPO, self.scratch)
+        self.copy = edge_copy.repository_copy(REPO, self.home)
         (self.copy / "fleet.yaml").write_text(FLEET)
         self.compose("up", "--detach", "socket-proxy", "traefik")
         self.edge("apply", "--closed", terminal=True)  # starts hello

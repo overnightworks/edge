@@ -2,8 +2,11 @@
 it, at a pty or without a terminal (#52 proof 10, #60 proof 11, #61 probe c).
 
 A probe works in the copy so that it flips `fleet.yaml` and lets `edge` write `dynamic/` and the
-state under its throwaway HOME without ever touching the checkout it runs from. A probe adds this
-directory to `sys.path` before importing it, which also works when the probe is loaded by path.
+state under its throwaway HOME without ever touching the checkout it runs from. The copy is the
+live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `edge apply`
+runs there and never against the operator's HOME (#79 rule 3). A probe adds this directory and the
+repository's `src` to `sys.path` before importing it, which also works when the probe is loaded by
+path.
 """
 
 from __future__ import annotations
@@ -13,6 +16,8 @@ import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+
+from edge import checkout
 
 APPLY_SECONDS = 600
 DISCARD_OUTPUT = "/dev/null"
@@ -27,9 +32,10 @@ def expect(condition: bool, message: str) -> None:
         raise ProbeFailed(message)
 
 
-def repository_copy(repository: Path, scratch: Path) -> Path:
-    """The files of `repository` that git tracks or would track, in `scratch`, with `uv sync`."""
-    copy = scratch / "repository"
+def repository_copy(repository: Path, home: Path) -> Path:
+    """The files of `repository` that git tracks or would track, as the live checkout of `home`: a
+    fresh git repository with its own venv from `uv sync`."""
+    copy = checkout.live_checkout(home)
     listing = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         capture_output=True, cwd=repository, check=True, timeout=APPLY_SECONDS,
@@ -38,6 +44,10 @@ def repository_copy(repository: Path, scratch: Path) -> Path:
         if (repository / name).is_file():
             (copy / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repository / name, copy / name)
+    subprocess.run(
+        ["git", "init", "--quiet"], capture_output=True, cwd=copy, check=True,
+        timeout=APPLY_SECONDS,
+    )  # fmt: skip
     synced = subprocess.run(
         ["uv", "sync", "--quiet"], capture_output=True, cwd=copy, check=False,
         timeout=APPLY_SECONDS,

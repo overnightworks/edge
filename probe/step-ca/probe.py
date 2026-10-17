@@ -39,6 +39,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
 from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect  # noqa: E402
@@ -588,8 +589,9 @@ class Probe:
     # --- edge apply --closed switches the unit and keeps its data (#52 rule 3) -----------------
 
     def repository_copy(self) -> Path:
-        """The lane's files in the scratch, with its own venv: fleet.yaml is flipped there only."""
-        return edge_copy.repository_copy(REPO, self.scratch)
+        """The lane's files as the live checkout of the scratch HOME, with its own venv: fleet.yaml
+        is flipped there only."""
+        return edge_copy.repository_copy(REPO, self.home)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         """Set step-ca's switch only: keycloak stays off, so apply never asks for its setup."""
