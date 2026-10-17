@@ -28,6 +28,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
+| `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
 | `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
@@ -303,6 +304,15 @@ Schalter faellt: Einheiten-Schalter und Sperren bleiben. Die Pruefung des Hosts 
 gebaut ("host check not built yet (#50 SW3)"). edge liest nie `/etc/cloudflared`, aendert den Tunnel
 nicht und ruft nie `sudo` auf. Fuer den Wegwerf-Beweis nehmen `EDGE_TUNNEL_UNIT` und
 `EDGE_TUNNEL_MANAGER=user` eine Wegwerf-Einheit des Benutzer-Managers statt `cloudflared.service`.
+
+Was `tunnel/` ist: der Inhalt, den overnightworks/home-tools#9 mit einem `sudo` nach `/etc`
+installiert; edge selbst installiert nichts. `cloudflared.service` ist die Einheit mit
+`/usr/bin/cloudflared`, `20-nonroot.conf` laesst sie ohne root laufen, `30-edge-global-stop.conf`
+startet sie nicht, solange `~/.local/state/edge/global-stop` existiert, und
+`polkit/10-edge-cloudflared-stop.rules` erlaubt dem Betreiber nur das **Stoppen** von
+`cloudflared.service` ohne Passwort, auch ueber SSH; `start` fragt weiter. Ein blosses
+`systemctl stop cloudflared` haelt daher nicht: Nach einem Neustart laeuft der Tunnel wieder, denn
+nur der Schalter ueberlebt ihn. Der Notschalter ist `edge stop --all`.
 
 Regel R4: Agenten rufen `edge apply` und `edge start` nie auf; `edge stop`
 duerfen sie. Die Terminalpruefung und das `yes` halten
