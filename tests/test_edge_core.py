@@ -103,6 +103,27 @@ def test_a_missing_file_bind_cannot_be_planned_and_names_its_path(config, checko
         core.plan_core(config, {"traefik": {"running"}}, checkout, record)
 
 
+@pytest.fixture
+def locked_directory(tmp_path: Path):
+    """A directory this user cannot enter; it is opened again so pytest can remove it."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    yield locked
+    locked.chmod(0o700)
+
+
+def test_a_file_bind_behind_a_directory_it_cannot_enter_cannot_be_planned_and_names_its_path(
+    config, checkout, record, locked_directory
+):
+    """#85 rule 1: a traefik.yml linked into a directory edge cannot enter is cannot plan."""
+    (checkout / TRAEFIK_FILE).unlink()
+    (checkout / TRAEFIK_FILE).symlink_to(locked_directory / TRAEFIK_FILE)
+
+    with pytest.raises(core.CoreError, match=str(checkout / TRAEFIK_FILE)):
+        core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+
+
 def test_the_digest_is_the_sha256_of_the_files_bytes(checkout):
     """#85 rule 2: a file bind's digest is its content's sha256, keyed by its checkout path."""
     found = core.digests([checkout / TRAEFIK_FILE], checkout)

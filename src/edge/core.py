@@ -43,8 +43,16 @@ def file_binds(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:
         Path(mount["source"]) for mount in service.get("volumes", []) if mount.get("type") == "bind"
     )
     return tuple(
-        source for source in sources if source.is_relative_to(checkout) and not source.is_dir()
+        source for source in sources if source.is_relative_to(checkout) and not _is_dir(source)
     )
+
+
+def _is_dir(source: Path) -> bool:
+    # Python 3.12 raises from is_dir() when a directory on the way cannot be entered.
+    try:
+        return source.is_dir()
+    except OSError as error:
+        raise _cannot_read(source, error) from error
 
 
 def digests(sources: Iterable[Path], checkout: Path) -> dict[str, str]:
@@ -54,9 +62,13 @@ def digests(sources: Iterable[Path], checkout: Path) -> dict[str, str]:
         try:
             content = source.read_bytes()
         except OSError as error:
-            raise CoreError(f"cannot read {source} ({error.strerror})") from error
+            raise _cannot_read(source, error) from error
         found[source.relative_to(checkout).as_posix()] = hashlib.sha256(content).hexdigest()
     return found
+
+
+def _cannot_read(source: Path, error: OSError) -> CoreError:
+    return CoreError(f"cannot read {source} ({error.strerror})")
 
 
 @dataclass(frozen=True)
