@@ -1,8 +1,0 @@
-claim_id = "24ff518e5fb146689668b38a465f0733"
-agent = "claude"
-role = "builder"
-base = "66310dc82ca72e9650e9ab9dec3a725d01dfb575"
-branch = "claude/issue-87-core-follows-definition"
-scope = ["README.md", "docs/architecture.md", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "tests/test_edge_apply.py", "tests/test_edge_core.py"]
-opened_commit = "9f70b11a5d2ed6b198967caf80e84fa3eac307b2"
-whole_reason = "The definition fact, the dependent order and the re-proof are one safety path for the live ingress: split, a socket-proxy recreate could report success while traefik's docker provider or a barrier was never checked."
