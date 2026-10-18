@@ -154,6 +154,7 @@ def plan_kept_images(
     profile, the followers are recreated by their own plan, a unit planned off loses its
     containers, and a service whose definition names no image has no pin to compare."""
     planned_off = {plan.unit.key for plan in plans if plan.action is Action.OFF}
+    live = [container for container in containers if container.live]
     kept: dict[KeptImage, None] = {}
     for unit in units:
         if unit.key in planned_off:
@@ -162,16 +163,25 @@ def plan_kept_images(
             configured = config["services"][service].get("image")
             if service in followers or configured is None:
                 continue
-            for container in containers:
-                if container.service != service or not container.live:
-                    continue
-                if container.image is None:
-                    raise compose.ComposeError(
-                        f"a live {service} container's `docker compose ps` line names no Image"
-                    )
-                if container.image != configured:
-                    kept[KeptImage(unit.key, service, container.image, configured)] = None
+            for running in _running_images(service, live):
+                if running != configured:
+                    kept[KeptImage(unit.key, service, running, configured)] = None
     return list(kept)
+
+
+def _running_images(service: str, live: Sequence[compose.Container]) -> list[str]:
+    """The images the service's live containers were created from; a ps line naming none cannot
+    be compared, so it cannot be planned, as a missing label is (#87)."""
+    images = []
+    for container in live:
+        if container.service != service:
+            continue
+        if container.image is None:
+            raise compose.ComposeError(
+                f"a live {service} container's `docker compose ps` line names no Image"
+            )
+        images.append(container.image)
+    return images
 
 
 @dataclass
