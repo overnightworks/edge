@@ -1,0 +1,7 @@
+claim_id = "d5c0750838d44697afabe475f50c28b4"
+agent = "claude"
+role = "builder"
+base = "676bfdc98eaf9ff8e7945279d3c702d481d38150"
+branch = "claude/issue-102-bin-edge"
+scope = ["README.md", "bin/edge", "tests/test_edge_launcher.py"]
+opened_commit = "778a9b03c66288cb9b6e483699ed14ed12f273a3"
