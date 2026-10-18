@@ -59,9 +59,14 @@ def _parse_columns(line: str) -> Listener:
         protocol=Protocol(columns[0]),
         address=checked_address(_bare_address(address)),
         port=int(port),
-        process=process.group(1) if (process := _PROCESS_NAME.search(line)) else None,
-        cgroup=cgroup.group(1) if (cgroup := _CGROUP.search(line)) else None,
+        process=_first_group(_PROCESS_NAME, line),
+        cgroup=_first_group(_CGROUP, line),
     )
+
+
+def _first_group(pattern: re.Pattern[str], line: str) -> str | None:
+    match = pattern.search(line)
+    return match.group(1) if match else None
 
 
 def _bare_address(address: str) -> str:

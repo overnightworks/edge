@@ -395,6 +395,14 @@ def test_exits_2_on_an_unreadable_allow_list(run_edge_check, allow_list, message
     assert message in err
 
 
+def test_exits_2_when_the_allow_list_is_not_a_regular_file(run_edge_check, tmp_path, capsys):
+    """defect: pythonsecurity:S8707 -- the allow-list argument must name a regular file."""
+    exit_code = cli.main(["--allow-list", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "not a regular file" in capsys.readouterr().err
+
+
 UNREADABLE_OUTPUTS = {
     "docker output is not JSON": (Host(docker="Error: no such object"), "docker inspect"),
     "docker output is JSON but not a list": (Host(docker="null"), "not a list of containers"),
