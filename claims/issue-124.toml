@@ -1,8 +1,0 @@
-claim_id = "cc8515747fff45f3a674b54925388595"
-agent = "claude"
-role = "builder"
-base = "3a7f454f0dd715983b49ca689300cb66316d2d2f"
-branch = "claude/issue-124-x1e-live-apply-guard"
-scope = ["README.md", "src/edge/apply.py", "src/edge/checkout.py", "src/edge/external/cli.py", "tests/test_edge_checkout.py", "tests/test_edge_external.py"]
-opened_commit = "415db4f9958592d9bff661e771c351452f90c737"
-whole_reason = "One guard: the moved clean-main check, its use by edge external apply, its tests and the README sentence; a part alone either refuses nothing or is unproven."
