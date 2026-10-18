@@ -1,7 +1,0 @@
-claim_id = "3034e7285d76437f868e1b1a10d666ec"
-agent = "claude"
-role = "builder"
-base = "524c5b8d4d8bff5539c6accce191237cc529e25e"
-branch = "claude/issue-111-edge-s-ci-runs-the-quality-gate-v0-2-0"
-scope = [".github/workflows/ci.yml"]
-opened_commit = "c42b7ad74430536c3734196c730e719522e993e3"
