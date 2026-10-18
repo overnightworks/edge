@@ -37,7 +37,7 @@ jobs:
         env:
           PYTHONPATH: src
         # pytest and pytest-cov come from the lock file, installed by the sync step above.
-        run: uv run --no-sync --no-build pytest --cov=src --cov=probe/keycloak --cov-report=xml:coverage.xml
+        run: uv run --no-sync --no-build pytest --cov=src --cov-report=xml:coverage.xml
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
