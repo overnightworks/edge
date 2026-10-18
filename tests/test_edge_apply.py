@@ -2920,6 +2920,24 @@ def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_u
     assert applied(state) == planned_record
 
 
+def test_a_traefik_stopped_after_socket_proxys_recreate_is_not_recreated_and_no_unit_switches(
+    applied_core, switch, scripted, repository
+):
+    """#93 rule 1, C3: liveness is read again just before each core recreate, so traefik stopped
+    after socket-proxy's recreate and before its own is not started; partial, exit 1."""
+    write_fleet(repository, ENABLED)
+    scripted.change_definition("socket-proxy")
+    scripted.after_up = lambda: scripted.containers.update(traefik="exited")
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
+    assert stopped_meanwhile("traefik") in err
+    assert scripted.containers["traefik"] == "exited"
+    assert unit_calls(scripted) == []
+
+
 # --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
 
 FOLLOWER_FILE = "traefik-mcp.yml"
