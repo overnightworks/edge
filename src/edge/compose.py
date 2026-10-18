@@ -6,6 +6,7 @@ names a volume, so a unit switched off loses containers and keeps its data.
 """
 
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping
@@ -24,6 +25,10 @@ _COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
 _NOT_RUNNING = {"exited", _COMPLETED, "created", "dead"}
+# Compose's record of the service definition a container was created from. Only this label is
+# read out of ps's comma-joined `Labels`, so another label's value may hold commas.
+_CONFIG_HASH_LABEL = re.compile(r"(?:^|,)com\.docker\.compose\.config-hash=([0-9a-f]{64})(?:,|$)")
+_HASH_LINE = re.compile(r"(\S+) ([0-9a-f]{64})")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
@@ -82,6 +87,17 @@ SETTLED = Watch()
 
 
 @dataclass(frozen=True)
+class Container:
+    """One container of the project as `ps` lists it. `config_hash` is the hash of the service
+    definition it was created from, as Compose labelled it; None when the label is missing."""
+
+    service: str
+    state: str
+    config_hash: str | None
+    image: str
+
+
+@dataclass(frozen=True)
 class Compose:
     run: Runner = run_docker
     repository: Path = REPOSITORY
@@ -94,13 +110,29 @@ class Compose:
         except json.JSONDecodeError as error:
             raise ComposeError("`docker compose config` did not answer JSON") from error
 
+    def containers(self) -> list[Container]:
+        """Every container of the project, of every profile."""
+        output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
+        return [_container(entry) for entry in _containers(output)]
+
     def states(self) -> dict[str, set[str]]:
         """Each service that has a container, with the states of its containers."""
-        output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
-        states: dict[str, set[str]] = {}
-        for container in _containers(output):
-            states.setdefault(container["Service"], set()).add(_state_of(container))
-        return states
+        return states_of(self.containers())
+
+    def config_hashes(self, services: tuple[str, ...]) -> dict[str, str]:
+        """Compose's hash of each service's definition as it resolves the checkout now; the
+        label of a container created from the same definition carries the same hash."""
+        output = self._call("*", "config", ["--hash", ",".join(services)], READ_SECONDS)
+        hashes = {}
+        for line in filter(str.strip, output.splitlines()):
+            if not (match := _HASH_LINE.fullmatch(line.strip())):
+                raise ComposeError(f"`docker compose config --hash` answered {line.strip()!r}")
+            hashes[match[1]] = match[2]
+        if missing := [service for service in services if service not in hashes]:
+            raise ComposeError(
+                f"`docker compose config --hash` named no hash for {', '.join(missing)}"
+            )
+        return hashes
 
     def start(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "up", ["-d", "--no-recreate", *services], CHANGE_SECONDS)
@@ -154,6 +186,21 @@ def has_running_container(states: Mapping[str, set[str]], services: tuple[str, .
     return any(states.get(name, set()) - _NOT_RUNNING for name in services)
 
 
+def states_of(containers: list[Container]) -> dict[str, set[str]]:
+    """Each service that has a container, with the states of its containers."""
+    states: dict[str, set[str]] = {}
+    for container in containers:
+        states.setdefault(container.service, set()).add(container.state)
+    return states
+
+
+def _container(entry: Mapping[str, Any]) -> Container:
+    label = _CONFIG_HASH_LABEL.search(entry.get("Labels", ""))
+    return Container(
+        entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image", "")
+    )
+
+
 def _state_of(container: Mapping[str, Any]) -> str:
     if container["State"] == "exited" and container.get("ExitCode") == 0:
         return _COMPLETED
@@ -165,7 +212,7 @@ def is_gone(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     return not any(name in states for name in services)
 
 
-def _containers(output: str) -> list[dict[str, str]]:
+def _containers(output: str) -> list[dict[str, Any]]:
     """`ps --format json` is one JSON array or one object per line, by Compose version."""
     text = output.strip()
     try:

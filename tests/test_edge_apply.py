@@ -1,6 +1,7 @@
 """`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
+import hashlib
 import io
 import json
 import stat
@@ -31,6 +32,20 @@ PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-r
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
 NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 NEVER_RUN = {"down", "-v", "--volumes", "-V", "--renew-anon-volumes"}
+# The labels beside the definition hash in a real `ps --format json` line (frozen from #87 Q1,
+# Compose 2.40.3): another label's value may hold commas and an `=`.
+OTHER_LABELS = (
+    "com.docker.compose.image=sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9,"
+    "com.docker.compose.oneoff=False,edge.note=x,y=z,com.docker.compose.depends_on="
+)
+IMAGE = (
+    "traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"
+)
+
+
+def definition_hash(service: str, version: int = 1) -> str:
+    """A `docker compose config --hash` value: 64 hex digits per service definition."""
+    return hashlib.sha256(f"{service} v{version}".encode()).hexdigest()
 
 
 def resolved_configuration() -> dict:
@@ -40,7 +55,11 @@ def resolved_configuration() -> dict:
     return {
         "services": {
             "socket-proxy": {"restart": "unless-stopped"},
-            "traefik": {"restart": "unless-stopped", "environment": {"EDGE_DOMAIN": "probe.test"}},
+            "traefik": {
+                "restart": "unless-stopped",
+                "environment": {"EDGE_DOMAIN": "probe.test"},
+                "depends_on": {"socket-proxy": {"condition": "service_started", "required": True}},
+            },
             "hello": {
                 "profiles": ["probe"],
                 "labels": {"traefik.enable": "true", "edge.name": "hello"},
@@ -72,14 +91,18 @@ def resolved_configuration() -> dict:
 class ScriptedCompose:
     """Compose over a table of service -> container state; records every call.
 
-    Like Compose, `up` recreates a container whose service definition changed since it was
-    created (it gets a new id) unless `--no-recreate` is given, and always with
-    `--force-recreate`. Edge never takes a project down or renews its volumes, so `down`, `-v`
-    and `--renew-anon-volumes` fail the test that runs them (#85 P13, cell U14)."""
+    Each service has a definition hash, as `config --hash` answers it, and each container the
+    hash it was created from as its config-hash label; a container put in directly carries the
+    current one. Like Compose, `up` recreates a container whose label differs from its service's
+    hash (it gets a new id) unless `--no-recreate` is given, and always with `--force-recreate`.
+    Edge never takes a project down or renews its volumes, so `down`, `-v` and
+    `--renew-anon-volumes` fail the test that runs them (#85 P13, cell U14, #87 D15)."""
 
     containers: dict[str, str] = field(default_factory=dict)
     container_ids: dict[str, int] = field(default_factory=dict)
-    changed_definitions: set[str] = field(default_factory=set)
+    definitions: dict[str, str] = field(default_factory=dict)  # service -> hash, if not v1
+    labels: dict[str, str | None] = field(default_factory=dict)  # service -> its container's
+    hash_answer: str | None = None  # what `config --hash` answers instead of the hashes
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
@@ -102,12 +125,26 @@ class ScriptedCompose:
         output = getattr(self, f"verb_{verb}")(profile, arguments)
         return subprocess.CompletedProcess(command, 0, output, "")
 
-    def verb_config(self, _profile: str, _arguments: list[str]) -> str:
-        return json.dumps(self.config)
+    def verb_config(self, _profile: str, arguments: list[str]) -> str:
+        if arguments[0] != "--hash":
+            return json.dumps(self.config)
+        if self.hash_answer is not None:
+            return self.hash_answer
+        return "".join(
+            f"{service} {self.definition(service)}\n" for service in arguments[1].split(",")
+        )
 
     def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
         output = "\n".join(
-            json.dumps({"Service": service, "State": state, "ExitCode": 0})
+            json.dumps(
+                {
+                    "Service": service,
+                    "State": state,
+                    "ExitCode": 0,
+                    "Image": IMAGE,
+                    "Labels": self.labels_of(service),
+                }
+            )
             for service, state in self.containers.items()
         )
         for service in self.just_started & self.crash_loops:
@@ -131,10 +168,23 @@ class ScriptedCompose:
             self.after_up()
         return ""
 
+    def definition(self, service: str) -> str:
+        return self.definitions.get(service, definition_hash(service))
+
+    def change_definition(self, service: str) -> None:
+        """The checkout now defines the service otherwise than its container was created."""
+        self.definitions[service] = definition_hash(service, version=2)
+
+    def labels_of(self, service: str) -> str:
+        config_hash = self.labels.get(service, self.definition(service))
+        if config_hash is None:
+            return OTHER_LABELS
+        return f"{OTHER_LABELS},com.docker.compose.config-hash={config_hash}"
+
     def create_container(self, service: str) -> None:
         self.containers_created += 1
         self.container_ids[service] = self.containers_created
-        self.changed_definitions.discard(service)
+        self.labels[service] = self.definition(service)
 
     def put_containers(self, states: dict[str, str]) -> None:
         """Containers that exist before the command, each with its own id."""
@@ -145,7 +195,8 @@ class ScriptedCompose:
     def needs_a_new_container(self, service: str, flags: set[str]) -> bool:
         if service not in self.containers or "--force-recreate" in flags:
             return True
-        return service in self.changed_definitions and "--no-recreate" not in flags
+        changed = self.labels.get(service, self.definition(service)) != self.definition(service)
+        return changed and "--no-recreate" not in flags
 
     def verb_stop(self, _profile: str, arguments: list[str]) -> str:
         for service in arguments:
@@ -157,6 +208,7 @@ class ScriptedCompose:
         for service in arguments[1:]:
             self.containers.pop(service, None)
             self.container_ids.pop(service, None)
+            self.labels.pop(service, None)
         return ""
 
     def changing_verbs(self) -> list[str]:
@@ -586,7 +638,8 @@ def test_switching_on_keeps_every_existing_container_and_the_volumes(
     scripted.volumes = {"step-ca": "intermediate-A", "traefik-mcp-acme": "issued-B"}
     held = dict(scripted.volumes)
     scripted.put_containers(before)
-    scripted.changed_definitions = set(changed)
+    for service in changed:
+        scripted.change_definition(service)
     existing_ids = dict(scripted.container_ids)
 
     exit_code, out, _ = switch()
@@ -1326,7 +1379,7 @@ def test_start_keeps_the_running_db_container_whose_image_changed(start, scripte
     """#75 rule 1, cell 3: `edge start` starts the exited app and leaves the running db as is."""
     switch_off(state)
     scripted.put_containers(APP_EXITED)
-    scripted.changed_definitions = {"step-ca"}
+    scripted.change_definition("step-ca")
     db_id = scripted.container_ids["step-ca"]
 
     exit_code, out, _ = start()
@@ -2128,7 +2181,7 @@ def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch,
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial, traefik is not running after the recreate" in err
+    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
     assert applied(state) == UNFINISHED
     assert RECREATED not in out
 
@@ -2144,7 +2197,7 @@ def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_ru
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial, traefik is not running after the recreate" in err
+    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
     assert applied(state) == UNFINISHED
     assert RECREATED not in out
     assert scripted.containers["traefik"] == "restarting"
