@@ -17,7 +17,10 @@ its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown s
 proof window is bounded by that cap. A cap reached before `READY`, or a teardown that leaves the
 stack behind, ends with `PROBE FAILED` and exit 1.
 
-- `run` (the default) proves proofs 1-10 and ends with `PROBE PASSED: proofs 1-10 hold`. Proof 3c
+- `run` (the default) proves proofs 1-10 and ends with `PROBE PASSED: proofs 1-10 hold`. Proof 1
+  fetches the login and account pages through 8081 and holds when both link a 200 resource under
+  `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
+  `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
   runs the realm observer (`realm-observer`, #66) around a default apply with the cache off and
   holds when it lists exactly the console changes the apply removes; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an
@@ -25,7 +28,8 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   container runs and as its inventory arrives, leave no container, and that an exit 0 carries
   the whole inventory (a stopped `compose run` exits 130 and may leave part of one on stdout;
   a signal it takes as the container begins to run may be lost, and the observe completes), and
-  `does not answer` with Keycloak stopped. Proof 10 signs a member of `/apps/songmaker/admin` in
+  `does not answer` with Keycloak stopped. Proof 8 also asserts the two themes, the locales and
+  the master's untouched theme and language. Proof 10 signs a member of `/apps/songmaker/admin` in
   to songmaker's client through 8081 with PKCE, its secret a scratch file the overlay mounts.
   Callers of `hold` get that `songmaker` client and must not create their own.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.

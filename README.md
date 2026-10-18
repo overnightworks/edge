@@ -794,6 +794,31 @@ only in the admin console; no file lists a person. songmaker's client is in
 `~/.secrets/keycloak/clients/songmaker` (the go-live makes it); the other app clients
 arrive at K13/K14, after K3c.
 
+#### Theme and language
+
+Keycloak's login and account pages use the realm theme `hallucinai`
+(`loginTheme` and `accountTheme` in `realm.yaml`). Its files sit in
+`keycloak/themes/hallucinai/{login,account}/theme.properties`, which for now
+only name the parents `keycloak.v2` and `keycloak.v3`; compose mounts the
+directory read-only into the `keycloak` service. A later look (logo, colours,
+font) therefore changes theme files only, never the realm. The email and
+admin themes, the master realm and the admin console stay Keycloak's own.
+
+The pages appear in German and English: the browser's language decides,
+English applies when neither is asked for, and the pages carry a language
+switcher (`internationalizationEnabled`, `supportedLocales`, `defaultLocale`
+in `realm.yaml`).
+
+Keycloak in `start` mode caches themes, so a changed theme file shows after
+`docker compose --profile keycloak restart keycloak`; that is not a realm
+change. `/resources/<version>/...` is served with `Cache-Control:
+max-age=2592000` (30 days), and the five-character version survives a plain
+restart, so a restart keeps the same URL. A
+CSS-only edit, which needs that restart to load, would still come from browser
+caches for up to 30 days under the same URL; a look change therefore names a
+new stylesheet in `theme.properties` (`styles=`) instead of editing one in
+place.
+
 > **Managed in full.** Groups are created and renamed only in `realm.yaml`.
 > The apply deletes every top-level group, client, client scope and flow that
 > an earlier apply created and the YAML no longer lists, and below a listed
@@ -1040,9 +1065,9 @@ flock /tmp/probe-stack.lock \
   timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
 ```
 
-The proofs: the public issuer and the path allow-list (1, 2a), the master issuer
-and the forced second factor on 8090, for the console and for a password grant
-(2b), a failing undefined variable, a fresh apply, an unchanged export after a
+The proofs: the public issuer, the themed login and account pages in German
+and English and the path allow-list (1, 2a), the master issuer and the
+forced second factor on 8090, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
 cache-off second apply and a changed YAML that applies and deletes a
 console-made subgroup it does not list, with a seeded member untouched (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused

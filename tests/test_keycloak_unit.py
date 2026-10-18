@@ -126,3 +126,23 @@ def test_a_client_secret_without_its_mount_file_or_probe_override_is_named(break
     break_wiring(realm, compose_file, overlay)
 
     assert len(client_secret_problems(realm, compose_file, overlay)) == 1
+
+
+@pytest.mark.parametrize(
+    ("realm_setting", "area", "parent"),
+    [("loginTheme", "login", "keycloak.v2"), ("accountTheme", "account", "keycloak.v3")],
+)
+def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_setting, area, parent):
+    """#105 rule 1, cell T2: a realm theme is mounted on keycloak only and names its parent."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak" / "realm.yaml").read_text())
+    theme = realm[realm_setting]
+    document = compose_document()
+    mount = f"./keycloak/themes/{theme}:/opt/keycloak/themes/{theme}:ro"
+    mounted_on = [
+        name
+        for name, service in document["services"].items()
+        if mount in service.get("volumes", [])
+    ]
+    properties = REPOSITORY / "keycloak" / "themes" / theme / area / "theme.properties"
+
+    assert (mounted_on, properties.read_text().strip()) == (["keycloak"], f"parent={parent}")

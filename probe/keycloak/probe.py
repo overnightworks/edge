@@ -58,6 +58,7 @@ KEYCLOAK_PROFILE = "keycloak"
 PROJECT_LABEL = f"com.docker.compose.project={PROJECT}"
 DOMAIN = "hallucinai.de"
 REALM = "hallucinai"
+THEME = "hallucinai"
 REALM_FILE = "realm.yaml"
 CONFIG_FILES = ("master.yaml", REALM_FILE)
 PUBLIC_HOST = f"auth.{DOMAIN}"
@@ -209,10 +210,17 @@ def http(
         return Response(error.code, dict(error.headers), error.read())
 
 
-def through_tunnel(method: str, path: str, *, host: str = PUBLIC_HOST, **kwargs: Any) -> Response:
+def through_tunnel(
+    method: str,
+    path: str,
+    *,
+    host: str = PUBLIC_HOST,
+    headers: dict[str, str] | None = None,
+    **kwargs: Any,
+) -> Response:
     """What cloudflared sends for a public request: the public host and the original scheme."""
-    headers = {"Host": host, "X-Forwarded-Proto": "https"}
-    return http(method, EDGE_URL + path, headers=headers, **kwargs)
+    sent = {"Host": host, "X-Forwarded-Proto": "https", **(headers or {})}
+    return http(method, EDGE_URL + path, headers=sent, **kwargs)
 
 
 def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
@@ -639,9 +647,13 @@ def page_message(page: Response) -> str:
 def totp(secret: str, period_offset: int = 0) -> str:
     """RFC 6238 code for Keycloak's default policy: HmacSHA1, 6 digits, 30 s, the raw secret."""
     counter = int(time.time()) // 30 + period_offset
-    # HmacSHA1 is the algorithm the master realm's OTP policy demands (Keycloak's default, the one
-    # every authenticator app supports); the probe answers that challenge, it chooses no hash.
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()  # NOSONAR
+    # Keycloak's default OTP policy (RFC 6238's default) is HmacSHA1; the probe answers it and
+    # chooses no hash.
+    digest = hmac.new(
+        secret.encode(),
+        struct.pack(">Q", counter),
+        hashlib.sha1,  # NOSONAR(S4790)
+    ).digest()
     offset = digest[-1] & 0x0F
     number = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
     return f"{number % 1_000_000:06d}"
@@ -937,8 +949,14 @@ class Probe:
             "eventsEnabled": True,
             "eventsExpiration": 2592000,
             "adminEventsEnabled": True,
+            "loginTheme": THEME,
+            "accountTheme": THEME,
+            "internationalizationEnabled": True,
+            "defaultLocale": "en",
         }
         wrong = {key: realm.get(key) for key, value in expected.items() if realm.get(key) != value}
+        if sorted(realm.get("supportedLocales", [])) != ["de", "en"]:
+            wrong["supportedLocales"] = realm.get("supportedLocales")
         admin_expiry = realm.get("attributes", {}).get("adminEventsExpiration")
         if admin_expiry != "31536000":
             wrong["attributes.adminEventsExpiration"] = admin_expiry
@@ -952,6 +970,9 @@ class Probe:
             "browserFlow": "browser-mfa",
             "directGrantFlow": "direct-grant-mfa",
             "webAuthnPolicyRpId": "localhost",
+            "loginTheme": None,
+            "accountTheme": None,
+            "internationalizationEnabled": False,
         }
         for key, value in master_expected.items():
             if master.get(key) != value:
@@ -963,7 +984,8 @@ class Probe:
             "30 d, admin events 1 y without details (no client representation in them), "
             "brute force on in both realms, "
             f"{len(providers)} identity providers (so no trustEmail=true), master browser flow "
-            "browser-mfa, direct grant direct-grant-mfa, rpId localhost",
+            "browser-mfa, direct grant direct-grant-mfa, rpId localhost, "
+            "master theme and language untouched; hallucinai themes and de/en as decided",
         )
 
     def public_issuer_and_paths(self) -> None:
@@ -971,28 +993,41 @@ class Probe:
         expect(discovery.status == 200, f"public discovery answered {discovery.status}")
         issuer = discovery.json()["issuer"]
         expect(issuer == PUBLIC_ISSUER, f"public issuer is {issuer}")
-        login_page = through_tunnel(
-            "GET",
-            f"{REALM_PATH}/protocol/openid-connect/auth?"
-            + urlencode(
-                {
-                    "client_id": "account-console",
-                    "redirect_uri": f"https://{PUBLIC_HOST}{REALM_PATH}/account/",
-                    "response_type": "code",
-                    "scope": "openid",
-                    "code_challenge": "x" * 43,
-                    "code_challenge_method": "S256",
-                }
-            ),
+        login_path = f"{REALM_PATH}/protocol/openid-connect/auth?" + urlencode(
+            {
+                "client_id": "account-console",
+                "redirect_uri": f"https://{PUBLIC_HOST}{REALM_PATH}/account/",
+                "response_type": "code",
+                "scope": "openid",
+                "code_challenge": "x" * 43,
+                "code_challenge_method": "S256",
+            }
         )
+        login_page = through_tunnel("GET", login_path)
         expect(login_page.status == 200, f"public login page answered {login_page.status}")
         expect("HTTPS required" not in login_page.text, "the login page demands HTTPS")
-        stylesheet = re.search(r'href="(/resources/[^"]+\.css)"', login_page.text)
-        expect(stylesheet is not None, "the login page links no /resources/ stylesheet")
-        resource = through_tunnel("GET", stylesheet.group(1))
-        expect(resource.status == 200, f"{stylesheet.group(1)} answered {resource.status}")
+        login_resource = self.themed_resource(login_page, "login")
+        german = through_tunnel("GET", login_path, headers={"Accept-Language": "de"})
+        expect(
+            "Passwort" in german.text and 'lang="de"' in german.text,
+            "the login page does not speak German for Accept-Language: de",
+        )
+        expect(self.has_language_switcher(german), "the German login page has no language switcher")
+        for asked in ({"Accept-Language": "fr"}, {}):
+            english = through_tunnel("GET", login_path, headers=asked)
+            expect(
+                'lang="en"' in english.text and "Password" in english.text,
+                f"the login page does not speak English for {asked or 'no language'}",
+            )
+        account_page = through_tunnel("GET", f"{REALM_PATH}/account/")
+        expect(account_page.status == 200, f"the account console answered {account_page.status}")
+        account_resource = self.themed_resource(account_page, "account")
         self.held(
-            "1", f"public discovery issuer {issuer}; the login page renders without HTTPS error"
+            "1",
+            f"public discovery issuer {issuer}; the login page renders without HTTPS error, "
+            f"links {login_resource} and the account console links {account_resource} "
+            "(both 200); German for Accept-Language de with a language switcher, English for "
+            "fr and for none",
         )
 
         localization = through_tunnel("GET", f"/resources/{REALM}/account/en")
@@ -1031,6 +1066,22 @@ class Probe:
             "metrics, health, root, traversal and Host: localhost requests (404) "
             "and an encoded slash inside the admitted prefix (400)",
         )
+
+    @staticmethod
+    def has_language_switcher(page: Response) -> bool:
+        return "login-select-toggle" in page.text
+
+    def themed_resource(self, page: Response, area: str) -> str:
+        """The first /resources/<version>/<area>/hallucinai/ link of a page, fetched and 200."""
+        link = re.search(
+            rf'(?:href|src)="([^"]*/resources/[a-z0-9]{{5}}/{area}/{THEME}/[^"]+)"', page.text
+        )
+        expect(link is not None, f"the {area} page links nothing under {area}/{THEME}/")
+        path = link.group(1)
+        resource = through_tunnel("GET", path[path.index("/resources/") :])
+        expect(resource.status == 200, f"{path} answered {resource.status}")
+        self.say(f"{path} Cache-Control: {resource.headers.get('Cache-Control')}")
+        return path
 
     def admin_console_login(
         self, holder: str, username: str, password: str, second_factor: Any

@@ -395,6 +395,58 @@ def test_exits_2_on_an_unreadable_allow_list(run_edge_check, allow_list, message
     assert message in err
 
 
+def test_exits_2_when_the_allow_list_is_not_a_regular_file(run_edge_check, tmp_path):
+    """defect: pythonsecurity:S8707 -- the allow-list argument must name a regular file."""
+    exit_code, _, err = run_edge_check(Host(), "--allow-list", str(tmp_path))
+
+    assert exit_code == 2
+    assert "not a regular file" in err
+
+
+def _allow_list_in_unreadable_directory(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "edge-check.toml").write_text("", encoding="utf-8")
+    locked.chmod(0o000)
+    return locked / "edge-check.toml"
+
+
+def _allow_list_symlink_loop(tmp_path):
+    loop = tmp_path / "loop.toml"
+    loop.symlink_to(loop)
+    return loop
+
+
+@pytest.mark.parametrize(
+    ("make_allow_list", "reason"),
+    [
+        pytest.param(
+            _allow_list_in_unreadable_directory,
+            "Permission denied",
+            marks=pytest.mark.skipif(
+                os.geteuid() == 0, reason="root reads through a mode-000 directory"
+            ),
+        ),
+        (_allow_list_symlink_loop, "Too many levels of symbolic links"),
+        (lambda tmp_path: tmp_path / "absent.toml", "No such file or directory"),
+    ],
+    ids=["unreadable parent directory", "symlink loop", "missing file"],
+)
+def test_exits_2_naming_the_os_reason_an_allow_list_cannot_be_reached(
+    run_edge_check, tmp_path, make_allow_list, reason
+):
+    """defect: PR #115 review B1 -- an allow-list path failing in the OS must exit 2, not 1."""
+    allow_list = make_allow_list(tmp_path)
+    try:
+        exit_code, _, err = run_edge_check(Host(), "--allow-list", str(allow_list))
+    finally:
+        for locked in tmp_path.glob("locked"):
+            locked.chmod(0o700)
+
+    assert exit_code == 2
+    assert reason in err
+
+
 UNREADABLE_OUTPUTS = {
     "docker output is not JSON": (Host(docker="Error: no such object"), "docker inspect"),
     "docker output is JSON but not a list": (Host(docker="null"), "not a list of containers"),

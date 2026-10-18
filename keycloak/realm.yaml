@@ -8,6 +8,13 @@
 # together with its live redirect and logout URLs.
 realm: hallucinai
 enabled: true
+# The pages' look lives in the theme files (keycloak/themes/hallucinai), so changing it is no realm change.
+loginTheme: hallucinai
+accountTheme: hallucinai
+# German and English, the browser decides, English when neither is asked for.
+internationalizationEnabled: true
+supportedLocales: [de, en]
+defaultLocale: en
 accessTokenLifespan: 300          # 5 minutes
 ssoSessionMaxLifespan: 2592000    # 30 days
 ssoSessionIdleTimeout: 604800     # 7 days
