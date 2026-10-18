@@ -27,7 +27,8 @@ _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its j
 _NOT_RUNNING = {"exited", _COMPLETED, "created", "dead"}
 # Compose's record of the service definition a container was created from. Only this label is
 # read out of ps's comma-joined `Labels`, so another label's value may hold commas.
-_CONFIG_HASH_LABEL = re.compile(r"(?:^|,)com\.docker\.compose\.config-hash=([0-9a-f]{64})(?:,|$)")
+CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
+_CONFIG_HASH = re.compile(rf"(?:^|,){re.escape(CONFIG_HASH_LABEL)}=([0-9a-f]{{64}})(?:,|$)")
 _HASH_LINE = re.compile(r"(\S+) ([0-9a-f]{64})")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
@@ -195,7 +196,7 @@ def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
 
 
 def _container(entry: Mapping[str, Any]) -> Container:
-    label = _CONFIG_HASH_LABEL.search(entry.get("Labels", ""))
+    label = _CONFIG_HASH.search(entry.get("Labels", ""))
     return Container(
         entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image", "")
     )

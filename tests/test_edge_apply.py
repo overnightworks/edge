@@ -2587,6 +2587,27 @@ def test_an_unreadable_hash_or_label_cannot_be_planned(
     assert scripted.changing_verbs() == []
 
 
+def test_apply_drops_a_ghost_entry_and_keeps_the_entry_of_a_switched_off_file_binding_service(
+    applied_core, switch, scripted, repository, state
+):
+    """#87 rule 6, cell D13: the prune of a real recreate goes by every service that binds a file
+    from the checkout, so traefik-mcp's entry survives while step-ca is off."""
+    scripted.config["services"]["traefik-mcp"]["volumes"].append(
+        bind(repository / "traefik-mcp.yml", "/etc/traefik/traefik.yml")
+    )
+    kept = {"traefik-mcp.yml": "1" * 64}
+    (state / "applied.json").write_text(
+        json.dumps(applied(state) | {"ghost": {}, "traefik-mcp": kept})
+    )
+    edit_traefik_yml(repository)
+
+    assert switch()[0] == 0
+    assert applied(state) == {
+        "traefik": {"traefik.yml": sha256(repository / "traefik.yml")},
+        "traefik-mcp": kept,
+    }
+
+
 def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touches_nothing(
     applied_core, switch, scripted, repository, monkeypatch
 ):

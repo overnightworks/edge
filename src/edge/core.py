@@ -12,14 +12,14 @@ A core service's file binds are its `type: bind` volumes whose source lies in th
 not a directory: today only `traefik.yml`. A directory bind such as `dynamic/` is live through
 Traefik's watch and needs no record.
 
-`~/.local/state/edge/applied.json`, beside the switches, holds for each service edge follows
-through a file bind the sha256 of each file bind's bytes as last fully applied:
+`~/.local/state/edge/applied.json`, beside the switches, holds for each service that binds a
+file from the checkout the sha256 of each file bind's bytes as last fully applied:
 `{service: {path in the checkout: sha256}}`. A file is changed when it differs from its entry; a
 missing, unreadable or malformed record, a missing entry or an entry naming another file counts as
 changed. An empty entry `{service: {}}` is written before a recreate starts and replaced only when
 it finished, so a recreate that did not finish is planned again whatever the file holds now (rule
-5). An entry for a service edge does not follow is ignored and dropped at the next write (#87
-rule 6).
+5). An entry for a service that binds no file from the checkout is ignored and dropped at the
+next write (#87 rule 6).
 """
 
 import hashlib
@@ -33,7 +33,6 @@ from typing import Any
 from edge import compose, switches
 
 APPLIED_FILE = "applied.json"
-CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 DEFINITION_CHANGED = "its compose definition changed"
 
 type Digests = Mapping[str, str]  # a file bind's path in the checkout -> the sha256 of its bytes
@@ -73,7 +72,7 @@ def start_order(config: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def followed_services(config: Mapping[str, Any], checkout: Path) -> frozenset[str]:
-    """The services of every profile that edge follows through a file bind, running or not."""
+    """Every service, of any profile and running or not, that binds a file from the checkout."""
     return frozenset(
         name for name, service in config["services"].items() if file_binds(service, checkout)
     )
@@ -258,7 +257,9 @@ def _config_hash_labels(
         if container.service not in core:
             continue
         if container.config_hash is None:
-            raise CoreError(f"a {container.service} container has no {CONFIG_HASH_LABEL} label")
+            raise CoreError(
+                f"a {container.service} container has no {compose.CONFIG_HASH_LABEL} label"
+            )
         labels.setdefault(container.service, set()).add(container.config_hash)
     return labels
 
