@@ -932,7 +932,7 @@ def started_something_after(keycloak: Keycloak, command_count: int) -> bool:
 def test_a_switched_off_keycloak_refuses_at_the_start_and_asks_and_starts_nothing(
     go_live, keycloak, session, marks, secrets_dir
 ):
-    """#64 rule 8: the marker stops the whole run before its first question."""
+    """T10, #64 rule 8: the marker stops the whole run before its first question."""
     name_clients(keycloak, secrets_dir, "a")
     switch_off(marks)
 
@@ -1059,7 +1059,7 @@ def test_starts_hold_the_switch_lock_and_prompts_leave_it_free(go_live, marks):
 
 
 def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, keycloak, marks):
-    """T10, #64 rule 8, counterexample: the guard costs a normal run nothing."""
+    """#64 rule 8, counterexample: the guard costs a normal run nothing."""
     assert go_live.run() == 0
 
     assert marks.since("keycloak") is None
@@ -1232,7 +1232,7 @@ def test_a_top_level_secret_without_a_file_is_not_a_client_secret(go_live, keycl
 
 
 def test_a_failed_write_removes_the_file_it_created_and_never_one_that_existed(
-    golive, secrets_dir, monkeypatch
+    golive, secrets_dir, marks
 ):
     """T3, Rule 3: no empty file is left to read as done; an existing file is untouched."""
     secrets_dir.mkdir(parents=True)
@@ -1240,15 +1240,15 @@ def test_a_failed_write_removes_the_file_it_created_and_never_one_that_existed(
     existing.write_text("kept")
     fresh = secrets_dir / "fresh"
 
-    def fail(_nbytes: int) -> str:
+    def fail_to_generate() -> str:
         raise OSError("disk full")
 
-    monkeypatch.setattr(golive.secrets, "token_hex", fail)
+    go_live = golive.GoLive(golive.Tools(new_secret=fail_to_generate), secrets_dir, marks)
 
     with pytest.raises(OSError, match="disk full"):
-        golive.GoLive.create_secret_file(fresh)
+        go_live.create_secret_file(fresh)
     with pytest.raises(FileExistsError):
-        golive.GoLive.create_secret_file(existing)
+        go_live.create_secret_file(existing)
 
     assert not fresh.exists()
     assert existing.read_text() == "kept"

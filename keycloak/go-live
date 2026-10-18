@@ -147,6 +147,10 @@ def run_command(
         raise DockerDidNotAnswer(f"cannot run {command[0]}: {error.strerror}") from error
 
 
+def new_secret_value() -> str:
+    return secrets.token_hex(32)
+
+
 @dataclass(frozen=True)
 class Tools:
     """Everything outside the script's logic: processes, HTTP, the operator, the clock."""
@@ -157,6 +161,7 @@ class Tools:
     say: Callable[[str], None] = print
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
+    new_secret: Callable[[], str] = new_secret_value
 
 
 @dataclass(frozen=True)
@@ -230,15 +235,14 @@ class GoLive:
         for name in SECRET_FILES:
             self.create_secret_file(self.secrets_dir / name)
 
-    @staticmethod
-    def create_secret_file(path: Path) -> None:
+    def create_secret_file(self, path: Path) -> None:
         # O_EXCL: an existing file is never overwritten. The container users must read the
         # file; the 0700 directory keeps everyone else out.
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         try:
             with os.fdopen(descriptor, "w") as secret_file:
                 os.fchmod(secret_file.fileno(), 0o644)
-                secret_file.write(secrets.token_hex(32))
+                secret_file.write(self.tools.new_secret())
         except BaseException:
             # An empty file would read as done on the next run; only this call's file goes.
             path.unlink()
