@@ -1,8 +1,0 @@
-claim_id = "54dda06c97ca43b1abe4d43f25612d56"
-agent = "claude"
-role = "builder"
-base = "676bfdc98eaf9ff8e7945279d3c702d481d38150"
-branch = "claude/issue-101-tofu-binary"
-scope = [".github/workflows/ci.yml", "external/opentofu.toml", "src/edge/external/tofu_binary.py", "tests/test_edge_tofu_binary.py"]
-opened_commit = "6ba5a466a6fb5bc3676db5e4e009f34d40a763f5"
-whole_reason = "The pin owner, the fetcher, its tests and CI's call to it are one vertical: CI must exercise the operator's fetch path."
