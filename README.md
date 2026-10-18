@@ -241,7 +241,9 @@ schreibt es ihn neu und meldet am Ende "the core is current"; scheitert ein Schr
 ist der Lauf teilweise (Exit 1), keine Einheit wird geschaltet und der naechste Lauf versucht es
 wieder ("traefik: recreate (the last recreate did not finish)"), auch wenn `traefik.yml`
 inzwischen wieder auf dem alten Stand ist. Einen gestoppten Kerndienst
-nennt es nur ("traefik: traefik.yml changed; it is not running and is not started") und startet es nie; einen, dessen
+nennt es nur ("traefik: traefik.yml changed; it is not running and is not started") und startet es nie,
+auch nicht, wenn er erst zwischen Plan und `yes` gestoppt wurde: dann ist der Lauf teilweise
+("traefik was stopped meanwhile; it is not started", Exit 1) und keine Einheit wird geschaltet; einen, dessen
 Container sein eigenes gescheitertes Neuerstellen nur erstellt und nie gestartet hat (so steht
 es in `applied.json`), erstellt der naechste Lauf wieder neu ("socket-proxy: recreate (the last recreate did not finish)"). Nach dem Kern folgt
 `traefik-mcp` ebenso `traefik-mcp.yml` und seiner Compose-Definition: ist `step-ca` an (aktiviert und

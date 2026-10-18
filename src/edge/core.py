@@ -236,12 +236,14 @@ class CoreAction(StrEnum):
 @dataclass(frozen=True)
 class CorePlan:
     """A changed core service; `digests` are its file binds as read when planning, empty for a
-    service edge follows through no file."""
+    service edge follows through no file; `left_unstarted` says its container was created and
+    never started by an unfinished recreate of edge's, which is recreated (#87 rule 4)."""
 
     service: str
     action: CoreAction
     why: str
     digests: Digests
+    left_unstarted: bool
 
     @property
     def files(self) -> str:
@@ -289,7 +291,7 @@ def plan_core(
         if whys:
             live = left_unstarted or compose.has_running_container(states, (service,))
             action = CoreAction.RECREATE if live else CoreAction.NOT_STARTED
-            plans[service] = CorePlan(service, action, "; ".join(whys), current)
+            plans[service] = CorePlan(service, action, "; ".join(whys), current, left_unstarted)
     return list(plans.values())
 
 
