@@ -1,0 +1,8 @@
+claim_id = "b3e93e8a21b147cc92f45898341237ce"
+agent = "claude"
+role = "builder"
+base = "3a7f454f0dd715983b49ca689300cb66316d2d2f"
+branch = "claude/issue-123-x1d-the-shared-seams-of-the-import-slice"
+scope = [".github/workflows/ci.yml", "README.md", "docs/architecture.md", "external/main.tf", "external/tests/catalog.tftest.hcl", "external/tests/fixtures/empty.yaml", "fleet.yaml", "src/edge/external/tofu_test.py", "tests/test_edge_tofu_test.py"]
+opened_commit = "2712bc3f282be72ed090b8dc4dea844f37800ce7"
+whole_reason = "One seam the import slices share: the provider, the catalog seam, the scrubbed tofu test entry point and its CI step; a part alone has no caller."
