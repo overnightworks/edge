@@ -2176,6 +2176,31 @@ def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recr
     assert "traefik: recreate (the last recreate did not finish)" in out
 
 
+def test_every_unproven_barrier_after_the_recreate_is_named_in_the_partial_line(
+    core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rule 5, S9, P15: a failure two switched-off units share names both, because every
+    active barrier is tried, not only up to the first that fails."""
+    probe_switched_off(scripted, repository, state)
+    scripted.config["services"]["echo"] = {
+        "profiles": ["echo"],
+        "labels": {"traefik.enable": "true", "edge.name": "echo"},
+    }
+    write_fleet(repository, PROBE_STOPPED + "  echo:\n    run: {enabled: true}\n")
+    scripted.containers["echo"] = "exited"
+    switch_off(state, unit="echo")
+    ingress.rejecting = True
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, the barriers of probe, echo are not proven after the traefik recreate (" in err
+    assert "(probe: " in err
+    assert "; echo: " in err
+    assert "): probe, echo may be reachable through Traefik; to close the tunnel now: " in err
+    assert applied(state) == UNFINISHED
+
+
 @pytest.mark.parametrize("failure", ["unproven barrier", "traefik not running"])
 def test_a_recreate_that_did_not_finish_is_planned_again_after_traefik_yml_is_reverted(
     failure, core_files, switch, scripted, repository, state, ingress

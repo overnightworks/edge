@@ -388,7 +388,9 @@ class CorePhase:
         return None
 
     def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
-        """Say each proven barrier; the failure line of the first one that is not (S9)."""
+        """Say each proven barrier; the failure line naming every one that is not, after all
+        active barriers were tried (S9)."""
+        unproven: list[barrier.Unproven] = []
         for proof in barrier.prove_active(
             fleet.units, fleet.profile_services, fleet.config, marks, self.repository, self.verifier
         ):
@@ -397,13 +399,20 @@ class CorePhase:
                     print(f"{COMMAND}: the barrier of {unit} is proven")
                 case barrier.NoHost(unit):
                     print(f"{COMMAND}: {unit}: no host behind Traefik, so no barrier")
-                case barrier.Unproven(unit, failure):
-                    return (
-                        f"the barrier of {unit} is not proven after the {service} recreate "
-                        f"({failure}): {unit} may be reachable through Traefik; to close the "
-                        f"tunnel now: {EMERGENCY_STOP}"
-                    )
-        return None
+                case barrier.Unproven():
+                    unproven.append(proof)
+        if not unproven:
+            return None
+        units = ", ".join(proof.unit for proof in unproven)
+        if len(unproven) == 1:
+            barriers, failures = f"the barrier of {units} is", unproven[0].failure
+        else:
+            barriers = f"the barriers of {units} are"
+            failures = "; ".join(f"{proof.unit}: {proof.failure}" for proof in unproven)
+        return (
+            f"{barriers} not proven after the {service} recreate ({failures}): {units} may be "
+            f"reachable through Traefik; to close the tunnel now: {EMERGENCY_STOP}"
+        )
 
 
 def _confirm_and_switch(
