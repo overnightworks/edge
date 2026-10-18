@@ -43,8 +43,6 @@ _ISOLATION = (
     "-c", "submodule.recurse=false",
 )  # fmt: skip
 _NEVER_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
-
-
 _ERROR_PREFIXES = ("fatal:", "error:")
 _URL_CREDENTIALS = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/@\s'\"]+@", re.IGNORECASE)
 _REDACTED = r"\1<redacted>@"
@@ -151,7 +149,7 @@ class ChangedFile:
 
 @dataclass(frozen=True)
 class Git:
-    """The questions `edge apply` asks of a checkout; nothing here writes to it."""
+    """The questions `edge apply` asks of a checkout; only the fetch writes, and only to `.git`."""
 
     tree: Path
     run: Runner = run_git
