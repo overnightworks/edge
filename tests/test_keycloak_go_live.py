@@ -61,6 +61,9 @@ class Keycloak:
     compose_without_database_volume: bool = False
     edge_restarting: bool = False  # step 5's recreate: kcadm is refused, 8090 does not answer yet
     docker_daemon_down: bool = False
+    compose_config_fails: bool = False
+    client_secret_files: list[str] = field(default_factory=list)  # compose's secrets of clients
+    compose_declares_environment_secret: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
@@ -112,9 +115,17 @@ class Keycloak:
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
     def compose_config(self, command: list[str]):
+        if self.compose_config_fails:
+            return self.done(returncode=1, stderr="validating compose.yaml: invalid")
         if self.compose_without_database_volume:
             return self.done("{}")
-        return self.done(json.dumps({"volumes": {"keycloak-db": {"name": PROJECT_VOLUME}}}))
+        secrets = {
+            f"secret_{at}": {"file": path} for at, path in enumerate(self.client_secret_files)
+        }
+        if self.compose_declares_environment_secret:
+            secrets["from_environment"] = {"environment": "SOME_VARIABLE"}
+        volumes = {"keycloak-db": {"name": PROJECT_VOLUME}}
+        return self.done(json.dumps({"volumes": volumes, "secrets": secrets}))
 
     def compose_ps(self, command: list[str]):
         return self.done("abc123\n" if self.running else "")
@@ -310,6 +321,10 @@ def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_di
     return golive.GoLive(tools, secrets_dir, marks)
 
 
+def name_clients(keycloak: Keycloak, secrets_dir: Path, *names: str) -> None:
+    keycloak.client_secret_files = [f"{secrets_dir}/clients/{name}" for name in names]
+
+
 def write_secrets(secrets_dir: Path, *names: str) -> None:
     secrets_dir.mkdir(parents=True, mode=0o700)
     for name in names:
@@ -317,9 +332,9 @@ def write_secrets(secrets_dir: Path, *names: str) -> None:
 
 
 def secret_values(secrets_dir: Path) -> list[str]:
-    return [
-        (secrets_dir / name).read_text() for name in SECRET_FILES if (secrets_dir / name).exists()
-    ]
+    paths = [secrets_dir / name for name in SECRET_FILES]
+    paths += sorted((secrets_dir / "clients").glob("*"))
+    return [path.read_text() for path in paths if path.exists()]
 
 
 def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, session, secrets_dir):
@@ -346,7 +361,7 @@ def test_every_compose_call_names_the_keycloak_profile(go_live, keycloak):
     assert compose_commands
     for command in compose_commands:
         profiles = {command[at + 1] for at, word in enumerate(command) if word == "--profile"}
-        assert profiles == {"keycloak"}
+        assert "keycloak" in profiles
 
 
 def test_the_secret_files_are_random_hex_in_a_private_directory(go_live, secrets_dir, keycloak):
@@ -917,7 +932,8 @@ def started_something_after(keycloak: Keycloak, command_count: int) -> bool:
 def test_a_switched_off_keycloak_refuses_at_the_start_and_asks_and_starts_nothing(
     go_live, keycloak, session, marks, secrets_dir
 ):
-    """#64 rule 8: the marker stops the whole run before its first question."""
+    """T10, #64 rule 8: the marker stops the whole run before its first question."""
+    name_clients(keycloak, secrets_dir, "a")
     switch_off(marks)
 
     assert go_live.run() == 1
@@ -1047,3 +1063,192 @@ def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, k
     assert go_live.run() == 0
 
     assert marks.since("keycloak") is None
+
+
+# --- one secret file per confidential app client (K11-SA1, #106) --------------------------------
+
+CLIENT_MISSING_LINE = (
+    f"{CHECK_PREFIX}: not set up: the secret of client {{}} is missing "
+    "(~/.secrets/keycloak/clients/{}); run keycloak/go-live"
+)
+
+
+def modes(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def test_a_fresh_run_creates_one_private_secret_file_per_client(
+    go_live, keycloak, session, secrets_dir
+):
+    """T1: the three service files, plus clients/a and clients/b at 0644 in a 0700 directory."""
+    name_clients(keycloak, secrets_dir, "a", "b")
+
+    assert go_live.run() == 0
+
+    assert modes(secrets_dir / "clients") == 0o700
+    for client_id in ("a", "b"):
+        assert modes(secrets_dir / "clients" / client_id) == 0o644
+        assert re.fullmatch(r"[0-9a-f]{64}", (secrets_dir / "clients" / client_id).read_text())
+    assert len({(secrets_dir / "clients" / name).read_text() for name in ("a", "b")}) == 2
+    assert (secrets_dir / "config-cli-secret").exists()
+
+
+def test_every_discovery_asks_compose_with_the_apply_profile(go_live, keycloak, secrets_dir):
+    """T9, Rule 2: without --profile apply compose drops keycloak-config-cli's secrets."""
+    go_live.client_ids()
+
+    assert "apply" in keycloak.commands[-1]
+
+
+def test_a_rerun_with_one_client_file_missing_creates_only_that_file_and_asks_nothing(
+    go_live, keycloak, session, secrets_dir
+):
+    """T2 and T3: the delta run leaves the other file byte-identical and starts nothing."""
+    name_clients(keycloak, secrets_dir, "a", "b")
+    assert go_live.run() == 0
+    (secrets_dir / "clients" / "b").unlink()
+    kept = (secrets_dir / "clients" / "a").read_bytes()
+    keycloak.commands.clear()
+    session.asked.clear()
+
+    assert go_live.run() == 0
+
+    assert (secrets_dir / "clients" / "a").read_bytes() == kept
+    assert (secrets_dir / "clients" / "b").exists()
+    assert session.asked == []
+    assert not keycloak.changed_something()
+
+
+def test_check_names_a_missing_client_secret_and_the_next_command(
+    go_live, keycloak, session, secrets_dir, finished
+):
+    """T4: exit 1 and one line."""
+    name_clients(keycloak, secrets_dir, "a", "b")
+    (secrets_dir / "clients").mkdir()
+    (secrets_dir / "clients" / "a").write_text("x")
+
+    assert go_live.check() == 1
+
+    assert session.printed == [CLIENT_MISSING_LINE.format("b", "b")]
+    assert not (secrets_dir / "clients" / "b").exists()
+
+
+def test_check_is_set_up_when_every_client_secret_exists(
+    go_live, keycloak, session, secrets_dir, finished
+):
+    """T5."""
+    name_clients(keycloak, secrets_dir, "a")
+    (secrets_dir / "clients").mkdir()
+    (secrets_dir / "clients" / "a").write_text("x")
+
+    assert go_live.check() == 0
+
+
+def test_a_compose_config_failure_is_exit_two_for_check_and_one_line_for_a_run(
+    go_live, keycloak, session, secrets_dir, finished
+):
+    """T6."""
+    keycloak.compose_config_fails = True
+
+    assert go_live.check() == 2
+    assert session.printed == [
+        f"{CHECK_PREFIX}: cannot tell: `docker compose config` exited 1: "
+        "validating compose.yaml: invalid"
+    ]
+    session.printed.clear()
+    assert go_live.run() == 1
+    assert len(session.printed) == 1
+    assert session.printed[0].startswith("go-live FAILED at backup:")
+
+
+def test_a_client_secret_quoted_by_a_failing_command_is_printed_as_stars(
+    go_live, keycloak, session, secrets_dir
+):
+    """T7: the value of a client file is scrubbed like the service passwords."""
+    name_clients(keycloak, secrets_dir, "a")
+    keycloak.fail_apply_after_master = True
+    keycloak.echo_secret_file = secrets_dir / "clients" / "a"
+
+    go_live.run()
+
+    assert session.printed[-1].endswith("realm.yaml: import failed ***")
+    assert [value for value in secret_values(secrets_dir) if value in session.output] == []
+
+
+@pytest.mark.parametrize("name", ["../x", "A", "-a", "a/b"])
+def test_a_client_name_that_is_not_an_id_is_refused_and_nothing_is_created(
+    go_live, keycloak, session, secrets_dir, name
+):
+    """T8."""
+    name_clients(keycloak, secrets_dir, name)
+
+    assert go_live.run() == 1
+
+    assert "FAILED at client secrets" in session.printed[-1]
+    assert not (secrets_dir / "clients").exists()
+    assert not (secrets_dir.parent / "x").exists()
+
+
+@pytest.fixture
+def real_compose_go_live(golive, secrets_dir, marks, monkeypatch):
+    """Compose resolves `${HOME}/.secrets/keycloak` to the injected secrets directory."""
+    monkeypatch.setenv("HOME", str(secrets_dir.parent.parent))
+    monkeypatch.setenv("EDGE_DOMAIN", "probe.test")  # the operator's .env supplies both
+    monkeypatch.setenv("DOCKER_GID", "999")
+    return golive.GoLive(golive.Tools(), secrets_dir, marks)
+
+
+def test_the_real_compose_file_names_no_client_secret_yet(real_compose_go_live):
+    """T9: the repository's compose.yaml; K11-SA2 makes this ["songmaker"]."""
+    assert real_compose_go_live.client_ids() == []
+
+
+def test_the_real_compose_discovers_a_client_secret_it_declares(
+    golive, real_compose_go_live, tmp_path, monkeypatch
+):
+    """T9, non-vacuity: the same real Compose and HOME find `clients/x` when compose declares it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "compose.yaml").write_text(
+        "name: probe\n"
+        "services:\n"
+        "  app:\n"
+        "    image: scratch\n"
+        "    secrets: [x]\n"
+        "secrets:\n"
+        "  x:\n"
+        "    file: ${HOME}/.secrets/keycloak/clients/x\n"
+    )
+    monkeypatch.setattr(golive, "REPO", repo)
+
+    assert real_compose_go_live.client_ids() == ["x"]
+
+
+def test_a_top_level_secret_without_a_file_is_not_a_client_secret(go_live, keycloak):
+    """T9, Rule 2: a secret from `environment:` has no file and names no client."""
+    keycloak.compose_declares_environment_secret = True
+
+    assert go_live.client_ids() == []
+
+
+def test_a_failed_write_removes_the_file_it_created_and_never_one_that_existed(
+    golive, secrets_dir, marks
+):
+    """T3, Rule 3: no empty file is left to read as done; an existing file is untouched."""
+    secrets_dir.mkdir(parents=True)
+    existing = secrets_dir / "existing"
+    existing.write_text("kept")
+    fresh = secrets_dir / "fresh"
+
+    def fail_to_generate() -> str:
+        raise OSError("disk full")
+
+    go_live = golive.GoLive(golive.Tools(new_secret=fail_to_generate), secrets_dir, marks)
+
+    with pytest.raises(OSError, match="disk full"):
+        go_live.create_secret_file(fresh)
+    with pytest.raises(FileExistsError):
+        go_live.create_secret_file(existing)
+
+    assert not fresh.exists()
+    assert existing.read_text() == "kept"
