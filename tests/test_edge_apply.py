@@ -2880,28 +2880,20 @@ def stopped_meanwhile(service: str) -> str:
             "exited",
             [],
         ),
-        (
-            lambda scripted, repository: scripted.change_definition("socket-proxy"),
-            "traefik",
-            "exited",
-            [RECREATE_SOCKET_PROXY],
-        ),
     ],
     ids=[
         "L1 traefik planned and stopped",
         "L1 traefik replaced by a container never started",
         "L2 socket-proxy stopped",
-        "L3 traefik stopped",
     ],
 )
 def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_unit_switches(
     change, stopped, left_as, ups, applied_core, switch, scripted, repository, state
 ):
-    """#93 rules 1, 2, C3, #87 rules 3, 4, cells L1-L3: the liveness read just before its
-    recreate finds it stopped, so it is not started; partial, exit 1, no unit touched; its entry
-    stays as the plan left it, also where socket-proxy's recreate began before it (L3). A
-    container created and never started counts as live only where the plan found edge's own
-    unfinished recreate left it so."""
+    """#93 rules 1, 2, C3, #87 rules 3, 4, cells L1, L2: the liveness read just before the set's
+    first recreate finds it stopped, so no recreate began; partial, exit 1, no unit touched, and
+    no entry changes. A container created and never started counts as live only where the plan
+    found edge's own unfinished recreate left it so."""
     write_fleet(repository, ENABLED)
     change(scripted, repository)
     planned_record = applied(state)
@@ -2920,22 +2912,51 @@ def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_u
     assert applied(state) == planned_record
 
 
-def test_a_traefik_stopped_after_socket_proxys_recreate_is_not_recreated_and_no_unit_switches(
-    applied_core, switch, scripted, repository
+def stop_traefik_during_the_prompt(scripted) -> dict:
+    return {"while_prompt_waits": lambda: scripted.containers.update(traefik="exited")}
+
+
+def stop_traefik_after_socket_proxys_recreate(scripted) -> dict:
+    scripted.after_up = lambda: scripted.containers.update(traefik="exited")
+    return {}
+
+
+@pytest.mark.parametrize(
+    "stop_traefik",
+    [stop_traefik_during_the_prompt, stop_traefik_after_socket_proxys_recreate],
+    ids=["L3 during the prompt", "L3 between the two recreates"],
+)
+def test_a_traefik_stopped_before_its_own_recreate_keeps_an_emptied_entry_for_the_next_run(
+    stop_traefik, applied_core, switch, scripted, repository, state
 ):
-    """#93 rule 1, C3: liveness is read again just before each core recreate, so traefik stopped
-    after socket-proxy's recreate and before its own is not started; partial, exit 1."""
+    """#93 rules 1, 2 (head ruling 18.10.2026), C3, C4, #87 rule 4, cell L3: liveness is read
+    again just before each core recreate, so a traefik stopped since the plan is not started
+    after socket-proxy's recreate; partial, exit 1. The record follows the set: the set's first
+    recreate began, so traefik's entry is emptied in both timings (P15), and the next run with
+    traefik live recreates it."""
     write_fleet(repository, ENABLED)
     scripted.change_definition("socket-proxy")
-    scripted.after_up = lambda: scripted.containers.update(traefik="exited")
 
-    exit_code, _, err = switch()
+    exit_code, _, err = switch(**stop_traefik(scripted))
 
     assert exit_code == 1
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert stopped_meanwhile("traefik") in err
     assert scripted.containers["traefik"] == "exited"
     assert unit_calls(scripted) == []
+    assert applied(state) == UNFINISHED
+
+    scripted.after_up = None
+    scripted.containers["traefik"] = "running"
+    scripted.calls.clear()
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert "socket-proxy: recreate" not in out
+    assert up_calls(scripted)[0] == RECREATE_TRAEFIK
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
 
 
 # --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
