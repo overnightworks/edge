@@ -91,7 +91,8 @@ edge apply --closed
 # (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply --closed` recreates
 # the running core services concerned, socket-proxy first and traefik after it, proves every
 # barrier again and only then says so, ending in "the core is current"; a stopped one is named
-# and not started, so start it with the `up` above first.
+# and not started, so start it with the `up` above first. A core container a failed recreate
+# left created and never started is no stopped one: the next apply recreates it again.
 ```
 
 Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
@@ -232,7 +233,9 @@ schreibt es ihn neu und meldet am Ende "the core is current"; scheitert ein Schr
 ist der Lauf teilweise (Exit 1), keine Einheit wird geschaltet und der naechste Lauf versucht es
 wieder ("traefik: recreate (the last recreate did not finish)"), auch wenn `traefik.yml`
 inzwischen wieder auf dem alten Stand ist. Einen gestoppten Kerndienst
-nennt es nur ("traefik is not running and is not started") und startet es nie. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
+nennt es nur ("traefik is not running and is not started") und startet es nie; einen, dessen
+Container ein gescheitertes Neuerstellen nur erstellt und nie gestartet hat, erstellt der
+naechste Lauf wieder neu ("socket-proxy: recreate (the last recreate did not finish)"). Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder

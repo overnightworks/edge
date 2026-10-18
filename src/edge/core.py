@@ -34,6 +34,7 @@ from edge import compose, switches
 
 APPLIED_FILE = "applied.json"
 DEFINITION_CHANGED = "its compose definition changed"
+UNFINISHED = "the last recreate did not finish"
 
 type Digests = Mapping[str, str]  # a file bind's path in the checkout -> the sha256 of its bytes
 
@@ -221,7 +222,8 @@ def plan_core(
     """Each changed core service in start order, with `hashes` from `docker compose config
     --hash`. One with a live container is recreated and pulls in the live core services that
     depend on it; one without is only named and pulls in nothing, because the core is never
-    started here (#85 rule 4, #87 rule 3)."""
+    started here (#85 rule 4, #87 rule 3). A core container that was created and never started
+    is no stopped service: a recreate left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
     states = compose.states_of(containers)
     labels = _config_hash_labels(containers, core_services(config))
@@ -234,7 +236,10 @@ def plan_core(
             whys.append(DEFINITION_CHANGED)
         if sources and (why := _why_changed(current, reading, service)):
             whys.append(why)
-        live = compose.has_running_container(states, (service,))
+        left_unstarted = compose.never_started(states, service)
+        if left_unstarted and UNFINISHED not in whys:
+            whys.append(UNFINISHED)
+        live = left_unstarted or compose.has_running_container(states, (service,))
         if live:
             whys += [
                 f"{dependency} is recreated"
@@ -268,7 +273,7 @@ def _why_changed(current: Digests, reading: Reading, service: str) -> str | None
     if reading.problem:
         return reading.problem
     if reading.entries.get(service) == {}:
-        return "the last recreate did not finish"
+        return UNFINISHED
     applied = reading.entries.get(service, {})
     for name, digest in current.items():
         if name not in applied:

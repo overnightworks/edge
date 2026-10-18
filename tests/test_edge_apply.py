@@ -106,6 +106,8 @@ class ScriptedCompose:
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
+    # `up` creates a new container of these but cannot start it: it stays created, `up` exits 1
+    unstartable: set[str] = field(default_factory=set)
     starts_nothing: bool = False
     after_up: Callable[[], None] | None = None  # what changes in the world once `up` returned
     # a container of these dies right after `up` starts it and Docker restarts it: the first `ps`
@@ -123,6 +125,8 @@ class ScriptedCompose:
         if verb == self.failing_verb:
             return subprocess.CompletedProcess(command, 1, "", f"{verb} broke\nlast line")
         output = getattr(self, f"verb_{verb}")(profile, arguments)
+        if verb == "up" and self.unstartable & set(arguments):
+            return subprocess.CompletedProcess(command, 1, output, "up broke\ncannot start")
         return subprocess.CompletedProcess(command, 0, output, "")
 
     def verb_config(self, _profile: str, arguments: list[str]) -> str:
@@ -160,6 +164,9 @@ class ScriptedCompose:
         for service in (argument for argument in arguments if argument not in flags):
             if self.needs_a_new_container(service, flags):
                 self.create_container(service)
+            if service in self.unstartable:
+                self.containers[service] = "created"
+                continue
             self.containers[service] = "exited" if service in one_shots else "running"
             self.just_started.add(service)
             for volume in compose.named_volumes(self.config["services"][service]):
@@ -2497,6 +2504,30 @@ def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and
     assert (
         "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)" in again
     )
+
+
+def test_a_socket_proxy_its_recreate_left_created_is_recreated_by_the_next_run(
+    applied_core, switch, scripted, state
+):
+    """#87 rule 4: a socket-proxy that cannot start stays created with the new label, so the
+    first run is partial; once it can start again, the next run recreates it, then traefik, and
+    the core is current."""
+    scripted.change_definition("socket-proxy")
+    scripted.unstartable.add("socket-proxy")
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, could not recreate socket-proxy, `docker compose up` exited 1" in err
+    assert scripted.containers["socket-proxy"] == "created"
+    scripted.unstartable.clear()
+    scripted.calls.clear()
+    exit_code, out, _ = switch()
+    assert exit_code == 0
+    assert "socket-proxy: recreate (the last recreate did not finish)" in out
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
+    assert out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT)
+    assert scripted.containers["socket-proxy"] == "running"
 
 
 def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_again(

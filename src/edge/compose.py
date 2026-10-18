@@ -24,7 +24,8 @@ _SETTLE_POLL_SECONDS = 0.5
 _COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
-_NOT_RUNNING = {"exited", _COMPLETED, "created", "dead"}
+_CREATED = "created"  # created but never started: an `up` whose start failed
+_NOT_RUNNING = {"exited", _COMPLETED, _CREATED, "dead"}
 # Compose's record of the service definition a container was created from. Only this label is
 # read out of ps's comma-joined `Labels`, so another label's value may hold commas.
 CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
@@ -185,6 +186,12 @@ def is_up(
 def has_running_container(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     """Some container of the unit's services is alive: running, restarting or paused."""
     return any(states.get(name, set()) - _NOT_RUNNING for name in services)
+
+
+def never_started(states: Mapping[str, set[str]], service: str) -> bool:
+    """Every container of the service was created and never started, as an `up` whose start
+    failed leaves it; nobody stopped it."""
+    return states.get(service) == {_CREATED}
 
 
 def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
