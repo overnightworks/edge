@@ -2754,18 +2754,24 @@ def test_the_config_hashes_are_read_from_a_real_config_hash_answer():
     }
 
 
+@pytest.mark.parametrize(
+    ("traefik_yml_changed", "why"),
+    [(True, "traefik.yml changed; socket-proxy is recreated"), (False, "socket-proxy is recreated")],
+)
 def test_the_core_is_not_current_while_a_changed_core_service_is_not_started(
-    applied_core, switch, scripted, repository
+    traefik_yml_changed, why, applied_core, switch, scripted, repository
 ):
-    """#87 rule 5, cell D12: socket-proxy is recreated, traefik is only named."""
+    """#87 rules 3, 5, cell D12 (scenario R3e): socket-proxy is recreated; a stopped traefik it
+    pulls in is only named, with or without a change of its own, and the core is not current."""
     scripted.change_definition("socket-proxy")
     scripted.containers["traefik"] = "exited"
-    edit_traefik_yml(repository)
+    if traefik_yml_changed:
+        edit_traefik_yml(repository)
 
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik.yml changed; traefik is not running and is not started" in out
+    assert f"{why}; traefik is not running and is not started" in out
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert SOCKET_PROXY_RECREATED in out
     assert CORE_CURRENT not in out

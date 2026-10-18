@@ -233,9 +233,9 @@ def plan_core(
     record: Record,
 ) -> list[CorePlan]:
     """Each changed core service in start order, with `hashes` from `docker compose config
-    --hash`. One with a live container is recreated and pulls in the live core services that
-    depend on it; one without is only named and pulls in nothing, because the core is never
-    started here (#85 rule 4, #87 rule 3). A core container that was created and never started
+    --hash`. One with a live container is recreated and pulls in the core services that depend
+    on it; one without, pulled in or not, is only named and pulls in nothing, because the core is
+    never started here (#85 rule 4, #87 rule 3). A core container that was created and never started
     while the record says a recreate that took it in did not finish is no stopped service: edge's
     recreate left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
@@ -248,10 +248,9 @@ def plan_core(
         left_unstarted = _left_unstarted(config, states, reading, checkout, service)
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
-        live = left_unstarted or compose.has_running_container(states, (service,))
-        if live:
-            whys += _pulled_in(config, service, plans)
+        whys += _pulled_in(config, service, plans)
         if whys:
+            live = left_unstarted or compose.has_running_container(states, (service,))
             action = CoreAction.RECREATE if live else CoreAction.NOT_STARTED
             plans[service] = CorePlan(service, action, "; ".join(whys), current)
     return list(plans.values())
