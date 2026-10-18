@@ -14,9 +14,9 @@ The CA and the gateway are only reachable on their internal compose networks, so
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
 --scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies, proof 11
 drives the emergency switch, proof 12 runs the setup from `edge apply` and proof 13 lets
-traefik-mcp follow its file and definition through about ten applies: the run takes about 30 to
-38 minutes, bounded by the 2400 s timeout above. Needs `uv`: proof 8 runs `edge-check` through
-it, proofs 10 to 13 run `uv sync` in a copy of the repository.
+traefik-mcp follow its file and definition through about ten applies: the run takes about 12
+minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
+proof 8 runs `edge-check` through it, proofs 10 to 13 run `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
