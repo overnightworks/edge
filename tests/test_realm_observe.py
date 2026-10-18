@@ -29,6 +29,7 @@ from realm_fake import (
     FakeRealm,
     Group,
     client_rep,
+    component,
     role_rep,
     step_rep,
     uid,
@@ -259,6 +260,22 @@ def test_a_component_identity_includes_its_sub_type(keycloak: FakeKeycloak) -> N
         "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy/"
         "allowed-client-templates/authenticated/Allowed Client Scopes",
     ]
+
+
+def test_a_component_without_a_name_is_known_by_its_type_and_provider(
+    keycloak: FakeKeycloak,
+) -> None:
+    """Rule 5: Keycloak 26.8.1 keeps master's declarative user profile as a component that
+    carries no name; missing equals null."""
+    user_profile = component(
+        "master", "", "org.keycloak.userprofile.UserProfileProvider", "declarative-user-profile"
+    )
+    del user_profile["name"]
+    keycloak.realms["master"].components.append(user_profile)
+
+    components = observe(keycloak)["master"]["component"]
+
+    assert "org.keycloak.userprofile.UserProfileProvider/declarative-user-profile" in components
 
 
 def test_a_duplicate_component_identity_fails_loudly(keycloak: FakeKeycloak) -> None:

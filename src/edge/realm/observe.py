@@ -266,8 +266,8 @@ USER = shape(
 )
 COMPONENT = shape(
     "component",
-    "name providerId providerType",
-    "subType config",
+    "providerId providerType",
+    "subType name config",
     maps={"config": MapShape(all_secret=True)},
 )
 
@@ -687,8 +687,8 @@ class RealmReader:
         for component in self.get("/components"):
             project(COMPONENT, component, self.digest)  # fails loudly on a missing identity part
             parts = [component["providerType"], component["providerId"]]
-            parts += [component["subType"]] if component.get("subType") else []
-            self.keep(COMPONENT.name, "/".join([*parts, component["name"]]), empty())
+            parts += [component[part] for part in ("subType", "name") if component.get(part)]
+            self.keep(COMPONENT.name, "/".join(parts), empty())
 
 
 REALM_SCOPES = {
