@@ -53,7 +53,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def _read_allow_list(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        path.stat()
+        resolved = path.resolve()
+        if not resolved.is_file():
+            raise AllowListError(f"cannot read {path}: not a regular file")
+        return resolved.read_text(encoding="utf-8")
     except OSError as error:
         raise AllowListError(f"cannot read {path}: {error.strerror}") from error
 
