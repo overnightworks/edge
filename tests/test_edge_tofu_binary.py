@@ -272,6 +272,13 @@ sha256 = { linux_amd64 = "ab" }
 
 [versions."1.13.2"]
 sha256 = { linux_amd64 = "ab" }
+
+[versions."1.13.3"]
+url = "https://example.invalid/{arch}.zip"
+sha256 = { linux_amd64 = "ab" }
+
+[versions]
+"1.13.4" = "not a table"
 """
 
 
@@ -292,8 +299,16 @@ def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
         ("1.14.0", "linux_amd64", "no entry for OpenTofu 1.14.0"),
         ("1.13.1", "darwin_arm64", "no sha256 for darwin_arm64"),
         ("1.13.2", "linux_amd64", "no url for OpenTofu 1.13.2"),
+        ("1.13.3", "linux_amd64", "url for OpenTofu 1.13.3 cannot be filled in: KeyError('arch')"),
+        ("1.13.4", "linux_amd64", "entry for OpenTofu 1.13.4 is not a table"),
     ],
-    ids=["unpinned-version", "other-platform", "entry-without-url"],
+    ids=[
+        "unpinned-version",
+        "other-platform",
+        "entry-without-url",
+        "unknown-url-placeholder",
+        "entry-not-a-table",
+    ],
 )
 def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platform, missing):
     """#101 T4, T5, rule 1: a gap in the version's entry names the pins file."""
@@ -317,18 +332,19 @@ def test_the_committed_pins_cover_the_pinned_version_on_linux_amd64():
 
 
 @pytest.mark.parametrize(
-    ("pins", "missing"),
+    ("make", "missing"),
     [
-        (None, "is missing"),
-        ("[versions\n", "is not valid TOML"),
+        (lambda pins_file: None, "is missing"),
+        (lambda pins_file: pins_file.write_text("[versions\n"), "is not valid TOML"),
+        (lambda pins_file: pins_file.mkdir(), "cannot be read"),
+        (lambda pins_file: pins_file.write_bytes(b"\xff\xfe"), "cannot be read"),
     ],
-    ids=["no-pins-file", "malformed-pins-file"],
+    ids=["no-pins-file", "malformed-pins-file", "pins-file-is-a-directory", "pins-file-not-utf8"],
 )
-def test_a_pins_file_it_cannot_parse_fails_naming_it(tmp_path, pins, missing):
-    """#101 rule 1: a missing or malformed pins file fails as a TofuError naming that file."""
+def test_a_pins_file_it_cannot_parse_fails_naming_it(tmp_path, make, missing):
+    """#101 rule 1: a missing, unreadable or malformed pins file fails as a TofuError naming it."""
     pins_file = tmp_path / "opentofu.toml"
-    if pins is not None:
-        pins_file.write_text(pins)
+    make(pins_file)
 
     with pytest.raises(TofuError) as raised:
         tofu_binary.read_pins(pins_file)

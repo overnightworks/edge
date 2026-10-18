@@ -59,13 +59,20 @@ def release_for(pins: dict, version: str, platform_name: str) -> Release:
     entry = pins.get("versions", {}).get(version)
     if entry is None:
         raise TofuError(f"{_pins_name()} has no entry for OpenTofu {version}")
+    if not isinstance(entry, dict):
+        raise TofuError(f"{_pins_name()} entry for OpenTofu {version} is not a table")
     sha256 = entry.get("sha256", {}).get(platform_name)
     if sha256 is None:
         raise TofuError(f"{_pins_name()} has no sha256 for {platform_name} of OpenTofu {version}")
     url_template = entry.get("url")
     if url_template is None:
         raise TofuError(f"{_pins_name()} has no url for OpenTofu {version}")
-    url = url_template.format(version=version, platform=platform_name)
+    try:
+        url = url_template.format(version=version, platform=platform_name)
+    except (KeyError, IndexError, ValueError) as error:
+        raise TofuError(
+            f"{_pins_name()} url for OpenTofu {version} cannot be filled in: {error!r}"
+        ) from error
     return Release(version=version, url=url, sha256=sha256)
 
 
@@ -109,6 +116,8 @@ def read_pins(pins_file: Path) -> dict:
         raise TofuError(f"{pins_file} is missing") from None
     except tomllib.TOMLDecodeError as error:
         raise TofuError(f"{pins_file} is not valid TOML: {error}") from error
+    except (OSError, UnicodeDecodeError) as error:
+        raise TofuError(f"{pins_file} cannot be read: {error}") from error
 
 
 def install(
