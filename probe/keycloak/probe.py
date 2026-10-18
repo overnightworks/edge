@@ -38,7 +38,7 @@ from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy, parse_ns_head
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 from urllib.request import (
     HTTPCookieProcessor,
     HTTPRedirectHandler,
@@ -67,12 +67,24 @@ PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
 EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
-SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
+SONGMAKER_SECRET_FILE = "clients/songmaker"
+SECRET_FILES = (
+    "db-password",
+    "config-cli-secret",
+    "bootstrap-admin-password",
+    SONGMAKER_SECRET_FILE,
+)
 READY_TIMEOUT_SECONDS = 240
 LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
+SONGMAKER_ADMIN_GROUP = f"{MEMBER_GROUP}/admin"
+SONGMAKER_ORIGIN = "https://songmaker.hallucinai.de"
+SONGMAKER_CALLBACK = f"{SONGMAKER_ORIGIN}/auth/callback"
+SONGMAKER_LOGIN = f"{SONGMAKER_ORIGIN}/login"
+PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
+PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
@@ -121,16 +133,20 @@ class Response:
         return self.body.decode(errors="replace")
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
         return None
 
 
 class LocalhostIsSecure(DefaultCookiePolicy):
-    """Sends Secure cookies to http://localhost, as browsers do for a loopback origin."""
+    """Sends Secure cookies to a loopback origin (http://localhost, or 8081 on 127.0.0.1), as
+    browsers do."""
 
     def return_ok_secure(self, cookie: Cookie, request: Request) -> bool:
-        return urlsplit(request.full_url).hostname == "localhost" or super().return_ok_secure(
+        return urlsplit(request.full_url).hostname in LOOPBACK_HOSTS or super().return_ok_secure(
             cookie, request
         )
 
@@ -197,6 +213,13 @@ def through_tunnel(method: str, path: str, *, host: str = PUBLIC_HOST, **kwargs:
     """What cloudflared sends for a public request: the public host and the original scheme."""
     headers = {"Host": host, "X-Forwarded-Proto": "https"}
     return http(method, EDGE_URL + path, headers=headers, **kwargs)
+
+
+def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
+    """Follows an absolute URL Keycloak gave out on the public host, through the tunnel."""
+    target = urlsplit(url)
+    expect(target.hostname == PUBLIC_HOST, f"{url} is not on {PUBLIC_HOST}")
+    return through_tunnel(method, urlunsplit(("", "", target.path, target.query, "")), **kwargs)
 
 
 def claims(jwt: str) -> dict[str, Any]:
@@ -286,6 +309,7 @@ class Stack:
         for name in SECRET_FILES:
             values[name] = secrets.token_urlsafe(32)
             path = self.secrets_dir / name
+            path.parent.mkdir(mode=0o700, exist_ok=True)
             path.write_text(values[name])
             # Readable by the container users (postgres, keycloak-config-cli); the directory
             # stays 0700, so no other host user reaches the file.
@@ -734,6 +758,7 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
+        self.songmaker_client(admin)
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -917,6 +942,8 @@ class Probe:
         admin_expiry = realm.get("attributes", {}).get("adminEventsExpiration")
         if admin_expiry != "31536000":
             wrong["attributes.adminEventsExpiration"] = admin_expiry
+        if realm.get("adminEventsDetailsEnabled"):
+            wrong["adminEventsDetailsEnabled"] = True
         providers = inventory[REALM].get("identity provider", {}).values()
         if any(provider["fields"]["trustEmail"] for provider in providers):
             wrong["identityProviders.trustEmail"] = True
@@ -933,7 +960,8 @@ class Probe:
         self.held(
             "8",
             "rpId hallucinai.de, access token 300 s, SSO max 30 d / idle 7 d, login events "
-            "30 d, admin events 1 y, brute force on in both realms, "
+            "30 d, admin events 1 y without details (no client representation in them), "
+            "brute force on in both realms, "
             f"{len(providers)} identity providers (so no trustEmail=true), master browser flow "
             "browser-mfa, direct grant direct-grant-mfa, rpId localhost",
         )
@@ -1253,6 +1281,165 @@ class Probe:
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
 
+    def songmaker_client(self, admin: Admin) -> None:
+        """Proof 10 (#108): songmaker's client does what #11 lists, through the public tunnel."""
+        username = "probe-songmaker-admin"
+        password = self.keep_secret(f"{username} password", secrets.token_urlsafe(16))
+        admin.join_group(admin.create_user(REALM, username, password), SONGMAKER_ADMIN_GROUP)
+        client_secret = self.secret_values[SONGMAKER_SECRET_FILE]
+        browser = new_opener(
+            ReceivedCookies(lambda name, value: self.keep_secret(f"songmaker {name}", value))
+        )
+        tokens = self.songmaker_sign_in(browser, username, password, client_secret)
+        groups = claims(tokens["id_token"]).get("groups", [])
+        expect(SONGMAKER_ADMIN_GROUP in groups, f"songmaker's ID token groups are {groups}")
+        self.songmaker_refuses_what_it_does_not_use(client_secret)
+        self.songmaker_logout_pages(browser)
+        self.songmaker_representation(admin)
+        self.held(
+            "10",
+            f"a member of {SONGMAKER_ADMIN_GROUP} signs in to songmaker with PKCE and gets a code "
+            f"at exactly {SONGMAKER_CALLBACK}, exchanged with the scratch secret for an ID token "
+            f"with groups {groups}; no code challenge, a callback with a suffix, plain http, the "
+            "password grant and client_credentials are refused; the end-session page asks before "
+            f"logging out for {SONGMAKER_LOGIN} and refuses an unregistered address; the client "
+            "has no front- or back-channel logout, a base URL and shows in the console",
+        )
+
+    def songmaker_authorization_query(self, **changes: str) -> str:
+        parameters = {
+            "client_id": "songmaker",
+            "redirect_uri": SONGMAKER_CALLBACK,
+            "response_type": "code",
+            "scope": "openid",
+            "state": secrets.token_urlsafe(8),
+            "nonce": secrets.token_urlsafe(8),
+        }
+        return urlencode({**parameters, **changes})
+
+    def songmaker_sign_in(
+        self, opener: OpenerDirector, username: str, password: str, client_secret: str
+    ) -> dict[str, Any]:
+        """The authorization-code flow with S256 up to the ID token (cells T1, T2)."""
+        verifier = self.keep_secret("songmaker PKCE verifier", secrets.token_urlsafe(48))
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        query = self.songmaker_authorization_query(
+            code_challenge=challenge.rstrip(b"=").decode(), code_challenge_method="S256"
+        )
+        login_page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}", opener=opener)
+        expect(login_page.status == 200, f"songmaker's login page answered {login_page.status}")
+        action, fields = form_with(login_page, "username")
+        signed_in = through_tunnel_url(
+            "POST",
+            action,
+            form=fields | {"username": username, "password": password},
+            opener=opener,
+        )
+        location = signed_in.headers.get("Location", "")
+        callback = urlsplit(location)
+        expect(
+            signed_in.status == 302 and location.startswith(f"{SONGMAKER_CALLBACK}?"),
+            f"sign-in answered {signed_in.status} with {callback._replace(query='').geturl()!r}, "
+            f"not a code at {SONGMAKER_CALLBACK}: {page_message(signed_in)}",
+        )
+        code = self.keep_secret("songmaker authorization code", parse_qs(callback.query)["code"][0])
+        return self.tokens_from(
+            username,
+            through_tunnel(
+                "POST",
+                PUBLIC_TOKEN_PATH,
+                form={
+                    "grant_type": "authorization_code",
+                    "client_id": "songmaker",
+                    "client_secret": client_secret,
+                    "redirect_uri": SONGMAKER_CALLBACK,
+                    "code": code,
+                    "code_verifier": verifier,
+                },
+            ),
+        )
+
+    def songmaker_refuses_what_it_does_not_use(self, client_secret: str) -> None:
+        """Cells T3 to T5: PKCE is required, the callback is exact, no other grant works."""
+        without_challenge = through_tunnel(
+            "GET", f"{PUBLIC_AUTH_PATH}?{self.songmaker_authorization_query()}"
+        )
+        error = parse_qs(urlsplit(without_challenge.headers.get("Location", "")).query)
+        expect(
+            without_challenge.status == 302 and error.get("error") == ["invalid_request"],
+            f"an auth request without code_challenge answered {without_challenge.status} "
+            f"with {error}",
+        )
+        for redirect_uri in (
+            f"{SONGMAKER_CALLBACK}/x",
+            SONGMAKER_CALLBACK.replace("https", "http"),
+        ):
+            challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
+            query = self.songmaker_authorization_query(redirect_uri=redirect_uri, **challenge)
+            page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
+            expect(
+                page.status == 400 and "Invalid parameter: redirect_uri" in page.text,
+                f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
+            )
+        for grant in ({"grant_type": "client_credentials"}, self.songmaker_password_grant()):
+            refused = through_tunnel(
+                "POST",
+                PUBLIC_TOKEN_PATH,
+                form={"client_id": "songmaker", "client_secret": client_secret, **grant},
+            )
+            error = refused.json().get("error") if refused.status in (400, 401) else None
+            expect(
+                error == "unauthorized_client",
+                f"{grant['grant_type']} on songmaker answered {refused.status}",
+            )
+
+    def songmaker_password_grant(self) -> dict[str, str]:
+        return {
+            "grant_type": "password",
+            "username": "probe-member",
+            "password": self.member_password,
+        }
+
+    def songmaker_logout_pages(self, browser: OpenerDirector) -> None:
+        """Cells T6, T7: with a session, the registered logout address asks before logging out and
+        others fail."""
+
+        def end_session(post_logout_redirect_uri: str) -> Response:
+            query = urlencode(
+                {"client_id": "songmaker", "post_logout_redirect_uri": post_logout_redirect_uri}
+            )
+            return through_tunnel("GET", f"{PUBLIC_LOGOUT_PATH}?{query}", opener=browser)
+
+        registered = end_session(SONGMAKER_LOGIN)
+        expect(
+            registered.status == 200 and "Do you want to log out?" in registered.text,
+            f"end session with {SONGMAKER_LOGIN} answered {registered.status} to "
+            f"{registered.headers.get('Location')}: {page_message(registered)}",
+        )
+        unregistered = end_session(f"{SONGMAKER_ORIGIN}/elsewhere")
+        expect(
+            unregistered.status == 400,
+            f"end session with an unregistered address answered {unregistered.status}",
+        )
+
+    def songmaker_representation(self, admin: Admin) -> None:
+        """Cell T8: logout, base URL and console listing as decided."""
+        client = admin.find(f"/{REALM}/clients", "clientId", "songmaker")
+        backchannel_url = client["attributes"].get("backchannel.logout.url")
+        wrong = {
+            key: client.get(key)
+            for key, value in {
+                "frontchannelLogout": False,
+                "baseUrl": f"{SONGMAKER_ORIGIN}/",
+                "alwaysDisplayInConsole": True,
+            }.items()
+            if client.get(key) != value
+        }
+        expect(
+            not wrong and not backchannel_url,
+            f"songmaker's representation differs: {wrong}, back-channel url {backchannel_url}",
+        )
+
     def the_observer_door(self, admin: Admin) -> None:
         """Proof 9 (#66): the observer's container, its console-change lines and its stops. Runs
         last but for proof 7, when every credential proof 7 looks for exists."""
@@ -1386,7 +1573,7 @@ READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 # Per mode: the Probe method that runs it and the line that reports it ended well.
 MODES = {
-    "run": ("run", "PROBE PASSED: proofs 1-9 hold"),
+    "run": ("run", "PROBE PASSED: proofs 1-10 hold"),
     "hold": ("hold", "HOLD ENDED"),
 }
 

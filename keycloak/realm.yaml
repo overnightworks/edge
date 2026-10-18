@@ -4,7 +4,8 @@
 # membership in it, on the next apply, and so does the apply to any subgroup under /apps or /ki-abo
 # that this file lacks, even one made in the admin console. Renaming in the console first is safe
 # only if no apply runs before the matching change here lands.
-# App clients arrive with each app's cutover, together with its live redirect and logout URLs.
+# songmaker's client is here before the go-live; the other app clients arrive with each app's cutover,
+# together with its live redirect and logout URLs.
 realm: hallucinai
 enabled: true
 accessTokenLifespan: 300          # 5 minutes
@@ -24,6 +25,8 @@ groups:
   - name: apps
     subGroups:
       - name: songmaker
+        subGroups:
+          - name: admin
       - name: presentator
       - name: hopin
       - name: aco-board
@@ -77,3 +80,27 @@ clients:
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     frontchannelLogout: false
+  # songmaker signs people in with the authorization code and PKCE. Back-channel logout is left out
+  # until its address is decided (songmaker#1620, K3c #50), so a block or sign-out in Keycloak ends
+  # an open songmaker session only when that session expires.
+  - clientId: songmaker
+    name: songmaker
+    enabled: true
+    publicClient: false
+    secret: $(env:SONGMAKER_CLIENT_SECRET)
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false
+    baseUrl: "https://songmaker.hallucinai.de/"
+    alwaysDisplayInConsole: true
+    redirectUris:
+      - "https://songmaker.hallucinai.de/auth/callback"
+    attributes:
+      post.logout.redirect.uris: "https://songmaker.hallucinai.de/login"
+      pkce.code.challenge.method: "S256"
+    defaultClientScopes:
+      - basic
+      - profile
+      - groups

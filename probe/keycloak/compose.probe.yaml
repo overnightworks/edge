@@ -23,3 +23,5 @@ secrets:
     file: ${PROBE_SECRETS_DIR}/config-cli-secret
   keycloak_bootstrap_admin_password:
     file: ${PROBE_SECRETS_DIR}/bootstrap-admin-password
+  keycloak_client_songmaker:
+    file: ${PROBE_SECRETS_DIR}/clients/songmaker
