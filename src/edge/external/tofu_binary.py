@@ -7,6 +7,7 @@ that folder on PATH. It is a build helper, not an `edge` subcommand.
 import errno
 import fcntl
 import hashlib
+import http.client
 import os
 import platform
 import shutil
@@ -31,7 +32,7 @@ from edge.external.tofu import (
 
 PINS_FILE = EXTERNAL_ROOT / "opentofu.toml"
 PARTIAL_PREFIX = ".partial-"
-# The 1.13.1 linux_amd64 zip is about 30 MiB; the limit only stops an endless or swapped stream.
+# The linux_amd64 release zip is about 30 MiB; the limit only stops an endless or swapped stream.
 MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
 _CHUNK_BYTES = 1024 * 1024
 _NETWORK_TIMEOUT_SECONDS = 60
@@ -189,7 +190,7 @@ def _stream(release: Release, fetch: Fetch, partial, max_bytes: int) -> str:
             received += len(chunk)
             digest.update(chunk)
             partial.write(chunk)
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         raise _download_failure(
             release, f"could not be downloaded ({error})", received, digest.hexdigest()
         ) from error
