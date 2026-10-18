@@ -1,8 +1,0 @@
-claim_id = "59df0ae02d18493a89971d40ab95682c"
-agent = "claude"
-role = "builder"
-base = "3a7f454f0dd715983b49ca689300cb66316d2d2f"
-branch = "claude/issue-127-k11b2-ask-only-without-backup"
-scope = ["README.md", "docs/architecture.md", "keycloak/go-live", "tests/test_keycloak_go_live.py"]
-opened_commit = "8f00e8c2c1c9c92dd1cc512455789e2ee63f0ded"
-whole_reason = "One question's condition: go-live's step, its test pins, README step 1 and the architecture row; a part alone leaves the question and its text disagreeing."
