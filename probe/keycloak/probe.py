@@ -1200,7 +1200,10 @@ class Probe:
         )
         password = self.keep_secret("go-live admin password", secrets.token_urlsafe(16))
         step = self.go_live_admin_step(password, typed_answers=True)
-        expect(not step.is_done(), "go-live's admin step is done before it ran")
+        expect(
+            not step.is_done(),
+            "go-live's admin step is done before it ran: config-cli's service account is no admin",
+        )
         step.do()
         expect(step.is_done(), "go-live's admin step is not done after it ran")
 

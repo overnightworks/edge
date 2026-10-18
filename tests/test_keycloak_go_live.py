@@ -82,6 +82,8 @@ class Keycloak:
     issued_tokens: list[str] = field(default_factory=list)
     expired_tokens: set[str] = field(default_factory=set)
     failing_user_lookups: int = 0  # the next lookups of a user by name answer 500
+    failing_client_listing: bool = False
+    failing_service_account_user: bool = False
 
     def add_admin(
         self, username: str, *, otp: bool, passkey: bool = True, enabled: bool = True
@@ -262,6 +264,18 @@ class Keycloak:
             ]
             service = {"id": "sa", "username": "service-account-config-cli", "enabled": True}
             return reply(200, json.dumps([*holders, service]).encode())
+        if method == "GET" and path.startswith("/clients?"):
+            if self.failing_client_listing:
+                return reply(500, b"")
+            clients = [
+                {"id": "client-config-cli", "serviceAccountsEnabled": True},
+                {"id": "client-console", "serviceAccountsEnabled": False},
+                {"id": "client-plain"},
+            ]
+            return reply(200, json.dumps(clients).encode())
+        if method == "GET" and path == "/clients/client-config-cli/service-account-user":
+            status = 500 if self.failing_service_account_user else 200
+            return reply(status, json.dumps({"id": "sa"}).encode())
         if method == "GET" and path == "/roles/admin":
             return reply(
                 self.role_read_status, json.dumps({"id": "role", "name": "admin"}).encode()
@@ -725,6 +739,32 @@ def test_the_bootstrap_stays_without_one_admin_who_has_both_factors(
     )
     assert keycloak.deleted == []
     assert (secrets_dir / "bootstrap-admin-password").exists()
+
+
+def test_a_human_admin_named_like_a_service_account_is_a_person(go_live, keycloak, session):
+    """#129 rules 2 and 7: only a client's service-account link makes a machine, not a name."""
+    session.on_enter = lambda: replace_created_admin_by(
+        keycloak, {"service-account-alice": {"otp": True}}
+    )
+
+    assert go_live.run() == 0
+
+    assert keycloak.deleted == ["temp-admin"]
+
+
+@pytest.mark.parametrize("failing", ["failing_client_listing", "failing_service_account_user"])
+def test_an_unknown_service_account_link_fails_the_step_in_one_line(
+    go_live, keycloak, session, failing
+):
+    """#129 rules 2 and 7: an account that cannot be classified is neither person nor skipped."""
+    setattr(keycloak, failing, True)
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1].startswith(
+        "go-live FAILED at admin created: the admin API answered 500 to GET /clients"
+    )
+    assert keycloak.created == []
 
 
 def test_the_check_of_both_factors_uses_a_token_taken_after_the_browser_pause(

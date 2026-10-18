@@ -63,8 +63,6 @@ PUBLIC_HOST = "auth.hallucinai.de"
 PUBLIC_REALM = "hallucinai"
 CONFIG_CLIENT = "config-cli"
 ADMIN_ROLE = "admin"
-# the role listing is the brief user representation: it has no serviceAccountClientId
-SERVICE_ACCOUNT_PREFIX = "service-account-"
 ADMIN_REQUIRED_ACTIONS = ["CONFIGURE_TOTP", "webauthn-register"]
 FACTORS = {"otp": "TOTP credential", "webauthn": "passkey"}  # Keycloak's credential types
 NO_SUCH_VOLUME = "no such volume"  # docker's answer for a volume that is absent
@@ -615,16 +613,27 @@ class GoLive:
             raise StepFailure(f"the {CONFIG_CLIENT} sign-in answered {reply.status}")
         return json.loads(reply.body)["access_token"]
 
+    def service_account_ids(self, token: str) -> set[str]:
+        """The ids of the master users that are a client's service account. Neither the role
+        listing nor the full user representation says so; only the client's own link does."""
+        clients = self.admin_call(token, "GET", "/clients?max=1000")
+        return {
+            self.admin_call(token, "GET", f"/clients/{client['id']}/service-account-user")["id"]
+            for client in clients
+            if client.get("serviceAccountsEnabled")
+        }
+
     def admin_people(self, token: str) -> list[dict]:
         """The enabled master users with the realm role admin who are people: not temp-admin and
         no service account. Step 6 asks whether there is one, step 7 whether one has both
         factors."""
         holders = self.admin_call(token, "GET", f"/roles/{ADMIN_ROLE}/users?max=1000")
+        machines = self.service_account_ids(token)
         return [
             user
             for user in holders
             if user["username"] != BOOTSTRAP_ADMIN
-            and not user["username"].startswith(SERVICE_ACCOUNT_PREFIX)
+            and user["id"] not in machines
             and user["enabled"]
         ]
 
