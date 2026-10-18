@@ -73,6 +73,7 @@ HELLO_ANSWERING = "hello answering"
 NOTHING_TO_CHANGE = "nothing to change"
 TRAEFIK_FILE = "traefik.yml"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
+TRAEFIK_KEPT = "the traefik container is the old one"
 SOCKET_PROXY_RECREATED = "edge apply --closed: socket-proxy is recreated"
 CORE_CURRENT = "the core is current"
 CORE = ("socket-proxy", "traefik")
@@ -281,7 +282,7 @@ class Probe:
             "traefik: recreate (traefik.yml has no applied record)" in out and RECREATED in out,
             f"the first apply said: {out[-200:]}",
         )
-        expect(self.container_ids()["traefik"] != before, "the traefik container is the old one")
+        expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
         expect(TRAEFIK_FILE in self.record.read().entries.get("traefik", {}), "no applied record")
         print("#85 P1 held: the first apply recreated traefik and wrote applied.json")
 
@@ -301,7 +302,7 @@ class Probe:
             "traefik: recreate (traefik.yml changed)" in out and RECREATED in out,
             f"apply after the edit said: {out[-200:]}",
         )
-        expect(self.container_ids()["traefik"] != before, "the traefik container is the old one")
+        expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"#85 P3 held: the edit recreated traefik, and {HOST} answers through it")
 
@@ -410,7 +411,7 @@ class Probe:
             f"apply after the traefik label said: {out[-300:]}",
         )
         expect(after["socket-proxy"] == before["socket-proxy"], "socket-proxy was recreated")
-        expect(after["traefik"] != before["traefik"], "the traefik container is the old one")
+        expect(after["traefik"] != before["traefik"], TRAEFIK_KEPT)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print("#87 Q3 held: a traefik label recreated traefik alone; socket-proxy's id unchanged")
 
