@@ -26,6 +26,13 @@ the live compose project to that tree (#79, exit 2); its `.env` (exit 2); `apply
 directory, held non-blocking for the whole run, so a second apply is refused (exit 1) while
 `edge stop` and `edge start` never wait for it; HEAD on `main` (exit 2); and a clean tree, every
 changed path named (exit 2), since a change reaches the live checkout through a pull request.
+
+Then it fetches origin's `main` through the operator's credential helper and pins its sha (#98): a
+failed fetch is exit 2 with git's last error line; a checkout ahead of or beside it is exit 2,
+nothing reset; an equal one says it is current. Behind, every waiting commit is shown, then its
+files by what an update does with them (from the binds of the resolved configuration), then how
+to bring them in by hand; the plan that follows applies HEAD, never the waiting commits. Nothing
+in the checkout changes: only `.git` gains the fetched objects, FETCH_HEAD and `origin/main`.
 """
 
 import fcntl
@@ -52,6 +59,20 @@ class ApplyExit(IntEnum):
     APPLIED_OR_NOTHING = 0
     REFUSED = 1
     CANNOT_PLAN = 2
+
+
+class Effect(StrEnum):
+    """What updating the live checkout does with a changed file (#98 rule 4), in shown order."""
+
+    LIVE = "live once updated"
+    RECREATED = "recreated by edge apply"
+    UV_SYNC = "stops for `uv sync`"
+    NOT_APPLIED = "not applied by edge apply (block 6)"
+    OTHER = "other"
+
+
+_CORE_DEFINITIONS = "compose.yaml"  # what the core is recreated from when its definition changed
+_UV_SYNC_FILES = frozenset({"pyproject.toml", "uv.lock"})  # edge's own code needs `uv sync` (S10)
 
 
 class Action(StrEnum):
@@ -373,10 +394,11 @@ def apply_closed(
         _say(f"another `{COMMAND}` is running; nothing changed")
         return ApplyExit.REFUSED
     try:
-        if not _on_clean_main(checkout.Git(repository, git)):
+        live = checkout.Git(repository, git)
+        if not _on_clean_main(live) or (waiting := _fetched(live)) is None:
             return ApplyExit.CANNOT_PLAN
         return _plan_and_apply(
-            state_directory, engine, repository, check, run_setup, verifier, watch
+            state_directory, engine, repository, check, run_setup, verifier, watch, waiting
         )
     finally:
         os.close(lock)
@@ -427,6 +449,77 @@ def _on_clean_main(git: checkout.Git) -> bool:
     return not changed
 
 
+@dataclass(frozen=True)
+class Waiting:
+    """What waits on origin's `main` for the live checkout; nothing while it is current."""
+
+    origin: checkout.Origin
+    commits: tuple[checkout.Commit, ...]
+    files: tuple[checkout.ChangedFile, ...]
+
+    def describe(self, binds: core.CheckoutBinds) -> list[str]:
+        """The waiting commits, their files by effect, the interim way to bring them in and what
+        the plan below applies (#98 rule 4)."""
+        one = len(self.commits) == 1
+        commits = "1 commit" if one else f"{len(self.commits)} commits"
+        lines = [f"{commits} {'waits' if one else 'wait'} on origin {checkout.MAIN}:"]
+        lines += [f"  {commit.short} {commit.subject}" for commit in self.commits]
+        lines.append("their files, by what an update does with them:")
+        by_effect = {effect: [] for effect in Effect}
+        for file in sorted(self.files, key=lambda changed: changed.path):
+            by_effect[_effect(file.path, binds)].append(f"    {file.status} {file.shown}")
+        for effect, files in by_effect.items():
+            if files:
+                lines += [f"  {effect}:", *files]
+        return [
+            *lines,
+            f"the live checkout is {commits} behind; to bring them: git -C "
+            f"{checkout.LIVE_CHECKOUT} merge --ff-only {self.origin.sha}",
+            f"the plan below applies HEAD {self.origin.head}, without the waiting commits",
+        ]
+
+
+def _effect(path: str, binds: core.CheckoutBinds) -> Effect:
+    if path == _CORE_DEFINITIONS or core.is_bound(path, binds.recreated):
+        return Effect.RECREATED
+    if core.is_bound(path, binds.live):
+        return Effect.LIVE
+    if path in _UV_SYNC_FILES:
+        return Effect.UV_SYNC
+    if core.is_bound(path, binds.units):
+        return Effect.NOT_APPLIED
+    return Effect.OTHER
+
+
+def _fetched(git: checkout.Git) -> Waiting | None:
+    """origin's `main` fetched and pinned, and what waits on it; None after saying why the apply
+    stops there: the fetch failed (S4), or HEAD is ahead of or beside it (S3) (#98 rules 2, 3)."""
+    try:
+        origin = checkout.fetch_origin(git)
+    except checkout.GitError as error:
+        _say(f"cannot fetch {checkout.MAIN} from origin, {error}; nothing changed")
+        return None
+    print(f"{COMMAND}: fetched {checkout.MAIN} from {origin.url}")
+    standing = origin.standing
+    if standing is checkout.Standing.CURRENT:
+        print(f"{COMMAND}: live checkout current ({origin.short})")
+        return Waiting(origin, (), ())
+    if standing is not checkout.Standing.BEHIND:
+        stands = "is ahead of" if standing is checkout.Standing.AHEAD else "has diverged from"
+        _say(
+            f"the live checkout {stands} origin {checkout.MAIN} (HEAD {origin.head}, origin "
+            f"{checkout.MAIN} {origin.short}); nothing reset, a change reaches it through a pull "
+            "request"
+        )
+        return None
+    try:
+        commits = tuple(git.waiting_commits(origin.sha))
+        return Waiting(origin, commits, tuple(git.waiting_files(origin.sha)))
+    except checkout.GitError as error:
+        _say(f"cannot read what waits on origin {checkout.MAIN}, {error}; nothing changed")
+        return None
+
+
 def _plan_and_apply(
     state_directory: Path,
     engine: compose.Compose | None,
@@ -435,11 +528,16 @@ def _plan_and_apply(
     run_setup: setup.SetupRunner,
     verifier: barrier.Verifier,
     watch: compose.Watch,
+    waiting: Waiting,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     record = core.Record(state_directory)
     try:
+        if waiting.commits:
+            binds = core.checkout_binds(engine.resolved_configuration(), repository)
+            for line in waiting.describe(binds):
+                print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
         missing = _missing_setups(planned.plans, repository, check)
         completed: list[str] = []
