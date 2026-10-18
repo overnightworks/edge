@@ -253,12 +253,16 @@ CANNOT_PLAN_ERRORS = (
 
 @dataclass(frozen=True)
 class Plan:
+    """`left_unstarted` are the core services the plan found created and never started by an
+    unfinished recreate of edge's, which it recreates (#87 rule 4)."""
+
     fleet: Fleet
     read: Mapping[str, switches.Mark | None]
     core: list[core.CorePlan]
     followers: list[core.FollowerPlan]
     plans: list[UnitPlan]
     images: list[KeptImage]
+    left_unstarted: frozenset[str]
 
     @property
     def changes_nothing(self) -> bool:
@@ -299,7 +303,12 @@ def _plan(
     images = plan_kept_images(
         fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
     )
-    return Plan(fleet, read, core_plans, follower_plans, plans, images)
+    left_unstarted = frozenset(
+        plan.service
+        for plan in core_plans
+        if plan.action is core.CoreAction.RECREATE and compose.never_started(states, plan.service)
+    )
+    return Plan(fleet, read, core_plans, follower_plans, plans, images, left_unstarted)
 
 
 def _gates(
@@ -502,7 +511,7 @@ class CorePhase:
             for index, plan in enumerate(recreates):
                 progress.unit = plan.service
                 if stopped := self._stopped_meanwhile(
-                    engine, plan, recorded if index == 0 else [], followed, progress
+                    engine, planned, plan, recorded if index == 0 else [], followed, progress
                 ):
                     return stopped
                 if failure := self._recreate_one(engine, planned, marks, plan, followed, progress):
@@ -516,6 +525,7 @@ class CorePhase:
     def _stopped_meanwhile(
         self,
         engine: compose.Compose,
+        planned: Plan,
         plan: core.CorePlan,
         unmarked: Sequence[str],
         followed: frozenset[str],
@@ -524,7 +534,7 @@ class CorePhase:
         """The failure line when the service has no live container now (#93 rules 1, 2);
         otherwise the `unmarked` services are marked unfinished before its recreate begins."""
         progress.step = f"look whether {plan.service} still runs"
-        if _stopped_since_the_plan(engine.states(), plan.service):
+        if _stopped_since_the_plan(engine.states(), plan.service, planned.left_unstarted):
             return f"{plan.service} was stopped meanwhile; it is not started"
         if unmarked:
             progress.step = f"mark {', '.join(unmarked)} unfinished in {core.APPLIED_FILE}"
@@ -654,13 +664,14 @@ class CorePhase:
         )
 
 
-def _stopped_since_the_plan(states: Mapping[str, set[str]], service: str) -> bool:
+def _stopped_since_the_plan(
+    states: Mapping[str, set[str]], service: str, left_unstarted: Collection[str]
+) -> bool:
     """The core service planned for a recreate has no live container now; one created and never
-    started is the container edge's unfinished recreate left, which the plan recreates (#87 rule
-    4), so it was not stopped (#93 rule 1)."""
-    return not (
-        compose.has_running_container(states, (service,)) or compose.never_started(states, service)
-    )
+    started counts as live only where the plan found edge's unfinished recreate left it so (#87
+    rule 4): any other was put there since the plan and is not started (#93 rule 1)."""
+    recovering = service in left_unstarted and compose.never_started(states, service)
+    return not (recovering or compose.has_running_container(states, (service,)))
 
 
 def _in_start_order(config: Mapping[str, Any], services: set[str]) -> tuple[str, ...]:

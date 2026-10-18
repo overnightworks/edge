@@ -2870,36 +2870,52 @@ def stopped_meanwhile(service: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("change", "stopped", "ups", "record_left"),
+    ("change", "stopped", "left_as", "ups", "record_left"),
     [
-        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", [], None),
+        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", "exited", [], None),
+        (
+            lambda scripted, repository: edit_traefik_yml(repository),
+            "traefik",
+            "created",
+            [],
+            None,
+        ),
         (
             lambda scripted, repository: scripted.change_definition("socket-proxy"),
             "socket-proxy",
+            "exited",
             [],
             None,
         ),
         (
             lambda scripted, repository: scripted.change_definition("socket-proxy"),
             "traefik",
+            "exited",
             [RECREATE_SOCKET_PROXY],
             UNFINISHED,
         ),
     ],
-    ids=["L1 traefik planned and stopped", "L2 socket-proxy stopped", "L3 traefik stopped"],
+    ids=[
+        "L1 traefik planned and stopped",
+        "L1 traefik replaced by a container never started",
+        "L2 socket-proxy stopped",
+        "L3 traefik stopped",
+    ],
 )
 def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_unit_switches(
-    change, stopped, ups, record_left, applied_core, switch, scripted, repository, state
+    change, stopped, left_as, ups, record_left, applied_core, switch, scripted, repository, state
 ):
-    """#93 rules 1, 2, C3, #87 rule 3, cells L1-L3: the liveness read just before its recreate
-    finds it stopped, so it is not started; partial, exit 1, no unit touched; its entry stays as
-    the plan left it (`record_left` None) unless the recreate of its set had begun."""
+    """#93 rules 1, 2, C3, #87 rules 3, 4, cells L1-L3: the liveness read just before its
+    recreate finds it stopped, so it is not started; partial, exit 1, no unit touched; its entry
+    stays as the plan left it (`record_left` None) unless the recreate of its set had begun. A
+    container created and never started counts as live only where the plan found edge's own
+    unfinished recreate left it so."""
     write_fleet(repository, ENABLED)
     change(scripted, repository)
     planned_record = applied(state)
 
     def stop_it() -> None:
-        scripted.containers[stopped] = "exited"
+        scripted.containers[stopped] = left_as
 
     exit_code, out, err = switch(while_prompt_waits=stop_it)
 
@@ -2907,7 +2923,7 @@ def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_u
     assert f"{stopped}: recreate" in out
     assert stopped_meanwhile(stopped) in err
     assert up_calls(scripted) == ups
-    assert scripted.containers[stopped] == "exited"
+    assert scripted.containers[stopped] == left_as
     assert unit_calls(scripted) == []
     assert applied(state) == (record_left or planned_record)
 
