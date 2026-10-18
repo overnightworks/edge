@@ -2,6 +2,8 @@
 serves, the faults it injects, and the server that runs it."""
 
 import json
+import os
+import signal
 import threading
 import time
 import uuid
@@ -413,6 +415,8 @@ class Faults:
     truncate_children: bool = False
     redirect: dict[str, str] = field(default_factory=dict)  # path -> Location
     not_json: set[str] = field(default_factory=set)  # paths answered 200 with a non-JSON body
+    first_page_again: set[str] = field(default_factory=set)  # paths whose every page is the first
+    stop: dict[str, signal.Signals] = field(default_factory=dict)  # path -> signal once answered
 
 
 class FakeKeycloak(ThreadingHTTPServer):
@@ -466,6 +470,8 @@ class AdminApi(BaseHTTPRequestHandler):
         if self.headers["Authorization"] != f"Bearer {TOKEN}":
             return self.reply({"error": "no token"}, 401)
         time.sleep(faults.delay.get(path, 0))
+        if path in faults.first_page_again:
+            query.pop("first", None)
         if path in faults.not_json:
             return self.reply_raw(200, b"<html>not JSON</html>")
         if path in faults.redirect:
@@ -480,6 +486,9 @@ class AdminApi(BaseHTTPRequestHandler):
         if answer is None:
             return self.reply({"error": "not found"}, 404)
         self.reply(answer)
+        # After the reply, so the observer's abandoned connection never breaks the fake's write.
+        if path in faults.stop:
+            os.kill(os.getpid(), faults.stop[path])
 
     def refuse_a_write(self) -> None:
         self.rfile.read(int(self.headers.get("Content-Length") or 0))

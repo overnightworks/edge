@@ -79,19 +79,26 @@ class Run:
 def run_observer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> Iterator[Callable[..., Run]]:
-    """The observer's command line as the compose service runs it, the key on stdin."""
+    """The observer's command line as the compose service runs it, the key on stdin; SIGINT
+    raises KeyboardInterrupt as in the container, whatever the test runner set."""
     secret_file = tmp_path / "config-cli-secret"
     secret_file.write_text(SECRET + "\n")
-    previous = signal.getsignal(signal.SIGTERM)
+    previous = {stop: signal.getsignal(stop) for stop in (signal.SIGTERM, signal.SIGINT)}
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 
-    def run(base_url: str, command: Callable[..., int] = observer.main) -> Run:
-        stdin = io.StringIO(KEY + "\n")
-        code = command(["--base-url", base_url], stdin, secret_file)
+    def run(
+        base_url: str,
+        command: Callable[..., int] = observer.main,
+        key_line: str = KEY,
+        secret: Path = secret_file,
+    ) -> Run:
+        code = command(["--base-url", base_url], io.StringIO(key_line + "\n"), secret)
         captured = capsys.readouterr()
         return Run(code, captured.out, captured.err)
 
     yield run
-    signal.signal(signal.SIGTERM, previous)
+    for stop, handler in previous.items():
+        signal.signal(stop, handler)
 
 
 # --- U8-U12, U23, U25: what the lines say ------------------------------------------------------
@@ -130,6 +137,16 @@ def new_uuids_and_access(realms: dict[str, FakeRealm]) -> None:
     realms["hallucinai"].realm["id"] = str(uuid.uuid4())
     realms["hallucinai"].realm["defaultRole"]["id"] = str(uuid.uuid4())
     realms["hallucinai"].realm["attributes"]["de.adorsys.keycloak.config.state-default"] = "x"
+
+
+def grant_config_cli_a_client_role_and_a_group(realms: dict[str, FakeRealm]) -> None:
+    master = realms["master"]
+    account_id = next(iter(master.role_mappings))
+    view_users = {"name": "view-users"}
+    master.role_mappings[account_id]["clientMappings"] = {
+        "hallucinai-realm": {"mappings": [view_users]}
+    }
+    master.user_groups[account_id] = ["/operators"]
 
 
 def change_unlisted_and_secrets(realms: dict[str, FakeRealm]) -> None:
@@ -177,6 +194,15 @@ def change_unlisted_and_secrets(realms: dict[str, FakeRealm]) -> None:
             id="U12-each-realm-named-on-its-own",
         ),
         pytest.param(new_uuids_and_access, [], id="U23-identity-not-uuid-volatile-excluded"),
+        pytest.param(
+            grant_config_cli_a_client_role_and_a_group,
+            [
+                "master: addition service-account client role "
+                "service-account-config-cli/hallucinai-realm/view-users",
+                "master: addition service-account group service-account-config-cli/operators",
+            ],
+            id="rule-3-service-account-client-role-and-group-by-identity",
+        ),
         pytest.param(
             change_unlisted_and_secrets,
             ["hallucinai: change client agent-service attributes.probe.unlisted: changed"],
@@ -332,6 +358,18 @@ def test_more_than_a_page_of_everything_is_read_in_full(keycloak: FakeKeycloak) 
     assert len(inventory["realm role"]) == 112
 
 
+def test_a_page_that_repeats_an_earlier_item_fails_loudly(keycloak: FakeKeycloak) -> None:
+    """U13: a server that ignores `first` would loop or double the clients; it fails instead."""
+    realm = keycloak.realms["hallucinai"]
+    realm.clients += [client_rep("hallucinai", f"client-{n:03}") for n in range(130)]
+    keycloak.faults.first_page_again = {"/admin/realms/hallucinai/clients"}
+
+    with pytest.raises(
+        observer.ObserveError, match=r"^/admin/realms/hallucinai/clients repeats an item"
+    ):
+        observe(keycloak)
+
+
 def test_children_fewer_than_the_sub_group_count_fail_loudly(keycloak: FakeKeycloak) -> None:
     """U14: the count check measures that nothing was truncated."""
     keycloak.faults.truncate_children = True
@@ -343,19 +381,23 @@ def test_children_fewer_than_the_sub_group_count_fail_loudly(keycloak: FakeKeycl
 # --- U19, U20, U22, U27: the door ------------------------------------------------------------
 
 
-def test_a_wrong_secret_is_one_sign_in_refused_line_without_body_or_token(
-    keycloak: FakeKeycloak, run_observer: Callable[[str], Run]
+@pytest.mark.parametrize(
+    ("status", "line"),
+    [
+        (401, "sign-in refused (status 401 at /realms/master/protocol/openid-connect/token)"),
+        (500, "sign-in answered status 500 at /realms/master/protocol/openid-connect/token"),
+    ],
+    ids=["U19-wrong-secret-refused", "U19-sign-in-failing"],
+)
+def test_a_failed_sign_in_is_one_line_without_body_or_token(
+    keycloak: FakeKeycloak, run_observer: Callable[[str], Run], status: int, line: str
 ) -> None:
-    """U19."""
-    keycloak.faults.token_status = 401
+    keycloak.faults.token_status = status
 
     run = run_observer(keycloak.url)
 
     assert (run.exit_code, run.stdout) == (1, "")
-    assert run.stderr.splitlines() == [
-        "realm-observer: sign-in refused (status 401 at "
-        "/realms/master/protocol/openid-connect/token)"
-    ]
+    assert run.stderr.splitlines() == [f"realm-observer: {line}"]
     assert REFUSAL_BODY not in run.stderr
     assert SECRET not in run.stderr
 
@@ -385,6 +427,47 @@ def test_a_timeout_mid_read_fails_the_observe_naming_the_path(keycloak: FakeKeyc
         match=r"^Keycloak does not answer /admin/realms/master/components \(timed out\)$",
     ):
         observer.observe(session, digest)
+
+
+@pytest.mark.parametrize(
+    ("key_line", "missing_secret", "line"),
+    [
+        ("", False, "no digest key of 32 bytes or more in hex on stdin"),
+        ("not-hex-" * 8, False, "no digest key of 32 bytes or more in hex on stdin"),
+        ("ab" * 31, False, "no digest key of 32 bytes or more in hex on stdin"),
+        (KEY, True, "cannot read the secret file {secret}"),
+    ],
+    ids=["no-key", "key-not-hex", "key-of-31-bytes", "secret-file-missing"],
+)
+def test_a_door_it_cannot_open_is_one_line_before_any_request(
+    keycloak: FakeKeycloak,
+    run_observer: Callable[..., Run],
+    tmp_path: Path,
+    key_line: str,
+    missing_secret: bool,
+    line: str,
+) -> None:
+    """The key and the secret are checked before the observer asks Keycloak anything."""
+    secret = tmp_path / "absent-secret" if missing_secret else tmp_path / "config-cli-secret"
+
+    run = run_observer(keycloak.url, key_line=key_line, secret=secret)
+
+    assert (run.exit_code, run.stdout) == (1, "")
+    assert run.stderr.splitlines() == [f"realm-observer: {line.format(secret=secret)}"]
+    assert keycloak.requests == []
+
+
+@pytest.mark.parametrize("stop", [signal.SIGINT, signal.SIGTERM])
+def test_a_stop_mid_read_is_one_stopped_line_exit_130_and_no_inventory(
+    keycloak: FakeKeycloak, run_observer: Callable[[str], Run], stop: signal.Signals
+) -> None:
+    """P17 in miniature: the stop reaches the observer's own process, as `docker kill` sends it."""
+    keycloak.faults.stop = {"/admin/realms/master/groups": stop}
+
+    run = run_observer(keycloak.url)
+
+    assert (run.exit_code, run.stdout) == (130, "")
+    assert run.stderr.splitlines() == ["realm-observer: stopped"]
 
 
 def test_keycloak_that_does_not_answer_is_one_line(run_observer: Callable[[str], Run]) -> None:
@@ -479,6 +562,14 @@ def test_a_redirect_is_refused_as_its_status_and_never_followed(
     with pytest.raises(observer.ObserveError, match=f"^status 302 at {redirecting}$"):
         observe(keycloak)
     assert keycloak.requests[-1] == ("GET", redirecting)
+
+
+def test_a_reordered_set_keeps_its_digest_while_reordered_objects_change_it() -> None:
+    """Keycloak returns its sets in no fixed order; a list of objects keeps the order it has."""
+    digest = observer.Digester(bytes.fromhex(KEY))
+
+    assert digest(["b", "a"]) == digest(["a", "b"])
+    assert digest([{"n": 2}, {"n": 1}]) != digest([{"n": 1}, {"n": 2}])
 
 
 def test_two_observes_of_an_unchanged_keycloak_are_equal(keycloak: FakeKeycloak) -> None:
