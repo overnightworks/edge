@@ -2870,29 +2870,21 @@ def stopped_meanwhile(service: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("change", "stopped", "left_as", "ups", "record_left"),
+    ("change", "stopped", "left_as", "ups"),
     [
-        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", "exited", [], None),
-        (
-            lambda scripted, repository: edit_traefik_yml(repository),
-            "traefik",
-            "created",
-            [],
-            None,
-        ),
+        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", "exited", []),
+        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", "created", []),
         (
             lambda scripted, repository: scripted.change_definition("socket-proxy"),
             "socket-proxy",
             "exited",
             [],
-            None,
         ),
         (
             lambda scripted, repository: scripted.change_definition("socket-proxy"),
             "traefik",
             "exited",
             [RECREATE_SOCKET_PROXY],
-            UNFINISHED,
         ),
     ],
     ids=[
@@ -2903,11 +2895,11 @@ def stopped_meanwhile(service: str) -> str:
     ],
 )
 def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_unit_switches(
-    change, stopped, left_as, ups, record_left, applied_core, switch, scripted, repository, state
+    change, stopped, left_as, ups, applied_core, switch, scripted, repository, state
 ):
     """#93 rules 1, 2, C3, #87 rules 3, 4, cells L1-L3: the liveness read just before its
     recreate finds it stopped, so it is not started; partial, exit 1, no unit touched; its entry
-    stays as the plan left it (`record_left` None) unless the recreate of its set had begun. A
+    stays as the plan left it, also where socket-proxy's recreate began before it (L3). A
     container created and never started counts as live only where the plan found edge's own
     unfinished recreate left it so."""
     write_fleet(repository, ENABLED)
@@ -2925,7 +2917,7 @@ def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_u
     assert up_calls(scripted) == ups
     assert scripted.containers[stopped] == left_as
     assert unit_calls(scripted) == []
-    assert applied(state) == (record_left or planned_record)
+    assert applied(state) == planned_record
 
 
 # --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------

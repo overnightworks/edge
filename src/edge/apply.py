@@ -497,12 +497,12 @@ class CorePhase:
         progress: Progress,
     ) -> str | None:
         """In start order, look again whether each still has a live container, mark every
-        recorded service of the set unfinished before the first recreate, then recreate each,
-        observe it running with the core services it depends on, prove every active barrier, and
-        only then record it with its plan-time digests (#85 rule 3, #87 rule 4); the failure line
-        of the first step that fails, whose set is left marked unfinished once its recreate began,
-        so the next run recreates it (#85 rule 5). One stopped since the plan is not started
-        (C3, #93 rule 2)."""
+        recorded service of the set still live unfinished before the first recreate, then
+        recreate each, observe it running with the core services it depends on, prove every
+        active barrier, and only then record it with its plan-time digests (#85 rule 3, #87 rule
+        4); the failure line of the first step that fails, whose set is left marked unfinished
+        once its recreate began, so the next run recreates it (#85 rule 5). One stopped since the
+        plan is not started and keeps its entry unless it was marked (C3, #93 rule 2)."""
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
         try:
@@ -532,13 +532,19 @@ class CorePhase:
         progress: Progress,
     ) -> str | None:
         """The failure line when the service has no live container now (#93 rules 1, 2);
-        otherwise the `unmarked` services are marked unfinished before its recreate begins."""
+        otherwise those of the `unmarked` services still live on the same read are marked
+        unfinished before its recreate begins, so one stopped meanwhile keeps its entry."""
         progress.step = f"look whether {plan.service} still runs"
-        if _stopped_since_the_plan(engine.states(), plan.service, planned.left_unstarted):
+        states = engine.states()
+        if _stopped_since_the_plan(states, plan.service, planned.left_unstarted):
             return f"{plan.service} was stopped meanwhile; it is not started"
-        if unmarked:
-            progress.step = f"mark {', '.join(unmarked)} unfinished in {core.APPLIED_FILE}"
-            self.record.mark_unfinished(unmarked, followed)
+        if live := [
+            service
+            for service in unmarked
+            if not _stopped_since_the_plan(states, service, planned.left_unstarted)
+        ]:
+            progress.step = f"mark {', '.join(live)} unfinished in {core.APPLIED_FILE}"
+            self.record.mark_unfinished(live, followed)
         return None
 
     def _recreate_one(
