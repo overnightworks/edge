@@ -69,6 +69,15 @@ labels:
   `traefik.http.services.<name>.loadbalancer.server.port: "<port>"`.
 - Never put a login-less tool on a network shared with a public tool.
 
+## Running edge
+
+`~/git/edge/bin/edge` runs the `edge` command of the checkout it lives in, from
+any directory: it syncs that checkout's locked dependencies (`uv sync --locked`,
+never rewriting `uv.lock`) and then becomes `.venv/bin/edge`, from the same
+environment the systemd units call. A failed sync ends with exit 2 and names the
+checkout.
+Slice S2b of overnightworks/edge#100 puts it on PATH as `edge`.
+
 ## Configure
 
 ```sh
@@ -187,7 +196,7 @@ Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
 `external/main.tf` entspricht.
 
 ```bash
-uv run edge external plan
+bin/edge external plan
 ```
 
 `edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
@@ -210,7 +219,7 @@ auf `edge external plan`, um den Live-Zustand zu pruefen. Exit 0 angewendet, 1 v
 abgebrochen oder fehlgeschlagen, 2 nicht planbar.
 
 ```bash
-uv run edge external apply
+bin/edge external apply
 ```
 
 ## Dienste an und aus
