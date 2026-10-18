@@ -110,13 +110,22 @@ def test_an_installed_pinned_binary_is_reused_without_the_network(root):
     assert again.urls == []
 
 
-def test_an_installed_binary_off_the_pin_is_replaced_by_the_verified_download(root):
+@pytest.mark.parametrize(
+    ("content", "mode"),
+    [
+        (FAKE_TOFU % b"0.0.1", 0o755),
+        (FAKE_TOFU % tofu.pinned_version().encode(), 0o644),
+        (b"\x7fELF not a binary for this machine", 0o755),
+    ],
+    ids=["wrong-version", "not-executable", "garbage"],
+)
+def test_an_installed_binary_off_the_pin_is_replaced_by_the_verified_download(root, content, mode):
     """#101 rule 2 Download: a `<version>/tofu` that does not report the pin is replaced."""
     archive = pinned_zip()
     stale = root / tofu.pinned_version() / "tofu"
     stale.parent.mkdir(parents=True)
-    stale.write_bytes(FAKE_TOFU % b"0.0.1")
-    stale.chmod(0o755)
+    stale.write_bytes(content)
+    stale.chmod(mode)
     download = Download(archive)
 
     installed = tofu_binary.install(root, release_of(archive), download)
@@ -178,6 +187,22 @@ def test_a_folder_a_parallel_run_installed_meanwhile_is_used_and_ours_removed(ro
     assert installed == theirs
     assert installed.stat().st_mtime == 0
     assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
+
+
+def test_a_parallel_run_folder_that_cannot_execute_fails_naming_it(root):
+    """#101 rule 2: a race winner that cannot run fails loud as a TofuError naming its file."""
+    archive = pinned_zip()
+    theirs = root / tofu.pinned_version() / "tofu"
+
+    def parallel_install() -> None:
+        theirs.parent.mkdir()
+        theirs.write_bytes(FAKE_TOFU % tofu.pinned_version().encode())
+        theirs.chmod(0o644)
+
+    with pytest.raises(TofuError, match="is not the pinned tofu") as raised:
+        tofu_binary.install(root, release_of(archive), Download(archive, parallel_install))
+
+    assert str(theirs) in str(raised.value)
 
 
 @pytest.mark.parametrize("installed_before", [False, True], ids=["empty-root", "beside-install"])

@@ -123,14 +123,14 @@ def _exclusive(root: Path) -> Iterator[None]:
 def _verified_install(installed: Path) -> Path:
     try:
         require_pinned_version(installed, _version_environment())
-    except TofuError as error:
+    except (TofuError, OSError) as error:  # OSError: a file that cannot be executed at all
         raise TofuError(f"{installed} is not the pinned tofu: {error}") from error
     return installed
 
 
 def _reports_pin(installed: Path) -> bool:
     try:
-        require_pinned_version(installed, _version_environment())
+        _verified_install(installed)
     except TofuError:
         return False
     return True
