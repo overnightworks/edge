@@ -342,12 +342,13 @@ def test_socket_proxy_comes_first_though_the_config_lists_traefik_first(config, 
     assert [planned.service for planned in plans] == ["socket-proxy", "traefik"]
 
 
+@pytest.mark.parametrize("state", ["exited", "created"])
 def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothing(
-    config, checkout, recorded
+    state, config, checkout, recorded
 ):
     """#87 rule 3, cell D5: a stopped core service is never started, so its dependents keep
-    running as they are."""
-    states = {"socket-proxy": "exited", "traefik": "running"}
+    running as they are; so is one created by hand, which no recreate of edge's left."""
+    states = {"socket-proxy": state, "traefik": "running"}
 
     plans = plan_of(config, checkout, recorded, states, {"socket-proxy": STALE})
 
@@ -367,9 +368,11 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothin
 def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_traefik(
     label, why, config, checkout, recorded
 ):
-    """#87 rule 4: a container created and never started is what a recreate whose start failed
-    leaves, with the new label; nobody stopped it, so the next run recreates it again, whether
-    the definition was fixed since or not."""
+    """#87 rule 4: a container created and never started while the record says its recreate did
+    not finish is what edge's recreate whose start failed leaves, with the new label; nobody
+    stopped it, so the next run recreates it again, whether the definition was fixed since or
+    not."""
+    recorded.mark_unfinished(["socket-proxy"], FOLLOWED)
     states = {"socket-proxy": "created", "traefik": "running"}
     labels = {"socket-proxy": label} if label else {}
 

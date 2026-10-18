@@ -120,6 +120,10 @@ class Reading:
     entries: dict[str, dict[str, str]]
     problem: str | None = None
 
+    def unfinished(self, service: str) -> bool:
+        """The service's recreate was started and never finished: its entry was emptied first."""
+        return self.entries.get(service) == {}
+
 
 @dataclass(frozen=True)
 class Record:
@@ -146,12 +150,14 @@ class Record:
 
     def mark_unfinished(self, services: Iterable[str], followed: Collection[str]) -> None:
         """Empty the services' entries before their recreates start, so a run that ends partial
-        leaves nothing that could match the files later."""
+        leaves nothing that could match the files later, and the next run knows a container it
+        finds created and never started is edge's own."""
         self._write({service: {} for service in services}, followed)
 
     def write(self, service: str, applied: Digests, followed: Collection[str]) -> None:
-        """Set the service's entry; an unreadable or malformed record is replaced whole."""
-        self._write({service: applied}, followed)
+        """Set the service's entry once its recreate finished; one edge follows through no file
+        keeps none. An unreadable or malformed record is replaced whole."""
+        self._write({service: applied} if service in followed else {}, followed)
 
     def _write(self, changes: Mapping[str, Digests], followed: Collection[str]) -> None:
         """Write the changed entries over the record, keeping only the services edge follows."""
@@ -223,7 +229,8 @@ def plan_core(
     --hash`. One with a live container is recreated and pulls in the live core services that
     depend on it; one without is only named and pulls in nothing, because the core is never
     started here (#85 rule 4, #87 rule 3). A core container that was created and never started
-    is no stopped service: a recreate left it so, and it is recreated again (#87 rule 4)."""
+    while the record says its recreate did not finish is no stopped service: edge's recreate
+    left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
     states = compose.states_of(containers)
     labels = _config_hash_labels(containers, core_services(config))
@@ -236,7 +243,7 @@ def plan_core(
             whys.append(DEFINITION_CHANGED)
         if sources and (why := _why_changed(current, reading, service)):
             whys.append(why)
-        left_unstarted = compose.never_started(states, service)
+        left_unstarted = compose.never_started(states, service) and reading.unfinished(service)
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
         live = left_unstarted or compose.has_running_container(states, (service,))
@@ -272,7 +279,7 @@ def _config_hash_labels(
 def _why_changed(current: Digests, reading: Reading, service: str) -> str | None:
     if reading.problem:
         return reading.problem
-    if reading.entries.get(service) == {}:
+    if reading.unfinished(service):
         return UNFINISHED
     applied = reading.entries.get(service, {})
     for name, digest in current.items():
