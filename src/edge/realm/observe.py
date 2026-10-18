@@ -39,6 +39,8 @@ TOKEN_PATH = "/realms/master/protocol/openid-connect/token"
 ADMIN_PATH = "/admin/realms"
 PAGE = 100
 REQUEST_SECONDS = 15.0
+# compose.yaml mounts the config-cli secret here; a fixed path, never one an argument names.
+SECRET_FILE = Path("/run/secrets/config_cli_secret")
 # config-cli's own checksum and state attributes change on every apply that writes them.
 CONFIG_CLI_STATE = "de.adorsys.keycloak.config"
 # UUIDs and the caller's own permissions: never an identity, never compared.
@@ -378,7 +380,7 @@ def project(form: Shape, representation: Representation, digest: Digester) -> En
     missing = sorted(name for name in form.required if name not in representation)
     if missing:
         raise ObserveError(f"a {form.name} representation lacks {', '.join(missing)}")
-    fields: dict[str, Any] = {name: None for name in form.listed - form.maps.keys()}
+    fields: dict[str, Any] = dict.fromkeys(form.listed - form.maps.keys())
     digests: dict[str, str] = {}
     for key, value in representation.items():
         if key in VOLATILE or key in form.elsewhere or key in form.secret:
@@ -698,17 +700,18 @@ def stop(_signum: int, _frame: object) -> None:
     raise KeyboardInterrupt
 
 
-def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
+def main(
+    argv: list[str] | None = None, stdin: TextIO | None = None, secret_file: Path = SECRET_FILE
+) -> int:
     """The command; `stdin` carries the digest key line and defaults to the process's stdin."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base-url", required=True, help="Keycloak, e.g. http://keycloak:8080")
-    parser.add_argument("--secret-file", type=Path, required=True, help="config-cli's secret")
     arguments = parser.parse_args(argv)
     # PID 1 in a container ignores SIGTERM unless it handles it.
     signal.signal(signal.SIGTERM, stop)
     try:
         key = digest_key((stdin or sys.stdin).readline())
-        session = Session(arguments.base_url.rstrip("/"), read_secret(arguments.secret_file))
+        session = Session(arguments.base_url.rstrip("/"), read_secret(secret_file))
         inventory = observe(session, Digester(key))
     except ObserveError as error:
         print(f"realm-observer: {error}", file=sys.stderr, flush=True)

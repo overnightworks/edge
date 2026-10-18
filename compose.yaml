@@ -174,7 +174,6 @@ services:
       - -I
       - -B
       - /opt/observer/observe.py
-      - --secret-file=/run/secrets/config_cli_secret
     command: ["--base-url", "http://keycloak:8080"]
     environment:
       PYTHONDONTWRITEBYTECODE: "1"

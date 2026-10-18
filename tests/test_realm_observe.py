@@ -584,8 +584,8 @@ def run_observer(
     previous = signal.getsignal(signal.SIGTERM)
 
     def run(base_url: str) -> Run:
-        arguments = ["--base-url", base_url, "--secret-file", str(secret_file)]
-        code = observer.main(arguments, stdin=io.StringIO(KEY + "\n"))
+        stdin = io.StringIO(KEY + "\n")
+        code = observer.main(["--base-url", base_url], stdin, secret_file)
         captured = capsys.readouterr()
         return Run(code, captured.out, captured.err)
 
@@ -751,10 +751,12 @@ def test_the_inventory_holds_no_secret_value_and_no_unlisted_value(
     assert run.exit_code == 0
     leaked = [name for name, value in PLANTED.items() if value in run.stdout + run.stderr]
     assert leaked == []
-    assert TOKEN not in run.stdout + run.stderr and SECRET not in run.stdout + run.stderr
+    assert TOKEN not in run.stdout + run.stderr
+    assert SECRET not in run.stdout + run.stderr
     client = json.loads(run.stdout)["hallucinai"]["client"]["agent-service"]
     assert "attributes.probe.unlisted" in client["digests"]
-    assert "secret" not in client["digests"] and "secret" not in client["fields"]
+    assert "secret" not in client["digests"]
+    assert "secret" not in client["fields"]
 
 
 def test_a_component_identity_includes_its_sub_type(keycloak: FakeKeycloak) -> None:
@@ -823,7 +825,8 @@ def test_a_wrong_secret_is_one_sign_in_refused_line_without_body_or_token(
         "realm-observer: sign-in refused (status 401 at "
         "/realms/master/protocol/openid-connect/token)"
     ]
-    assert REFUSAL_BODY not in run.stderr and SECRET not in run.stderr
+    assert REFUSAL_BODY not in run.stderr
+    assert SECRET not in run.stderr
 
 
 def test_a_5xx_mid_read_is_one_line_and_no_inventory(
@@ -879,7 +882,9 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
 
 def test_two_observes_of_an_unchanged_keycloak_are_equal(keycloak: FakeKeycloak) -> None:
     """U22: nothing volatile reaches the inventory."""
-    assert observe(keycloak) == observe(keycloak)
+    first = observe(keycloak)
+
+    assert observe(keycloak) == first
 
 
 def test_an_expired_token_mid_read_signs_in_once_more_and_completes(
