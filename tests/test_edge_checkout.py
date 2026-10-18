@@ -311,15 +311,17 @@ def sentinel(tmp_path: Path) -> Path:
     return tmp_path / "sentinel"
 
 
-def test_no_hook_runs_through_the_runner(git, main_tree, home, sentinel):
-    """#95 R2, G22: a global `core.hooksPath` holding every hook as a sentinel; plain git runs one
-    (the positive control), the runner none."""
-    hooks = home / "hooks"
+@pytest.mark.parametrize("scope", ["--global", "--local", ".git/hooks"])
+def test_no_hook_runs_through_the_runner(git, main_tree, home, sentinel, scope):
+    """#95 R2, G22: every hook as a sentinel, in a global or a repository `core.hooksPath` or in
+    the checkout's own `.git/hooks`; plain git runs one (the positive control), the runner none."""
+    hooks = main_tree / ".git" / "hooks" if scope == ".git/hooks" else home / "hooks"
     for name in HOOK_NAMES:
         sentinel_script(hooks / name, sentinel)
-    plain_git(main_tree, "config", "--global", "core.hooksPath", str(hooks))
+    if scope != ".git/hooks":
+        plain_git(main_tree, "config", scope, "core.hooksPath", str(hooks))
     plain_git(main_tree, "commit", "--quiet", "--allow-empty", "--message", "control")
-    assert sentinel.exists(), "positive control: plain git runs the global hooks"
+    assert sentinel.exists(), "positive control: plain git runs the hooks"
     sentinel.unlink()
 
     guarded(git, main_tree)
