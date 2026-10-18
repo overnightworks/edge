@@ -1,6 +1,7 @@
 """`tofu_binary`: edge installs only the pinned tofu whose download matches its recorded sha256."""
 
 import hashlib
+import http.client
 import io
 import os
 import tomllib
@@ -70,6 +71,10 @@ def assert_names_the_url_and_both_shas(message: str, recorded: str, received: by
 
 def connection_reset() -> None:
     raise OSError("connection reset")
+
+
+def truncated_response() -> None:
+    raise http.client.IncompleteRead(b"", 1024)
 
 
 @pytest.fixture
@@ -147,13 +152,16 @@ def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
     assert tree(root) == set()
 
 
-def test_a_network_error_names_the_url_and_both_shas_and_installs_nothing(root):
+@pytest.mark.parametrize(
+    "network_error", [connection_reset, truncated_response], ids=["os-error", "http-exception"]
+)
+def test_a_network_error_names_the_url_and_both_shas_and_installs_nothing(root, network_error):
     """#101 rule 2 Failure: a network error names the URL and both shas; nothing is installed."""
     archive = pinned_zip()
     release = release_of(archive)
 
     with pytest.raises(TofuError) as raised:
-        tofu_binary.install(root, release, Download(archive, connection_reset))
+        tofu_binary.install(root, release, Download(archive, network_error))
 
     assert_names_the_url_and_both_shas(str(raised.value), release.sha256, half_of(archive))
     assert tree(root) == set()
