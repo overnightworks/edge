@@ -33,6 +33,10 @@ The #91 cells, after Q6's `edge start` of hello and hello-mcp: Z1 prints each on
 `image` and ps `Image` and requires them equal (else #91 rule 5 stops the lane); Z2 hello's image
 respelled in the copy with the same digest (a `docker.io/` prefix, nothing pulled) is named with
 both strings, and the apply still changes nothing and asks nothing; Z3 reverted, nothing is named.
+
+The copy is a clean `main` with a bare remote: every edit above is published (committed and
+pushed) before the apply that follows it (#95 P1); the #95 cell P2, after P2, applies with one
+unpublished `traefik.yml` edit and requires exit 2 naming it, with traefik's container kept.
 Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
@@ -189,10 +193,12 @@ class Probe:
         else:
             lines.insert(start, label)
         path.write_text("".join(lines))
+        edge_copy.publish(self.copy, f"probe: label {service} {value}")
 
     def edit_traefik_yml(self) -> None:
         with (self.copy / TRAEFIK_FILE).open("a") as file:
             file.write(HARMLESS_EDIT)
+        edge_copy.publish(self.copy, "probe: a harmless traefik.yml edit")
 
     def hello_state(self) -> str:
         containers = self.compose("--profile", "probe", "ps", "--all", "--format", "json", "hello")
@@ -274,8 +280,9 @@ class Probe:
     # --- the cells ---------------------------------------------------------------------------
 
     def bring_up(self) -> None:
-        self.copy = edge_copy.repository_copy(REPO, self.home)
+        self.copy = edge_copy.repository_copy(REPO, self.home, self.scratch)
         (self.copy / "fleet.yaml").write_text(FLEET)
+        edge_copy.publish(self.copy, "probe: the probe's fleet")
         self.compose("up", "--detach", "socket-proxy", "traefik")
 
     def cell_p7_the_real_bind_shape(self) -> None:
@@ -308,6 +315,24 @@ class Probe:
         expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
         expect(self.container_ids() == before, "the second apply replaced a container")
         print("#85 P2 held: a second apply changes nothing and keeps every container id")
+
+    def cell_s1_an_unpublished_edit(self) -> None:
+        """#95 P2: an edit that was never published leaves the copy dirty; apply names it and
+        recreates nothing."""
+        traefik_yml = self.copy / TRAEFIK_FILE
+        published = traefik_yml.read_text()
+        before = self.container_ids()["traefik"]
+        traefik_yml.write_text(published + HARMLESS_EDIT)
+        try:
+            out = self.edge("apply", "--closed", terminal=True, exit_code=2)
+        finally:
+            traefik_yml.write_text(published)
+        expect(
+            "the live checkout has local changes" in out and TRAEFIK_FILE in out,
+            f"apply with an unpublished edit said: {out[-200:]}",
+        )
+        expect(self.container_ids()["traefik"] == before, "an unpublished edit recreated traefik")
+        print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 2, traefik kept")
 
     def cell_p3_edited_traefik_yml(self) -> None:
         self.volumes_before_p3 = self.volumes()
@@ -485,6 +510,7 @@ class Probe:
         """Respell hello's image and name hello-mcp's as before, without their shared anchor."""
         text = self.compose_before_z2.replace(WHOAMI_ANCHOR, f"image: {RESPELLED_WHOAMI}")
         (self.copy / COMPOSE_FILE).write_text(text.replace(WHOAMI_ALIAS, f"image: {WHOAMI_IMAGE}"))
+        edge_copy.publish(self.copy, "probe: hello's image respelled")
 
     def cell_z2_a_respelled_image(self) -> None:
         self.compose_before_z2 = (self.copy / COMPOSE_FILE).read_text()
@@ -507,6 +533,7 @@ class Probe:
 
     def cell_z3_reverted(self) -> None:
         (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)
+        edge_copy.publish(self.copy, "probe: hello's image as before")
         before = self.container_ids()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(
@@ -681,6 +708,7 @@ def prove(probe: Probe) -> int:
         probe.recreate_socket_proxy_for_q1()
         probe.cell_q1_the_definition_fact("after edge's socket-proxy recreate", must_match=CORE)
         probe.cell_p2_second_apply()
+        probe.cell_s1_an_unpublished_edit()
         probe.cell_1_control()
         probe.cell_2_stop()
         probe.cell_3_up_behind_the_barrier()

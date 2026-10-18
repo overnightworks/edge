@@ -17,6 +17,8 @@ drives the emergency switch, proof 12 runs the setup from `edge apply` and proof
 traefik-mcp follow its file and definition through about ten applies: the run takes about 12
 minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
 proof 8 runs `edge-check` through it, proofs 10 to 13 run `uv sync` in a copy of the repository.
+The copy is a clean `main` with a bare remote under the scratch directory, and every edit a proof
+makes there is published (committed and pushed) before the apply that follows it (#95 P3).
 """
 
 from __future__ import annotations
@@ -607,7 +609,7 @@ class Probe:
     def repository_copy(self) -> Path:
         """The lane's files as the live checkout of the scratch HOME, with its own venv: fleet.yaml
         is flipped there only."""
-        return edge_copy.repository_copy(REPO, self.home)
+        return edge_copy.repository_copy(REPO, self.home, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         """Set step-ca's switch only: keycloak stays off, so apply never asks for its setup."""
@@ -615,6 +617,7 @@ class Probe:
         fleet.write_text(
             STEP_CA_SWITCH.sub(rf"\g<1>{str(enabled).lower()}", fleet.read_text(), count=1)
         )
+        edge_copy.publish(copy, f"probe: step-ca enabled {enabled}")
 
     def edge(
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
@@ -804,6 +807,11 @@ class Probe:
         expect("Type" not in out, f"{cell}: apply asked for `yes` with nothing to change")
         return out
 
+    def edit_follower_file(self, copy: Path) -> None:
+        with (copy / FOLLOWER_FILE).open("a") as file:
+            file.write(HARMLESS_EDIT)
+        edge_copy.publish(copy, f"probe: a harmless {FOLLOWER_FILE} edit")
+
     def proof_13a_followers(self, copy: Path) -> None:
         config = json.loads(self.copy_compose(copy, "config", "--format", "json"))
         followers = core.followers(config)
@@ -815,8 +823,7 @@ class Probe:
     def proof_13b_file_follows(self, copy: Path) -> None:
         follower, step_ca = self.ids()
         intermediate, serial = self.intermediate_now(), self.wait_until_served()["serial_number"]
-        with (copy / FOLLOWER_FILE).open("a") as file:
-            file.write(HARMLESS_EDIT)
+        self.edit_follower_file(copy)
         out = self.edge(copy, "apply", "--closed", terminal=True)
         expect("traefik-mcp: recreate (traefik-mcp.yml changed)" in out, f"P13b: {out[-240:]}")
         expect("traefik-mcp is recreated and runs the checked-out traefik-mcp.yml" in out, out)
@@ -853,6 +860,7 @@ class Probe:
         for anchor in LABEL_AFTER.values():
             text = text.replace(anchor, anchor + PROBE_LABEL, 1)
         compose_file.write_text(text)
+        edge_copy.publish(copy, "probe: a label on traefik-mcp")
         out = self.edge(copy, "apply", "--closed", terminal=True)
         expect("traefik-mcp: recreate (its compose definition changed)" in out, out[-240:])
         expect("step-ca:" not in out, f"P13d: step-ca was named: {out[-240:]}")
@@ -885,8 +893,7 @@ class Probe:
         recorded = (copy / FOLLOWER_FILE).read_text()
         self.edge(copy, "stop", "step-ca", terminal=False)
         written = marker.read_text()
-        with (copy / FOLLOWER_FILE).open("a") as file:
-            file.write(HARMLESS_EDIT)
+        self.edit_follower_file(copy)
         out = self.apply_says_nothing_to_change(copy, "P13e")
         expect("step-ca stays stopped" in out, f"P13e: {out[-240:]}")
         held = "traefik-mcp: traefik-mcp.yml changed; step-ca is switched off, so it is not started"
@@ -895,6 +902,7 @@ class Probe:
         expect(marker.read_text() == written, "P13e: apply touched the marker")
         self.volume_names_exist()
         (copy / FOLLOWER_FILE).write_text(recorded)
+        edge_copy.publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
         self.edge(copy, "start", "step-ca", terminal=True)
         self.wait_until_answering()
         self.apply_says_nothing_to_change(copy, "P13e after start")
@@ -903,8 +911,7 @@ class Probe:
     def proof_13f_disabled(self, copy: Path) -> None:
         held = "traefik-mcp: traefik-mcp.yml changed; step-ca is off, so it is not started"
         self.set_enabled(copy, False)
-        with (copy / FOLLOWER_FILE).open("a") as file:
-            file.write(HARMLESS_EDIT)
+        self.edit_follower_file(copy)
         out = self.edge(copy, "apply", "--closed", terminal=True)
         expect(held in out and "step-ca: off" in out, f"P13f: {out[-240:]}")
         expect(not self.containers_of_unit(running_only=False), "P13f: containers are left")
