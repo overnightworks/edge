@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Probe of the ingress barrier of `edge stop` (#61 proofs 1-7) and of the Traefik that follows
-its `traefik.yml` (#85 cells P1-P7): a throwaway compose project, HOME and copy of the repository.
+"""Probe of the ingress barrier of `edge stop` (#61 proofs 1-7), of the Traefik that follows its
+`traefik.yml` (#85 cells P1-P7) and of the core that follows its compose definition (#87 cells
+Q1-Q6): a throwaway compose project, HOME and copy of the repository.
 
 It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml under their own
 project name, drives the real `edge stop`, `edge start` and `edge apply --closed` of a copy, and
@@ -16,9 +17,17 @@ and checks that edge's core derives exactly `traefik.yml` from them; P1 the firs
 traefik and writes `applied.json`; P2 a second apply changes nothing; P3 an edited `traefik.yml`
 recreates traefik, which then serves `hello`; P4 the same with `probe` switched off proves its
 barrier before the success line; P5 a stopped traefik is named and not started; P6 the volumes,
-the marker and the barrier survive P3-P5. Every transcript line names its item. It never touches the
-live stack or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it
-runs.
+the marker and the barrier survive P3-P5.
+
+The #87 cells: Q1 prints each core container's real ps fields (Labels, Image) and `config --hash`,
+after the plain `up` and after edge's own recreate, and requires label == hash after edge's
+recreate (else #87 rule 8 stops the lane); Q2 a harmless label on socket-proxy in the copy's
+compose.yaml recreates socket-proxy, then traefik, and `hello` answers through Traefik again; Q3 a
+label on traefik alone keeps socket-proxy's container; Q4 a second apply changes nothing; Q5 with
+`probe` switched off a socket-proxy change proves its barrier before the success line; Q6 the
+volumes, the marker and the barrier survive Q2-Q5. Every transcript line names its item. It never
+touches the live stack or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is
+down while it runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
@@ -39,6 +48,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -48,7 +58,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import checkout, core, tunnel  # noqa: E402
+from edge import checkout, compose, core, tunnel  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -63,6 +73,10 @@ HELLO_ANSWERING = "hello answering"
 NOTHING_TO_CHANGE = "nothing to change"
 TRAEFIK_FILE = "traefik.yml"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
+SOCKET_PROXY_RECREATED = "edge apply --closed: socket-proxy is recreated"
+CORE_CURRENT = "the core is current"
+CORE = ("socket-proxy", "traefik")
+COMPOSE_FILE = "compose.yaml"
 HARMLESS_EDIT = "# an edit that changes no setting\n"
 READY_SECONDS = 90
 BEHIND_BARRIER_SECONDS = 10
@@ -93,6 +107,7 @@ class Probe:
         self.marker = self.state / "stopped" / UNIT
         self.record = core.Record(self.state)
         self.volumes_before_p3: set[str] = set()
+        self.volumes_before_q2: set[str] = set()
         self.barrier = self.copy / "dynamic" / f"switch-{UNIT}.yml"
 
     # --- the stack ---------------------------------------------------------------------------
@@ -129,6 +144,34 @@ class Probe:
             "volume", "ls", "--quiet", "--filter", f"label=com.docker.compose.project={PROJECT}"
         )
         return set(listed.stdout.decode().split())
+
+    def engine(self) -> compose.Compose:
+        """edge's own Compose reader, over the copy and the probe's project."""
+
+        def run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                command, capture_output=True, text=True, env=self.environment, cwd=self.copy,
+                check=False, timeout=timeout,
+            )  # fmt: skip
+
+        return compose.Compose(run, self.copy)
+
+    def created(self, container_id: str) -> datetime:
+        """When Docker created the container, to the microsecond."""
+        inspected = self.docker("inspect", "--format", "{{.Created}}", container_id)
+        return datetime.fromisoformat(inspected.stdout.decode().strip())
+
+    def label_core_service(self, service: str, value: str) -> None:
+        """Give the service a label that changes nothing it does, so only its definition changes."""
+        path = self.copy / COMPOSE_FILE
+        lines = path.read_text().splitlines(keepends=True)
+        label = f"    labels: {{edge.probe-change: {value}}}\n"
+        start = lines.index(f"  {service}:\n") + 1
+        if lines[start].startswith("    labels: {edge.probe-change:"):
+            lines[start] = label
+        else:
+            lines.insert(start, label)
+        path.write_text("".join(lines))
 
     def edit_traefik_yml(self) -> None:
         with (self.copy / TRAEFIK_FILE).open("a") as file:
@@ -300,6 +343,101 @@ class Probe:
         self.edge("start", UNIT, terminal=True)
         print("#85 P6 held: the named volumes, the marker and the barrier survived P3-P5")
 
+    def cell_q1_the_definition_fact(self, after: str, must_match: tuple[str, ...]) -> None:
+        listed = self.compose("ps", "--all", "--format", "json").stdout.decode()
+        for line in listed.strip().splitlines():
+            container = json.loads(line)
+            if container["Service"] in CORE:
+                fields = {key: container[key] for key in ("Service", "Image", "Labels")}
+                print(f"#87 Q1 {after}, ps: {json.dumps(fields)}")
+        hashes = self.compose("--profile", "*", "config", "--hash", ",".join(CORE)).stdout
+        print(f"#87 Q1 {after}, config --hash: {hashes.decode().strip()!r}")
+        engine = self.engine()
+        read = engine.config_hashes(CORE)
+        labels = {c.service: c.config_hash for c in engine.containers() if c.service in CORE}
+        for service in CORE:
+            same = labels[service] == read[service]
+            print(f"#87 Q1 {after}: {service} label == config --hash: {same}")
+        for service in must_match:
+            expect(
+                labels[service] == read[service],
+                f"#87 rule 8: {service}'s label differs from config --hash {after}; stop the lane",
+            )
+        required = ", ".join(must_match) or "none required"
+        print(f"#87 Q1 held {after}: printed; label == hash for {required}")
+
+    def apply_core_change(self) -> tuple[dict[str, str], dict[str, str], str]:
+        """The container ids before and after one `edge apply --closed` with `yes`, and its out."""
+        before = self.container_ids()
+        out = self.edge("apply", "--closed", terminal=True)
+        return before, self.container_ids(), out
+
+    def cell_q2_socket_proxy_definition(self) -> None:
+        self.volumes_before_q2 = self.volumes()
+        self.label_core_service("socket-proxy", "q2")
+        before, after, out = self.apply_core_change()
+        expect(
+            "socket-proxy: recreate (its compose definition changed)" in out
+            and "socket-proxy is recreated)" in out  # traefik's plan line, P5's edit may join it
+            and out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
+            f"apply after the socket-proxy label said: {out[-400:]}",
+        )
+        expect(all(after[s] != before[s] for s in CORE), "a core container is the old one")
+        expect(
+            self.created(after["socket-proxy"]) < self.created(after["traefik"]),
+            "traefik was created before socket-proxy",
+        )
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
+        print(f"#87 Q2 held: socket-proxy, then traefik recreated; {HOST} answers through Traefik")
+
+    def cell_q3_traefik_definition(self) -> None:
+        self.label_core_service("traefik", "q3")
+        before, after, out = self.apply_core_change()
+        expect(
+            "traefik: recreate (its compose definition changed)" in out
+            and "socket-proxy: recreate" not in out
+            and RECREATED in out,
+            f"apply after the traefik label said: {out[-300:]}",
+        )
+        expect(after["socket-proxy"] == before["socket-proxy"], "socket-proxy was recreated")
+        expect(after["traefik"] != before["traefik"], "the traefik container is the old one")
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
+        print("#87 Q3 held: a traefik label recreated traefik alone; socket-proxy's id unchanged")
+
+    def cell_q4_second_run(self) -> None:
+        before = self.container_ids()
+        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
+        expect(self.container_ids() == before, "the second apply replaced a container")
+        print("#87 Q4 held: a second apply changes nothing and keeps every container id")
+
+    def cell_q5_barrier_after_a_socket_proxy_recreate(self) -> None:
+        self.edge("stop", UNIT, terminal=False)
+        self.compose("--profile", UNIT, "up", "--detach", "hello")
+        self.label_core_service("socket-proxy", "q5")
+        _, _, out = self.apply_core_change()
+        proven = f"the barrier of {UNIT} is proven"
+        expect(
+            proven in out
+            and SOCKET_PROXY_RECREATED in out
+            and out.index(proven) < out.index(SOCKET_PROXY_RECREATED),
+            f"apply with the barrier said: {out[-400:]}",
+        )
+        expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after the recreate")
+        expect(self.hello_state() == "running", "hello stopped across the recreate")
+        print("#87 Q5 held: the barrier answered 404 with X-Edge-Barrier before the success line")
+
+    def cell_q6_what_survives(self) -> None:
+        volumes = self.volumes()
+        expect(volumes == self.volumes_before_q2, f"the volumes were {self.volumes_before_q2}")
+        expect(f"{PROJECT}_socket-proxy-run" in volumes, f"no socket-proxy-run in {volumes}")
+        expect(self.marker.is_file() and self.barrier.is_file(), "the marker or barrier is gone")
+        self.edge("start", UNIT, terminal=True)
+        self.wait_until(HELLO_ANSWERING, self.serves_whoami)
+        print(
+            "#87 Q6 held: socket-proxy-run, the named volumes, the marker and the barrier survived"
+        )
+
     def cell_1_control(self) -> None:
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"#61 proof 1 held: {HOST} answers whoami without a switch")
@@ -458,8 +596,10 @@ def raise_interrupt(_signal: int, _frame: object) -> None:
 def prove(probe: Probe) -> int:
     try:
         probe.bring_up()
+        probe.cell_q1_the_definition_fact("after the plain up", must_match=())
         probe.cell_p7_the_real_bind_shape()
         probe.cell_p1_first_apply()
+        probe.cell_q1_the_definition_fact("after edge's recreate", must_match=("traefik",))
         probe.cell_p2_second_apply()
         probe.cell_1_control()
         probe.cell_2_stop()
@@ -473,6 +613,11 @@ def prove(probe: Probe) -> int:
         probe.cell_p4_barrier_proven_after_the_recreate()
         probe.cell_p5_stopped_traefik()
         probe.cell_p6_what_survives()
+        probe.cell_q2_socket_proxy_definition()
+        probe.cell_q3_traefik_definition()
+        probe.cell_q4_second_run()
+        probe.cell_q5_barrier_after_a_socket_proxy_recreate()
+        probe.cell_q6_what_survives()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
@@ -503,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: #61 proofs 1-7, #70 proof 8 and #85 P1-P7 hold")
+        print("PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7 and #87 Q1-Q6 hold")
     return exit_code
 
 
