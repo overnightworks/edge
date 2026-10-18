@@ -202,7 +202,9 @@ bin/edge external plan
 `edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
 Schreib-Tokens `~/.secrets/cloudflare/fleet-write` und
 `~/.secrets/github/fleet-admin` (dieselbe Allowlist-Umgebung, dieselbe
-State-Passphrase). Es laeuft nur an einem Terminal (stdin und stdout; sonst
+State-Passphrase). Es laeuft nur aus `~/git/edge` als Haupt-Worktree auf
+einem sauberen `main`, sonst Exit 2 mit dem Grund (`plan` laeuft aus jedem
+Checkout), und nur an einem Terminal (stdin und stdout; sonst
 Exit 1, bevor `tofu` aufgerufen wird), plant in eine Datei, zeigt den Plan
 und wendet genau diese Datei erst nach der Eingabe `yes` an (`y`, `Yes`,
 leer: Abbruch, Exit 1). Ein Plan ohne Aenderungen endet mit Exit 0 ohne

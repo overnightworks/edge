@@ -19,6 +19,7 @@ import pytest
 
 from edge import cli
 from edge.external import apply as external_apply
+from edge.external import cli as external_cli
 from edge.external import secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
@@ -176,6 +177,28 @@ def fake_tofu(tmp_path, monkeypatch) -> FakeTofu:
     fake = FakeTofu(directory)
     fake.configure()
     return fake
+
+
+def plain_git(tree: Path, *arguments: str) -> None:
+    identity = ["-c", "user.name=edge test", "-c", "user.email=test@edge.invalid"]
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    subprocess.run(
+        ["git", "-C", str(tree), *identity, "-c", "core.hooksPath=/dev/null", *arguments],
+        check=True, capture_output=True, stdin=subprocess.DEVNULL, env=environment,
+    )  # fmt: skip
+
+
+@pytest.fixture
+def live_checkout(home) -> Path:
+    """`~/git/edge` as the operator has it: the main worktree, a clean `main` with one commit."""
+    tree = home / "git" / "edge"
+    (tree / "external").mkdir(parents=True)
+    (tree / "external" / "main.tf").write_text("# catalog\n")
+    (tree / ".gitignore").write_text((PROJECT_ROOT / ".gitignore").read_text())
+    plain_git(tree, "init", "--quiet", "--initial-branch", "main")
+    plain_git(tree, "add", "--all")
+    plain_git(tree, "commit", "--quiet", "--message", "init")
+    return tree
 
 
 def edge_external_plan() -> int:
@@ -487,13 +510,21 @@ class Terminal:
 
 
 @pytest.fixture
-def terminal(home, fake_tofu):
+def terminal(home, fake_tofu, live_checkout):
     """Start `command` on a pty with a minimal environment and no session bus."""
     started = []
 
-    def start(*, command="apply", stdin_is_terminal=True, stdout_is_terminal=True) -> Terminal:
+    def start(
+        *, command="apply", stdin_is_terminal=True, stdout_is_terminal=True, tree=None
+    ) -> Terminal:
+        """`tree` is the checkout whose code runs; the live checkout unless a test says another."""
         master, slave = pty.openpty()
-        program = "import sys; from edge import cli; sys.exit(cli.main(sys.argv[1:]))"
+        program = (
+            "import sys; from pathlib import Path; from edge import cli; "
+            "from edge.external import tofu; "
+            f"tofu.PROJECT_ROOT = Path({str(tree or live_checkout)!r}); "
+            "sys.exit(cli.main(sys.argv[1:]))"
+        )
         process = subprocess.Popen(
             [sys.executable, "-c", program, "external", command],
             stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
@@ -525,6 +556,108 @@ def test_apply_without_a_terminal_exits_1_before_any_tofu_call(home, fake_tofu, 
     assert cli.main(["external", "apply"]) == 1
     assert "terminal" in capsys.readouterr().err
     assert fake_tofu.calls() == []
+
+
+def a_linked_worktree_as_the_live_checkout(live_checkout, tmp_path) -> Path:
+    main_worktree = tmp_path / "main-worktree"
+    live_checkout.rename(main_worktree)
+    plain_git(main_worktree, "worktree", "add", "--quiet", "--detach", str(live_checkout))
+    return live_checkout
+
+
+def another_copy(live_checkout, tmp_path) -> Path:
+    copy = tmp_path / "copy"
+    plain_git(tmp_path, "clone", "--quiet", str(live_checkout), str(copy))
+    return copy
+
+
+def on_a_branch(live_checkout, _tmp_path) -> Path:
+    plain_git(live_checkout, "switch", "--quiet", "--create", "feature/x")
+    return live_checkout
+
+
+def detached(live_checkout, _tmp_path) -> Path:
+    plain_git(live_checkout, "switch", "--quiet", "--detach")
+    return live_checkout
+
+
+def modified(live_checkout, _tmp_path) -> Path:
+    (live_checkout / "external" / "main.tf").write_text("# edited\n")
+    return live_checkout
+
+
+def with_a_stray_tfvars(live_checkout, _tmp_path) -> Path:
+    (live_checkout / "external" / "x.auto.tfvars").write_text("zone = 1\n")
+    return live_checkout
+
+
+REFUSAL = "edge external apply: "
+LIVE_ONLY = f"{REFUSAL}runs only from the live checkout ~/git/edge ("
+MAIN_ONLY = f"{REFUSAL}runs only on main ("
+
+
+@pytest.mark.parametrize(
+    ("arrange", "reason"),
+    [
+        pytest.param(a_linked_worktree_as_the_live_checkout,
+                     f"{LIVE_ONLY}a linked worktree, not the main checkout)", id="E1-linked"),
+        pytest.param(another_copy, f"{LIVE_ONLY}this is ", id="E2-another-copy"),
+        pytest.param(on_a_branch, f"{MAIN_ONLY}this is branch feature/x)", id="E3-branch"),
+        pytest.param(detached, f"{MAIN_ONLY}HEAD is detached at ", id="E3-detached"),
+        pytest.param(modified, f"{REFUSAL}the live checkout has local changes",
+                     id="E4-modified-file"),
+        pytest.param(modified, f"{REFUSAL}external/main.tf", id="E4-the-path-on-its-own-line"),
+        pytest.param(with_a_stray_tfvars, f"{REFUSAL}external/x.auto.tfvars",
+                     id="E5-untracked-tfvars"),
+    ],
+)  # fmt: skip
+def test_apply_outside_a_clean_main_of_the_live_checkout_exits_2_before_any_token_or_tofu(
+    home, fake_tofu, terminal, live_checkout, tmp_path, arrange, reason
+):
+    """#124 rule 2: the reason is named, no token file is read (a missing one is not named)."""
+    tree = arrange(live_checkout, tmp_path)
+    (home / next(iter(WRITE_TOKEN_FILES))).unlink()
+    apply = terminal(tree=tree)
+    assert apply.finish() == 2
+    assert reason in " ".join(apply.output.split())
+    assert str(home / ".secrets") not in apply.output
+    assert fake_tofu.calls() == []
+
+
+def test_apply_from_a_clean_main_ignores_ignored_files(home, fake_tofu, terminal, live_checkout):
+    """#124 rule 3, E6: `.terraform/` and a `*.tfplan` are no change."""
+    (live_checkout / "external" / ".terraform").mkdir()
+    (live_checkout / "external" / ".terraform" / "x").touch()
+    (live_checkout / "external" / "x.tfplan").touch()
+    fake_tofu.configure(plan=0)
+    assert terminal().finish() == 0
+
+
+def test_apply_with_a_failing_git_exits_2_saying_it_cannot_read_the_checkout(
+    home, fake_tofu, terminal
+):
+    """#124 rule 2, E11."""
+    broken_git = fake_tofu.directory / "git"
+    broken_git.write_text("#!/bin/sh\nexit 128\n")
+    broken_git.chmod(0o755)
+    apply = terminal()
+    assert apply.finish() == 2
+    assert "edge external apply: cannot read the live checkout, " in apply.output
+    assert fake_tofu.calls() == []
+
+
+def test_apply_without_a_terminal_from_a_wrong_tree_exits_1_first(
+    home, fake_tofu, capsys, live_checkout, tmp_path
+):
+    """#124 E9: the terminal refusal comes before the tree is asked."""
+    assert external_cli.apply_command(home, another_copy(live_checkout, tmp_path)) == 1
+    assert "terminal" in capsys.readouterr().err
+
+
+def test_plan_runs_from_any_checkout(home, fake_tofu, live_checkout, tmp_path, monkeypatch):
+    """#124 rule 4, E8: plan asks nothing of the tree it runs from."""
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", another_copy(live_checkout, tmp_path))
+    assert edge_external_plan() == 0
 
 
 def test_apply_without_a_terminal_exits_1_even_when_the_write_tokens_are_missing(

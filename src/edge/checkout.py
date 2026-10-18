@@ -351,3 +351,21 @@ def not_on_main(git: Git) -> str | None:
     if not git.has_commit():
         return f"{MAIN} has no commit yet"
     return None
+
+
+def not_clean_main(git: Git) -> list[str]:
+    """Why `git` is not a born `main` with nothing changed, as lines; none when it is (#95 rules
+    5, 6). A git that fails is a line too, so the caller refuses rather than guesses."""
+    try:
+        if reason := not_on_main(git):
+            return [f"runs only on {MAIN} ({reason})"]
+        changed = git.changed_paths()
+    except GitError as error:
+        return [f"cannot read the live checkout, {error}"]
+    if not changed:
+        return []
+    return [
+        "the live checkout has local changes, nothing changed; a change reaches it through "
+        "a pull request and `git pull --ff-only`:",
+        *(f"  {path}" for path in changed),
+    ]

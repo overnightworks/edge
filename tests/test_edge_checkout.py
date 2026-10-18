@@ -247,6 +247,35 @@ def test_ignored_files_do_not_count(git, main_tree):
     assert git.changed_paths() == []
 
 
+def test_a_clean_main_has_no_refusal(git):
+    """#124 rule 1: the one owner of the clean-main check says nothing on a clean main."""
+    assert checkout.not_clean_main(git) == []
+
+
+def test_a_branch_is_one_refusal_line(git, main_tree):
+    plain_git(main_tree, "switch", "--quiet", "--create", "feature/x")
+
+    assert checkout.not_clean_main(git) == ["runs only on main (this is branch feature/x)"]
+
+
+def test_changed_paths_follow_the_local_changes_line_one_each(git, main_tree):
+    (main_tree / "fleet.yaml").write_text("services: {edited: {}}\n")
+    (main_tree / "extra.auto.tfvars").touch()
+
+    lines = checkout.not_clean_main(git)
+
+    assert lines[0].startswith("the live checkout has local changes, nothing changed;")
+    assert sorted(lines[1:]) == ["  extra.auto.tfvars", "  fleet.yaml"]
+
+
+def test_a_git_that_fails_is_a_refusal_line_not_an_error(main_tree, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    assert checkout.not_clean_main(checkout.Git(main_tree)) == [
+        "cannot read the live checkout, cannot run git (No such file or directory)"
+    ]
+
+
 def test_traefik_yml_replaced_by_an_empty_directory_is_named(git, main_tree):
     """#95 rule 6, G19 (#34 finding 49): a tracked file replaced by a directory is dirty."""
     (main_tree / "traefik.yml").unlink()

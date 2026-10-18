@@ -431,22 +431,10 @@ def _take_apply_lock(state_directory: Path) -> int | None:
 
 def _on_clean_main(git: checkout.Git) -> bool:
     """True on a born `main` with nothing changed; else False, after saying why (#95 rules 5, 6)."""
-    try:
-        if reason := checkout.not_on_main(git):
-            _say(f"runs only on {checkout.MAIN} ({reason})")
-            return False
-        changed = git.changed_paths()
-    except checkout.GitError as error:
-        _say(f"cannot read the live checkout, {error}")
-        return False
-    if changed:
-        _say(
-            "the live checkout has local changes, nothing changed; a change reaches it through "
-            "a pull request and `git pull --ff-only`:"
-        )
-        for path in changed:
-            _say(f"  {path}")
-    return not changed
+    refusals = checkout.not_clean_main(git)
+    for line in refusals:
+        _say(line)
+    return not refusals
 
 
 @dataclass(frozen=True)
