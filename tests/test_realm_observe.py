@@ -429,9 +429,10 @@ def test_the_fake_records_every_method_the_read_only_test_judges(
 ) -> None:
     """Rule 1: a method the fake has no handler for still reaches its request log."""
     path = "/admin/realms/hallucinai/clients"
+    request = urllib.request.Request(keycloak.url + path, method=method)
 
     with pytest.raises(urllib.error.HTTPError):
-        urllib.request.urlopen(urllib.request.Request(keycloak.url + path, method=method))
+        urllib.request.urlopen(request)
 
     assert keycloak.requests == [(method, path)]
 
