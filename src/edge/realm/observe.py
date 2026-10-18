@@ -13,8 +13,6 @@ leaves only as its name plus an HMAC-SHA256 digest under the per-run key the hos
 stdin, so a change in it still shows; the named secret keys never leave, not even as a digest.
 A failure is one line on stderr naming the status and the path, never a reply body or a token,
 and stdout stays empty.
-
-`diff` compares two inventories into `Change`s; `edge.realm.change_lines` prints them.
 """
 
 from __future__ import annotations
@@ -29,7 +27,6 @@ import sys
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -691,63 +688,6 @@ def step_identities(flow: str, steps: list[Any]) -> Iterator[tuple[str, Represen
 def observe(session: Session, digest: Digester, realms: tuple[str, ...] = REALMS) -> Inventory:
     session.sign_in()
     return {realm: RealmReader(session, realm, digest).read() for realm in realms}
-
-
-# --- The diff ---------------------------------------------------------------------------------
-
-
-class Kind(StrEnum):
-    ADDITION = "addition"
-    CHANGE = "change"
-    REMOVAL = "removal"
-
-
-@dataclass(frozen=True)
-class Change:
-    """One addition, change or removal. A change of a digested key carries no value."""
-
-    realm: str
-    kind: Kind
-    type: str
-    identity: str
-    field: str | None = None
-    old: Any = None
-    new: Any = None
-    hidden: bool = False
-    members: int | None = None
-
-
-def diff(before: Inventory, after: Inventory) -> list[Change]:
-    changes: list[Change] = []
-    for realm in sorted(before.keys() | after.keys()):
-        old_realm, new_realm = before.get(realm, {}), after.get(realm, {})
-        for kind in sorted(old_realm.keys() | new_realm.keys()):
-            old_objects, new_objects = old_realm.get(kind, {}), new_realm.get(kind, {})
-            for identity in sorted(old_objects.keys() | new_objects.keys()):
-                old, new = old_objects.get(identity), new_objects.get(identity)
-                if old is None:
-                    members = new["fields"].get("members")
-                    changes.append(Change(realm, Kind.ADDITION, kind, identity, members=members))
-                elif new is None:
-                    members = old["fields"].get("members")
-                    changes.append(Change(realm, Kind.REMOVAL, kind, identity, members=members))
-                else:
-                    changes += field_changes(realm, kind, identity, old, new)
-    return changes
-
-
-def field_changes(realm: str, kind: str, identity: str, old: Entity, new: Entity) -> list[Change]:
-    changes = [
-        Change(realm, Kind.CHANGE, kind, identity, name, old["fields"].get(name), value)
-        for name in sorted(old["fields"].keys() | new["fields"].keys())
-        if (value := new["fields"].get(name)) != old["fields"].get(name)
-    ]
-    changes += [
-        Change(realm, Kind.CHANGE, kind, identity, name, hidden=True)
-        for name in sorted(old["digests"].keys() | new["digests"].keys())
-        if old["digests"].get(name) != new["digests"].get(name)
-    ]
-    return changes
 
 
 # --- The command ------------------------------------------------------------------------------
