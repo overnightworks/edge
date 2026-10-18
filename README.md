@@ -751,9 +751,10 @@ app's cutover (K12–K14).
 > realm role added to `service-account-config-cli`, a step added to
 > `browser-mfa-forms`, and a top-level flow made in the console in master. A
 > console-made client, identity provider, component, realm role, and a mapper
-> on `agent-service` survive. The realm observer (`realm-observer`,
-> `src/edge/realm/observe.py`) lists each such removal before and after an
-> apply, one line each, with its realm.
+> on `agent-service` survive. Each such removal shows around an apply: the
+> realm observer (`realm-observer`, `src/edge/realm/observe.py`) reads the
+> realms before and after, and `edge.realm` compares the two reads and prints
+> one line per change with its realm.
 
 ### Keycloak secrets
 
