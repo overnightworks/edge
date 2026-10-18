@@ -178,20 +178,30 @@ def _stream(release: Release, fetch: Fetch, partial, max_bytes: int) -> str:
     received = 0
     try:
         for chunk in fetch(release.url):
-            received += len(chunk)
-            if received > max_bytes:
-                raise TofuError(
-                    f"{release.url} exceeds the {max_bytes}-byte download limit;"
-                    f" {_pins_name()} records sha256 {release.sha256}"
+            if received + len(chunk) > max_bytes:
+                raise _download_failure(
+                    release,
+                    f"exceeds the {max_bytes}-byte download limit",
+                    received,
+                    digest.hexdigest(),
                 )
+            received += len(chunk)
             digest.update(chunk)
             partial.write(chunk)
     except OSError as error:
-        raise TofuError(
-            f"{release.url} could not be downloaded ({error});"
-            f" {_pins_name()} records sha256 {release.sha256}"
+        raise _download_failure(
+            release, f"could not be downloaded ({error})", received, digest.hexdigest()
         ) from error
     return digest.hexdigest()
+
+
+def _download_failure(
+    release: Release, reason: str, received: int, received_sha256: str
+) -> TofuError:
+    return TofuError(
+        f"{release.url} {reason}; the {received} bytes received so far have sha256"
+        f" {received_sha256}, {_pins_name()} records {release.sha256}"
+    )
 
 
 def _install_member(root: Path, archive: Path, release: Release) -> None:

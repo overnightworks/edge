@@ -48,14 +48,28 @@ class Download:
 
     def __call__(self, url: str) -> Iterator[bytes]:
         self.urls.append(url)
-        middle = len(self.archive) // 2
-        yield self.archive[:middle]
+        yield half_of(self.archive)
         self.during()
-        yield self.archive[middle:]
+        yield self.archive[len(half_of(self.archive)) :]
+
+
+def half_of(archive: bytes) -> bytes:
+    """The first chunk `Download` serves."""
+    return archive[: len(archive) // 2]
 
 
 def tree(root: Path) -> set[str]:
     return {str(path.relative_to(root)) for path in root.rglob("*")}
+
+
+def assert_names_the_url_and_both_shas(message: str, recorded: str, received: bytes) -> None:
+    assert URL in message
+    assert recorded in message
+    assert hashlib.sha256(received).hexdigest() in message
+
+
+def connection_reset() -> None:
+    raise OSError("connection reset")
 
 
 @pytest.fixture
@@ -110,33 +124,31 @@ def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
     with pytest.raises(TofuError) as raised:
         tofu_binary.install(root, release_of(archive, sha256=recorded), Download(archive))
 
-    message = str(raised.value)
-    assert URL in message
-    assert recorded in message
-    assert hashlib.sha256(archive).hexdigest() in message
+    assert_names_the_url_and_both_shas(str(raised.value), recorded, archive)
     assert tree(root) == set()
 
 
-def test_a_network_error_names_the_url_and_installs_nothing(root):
-    """#101 rule 2 Failure: a network error names the URL, and nothing is installed."""
-
-    def unreachable(url: str) -> Iterator[bytes]:
-        raise OSError("connection refused")
-        yield b""
-
-    with pytest.raises(TofuError, match=URL):
-        tofu_binary.install(root, release_of(b"archive"), unreachable)
-    assert tree(root) == set()
-
-
-def test_a_download_over_the_size_limit_is_refused_and_installs_nothing(root):
-    """#101 T6: a download over the size limit is refused, and nothing is installed."""
+def test_a_network_error_names_the_url_and_both_shas_and_installs_nothing(root):
+    """#101 rule 2 Failure: a network error names the URL and both shas; nothing is installed."""
     archive = pinned_zip()
+    release = release_of(archive)
 
-    with pytest.raises(TofuError, match="limit"):
-        tofu_binary.install(
-            root, release_of(archive), Download(archive), max_bytes=len(archive) - 1
-        )
+    with pytest.raises(TofuError) as raised:
+        tofu_binary.install(root, release, Download(archive, connection_reset))
+
+    assert_names_the_url_and_both_shas(str(raised.value), release.sha256, half_of(archive))
+    assert tree(root) == set()
+
+
+def test_a_download_over_the_size_limit_names_both_shas_and_installs_nothing(root):
+    """#101 T6: a download over the size limit is refused with both shas; nothing is installed."""
+    archive = pinned_zip()
+    release = release_of(archive)
+
+    with pytest.raises(TofuError, match="limit") as raised:
+        tofu_binary.install(root, release, Download(archive), max_bytes=len(archive) - 1)
+
+    assert_names_the_url_and_both_shas(str(raised.value), release.sha256, half_of(archive))
     assert tree(root) == set()
 
 
