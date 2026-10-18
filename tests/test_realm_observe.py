@@ -477,6 +477,14 @@ class AdminApi(BaseHTTPRequestHandler):
             return self.reply({"error": "not found"}, 404)
         self.reply(answer)
 
+    def refuse_a_write(self) -> None:
+        """Records any other method, so the read-only test sees it, and answers 405."""
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.server.requests.append((self.command, unquote(urlsplit(self.path).path)))
+        self.reply({"error": "method not allowed"}, 405)
+
+    do_PUT = do_DELETE = do_PATCH = refuse_a_write
+
     def answer(self, realm: FakeRealm, path: str, query: dict[str, list[str]]) -> Any:
         groups_by_id = {uid(realm.name, "group", path): path for path in realm.groups}
         parts = path.strip("/").split("/")
@@ -870,14 +878,12 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
     """Rule 1 and U22: read-only is a protocol contract."""
     observe(keycloak)
 
-    posts = [path for method, path in keycloak.requests if method == "POST"]
-    others = [
+    not_admin_reads = [
         (method, path)
         for method, path in keycloak.requests
-        if method != "POST" and not (method == "GET" and path.startswith("/admin/realms/"))
+        if not (method == "GET" and path.startswith("/admin/realms/"))
     ]
-    assert posts == ["/realms/master/protocol/openid-connect/token"]
-    assert others == []
+    assert not_admin_reads == [("POST", "/realms/master/protocol/openid-connect/token")]
 
 
 def test_two_observes_of_an_unchanged_keycloak_are_equal(keycloak: FakeKeycloak) -> None:
