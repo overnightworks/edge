@@ -1235,7 +1235,13 @@ class Probe:
         """Proof 9 (#66): the observer's container, its console-change lines and its stops. Runs
         last but for proof 7, when every credential proof 7 looks for exists."""
         password = self.keep_secret("smtp password", secrets.token_urlsafe(16))
-        smtp = {"host": "smtp.probe.invalid", "port": "587", "auth": "true", "user": "probe"}
+        smtp = {
+            "host": "smtp.probe.invalid",
+            "port": "587",
+            "from": "probe@probe.invalid",
+            "auth": "true",
+            "user": "probe",
+        }
         admin.must("PUT", f"/{REALM}", {"smtpServer": smtp | {"password": password}})
         digest_key = self.keep_secret("the observer's second digest key", new_digest_key())
         kept = f"{PROJECT}-observe-{secrets.token_hex(4)}"
