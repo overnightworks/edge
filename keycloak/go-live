@@ -235,9 +235,14 @@ class GoLive:
         # O_EXCL: an existing file is never overwritten. The container users must read the
         # file; the 0700 directory keeps everyone else out.
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        with os.fdopen(descriptor, "w") as secret_file:
-            os.fchmod(secret_file.fileno(), 0o644)
-            secret_file.write(secrets.token_hex(32))
+        try:
+            with os.fdopen(descriptor, "w") as secret_file:
+                os.fchmod(secret_file.fileno(), 0o644)
+                secret_file.write(secrets.token_hex(32))
+        except BaseException:
+            # An empty file would read as done on the next run; only this call's file goes.
+            path.unlink()
+            raise
 
     # --- client secrets (step 2b): compose names the clients, go-live creates the files --------
 
@@ -256,7 +261,8 @@ class GoLive:
         if config.returncode != 0:
             raise DockerDidNotAnswer(self.failure_line("config", config))
         prefix = f"{self.client_secrets_dir}/"
-        files = [secret["file"] for secret in json.loads(config.stdout).get("secrets", {}).values()]
+        declared = json.loads(config.stdout).get("secrets", {}).values()
+        files = [secret["file"] for secret in declared if "file" in secret]
         client_ids = [file.removeprefix(prefix) for file in files if file.startswith(prefix)]
         for client_id in client_ids:
             if not CLIENT_ID.fullmatch(client_id):

@@ -824,11 +824,12 @@ install -d -m 0700 ~/.secrets/keycloak ~/.secrets/keycloak/clients
 for name in db-password config-cli-secret bootstrap-admin-password; do
   openssl rand -hex 32 > ~/.secrets/keycloak/$name
 done
-chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 0700 directory keeps everyone else out
+chmod 0644 ~/.secrets/keycloak/{db-password,config-cli-secret,bootstrap-admin-password}
+# 0644: the container users must read the files; the 0700 directories keep everyone else out
 ```
 
 Every confidential app client has its own file, `~/.secrets/keycloak/clients/<clientId>`
-(0644 in the 0700 directory). `compose.yaml` names them as top-level secrets; go-live reads that
+(0644 in the 0700 directory; by hand, `openssl rand -hex 32 > …/<clientId>` and `chmod 0644` on that file only). `compose.yaml` names them as top-level secrets; go-live reads that
 list (with `--profile apply`) and creates only the missing files, once, never over an existing one.
 A later app adds one secret to `compose.yaml`, and the next go-live creates only its file.
 

@@ -63,6 +63,7 @@ class Keycloak:
     docker_daemon_down: bool = False
     compose_config_fails: bool = False
     client_secret_files: list[str] = field(default_factory=list)  # compose's secrets of clients
+    compose_declares_environment_secret: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
     commands: list[list[str]] = field(default_factory=list)
@@ -121,6 +122,8 @@ class Keycloak:
         secrets = {
             f"secret_{at}": {"file": path} for at, path in enumerate(self.client_secret_files)
         }
+        if self.compose_declares_environment_secret:
+            secrets["from_environment"] = {"environment": "SOME_VARIABLE"}
         volumes = {"keycloak-db": {"name": PROJECT_VOLUME}}
         return self.done(json.dumps({"volumes": volumes, "secrets": secrets}))
 
@@ -1056,7 +1059,7 @@ def test_starts_hold_the_switch_lock_and_prompts_leave_it_free(go_live, marks):
 
 
 def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, keycloak, marks):
-    """#64 rule 8, counterexample: the guard costs a normal run nothing."""
+    """T10, #64 rule 8, counterexample: the guard costs a normal run nothing."""
     assert go_live.run() == 0
 
     assert marks.since("keycloak") is None
@@ -1091,7 +1094,7 @@ def test_a_fresh_run_creates_one_private_secret_file_per_client(
 
 
 def test_every_discovery_asks_compose_with_the_apply_profile(go_live, keycloak, secrets_dir):
-    """Without --profile apply compose drops keycloak-config-cli's secrets."""
+    """T9, Rule 2: without --profile apply compose drops keycloak-config-cli's secrets."""
     go_live.client_ids()
 
     assert "apply" in keycloak.commands[-1]
@@ -1186,10 +1189,66 @@ def test_a_client_name_that_is_not_an_id_is_refused_and_nothing_is_created(
     assert not (secrets_dir.parent / "x").exists()
 
 
-def test_the_real_compose_file_names_no_client_secret_yet(golive, secrets_dir, marks, monkeypatch):
-    """T9: the repository's compose.yaml; K11-SA2 makes this ["songmaker"]."""
+@pytest.fixture
+def real_compose_go_live(golive, secrets_dir, marks, monkeypatch):
+    """Compose resolves `${HOME}/.secrets/keycloak` to the injected secrets directory."""
+    monkeypatch.setenv("HOME", str(secrets_dir.parent.parent))
     monkeypatch.setenv("EDGE_DOMAIN", "probe.test")  # the operator's .env supplies both
     monkeypatch.setenv("DOCKER_GID", "999")
-    go_live = golive.GoLive(golive.Tools(), secrets_dir, marks)
+    return golive.GoLive(golive.Tools(), secrets_dir, marks)
+
+
+def test_the_real_compose_file_names_no_client_secret_yet(real_compose_go_live):
+    """T9: the repository's compose.yaml; K11-SA2 makes this ["songmaker"]."""
+    assert real_compose_go_live.client_ids() == []
+
+
+def test_the_real_compose_discovers_a_client_secret_it_declares(
+    golive, real_compose_go_live, tmp_path, monkeypatch
+):
+    """T9, non-vacuity: the same real Compose and HOME find `clients/x` when compose declares it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "compose.yaml").write_text(
+        "name: probe\n"
+        "services:\n"
+        "  app:\n"
+        "    image: scratch\n"
+        "    secrets: [x]\n"
+        "secrets:\n"
+        "  x:\n"
+        "    file: ${HOME}/.secrets/keycloak/clients/x\n"
+    )
+    monkeypatch.setattr(golive, "REPO", repo)
+
+    assert real_compose_go_live.client_ids() == ["x"]
+
+
+def test_a_top_level_secret_without_a_file_is_not_a_client_secret(go_live, keycloak):
+    """T9, Rule 2: a secret from `environment:` has no file and names no client."""
+    keycloak.compose_declares_environment_secret = True
 
     assert go_live.client_ids() == []
+
+
+def test_a_failed_write_removes_the_file_it_created_and_never_one_that_existed(
+    golive, secrets_dir, monkeypatch
+):
+    """T3, Rule 3: no empty file is left to read as done; an existing file is untouched."""
+    secrets_dir.mkdir(parents=True)
+    existing = secrets_dir / "existing"
+    existing.write_text("kept")
+    fresh = secrets_dir / "fresh"
+
+    def fail(_nbytes: int) -> str:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(golive.secrets, "token_hex", fail)
+
+    with pytest.raises(OSError, match="disk full"):
+        golive.GoLive.create_secret_file(fresh)
+    with pytest.raises(FileExistsError):
+        golive.GoLive.create_secret_file(existing)
+
+    assert not fresh.exists()
+    assert existing.read_text() == "kept"
