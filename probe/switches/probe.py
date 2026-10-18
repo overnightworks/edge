@@ -20,14 +20,14 @@ barrier before the success line; P5 a stopped traefik is named and not started; 
 the marker and the barrier survive P3-P5.
 
 The #87 cells: Q1 prints each core container's real ps fields (Labels, Image) and `config --hash`,
-after the plain `up` and after edge's own recreate, and requires label == hash after edge's
-recreate (else #87 rule 8 stops the lane); Q2 a harmless label on socket-proxy in the copy's
-compose.yaml recreates socket-proxy, then traefik, and `hello` answers through Traefik again; Q3 a
-label on traefik alone keeps socket-proxy's container; Q4 a second apply changes nothing; Q5 with
-`probe` switched off a socket-proxy change proves its barrier before the success line; Q6 the
-volumes, the marker and the barrier survive Q2-Q5. Every transcript line names its item. It never
-touches the live stack or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is
-down while it runs.
+after the plain `up` and after edge's own recreates of traefik and of socket-proxy (a harmless
+label), and requires label == hash for both after edge's recreate (else #87 rule 8 stops the
+lane); Q2 a harmless label on socket-proxy in the copy's compose.yaml recreates socket-proxy,
+then traefik, and `hello` answers through Traefik again; Q3 a label on traefik alone keeps
+socket-proxy's container; Q4 a second apply changes nothing; Q5 with `probe` switched off a
+socket-proxy change proves its barrier before the success line; Q6 the volumes, the marker and
+the barrier survive Q2-Q5. Every transcript line names its item. It never touches the live stack
+or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
@@ -366,6 +366,16 @@ class Probe:
         required = ", ".join(must_match) or "none required"
         print(f"#87 Q1 held {after}: printed; label == hash for {required}")
 
+    def recreate_socket_proxy_for_q1(self) -> None:
+        """Edge's own recreate of socket-proxy, which also recreates traefik, so Q1 can compare
+        both labels before any other cell runs (#87 rule 8)."""
+        self.label_core_service("socket-proxy", "q1")
+        before, after, out = self.apply_core_change()
+        expect(
+            SOCKET_PROXY_RECREATED in out and all(after[s] != before[s] for s in CORE),
+            f"apply after the Q1 socket-proxy label said: {out[-400:]}",
+        )
+
     def apply_core_change(self) -> tuple[dict[str, str], dict[str, str], str]:
         """The container ids before and after one `edge apply --closed` with `yes`, and its out."""
         before = self.container_ids()
@@ -599,7 +609,9 @@ def prove(probe: Probe) -> int:
         probe.cell_q1_the_definition_fact("after the plain up", must_match=())
         probe.cell_p7_the_real_bind_shape()
         probe.cell_p1_first_apply()
-        probe.cell_q1_the_definition_fact("after edge's recreate", must_match=("traefik",))
+        probe.cell_q1_the_definition_fact("after edge's traefik recreate", must_match=("traefik",))
+        probe.recreate_socket_proxy_for_q1()
+        probe.cell_q1_the_definition_fact("after edge's socket-proxy recreate", must_match=CORE)
         probe.cell_p2_second_apply()
         probe.cell_1_control()
         probe.cell_2_stop()
