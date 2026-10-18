@@ -1005,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-13 hold")
+        print("PROBE PASSED: proofs 1-13, #95 P3 hold")
     return exit_code
 
 

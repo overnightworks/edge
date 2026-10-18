@@ -36,7 +36,11 @@ both strings, and the apply still changes nothing and asks nothing; Z3 reverted,
 
 The copy is a clean `main` with a bare remote: every edit above is published (committed and
 pushed) before the apply that follows it (#95 P1); the #95 cell P2, after P2, applies with one
-unpublished `traefik.yml` edit and requires exit 2 naming it, with traefik's container kept.
+unpublished `traefik.yml` edit and requires exit 2 naming it, with traefik's container kept. The
+#98 cell P1 then pushes one commit to the remote from a work clone (appending to
+`dynamic/.gitkeep` and `README.md`): the copy's apply shows that commit and its files in their
+groups, the merge line and that the plan applies HEAD, and changes nothing, HEAD and every
+container kept; the copy then runs the shown `git merge --ff-only <sha>` and is current again.
 Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
@@ -90,6 +94,7 @@ CORE_CURRENT = "the core is current"
 CORE = ("socket-proxy", "traefik")
 COMPOSE_FILE = "compose.yaml"
 HARMLESS_EDIT = "# an edit that changes no setting\n"
+WAITING_NOTE = "\n"  # a change that touches no setting, waiting on origin (#98 P1)
 READY_SECONDS = 90
 BEHIND_BARRIER_SECONDS = 10
 REQUEST_SECONDS = 3
@@ -316,7 +321,7 @@ class Probe:
         expect(self.container_ids() == before, "the second apply replaced a container")
         print("#85 P2 held: a second apply changes nothing and keeps every container id")
 
-    def cell_s1_an_unpublished_edit(self) -> None:
+    def cell_95_p2_an_unpublished_edit(self) -> None:
         """#95 P2: an edit that was never published leaves the copy dirty; apply names it and
         recreates nothing."""
         traefik_yml = self.copy / TRAEFIK_FILE
@@ -333,6 +338,36 @@ class Probe:
         )
         expect(self.container_ids()["traefik"] == before, "an unpublished edit recreated traefik")
         print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 2, traefik kept")
+
+    def cell_98_p1_commits_waiting(self) -> None:
+        """#98 P1: a commit pushed from a work clone waits on origin; the copy's apply shows it and
+        its files by effect, plans HEAD and changes nothing; the shown merge line brings it in."""
+        head = checkout.Git(self.copy).short()
+        before = self.container_ids()
+        waiting = edge_copy.advance_origin(
+            self.scratch,
+            "probe: a commit waiting on origin",
+            {"dynamic/.gitkeep": WAITING_NOTE, "README.md": WAITING_NOTE},
+        )
+        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        shown = (
+            f"1 commit waits on origin main: {waiting} probe: a commit waiting on origin",
+            "live once updated: M dynamic/.gitkeep",
+            "other: M README.md",
+            f"the plan below applies HEAD {head}, without the waiting commits",
+            NOTHING_TO_CHANGE,
+        )
+        expect(all(line in out for line in shown), f"apply behind origin said: {out[-400:]}")
+        expect(checkout.Git(self.copy).short() == head, "apply behind origin moved HEAD")
+        expect(self.container_ids() == before, "apply behind origin replaced a container")
+        merge = out.split("to bring them: ")[1].split(" edge apply --closed:")[0].split()
+        expect(merge[:3] == ["git", "-C", checkout.LIVE_CHECKOUT], f"the merge line is {merge}")
+        edge_copy.git(self.copy, *merge[3:])
+        current = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        expect(
+            f"live checkout current ({waiting})" in current, f"after the merge: {current[-200:]}"
+        )
+        print(f"#98 P1 held: {waiting} waits and is shown by effect, HEAD {head} planned and kept")
 
     def cell_p3_edited_traefik_yml(self) -> None:
         self.volumes_before_p3 = self.volumes()
@@ -708,7 +743,8 @@ def prove(probe: Probe) -> int:
         probe.recreate_socket_proxy_for_q1()
         probe.cell_q1_the_definition_fact("after edge's socket-proxy recreate", must_match=CORE)
         probe.cell_p2_second_apply()
-        probe.cell_s1_an_unpublished_edit()
+        probe.cell_95_p2_an_unpublished_edit()
+        probe.cell_98_p1_commits_waiting()
         probe.cell_1_control()
         probe.cell_2_stop()
         probe.cell_3_up_behind_the_barrier()
@@ -759,7 +795,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3 hold")
+        print(
+            "PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3, "
+            "#95 P1-P2, #98 P1 hold"
+        )
     return exit_code
 
 

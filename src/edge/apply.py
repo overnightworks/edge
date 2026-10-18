@@ -460,9 +460,9 @@ class Waiting:
     def describe(self, binds: core.CheckoutBinds) -> list[str]:
         """The waiting commits, their files by effect, the interim way to bring them in and what
         the plan below applies (#98 rule 4)."""
-        count = len(self.commits)
-        commits = f"{count} commit{'s' if count != 1 else ''}"
-        lines = [f"{commits} wait on origin {checkout.MAIN}:"]
+        one = len(self.commits) == 1
+        commits = "1 commit" if one else f"{len(self.commits)} commits"
+        lines = [f"{commits} {'waits' if one else 'wait'} on origin {checkout.MAIN}:"]
         lines += [f"  {commit.short} {commit.subject}" for commit in self.commits]
         lines.append("their files, by what an update does with them:")
         by_effect = {effect: [] for effect in Effect}
