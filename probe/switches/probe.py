@@ -326,7 +326,7 @@ class Probe:
         self.edit_traefik_yml()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(
-            "traefik.yml changed; traefik is not running and is not started" in out
+            "traefik: traefik.yml changed; it is not running and is not started" in out
             and NOTHING_TO_CHANGE in out,
             f"apply with traefik stopped said: {out[-200:]}",
         )

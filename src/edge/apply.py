@@ -389,16 +389,18 @@ class CorePhase:
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"
                 observed = (plan.service, *core.dependencies(config, plan.service))
-                if not engine.stays_up(config, observed, self.watch):
-                    down = " or ".join(observed)
-                    return f"{down} is not running after the {plan.service} recreate"
+                if down := engine.down_while_watched(config, observed, self.watch):
+                    verb = "is" if len(down) == 1 else "are"
+                    return (
+                        f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
+                    )
                 progress.step = "prove the barriers"
                 if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
                     return unproven
                 if plan.service in followed:
                     progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
                     self.record.write(plan.service, plan.digests, followed)
-                print(f"{COMMAND}: {plan.recreated()}")
+                print(f"{COMMAND}: {plan.recreated(followed)}")
         except (compose.ComposeError, core.CoreError) as error:
             return f"could not {progress.step}, {error}"
         if recreates and len(recreates) == len(planned.core):

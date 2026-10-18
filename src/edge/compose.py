@@ -144,15 +144,18 @@ class Compose:
         services it depends on are left as they are, and its volumes are kept."""
         self._call("*", "up", ["-d", "--no-deps", "--force-recreate", service], CHANGE_SECONDS)
 
-    def stays_up(self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch) -> bool:
-        """The services are up at every look until the watch is over: a container that dies
-        right after it started and is restarting is not running."""
+    def down_while_watched(
+        self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch
+    ) -> tuple[str, ...]:
+        """The services found not up at the first look before the watch is over that finds one,
+        none when all stay up: a container that dies right after it started and is restarting is
+        not running."""
         deadline = watch.clock() + watch.seconds
-        while is_up(self.states(), config, services):
+        while not (down := not_up(self.states(), config, services)):
             if watch.clock() >= deadline:
-                return True
+                return ()
             watch.sleep(_SETTLE_POLL_SECONDS)
-        return False
+        return down
 
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)
@@ -175,11 +178,21 @@ def is_up(
     states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
 ) -> bool:
     """Every service of the unit has a container: running, or for a one-shot also completed."""
+    return not not_up(states, config, services)
+
+
+def not_up(
+    states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The services without a container that is running, or for a one-shot also completed."""
     one_shots = one_shot_services(config)
-    return all(
-        states.get(name, set())
-        and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
+    return tuple(
+        name
         for name in services
+        if not (
+            states.get(name, set())
+            and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
+        )
     )
 
 

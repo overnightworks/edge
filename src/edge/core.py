@@ -215,12 +215,13 @@ class CorePlan:
 
     def describe(self) -> str:
         if self.action is CoreAction.NOT_STARTED:
-            return f"{self.why}; {self.service} is not running and is not started"
+            return f"{self.service}: {self.why}; it is not running and is not started"
         return f"{self.service}: recreate ({self.why})"
 
-    def recreated(self) -> str:
-        """The success line once the recreate is observed and every barrier is proven."""
-        if self.digests:
+    def recreated(self, followed: Collection[str]) -> str:
+        """The success line once the recreate is observed and every barrier is proven; one for a
+        followed service names the files it runs."""
+        if self.service in followed:
             return f"{self.service} is recreated and runs the checked-out {self.files}"
         return f"{self.service} is recreated"
 
@@ -244,7 +245,9 @@ def plan_core(
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):
         current = digests(file_binds(config["services"][service], checkout), checkout)
-        whys = _own_changes(config, service, labels.get(service, set()), hashes, current, reading)
+        whys = _own_changes(
+            config, service, labels.get(service, set()), hashes, checkout, current, reading
+        )
         left_unstarted = _left_unstarted(config, states, reading, checkout, service)
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
@@ -261,6 +264,7 @@ def _own_changes(
     service: str,
     labels: Collection[str],
     hashes: Mapping[str, str],
+    checkout: Path,
     current: Digests,
     reading: Reading,
 ) -> list[str]:
@@ -269,7 +273,7 @@ def _own_changes(
     whys = []
     if set(labels) - {hashes[service]}:
         whys.append(DEFINITION_CHANGED)
-    if current and (why := _why_changed(current, reading, service)):
+    if follows(config, service, checkout) and (why := _why_changed(current, reading, service)):
         whys.append(why)
     return whys
 

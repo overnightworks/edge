@@ -2119,7 +2119,7 @@ def test_a_changed_traefik_yml_with_no_live_traefik_is_named_and_traefik_is_not_
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert "traefik.yml changed; traefik is not running and is not started" in out
+    assert "traefik: traefik.yml changed; it is not running and is not started" in out
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
     assert scripted.containers.get("traefik") == traefik
@@ -2194,7 +2194,7 @@ def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch,
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
+    assert "partial, traefik is not running after the traefik recreate" in err
     assert applied(state) == UNFINISHED
     assert RECREATED not in out
 
@@ -2210,7 +2210,7 @@ def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_ru
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
+    assert "partial, traefik is not running after the traefik recreate" in err
     assert applied(state) == UNFINISHED
     assert RECREATED not in out
     assert scripted.containers["traefik"] == "restarting"
@@ -2474,7 +2474,7 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_traefik_is_left
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    named = "its compose definition changed; socket-proxy is not running and is not started"
+    named = "socket-proxy: its compose definition changed; it is not running and is not started"
     assert (named in out) is bool(state_of_proxy)
     assert "traefik: recreate" not in out
     assert "nothing to change" in out
@@ -2569,7 +2569,7 @@ def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_aga
     exit_code, out, err = switch()
     assert exit_code == 1
     assert "traefik: recreate (the last recreate did not finish)" in out
-    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
+    assert "partial, socket-proxy is not running after the traefik recreate" in err
     assert CORE_CURRENT not in out
 
 
@@ -2756,7 +2756,10 @@ def test_the_config_hashes_are_read_from_a_real_config_hash_answer():
 
 @pytest.mark.parametrize(
     ("traefik_yml_changed", "why"),
-    [(True, "traefik.yml changed; socket-proxy is recreated"), (False, "socket-proxy is recreated")],
+    [
+        (True, "traefik.yml changed; socket-proxy is recreated"),
+        (False, "socket-proxy is recreated"),
+    ],
 )
 def test_the_core_is_not_current_while_a_changed_core_service_is_not_started(
     traefik_yml_changed, why, applied_core, switch, scripted, repository
@@ -2771,7 +2774,7 @@ def test_the_core_is_not_current_while_a_changed_core_service_is_not_started(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert f"{why}; traefik is not running and is not started" in out
+    assert f"traefik: {why}; it is not running and is not started" in out
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert SOCKET_PROXY_RECREATED in out
     assert CORE_CURRENT not in out

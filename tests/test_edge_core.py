@@ -257,7 +257,7 @@ def test_a_core_service_that_is_not_running_is_named_and_not_started(config, che
 
     [plan] = plan_of(config, checkout, record, {})
 
-    assert plan.describe() == "traefik.yml changed; traefik is not running and is not started"
+    assert plan.describe() == "traefik: traefik.yml changed; it is not running and is not started"
 
 
 def test_the_record_is_written_into_a_new_state_directory_whole(record, tmp_path):
@@ -374,7 +374,7 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothin
     plans = plan_of(config, checkout, recorded, states, {"socket-proxy": STALE})
 
     assert lines(plans) == [
-        "its compose definition changed; socket-proxy is not running and is not started"
+        "socket-proxy: its compose definition changed; it is not running and is not started"
     ]
     assert plans[0].action is core.CoreAction.NOT_STARTED
 
