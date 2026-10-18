@@ -1,0 +1,8 @@
+claim_id = "1218bfbb13ce46c788a041a26b555b6e"
+agent = "claude"
+role = "builder"
+base = "f780ef3577b58a5b6c4b70b20fbff974eac9a5de"
+branch = "claude/issue-98-fetch-and-show"
+scope = ["README.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/checkout.py", "src/edge/core.py", "tests/test_edge_apply.py", "tests/test_edge_checkout.py", "tests/test_edge_core.py"]
+opened_commit = "a21eee6abf27bbaa626df3accfba883311d1eb09"
+whole_reason = "The fetch, the comparison and the shown commits are one read path; split, the plan could pin a sha it never shows or show commits it did not pin."
