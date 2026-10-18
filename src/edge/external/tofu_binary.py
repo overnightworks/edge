@@ -180,15 +180,15 @@ def _stream(release: Release, fetch: Fetch, partial, max_bytes: int) -> str:
     received = 0
     try:
         for chunk in fetch(release.url):
-            if received + len(chunk) > max_bytes:
+            received += len(chunk)
+            digest.update(chunk)
+            if received > max_bytes:
                 raise _download_failure(
                     release,
                     f"exceeds the {max_bytes}-byte download limit",
                     received,
                     digest.hexdigest(),
                 )
-            received += len(chunk)
-            digest.update(chunk)
             partial.write(chunk)
     except (OSError, http.client.HTTPException) as error:
         raise _download_failure(

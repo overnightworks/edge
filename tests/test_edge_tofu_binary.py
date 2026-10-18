@@ -160,14 +160,22 @@ def test_a_network_error_names_the_url_and_both_shas_and_installs_nothing(root):
 
 
 def test_a_download_over_the_size_limit_names_both_shas_and_installs_nothing(root):
-    """#101 T6: a download over the size limit is refused with both shas; nothing is installed."""
+    """#101 T6: a download over the size limit is refused with both shas; nothing is installed.
+
+    The diagnostics count and hash the chunk that crossed the limit, since it was received."""
     archive = pinned_zip()
-    release = release_of(archive)
+    recorded = "0" * 64
 
     with pytest.raises(TofuError, match="limit") as raised:
-        tofu_binary.install(root, release, Download(archive), max_bytes=len(archive) - 1)
+        tofu_binary.install(
+            root,
+            release_of(archive, sha256=recorded),
+            Download(archive),
+            max_bytes=len(archive) - 1,
+        )
 
-    assert_names_the_url_and_both_shas(str(raised.value), release.sha256, half_of(archive))
+    assert_names_the_url_and_both_shas(str(raised.value), recorded, archive)
+    assert f"the {len(archive)} bytes received" in str(raised.value)
     assert tree(root) == set()
 
 
