@@ -1,8 +1,0 @@
-claim_id = "d5b309ca62724880b8318578a922a460"
-agent = "claude"
-role = "builder"
-base = "8d7301a5e731e78f09c05a8e3a97880484514f61"
-branch = "claude/issue-108-k11-sa2-the-songmaker-client-and-apps-so"
-scope = ["README.md", "compose.yaml", "docs/architecture.md", "keycloak/realm.yaml", "probe/keycloak/README.md", "probe/keycloak/compose.probe.yaml", "probe/keycloak/probe.py", "tests/test_keycloak_go_live.py", "tests/test_keycloak_probe.py", "tests/test_keycloak_unit.py"]
-opened_commit = "daa4198ccf32f06dc1ac58b970cb37842409bbb1"
-whole_reason = "One relying party: its realm entry, its secret mount, its probe override and the proof that it behaves; a part alone either cannot import or is unproven."
