@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import secrets_view
+from home_tools import secrets_view, system_step
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
@@ -202,15 +202,27 @@ exit 0
 # The `git` value real uv 0.10.9 wrote to uv-receipt.toml after installing QUALITY_SOURCE's pinned SHA; only the revision follows the pin.
 RECORDED_RECEIPT_GIT = f"https://github.com/overnightworks/quality?rev={QUALITY_SOURCE.rpartition('@')[2]}"
 
-# Writes what `uv tool install` leaves behind: the quality executable and uv's receipt for the pinned source.
+# Writes what `uv tool install` leaves behind for the requirement it is given: the tool's executable and uv's receipt for it.
+# Ansible's executable is a dummy, since the sandbox hands the system step a FakePlaybook instead of running it.
 STUB_UV = """\
 #!/bin/sh
 echo "$@" >> "$STUB_UV_LOG"
 [ -n "$STUB_UV_FAIL" ] && exit 1
-mkdir -p "$HOME/.local/bin" "$HOME/.local/share/uv/tools/overnightworks-quality"
-cp "$STUB_QUALITY" "$HOME/.local/bin/quality" && chmod 755 "$HOME/.local/bin/quality"
-printf '[tool]\\nrequirements = [{ name = "overnightworks-quality", git = "%s" }]\\n' "$STUB_RECEIPT_GIT" \\
-    > "$HOME/.local/share/uv/tools/overnightworks-quality/uv-receipt.toml"
+mkdir -p "$HOME/.local/bin"
+case "$4" in
+ansible-core==*)
+    mkdir -p "$HOME/.local/share/uv/tools/ansible-core"
+    printf '#!/bin/sh\\nexit 1\\n' > "$HOME/.local/bin/ansible-playbook" && chmod 755 "$HOME/.local/bin/ansible-playbook"
+    printf '[tool]\\nrequirements = [{ name = "ansible-core", specifier = "==%s" }]\\n' "${4#ansible-core==}" \\
+        > "$HOME/.local/share/uv/tools/ansible-core/uv-receipt.toml"
+    ;;
+*)
+    mkdir -p "$HOME/.local/share/uv/tools/overnightworks-quality"
+    cp "$STUB_QUALITY" "$HOME/.local/bin/quality" && chmod 755 "$HOME/.local/bin/quality"
+    printf '[tool]\\nrequirements = [{ name = "overnightworks-quality", git = "%s" }]\\n' "$STUB_RECEIPT_GIT" \\
+        > "$HOME/.local/share/uv/tools/overnightworks-quality/uv-receipt.toml"
+    ;;
+esac
 """
 
 
@@ -219,13 +231,42 @@ def _write_executable(path: Path, text: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+class FakePlaybook:
+    """Ansible as the system step sees it: a converging playbook, whose check finds a change until a run has applied it."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.succeeds = True
+        self.applied = False
+
+    def __call__(self, argv: Sequence[str]) -> system_step.PlaybookRun:
+        self.calls.append(list(argv))
+        changed = 0 if self.applied else 1
+        if self.succeeds and "--check" not in argv:
+            self.applied = True
+        return system_step.PlaybookRun(self.succeeds, changed)
+
+
+@dataclass
+class FakeSystem:
+    """The system step's boundaries: a terminal that is there or not, the FakePlaybook, and a fixed operator."""
+
+    playbook: FakePlaybook
+    terminal: bool = True
+
+    @property
+    def boundaries(self) -> system_step.Boundaries:
+        return system_step.Boundaries(lambda: self.terminal, self.playbook, lambda: "operator")
+
+
 @dataclass(frozen=True)
 class Sandbox:
-    """A throwaway HOME whose global git config, `uv` and scanner are stubs; nothing reaches the operator's own."""
+    """A throwaway HOME whose global git config, `uv`, scanner and system step are stubs; nothing reaches the operator's own or sudo."""
 
     home: Path
     global_git_config: Path
     uv_calls: Path
+    system: FakeSystem
 
     @property
     def layout(self) -> Layout:
@@ -256,4 +297,6 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         monkeypatch.setenv(name, value)
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
-    return Sandbox(home, global_git_config, uv_calls)
+    system = FakeSystem(FakePlaybook())
+    monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
+    return Sandbox(home, global_git_config, uv_calls, system)

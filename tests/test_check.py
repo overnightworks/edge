@@ -405,7 +405,7 @@ def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     clean_home, runner, capsys, plant_memory: Callable[[Path], None], refusal: str
 ) -> None:
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True)
+    layout.state_dir.mkdir(parents=True, exist_ok=True)
     plant_memory(layout.check_findings_file)
 
     code = home_check(clean_home, runner)
@@ -418,7 +418,7 @@ def test_a_corrupt_findings_memory_still_leaves_the_report_written(
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 def test_a_symlinked_findings_memory_is_refused_and_never_carried_into_the_state(clean_home, runner, tmp_path) -> None:
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True)
+    layout.state_dir.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside.json"
     outside.write_text('["tidy\\tpasted-images\\tleaked-secret"]')
     layout.check_findings_file.symlink_to(outside)

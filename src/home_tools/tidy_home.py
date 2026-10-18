@@ -255,6 +255,11 @@ class Layout:
         return self.local_dir / "state" / "home"
 
     @property
+    def system_step_record(self) -> Path:
+        """The digest of what the system step rendered at its last verified run; `home next` compares it, never sudo."""
+        return self.state_dir / "system-step.sha256"
+
+    @property
     def tidy_report_file(self) -> Path:
         return self.state_dir / "tidy-report.md"
 
@@ -285,6 +290,19 @@ class Layout:
     @property
     def quality_uv_receipt(self) -> Path:
         return self.data_dir / "uv" / "tools" / "overnightworks-quality" / "uv-receipt.toml"
+
+    @property
+    def ansible_playbook_executable(self) -> Path:
+        return self.local_dir / "bin" / "ansible-playbook"
+
+    @property
+    def ansible_uv_receipt(self) -> Path:
+        return self.data_dir / "uv" / "tools" / "ansible-core" / "uv-receipt.toml"
+
+    @property
+    def edge_tunnel_dir(self) -> Path:
+        """edge's cloudflared unit, its drop-ins and the polkit rule, which the system step installs."""
+        return self.git / "edge" / "tunnel"
 
     @property
     def secrets_report_file(self) -> Path:

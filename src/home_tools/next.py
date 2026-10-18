@@ -62,14 +62,22 @@ def _as_command(text: str) -> str:
     return inner if text != inner and "`" not in inner else text
 
 
+def _setup_apply_step(expected: str, why: str = "") -> OperatorStep:
+    """`home setup --apply` runs every step, so whichever is open, the command asks for sudo in the operator's own window."""
+    asks_for_sudo = setup.APPLY_ASKS_FOR_SUDO
+    return OperatorStep(
+        _as_command(hook_check.SETUP_APPLY),
+        OWN_TERMINAL if asks_for_sudo else ANY_TERMINAL,
+        f"{expected}; it asks once for sudo" if asks_for_sudo else expected,
+        why,
+    )
+
+
 def _setup_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
-    if pending := setup.pending(layout, ports.run):
-        yield OperatorStep(
-            "home setup --apply",
-            ANY_TERMINAL,
-            f"{', '.join(pending)}: geändert",
-            "ohne den Hook prüft kein Commit auf Geheimnisse",
-        )
+    """One `home setup --apply` for every open step."""
+    if pending := setup.pending(layout, ports):
+        changed = f"{', '.join(step.name for step in pending)}: changed"
+        yield _setup_apply_step(changed, "; ".join(dict.fromkeys(step.why for step in pending)))
 
 
 def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
@@ -141,7 +149,11 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
 
 def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     for finding in hook_check.collect_findings(layout, ports.run):
-        yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, f"home check meldet {finding.rule} für {finding.subject} nicht mehr")
+        cleared = f"home check meldet {finding.rule} für {finding.subject} nicht mehr"
+        if finding.fix == hook_check.SETUP_APPLY:
+            yield _setup_apply_step(cleared)
+        else:
+            yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, cleared)
 
 
 def _tidy_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkeeping]:

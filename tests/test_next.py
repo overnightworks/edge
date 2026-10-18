@@ -9,9 +9,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, HOME_README, TEST_MANIFEST, FakeProbe, RunnerWithRealGitAndQuality, Sandbox, symlinked_folder_fix
+from conftest import (
+    FAKE_SECRET_VALUE,
+    HOME_README,
+    TEST_MANIFEST,
+    FakePlaybook,
+    FakeProbe,
+    RunnerWithRealGitAndQuality,
+    Sandbox,
+    symlinked_folder_fix,
+)
 
-from home_tools import cli
+from home_tools import cli, system_step
+from home_tools.tidy_home import Layout
 
 NOW = datetime(2026, 10, 17, 9, 0)
 
@@ -50,8 +60,14 @@ UNREADABLE_SECRETS = "1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: h
 AGENT_SORTS_IT_IN = "Das macht ein Agent: sag „räum home auf“."
 
 SETUP_PENDING = (
-    "1. home setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: geändert",
-    "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+    "1. home setup --apply (eigenes Terminalfenster) — erwartet: quality, Engines, Hook-Dateien, Aktivierung, Ansible, System: changed;"
+    " it asks once for sudo",
+    "   warum: ohne den Hook prüft kein Commit auf Geheimnisse;"
+    " without it the tunnel ignores edge's global stop after a reboot, and only root may stop it",
+)
+SYSTEM_PENDING = (
+    "1. home setup --apply (eigenes Terminalfenster) — erwartet: System: changed; it asks once for sudo",
+    "   warum: without it the tunnel ignores edge's global stop after a reboot, and only root may stop it",
 )
 
 
@@ -495,3 +511,127 @@ def test_the_symlink_step_run_as_printed_leaves_a_real_folder_and_the_step_goes(
     assert place.is_dir()
     assert sorted(path.name for path in place.iterdir()) == (["kept"] if target_exists else [])
     assert not [line for line in home_next(home, probe, capsys)[1] if "symlinked-folder" in line]
+
+
+# --- the system step (#40, E2): `home next` reads its record and never asks for sudo ---
+
+
+def edge_tunnel_file(home: Path) -> Path:
+    path = Layout(home).edge_tunnel_dir / "cloudflared.service"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def setup_step(lines: list[str]) -> list[str]:
+    """The `home setup --apply` step and its why, without its number."""
+    index = next(index for index, line in enumerate(lines) if ". home setup --apply" in line)
+    return [lines[index].split(". ", 1)[1], lines[index + 1]]
+
+
+def test_before_any_verified_run_the_system_step_shows_and_neither_ansible_nor_sudo_runs(
+    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys
+) -> None:
+    """Cell 14: the step and its sudo note show from the record alone; no playbook and no sudo is started."""
+    runner = RunnerWithRealGitAndQuality()
+    cli.main(["next"], home=home, run=runner, probe=probe, now=NOW)
+
+    assert capsys.readouterr().out.splitlines()[:2] == list(SETUP_PENDING)
+    assert sandbox.system.playbook.calls == []
+    assert [call for call in runner.calls if Path(call[0]).name in {"sudo", "ansible-playbook"}] == []
+
+
+@pytest.mark.usefixtures("hook_installed")
+def test_after_a_verified_apply_there_is_no_system_step(home: Path, probe: FakeProbe, capsys) -> None:
+    """Cell 15."""
+    assert home_next(home, probe, capsys) == (0, ["Nichts zu tun."])
+
+
+@pytest.mark.usefixtures("hook_installed")
+def test_with_only_a_local_step_open_after_a_verified_system_run_the_step_still_asks_for_sudo_in_your_own_window(
+    home: Path, probe: FakeProbe, capsys
+) -> None:
+    """E2 'its line says that the step asks once for sudo': `--apply` always runs the system step, so a damaged hook file needs it too."""
+    (Layout(home).git_hooks_dir / "pre-commit").write_text("#!/bin/sh\n")
+
+    assert home_next(home, probe, capsys) == (
+        0,
+        [
+            "1. home setup --apply (eigenes Terminalfenster) — erwartet: Hook-Dateien: changed; it asks once for sudo",
+            "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+        ],
+    )
+
+
+@pytest.mark.usefixtures("hook_installed")
+def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_window_when_setup_is_unreadable(
+    home: Path, probe: FakeProbe, capsys
+) -> None:
+    """E2 'its line says that the step asks once for sudo': the hook check's `home setup --apply` says so on its own too."""
+    hook = Layout(home).git_hooks_dir / "pre-commit"
+    hook.write_text("#!/bin/sh\n")
+
+    def refusing_operator() -> str:
+        raise ValueError("no passwd entry for the running user")
+
+    unreadable_setup = system_step.Boundaries(lambda: True, FakePlaybook(), refusing_operator)
+    code = cli.main(["next"], home=home, run=RunnerWithRealGitAndQuality(), probe=probe, now=NOW, system_boundaries=unreadable_setup)
+
+    assert (code, capsys.readouterr().out.splitlines()) == (
+        0,
+        [
+            "1. konnte den Stand von home setup nicht lesen; den Fehler zeigt: home setup",
+            f"2. home setup --apply (eigenes Terminalfenster) — erwartet: home check meldet hook-file für {hook} nicht mehr; "
+            "it asks once for sudo",
+        ],
+    )
+
+
+@pytest.mark.usefixtures("hook_installed")
+def test_a_hook_finding_with_its_own_fix_is_any_terminal_and_does_not_say_it_asks_for_sudo(
+    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys
+) -> None:
+    """E2 'its line says that the step asks once for sudo': only `home setup --apply` does, not a hook finding's other fix."""
+    repository = home / "git" / "project"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+
+    assert home_next(home, probe, capsys) == (
+        0,
+        [
+            f"1. {sandbox.global_git_config} bearbeiten und die Zeile core.hooksPath (oder das include) entfernen (beliebiges Terminal)"
+            f" — erwartet: home check meldet hooks-path für {repository} nicht mehr",
+        ],
+    )
+
+
+@pytest.mark.parametrize("change", ["edited file", "new file"])
+def test_a_changed_tunnel_file_in_edge_brings_the_system_step_back(
+    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys, change: str
+) -> None:
+    """Cell 16: the record holds what was rendered, so a change in edge's `tunnel/` shows the step again, sudo-free."""
+    edge_tunnel_file(home).write_text("[Unit]\n")
+    assert cli.main(["setup", "--apply"], home=home) == 0
+    capsys.readouterr()
+    if change == "edited file":
+        edge_tunnel_file(home).write_text("[Unit]\nDescription=cloudflared\n")
+    else:
+        (edge_tunnel_file(home).parent / "cloudflared.service.d").mkdir()
+        (edge_tunnel_file(home).parent / "cloudflared.service.d" / "40-new.conf").write_text("[Service]\n")
+
+    _code, lines = home_next(home, probe, capsys)
+
+    assert setup_step(lines) == setup_step(list(SYSTEM_PENDING))
+    assert [argv for argv in sandbox.system.playbook.calls if "--check" in argv] == []
+
+
+@pytest.mark.parametrize("verified_before", [False, True], ids=["never verified", "verified earlier"])
+def test_a_failed_ansible_run_leaves_no_verified_record_and_the_system_step_stays(
+    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys, verified_before: bool
+) -> None:
+    """Cell 17 and rule 7: only a run Ansible reports as successful is recorded, and a failed apply withdraws an earlier record."""
+    if verified_before:
+        assert cli.main(["setup", "--apply"], home=home) == 0
+    sandbox.system.playbook.succeeds = False
+    assert cli.main(["setup", "--apply"], home=home) == 1
+    capsys.readouterr()
+
+    assert home_next(home, probe, capsys) == (0, list(SYSTEM_PENDING))

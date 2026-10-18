@@ -25,8 +25,8 @@ Schlusszeile:
 ```
 1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
-3. home setup --apply (beliebiges Terminal) — erwartet: Aktivierung: geändert
-   warum: ohne den Hook prüft kein Commit auf Geheimnisse
+3. home setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
+   warum: ohne den Hook prüft kein Commit auf Geheimnisse; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
 Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. Das macht ein Agent: sag „räum home auf“.
 ```
 
@@ -394,9 +394,12 @@ installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
 
 ## home setup
 
-Richtet den globalen Commit-Hook gegen Geheimnisse ein. `home setup` zeigt nur,
-was es ändern würde; `home setup --apply` führt es der Reihe nach aus und hält
-beim ersten Fehler an, mit dem Namen des Schritts:
+Richtet den globalen Commit-Hook gegen Geheimnisse ein.
+Then it runs the system step.
+`home setup` zeigt nur, was es ändern würde; `home setup --apply` führt es der
+Reihe nach aus und hält beim ersten Fehler an, mit dem Namen des Schritts.
+The activation comes before the system step, so a wrong sudo password never
+keeps the commit hook from being active:
 
 1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
    `src/home_tools/setup.py`, einem Commit-SHA von overnightworks/quality (ein
@@ -410,11 +413,19 @@ beim ersten Fehler an, mit dem Namen des Schritts:
    Inhalt, der abweicht, ein verlorenes Ausführungsrecht oder ein anderer Modus als 755 wird
    repariert.
 4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
-   Verzeichnis, zuletzt: ein Fehler davor aktiviert nie einen Hook, dessen
-   Scanner fehlt.
+   Verzeichnis. It comes after the three steps above, so a failure in one of
+   them never activates a hook whose scanner is missing.
+5. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
+   `src/home_tools/setup.py`, a pinned `ansible-core`; like quality, it runs
+   again when `~/.local/bin/ansible-playbook` is missing or uv recorded
+   another version.
+6. **System.** The playbook `src/home_tools/system/playbook.yml` installs
+   edge's files from `~/git/edge/tunnel/`, see below. It asks once for sudo.
 
-Jeder Schritt meldet `geändert` oder `unverändert`; ein zweites `--apply` ändert
-nichts und lädt nichts. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
+Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
+`would change` or `unchanged`, and the system step also `not checked (needs
+sudo at a terminal)`, or `not checked (needs Ansible, …)` before the Ansible
+step has installed it. A second `--apply` changes nothing and downloads nothing. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
 `.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
@@ -422,6 +433,57 @@ Dateien stagen kann. Exit `0` heißt sauber, `1` ein Geheimnis gefunden, `2` nic
 beurteilbar; jeder Wert ungleich `0` bricht den Commit ab. Fehlt `quality`,
 bleibt der Commit gesperrt, bis `home setup --apply` es wieder einrichtet. Das
 ist gewollt.
+
+### The system step
+
+edge ships the tunnel's files in `tunnel/`; the system step copies them, with
+their placeholders filled, to:
+
+- `/etc/systemd/system/cloudflared.service`, the clean base unit;
+- `/etc/systemd/system/cloudflared.service.d/20-nonroot.conf` and
+  `30-edge-global-stop.conf`, so the tunnel stays down after a reboot while
+  `~/.local/state/edge/global-stop` exists;
+- `/etc/polkit-1/rules.d/10-edge-cloudflared-stop.rules`, so you may *stop*
+  `cloudflared.service` without a password, and only stop.
+
+All four are root-owned, mode 644. `@HOME@` and `@OPERATOR_USER@` are your
+home and your user; `@TUNNEL_ID@` is `tunnel:` in `/etc/cloudflared/config.yml`,
+and without it the step fails before writing anything. Once the new base unit
+is in place, `10-root-binary.conf` is deleted. A change ends in one
+`systemctl daemon-reload`; cloudflared is never started, stopped or restarted.
+Whatever is replaced or deleted is copied first to
+`/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`.
+
+- **sudo.** At a terminal, both `home setup` (Ansible's `--check --diff`) and
+  `home setup --apply` ask once for the sudo password. Without a terminal,
+  the dry run says `System: not checked (needs sudo at a terminal)` and
+  `--apply` refuses the step and names the command; neither waits for a prompt.
+- **home next.** After a verified run (an `--apply`, or a dry run at a
+  terminal that says `unchanged`), the step records a digest of edge's files
+  and the filled-in values in `~/.local/state/home/system-step.sha256`.
+  `home next` compares only that record, so it never asks for sudo: it shows
+  the step until a verified run, and again when edge's files or the values
+  change. A hand edit in `/etc`, or a new tunnel id, only `home setup` at a
+  terminal sees.
+- **Rollback.** Restore the previous `cloudflared.service`,
+  `10-root-binary.conf` and `20-nonroot.conf` from the backup (their content
+  before the first run is in the inventory of #9). Restore
+  `30-edge-global-stop.conf` from the backup too, or remove it when the backup
+  has none, because the step created it; until then the global-stop condition
+  stays in force. Then run `sudo systemctl daemon-reload`, and remove
+  `/etc/polkit-1/rules.d/10-edge-cloudflared-stop.rules`.
+- **A failed `--apply`.** Files are copied in the order above, so some may already be in place, and
+  `10-root-binary.conf` is deleted only after all four are. The `daemon-reload` handler does not run
+  after a failure, so systemd still runs its old configuration. Two cases:
+  - A failure while copying leaves some files in place and `10-root-binary.conf` still there. Run
+    `home setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
+  - A failure in the reload itself leaves every file in place, `10-root-binary.conf` already deleted
+    and systemd not reloaded. A retry then finds nothing to change, reports unchanged and does not
+    reload. Run `sudo systemctl daemon-reload` once and check that it succeeds.
+
+  Or roll back as described.
+- **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
+  the step in a throwaway systemd container, never on this PC.
 
 ### Was der Hook nicht garantiert
 

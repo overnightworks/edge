@@ -69,7 +69,7 @@ def test_an_unreadable_config_exits_2(clean_home, runner, capsys: pytest.Capture
     assert capsys.readouterr().err.startswith("home: ")
 
 
-@pytest.mark.parametrize("argv", [["--help"], ["tidy", "--help"], ["check", "--help"]])
+@pytest.mark.parametrize("argv", [["--help"], ["tidy", "--help"], ["check", "--help"], ["setup", "--help"]])
 def test_help_shows_german_examples(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         cli.main(argv)

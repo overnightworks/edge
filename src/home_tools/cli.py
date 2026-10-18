@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from home_tools import check, secrets_setup, secrets_view, setup, tidy_home
+from home_tools import check, secrets_setup, secrets_view, setup, system_step, tidy_home
 from home_tools import next as next_steps
 from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
@@ -24,6 +24,7 @@ class Ports:
     probe: ExitCodeProbe
     secrets_setup: Boundaries
     now: datetime
+    system: system_step.Boundaries
 
 
 SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
@@ -37,8 +38,8 @@ Beispiele:
   home tidy --apply    räumt die clean-Funde weg
   home secrets         zeigt jedes Geheimnis, nie einen Wert
   home secrets --setup führt am Terminal durch jedes fehlende Geheimnis
-  home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht
-  home setup --apply   richtet quality, die Engines und den Hook ein
+  home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht; at a terminal it asks once for sudo
+  home setup --apply   richtet quality, die Engines und den Hook ein, then the system step (asks once for sudo)
   home <befehl> --help Einzelheiten zu einem Befehl
 
 Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository home-tools.
@@ -81,6 +82,7 @@ def main(
     probe: ExitCodeProbe = probe_exit_code,
     now: datetime | None = None,
     secrets_setup_boundaries: Boundaries = TERMINAL_BOUNDARIES,
+    system_boundaries: system_step.Boundaries | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
     layout = Layout(home or Path.home())
@@ -92,7 +94,9 @@ def main(
         return 2
     # Exit 1 means "findings" and the timer counts it as success, so a crash must end with its own code.
     try:
-        return args.handler(args, layout, config, Ports(run, probe, secrets_setup_boundaries, now or datetime.now()))
+        # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
+        system = system_boundaries or system_step.TERMINAL_BOUNDARIES
+        return args.handler(args, layout, config, Ports(run, probe, secrets_setup_boundaries, now or datetime.now(), system))
     except secrets_view.ManifestError as error:
         print(f"home: {error}", file=sys.stderr)
         return 2
