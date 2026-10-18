@@ -1,0 +1,8 @@
+claim_id = "3de453e2616c4b5e9fffb528fb5a81d5"
+agent = "claude"
+role = "builder"
+base = "57cc06b44511bf35ed3c5583345b6ac0251af76c"
+branch = "claude/issue-129-l4-go-live-creates-the-admin"
+scope = ["README.md", "docs/architecture.md", "keycloak/go-live", "probe/keycloak/README.md", "probe/keycloak/probe.py", "tests/test_keycloak_go_live.py", "tests/test_keycloak_probe.py"]
+opened_commit = "5e6403f1c7418c0221e55f9c2540667df970d4d5"
+whole_reason = "One path: the typed password, the user it creates, the proof of both factors that gates temp-admin's deletion, and the probe that shows a real Keycloak accepts it. A part alone leaves an unproven secret path or a retire check that no longer matches the browser step."
