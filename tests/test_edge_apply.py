@@ -2152,15 +2152,19 @@ def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_ru
 def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recreates_again(
     core_files, switch, scripted, repository, state, ingress
 ):
-    """#85 rule 5, S9, cell U9: partial naming the unit, record unfinished, the next run plans
-    again."""
+    """#85 rule 5, S9, cell U9: partial naming the unit, that it may be reachable, and the
+    emergency stop; record unfinished, the next run plans again."""
     probe_switched_off(scripted, repository, state)
     ingress.rejecting = True
 
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "partial, the barrier of probe is not proven after the traefik recreate" in err
+    assert "partial, the barrier of probe is not proven after the traefik recreate (" in err
+    assert (
+        "): probe may be reachable through Traefik; to close the tunnel now: edge stop --all; "
+        "no unit switched" in err
+    )
     assert applied(state) == UNFINISHED
     assert RECREATED not in out
     ingress.rejecting = False

@@ -24,6 +24,9 @@ from typing import Any
 from edge import barrier, catalog, checkout, compose, core, setup, switches, terminal
 
 COMMAND = "edge apply --closed"
+# The emergency command's name; `emergency` owns the verb but imports this module, so it
+# cannot be imported here.
+EMERGENCY_STOP = "edge stop --all"
 
 
 class ApplyExit(IntEnum):
@@ -397,7 +400,8 @@ class CorePhase:
                 case barrier.Unproven(unit, failure):
                     return (
                         f"the barrier of {unit} is not proven after the {service} recreate "
-                        f"({failure})"
+                        f"({failure}): {unit} may be reachable through Traefik; to close the "
+                        f"tunnel now: {EMERGENCY_STOP}"
                     )
         return None
 
