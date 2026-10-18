@@ -1080,7 +1080,8 @@ included), in any compose, apply or service log output, or in its own output
 (7), the realm settings as decided, with admin events that carry no client
 representation (8), and songmaker's client: a PKCE sign-in with the scratch secret
 that ends in an ID token with the group `/apps/songmaker/admin`, an exact
-callback, the password grant and `client_credentials` refused, and an end-session
+callback, the password grant, `client_credentials` and the `offline_access` scope refused (the client has
+no optional scope), and an end-session
 page for `/login` only (10). Proof 7 also looks for the songmaker secret and its
 tokens.
 
