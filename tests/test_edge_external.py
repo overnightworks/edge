@@ -662,7 +662,7 @@ def git_exiting_128(tree, arguments, profile):
         pytest.param(lambda live, _tmp: live, checkout.run_git, 42, "", id="E7-clean-main"),
     ],
 )  # fmt: skip
-def test_apply_command_asks_the_tree_after_the_terminal_and_before_the_tokens(
+def test_apply_command_refuses_off_a_clean_live_main_in_process(
     home,
     fake_tofu,
     capsys,
