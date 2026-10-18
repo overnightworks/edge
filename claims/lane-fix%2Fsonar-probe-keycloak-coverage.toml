@@ -1,0 +1,7 @@
+claim_id = "e05b0658126e44cab70e0a7c178467cd"
+agent = "claude"
+role = "builder"
+base = "578eb9b4f76371428bacd37aabead1fb5d3eada8"
+branch = "fix/sonar-probe-keycloak-coverage"
+scope = ["sonar-project.properties"]
+opened_commit = "d7c41e9f5475b030ea505c62be9d112a18870601"
