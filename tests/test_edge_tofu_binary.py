@@ -1,10 +1,13 @@
 """`tofu_binary`: edge installs only the pinned tofu whose download matches its recorded sha256."""
 
+import email.message
 import hashlib
 import http.client
 import io
 import os
 import tomllib
+import urllib.request
+import urllib.response
 import zipfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -306,3 +309,61 @@ def test_the_committed_pins_cover_the_pinned_version_on_linux_amd64():
 
     assert release.url.startswith("https://github.com/opentofu/opentofu/releases/download/")
     assert len(release.sha256) == 64
+
+
+def pins_without_url() -> str:
+    platform_sha = f'{tofu_binary.current_platform()} = "ab"'
+    return f'[versions."{tofu.pinned_version()}"]\nsha256 = {{ {platform_sha} }}\n'
+
+
+@pytest.mark.parametrize(
+    ("pins", "missing"),
+    [
+        (None, "is missing"),
+        ("[versions\n", "is not valid TOML"),
+        (pins_without_url(), f"has no url for OpenTofu {tofu.pinned_version()}"),
+    ],
+    ids=["no-pins-file", "malformed-pins-file", "entry-without-url"],
+)
+def test_a_pins_file_it_cannot_use_fails_naming_it_without_a_traceback(
+    tmp_path, monkeypatch, capsys, pins, missing
+):
+    """#101 rule 1: a missing or malformed pins file, or an entry without url, names the file."""
+    pins_file = tmp_path / "external" / "opentofu.toml"
+    if pins is not None:
+        pins_file.parent.mkdir()
+        pins_file.write_text(pins)
+    monkeypatch.setattr(tofu_binary, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(tofu_binary, "PINS_FILE", pins_file)
+
+    exit_code = tofu_binary.main([str(tmp_path / "opentofu")])
+
+    error = capsys.readouterr().err
+    assert exit_code == 2
+    assert "external/opentofu.toml" in error
+    assert missing in error
+
+
+def redirect_to(location: str) -> Callable:
+    def https_open(_handler, request) -> urllib.response.addinfourl:
+        headers = email.message.Message()
+        headers["Location"] = location
+        response = urllib.response.addinfourl(io.BytesIO(b""), headers, request.full_url, 302)
+        response.msg = "Found"
+        return response
+
+    return https_open
+
+
+def test_a_redirect_off_https_names_both_urls_and_the_expected_sha(root, monkeypatch):
+    """#101 rule 2 Failure: a redirect to plain http names both URLs and the expected sha."""
+    plain = "http://downloads.invalid/tofu.zip"
+    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", redirect_to(plain))
+    release = release_of(pinned_zip())
+
+    with pytest.raises(TofuError) as raised:
+        tofu_binary.install(root, release, tofu_binary.fetch_https)
+
+    assert_names_the_url_and_both_shas(str(raised.value), release.sha256, b"")
+    assert plain in str(raised.value)
+    assert tree(root) == set()

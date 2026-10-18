@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import tomllib
+import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator
@@ -61,7 +62,10 @@ def release_for(pins: dict, version: str, platform_name: str) -> Release:
     sha256 = entry.get("sha256", {}).get(platform_name)
     if sha256 is None:
         raise TofuError(f"{_pins_name()} has no sha256 for {platform_name} of OpenTofu {version}")
-    url = entry["url"].format(version=version, platform=platform_name)
+    url_template = entry.get("url")
+    if url_template is None:
+        raise TofuError(f"{_pins_name()} has no url for OpenTofu {version}")
+    url = url_template.format(version=version, platform=platform_name)
     return Release(version=version, url=url, sha256=sha256)
 
 
@@ -73,7 +77,8 @@ def current_platform() -> str:
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not newurl.startswith("https://"):
-            raise TofuError(f"{req.full_url} redirects to {newurl}, which is not https")
+            # An OSError, so the download failure names the expected sha like every other one.
+            raise urllib.error.URLError(f"redirects to {newurl}, which is not https")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -88,8 +93,16 @@ def fetch_https(url: str) -> Iterator[bytes]:
 
 def ensure(root: Path, fetch: Fetch = fetch_https) -> Path:
     """The pinned tofu under `root`, downloaded and verified first when it is not there yet."""
-    pins = tomllib.loads(PINS_FILE.read_text())
-    return install(root, release_for(pins, pinned_version(), current_platform()), fetch)
+    return install(root, release_for(_read_pins(), pinned_version(), current_platform()), fetch)
+
+
+def _read_pins() -> dict:
+    try:
+        return tomllib.loads(PINS_FILE.read_text())
+    except FileNotFoundError:
+        raise TofuError(f"{_pins_name()} is missing") from None
+    except tomllib.TOMLDecodeError as error:
+        raise TofuError(f"{_pins_name()} is not valid TOML: {error}") from error
 
 
 def install(
