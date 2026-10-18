@@ -24,7 +24,7 @@ other tree it would bind the live compose project to that tree, so it refuses th
 """
 
 import sys
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -157,16 +157,24 @@ def plan_kept_images(
     live = [container for container in containers if container.live]
     kept: dict[KeptImage, None] = {}
     for unit in units:
-        if unit.key in planned_off:
-            continue
-        for service in profile_services[unit.key]:
-            configured = config["services"][service].get("image")
-            if service in followers or configured is None:
-                continue
-            for running in _running_images(service, live):
-                if running != configured:
-                    kept[KeptImage(unit.key, service, running, configured)] = None
+        if unit.key not in planned_off:
+            services = [
+                service for service in profile_services[unit.key] if service not in followers
+            ]
+            kept.update(dict.fromkeys(_kept_images_of(unit.key, services, config, live)))
     return list(kept)
+
+
+def _kept_images_of(
+    unit: str, services: Sequence[str], config: Mapping[str, Any], live: Sequence[compose.Container]
+) -> Iterator[KeptImage]:
+    for service in services:
+        configured = config["services"][service].get("image")
+        if configured is None:
+            continue
+        for running in _running_images(service, live):
+            if running != configured:
+                yield KeptImage(unit, service, running, configured)
 
 
 def _running_images(service: str, live: Sequence[compose.Container]) -> list[str]:
