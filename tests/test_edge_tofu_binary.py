@@ -82,8 +82,8 @@ def root(tmp_path) -> Path:
     return tmp_path / "opentofu"
 
 
-def test_an_empty_root_gets_the_verified_binary_at_0755(root):
-    """#101 T1: an empty root gets the verified binary at 0755."""
+def test_an_empty_root_gets_the_verified_binary_runnable_by_its_owner_only(root):
+    """#101 T1: an empty root gets the verified binary at 0700, runnable by its owner only."""
     archive = pinned_zip()
     download = Download(archive)
 
@@ -91,7 +91,7 @@ def test_an_empty_root_gets_the_verified_binary_at_0755(root):
 
     assert installed == root / tofu.pinned_version() / "tofu"
     assert download.urls == [URL]
-    assert installed.stat().st_mode & 0o777 == 0o755
+    assert installed.stat().st_mode & 0o777 == 0o700
     assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
 
 

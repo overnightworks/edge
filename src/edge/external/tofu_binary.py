@@ -231,7 +231,7 @@ def _write_executable(archive: Path, target: Path, url: str) -> None:
             raise TofuError(f"{url} has no member {_MEMBER}") from None
         with member, target.open("xb") as binary:
             shutil.copyfileobj(member, binary, _CHUNK_BYTES)
-            os.fchmod(binary.fileno(), 0o755)
+            os.fchmod(binary.fileno(), 0o700)  # only its owner runs it
             binary.flush()
             os.fsync(binary.fileno())
     _fsync_directory(target.parent)
