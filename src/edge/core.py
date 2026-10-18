@@ -432,13 +432,13 @@ def _dependents(config: Mapping[str, Any], service: str) -> set[str]:
 
 
 def _config_hash_labels(
-    containers: Iterable[compose.Container], core: Collection[str]
+    containers: Iterable[compose.Container], services: Collection[str]
 ) -> dict[str, set[str]]:
-    """The definition hash labels of each core service's containers; one without is an error,
+    """The definition hash labels of each named service's containers; one without is an error,
     because without it every run would see a change (P15)."""
     labels: dict[str, set[str]] = {}
     for container in containers:
-        if container.service not in core:
+        if container.service not in services:
             continue
         if container.config_hash is None:
             raise CoreError(
