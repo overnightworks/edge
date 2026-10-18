@@ -99,9 +99,9 @@ class Record:
         try:
             entries = json.loads(text)
         except ValueError:
-            entries = None
-        if not _is_record(entries):
-            return Reading({}, f"{APPLIED_FILE} is malformed")
+            return Reading({}, f"{self.path} is malformed: it is not JSON")
+        if why := _malformation(entries):
+            return Reading({}, f"{self.path} is malformed: {why}")
         return Reading(entries)
 
     def mark_unfinished(self, service: str) -> None:
@@ -121,12 +121,17 @@ class Record:
             raise CoreError(f"cannot write {self.path} ({error.strerror})") from error
 
 
-def _is_record(entries: object) -> bool:
-    return isinstance(entries, dict) and all(
-        isinstance(entry, dict)
-        and all(isinstance(name, str) and isinstance(digest, str) for name, digest in entry.items())
-        for entry in entries.values()
-    )
+def _malformation(entries: object) -> str | None:
+    """Why the parsed record is not services mapped to file digests; None when it is."""
+    if not isinstance(entries, dict):
+        return "it is not an object of services"
+    for service, entry in entries.items():
+        if not isinstance(entry, dict):
+            return f"the {service} entry is not an object of files"
+        for name, digest in entry.items():
+            if not isinstance(digest, str):
+                return f"{name} of {service} is not a digest string"
+    return None
 
 
 class CoreAction(StrEnum):

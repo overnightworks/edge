@@ -2011,8 +2011,11 @@ def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
 @pytest.mark.parametrize(
     ("record", "why"),
     [
-        ("not json", "applied.json is malformed"),
-        ('{"traefik": ["traefik.yml"]}', "applied.json is malformed"),
+        ("not json", "RECORD is malformed: it is not JSON"),
+        (
+            '{"traefik": ["traefik.yml"]}',
+            "RECORD is malformed: the traefik entry is not an object of files",
+        ),
         ('{"socket-proxy": {}}', "traefik.yml has no applied record"),
         (
             '{"traefik": {"traefik.yml": "DIGEST", "old.yml": "DIGEST"}}',
@@ -2031,7 +2034,7 @@ def test_a_record_that_cannot_be_trusted_counts_as_changed(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert f"traefik: recreate ({why})" in out
+    assert f"traefik: recreate ({why.replace('RECORD', str(state / 'applied.json'))})" in out
     assert RECREATE_TRAEFIK in scripted.calls
     assert applied(state)["traefik"] == {"traefik.yml": digest}
 

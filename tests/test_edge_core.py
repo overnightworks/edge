@@ -144,8 +144,13 @@ def write_record(record: core.Record, content: str) -> None:
     [
         (None, "traefik.yml has no applied record"),
         ("{}", "traefik.yml has no applied record"),
-        ("not json", "applied.json is malformed"),
-        ('{"traefik": "abc"}', "applied.json is malformed"),
+        ("not json", "RECORD is malformed: it is not JSON"),
+        ("[]", "RECORD is malformed: it is not an object of services"),
+        ('{"traefik": "abc"}', "RECORD is malformed: the traefik entry is not an object of files"),
+        (
+            '{"traefik": {"traefik.yml": 1}}',
+            "RECORD is malformed: traefik.yml of traefik is not a digest string",
+        ),
         ('{"traefik": {"traefik.yml": "0000"}}', "traefik.yml changed"),
         ('{"traefik": {"old.yml": "0000"}}', "traefik.yml has no applied record"),
     ],
@@ -159,7 +164,7 @@ def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
 
     [plan] = core.plan_core(config, {"traefik": {"running"}}, checkout, record)
 
-    assert plan.describe() == f"traefik: recreate ({why})"
+    assert plan.describe() == f"traefik: recreate ({why.replace('RECORD', str(record.path))})"
     assert plan.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
 
 
