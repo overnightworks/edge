@@ -29,6 +29,17 @@ def write_tree(tmp_path: Path, files: dict[str, str]) -> Path:
 
 COMMENTED_MOCK = '# mock_provider "github" {}\nmock_provider "cloudflare" {}\n'
 ALIASED_MOCK = 'mock_provider "github" {\n  alias = "fake"\n}\nmock_provider "cloudflare" {}\n'
+LATE_ALIAS = (
+    'mock_provider "github" {\n  mock_data "github_user" {}\n  alias = "fake"\n}\n'
+    'mock_provider "cloudflare" {}\n'
+)
+ALIASED_REAL_PROVIDER = (
+    MOCKS + 'provider "github" {\n  alias = "real"\n}\n'
+    'run "r" {\n  providers = {\n    github = github.real\n  }\n}\n'
+)
+REAL_PROVIDER = MOCKS + 'provider "github" {\n  owner = "edge-fixture.invalid"\n}\n'
+HELPER_PROVIDER = 'provider "github" {}\n'
+OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
 
 
 @pytest.mark.parametrize(
@@ -37,7 +48,16 @@ ALIASED_MOCK = 'mock_provider "github" {\n  alias = "fake"\n}\nmock_provider "cl
         ({"tests/a.tftest.hcl": 'mock_provider "cloudflare" {}\n'}, "a.tftest.hcl", "github"),
         ({"tests/a.tftest.hcl": 'mock_provider "github" {}\n'}, "a.tftest.hcl", "cloudflare"),
         ({"tests/a.tftest.hcl": COMMENTED_MOCK}, "a.tftest.hcl", "github"),
-        ({"tests/a.tftest.hcl": ALIASED_MOCK}, "a.tftest.hcl", "github"),
+        ({"tests/a.tftest.hcl": ALIASED_MOCK}, "a.tftest.hcl", "alias"),
+        ({"tests/a.tftest.hcl": LATE_ALIAS}, "a.tftest.hcl", "alias"),
+        ({"tests/a.tftest.hcl": ALIASED_REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
+        ({"tests/a.tftest.hcl": REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
+        ({"tests/a.tftest.hcl": OUTSIDE_MODULE}, "a.tftest.hcl", "loads a module"),
+        (
+            {"tests/helper/main.tf": HELPER_PROVIDER, "tests/a.tftest.hcl": MOCKS},
+            "main.tf",
+            "real provider",
+        ),
         (
             {"tests/a.tftest.hcl": MOCKS, "tests/fixtures/org.yaml": "org: OvernightWorks"},
             "org.yaml",
@@ -54,6 +74,9 @@ ALIASED_MOCK = 'mock_provider "github" {\n  alias = "fake"\n}\nmock_provider "cl
     ],
     ids=[
         "no github mock", "no cloudflare mock", "commented mock", "aliased mock",
+        "alias after a nested block",
+        "aliased real provider", "real provider beside the mocks", "module outside tests",
+        "provider in a helper module",
         "live org in a fixture", "live zone in a test",
         "test in the root folder", "tofutest form", "json form",
     ],
@@ -62,9 +85,9 @@ def test_refuses_a_test_that_could_reach_a_live_account(tmp_path, files, named_f
     """#123 S3/S4: no test file tofu runs may reach a live account."""
     problems = tofu_test.refusals(write_tree(tmp_path, files))
 
-    assert len(problems) == 1
-    assert named_file in problems[0]
-    assert named_reason in problems[0]
+    assert problems
+    assert all(named_file in problem for problem in problems)
+    assert any(named_reason in problem for problem in problems)
 
 
 def test_accepts_mocked_tests_with_fixture_names(tmp_path):

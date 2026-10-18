@@ -37,11 +37,16 @@ def live_names(fleet_file: Path = FLEET_FILE) -> tuple[str, str]:
     return fleet["github"]["org"].lower(), fleet["cloudflare"]["zone"].lower()
 
 
-def _unaliased_mock(provider: str, content: str) -> bool:
-    """A mock with an alias would leave the real default provider in place."""
-    return (
-        re.search(rf'^mock_provider "{provider}" \{{(?![^}}]*\balias\b)', content, re.M) is not None
-    )
+def _mocks(provider: str, content: str) -> bool:
+    return re.search(rf'^mock_provider "{provider}" \{{', content, re.M) is not None
+
+
+# Each of these could put a real, unmocked provider in a test's reach.
+FORBIDDEN_IN_TESTS = (
+    (re.compile(r'^\s*provider "', re.M), "configures a real provider"),
+    (re.compile(r"\balias\b"), "uses an alias, which can select a provider that is not mocked"),
+    (re.compile(r"^\s*module\b", re.M), "loads a module, which may carry its own provider"),
+)
 
 
 def _is_tofu_test_file(path: Path) -> bool:
@@ -62,6 +67,12 @@ def refusals(external_directory: Path) -> list[str]:
     tests_directory = external_directory / TESTS_FOLDER
     for path in _files_to_guard(external_directory):
         content = path.read_text()
+        if path.is_relative_to(tests_directory):
+            found += [
+                f"{path} {reason}"
+                for pattern, reason in FORBIDDEN_IN_TESTS
+                if pattern.search(content)
+            ]
         if _is_tofu_test_file(path):
             if path.parent != tests_directory or not path.match(ACCEPTED_TEST_FILE):
                 found.append(
@@ -69,9 +80,9 @@ def refusals(external_directory: Path) -> list[str]:
                 )
             else:
                 found += [
-                    f"{path} does not mock_provider {provider!r} without an alias"
+                    f"{path} does not mock_provider {provider!r}"
                     for provider in MOCKED_PROVIDERS
-                    if not _unaliased_mock(provider, content)
+                    if not _mocks(provider, content)
                 ]
         found += [f"{path} names the live {name!r}" for name in names if name in content.lower()]
     return found
