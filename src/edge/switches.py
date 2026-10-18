@@ -123,7 +123,7 @@ class Switches:
         first = recorded.since if recorded and recorded.since != UNKNOWN_SWITCH_TIME else None
         try:
             self._make_private_directories()
-            _write_atomically(
+            write_atomically(
                 path, first or now.isoformat(timespec="seconds"), keep_existing=recorded is None
             )
         except OSError as error:
@@ -174,7 +174,7 @@ def _link_unless_present(source: str, path: Path) -> None:
         os.link(source, path)
 
 
-def _write_atomically(path: Path, text: str, *, keep_existing: bool) -> None:
+def write_atomically(path: Path, text: str, *, keep_existing: bool) -> None:
     """Publish the file whole; `keep_existing` leaves a file another writer published meanwhile."""
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:

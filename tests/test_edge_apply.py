@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_edge_core import bind_core_files, sha256
 
 from edge import apply, barrier, catalog, cli, compose, emergency, setup, switches
 
@@ -29,6 +30,7 @@ NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier
 PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-route answer
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
 NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
+NEVER_RUN = {"down", "-v", "--volumes", "-V", "--renew-anon-volumes"}
 
 
 def resolved_configuration() -> dict:
@@ -71,7 +73,9 @@ class ScriptedCompose:
     """Compose over a table of service -> container state; records every call.
 
     Like Compose, `up` recreates a container whose service definition changed since it was
-    created (it gets a new id) unless `--no-recreate` is given."""
+    created (it gets a new id) unless `--no-recreate` is given, and always with
+    `--force-recreate`. Edge never takes a project down or renews its volumes, so `down`, `-v`
+    and `--renew-anon-volumes` fail the test that runs them (#85 P13, cell U14)."""
 
     containers: dict[str, str] = field(default_factory=dict)
     container_ids: dict[str, int] = field(default_factory=dict)
@@ -80,12 +84,19 @@ class ScriptedCompose:
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
     starts_nothing: bool = False
+    after_up: Callable[[], None] | None = None  # what changes in the world once `up` returned
+    # a container of these dies right after `up` starts it and Docker restarts it: the first `ps`
+    # after the `up` still sees it running, every later one restarting
+    crash_loops: set[str] = field(default_factory=set)
+    just_started: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
     config: dict = field(default_factory=resolved_configuration)
 
     def run(self, command: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
         self.calls.append(command[PROJECT_PREFIX:])
         _, profile, verb, *arguments = command[PROJECT_PREFIX:]
+        refused = NEVER_RUN & {verb, *arguments}
+        assert not refused, f"edge ran docker compose {verb} {' '.join(arguments)}"
         if verb == self.failing_verb:
             return subprocess.CompletedProcess(command, 1, "", f"{verb} broke\nlast line")
         output = getattr(self, f"verb_{verb}")(profile, arguments)
@@ -95,10 +106,14 @@ class ScriptedCompose:
         return json.dumps(self.config)
 
     def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
-        return "\n".join(
+        output = "\n".join(
             json.dumps({"Service": service, "State": state, "ExitCode": 0})
             for service, state in self.containers.items()
         )
+        for service in self.just_started & self.crash_loops:
+            self.containers[service] = "restarting"
+        self.just_started.clear()
+        return output
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
         if self.starts_nothing:
@@ -109,8 +124,11 @@ class ScriptedCompose:
             if self.needs_a_new_container(service, flags):
                 self.create_container(service)
             self.containers[service] = "exited" if service in one_shots else "running"
+            self.just_started.add(service)
             for volume in compose.named_volumes(self.config["services"][service]):
                 self.volumes.setdefault(volume, "created by up")
+        if self.after_up:
+            self.after_up()
         return ""
 
     def create_container(self, service: str) -> None:
@@ -125,7 +143,7 @@ class ScriptedCompose:
             self.containers[service] = container_state
 
     def needs_a_new_container(self, service: str, flags: set[str]) -> bool:
-        if service not in self.containers:
+        if service not in self.containers or "--force-recreate" in flags:
             return True
         return service in self.changed_definitions and "--no-recreate" not in flags
 
@@ -257,6 +275,7 @@ class Ingress:
     rejecting: bool = False
     down: bool = False
     asked: list[str] = field(default_factory=list)  # what the world looked like at each request
+    on_fetch: Callable[[], None] | None = None  # a look at the world as each request arrives
     now: float = 0.0
 
     def barrier_file(self) -> Path:
@@ -266,6 +285,8 @@ class Ingress:
         self, _address: str, _host: str, _seconds: float, _clock: Callable[[], float]
     ) -> barrier.Answer:
         self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
+        if self.on_fetch:
+            self.on_fetch()
         if self.down:
             raise ConnectionRefusedError
         if not self.barrier_file().exists():
@@ -278,6 +299,11 @@ class Ingress:
     @property
     def verifier(self) -> barrier.Verifier:
         return barrier.Verifier(self.fetch, lambda: self.now, self.sleep)
+
+    @property
+    def watch(self) -> compose.Watch:
+        """How a recreated Traefik is watched, on the same counter."""
+        return compose.Watch(lambda: self.now, self.sleep)
 
 
 @pytest.fixture
@@ -314,7 +340,7 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 
 
 @pytest.fixture
-def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home):
+def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress):
     """Run `edge apply --closed` from the live checkout; the operator types `yes` unless told
     otherwise."""
 
@@ -327,6 +353,8 @@ def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, st
             setup_check,
             setup_run,
             home,
+            ingress.verifier,
+            ingress.watch,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -454,7 +482,8 @@ def test_a_one_shot_container_left_behind_is_removed_when_switched_off(
 def test_off_never_takes_a_volume_or_a_project_down_and_never_names_the_core(
     switch, scripted, repository
 ):
-    """#52 rule 2: no `down`, `-v` or volume command; traefik and socket-proxy are never named."""
+    """#52 rule 2: no `down`, `-v` or volume command; while the core's files are as recorded
+    (here it has none), traefik and socket-proxy are never named (#85 rule 3)."""
     switch()
     write_fleet(repository, DISABLED)
     switch()
@@ -1029,6 +1058,18 @@ def test_compose_that_cannot_be_read_is_cannot_plan(switch, scripted):
     assert exit_code == 2
     assert "cannot plan" in err
     assert "last line" in err
+
+
+def test_a_routed_unit_without_traefiks_edge_domain_is_cannot_plan(switch, scripted, repository):
+    """#85 rule 7: a barrier that cannot be named is cannot plan, exit 2, and changes nothing."""
+    write_fleet(repository, PROBE_ENABLED)
+    del scripted.config["services"]["traefik"]["environment"]["EDGE_DOMAIN"]
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert "cannot plan, compose.yaml gives traefik no EDGE_DOMAIN" in err
+    assert scripted.changing_verbs() == []
 
 
 # --- catalog and compose cannot drift (catalog -> compose) --------------------------------------
@@ -1778,7 +1819,9 @@ def test_start_of_a_running_unit_without_marker_or_barrier_changes_nothing(
 def test_apply_leaves_the_barrier_in_b_to_e_and_in_e_with_a_marker_to_b(
     catalog_text, probe_unit, switch, scripted, ingress, state
 ):
-    """#61 rule 5: apply never writes or removes a barrier."""
+    """#61 rule 5, narrowed by #85 S9: apply never writes or removes a barrier; it re-renders
+    and proves them only after a Traefik recreate, which this core without file binds never
+    plans."""
     put_probe_in_b(scripted, state, ingress)
     ingress.barrier_file().write_text("the barrier")
     write_fleet(ingress.repository, catalog_text)
@@ -1870,3 +1913,395 @@ def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, se
 
     assert exit_code == 0
     assert setup_check.commands == []
+
+
+RECREATE_TRAEFIK = ["--profile", "*", "up", "-d", "--no-deps", "--force-recreate", "traefik"]
+PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
+RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
+UNFINISHED = {"traefik": {}}
+
+
+@pytest.fixture
+def core_files(scripted, repository):
+    """The core as compose.yaml resolves it, with traefik's bind of `traefik.yml`, both running;
+    no unit has anything to change."""
+    bind_core_files(scripted.config, repository)
+    scripted.put_containers({"socket-proxy": "running", "traefik": "running"})
+    write_fleet(repository, DISABLED)
+
+
+def applied(state: Path) -> dict | None:
+    record = state / "applied.json"
+    return json.loads(record.read_text()) if record.exists() else None
+
+
+def record_traefik(state: Path, digest: str) -> None:
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "applied.json").write_text(json.dumps({"traefik": {"traefik.yml": digest}}))
+
+
+def probe_switched_off(scripted, repository, state) -> None:
+    """`probe` is B: its marker stands and `hello` is stopped, so its barrier is active."""
+    write_fleet(repository, PROBE_STOPPED)
+    scripted.containers["hello"] = "exited"
+    switch_off(state, unit="probe")
+
+
+def edit_traefik_yml(repository: Path) -> None:
+    with (repository / "traefik.yml").open("a") as file:
+        file.write("# a harmless edit\n")
+
+
+def unit_calls(scripted, unit: str = "step-ca") -> list[list[str]]:
+    return [call for call in scripted.calls if call[:2] == ["--profile", unit]]
+
+
+def test_a_first_apply_recreates_traefik_proves_the_barriers_and_records_its_file(
+    core_files, switch, scripted, repository, state
+):
+    """#85 rules 2, 3, cell U1: no record, so recreate exactly traefik, prove, then record."""
+    probe_switched_off(scripted, repository, state)
+    ids = dict(scripted.container_ids)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (traefik.yml has no applied record)" in out
+    assert [call for call in scripted.calls if call[2] == "up"] == [RECREATE_TRAEFIK]
+    assert scripted.container_ids["traefik"] != ids["traefik"]
+    assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
+    assert out.index("the barrier of probe is proven") < out.index(RECREATED)
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
+
+
+def test_a_second_apply_with_the_recorded_traefik_yml_changes_nothing(core_files, switch, scripted):
+    """#85 rule 2, P15, cell U2: nothing to change, no prompt, no changing compose verb."""
+    switch()
+    ids = dict(scripted.container_ids)
+    scripted.calls.clear()
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert "apply exactly this plan" not in out
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
+    core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rules 2, 3, cell U3: `prove_active` runs before the record is written."""
+    switch()
+    probe_switched_off(scripted, repository, state)
+    edit_traefik_yml(repository)
+    records_seen = []
+    ingress.on_fetch = lambda: records_seen.append(applied(state))
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (traefik.yml changed)" in out
+    assert RECREATE_TRAEFIK in scripted.calls
+    assert records_seen[0] == UNFINISHED
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
+
+
+@pytest.mark.parametrize(
+    ("record", "why"),
+    [
+        ("not json", "RECORD is malformed: it is not JSON"),
+        (
+            '{"traefik": ["traefik.yml"]}',
+            "RECORD is malformed: the traefik entry is not an object of files",
+        ),
+        ('{"socket-proxy": {}}', "traefik.yml has no applied record"),
+        (
+            '{"traefik": {"traefik.yml": "DIGEST", "old.yml": "DIGEST"}}',
+            "applied.json names old.yml, which traefik does not mount",
+        ),
+    ],
+)
+def test_a_record_that_cannot_be_trusted_counts_as_changed(
+    record, why, core_files, switch, scripted, repository, state
+):
+    """#85 rule 2, cell U4: malformed, missing entry or unknown key: recreate, and say why."""
+    digest = sha256(repository / "traefik.yml")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "applied.json").write_text(record.replace("DIGEST", digest))
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert f"traefik: recreate ({why.replace('RECORD', str(state / 'applied.json'))})" in out
+    assert RECREATE_TRAEFIK in scripted.calls
+    assert applied(state)["traefik"] == {"traefik.yml": digest}
+
+
+@pytest.mark.parametrize("traefik", ["exited", None])
+def test_a_changed_traefik_yml_with_no_live_traefik_is_named_and_traefik_is_not_started(
+    traefik, core_files, switch, scripted, state
+):
+    """#85 rule 4, cell U5: exited or absent: no recreate, record old, no prompt, exit 0."""
+    if traefik:
+        scripted.containers["traefik"] = traefik
+    else:
+        scripted.containers.pop("traefik")
+    record_traefik(state, "0000")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "traefik.yml changed; traefik is not running and is not started" in out
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+    assert scripted.containers.get("traefik") == traefik
+    assert applied(state) == {"traefik": {"traefik.yml": "0000"}}
+
+
+def test_a_restarting_traefik_is_recreated(core_files, switch, scripted):
+    """#85 rule 3, cell U6: a restarting container is live, so it is recreated."""
+    scripted.containers["traefik"] = "restarting"
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert RECREATE_TRAEFIK in scripted.calls
+    assert RECREATED in out
+
+
+def test_a_failed_recreate_is_partial_marks_the_record_unfinished_and_touches_no_unit(
+    core_files, switch, scripted, repository, state
+):
+    """#85 rule 5, cells U7, U11: `could not recreate traefik`, exit 1, step-ca not started."""
+    write_fleet(repository, ENABLED)
+    scripted.failing_verb = "up"
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, could not recreate traefik, `docker compose up` exited 1" in err
+    assert applied(state) == UNFINISHED
+    assert unit_calls(scripted) == []
+    assert RECREATED not in out
+
+
+@pytest.mark.parametrize(
+    ("step", "record_left", "recreated"),
+    [
+        ("mark traefik unfinished in applied.json", None, False),
+        ("record traefik in applied.json", UNFINISHED, True),
+    ],
+)
+def test_a_record_that_cannot_be_written_is_partial_names_the_step_and_touches_no_unit(
+    step, record_left, recreated, core_files, switch, scripted, repository, state
+):
+    """#85 rule 5: a read-only state directory before the recreate leaves traefik untouched; one
+    after it leaves the entry unfinished; either way exit 1 names the step and no unit moves."""
+    write_fleet(repository, ENABLED)
+    state.mkdir(parents=True, exist_ok=True)
+    ids = dict(scripted.container_ids)
+    if recreated:
+        scripted.after_up = lambda: state.chmod(0o500)
+    else:
+        state.chmod(0o500)
+    try:
+        exit_code, out, err = switch()
+    finally:
+        state.chmod(0o700)
+
+    assert exit_code == 1
+    assert f"partial, could not {step}, cannot write {state / 'applied.json'}" in err
+    assert (RECREATE_TRAEFIK in scripted.calls) is recreated
+    assert (scripted.container_ids["traefik"] != ids["traefik"]) is recreated
+    assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
+    assert applied(state) == record_left
+    assert unit_calls(scripted) == []
+    assert RECREATED not in out
+
+
+def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch, scripted, state):
+    """#85 rule 5, cell U8: not observed running, so partial, exit 1, record unfinished."""
+    scripted.after_up = lambda: scripted.containers.update(traefik="exited")
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, traefik is not running after the recreate" in err
+    assert applied(state) == UNFINISHED
+    assert RECREATED not in out
+
+
+def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_run_recreates_again(
+    core_files, switch, scripted, state
+):
+    """#85 rule 3, rule 5: a traefik.yml Traefik cannot load lets it run for a moment, then it
+    restarts on every start; that is not running, so partial, exit 1, the record says unfinished
+    and the next run plans the recreate again."""
+    scripted.crash_loops.add("traefik")
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, traefik is not running after the recreate" in err
+    assert applied(state) == UNFINISHED
+    assert RECREATED not in out
+    assert scripted.containers["traefik"] == "restarting"
+    _, again, _ = switch("no")
+    assert "traefik: recreate (the last recreate did not finish)" in again
+
+
+def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recreates_again(
+    core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rule 5, S9, cell U9: partial naming the unit, that it may be reachable, and the
+    emergency stop; record unfinished, the next run plans again."""
+    probe_switched_off(scripted, repository, state)
+    ingress.rejecting = True
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, the barrier of probe is not proven after the traefik recreate (" in err
+    assert (
+        "): probe may be reachable through Traefik; to close the tunnel now: edge stop --all; "
+        "no unit switched" in err
+    )
+    assert applied(state) == UNFINISHED
+    assert RECREATED not in out
+    ingress.rejecting = False
+    exit_code, out, _ = switch()
+    assert exit_code == 0
+    assert "traefik: recreate (the last recreate did not finish)" in out
+
+
+def test_every_unproven_barrier_after_the_recreate_is_named_in_the_partial_line(
+    core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rule 5, S9, P15: a failure two switched-off units share names both, because every
+    active barrier is tried, not only up to the first that fails."""
+    probe_switched_off(scripted, repository, state)
+    scripted.config["services"]["echo"] = {
+        "profiles": ["echo"],
+        "labels": {"traefik.enable": "true", "edge.name": "echo"},
+    }
+    write_fleet(repository, PROBE_STOPPED + "  echo:\n    run: {enabled: true}\n")
+    scripted.containers["echo"] = "exited"
+    switch_off(state, unit="echo")
+    ingress.rejecting = True
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, the barriers of probe, echo are not proven after the traefik recreate (" in err
+    assert "(probe: " in err
+    assert "; echo: " in err
+    assert "): probe, echo may be reachable through Traefik; to close the tunnel now: " in err
+    assert applied(state) == UNFINISHED
+
+
+@pytest.mark.parametrize("failure", ["unproven barrier", "traefik not running"])
+def test_a_recreate_that_did_not_finish_is_planned_again_after_traefik_yml_is_reverted(
+    failure, core_files, switch, scripted, repository, state, ingress
+):
+    """#85 rule 5, S9: a partial recreate leaves no entry that the reverted file could match, so
+    the next run recreates again instead of saying `nothing to change`."""
+    probe_switched_off(scripted, repository, state)
+    assert switch()[0] == 0
+    recorded = (repository / "traefik.yml").read_text()
+    edit_traefik_yml(repository)
+    if failure == "unproven barrier":
+        ingress.rejecting = True
+    else:
+        scripted.after_up = lambda: scripted.containers.update(traefik="exited")
+    assert switch()[0] == 1
+    (repository / "traefik.yml").write_text(recorded)
+    ingress.rejecting = False
+    scripted.after_up = None
+    scripted.containers["traefik"] = "running"
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert RECREATED in out
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
+
+
+def test_a_traefik_yml_changed_during_the_recreate_is_recreated_again_by_the_next_run(
+    core_files, switch, scripted, repository, state
+):
+    """#85 rule 3, cell U10: the record holds the plan-time digest, not the file's later one."""
+    planned = sha256(repository / "traefik.yml")
+    scripted.after_up = lambda: edit_traefik_yml(repository)
+
+    assert switch()[0] == 0
+    assert applied(state) == {"traefik": {"traefik.yml": planned}}
+    scripted.after_up = None
+    exit_code, out, _ = switch()
+    assert exit_code == 0
+    assert "traefik: recreate (traefik.yml changed)" in out
+
+
+def test_a_core_change_and_a_unit_switch_share_one_plan_and_one_yes_core_first(
+    core_files, switch, scripted, repository
+):
+    """#85 rule 1, cell U11: the core lines come first and the core is changed first."""
+    write_fleet(repository, ENABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    assert out.count("apply exactly this plan") == 1
+    starting_step_ca = unit_calls(scripted)[0]
+    assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
+    assert "step-ca is on" in out
+
+
+def test_a_missing_traefik_yml_cannot_be_planned_and_is_named(
+    core_files, switch, scripted, repository
+):
+    """#85 rule 1, cell U12: a deleted traefik.yml never passes silently."""
+    (repository / "traefik.yml").unlink()
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert f"cannot plan, cannot read {repository / 'traefik.yml'}" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
+    switch, scripted, repository, ingress
+):
+    """#85 rule 7, #34 finding 41, cell U13: a barrier alone switches the unit off."""
+    write_fleet(repository, PROBE_ENABLED)
+    scripted.put_containers(
+        {
+            "step-ca": "running",
+            "traefik-mcp-acme-owner": "exited",
+            "traefik-mcp": "running",
+            "hello": "exited",
+        }
+    )
+    ingress.barrier_file().write_text("the barrier")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "probe stays stopped (its barrier stands; no switch recorded)" in out
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+@pytest.mark.parametrize(
+    "arguments", [["down"], ["rm", "-v", "hello"], ["up", "-d", "--renew-anon-volumes", "hello"]]
+)
+def test_the_scripted_compose_fails_a_test_that_takes_volumes_or_the_project_down(
+    arguments, scripted
+):
+    """#85 P13, cell U14: every test above runs on a fake that refuses these."""
+    with pytest.raises(AssertionError):
+        scripted.run(["docker", "compose", "-p", "d", "-f", "f", "--profile", "*", *arguments], 1)
