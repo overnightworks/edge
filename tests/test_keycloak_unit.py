@@ -44,9 +44,10 @@ def keycloak_unit_off(keycloak_unit) -> catalog.Unit:
     return dataclasses.replace(keycloak_unit, enabled=False)
 
 
-def test_the_catalog_switches_keycloak_on_with_go_live_as_its_setup(keycloak_unit):
-    """#118 rule 1: the real catalog lists keycloak as on, with go-live as its setup."""
-    assert (keycloak_unit.enabled, keycloak_unit.setup) == (True, "keycloak/go-live")
+def test_the_catalog_ships_keycloak_off_with_go_live_as_its_setup(keycloak_unit):
+    """#64 rule 1; the operator, 18.10.2026: Keycloak stays off until edge publishes its
+    host itself (#30)."""
+    assert (keycloak_unit.enabled, keycloak_unit.setup) == (False, "keycloak/go-live")
 
 
 def test_the_keycloak_profile_is_its_database_and_keycloak_and_not_the_config_cli():

@@ -969,7 +969,7 @@ keycloak`), go-live refuses at the start of its run, asks nothing and starts not
 ``go-live: refused, keycloak is switched off (since …); `edge start keycloak` ends the switch``
 (exit 1). It reads the marker again, under the switch lock, right before each start (step 3,
 step 4b, step 5), so a stop made during the run wins. `--check` starts nothing and ignores the
-marker. While go-live is not done, `edge apply --closed` asks and runs it in your terminal on yes (`--check` first).
+marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply --closed` asks and runs it in your terminal on yes (`--check` first).
 
 - **1. Backup.** It asks once whether to continue without the Keycloak backup
    (K11b has not landed). There is no default; the answer is yours. It is done once
