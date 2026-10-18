@@ -17,7 +17,10 @@ its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown s
 proof window is bounded by that cap. A cap reached before `READY`, or a teardown that leaves the
 stack behind, ends with `PROBE FAILED` and exit 1.
 
-- `run` (the default) proves proofs 1-9 and ends with `PROBE PASSED: proofs 1-9 hold`. Proof 3c
+- `run` (the default) proves proofs 1-9 and ends with `PROBE PASSED: proofs 1-9 hold`. Proof 1
+  fetches the login and account pages through 8081 and holds when both link a 200 resource under
+  `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
+  `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
   runs the realm observer (`realm-observer`, #66) around a default apply with the cache off and
   holds when it lists exactly the console changes the apply removes; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an

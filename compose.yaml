@@ -112,6 +112,7 @@ services:
         target: KC_DB_PASSWORD
     volumes:
       - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
+      - ./keycloak/themes/hallucinai:/opt/keycloak/themes/hallucinai:ro
     labels:
       traefik.enable: "true"
       edge.name: auth
