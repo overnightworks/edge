@@ -13,7 +13,7 @@ from typing import Any
 from edge.compose import printable
 from edge.realm.observe import Change, Inventory, Kind, diff
 
-SERVICE = "realm-observer"
+OBSERVER_SERVICE = "realm-observer"
 DIGEST_KEY_BYTES = 32
 
 

@@ -47,6 +47,11 @@ from urllib.request import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
+# The probe runs from a bare checkout with the system python; edge.realm is standard library only.
+sys.path.insert(0, str(REPO / "src"))
+from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key  # noqa: E402
+from edge.realm.observe import Inventory  # noqa: E402
+
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
 PROJECT_LABEL = f"com.docker.compose.project={PROJECT}"
@@ -62,7 +67,6 @@ EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
-CONFIG_STATE_PREFIX = "de.adorsys.keycloak.config"
 READY_TIMEOUT_SECONDS = 240
 LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
@@ -71,6 +75,23 @@ MEMBER_GROUP = "/apps/songmaker"
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
+# What an operator adds in the admin console before an apply (#66, the U1 measurement): the
+# default apply removes the first five, the survivors stay, and the observer names exactly that.
+CONSOLE_NAME = "probe-console"
+CONSOLE_FLOW = "console-flow"
+FORMS_FLOW = "browser-mfa-forms"
+REMOVED_BY_THE_APPLY = [
+    f"hallucinai: removal group {CONSOLE_SUBGROUP} (1 member)",
+    f"hallucinai: removal protocol mapper scope groups/{CONSOLE_NAME}-mapper",
+    f"master: removal flow {CONSOLE_FLOW}",
+    f"master: removal flow step {FORMS_FLOW}/auth-otp-form#1",
+    f"master: removal service-account realm role service-account-config-cli/{CONSOLE_NAME}-role",
+]
+CHANGED_CONFIG = "browser-mfa-without-passkey"
+ESCAPING_GROUP = "probe\x1b[31mconsole\nname"
+OBSERVER_SECRET = "/run/secrets/config_cli_secret"
+OBSERVER_SCRIPT = "/opt/observer/observe.py"
+OBSERVER_START_SECONDS = 60
 
 
 class ProbeFailure(Exception):
@@ -222,8 +243,24 @@ class Stack:
         }
 
     def compose(
-        self, *args: str, bootstrap: bool = False, config_dir: Path | None = None
+        self,
+        *args: str,
+        bootstrap: bool = False,
+        config_dir: Path | None = None,
+        stdin: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            [*self.compose_command(bootstrap), *args],
+            env=self.environment(config_dir or self.config_dir),
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.outputs.append(result.stdout + result.stderr)
+        return result
+
+    def compose_command(self, bootstrap: bool = False) -> list[str]:
         files = ["compose.yaml"]
         if bootstrap:
             files.append("keycloak/bootstrap.compose.yaml")
@@ -240,15 +277,7 @@ class Stack:
         ]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
-        result = subprocess.run(
-            [*command, *args],
-            env=self.environment(config_dir or self.config_dir),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.outputs.append(result.stdout + result.stderr)
-        return result
+        return command
 
     def write_secrets(self) -> dict[str, str]:
         self.secrets_dir.mkdir(mode=0o700, parents=True)
@@ -282,6 +311,42 @@ class Stack:
         self.see_env(container)
         subprocess.run(["docker", "rm", container], capture_output=True, check=True)
         return result
+
+    def observe(self, digest_key: str, *, keep_as: str = "") -> subprocess.CompletedProcess[str]:
+        """One observe as `edge apply` runs it; `keep_as` names and keeps the container, so its
+        Config.Env and hardening can be inspected, instead of `--rm`."""
+        options = ["--name", keep_as] if keep_as else ["--rm"]
+        return self.compose("run", "-T", *options, OBSERVER_SERVICE, stdin=digest_key + "\n")
+
+    def observe_stopped_by(self, digest_key: str, stop_signal: signal.Signals) -> list[str]:
+        """Sends `stop_signal` to an observe while its container runs; names what is left."""
+        observing = subprocess.Popen(
+            [*self.compose_command(), "run", "-T", "--rm", OBSERVER_SERVICE],
+            env=self.environment(self.config_dir),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert observing.stdin is not None
+        observing.stdin.write(digest_key + "\n")
+        observing.stdin.flush()
+        deadline = time.monotonic() + OBSERVER_START_SECONDS
+        while not observer_containers() and observing.poll() is None:
+            expect(time.monotonic() < deadline, "the observer container did not start")
+            time.sleep(0.1)
+        observing.send_signal(stop_signal)
+        stdout, stderr = observing.communicate(timeout=OBSERVER_START_SECONDS)
+        self.outputs.append(stdout + stderr)
+        expect(
+            observing.returncode != 0 and not stdout,
+            f"the observe ended with {observing.returncode} and an inventory before "
+            f"{stop_signal.name} reached it",
+        )
+        deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
+        while observer_containers() and time.monotonic() < deadline:
+            time.sleep(0.5)
+        return observer_containers()
 
     def must_apply(self, label: str, **kwargs: Any) -> str:
         result = self.apply(**kwargs)
@@ -344,6 +409,20 @@ class Stack:
 
 def docker(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+
+
+def observer_containers() -> list[str]:
+    listed = docker(
+        "container",
+        "ls",
+        "--all",
+        "--quiet",
+        "--filter",
+        f"label={PROJECT_LABEL}",
+        "--filter",
+        f"label=com.docker.compose.service={OBSERVER_SERVICE}",
+    )
+    return listed.stdout.split()
 
 
 def remove_one_offs() -> None:
@@ -456,51 +535,22 @@ class Admin:
     def group_paths(self, user_id: str) -> list[str]:
         return sorted(group["path"] for group in self.get(f"/{REALM}/users/{user_id}/groups"))
 
-    def realm_export(self) -> dict[str, Any]:
-        response = self.call(
-            "POST", f"/{REALM}/partial-export?exportClients=true&exportGroupsAndRoles=true"
-        )
-        expect(response.status == 200, f"partial export answered {response.status}")
-        return response.json()
+    def admin_event_count(self, realm: str) -> int:
+        return len(self.get(f"/{realm}/admin-events?first=0&max=100000"))
+
+    def find(self, path: str, key: str, value: str) -> dict[str, Any]:
+        found = [item for item in self.get(path) if item.get(key) == value]
+        expect(len(found) == 1, f"GET {path} holds {len(found)} items with {key} {value}")
+        return found[0]
 
 
-def without_config_cli_state(export: dict[str, Any]) -> dict[str, Any]:
-    """The export minus config-cli's own checksum and state attributes."""
-    attributes = {
-        key: value
-        for key, value in export.get("attributes", {}).items()
-        if not key.startswith(CONFIG_STATE_PREFIX)
+def hardcoded_claim(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-hardcoded-claim-mapper",
+        "config": {"claim.name": name, "claim.value": "console", "access.token.claim": "true"},
     }
-    return {**export, "attributes": attributes}
-
-
-IDENTITY_KEYS = ("clientId", "alias", "name", "id")
-
-
-def keyed(items: list[Any]) -> dict[str, Any] | None:
-    """A list of representations keyed by their identity, or None for a plain list."""
-    if not all(isinstance(item, dict) for item in items):
-        return None
-    for identity in IDENTITY_KEYS:
-        keys = [item.get(identity) for item in items]
-        if None not in keys and len(set(keys)) == len(keys):
-            return {str(key): item for key, item in zip(keys, items, strict=True)}
-    return None
-
-
-def differences(before: Any, after: Any, path: str = "") -> list[str]:
-    """The JSON paths at which two exports differ; lists of representations match by identity."""
-    if isinstance(before, list) and isinstance(after, list):
-        before_keyed, after_keyed = keyed(before), keyed(after)
-        if before_keyed is not None and after_keyed is not None:
-            before, after = before_keyed, after_keyed
-    if isinstance(before, dict) and isinstance(after, dict):
-        return [
-            difference
-            for key in sorted(before.keys() | after.keys())
-            for difference in differences(before.get(key), after.get(key), f"{path}/{key}")
-        ]
-    return [] if before == after else [path]
 
 
 # --- Browser login (admin console) ------------------------------------------------------------
@@ -654,7 +704,7 @@ class Probe:
         )
 
         member_id = self.seed_member(admin)
-        self.reapply_is_idempotent(admin, member_id)
+        self.apply_removes_what_the_observer_names(admin, member_id)
         self.public_issuer_and_paths()
         self.admin_console_only_on_loopback(admin)
         self.changed_yaml_applies(admin, member_id)
@@ -662,6 +712,7 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
+        self.the_observer_door(admin)
         self.no_secret_leaked()
 
     def hold(self) -> None:
@@ -706,22 +757,128 @@ class Probe:
         self.say(f"seed: probe-member in {MEMBER_GROUP} through the admin API")
         return member_id
 
-    def reapply_is_idempotent(self, admin: Admin, member_id: str) -> None:
-        before = without_config_cli_state(admin.realm_export())
+    def observe(self, digest_key: str) -> Inventory:
+        result = self.stack.observe(digest_key)
+        expect(
+            result.returncode == 0, f"an observe exited {result.returncode}: {tail(result.stderr)}"
+        )
+        return json.loads(result.stdout)
+
+    def apply_removes_what_the_observer_names(self, admin: Admin, member_id: str) -> None:
+        digest_key = self.keep_secret("the observer's digest key", new_digest_key())
+        events = admin.admin_event_count(REALM)
+        first, second = self.observe(digest_key), self.observe(digest_key)
+        expect(change_lines(first, second) == [], "two observes of an unchanged Keycloak differ")
+        expect(admin.admin_event_count(REALM) == events, f"an observe left admin events in {REALM}")
+
+        self.make_console_changes(admin)
+        before = self.observe(digest_key)
         output = self.stack.must_apply("second apply", cache=False)
         expect("checksum" not in output.lower(), "the second apply consulted the checksum cache")
-        after = without_config_cli_state(admin.realm_export())
-        changed = differences(before, after)
-        expect(not changed, f"the second apply changed the realm export: {changed}")
+        after = self.observe(digest_key)
+        removed = change_lines(before, after)
+        expect(
+            removed == REMOVED_BY_THE_APPLY,
+            f"the observer lists {removed}, not the console changes the apply removes",
+        )
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
+        self.stack.must_apply("third apply", cache=False)
+        reapplied = self.observe(digest_key)
+        again = change_lines(after, reapplied)
+        expect(again == [], f"a re-apply with IMPORT_CACHE_ENABLED=false changed {again}")
+        for line in removed:
+            self.say(f"observer: {line}")
         self.held(
             "3c",
-            "a second apply with IMPORT_CACHE_ENABLED=false leaves the realm export unchanged "
-            f"and probe-member in {MEMBER_GROUP}",
+            "two observes are equal and leave no admin event; a second apply with "
+            f"IMPORT_CACHE_ENABLED=false removes exactly the {len(removed)} console changes the "
+            "observer lists above in both realms, keeps the console client, identity provider, "
+            "component, realm roles and the agent-service mapper, and keeps probe-member in "
+            f"{MEMBER_GROUP}; a third apply lists nothing",
         )
-        self.realm_settings_as_decided(admin, after)
+        self.realm_settings_as_decided(admin, reapplied)
 
-    def realm_settings_as_decided(self, admin: Admin, export: dict[str, Any]) -> None:
+    def make_console_changes(self, admin: Admin) -> None:
+        """What an operator does in the admin console: five changes inside declared objects or
+        realms that the apply removes, and five additions that survive it."""
+        groups_scope = admin.find(f"/{REALM}/client-scopes", "name", "groups")
+        admin.create(
+            f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
+            hardcoded_claim(f"{CONSOLE_NAME}-mapper"),
+        )
+        for realm in ("master", REALM):
+            admin.create(f"/{realm}/roles", {"name": f"{CONSOLE_NAME}-role"})
+        config_cli = admin.find("/master/clients?clientId=config-cli", "clientId", "config-cli")
+        account = admin.get(f"/master/clients/{config_cli['id']}/service-account-user")
+        console_role = admin.get(f"/master/roles/{CONSOLE_NAME}-role")
+        admin.must("POST", f"/master/users/{account['id']}/role-mappings/realm", [console_role])
+        admin.must(
+            "POST",
+            f"/master/authentication/flows/{FORMS_FLOW}/executions/execution",
+            {"provider": "auth-otp-form"},
+        )
+        admin.create(
+            "/master/authentication/flows",
+            {"alias": CONSOLE_FLOW, "providerId": "basic-flow", "topLevel": True, "builtIn": False},
+        )
+        parent = admin.get(f"/{REALM}/group-by-path{CONSOLE_PARENT}")
+        admin.create(f"/{REALM}/groups/{parent['id']}/children", {"name": CONSOLE_SUBGROUP_NAME})
+        password = self.keep_secret("probe-console-member password", secrets.token_urlsafe(16))
+        admin.join_group(
+            admin.create_user(REALM, "probe-console-member", password), CONSOLE_SUBGROUP
+        )
+        self.make_survivors(admin)
+
+    def make_survivors(self, admin: Admin) -> None:
+        attribute = self.keep_secret("probe-console client attribute", secrets.token_urlsafe(24))
+        client_id = admin.create(
+            f"/{REALM}/clients",
+            {
+                "clientId": f"{CONSOLE_NAME}-client",
+                "publicClient": False,
+                "serviceAccountsEnabled": False,
+                "attributes": {"probe.console.secret": attribute},
+            },
+        )
+        secret = admin.get(f"/{REALM}/clients/{client_id}/client-secret")["value"]
+        self.keep_secret("probe-console client secret", secret)
+        idp_secret = self.keep_secret("console-idp clientSecret", secrets.token_urlsafe(24))
+        admin.create(
+            f"/{REALM}/identity-provider/instances",
+            {
+                "alias": "console-idp",
+                "providerId": "oidc",
+                "enabled": True,
+                "trustEmail": False,
+                "config": {
+                    "clientId": "console",
+                    "clientSecret": idp_secret,
+                    "clientAuthMethod": "client_secret_post",
+                    "authorizationUrl": "https://idp.probe.invalid/auth",
+                    "tokenUrl": "https://idp.probe.invalid/token",
+                },
+            },
+        )
+        admin.create(
+            f"/{REALM}/components",
+            {
+                "name": f"{CONSOLE_NAME}-component",
+                "providerId": "max-clients",
+                "providerType": (
+                    "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy"
+                ),
+                "subType": "anonymous",
+                "parentId": admin.get(f"/{REALM}")["id"],
+                "config": {"max-clients": ["50"]},
+            },
+        )
+        agent = admin.find(f"/{REALM}/clients?clientId=agent-service", "clientId", "agent-service")
+        admin.create(
+            f"/{REALM}/clients/{agent['id']}/protocol-mappers/models",
+            hardcoded_claim(f"{CONSOLE_NAME}-agent-mapper"),
+        )
+
+    def realm_settings_as_decided(self, admin: Admin, inventory: Inventory) -> None:
         realm = admin.get(f"/{REALM}")
         master = admin.get("/master")
         expected = {
@@ -739,8 +896,8 @@ class Probe:
         admin_expiry = realm.get("attributes", {}).get("adminEventsExpiration")
         if admin_expiry != "31536000":
             wrong["attributes.adminEventsExpiration"] = admin_expiry
-        providers = export.get("identityProviders", [])
-        if any(provider.get("trustEmail") for provider in providers):
+        providers = inventory[REALM].get("identity provider", {}).values()
+        if any(provider["fields"]["trustEmail"] for provider in providers):
             wrong["identityProviders.trustEmail"] = True
         master_expected = {
             "bruteForceProtected": True,
@@ -1075,6 +1232,99 @@ class Probe:
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
 
+    def the_observer_door(self, admin: Admin) -> None:
+        """Proof 9 (#66): the observer's container, its console-change lines and its stops. Runs
+        last but for proof 7, when every credential proof 7 looks for exists."""
+        password = self.keep_secret("smtp password", secrets.token_urlsafe(16))
+        smtp = {"host": "smtp.probe.invalid", "port": "587", "auth": "true", "user": "probe"}
+        admin.must("PUT", f"/{REALM}", {"smtpServer": smtp | {"password": password}})
+        digest_key = self.keep_secret("the observer's second digest key", new_digest_key())
+        kept = f"{PROJECT}-observe-{secrets.token_hex(4)}"
+        result = self.stack.observe(digest_key, keep_as=kept)
+        expect(result.returncode == 0, f"the kept observe exited {result.returncode}")
+        before = json.loads(result.stdout)
+        door = self.observer_container(kept)
+
+        original = self.change_config_in_console(admin)
+        group_id = admin.create(f"/{REALM}/groups", {"name": ESCAPING_GROUP})
+        lines = change_lines(before, self.observe(digest_key))
+        admin.must("PUT", f"/master/authentication/config/{original['id']}", original)
+        admin.must("DELETE", f"/{REALM}/groups/{group_id}")
+        expected = [
+            f"{REALM}: addition group /probe\\x1b[31mconsole\\nname (0 members)",
+            f"master: change authenticator config {CHANGED_CONFIG} config.check_result: "
+            '"not-executed" → "executed"',
+        ]
+        expect(lines == expected, f"the console changes are listed as {lines}")
+
+        left = {
+            stop.name: self.stack.observe_stopped_by(digest_key, stop)
+            for stop in (signal.SIGINT, signal.SIGTERM)
+        }
+        expect(not any(left.values()), f"a stopped observe left containers: {left}")
+
+        self.stack.see_running()
+        stopped = self.stack.compose("stop", "keycloak")
+        expect(stopped.returncode == 0, f"compose stop keycloak failed: {tail(stopped.stderr)}")
+        refused = self.stack.observe(digest_key)
+        running = self.stack.compose("ps", "--status", "running", "--services").stdout.split()
+        expect(
+            refused.returncode != 0 and "does not answer" in refused.stderr,
+            f"an observe without Keycloak exited {refused.returncode}: {tail(refused.stderr)}",
+        )
+        expect("keycloak" not in running, "an observe started Keycloak")
+        self.held(
+            "9",
+            f"the observer runs as {door}; a console change of {CHANGED_CONFIG} is one change "
+            "line and a group named with ESC and a newline one escaped line; SIGINT and SIGTERM "
+            "mid-read leave no container; with Keycloak stopped it says 'does not answer', exits "
+            f"{refused.returncode} and starts nothing",
+        )
+
+    def observer_container(self, name: str) -> str:
+        """Checks the kept observer container's door, records its Config.Env, removes it."""
+        self.stack.see_env(name)
+        inspected = docker("inspect", name)
+        docker("rm", name)
+        expect(inspected.returncode == 0, f"docker inspect {name} failed")
+        container = json.loads(inspected.stdout)[0]
+        host, config = container["HostConfig"], container["Config"]
+        mounts = {mount["Destination"]: mount["RW"] for mount in container["Mounts"]}
+        door = {
+            "user": config["User"],
+            "read-only": host["ReadonlyRootfs"],
+            "cap_drop": host["CapDrop"],
+            "no-new-privileges": "no-new-privileges:true" in (host["SecurityOpt"] or []),
+            "ports": host["PortBindings"] or {},
+            "networks": sorted(container["NetworkSettings"]["Networks"]),
+            "mounts": mounts,
+        }
+        wanted = {
+            "user": "65534:65534",
+            "read-only": True,
+            "cap_drop": ["ALL"],
+            "no-new-privileges": True,
+            "ports": {},
+            "networks": [f"{PROJECT}_keycloak"],
+            "mounts": {OBSERVER_SECRET: False, OBSERVER_SCRIPT: False},
+        }
+        expect(door == wanted, f"the observer container is {door}")
+        return (
+            "65534, read-only, cap_drop ALL, no-new-privileges, no port, the keycloak network "
+            "alone, its secret a read-only file"
+        )
+
+    def change_config_in_console(self, admin: Admin) -> dict[str, Any]:
+        """Changes one authenticator config as an operator would; returns it as it was."""
+        steps = admin.get("/master/authentication/flows/browser-mfa/executions")
+        config_id = next(
+            step["authenticationConfig"] for step in steps if step.get("alias") == CHANGED_CONFIG
+        )
+        original = admin.get(f"/master/authentication/config/{config_id}")
+        changed = {**original, "config": {**original["config"], "check_result": "executed"}}
+        admin.must("PUT", f"/master/authentication/config/{config_id}", changed)
+        return original
+
     def no_secret_leaked(self) -> None:
         self.stack.see_running()
         places = [(f"Config.Env of {name}", "\n".join(env)) for name, env in self.stack.seen_env]
@@ -1105,7 +1355,7 @@ READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 # Per mode: the Probe method that runs it and the line that reports it ended well.
 MODES = {
-    "run": ("run", "PROBE PASSED: proofs 1-8 hold"),
+    "run": ("run", "PROBE PASSED: proofs 1-9 hold"),
     "hold": ("hold", "HOLD ENDED"),
 }
 

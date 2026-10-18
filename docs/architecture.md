@@ -220,7 +220,7 @@ services:
 - it reconciles for real, not with a checksum-cached skip;
 - every concrete deletion is shown first;
 - deletions need a **separate** confirmation;
-- a restorable realm export is taken before any deletion.
+- a restorable database dump is taken before any deletion.
 
 **Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator.
 
