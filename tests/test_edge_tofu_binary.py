@@ -144,9 +144,11 @@ def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
     """#101 T3: a sha mismatch names the URL and both shas, and nothing is installed."""
     archive = pinned_zip()
     recorded = "0" * 64
+    release = release_of(archive, sha256=recorded)
+    download = Download(archive)
 
     with pytest.raises(TofuError) as raised:
-        tofu_binary.install(root, release_of(archive, sha256=recorded), Download(archive))
+        tofu_binary.install(root, release, download)
 
     assert_names_the_url_and_both_shas(str(raised.value), recorded, archive)
     assert tree(root) == set()
@@ -159,9 +161,10 @@ def test_a_network_error_names_the_url_and_both_shas_and_installs_nothing(root, 
     """#101 rule 2 Failure: a network error names the URL and both shas; nothing is installed."""
     archive = pinned_zip()
     release = release_of(archive)
+    download = Download(archive, network_error)
 
     with pytest.raises(TofuError) as raised:
-        tofu_binary.install(root, release, Download(archive, network_error))
+        tofu_binary.install(root, release, download)
 
     assert_names_the_url_and_both_shas(str(raised.value), release.sha256, half_of(archive))
     assert tree(root) == set()
@@ -173,14 +176,11 @@ def test_a_download_over_the_size_limit_names_both_shas_and_installs_nothing(roo
     The diagnostics count and hash the chunk that crossed the limit, since it was received."""
     archive = pinned_zip()
     recorded = "0" * 64
+    release = release_of(archive, sha256=recorded)
+    download = Download(archive)
 
     with pytest.raises(TofuError, match="limit") as raised:
-        tofu_binary.install(
-            root,
-            release_of(archive, sha256=recorded),
-            Download(archive),
-            max_bytes=len(archive) - 1,
-        )
+        tofu_binary.install(root, release, download, max_bytes=len(archive) - 1)
 
     assert_names_the_url_and_both_shas(str(raised.value), recorded, archive)
     assert f"the {len(archive)} bytes received" in str(raised.value)
@@ -215,8 +215,11 @@ def test_a_parallel_run_folder_that_cannot_execute_fails_naming_it(root):
         theirs.write_bytes(FAKE_TOFU % tofu.pinned_version().encode())
         theirs.chmod(0o644)
 
+    release = release_of(archive)
+    download = Download(archive, parallel_install)
+
     with pytest.raises(TofuError, match="is not the pinned tofu") as raised:
-        tofu_binary.install(root, release_of(archive), Download(archive, parallel_install))
+        tofu_binary.install(root, release, download)
 
     assert str(theirs) in str(raised.value)
 
@@ -250,9 +253,11 @@ def test_member_names_that_escape_are_never_extracted(tmp_path, root):
 def test_an_archive_without_the_tofu_member_installs_nothing(root):
     """#101 rule 2 Check before open: an archive without the member `tofu` installs nothing."""
     archive = release_zip({"../tofu": b"escaped"})
+    release = release_of(archive)
+    download = Download(archive)
 
     with pytest.raises(TofuError, match="tofu"):
-        tofu_binary.install(root, release_of(archive), Download(archive))
+        tofu_binary.install(root, release, download)
     assert tree(root) == set()
 
 
@@ -284,8 +289,10 @@ def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
 )
 def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platform, missing):
     """#101 T4, T5: a version without an entry or a platform without a sha names the pins file."""
+    pins = tomllib.loads(PINS)
+
     with pytest.raises(TofuError) as raised:
-        tofu_binary.release_for(tomllib.loads(PINS), version, platform)
+        tofu_binary.release_for(pins, version, platform)
 
     assert missing in str(raised.value)
     assert "external/opentofu.toml" in str(raised.value)
