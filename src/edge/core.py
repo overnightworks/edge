@@ -18,8 +18,10 @@ file from the checkout the sha256 of each file bind's bytes as last fully applie
 missing, unreadable or malformed record, a missing entry or an entry naming another file counts as
 changed. An empty entry `{service: {}}` is written before a recreate starts and replaced only when
 it finished, so a recreate that did not finish is planned again whatever the file holds now (rule
-5). An entry for a service that binds no file from the checkout is ignored and dropped at the
-next write (#87 rule 6).
+5). A core container found created and never started is retried only while the entry of a
+recreate that took it in is empty; socket-proxy keeps none, so traefik's, emptied with it, speaks
+for it (#87 rule 4). An entry for a service that binds no file from the checkout is ignored and
+dropped at the next write (#87 rule 6).
 """
 
 import hashlib
