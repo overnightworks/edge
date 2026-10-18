@@ -2608,15 +2608,11 @@ def test_apply_drops_a_ghost_entry_and_keeps_the_entry_of_a_switched_off_file_bi
     }
 
 
-def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touches_nothing(
-    applied_core, switch, scripted, repository, monkeypatch
-):
-    """#87 rule 4: the services edge follows are found after the yes; a bind of `hello` under a
-    directory that cannot be entered is partial, exit 1, with the step, and no core service is
-    recreated."""
+@pytest.fixture
+def unreadable_profile_bind(applied_core, scripted, repository, monkeypatch):
+    """`hello` binds a file under a directory that cannot be entered."""
     locked = repository / "locked"
     scripted.config["services"]["hello"]["volumes"] = [bind(locked / "hello.yml", "/hello.yml")]
-    edit_traefik_yml(repository)
     is_dir = Path.is_dir
 
     def is_dir_as_python_3_12(path: Path) -> bool:
@@ -2627,12 +2623,36 @@ def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touch
 
     monkeypatch.setattr(Path, "is_dir", is_dir_as_python_3_12)
 
+
+def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touches_nothing(
+    unreadable_profile_bind, switch, scripted, repository
+):
+    """#87 rule 4: the services edge follows are found after the yes; a bind of `hello` under a
+    directory that cannot be entered is partial, exit 1, with the step, and no core service is
+    recreated."""
+    edit_traefik_yml(repository)
+
     exit_code, _, err = switch()
 
     assert exit_code == 1
     assert "partial, could not find the services edge follows, cannot read" in err
     assert up_calls(scripted) == []
     assert unit_calls(scripted) == []
+
+
+def test_a_unit_switch_without_a_core_recreate_never_reads_the_profile_binds(
+    unreadable_profile_bind, switch, scripted, repository
+):
+    """#87 rule 4: the services edge follows are found only for a recorded recreate, so a bind
+    that cannot be read does not stop an apply that only switches a unit."""
+    write_fleet(repository, ENABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "step-ca is on" in out
+    assert unit_calls(scripted) != []
+    assert RECREATE_TRAEFIK not in scripted.calls
 
 
 # A real `ps --format json` line and `config --hash` answer, Compose 2.40.3 (#87 Q1).
