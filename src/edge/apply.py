@@ -6,7 +6,12 @@ definition changed (Compose's `config --hash` against its container's label) or 
 file, today `traefik.yml`, changed since it was last applied is recreated together with the core
 services that depend on it, socket-proxy first; each is observed running with what it depends on
 and every active barrier proven again before its record is written and its success is said; one
-without a live container is named and never started (#85, #87). A unit is a compose profile: on
+without a live container is named and never started (#85, #87). After the core, a follower
+(today traefik-mcp, a profile service binding a file at Traefik's static-config path) whose file or
+definition changed is recreated alone while its unit is on, under the switch lock so a marker
+stops it, and recorded once observed running; while its unit is off or switched off it is named
+and nothing starts, and one that starts with its unit is recorded once the unit is on (#89).
+A unit is a compose profile: on
 starts its services, off removes their containers. Volumes are never touched. A unit that would be
 switched on and is not set up is asked about separately; on `yes` its own setup command runs in
 the operator's terminal (key material is made there, never here) and `--check` must then pass
@@ -133,8 +138,7 @@ def _switch(
         progress.step = "start"
         with marks.lock():
             if changed := marks.changed(plan.unit.key, read[plan.unit.key]):
-                current = changed.current
-                return current.since if current else switches.UNKNOWN_SWITCH_TIME
+                return _since_of(changed)
             engine.start(plan.unit.key, plan.services)
         return None
     progress.step = "stop"
@@ -142,6 +146,11 @@ def _switch(
     progress.step = "remove the containers"
     engine.remove_containers(plan.unit.key, plan.services)
     return None
+
+
+def _since_of(changed: switches.Changed) -> str:
+    """The time of a switch that appeared after the plan was read."""
+    return changed.current.since if changed.current else switches.UNKNOWN_SWITCH_TIME
 
 
 def _unobserved(
@@ -174,16 +183,19 @@ class Plan:
     fleet: Fleet
     read: Mapping[str, switches.Mark | None]
     core: list[core.CorePlan]
+    followers: list[core.FollowerPlan]
     plans: list[UnitPlan]
 
     @property
     def changes_nothing(self) -> bool:
-        return all(plan.action is Action.STAYS_STOPPED for plan in self.plans) and all(
-            plan.action is core.CoreAction.NOT_STARTED for plan in self.core
+        return (
+            all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
+            and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
+            and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
         )
 
     def describe(self) -> list[str]:
-        return [plan.describe() for plan in (*self.core, *self.plans)]
+        return [plan.describe() for plan in (*self.core, *self.followers, *self.plans)]
 
 
 @dataclass(frozen=True)
@@ -196,19 +208,35 @@ def _plan(
     engine: compose.Compose, marks: switches.Switches, record: core.Record, repository: Path
 ) -> Plan:
     fleet = read_fleet(engine, repository)
-    hashes = engine.config_hashes(core.core_services(fleet.config))
+    read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
+    switched_off = _switched_off(fleet, read, repository)
+    gates = _gates(fleet.units, switched_off)
+    followers = core.follower_units(fleet.config, gates)
+    hashes = engine.config_hashes((*core.core_services(fleet.config), *followers))
     containers = engine.containers()
     states = compose.states_of(containers)
-    read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
-    plans = plan_switches(
-        fleet.units,
-        fleet.profile_services,
-        fleet.config,
-        states,
-        _switched_off(fleet, read, repository),
-    )
+    plans = plan_switches(fleet.units, fleet.profile_services, fleet.config, states, switched_off)
     core_plans = core.plan_core(fleet.config, containers, hashes, repository, record)
-    return Plan(fleet, read, core_plans, plans)
+    follower_plans = core.plan_followers(
+        fleet.config, containers, hashes, repository, record, gates
+    )
+    return Plan(fleet, read, core_plans, follower_plans, plans)
+
+
+def _gates(
+    units: Sequence[catalog.Unit], switched_off: Mapping[str, str | None]
+) -> dict[str, core.Gate]:
+    """Each catalogued unit's gate for its followers: on while enabled and not switched off,
+    whether or not it is up (#89)."""
+    return {unit.key: _gate(unit, switched_off) for unit in units}
+
+
+def _gate(unit: catalog.Unit, switched_off: Mapping[str, str | None]) -> core.Gate:
+    if not unit.enabled:
+        return core.Gate.OFF
+    if unit.key in switched_off:
+        return core.Gate.SWITCHED_OFF
+    return core.Gate.ON
 
 
 def _switched_off(
@@ -353,7 +381,8 @@ def _run_one_setup(
 
 @dataclass(frozen=True)
 class CorePhase:
-    """Recreate each changed core service with a live container before any unit is touched."""
+    """Recreate each changed core service with a live container, then each changed follower whose
+    unit is on, before any unit is touched; record the followers a switch-on started."""
 
     record: core.Record
     repository: Path
@@ -361,6 +390,18 @@ class CorePhase:
     watch: compose.Watch
 
     def run(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        progress: Progress,
+    ) -> str | None:
+        """The core, then the followers; the failure line of the first step that fails."""
+        if failure := self._recreate_core(engine, planned, marks, progress):
+            return failure
+        return self._recreate_followers(engine, planned, marks, progress)
+
+    def _recreate_core(
         self,
         engine: compose.Compose,
         planned: Plan,
@@ -388,7 +429,9 @@ class CorePhase:
                 progress.step = f"recreate {plan.service}"
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"
-                observed = (plan.service, *core.dependencies(config, plan.service))
+                observed = _in_start_order(
+                    config, {plan.service, *core.dependencies(config, plan.service)}
+                )
                 if down := engine.down_while_watched(config, observed, self.watch):
                     verb = "is" if len(down) == 1 else "are"
                     return (
@@ -406,6 +449,70 @@ class CorePhase:
         if recreates and len(recreates) == len(planned.core):
             print(f"{COMMAND}: the core is current")
         return None
+
+    def _recreate_followers(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        progress: Progress,
+    ) -> str | None:
+        """Recreate each changed follower whose unit is on, alone (`--no-deps`: its unit's other
+        services are never touched, C6), under the switch lock, so a marker that appeared since
+        the plan holds it (P7). Its entry is emptied first and its plan-time digests written once
+        it is observed running (#89 rule 3). No barrier is proven again: a follower serves no
+        barrier."""
+        recreates = [
+            plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
+        ]
+        if not recreates:
+            return None
+        config = planned.fleet.config
+        try:
+            progress.step = "find the services edge follows"
+            followed = core.followed_services(config, self.repository)
+            for plan in recreates:
+                progress.unit = plan.service
+                with marks.lock():
+                    if changed := marks.changed(plan.unit, planned.read[plan.unit]):
+                        since = switches.describe_since(_since_of(changed))
+                        return (
+                            f"{plan.unit} was switched off meanwhile (since {since}); "
+                            f"{plan.service} is not recreated"
+                        )
+                    progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
+                    self.record.mark_unfinished([plan.service], followed)
+                    progress.step = f"recreate {plan.service}"
+                    engine.recreate(plan.service)
+                progress.step = f"observe {plan.service} running"
+                if engine.down_while_watched(config, (plan.service,), self.watch):
+                    return f"{plan.service} is not running after the {plan.service} recreate"
+                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+                self.record.write(plan.service, plan.digests, followed)
+                print(f"{COMMAND}: {plan.recreated()}")
+        except (compose.ComposeError, core.CoreError, switches.SwitchError) as error:
+            return f"could not {progress.step}, {error}"
+        return None
+
+    def record_switched_on(
+        self, planned: Plan, switched_on: Sequence[UnitPlan], progress: Progress
+    ) -> None:
+        """Write the plan-time digests of each follower that started with a unit observed on, so
+        the next run does not recreate it (#89, P15)."""
+        units = {plan.unit.key for plan in switched_on}
+        started = [
+            plan
+            for plan in planned.followers
+            if plan.action is core.FollowerAction.STARTS_WITH_UNIT and plan.unit in units
+        ]
+        if not started:
+            return
+        progress.step = "find the services edge follows"
+        followed = core.followed_services(planned.fleet.config, self.repository)
+        for plan in started:
+            progress.unit = plan.unit
+            progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+            self.record.write(plan.service, plan.digests, followed)
 
     def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
         """Say each proven barrier; the failure line naming every one that is not, after all
@@ -433,6 +540,10 @@ class CorePhase:
             f"{barriers} not proven after the {service} recreate ({failures}): {units} may be "
             f"reachable through Traefik; to close the tunnel now: {EMERGENCY_STOP}"
         )
+
+
+def _in_start_order(config: Mapping[str, Any], services: set[str]) -> tuple[str, ...]:
+    return tuple(service for service in core.start_order(config) if service in services)
 
 
 def _confirm_and_switch(
@@ -470,7 +581,9 @@ def _confirm_and_switch(
         progress.step = "observe the result"
         started = [plan for plan in changes if plan.unit.key not in withheld]
         mismatched = _unobserved(engine, started, config)
-    except (compose.ComposeError, switches.SwitchError) as error:
+        switched_on = [p for p in started if p.action is Action.ON and p not in mismatched]
+        core_phase.record_switched_on(planned, switched_on, progress)
+    except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
             file=sys.stderr,
