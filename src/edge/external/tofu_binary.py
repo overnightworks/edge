@@ -82,11 +82,15 @@ class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_https(url: str) -> Iterator[bytes]:
+def https_opener(*handlers: urllib.request.BaseHandler) -> urllib.request.OpenerDirector:
+    """An opener that follows redirects only to https; each handler replaces its default kind."""
+    return urllib.request.build_opener(_HttpsOnlyRedirects, *handlers)
+
+
+def fetch_https(url: str, opener: urllib.request.OpenerDirector | None = None) -> Iterator[bytes]:
     if not url.startswith("https://"):
         raise TofuError(f"{url} is not an https URL")
-    opener = urllib.request.build_opener(_HttpsOnlyRedirects)
-    with opener.open(url, timeout=_NETWORK_TIMEOUT_SECONDS) as response:
+    with (opener or https_opener()).open(url, timeout=_NETWORK_TIMEOUT_SECONDS) as response:
         while chunk := response.read(_CHUNK_BYTES):
             yield chunk
 

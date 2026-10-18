@@ -1,6 +1,7 @@
 """`tofu_binary`: edge installs only the pinned tofu whose download matches its recorded sha256."""
 
 import email.message
+import functools
 import hashlib
 import http.client
 import io
@@ -336,26 +337,28 @@ def test_a_pins_file_it_cannot_parse_fails_naming_it(tmp_path, pins, missing):
     assert missing in str(raised.value)
 
 
-def redirect_to(location: str) -> Callable:
-    def https_open(_handler, request) -> urllib.response.addinfourl:
+class RedirectsToPlainHttp(urllib.request.HTTPSHandler):
+    """The injected HTTPS transport: answers every request with a 302 to plain http."""
+
+    location = "http://downloads.invalid/tofu.zip"
+
+    def https_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
         headers = email.message.Message()
-        headers["Location"] = location
-        response = urllib.response.addinfourl(io.BytesIO(b""), headers, request.full_url, 302)
+        headers["Location"] = self.location
+        response = urllib.response.addinfourl(io.BytesIO(b""), headers, req.full_url, 302)
         response.msg = "Found"
         return response
 
-    return https_open
 
-
-def test_a_redirect_off_https_names_both_urls_and_the_expected_sha(root, monkeypatch):
+def test_a_redirect_off_https_names_both_urls_and_the_expected_sha(root):
     """#101 rule 2 Failure: a redirect to plain http names both URLs and the expected sha."""
-    plain = "http://downloads.invalid/tofu.zip"
-    monkeypatch.setattr(urllib.request.HTTPSHandler, "https_open", redirect_to(plain))
+    opener = tofu_binary.https_opener(RedirectsToPlainHttp())
+    fetch = functools.partial(tofu_binary.fetch_https, opener=opener)
     release = release_of(pinned_zip())
 
     with pytest.raises(TofuError) as raised:
-        tofu_binary.install(root, release, tofu_binary.fetch_https)
+        tofu_binary.install(root, release, fetch)
 
     assert_names_the_url_and_both_shas(str(raised.value), release.sha256, b"")
-    assert plain in str(raised.value)
+    assert RedirectsToPlainHttp.location in str(raised.value)
     assert tree(root) == set()
