@@ -2084,6 +2084,40 @@ def test_a_failed_recreate_is_partial_marks_the_record_unfinished_and_touches_no
     assert RECREATED not in out
 
 
+@pytest.mark.parametrize(
+    ("step", "record_left", "recreated"),
+    [
+        ("mark traefik unfinished in applied.json", None, False),
+        ("record traefik in applied.json", UNFINISHED, True),
+    ],
+)
+def test_a_record_that_cannot_be_written_is_partial_names_the_step_and_touches_no_unit(
+    step, record_left, recreated, core_files, switch, scripted, repository, state
+):
+    """#85 rule 5: a read-only state directory before the recreate leaves traefik untouched; one
+    after it leaves the entry unfinished; either way exit 1 names the step and no unit moves."""
+    write_fleet(repository, ENABLED)
+    state.mkdir(parents=True, exist_ok=True)
+    ids = dict(scripted.container_ids)
+    if recreated:
+        scripted.after_up = lambda: state.chmod(0o500)
+    else:
+        state.chmod(0o500)
+    try:
+        exit_code, out, err = switch()
+    finally:
+        state.chmod(0o700)
+
+    assert exit_code == 1
+    assert f"partial, could not {step}, cannot write {state / 'applied.json'}" in err
+    assert (RECREATE_TRAEFIK in scripted.calls) is recreated
+    assert (scripted.container_ids["traefik"] != ids["traefik"]) is recreated
+    assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
+    assert applied(state) == record_left
+    assert unit_calls(scripted) == []
+    assert RECREATED not in out
+
+
 def test_a_traefik_not_running_after_the_recreate_is_partial(core_files, switch, scripted, state):
     """#85 rule 5, cell U8: not observed running, so partial, exit 1, record unfinished."""
     scripted.after_up = lambda: scripted.containers.update(traefik="exited")
