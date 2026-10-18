@@ -94,6 +94,9 @@ edge apply --closed
 # and not started, so start it with the `up` above first. A core container edge's failed
 # recreate left created and never started is no stopped one: applied.json says so, and the
 # next apply recreates it again; one made by `docker compose create` is a stopped one.
+# traefik-mcp follows traefik-mcp.yml and its own compose definition the same way, after the
+# core: while step-ca is on it alone is recreated (step-ca keeps its container and certificate);
+# while step-ca is off or switched off it is only named and nothing starts.
 ```
 
 Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
@@ -236,7 +239,13 @@ wieder ("traefik: recreate (the last recreate did not finish)"), auch wenn `trae
 inzwischen wieder auf dem alten Stand ist. Einen gestoppten Kerndienst
 nennt es nur ("traefik: traefik.yml changed; it is not running and is not started") und startet es nie; einen, dessen
 Container sein eigenes gescheitertes Neuerstellen nur erstellt und nie gestartet hat (so steht
-es in `applied.json`), erstellt der naechste Lauf wieder neu ("socket-proxy: recreate (the last recreate did not finish)"). Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
+es in `applied.json`), erstellt der naechste Lauf wieder neu ("socket-proxy: recreate (the last recreate did not finish)"). Nach dem Kern folgt
+`traefik-mcp` ebenso `traefik-mcp.yml` und seiner Compose-Definition: ist `step-ca` an (aktiviert und
+nicht abgeschaltet), erstellt der Lauf nur `traefik-mcp` neu (`up -d --no-deps --force-recreate
+traefik-mcp`, `step-ca` behaelt Container und Zertifikat) und schreibt den Eintrag, sobald es laeuft;
+ist `step-ca` aus oder abgeschaltet, nennt er es nur ("traefik-mcp: traefik-mcp.yml changed; step-ca
+is off, so it is not started") und startet nichts. Schaltet ein Lauf `step-ca` an, schreibt er den
+Eintrag von `traefik-mcp`, sobald die Einheit laeuft, damit der naechste Lauf nichts aendert. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
@@ -975,7 +984,11 @@ It answers to `<app>.mcp.internal` on `mcp-ca` and `mcp`, gets a 24-hour certifi
 step-ca over TLS-ALPN-01 (trusting only the CA's root, `~/.secrets/step-ca/root_ca.crt`) and renews
 it by itself. `traefik-mcp.yml` is its static configuration; `mcp/dynamic/` holds one router file
 per app (`hello.yml` is the probe's). The certificates live in the volume `traefik-mcp-acme`,
-which is not backed up because they are issued again.
+which is not backed up because they are issued again. Traefik reads `traefik-mcp.yml` only when it
+starts: while step-ca is on, `edge apply --closed` recreates `traefik-mcp` alone when that file or
+its compose definition changed, and step-ca keeps its container and certificate; while step-ca is
+off or switched off it names the change and starts nothing. `mcp/dynamic/` is watched and needs no
+recreate.
 
 A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router file under
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
@@ -990,8 +1003,8 @@ does not matter, also after a restart of the Docker daemon. Switch it off: `enab
 switching on again serves the same intermediate. Removing the volumes (`docker volume rm
 <project>_traefik-mcp-acme`, `<project>_step-ca`) stays a manual command.
 
-Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 1800 python3 probe/step-ca/probe.py
---scratch DIR` starts a throwaway project under a throwaway `HOME` and holds eleven proofs. Proofs 1
+Proof: `flock /tmp/probe-stack.lock timeout --kill-after=30 2400 python3 probe/step-ca/probe.py
+--scratch DIR` starts a throwaway project under a throwaway `HOME` and holds thirteen proofs. Proofs 1
 to 5 are the CA's (init modes and silence, the ACME directory verifies only with the probe root, the
 volume holds no root key, a restart keeps the intermediate, a partial state is completed, also with
 a root key owned by another user). Proofs 6 to 9 are the gateway's: a client on `mcp` reaches
@@ -1002,8 +1015,12 @@ CA copy is renewed within 12 minutes without a restart. Proof 10 runs `edge appl
 off and on in a copy of the repository: both volumes and the same intermediate survive, and a
 repeated apply changes nothing. Proof 11 drives the emergency switch through the cells A, B and E
 crossed with `edge stop`, `edge start` and `edge apply --closed`: the marker survives apply and
-the off, nothing is started past it, and `edge start` at a terminal ends it. The run takes about
-20 to 25 minutes, within the 1800 s timeout.
+the off, nothing is started past it, and `edge start` at a terminal ends it. Proof 12 lets
+`edge apply --closed` ask for `step-ca/init`, run it and switch the unit on. Proof 13 lets
+`traefik-mcp` follow `traefik-mcp.yml` and its definition: recreated alone while step-ca is on,
+with step-ca's container, intermediate and served certificate kept; named only while step-ca is
+switched off or disabled; recorded at a switch-on, so the next apply changes nothing. The run
+takes about 30 to 38 minutes, within the 2400 s timeout.
 Every call runs from a throwaway container on the network a client would sit on.
 
 The switch is one for the CA and the gateway together (`enabled: false`, then

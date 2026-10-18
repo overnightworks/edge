@@ -22,6 +22,14 @@ it finished, so a recreate that did not finish is planned again whatever the fil
 recreate that took it in is empty; socket-proxy keeps none, so traefik's, emptied with it, speaks
 for it (#87 rule 4). An entry for a service that binds no file from the checkout is ignored and
 dropped at the next write (#87 rule 6).
+
+A follower is a profile service that binds a file at Traefik's static-config path: today
+traefik-mcp with `traefik-mcp.yml` (#89). It is changed as a core service is, by its file binds
+against the record or its definition hash against its container's label, and what is done with a
+changed one depends on its unit, which apply decides and passes in as a gate: while the unit is on,
+a follower with a container is recreated on its own and one without starts with its unit; while
+the unit is off or switched off it is only named and nothing starts. A follower whose profile is
+no catalog unit is not planned at all.
 """
 
 import hashlib
@@ -35,6 +43,7 @@ from typing import Any
 from edge import compose, switches
 
 APPLIED_FILE = "applied.json"
+TRAEFIK_STATIC_CONFIG = "/etc/traefik/traefik.yml"  # where Traefik reads its static config
 DEFINITION_CHANGED = "its compose definition changed"
 UNFINISHED = "the last recreate did not finish"
 
@@ -72,6 +81,31 @@ def start_order(config: Mapping[str, Any]) -> tuple[str, ...]:
     for service in core_services(config):
         place(service)
     return tuple(ordered)
+
+
+def followers(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """The profile services that bind a file at Traefik's static-config path, in file order: each
+    is a Traefik that runs the bound file (#89)."""
+    return tuple(
+        name
+        for name, service in config["services"].items()
+        if service.get("profiles")
+        and any(
+            mount.get("type") == "bind" and mount.get("target") == TRAEFIK_STATIC_CONFIG
+            for mount in service.get("volumes", [])
+        )
+    )
+
+
+def follower_units(config: Mapping[str, Any], units: Collection[str]) -> dict[str, str]:
+    """Each follower whose profile is one of the catalog's units, with that unit; any other is
+    never planned (#89 rule 5)."""
+    found = {}
+    for follower in followers(config):
+        profiles = config["services"][follower]["profiles"]
+        if unit := next((profile for profile in profiles if profile in units), None):
+            found[follower] = unit
+    return found
 
 
 def followed_services(config: Mapping[str, Any], checkout: Path) -> frozenset[str]:
@@ -259,6 +293,79 @@ def plan_core(
     return list(plans.values())
 
 
+class Gate(StrEnum):
+    """The state of a follower's unit as apply decides it: on is enabled and not switched off,
+    whether or not the unit is up."""
+
+    ON = "on"
+    OFF = "off"
+    SWITCHED_OFF = "switched off"
+
+
+class FollowerAction(StrEnum):
+    RECREATE = "recreate"
+    STARTS_WITH_UNIT = "starts with its unit"
+    HELD = "held"
+
+
+@dataclass(frozen=True)
+class FollowerPlan:
+    """A changed follower; `digests` are its file binds as read when planning."""
+
+    service: str
+    unit: str
+    action: FollowerAction
+    why: str
+    digests: Digests
+    gate: Gate
+
+    def describe(self) -> str:
+        if self.action is FollowerAction.HELD:
+            return f"{self.service}: {self.why}; {self.unit} is {self.gate}, so it is not started"
+        if self.action is FollowerAction.STARTS_WITH_UNIT:
+            return f"{self.service}: {self.why}; it starts with {self.unit}"
+        return f"{self.service}: recreate ({self.why})"
+
+    def recreated(self) -> str:
+        return f"{self.service} is recreated and runs the checked-out {', '.join(self.digests)}"
+
+
+def plan_followers(
+    config: Mapping[str, Any],
+    containers: Sequence[compose.Container],
+    hashes: Mapping[str, str],
+    checkout: Path,
+    record: Record,
+    gates: Mapping[str, Gate],
+) -> list[FollowerPlan]:
+    """Each changed follower whose profile is a unit in `gates`, in file order, with `hashes` from
+    `docker compose config --hash` (#89 rules 1-6). A follower with any container whose unit is on
+    is recreated, so a fixed file reaches one that crash-loops on a broken one; one without a
+    container starts with its unit; one whose unit is off or switched off is held. A file bind
+    that cannot be read is an error whatever the unit's state (#89 rule 6)."""
+    reading = record.read()
+    states = compose.states_of(containers)
+    units = follower_units(config, gates)
+    labels = _config_hash_labels(containers, units)
+    plans = []
+    for follower, unit in units.items():
+        gate = gates[unit]
+        current = digests(file_binds(config["services"][follower], checkout), checkout)
+        whys = _own_changes(
+            config, follower, labels.get(follower, set()), hashes, checkout, current, reading
+        )
+        if not whys:
+            continue
+        if gate is not Gate.ON:
+            action = FollowerAction.HELD
+        elif follower in states:
+            action = FollowerAction.RECREATE
+        else:
+            action = FollowerAction.STARTS_WITH_UNIT
+        plans.append(FollowerPlan(follower, unit, action, "; ".join(whys), current, gate))
+    return plans
+
+
 def _own_changes(
     config: Mapping[str, Any],
     service: str,
@@ -325,13 +432,13 @@ def _dependents(config: Mapping[str, Any], service: str) -> set[str]:
 
 
 def _config_hash_labels(
-    containers: Iterable[compose.Container], core: Collection[str]
+    containers: Iterable[compose.Container], services: Collection[str]
 ) -> dict[str, set[str]]:
-    """The definition hash labels of each core service's containers; one without is an error,
+    """The definition hash labels of each named service's containers; one without is an error,
     because without it every run would see a change (P15)."""
     labels: dict[str, set[str]] = {}
     for container in containers:
-        if container.service not in core:
+        if container.service not in services:
             continue
         if container.config_hash is None:
             raise CoreError(

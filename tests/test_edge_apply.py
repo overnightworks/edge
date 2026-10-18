@@ -2573,6 +2573,22 @@ def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_aga
     assert CORE_CURRENT not in out
 
 
+def test_a_core_left_down_whole_after_the_traefik_recreate_names_both_in_start_order(
+    applied_core, switch, scripted, repository, state
+):
+    """#89 rule 7, cell F17 (#34 finding 57): both down at one look are named socket-proxy first."""
+    edit_traefik_yml(repository)
+    scripted.after_up = lambda: scripted.containers.update(
+        {"socket-proxy": "exited", "traefik": "exited"}
+    )
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, socket-proxy and traefik are not running after the traefik recreate" in err
+    assert applied(state) == UNFINISHED
+
+
 def test_every_core_recreate_proves_the_barriers_before_its_success_line(
     applied_core, switch, scripted, repository, state
 ):
@@ -2648,6 +2664,7 @@ def test_apply_drops_a_ghost_entry_and_keeps_the_entry_of_a_switched_off_file_bi
     scripted.config["services"]["traefik-mcp"]["volumes"].append(
         bind(repository / "traefik-mcp.yml", "/etc/traefik/traefik.yml")
     )
+    (repository / "traefik-mcp.yml").write_text("entryPoints: {}\n")
     kept = {"traefik-mcp.yml": "1" * 64}
     (state / "applied.json").write_text(
         json.dumps(applied(state) | {"ghost": {}, "traefik-mcp": kept})
@@ -2797,3 +2814,341 @@ def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
     assert up_calls(scripted)[:2] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
     assert out.index(CORE_CURRENT) < out.index("step-ca is on")
+
+
+# --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
+
+FOLLOWER_FILE = "traefik-mcp.yml"
+RECREATE_FOLLOWER = [*RECREATE_TRAEFIK[:-1], "traefik-mcp"]
+FOLLOWER_RECREATED = (
+    f"{apply.COMMAND}: traefik-mcp is recreated and runs the checked-out {FOLLOWER_FILE}"
+)
+HELD_OFF = "traefik-mcp: traefik-mcp.yml changed; step-ca is off, so it is not started"
+HELD_SWITCHED_OFF = (
+    "traefik-mcp: traefik-mcp.yml changed; step-ca is switched off, so it is not started"
+)
+
+
+def bind_traefik_mcp_files(config: dict, repository: Path) -> None:
+    """compose.yaml's binds of traefik-mcp, resolved for `repository`: its static config at
+    Traefik's path and `mcp/dynamic` as a directory."""
+    (repository / FOLLOWER_FILE).write_text("entryPoints: {}\n")
+    (repository / "mcp" / "dynamic").mkdir(parents=True)
+    config["services"]["traefik-mcp"]["volumes"] += [
+        bind(repository / FOLLOWER_FILE, "/etc/traefik/traefik.yml"),
+        bind(repository / "mcp" / "dynamic", "/mcp/dynamic"),
+    ]
+
+
+def edit_traefik_mcp_yml(repository: Path) -> None:
+    with (repository / FOLLOWER_FILE).open("a") as file:
+        file.write("# a harmless edit\n")
+
+
+def follower_entry(state: Path) -> dict | None:
+    return (applied(state) or {}).get("traefik-mcp")
+
+
+def follower_digest(repository: Path) -> dict:
+    return {FOLLOWER_FILE: sha256(repository / FOLLOWER_FILE)}
+
+
+@pytest.fixture
+def step_ca_applied(applied_core, scripted, repository, state):
+    """step-ca on and applied: traefik.yml and traefik-mcp.yml recorded, every container created
+    from the current definitions; the calls so far are forgotten."""
+    bind_traefik_mcp_files(scripted.config, repository)
+    write_fleet(repository, ENABLED)
+    scripted.put_containers(STEP_CA_ON)
+    (state / "applied.json").write_text(
+        json.dumps(applied(state) | {"traefik-mcp": follower_digest(repository)})
+    )
+    scripted.calls.clear()
+
+
+def test_a_changed_traefik_mcp_yml_recreates_exactly_traefik_mcp_and_records_the_plan_time_file(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rules 2, 3, C5, C6, cell F1: one plan, one yes, the follower's own argv; step-ca keeps
+    its container; the entry holds the digest as planned."""
+    ids = dict(scripted.container_ids)
+    edit_traefik_mcp_yml(repository)
+    planned = follower_digest(repository)
+    scripted.after_up = lambda: edit_traefik_mcp_yml(repository)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik-mcp: recreate (traefik-mcp.yml changed)" in out
+    assert out.count("apply exactly this plan") == 1
+    assert up_calls(scripted) == [RECREATE_FOLLOWER]
+    assert scripted.container_ids["traefik-mcp"] != ids["traefik-mcp"]
+    assert scripted.container_ids["step-ca"] == ids["step-ca"]
+    assert follower_entry(state) == planned
+    assert FOLLOWER_RECREATED in out
+
+
+def test_a_follower_without_an_entry_is_recreated_once_and_a_second_run_changes_nothing(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 2, P15, cells F2, F4."""
+    (state / "applied.json").write_text(json.dumps({"traefik": applied(state)["traefik"]}))
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik-mcp: recreate (traefik-mcp.yml has no applied record)" in out
+    assert up_calls(scripted) == [RECREATE_FOLLOWER]
+    ids = dict(scripted.container_ids)
+    scripted.calls.clear()
+    exit_code, out, _ = switch(answer="no")
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert "apply exactly this plan" not in out
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+def test_a_changed_traefik_mcp_definition_recreates_it_and_a_stale_step_ca_label_is_left(
+    step_ca_applied, switch, scripted
+):
+    """#89 rule 2, C6, cell F3: only the follower's label is compared; step-ca is never named."""
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("traefik-mcp")
+    scripted.change_definition("step-ca")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik-mcp: recreate (its compose definition changed)" in out
+    assert "step-ca:" not in out
+    assert up_calls(scripted) == [RECREATE_FOLLOWER]
+    assert scripted.container_ids["step-ca"] == ids["step-ca"]
+
+
+@pytest.mark.parametrize(
+    ("marked", "held"), [(False, HELD_OFF), (True, HELD_SWITCHED_OFF)], ids=["F5", "F5 marked"]
+)
+def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_only(
+    marked, held, step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 4, cell F5: a non-action; nothing to change, no up, the entry unchanged; a
+    marker left on the disabled unit names it switched off."""
+    write_fleet(repository, DISABLED)
+    for service in STEP_CA_SERVICES:
+        scripted.containers.pop(service)
+    if marked:
+        switch_off(state)
+    entry = follower_entry(state)
+    edit_traefik_mcp_yml(repository)
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert held in out
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+    assert follower_entry(state) == entry
+
+
+@pytest.mark.parametrize(
+    "follower", ["exited", "running"], ids=["F6 stopped", "F7 running behind the switch"]
+)
+def test_a_changed_traefik_mcp_yml_while_step_ca_is_switched_off_is_named_and_never_recreated(
+    follower, step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 4, P7, cells F6, F7: the switch holds the follower whether or not it runs."""
+    scripted.containers.update({"step-ca": "exited", "traefik-mcp": follower})
+    switch_off(state)
+    entry = follower_entry(state)
+    edit_traefik_mcp_yml(repository)
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "step-ca stays stopped (switch since" in out
+    assert HELD_SWITCHED_OFF in out
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+    assert follower_entry(state) == entry
+
+
+def test_a_switch_that_appears_while_the_prompt_waits_holds_the_follower_and_every_unit(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 3, P7, cell F8: no recreate, partial, exit 1, no unit switched."""
+    write_fleet(repository, PROBE_ENABLED)
+    entry = follower_entry(state)
+    edit_traefik_mcp_yml(repository)
+
+    exit_code, out, err = switch(while_prompt_waits=lambda: switch_off(state, LATER_SWITCH_AT))
+
+    assert exit_code == 1
+    assert "probe: on" in out
+    assert (
+        "partial, step-ca was switched off meanwhile (since "
+        f"{switches.describe_since(LATER_SWITCH_AT)}); traefik-mcp is not recreated; "
+        "no unit switched" in err
+    )
+    assert up_calls(scripted) == []
+    assert follower_entry(state) == entry
+
+
+def test_a_failed_follower_recreate_empties_its_entry_and_the_next_runs_recreate_again(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 3 (#85 rule 5), cell F9: also after the file is reverted."""
+    recorded = (repository / FOLLOWER_FILE).read_text()
+    edit_traefik_mcp_yml(repository)
+    scripted.failing_verb = "up"
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, could not recreate traefik-mcp, `docker compose up` exited 1" in err
+    assert follower_entry(state) == {}
+    assert FOLLOWER_RECREATED not in out
+    scripted.failing_verb = None
+    (repository / FOLLOWER_FILE).write_text(recorded)
+    exit_code, out, _ = switch()
+    assert exit_code == 0
+    assert "traefik-mcp: recreate (the last recreate did not finish)" in out
+    assert follower_entry(state) == follower_digest(repository)
+
+
+def test_a_traefik_mcp_that_crash_loops_after_its_recreate_is_partial_with_its_entry_emptied(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 rule 3, cell F10: observed alone, it is not running."""
+    edit_traefik_mcp_yml(repository)
+    scripted.crash_loops.add("traefik-mcp")
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, traefik-mcp is not running after the traefik-mcp recreate" in err
+    assert follower_entry(state) == {}
+    assert FOLLOWER_RECREATED not in out
+
+
+def test_a_fixed_file_reaches_traefik_mcp_before_a_crashed_step_ca_is_started(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#89 head decision, cell F11: step-ca's unit plan is on, the follower is recreated first."""
+    scripted.containers["step-ca"] = "exited"
+    edit_traefik_mcp_yml(repository)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "step-ca: on" in out
+    starting_step_ca = unit_calls(scripted)[0]
+    assert scripted.calls.index(RECREATE_FOLLOWER) < scripted.calls.index(starting_step_ca)
+    assert out.index(FOLLOWER_RECREATED) < out.index("step-ca is on")
+    assert follower_entry(state) == follower_digest(repository)
+
+
+@pytest.mark.parametrize("observed_on", [True, False], ids=["observed on", "left down"])
+def test_a_switch_on_records_the_follower_only_once_the_unit_is_observed_on(
+    observed_on, applied_core, switch, scripted, repository, state
+):
+    """#89 head decision, P15, cell F12: the follower starts with its unit, no recreate; its
+    plan-time digest is written once step-ca is observed on, so the next run changes nothing."""
+    bind_traefik_mcp_files(scripted.config, repository)
+    write_fleet(repository, ENABLED)
+    scripted.starts_nothing = not observed_on
+
+    exit_code, out, _ = switch()
+
+    assert "traefik-mcp: traefik-mcp.yml has no applied record; it starts with step-ca" in out
+    assert RECREATE_FOLLOWER not in scripted.calls
+    if not observed_on:
+        assert exit_code == 1
+        assert follower_entry(state) is None
+        return
+    assert exit_code == 0
+    assert follower_entry(state) == follower_digest(repository)
+    scripted.calls.clear()
+    exit_code, out, _ = switch(answer="no")
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_follower_entry_that_cannot_be_written_after_a_switch_on_is_partial_and_names_the_step(
+    applied_core, switch, scripted, repository, state
+):
+    """#89 P15, beside cell F12: step-ca is observed on, but writing the follower's entry fails;
+    exit 1 names the unit and the step, and no entry is left for traefik-mcp."""
+    bind_traefik_mcp_files(scripted.config, repository)
+    write_fleet(repository, ENABLED)
+    scripted.after_up = lambda: state.chmod(0o500)
+    try:
+        exit_code, _, err = switch()
+    finally:
+        state.chmod(0o700)
+
+    assert exit_code == 1
+    assert (
+        f"partial, step-ca: could not record traefik-mcp in applied.json, "
+        f"cannot write {state / 'applied.json'}"
+    ) in err
+    assert RECREATE_FOLLOWER not in scripted.calls
+    assert follower_entry(state) is None
+
+
+def test_a_core_change_a_follower_change_and_a_unit_switch_share_one_yes_in_order(
+    step_ca_applied, switch, scripted, repository, state, ingress
+):
+    """#89 rules 1, 3, cell F13: socket-proxy, traefik, traefik-mcp, then the unit; the barriers
+    are proven after each core recreate only; the core is current."""
+    scripted.config["services"]["echo"] = {"profiles": ["echo"]}
+    write_fleet(
+        repository,
+        ENABLED + "  probe:\n    run: {enabled: true}\n  echo:\n    run: {enabled: true}\n",
+    )
+    scripted.containers["hello"] = "exited"
+    switch_off(state, unit="probe")
+    scripted.change_definition("socket-proxy")
+    edit_traefik_mcp_yml(repository)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert up_calls(scripted)[:3] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK, RECREATE_FOLLOWER]
+    assert unit_calls(scripted, "echo") == [up_calls(scripted)[3]]
+    proven = "the barrier of probe is proven"
+    assert out.count(proven) == 2
+    assert out.rindex(proven) < out.index(CORE_CURRENT) < out.index(FOLLOWER_RECREATED)
+    assert out.index(FOLLOWER_RECREATED) < out.index("echo is on")
+
+
+def test_a_follower_of_a_unit_the_catalog_does_not_name_is_never_planned(
+    step_ca_applied, switch, scripted, repository
+):
+    """#89 rule 5, cell F14: no line, no hash asked, no recreate."""
+    write_fleet(repository, "services:\n  probe:\n    run: {enabled: false}\n")
+    (repository / FOLLOWER_FILE).unlink()
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "traefik-mcp" not in out
+    hash_calls = [call for call in scripted.calls if call[2:4] == ["config", "--hash"]]
+    assert hash_calls
+    assert all("traefik-mcp" not in call[4].split(",") for call in hash_calls)
+    assert scripted.changing_verbs() == []
+
+
+def test_a_missing_traefik_mcp_yml_while_step_ca_is_on_cannot_be_planned(
+    step_ca_applied, switch, scripted, repository
+):
+    """#89 rule 6, cell F15: exit 2, naming the path."""
+    (repository / FOLLOWER_FILE).unlink()
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert f"cannot plan, cannot read {repository / FOLLOWER_FILE}" in err
+    assert scripted.changing_verbs() == []

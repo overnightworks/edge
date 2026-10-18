@@ -459,3 +459,151 @@ def test_a_ghost_entry_is_ignored_and_dropped_at_the_next_write_while_a_followed
     record.mark_unfinished(["traefik"], followed)
     assert record.read().entries == {"traefik": {}, "traefik-mcp": {"x.yml": "1"}}
     assert followed == {"traefik", "traefik-mcp", "hello"}
+
+
+# --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
+
+FOLLOWER = "traefik-mcp"
+FOLLOWER_FILE = "traefik-mcp.yml"
+FOLLOWER_HASHES = HASHES | {FOLLOWER: "c" * 64}
+ON = {"step-ca": core.Gate.ON}
+
+
+@pytest.fixture
+def with_follower(config: dict, checkout: Path) -> dict:
+    """compose.yaml's step-ca profile as resolved: traefik-mcp binds its static config at
+    Traefik's path and `mcp/dynamic` as a directory; step-ca binds ca.json elsewhere."""
+    (checkout / FOLLOWER_FILE).write_text("entryPoints: {}\n")
+    (checkout / "mcp" / "dynamic").mkdir(parents=True)
+    (checkout / "ca.json").write_text("{}\n")
+    config["services"]["step-ca"] = {
+        "profiles": ["step-ca"],
+        "volumes": [bind(checkout / "ca.json", "/home/step/config/ca.json")],
+    }
+    config["services"][FOLLOWER] = {
+        "profiles": ["step-ca"],
+        "depends_on": {"step-ca": {"condition": "service_started"}},
+        "volumes": [
+            bind(checkout / FOLLOWER_FILE, "/etc/traefik/traefik.yml"),
+            bind(checkout / "mcp" / "dynamic", "/mcp/dynamic"),
+        ],
+    }
+    config["services"]["keycloak"] = {"profiles": ["keycloak"]}
+    return config
+
+
+def followers_of(
+    config: dict,
+    checkout: Path,
+    record: core.Record,
+    states: dict[str, str],
+    gates: dict[str, core.Gate],
+    labels: dict[str, str | None] | None = None,
+) -> list[core.FollowerPlan]:
+    found = [
+        compose.Container(service, state, (FOLLOWER_HASHES | (labels or {})).get(service), "i")
+        for service, state in states.items()
+    ]
+    return core.plan_followers(config, found, FOLLOWER_HASHES, checkout, record, gates)
+
+
+def test_the_followers_are_the_profile_services_binding_traefiks_static_config(
+    with_follower, checkout
+):
+    """#89 head decision, cell F16: exactly traefik-mcp; traefik is core, step-ca binds ca.json
+    elsewhere, and the `mcp/dynamic` directory bind is no file it follows."""
+    assert core.followers(with_follower) == (FOLLOWER,)
+    assert core.file_binds(with_follower["services"][FOLLOWER], checkout) == (
+        checkout / FOLLOWER_FILE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("states", "gate", "line"),
+    [
+        (
+            {FOLLOWER: "running"},
+            core.Gate.ON,
+            "traefik-mcp: recreate (traefik-mcp.yml has no applied record)",
+        ),
+        (
+            {FOLLOWER: "restarting"},
+            core.Gate.ON,
+            "traefik-mcp: recreate (traefik-mcp.yml has no applied record)",
+        ),
+        (
+            {},
+            core.Gate.ON,
+            "traefik-mcp: traefik-mcp.yml has no applied record; it starts with step-ca",
+        ),
+        (
+            {},
+            core.Gate.OFF,
+            "traefik-mcp: traefik-mcp.yml has no applied record; step-ca is off, so it is not "
+            "started",
+        ),
+        (
+            {FOLLOWER: "running"},
+            core.Gate.SWITCHED_OFF,
+            "traefik-mcp: traefik-mcp.yml has no applied record; step-ca is switched off, so it "
+            "is not started",
+        ),
+    ],
+    ids=["F2 on", "F10 crash-looping", "F12 switched on", "F5 off", "F7 switched off"],
+)
+def test_a_changed_follower_is_planned_by_its_units_gate(
+    states, gate, line, with_follower, checkout, record
+):
+    """#89 rules 2-4, cells F2, F5, F7, F10, F12: a follower with any container whose unit is on
+    is recreated, one without starts with its unit, and an off or switched-off unit holds it."""
+    [plan] = followers_of(with_follower, checkout, record, states, {"step-ca": gate})
+
+    assert plan.describe() == line
+    assert plan.digests == {FOLLOWER_FILE: sha256(checkout / FOLLOWER_FILE)}
+
+
+def test_a_follower_as_recorded_and_labelled_plans_nothing(with_follower, checkout, record):
+    """#89 rule 2, cell F4: P15."""
+    record.write(FOLLOWER, {FOLLOWER_FILE: sha256(checkout / FOLLOWER_FILE)}, {FOLLOWER})
+
+    assert followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, ON) == []
+
+
+def test_a_followers_changed_label_is_its_definition_and_step_cas_is_none_of_its_concern(
+    with_follower, checkout, record
+):
+    """#89 rule 2, cell F3: only the follower's own label is compared."""
+    record.write(FOLLOWER, {FOLLOWER_FILE: sha256(checkout / FOLLOWER_FILE)}, {FOLLOWER})
+    states = {FOLLOWER: "running", "step-ca": "running"}
+
+    [plan] = followers_of(
+        with_follower, checkout, record, states, ON, {FOLLOWER: STALE, "step-ca": STALE}
+    )
+
+    assert plan.describe() == "traefik-mcp: recreate (its compose definition changed)"
+
+
+def test_a_follower_without_a_container_gets_no_definition_line(with_follower, checkout, record):
+    """#89 rule 2: no container, no label to compare."""
+    record.write(FOLLOWER, {FOLLOWER_FILE: sha256(checkout / FOLLOWER_FILE)}, {FOLLOWER})
+
+    assert followers_of(with_follower, checkout, record, {}, {"step-ca": core.Gate.OFF}) == []
+
+
+def test_a_follower_whose_profile_is_no_catalog_unit_is_skipped(with_follower, checkout, record):
+    """#89 rule 5, cell F14: no line, no hash asked, whatever the file holds."""
+    (checkout / FOLLOWER_FILE).unlink()
+
+    assert core.follower_units(with_follower, {}) == {}
+    assert followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, {}) == []
+
+
+@pytest.mark.parametrize("gate", list(core.Gate))
+def test_a_missing_follower_file_cannot_be_planned_and_names_its_path(
+    gate, with_follower, checkout, record
+):
+    """#89 rule 6, cell F15: whether step-ca is on, off or switched off."""
+    (checkout / FOLLOWER_FILE).unlink()
+
+    with pytest.raises(core.CoreError, match=re.escape(str(checkout / FOLLOWER_FILE))):
+        followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, {"step-ca": gate})

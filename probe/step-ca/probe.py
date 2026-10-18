@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
-#60 proof 11, #69 proof 12): a throwaway compose project and a throwaway HOME.
+#60 proof 11, #69 proof 12, #89 proof 13): a throwaway compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
 the proofs and always removes its containers, networks and volumes. It never touches the live
 stack: the project name and HOME are set in the environment of every command.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 1800 \\
+    flock /tmp/probe-stack.lock timeout --kill-after=30 2400 \\
         python3 probe/step-ca/probe.py --scratch DIR
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
 --scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies, proof 11
-drives the emergency switch and proof 12 runs the setup from `edge apply`: the run takes about
-25 to 30 minutes, bounded by the 1800 s timeout
-above. Needs `uv`: proof 8 runs
-`edge-check` through it, proofs 10 and 11 run `uv sync` in a copy of the repository.
+drives the emergency switch, proof 12 runs the setup from `edge apply` and proof 13 lets
+traefik-mcp follow its file and definition through about ten applies: the run takes about 30 to
+38 minutes, bounded by the 2400 s timeout above. Needs `uv`: proof 8 runs `edge-check` through
+it, proofs 10 to 13 run `uv sync` in a copy of the repository.
 """
 
 from __future__ import annotations
@@ -44,6 +44,8 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect  # noqa: E402
 
+from edge import core  # noqa: E402
+
 PROJECT = "edge-stepca-probe"
 CA_URL = "https://step-ca:9000"
 NETWORK = f"{PROJECT}_mcp-ca"
@@ -54,6 +56,7 @@ DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
+COMPOSE_FILE = "compose.yaml"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
@@ -94,6 +97,14 @@ RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
 STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|false)")
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
+FOLLOWER = "traefik-mcp"
+FOLLOWER_FILE = "traefik-mcp.yml"
+HARMLESS_EDIT = "# probe 13: a harmless edit\n"
+PROBE_LABEL = '    labels: {edge.probe: "13"}\n'  # a definition change that changes nothing else
+LABEL_AFTER = {  # where the probe label goes in compose.yaml: after each service's profile line
+    "step-ca": "  step-ca:\n    profiles: [step-ca]\n",
+    FOLLOWER: "  traefik-mcp:\n    <<: *traefik\n    profiles: [step-ca]\n",
+}
 
 
 class Probe:
@@ -554,7 +565,12 @@ class Probe:
         short_ca = self.scratch / "ca-short-lived.json"
         short_ca.write_text(json.dumps(ca))
         self.environment["PROBE_CA_JSON"] = str(short_ca)
-        self.compose_files = ["compose.yaml", str(OVERRIDE)]
+        self.compose_files = [COMPOSE_FILE, str(OVERRIDE)]
+
+    @property
+    def state_directory(self) -> Path:
+        """Where edge keeps its markers and its applied record under the probe's HOME."""
+        return self.home / ".local" / "state" / "edge"
 
     def traefik_started_at(self) -> str:
         container = self.compose("ps", "--quiet", "traefik-mcp").stdout.decode().strip()
@@ -660,7 +676,7 @@ class Probe:
 
     def proof_11_emergency_switch(self) -> None:
         copy = self.repository_copy()
-        marker = self.home / ".local" / "state" / "edge" / "stopped" / "step-ca"
+        marker = self.state_directory / "stopped" / "step-ca"
         self.set_enabled(copy, True)
 
         self.edge(copy, "stop", "step-ca", terminal=False)  # 1. A x stop: R4, no terminal
@@ -757,6 +773,174 @@ class Probe:
         expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
         print("proof 12 held: no changes nothing; yes, yes runs step-ca/init, re-checks, plans, on")
 
+    # --- traefik-mcp follows its file and definition while step-ca is on (#89) ----------------
+
+    def copy_compose(self, copy: Path, *arguments: str) -> str:
+        """Compose as edge calls it in the copy: its project directory, every profile."""
+        return self.run(
+            ["docker", "compose", "--project-directory", str(copy), "--file",
+             str(copy / COMPOSE_FILE), "--profile", "*", *arguments]
+        ).stdout.decode()  # fmt: skip
+
+    def container_id(self, service: str) -> str:
+        return self.compose("ps", "--all", "-q", service).stdout.decode().strip()
+
+    def ids(self) -> tuple[str, str]:
+        return self.container_id(FOLLOWER), self.container_id("step-ca")
+
+    def follower_entry(self) -> dict | None:
+        record = self.state_directory / core.APPLIED_FILE
+        return json.loads(record.read_text()).get(FOLLOWER) if record.exists() else None
+
+    def follower_digest(self, copy: Path) -> dict:
+        return core.digests([copy / FOLLOWER_FILE], copy)
+
+    def intermediate_now(self) -> str:
+        return self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
+
+    def apply_says_nothing_to_change(self, copy: Path, cell: str) -> str:
+        out = self.edge(copy, "apply", "--closed", terminal=True, typed=b"no\n")
+        expect(NOTHING_TO_CHANGE in out, f"{cell}: apply said: {out[-200:]}")
+        expect("Type" not in out, f"{cell}: apply asked for `yes` with nothing to change")
+        return out
+
+    def proof_13a_followers(self, copy: Path) -> None:
+        config = json.loads(self.copy_compose(copy, "config", "--format", "json"))
+        followers = core.followers(config)
+        binds = core.file_binds(config["services"][FOLLOWER], copy)
+        expect(followers == (FOLLOWER,), f"P13a: the followers are {followers}")
+        expect(binds == (copy / FOLLOWER_FILE,), f"P13a: traefik-mcp's file binds are {binds}")
+        print(f"P13a held: followers {followers}, file bind {binds[0]}")
+
+    def proof_13b_file_follows(self, copy: Path) -> None:
+        follower, step_ca = self.ids()
+        intermediate, serial = self.intermediate_now(), self.wait_until_served()["serial_number"]
+        with (copy / FOLLOWER_FILE).open("a") as file:
+            file.write(HARMLESS_EDIT)
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect("traefik-mcp: recreate (traefik-mcp.yml changed)" in out, f"P13b: {out[-240:]}")
+        expect("traefik-mcp is recreated and runs the checked-out traefik-mcp.yml" in out, out)
+        expect(self.container_id(FOLLOWER) != follower, "P13b: traefik-mcp kept its container")
+        expect(self.container_id("step-ca") == step_ca, "P13b: step-ca was recreated")
+        self.wait_until_answering()
+        served = self.wait_until_served()["serial_number"]
+        expect(self.intermediate_now() == intermediate, "P13b: the intermediate changed")
+        expect(served == serial, f"P13b: served serial {serial[-8:]} -> {served[-8:]}")
+        entry = self.follower_entry()
+        expect(entry == self.follower_digest(copy), f"P13b: the entry is {entry}")
+        print(
+            f"P13b held: traefik-mcp {follower[:12]} -> {self.container_id(FOLLOWER)[:12]}, "
+            f"step-ca {step_ca[:12]} kept, intermediate {intermediate}, serial ...{serial[-8:]} "
+            f"kept, entry {entry}"
+        )
+
+    def proof_13c_second_run(self, copy: Path) -> None:
+        ids = self.ids()
+        self.apply_says_nothing_to_change(copy, "P13c")
+        expect(self.ids() == ids, "P13c: a container was replaced")
+        label = self.run(
+            ["docker", "inspect", "--format",
+             '{{index .Config.Labels "com.docker.compose.config-hash"}}', ids[0]]
+        ).stdout.decode().strip()  # fmt: skip
+        hashed = self.copy_compose(copy, "config", "--hash", FOLLOWER).split()
+        expect(hashed == [FOLLOWER, label], f"P13c: label {label}, config --hash {hashed}")
+        print(f"P13c held: nothing to change, same ids, label = config --hash = {label[:12]}")
+
+    def proof_13d_definition_follows(self, copy: Path) -> None:
+        follower, step_ca = self.ids()
+        compose_file = copy / COMPOSE_FILE
+        text = compose_file.read_text()
+        for anchor in LABEL_AFTER.values():
+            text = text.replace(anchor, anchor + PROBE_LABEL, 1)
+        compose_file.write_text(text)
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect("traefik-mcp: recreate (its compose definition changed)" in out, out[-240:])
+        expect("step-ca:" not in out, f"P13d: step-ca was named: {out[-240:]}")
+        expect(self.container_id(FOLLOWER) != follower, "P13d: traefik-mcp kept its container")
+        expect(self.container_id("step-ca") == step_ca, "P13d: step-ca was recreated")
+        self.apply_says_nothing_to_change(copy, "P13d")
+        print(f"P13d held: traefik-mcp recreated for its label, step-ca {step_ca[:12]} kept")
+        self.answer_the_acme_owner_question(copy)
+
+    def answer_the_acme_owner_question(self, copy: Path) -> None:
+        """Whether `up --no-deps traefik-mcp` waits on the missing one-shot it depends on to
+        complete: a fact of Compose, reported, not ruled."""
+        self.compose("rm", "--force", "--stop", "traefik-mcp-acme-owner")
+        started = time.monotonic()
+        self.copy_compose(copy, "up", "-d", "--no-deps", "--force-recreate", FOLLOWER)
+        seconds = time.monotonic() - started
+        owner = self.container_id("traefik-mcp-acme-owner") or "none"
+        running = self.compose("ps", "-q", "--status", "running", FOLLOWER).stdout.decode().strip()
+        print(
+            f"P13 acme owner: `up --no-deps --force-recreate traefik-mcp` without the owner "
+            f"returned in {seconds:.1f} s; owner container: {owner[:12]}; traefik-mcp running: "
+            f"{bool(running)}"
+        )
+        # A missing owner leaves the unit not up: this apply makes it again, else changes nothing.
+        self.edge(copy, "apply", "--closed", terminal=True)
+        self.apply_says_nothing_to_change(copy, "P13 acme owner")
+
+    def proof_13e_switched_off(self, copy: Path) -> None:
+        marker = self.state_directory / "stopped" / "step-ca"
+        recorded = (copy / FOLLOWER_FILE).read_text()
+        self.edge(copy, "stop", "step-ca", terminal=False)
+        written = marker.read_text()
+        with (copy / FOLLOWER_FILE).open("a") as file:
+            file.write(HARMLESS_EDIT)
+        out = self.apply_says_nothing_to_change(copy, "P13e")
+        expect("step-ca stays stopped" in out, f"P13e: {out[-240:]}")
+        held = "traefik-mcp: traefik-mcp.yml changed; step-ca is switched off, so it is not started"
+        expect(held in out, f"P13e: {out[-240:]}")
+        expect(not self.containers_of_unit(running_only=True), "P13e: a container runs")
+        expect(marker.read_text() == written, "P13e: apply touched the marker")
+        self.volume_names_exist()
+        (copy / FOLLOWER_FILE).write_text(recorded)
+        self.edge(copy, "start", "step-ca", terminal=True)
+        self.wait_until_answering()
+        self.apply_says_nothing_to_change(copy, "P13e after start")
+        print("P13e held: switched off, the held line, nothing to change, nothing running")
+
+    def proof_13f_disabled(self, copy: Path) -> None:
+        held = "traefik-mcp: traefik-mcp.yml changed; step-ca is off, so it is not started"
+        self.set_enabled(copy, False)
+        with (copy / FOLLOWER_FILE).open("a") as file:
+            file.write(HARMLESS_EDIT)
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect(held in out and "step-ca: off" in out, f"P13f: {out[-240:]}")
+        expect(not self.containers_of_unit(running_only=False), "P13f: containers are left")
+        out = self.apply_says_nothing_to_change(copy, "P13f")
+        expect(held in out, f"P13f: a second apply said {out[-240:]}")
+        self.volume_names_exist()
+        print("P13f held: disabled, the held line twice, no container")
+
+    def proof_13g_switch_on_record(self, copy: Path) -> None:
+        self.set_enabled(copy, True)
+        out = self.edge(copy, "apply", "--closed", terminal=True)
+        expect("it starts with step-ca" in out, f"P13g: {out[-240:]}")
+        expect("traefik-mcp: recreate" not in out, f"P13g: {out[-240:]}")
+        self.wait_until_answering()
+        self.wait_until_served()
+        entry = self.follower_entry()
+        expect(entry == self.follower_digest(copy), f"P13g: the entry is {entry}")
+        self.apply_says_nothing_to_change(copy, "P13g")
+        print(f"P13g held: switched on, entry {entry} recorded, the next apply changes nothing")
+
+    def proof_13_traefik_mcp_follows(self) -> None:
+        copy = self.repository_copy()
+        self.set_enabled(copy, True)
+        self.compose("up", "--detach", "--no-deps", "hello-mcp")  # proof 12 took it down
+        intermediate = self.intermediate_now()
+        self.proof_13a_followers(copy)
+        self.proof_13b_file_follows(copy)
+        self.proof_13c_second_run(copy)
+        self.proof_13d_definition_follows(copy)
+        self.proof_13e_switched_off(copy)
+        self.proof_13f_disabled(copy)
+        self.proof_13g_switch_on_record(copy)
+        self.volume_names_exist()
+        expect(self.intermediate_now() == intermediate, "P13h: the intermediate changed")
+        print("P13h held: both volumes and the intermediate kept, the marker kept across apply")
+
     def volume_names_exist(self) -> None:
         for volume in self.volume_names():
             self.run(["docker", "volume", "inspect", volume])
@@ -814,7 +998,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-12 hold")
+        print("PROBE PASSED: proofs 1-13 hold")
     return exit_code
 
 
@@ -836,6 +1020,7 @@ def prove(probe: Probe) -> int:
         probe.proof_10_apply_cycle()
         probe.proof_11_emergency_switch()
         probe.proof_12_apply_runs_the_setup()
+        probe.proof_13_traefik_mcp_follows()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
