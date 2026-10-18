@@ -1,8 +1,0 @@
-claim_id = "2d0027ed18f547ea822c65626957d6bd"
-agent = "claude"
-role = "builder"
-base = "8d7301a5e731e78f09c05a8e3a97880484514f61"
-branch = "claude/issue-105-k11-sb-keycloak-s-pages-use-edge-s-theme"
-scope = ["README.md", "compose.yaml", "keycloak/realm.yaml", "keycloak/themes/hallucinai/account/theme.properties", "keycloak/themes/hallucinai/login/theme.properties", "probe/keycloak/README.md", "probe/keycloak/probe.py", "tests/test_keycloak_unit.py"]
-opened_commit = "54a2a906289604a86fed3a1895456d69744b5558"
-whole_reason = "One seam: the realm names the theme, compose mounts it, the probe proves it is served; splitting leaves a realm pointing at a theme that is not mounted."
