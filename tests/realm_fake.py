@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -558,10 +559,23 @@ class AdminApi(BaseHTTPRequestHandler):
         pass
 
 
-@pytest.fixture
-def keycloak() -> Iterator[FakeKeycloak]:
+@contextmanager
+def serving() -> Iterator[FakeKeycloak]:
     server = FakeKeycloak()
     threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
     yield server
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture
+def keycloak() -> Iterator[FakeKeycloak]:
+    with serving() as server:
+        yield server
+
+
+@pytest.fixture
+def proxy() -> Iterator[FakeKeycloak]:
+    """A second fake that stands in for a proxy Docker injects: whatever reaches it is logged."""
+    with serving() as server:
+        yield server

@@ -2,6 +2,7 @@
 the item's scenario matrix (U8-U29) or its rule."""
 
 import copy
+import importlib.util
 import io
 import json
 import shutil
@@ -14,6 +15,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
@@ -69,9 +71,9 @@ def run_observer(
     secret_file.write_text(SECRET + "\n")
     previous = signal.getsignal(signal.SIGTERM)
 
-    def run(base_url: str) -> Run:
+    def run(base_url: str, command: Callable[..., int] = observer.main) -> Run:
         stdin = io.StringIO(KEY + "\n")
-        code = observer.main(["--base-url", base_url], stdin, secret_file)
+        code = command(["--base-url", base_url], stdin, secret_file)
         captured = capsys.readouterr()
         return Run(code, captured.out, captured.err)
 
@@ -364,6 +366,43 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
         if not (method == "GET" and path.startswith("/admin/realms/"))
     ]
     assert not_admin_reads == [("POST", "/realms/master/protocol/openid-connect/token")]
+
+
+def fresh_observer(name: str) -> ModuleType:
+    """observe.py loaded anew from its file, so its opener is built under the current
+    environment rather than the one the test session imported it in."""
+    spec = importlib.util.spec_from_file_location(name, REPOSITORY / "src/edge/realm/observe.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[name]
+    return module
+
+
+def test_a_proxy_in_the_environment_never_sees_the_secret_or_the_token(
+    keycloak: FakeKeycloak,
+    proxy: FakeKeycloak,
+    run_observer: Callable[..., Run],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rule 1 and Rule 4: Docker may inject HTTP(S)_PROXY; the token POST and the bearer GETs
+    still go to Keycloak alone."""
+    for variable in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(variable, proxy.url)
+    for variable in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(variable, raising=False)
+    expected = run_observer(keycloak.url)
+    keycloak.requests.clear()
+
+    run = run_observer(keycloak.url, fresh_observer("observe_under_a_proxy").main)
+
+    assert (run.exit_code, run.stdout) == (0, expected.stdout)
+    assert proxy.requests == []
+    assert keycloak.requests[0] == ("POST", "/realms/master/protocol/openid-connect/token")
+    assert {method for method, _ in keycloak.requests[1:]} == {"GET"}
 
 
 @pytest.mark.parametrize("method", ["HEAD", "OPTIONS", "TRACE", "PUT", "PROPFIND"])
