@@ -64,6 +64,7 @@ def root(tmp_path) -> Path:
 
 
 def test_an_empty_root_gets_the_verified_binary_at_0755(root):
+    """#101 T1: an empty root gets the verified binary at 0755."""
     archive = pinned_zip()
     download = Download(archive)
 
@@ -76,6 +77,7 @@ def test_an_empty_root_gets_the_verified_binary_at_0755(root):
 
 
 def test_an_installed_pinned_binary_is_reused_without_the_network(root):
+    """#101 T2: an installed binary reporting the pin is returned with no network call."""
     archive = pinned_zip()
     first = tofu_binary.install(root, release_of(archive), Download(archive))
     again = Download(archive)
@@ -85,6 +87,7 @@ def test_an_installed_pinned_binary_is_reused_without_the_network(root):
 
 
 def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
+    """#101 T3: a sha mismatch names the URL and both shas, and nothing is installed."""
     archive = pinned_zip()
     recorded = "0" * 64
 
@@ -99,6 +102,8 @@ def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
 
 
 def test_a_network_error_names_the_url_and_installs_nothing(root):
+    """#101 rule 2 Failure: a network error names the URL, and nothing is installed."""
+
     def unreachable(url: str) -> Iterator[bytes]:
         raise OSError("connection refused")
         yield b""
@@ -109,6 +114,7 @@ def test_a_network_error_names_the_url_and_installs_nothing(root):
 
 
 def test_a_download_over_the_size_limit_is_refused_and_installs_nothing(root):
+    """#101 T6: a download over the size limit is refused, and nothing is installed."""
     archive = pinned_zip()
 
     with pytest.raises(TofuError, match="limit"):
@@ -119,6 +125,7 @@ def test_a_download_over_the_size_limit_is_refused_and_installs_nothing(root):
 
 
 def test_a_folder_a_parallel_run_installed_meanwhile_is_used_and_ours_removed(root):
+    """#101 T7: a `<version>` a parallel run made meanwhile is used, and ours is removed."""
     archive = pinned_zip()
     theirs = root / tofu.pinned_version() / "tofu"
 
@@ -136,6 +143,7 @@ def test_a_folder_a_parallel_run_installed_meanwhile_is_used_and_ours_removed(ro
 
 
 def test_leftover_temp_names_of_a_killed_run_are_cleaned(root):
+    """#101 T8: leftover temp names of a killed run are cleaned before a download."""
     archive = pinned_zip()
     root.mkdir()
     (root / f"{tofu_binary.PARTIAL_PREFIX}download").write_bytes(b"half a zip")
@@ -148,6 +156,7 @@ def test_leftover_temp_names_of_a_killed_run_are_cleaned(root):
 
 
 def test_member_names_that_escape_are_never_extracted(tmp_path, root):
+    """#101 T9: member names that escape are never extracted; only `tofu` is read."""
     archive = pinned_zip(**{"../tofu": b"escaped", "../../evil": b"escaped"})
 
     installed = tofu_binary.install(root, release_of(archive), Download(archive))
@@ -157,6 +166,7 @@ def test_member_names_that_escape_are_never_extracted(tmp_path, root):
 
 
 def test_an_archive_without_the_tofu_member_installs_nothing(root):
+    """#101 rule 2 Check before open: an archive without the member `tofu` installs nothing."""
     archive = release_zip({"../tofu": b"escaped"})
 
     with pytest.raises(TofuError, match="tofu"):
@@ -172,6 +182,7 @@ sha256 = { linux_amd64 = "ab" }
 
 
 def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
+    """#101 rule 1: the release comes from its pins entry, with the URL template filled in."""
     release = tofu_binary.release_for(tomllib.loads(PINS), "1.13.1", "linux_amd64")
 
     assert release == tofu_binary.Release(
@@ -190,6 +201,7 @@ def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
     ids=["unpinned-version", "other-platform"],
 )
 def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platform, missing):
+    """#101 T4, T5: a version without an entry or a platform without a sha names the pins file."""
     with pytest.raises(TofuError) as raised:
         tofu_binary.release_for(tomllib.loads(PINS), version, platform)
 
@@ -198,6 +210,7 @@ def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platfor
 
 
 def test_the_committed_pins_cover_the_pinned_version_on_linux_amd64():
+    """#101 rule 1: the committed pins file covers the pinned version on linux_amd64."""
     pins = tomllib.loads(tofu_binary.PINS_FILE.read_text())
 
     release = tofu_binary.release_for(pins, tofu.pinned_version(), "linux_amd64")
