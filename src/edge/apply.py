@@ -374,9 +374,10 @@ class CorePhase:
         recreates it (#85 rule 5)."""
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
-        followed = core.followed_services(config, self.repository)
         recorded = [plan.service for plan in recreates if plan.digests]
         try:
+            progress.step = "find the services edge follows"
+            followed = core.followed_services(config, self.repository)
             if recorded:
                 progress.unit = recorded[0]
                 progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"

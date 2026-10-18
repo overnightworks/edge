@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_edge_core import bind_core_files, sha256
+from test_edge_core import bind, bind_core_files, sha256
 
 from edge import apply, barrier, catalog, cli, compose, emergency, setup, switches
 
@@ -2585,6 +2585,33 @@ def test_an_unreadable_hash_or_label_cannot_be_planned(
     assert exit_code == 2
     assert f"cannot plan, {line}" in err
     assert scripted.changing_verbs() == []
+
+
+def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touches_nothing(
+    applied_core, switch, scripted, repository, monkeypatch
+):
+    """#87 rule 4: the services edge follows are found after the yes; a bind of `hello` under a
+    directory that cannot be entered is partial, exit 1, with the step, and no core service is
+    recreated."""
+    locked = repository / "locked"
+    scripted.config["services"]["hello"]["volumes"] = [bind(locked / "hello.yml", "/hello.yml")]
+    edit_traefik_yml(repository)
+    is_dir = Path.is_dir
+
+    def is_dir_as_python_3_12(path: Path) -> bool:
+        # Python 3.14 answers False where 3.12 raises for a directory that cannot be entered.
+        if path.is_relative_to(locked):
+            raise PermissionError(13, "Permission denied")
+        return is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir_as_python_3_12)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, could not find the services edge follows, cannot read" in err
+    assert up_calls(scripted) == []
+    assert unit_calls(scripted) == []
 
 
 # A real `ps --format json` line and `config --hash` answer, Compose 2.40.3 (#87 Q1).
