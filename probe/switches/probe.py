@@ -73,7 +73,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import checkout, compose, core, tunnel  # noqa: E402
+from edge import apply, checkout, compose, core, tunnel  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -95,6 +95,7 @@ CORE = ("socket-proxy", "traefik")
 COMPOSE_FILE = "compose.yaml"
 HARMLESS_EDIT = "# an edit that changes no setting\n"
 WAITING_NOTE = "\n"  # a change that touches no setting, waiting on origin (#98 P1)
+WAITING_SUBJECT = "probe: a commit waiting on origin"
 READY_SECONDS = 90
 BEHIND_BARRIER_SECONDS = 10
 REQUEST_SECONDS = 3
@@ -346,21 +347,21 @@ class Probe:
         before = self.container_ids()
         waiting = edge_copy.advance_origin(
             self.scratch,
-            "probe: a commit waiting on origin",
+            WAITING_SUBJECT,
             {"dynamic/.gitkeep": WAITING_NOTE, "README.md": WAITING_NOTE},
         )
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         shown = (
-            f"1 commit waits on origin main: {waiting} probe: a commit waiting on origin",
-            "live once updated: M dynamic/.gitkeep",
-            "other: M README.md",
-            f"the plan below applies HEAD {head}, without the waiting commits",
+            printed("1 commit waits on origin main:", f"{waiting} {WAITING_SUBJECT}"),
+            printed("live once updated:", "M dynamic/.gitkeep"),
+            printed("other:", "M README.md"),
+            printed(f"the plan below applies HEAD {head}, without the waiting commits"),
             NOTHING_TO_CHANGE,
         )
-        expect(all(line in out for line in shown), f"apply behind origin said: {out[-400:]}")
+        expect(all(lines in out for lines in shown), f"apply behind origin said: {out[-400:]}")
         expect(checkout.Git(self.copy).short() == head, "apply behind origin moved HEAD")
         expect(self.container_ids() == before, "apply behind origin replaced a container")
-        merge = out.split("to bring them: ")[1].split(" edge apply --closed:")[0].split()
+        merge = out.split("to bring them: ")[1].split(f" {apply.COMMAND}:")[0].split()
         expect(merge[:3] == ["git", "-C", checkout.LIVE_CHECKOUT], f"the merge line is {merge}")
         edge_copy.git(self.copy, *merge[3:])
         current = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
@@ -722,6 +723,12 @@ class ThrowawayTunnel:
             self.drop_in.parent.rmdir()
         self.unit_file.unlink(missing_ok=True)
         self.systemctl("daemon-reload")
+
+
+def printed(*lines: str) -> str:
+    """`lines` as `edge apply --closed` prints them one after another, each with its prefix, in the
+    whitespace-joined form `edge_copy.run_edge` returns."""
+    return " ".join(" ".join(f"{apply.COMMAND}: {line}" for line in lines).split())
 
 
 def port_is_busy() -> bool:
