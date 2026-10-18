@@ -153,6 +153,8 @@ services:
         target: KEYCLOAK_CLIENTSECRET
       - source: keycloak_config_cli_secret
         target: CONFIG_CLI_CLIENT_SECRET
+      - source: keycloak_client_songmaker
+        target: SONGMAKER_CLIENT_SECRET
     volumes:
       - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
       - ./keycloak:/config:ro
@@ -281,6 +283,8 @@ secrets:
     file: ${HOME}/.secrets/keycloak/db-password
   keycloak_config_cli_secret:
     file: ${HOME}/.secrets/keycloak/config-cli-secret
+  keycloak_client_songmaker:
+    file: ${HOME}/.secrets/keycloak/clients/songmaker
   # step-ca/init creates it; README "Interne CA".
   step_ca_password:
     file: ${HOME}/.secrets/step-ca/password
