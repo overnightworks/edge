@@ -3075,6 +3075,28 @@ def test_a_switch_on_records_the_follower_only_once_the_unit_is_observed_on(
     assert scripted.changing_verbs() == []
 
 
+def test_a_follower_entry_that_cannot_be_written_after_a_switch_on_is_partial_and_names_the_step(
+    applied_core, switch, scripted, repository, state
+):
+    """#89 P15, beside cell F12: step-ca is observed on, but writing the follower's entry fails;
+    exit 1 names the unit and the step, and no entry is left for traefik-mcp."""
+    bind_traefik_mcp_files(scripted.config, repository)
+    write_fleet(repository, ENABLED)
+    scripted.after_up = lambda: state.chmod(0o500)
+    try:
+        exit_code, _, err = switch()
+    finally:
+        state.chmod(0o700)
+
+    assert exit_code == 1
+    assert (
+        f"partial, step-ca: could not record traefik-mcp in applied.json, "
+        f"cannot write {state / 'applied.json'}"
+    ) in err
+    assert RECREATE_FOLLOWER not in scripted.calls
+    assert follower_entry(state) is None
+
+
 def test_a_core_change_a_follower_change_and_a_unit_switch_share_one_yes_in_order(
     step_ca_applied, switch, scripted, repository, state, ingress
 ):
