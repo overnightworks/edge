@@ -42,6 +42,17 @@ variable "state_passphrase" {
   sensitive = true
 }
 
+# Only the tests set this (external/tests/); the live runs leave it at the real catalog.
+variable "catalog_file" {
+  type    = string
+  default = null
+}
+
 locals {
-  fleet = yamldecode(file("${path.module}/../fleet.yaml"))
+  fleet = yamldecode(file(coalesce(var.catalog_file, "${path.module}/../fleet.yaml")))
+}
+
+# The token comes from GITHUB_TOKEN in the child environment; cloudflare reads CLOUDFLARE_API_TOKEN the same way.
+provider "github" {
+  owner = local.fleet.github.org
 }

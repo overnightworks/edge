@@ -376,8 +376,8 @@ def apply_closed(
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
-    if reason := checkout.not_live_checkout(repository, home or Path.home()):
-        _say(f"runs only from the live checkout {checkout.LIVE_CHECKOUT} ({reason})")
+    if refusal := checkout.not_live_checkout_line(repository, home or Path.home()):
+        _say(refusal)
         return ApplyExit.CANNOT_PLAN
     if not checkout.has_environment_file(repository):
         _say(
@@ -431,22 +431,10 @@ def _take_apply_lock(state_directory: Path) -> int | None:
 
 def _on_clean_main(git: checkout.Git) -> bool:
     """True on a born `main` with nothing changed; else False, after saying why (#95 rules 5, 6)."""
-    try:
-        if reason := checkout.not_on_main(git):
-            _say(f"runs only on {checkout.MAIN} ({reason})")
-            return False
-        changed = git.changed_paths()
-    except checkout.GitError as error:
-        _say(f"cannot read the live checkout, {error}")
-        return False
-    if changed:
-        _say(
-            "the live checkout has local changes, nothing changed; a change reaches it through "
-            "a pull request and `git pull --ff-only`:"
-        )
-        for path in changed:
-            _say(f"  {path}")
-    return not changed
+    refusals = checkout.not_clean_main(git)
+    for line in refusals:
+        _say(line)
+    return not refusals
 
 
 @dataclass(frozen=True)

@@ -336,6 +336,13 @@ def not_live_checkout(tree: Path, home: Path) -> str | None:
     return None
 
 
+def not_live_checkout_line(tree: Path, home: Path) -> str | None:
+    """The refusal line for a `tree` that is not the live checkout; None when it is."""
+    if reason := not_live_checkout(tree, home):
+        return f"runs only from the live checkout {LIVE_CHECKOUT} ({reason})"
+    return None
+
+
 def has_environment_file(tree: Path) -> bool:
     """Whether `.env` is a file, followed through a symlink; it is never opened (#95 rule 3)."""
     return (tree / ENVIRONMENT_FILE).is_file()
@@ -351,3 +358,21 @@ def not_on_main(git: Git) -> str | None:
     if not git.has_commit():
         return f"{MAIN} has no commit yet"
     return None
+
+
+def not_clean_main(git: Git) -> list[str]:
+    """Why `git` is not a born `main` with nothing changed, as lines; none when it is (#95 rules
+    5, 6). A git that fails is a line too, so the caller refuses rather than guesses."""
+    try:
+        if reason := not_on_main(git):
+            return [f"runs only on {MAIN} ({reason})"]
+        changed = git.changed_paths()
+    except GitError as error:
+        return [f"cannot read the live checkout, {error}"]
+    if not changed:
+        return []
+    return [
+        "the live checkout has local changes, nothing changed; a change reaches it through "
+        "a pull request and `git pull --ff-only`:",
+        *(f"  {path}" for path in changed),
+    ]
