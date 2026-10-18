@@ -1,6 +1,14 @@
 cloudflare:
+  zone: hallucinai.de
+
 github:
+  org: overnightworks
+
 services:
+  songmaker:
+    hosts:
+      - {name: "@", exposure: public, reason: "songmaker is public with its own login"}
+      - {name: www, exposure: public, reason: "the apex's alias"}
   step-ca:
     run:
       enabled: false
