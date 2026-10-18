@@ -1,8 +1,0 @@
-claim_id = "1dfb8f07ab2c421c8fa7135aadf40e5e"
-agent = "claude"
-role = "builder"
-base = "1557838401b344791246bb6fe65ee470d7be484a"
-branch = "claude/issue-93-stopped-meanwhile"
-scope = ["README.md", "src/edge/apply.py", "src/edge/core.py", "tests/test_edge_apply.py", "tests/test_edge_core.py"]
-opened_commit = "26f9306191a2482eba16d0f870d2148433be4951"
-whole_reason = "The liveness re-read and the record marking of the core set are one decision in CorePhase; core owns left_unstarted, so the plan and the apply-time check ask one owner."
