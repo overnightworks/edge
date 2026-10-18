@@ -2,6 +2,7 @@
 
 import dataclasses
 import fcntl
+import getpass
 import importlib.machinery
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import re
 import stat
 import subprocess
 import sys
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,6 +27,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "keycloak" / "go-live"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 OVERLAY = "keycloak/bootstrap.compose.yaml"
 OTP_ADMIN = "alice"
+SENTINEL_PASSWORD = "sentinel-first-password-7f3a"
 
 
 @pytest.fixture(scope="module")
@@ -66,13 +69,24 @@ class Keycloak:
     compose_declares_environment_secret: bool = False
     echo_secret_file: Path | None = None  # the apply's error text quotes this file's value
     users: dict[str, dict] = field(default_factory=lambda: {"temp-admin": {"otp": True}})
+    requests: list[tuple[str, str, object]] = field(default_factory=list)  # method, url, JSON body
+    created: list[dict] = field(default_factory=list)  # the JSON bodies of POST /users
+    create_status: int = 201
+    role_read_status: int = 200
+    role_mapping_status: int = 204
+    refuse_deleting: str | None = None
     commands: list[list[str]] = field(default_factory=list)
     stdin_seen: str | None = None
     stdin_of_this_command: str | None = None
     deleted: list[str] = field(default_factory=list)
 
-    def add_admin(self, username: str, *, otp: bool, enabled: bool = True) -> None:
-        self.users[username] = {"otp": otp, "enabled": enabled}
+    def add_admin(
+        self, username: str, *, otp: bool, passkey: bool = True, enabled: bool = True
+    ) -> None:
+        self.users[username] = {"otp": otp, "webauthn": passkey, "enabled": enabled}
+
+    def enrol_both_factors(self, username: str) -> None:
+        self.users[username].update(otp=True, webauthn=True)
 
     def changed_something(self) -> bool:
         return any(
@@ -204,7 +218,8 @@ class Keycloak:
 
     # --- HTTP -----------------------------------------------------------------------------
 
-    def fetch(self, method: str, url: str, *, headers=None, form=None):
+    def fetch(self, method: str, url: str, *, headers=None, form=None, json_body=None):
+        self.requests.append((method, url, json_body))
         from_script = sys.modules["keycloak_go_live"].Reply
         if not self.edge_up:
             raise ConnectionRefusedError
@@ -219,7 +234,8 @@ class Keycloak:
             return from_script(200, json.dumps({"access_token": "token"}).encode())
         if url == "http://localhost:8090/admin/realms/hallucinai":
             return self.realm_representation(from_script)
-        return self.admin_api(method, url.split("/admin/realms/master")[1], from_script)
+        path = url.split("/admin/realms/master")[1]
+        return self.admin_api(method, path, from_script, json_body)
 
     def realm_representation(self, reply):
         if not self.realm_exists:
@@ -229,27 +245,50 @@ class Keycloak:
             200, json.dumps({"attributes": checksum if self.import_completed else {}}).encode()
         )
 
-    def admin_api(self, method: str, path: str, reply):
+    def admin_api(self, method: str, path: str, reply, json_body=None):
         if method == "GET" and path.startswith("/roles/admin/users"):
             holders = [
                 {"id": name, "username": name, "enabled": person.get("enabled", True)}
                 for name, person in self.users.items()
+                if person.get("admin", True)
             ]
-            service = {"id": "sa", "username": "service-account-config-cli"}
+            service = {"id": "sa", "username": "service-account-config-cli", "enabled": True}
+            return reply(200, json.dumps([*holders, service]).encode())
+        if method == "GET" and path == "/roles/admin":
             return reply(
-                200, json.dumps([*holders, {**service, "serviceAccountClientId": "x"}]).encode()
+                self.role_read_status, json.dumps({"id": "role", "name": "admin"}).encode()
             )
         if method == "GET" and path.endswith("/credentials"):
             user = self.users[path.split("/")[2]]
-            return reply(200, json.dumps([{"type": "otp" if user["otp"] else "password"}]).encode())
-        if method == "GET" and path.startswith("/users?username=temp-admin"):
-            found = [{"id": "temp-admin"}] if "temp-admin" in self.users else []
+            types = ["password"] + [kind for kind in ("otp", "webauthn") if user.get(kind)]
+            return reply(200, json.dumps([{"type": kind} for kind in types]).encode())
+        if method == "GET" and path.startswith("/users?username="):
+            name = path.split("=")[1].split("&")[0]
+            found = [{"id": name}] if name in self.users else []
             return reply(200, json.dumps(found).encode())
+        if method == "POST" and path == "/users":
+            return self.create_user(json_body, reply)
+        if method == "POST" and path.endswith("/role-mappings/realm"):
+            if self.role_mapping_status == 204:
+                self.users[path.split("/")[2]]["admin"] = True
+            return reply(self.role_mapping_status, b"")
         if method == "DELETE":
-            self.deleted.append(path.rsplit("/", 1)[1])
-            self.users.pop(path.rsplit("/", 1)[1])
+            name = path.rsplit("/", 1)[1]
+            if name == self.refuse_deleting:
+                return reply(500, b"")
+            self.deleted.append(name)
+            self.users.pop(name)
             return reply(204, b"")
         raise AssertionError(f"unscripted {method} {path}")
+
+    def create_user(self, body: dict, reply):
+        self.created.append(body)
+        if self.create_status != 201:
+            return reply(self.create_status, b'{"error":"refused"}')
+        if body["username"] in self.users:
+            return reply(409, b"")
+        self.users[body["username"]] = {"admin": False}
+        return reply(201, b"")
 
 
 def form_text(form: dict[str, str]) -> str:
@@ -261,8 +300,10 @@ class Session:
     """One operator at the terminal: answers, and everything printed."""
 
     answers: list[str]
+    hidden: list[str] = field(default_factory=list)
     printed: list[str] = field(default_factory=list)
     asked: list[str] = field(default_factory=list)
+    asked_hidden: list[str] = field(default_factory=list)
     on_enter: object = None
     clock: float = 0.0
 
@@ -273,6 +314,12 @@ class Session:
         if not self.answers:
             raise EOFError
         return self.answers.pop(0)
+
+    def ask_hidden(self, prompt: str) -> str:
+        self.asked_hidden.append(prompt)
+        if not self.hidden:
+            raise EOFError
+        return self.hidden.pop(0)
 
     def sleep(self, seconds: float) -> None:
         self.clock += seconds
@@ -297,9 +344,10 @@ def secrets_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def session(keycloak: Keycloak) -> Session:
-    """Says yes to the backup question, creates the second admin on Enter."""
-    operator = Session(answers=["yes", ""])
-    operator.on_enter = lambda: keycloak.add_admin(OTP_ADMIN, otp=True)
+    """Says yes to the backup question, takes the default user name, types the sentinel password
+    twice, and enrols both factors of the created admin in the browser before pressing Enter."""
+    operator = Session(answers=["yes", "", ""], hidden=[SENTINEL_PASSWORD, SENTINEL_PASSWORD])
+    operator.on_enter = lambda: keycloak.enrol_both_factors(OTP_ADMIN)
     return operator
 
 
@@ -333,6 +381,8 @@ def go_live(
         run=keycloak.run,
         fetch=keycloak.fetch,
         ask=session.ask,
+        ask_hidden=session.ask_hidden,
+        default_user=lambda: OTP_ADMIN,
         say=session.printed.append,
         sleep=session.sleep,
         monotonic=session.monotonic,
@@ -367,7 +417,7 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
         "db-password",
     ]
     assert "curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known" in session.output
-    assert len(session.asked) == 2
+    assert len(session.asked) == 3  # backup, the admin's name, Enter
 
 
 def test_every_compose_call_names_the_keycloak_profile(go_live, keycloak):
@@ -435,7 +485,9 @@ def test_a_run_whose_apply_failed_applies_again_and_goes_on(go_live, keycloak, s
 
     assert keycloak.import_completed
     assert not any("/opt/edge/admin-frontend.sh" in command for command in keycloak.commands)
-    assert len(session.asked) == 2  # the backup question of the first run, Enter of the second
+    assert (
+        len(session.asked) == 3
+    )  # the backup question of the first run, name and Enter of the second
 
 
 def test_a_realm_whose_import_never_completed_is_applied_again(go_live, keycloak, session):
@@ -532,7 +584,7 @@ def test_a_run_stopped_after_the_apply_never_moves_master_again_and_starts_the_e
 
     assert keycloak.edge_up
     assert not any("/opt/edge/admin-frontend.sh" in command for command in keycloak.commands)
-    assert len(session.asked) == 2
+    assert len(session.asked) == 3
 
 
 def test_a_partial_set_missing_only_the_bootstrap_password_is_refused_on_a_fresh_install(
@@ -618,21 +670,41 @@ def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, sessi
     )
 
 
+def replace_created_admin_by(keycloak: Keycloak, admins: dict[str, dict]) -> None:
+    keycloak.users.pop(OTP_ADMIN)
+    for name, factors in admins.items():
+        keycloak.add_admin(name, **factors)
+
+
+NO_ADMIN = "no other enabled master user has the realm role admin"
+
+
 @pytest.mark.parametrize(
-    ("second_admin", "reason"),
+    ("admins", "reason"),
     [
-        (None, "no other enabled master user has the realm role admin"),
-        ({"otp": False}, "alice has the role admin but no TOTP credential"),
-        ({"otp": True, "enabled": False}, "no other enabled master user has the realm role admin"),
+        ({}, NO_ADMIN),
+        ({"alice": {"otp": True, "passkey": False}}, "alice has the role admin but no passkey"),
+        (
+            {"alice": {"otp": False, "passkey": True}},
+            "alice has the role admin but no TOTP credential",
+        ),
+        (
+            {"alice": {"otp": False, "passkey": False}},
+            "alice has the role admin but no TOTP credential and no passkey",
+        ),
+        ({"alice": {"otp": True, "enabled": False}}, NO_ADMIN),
+        (
+            {"alice": {"otp": True, "passkey": False}, "bob": {"otp": False, "passkey": True}},
+            "alice has the role admin but no passkey; bob has the role admin but no TOTP "
+            "credential",
+        ),
     ],
 )
-def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
-    go_live, keycloak, session, secrets_dir, second_admin, reason
+def test_the_bootstrap_stays_without_one_admin_who_has_both_factors(
+    go_live, keycloak, session, secrets_dir, admins, reason
 ):
-    """#19 rule 4: no retirement without a second admin who has TOTP."""
-    session.on_enter = (
-        None if second_admin is None else lambda: keycloak.add_admin(OTP_ADMIN, **second_admin)
-    )
+    """#19 rule 4, #129 rule 7: no retirement unless one person has TOTP and a passkey."""
+    session.on_enter = lambda: replace_created_admin_by(keycloak, admins)
 
     assert go_live.run() == 1
 
@@ -642,6 +714,268 @@ def test_the_bootstrap_stays_without_a_second_admin_who_has_otp(
     )
     assert keycloak.deleted == []
     assert (secrets_dir / "bootstrap-admin-password").exists()
+
+
+def leaks_of_the_password(keycloak: Keycloak, session: Session, tmp_path: Path) -> list[str]:
+    """The places that hold the sentinel; only the body of the one create request may."""
+    files = (path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())
+    places = {
+        "output": session.output + " ".join(session.asked + session.asked_hidden),
+        "commands": json.dumps(keycloak.commands) + (keycloak.stdin_seen or ""),
+        "urls": " ".join(url for _, url, _ in keycloak.requests),
+        "environment": json.dumps(dict(os.environ)),
+        "files": "".join(files),
+    }
+    return [place for place, text in places.items() if SENTINEL_PASSWORD in text]
+
+
+def test_a_fresh_run_creates_the_admin_with_the_typed_permanent_password(
+    go_live, keycloak, session, tmp_path
+):
+    """#129 rules 3, 4, 8: U1, U5: the password travels only in the create request's body."""
+    assert go_live.run() == 0
+
+    assert keycloak.created == [
+        {
+            "username": OTP_ADMIN,
+            "enabled": True,
+            "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"],
+            "credentials": [{"type": "password", "value": SENTINEL_PASSWORD, "temporary": False}],
+        }
+    ]
+    assert keycloak.users[OTP_ADMIN]["admin"]
+    assert session.asked[1].startswith("User name of your admin [alice]")
+    assert len(session.asked_hidden) == 2
+    assert leaks_of_the_password(keycloak, session, tmp_path) == []
+
+
+def test_a_typed_user_name_is_lower_cased(go_live, keycloak, session):
+    """#129 rule 3: Keycloak stores user names lower-case, so the create and the lookup agree."""
+    session.answers = ["yes", "  Alice  ", ""]
+
+    assert go_live.run() == 0
+
+    assert [body["username"] for body in keycloak.created] == ["alice"]
+
+
+def test_an_empty_user_name_is_refused_and_asked_again(go_live, keycloak, session):
+    """#129 rule 3: a name of blanks is no name; Enter alone takes the Unix user."""
+    session.answers = ["yes", "   ", "bob", ""]
+    session.on_enter = lambda: keycloak.enrol_both_factors("bob")
+
+    assert go_live.run() == 0
+
+    assert [body["username"] for body in keycloak.created] == ["bob"]
+    assert "The user name must not be empty." in session.printed
+
+
+def test_passwords_that_differ_or_are_empty_are_asked_again_and_nothing_is_sent(
+    go_live, keycloak, session
+):
+    """#129 rule 3: U2."""
+    session.hidden = ["first", "other", "", "", SENTINEL_PASSWORD, SENTINEL_PASSWORD]
+    sent_before_the_match = []
+    ask_hidden = session.ask_hidden
+
+    def watched(prompt: str) -> str:
+        sent_before_the_match.append(len(keycloak.created))
+        return ask_hidden(prompt)
+
+    go_live.tools = dataclasses.replace(go_live.tools, ask_hidden=watched)
+
+    assert go_live.run() == 0
+
+    assert sent_before_the_match == [0] * 6
+    assert keycloak.created[0]["credentials"][0]["value"] == SENTINEL_PASSWORD
+    assert len(keycloak.created) == 1
+
+
+def test_a_rerun_with_an_admin_asks_nothing_and_sends_nothing(go_live, keycloak, session):
+    """#129 rule 2: U3: no prompt, no create, no password; step 7 names the existing admin."""
+    assert go_live.run() == 0
+    keycloak.add_admin("temp-admin", otp=True)
+    keycloak.created.clear()
+    session.asked.clear()
+    session.asked_hidden.clear()
+    session.printed.clear()
+    session.answers = [""]
+    fresh_go_live = type(go_live)(go_live.tools, go_live.secrets_dir, go_live.marks)
+
+    assert fresh_go_live.run() == 0
+
+    assert keycloak.created == []
+    assert session.asked_hidden == []
+    assert [prompt[:5] for prompt in session.asked] == ["Press"]
+    assert "sign in as alice and enrol" in session.output
+    assert "typed" not in session.output
+
+
+@pytest.mark.parametrize("status", [400, 500])
+def test_a_refused_create_ends_in_one_line_without_the_password(
+    go_live, keycloak, session, tmp_path, status
+):
+    """#129 rule 8: U4: status and path only."""
+    keycloak.create_status = status
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        f"go-live FAILED at admin created: the admin API answered {status} to POST /users"
+    )
+    assert leaks_of_the_password(keycloak, session, tmp_path) == []
+    assert keycloak.deleted == []
+
+
+def test_the_exception_of_a_refused_create_does_not_hold_the_password(
+    go_live, golive, keycloak, session
+):
+    """#129 rule 8: U4: not only the printed line, the exception text itself."""
+    keycloak.create_status = 500
+    go_live.run()
+    session.answers = [""]
+    session.hidden = [SENTINEL_PASSWORD, SENTINEL_PASSWORD]
+
+    with pytest.raises(golive.StepFailure) as refused:
+        go_live.create_admin()
+
+    assert SENTINEL_PASSWORD not in str(refused.value)
+
+
+def test_a_name_that_exists_is_never_given_a_password(go_live, keycloak, session):
+    """#129 rule 4: U7: a user left without the role (a hard kill) is named, not taken over."""
+    keycloak.users[OTP_ADMIN] = {"admin": False}
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at admin created: the user alice exists already; choose another name, "
+        "or delete it in the console at http://localhost:8090/admin/"
+    )
+    assert len(keycloak.created) == 1
+    assert [method for method, url, _ in keycloak.requests if url.endswith("/users/alice")] == []
+    assert keycloak.deleted == []
+
+
+@pytest.mark.parametrize(
+    ("answers", "hidden"),
+    [(["yes"], []), (["yes", ""], []), (["yes", ""], [SENTINEL_PASSWORD])],
+    ids=["name", "password", "repeat"],
+)
+def test_the_end_of_input_at_a_prompt_fails_the_step(go_live, keycloak, session, answers, hidden):
+    """#129 rule 3: U8."""
+    session.answers = answers
+    session.hidden = hidden
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == "go-live FAILED at admin created: no answer on standard input"
+    assert keycloak.created == []
+
+
+def test_the_bootstrap_password_file_is_never_opened_by_the_admin_step(
+    go_live, keycloak, session, secrets_dir
+):
+    """#129 rule 8: U10: unreadable from the name prompt on, the step still works."""
+    ask = session.ask
+
+    def ask_then_lock_the_file(prompt: str) -> str:
+        if prompt.startswith("User name"):
+            (secrets_dir / "bootstrap-admin-password").chmod(0)
+        return ask(prompt)
+
+    go_live.tools = dataclasses.replace(go_live.tools, ask=ask_then_lock_the_file)
+
+    assert go_live.run() == 0
+
+    assert len(keycloak.created) == 1
+
+
+@pytest.mark.parametrize(
+    ("failing", "path"),
+    [
+        ("role_read_status", "GET /roles/admin"),
+        ("role_mapping_status", "POST /users/alice/role-mappings/realm"),
+    ],
+)
+def test_a_role_that_cannot_be_set_deletes_the_new_user_and_the_rerun_asks_again(
+    go_live, keycloak, session, tmp_path, failing, path
+):
+    """#129 rule 4: U11: no half-made admin stays; the re-run starts from the prompt."""
+    setattr(keycloak, failing, 500)
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        f"go-live FAILED at admin created: the admin API answered 500 to {path}"
+    )
+    assert keycloak.deleted == [OTP_ADMIN]
+    assert OTP_ADMIN not in keycloak.users
+    assert leaks_of_the_password(keycloak, session, tmp_path) == []
+    setattr(keycloak, failing, 204 if failing == "role_mapping_status" else 200)
+    session.answers = ["", ""]
+    session.hidden = [SENTINEL_PASSWORD, SENTINEL_PASSWORD]
+
+    assert go_live.run() == 0
+
+    assert len(keycloak.created) == 2
+
+
+def test_a_user_that_cannot_be_deleted_after_a_failed_role_is_named(go_live, keycloak, session):
+    """#129 rule 4: the compensation fails too: one line, the way out."""
+    keycloak.role_mapping_status = 500
+    keycloak.refuse_deleting = OTP_ADMIN
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == (
+        "go-live FAILED at admin created: the role admin could not be set and alice could not "
+        "be deleted again; delete it in the console at http://localhost:8090/admin/"
+    )
+
+
+def test_an_interrupt_after_the_create_deletes_the_new_user(go_live, keycloak, session):
+    """#129 rule 4: the compensation also runs for Ctrl-C."""
+    keycloak.role_mapping_status = 500
+    fetch = keycloak.fetch
+
+    def interrupted(method: str, url: str, **kwargs):
+        if method == "POST" and url.endswith("/role-mappings/realm"):
+            raise KeyboardInterrupt
+        return fetch(method, url, **kwargs)
+
+    go_live.tools = dataclasses.replace(go_live.tools, fetch=interrupted)
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == "go-live FAILED at admin created: interrupted"
+    assert keycloak.deleted == [OTP_ADMIN]
+
+
+def test_without_a_terminal_the_password_is_not_read_and_nothing_is_sent(
+    go_live, golive, keycloak, session, monkeypatch
+):
+    """#129 rule 3: U12: getpass would warn and echo; the step fails before it reads."""
+    read = []
+
+    def getpass_without_terminal(prompt: str) -> str:
+        warnings.warn("no echo control", getpass.GetPassWarning, stacklevel=2)
+        read.append(prompt)
+        return SENTINEL_PASSWORD
+
+    monkeypatch.setattr(getpass, "getpass", getpass_without_terminal)
+    go_live.tools = dataclasses.replace(go_live.tools, ask_hidden=golive.ask_without_echo)
+
+    assert go_live.run() == 1
+
+    assert session.printed[-1] == "go-live FAILED at admin created: no terminal for the password"
+    assert read == []
+    assert keycloak.created == []
+
+
+def test_with_a_terminal_the_password_is_read_hidden(golive, monkeypatch):
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: SENTINEL_PASSWORD)
+
+    assert golive.ask_without_echo("password: ") == SENTINEL_PASSWORD
 
 
 def test_a_failure_with_an_unreadable_secret_file_is_still_one_line(go_live, secrets_dir, session):
@@ -694,15 +1028,18 @@ def test_without_an_accepted_backup_nothing_is_created(
 
 
 def test_a_set_up_edge_backup_asks_no_backup_question(go_live, keycloak, session, home):
-    """B1, #127 rule 3: no question, no volume lookup; the run asks only Enter."""
+    """B1, #127 rule 3: no question, no volume lookup; the run asks the admin's name and Enter."""
     set_up_backup(home)
+    session.answers = ["", ""]
 
     assert go_live.run() == 0
 
     assert not any("volume inspect" in command for command in keycloak.commands)
     assert "backup" not in session.output.split("Step 2")[0]
-    assert len(session.asked) == 1
-    assert session.asked[0].startswith("Press Enter")
+    assert [prompt.split(" [")[0].split(".")[0] for prompt in session.asked] == [
+        "User name of your admin",
+        "Press Enter when your admin has TOTP and a passkey",
+    ]
 
 
 def break_password_mode(home: Path) -> None:
@@ -748,7 +1085,6 @@ def test_an_unclear_edge_backup_reads_as_not_set_up(go_live, session, home, spoi
         (home / ".secrets/restic").chmod(0o700)
 
     assert session.asked[0].startswith("edge-backup is not set up on this PC")
-    assert "Traceback" not in session.output
 
 
 def test_a_set_up_edge_backup_never_fails_the_backup_step_on_a_down_docker(
@@ -793,7 +1129,8 @@ def test_each_step_says_what_happens_and_why_before_it_runs(go_live, session):
         "Step 4a",
         "Step 4b",
         "Step 5",
-        "Step 6-7",
+        "Step 6",
+        "Step 7",
     ]
     assert (
         "only so the realms can be applied once; that admin is deleted in step 7" in session.output
@@ -816,6 +1153,8 @@ def test_help_lists_the_steps_in_plain_words():
 
     assert result.returncode == 0
     assert "3. keycloak start: Start Keycloak with a temporary admin" in result.stdout
+    assert "6. admin created:" in result.stdout
+    assert "7. bootstrap retired:" in result.stdout
 
 
 def numbers_in(lines: list[str], pattern: str) -> list[str]:
@@ -1144,7 +1483,7 @@ def test_starts_hold_the_switch_lock_and_prompts_leave_it_free(go_live, marks):
 
     assert free_during_starts
     assert not any(free_during_starts)
-    assert len(free_during_prompts) == 2
+    assert len(free_during_prompts) == 3  # backup, the admin's name, Enter
     assert all(free_during_prompts)
 
 

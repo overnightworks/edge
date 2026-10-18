@@ -997,14 +997,20 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
    completed.
 - **5. Leave the bootstrap overlay and start the edge.** The script waits by
    itself until the edge is ready.
-- **6-7. Your part, in the browser, then retire the bootstrap.** The script stops and says what to do: sign in
-   at `http://localhost:8090/admin/` as `temp-admin` (password in the bootstrap
-   file; enrol TOTP when asked), create your own admin in the master realm with
-   the realm role `admin`, sign in as that admin, enrol TOTP and add a passkey.
-   Press Enter when done. Step 7 (the script): it checks through the admin API that
-   another master user with the realm role `admin` has a TOTP credential. Only
-   then it deletes `temp-admin` and the `bootstrap-admin-password` file;
-   otherwise it refuses and says what is missing.
+- **6. Your admin.** The script asks for a user name (Enter takes your Unix user; it is
+   lower-cased) and a first password, hidden, twice. It creates that master user through the
+   admin API (signed in as the `config-cli` service account) with the realm role `admin`, a
+   permanent password and the pending actions "configure TOTP" and "register a passkey". The
+   password goes only to Keycloak on this PC, never into a command line, a file or a log.
+   Without a terminal it stops before it reads anything. A name that exists already is refused
+   (choose another, or delete it in the console); if the role cannot be set, the new user is
+   deleted again. A run that finds such an admin asks nothing and changes nothing.
+- **7. Your part, in the browser, then retire the bootstrap.** The script stops and says what
+   to do: sign in at `http://localhost:8090/admin/` as that admin with the password you typed,
+   enrol TOTP and add a passkey, sign out and sign in once more. Press Enter when done. The
+   script then checks through the admin API that one master user with the realm role `admin`
+   has both a TOTP and a passkey credential. Only then it deletes `temp-admin` and the
+   `bootstrap-admin-password` file; otherwise it refuses and says what is missing.
 
 Last, **your part, in Cloudflare** (unnumbered). The script ends by printing the steps (A8, steps
 3 to 5, for `auth.hallucinai.de`) and the check:
@@ -1076,9 +1082,11 @@ switched-off Keycloak):
   `traefik.yml` or compose definition changed; a Traefik that is not running it leaves stopped,
   so start it first with `docker compose up -d --no-recreate socket-proxy traefik`. Wait until
   the readiness check prints `ready`.
-- **6-7. Your part, then retire the bootstrap.** Create your permanent admin in the
-  browser, as in step 6-7 above. Then delete `temp-admin` in the admin console and run
-  `rm ~/.secrets/keycloak/bootstrap-admin-password`.
+- **6. Create your admin by hand.** Sign in at `http://localhost:8090/admin/` as `temp-admin`
+  (password in the bootstrap file; enrol TOTP when asked), add a user in the master realm, give
+  it the realm role `admin` and a password that is not temporary.
+- **7. Retire the bootstrap.** Sign in as that user, enrol TOTP and add a passkey, then delete
+  `temp-admin` in the admin console and run `rm ~/.secrets/keycloak/bootstrap-admin-password`.
 
 Last, **public login in Cloudflare** (unnumbered), as in the Cloudflare part above.
 

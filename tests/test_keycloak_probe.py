@@ -546,6 +546,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "seed_member",
         "apply_removes_what_the_observer_names",
         "public_issuer_and_paths",
+        "go_live_creates_the_admin",
         "admin_console_only_on_loopback",
         "changed_yaml_applies",
         "create_probe_rp",
