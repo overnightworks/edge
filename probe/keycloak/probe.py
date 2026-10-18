@@ -812,8 +812,7 @@ class Probe:
         account = admin.get(f"/master/clients/{config_cli['id']}/service-account-user")
         console_role = admin.get(f"/master/roles/{CONSOLE_NAME}-role")
         admin.must("POST", f"/master/users/{account['id']}/role-mappings/realm", [console_role])
-        admin.must(
-            "POST",
+        admin.create(
             f"/master/authentication/flows/{FORMS_FLOW}/executions/execution",
             {"provider": "auth-otp-form"},
         )
