@@ -91,12 +91,18 @@ SETTLED = Watch()
 @dataclass(frozen=True)
 class Container:
     """One container of the project as `ps` lists it. `config_hash` is the hash of the service
-    definition it was created from, as Compose labelled it; None when the label is missing."""
+    definition it was created from, as Compose labelled it; None when the label is missing.
+    `image` is the image reference it was created from, spelled as the definition named it then;
+    None when `ps` names none."""
 
     service: str
     state: str
     config_hash: str | None
-    image: str
+    image: str | None
+
+    @property
+    def live(self) -> bool:
+        return is_live(self.state)
 
 
 @dataclass(frozen=True)
@@ -196,9 +202,14 @@ def not_up(
     )
 
 
+def is_live(state: str) -> bool:
+    """A container in this state is alive: running, restarting or paused."""
+    return state not in _NOT_RUNNING
+
+
 def has_running_container(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     """Some container of the unit's services is alive: running, restarting or paused."""
-    return any(states.get(name, set()) - _NOT_RUNNING for name in services)
+    return any(is_live(state) for name in services for state in states.get(name, set()))
 
 
 def never_started(states: Mapping[str, set[str]], service: str) -> bool:
@@ -218,7 +229,7 @@ def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
 def _container(entry: Mapping[str, Any]) -> Container:
     label = _CONFIG_HASH.search(entry.get("Labels", ""))
     return Container(
-        entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image", "")
+        entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image") or None
     )
 
 

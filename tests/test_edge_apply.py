@@ -38,9 +38,30 @@ OTHER_LABELS = (
     "com.docker.compose.image=sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9,"
     "com.docker.compose.oneoff=False,edge.note=x,y=z,com.docker.compose.depends_on="
 )
+# The `Image` of a real `ps --format json` line is the reference the container was created from,
+# spelled as its resolved `image` was then (frozen from #91 Z1, Compose 2.40.3).
 IMAGE = (
     "traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"
 )
+# compose.yaml's pins, `name:tag@sha256:<64>`, and a bump of each as a pull would bring it.
+TRAEFIK_IMAGE = (
+    "traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c"
+)
+SOCKET_PROXY_IMAGE = (
+    "wollomatic/socket-proxy:1.13.1"
+    "@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002"
+)
+KEYCLOAK_IMAGE = (
+    "quay.io/keycloak/keycloak:26.8.1"
+    "@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244"
+)
+STEP_CA_IMAGE = (
+    "smallstep/step-ca:0.30.2"
+    "@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270"
+)
+STEP_CA_BUMP = f"smallstep/step-ca:0.30.3@sha256:{'1' * 64}"
+TRAEFIK_BUMP = f"traefik:v3.7.15@sha256:{'2' * 64}"
+SOCKET_PROXY_BUMP = f"wollomatic/socket-proxy:1.13.2@sha256:{'3' * 64}"
 
 
 def definition_hash(service: str, version: int = 1) -> str:
@@ -54,28 +75,37 @@ def resolved_configuration() -> dict:
 
     return {
         "services": {
-            "socket-proxy": {"restart": "unless-stopped"},
+            "socket-proxy": {"image": SOCKET_PROXY_IMAGE, "restart": "unless-stopped"},
             "traefik": {
+                "image": TRAEFIK_IMAGE,
                 "restart": "unless-stopped",
                 "environment": {"EDGE_DOMAIN": "probe.test"},
                 "depends_on": {"socket-proxy": {"condition": "service_started", "required": True}},
             },
             "hello": {
+                "image": IMAGE,
                 "profiles": ["probe"],
                 "labels": {"traefik.enable": "true", "edge.name": "hello"},
             },
-            "keycloak": {"restart": "unless-stopped", "profiles": ["keycloak"]},
+            "keycloak": {
+                "image": KEYCLOAK_IMAGE,
+                "restart": "unless-stopped",
+                "profiles": ["keycloak"],
+            },
             "step-ca": {
+                "image": STEP_CA_IMAGE,
                 "restart": "unless-stopped",
                 "profiles": ["step-ca"],
                 "volumes": volume("step-ca"),
             },
             "traefik-mcp-acme-owner": {
+                "image": TRAEFIK_IMAGE,
                 "restart": "no",
                 "profiles": ["step-ca"],
                 "volumes": volume("traefik-mcp-acme"),
             },
             "traefik-mcp": {
+                "image": TRAEFIK_IMAGE,
                 "restart": "unless-stopped",
                 "profiles": ["step-ca"],
                 "volumes": volume("traefik-mcp-acme"),
@@ -92,16 +122,19 @@ class ScriptedCompose:
     """Compose over a table of service -> container state; records every call.
 
     Each service has a definition hash, as `config --hash` answers it, and each container the
-    hash it was created from as its config-hash label; a container put in directly carries the
-    current one. Like Compose, `up` recreates a container whose label differs from its service's
-    hash (it gets a new id) unless `--no-recreate` is given, and always with `--force-recreate`.
-    Edge never takes a project down or renews its volumes, so `down`, `-v` and
-    `--renew-anon-volumes` fail the test that runs them (#85 P13, cell U14, #87 D15)."""
+    hash it was created from as its config-hash label and the image it was created from as its
+    `Image`; a container put in directly carries the current ones. Like Compose, `up` recreates a
+    container whose label differs from its service's hash (it gets a new id) unless
+    `--no-recreate` is given, and always with `--force-recreate`. Edge never takes a project down
+    or renews its volumes, so `down`, `-v` and `--renew-anon-volumes` fail the test that runs them
+    (#85 P13, cell U14, #87 D15)."""
 
     containers: dict[str, str] = field(default_factory=dict)
     container_ids: dict[str, int] = field(default_factory=dict)
     definitions: dict[str, str] = field(default_factory=dict)  # service -> hash, if not v1
     labels: dict[str, str | None] = field(default_factory=dict)  # service -> its container's
+    # service -> the image its container was created from; None: its ps line names no `Image`
+    images: dict[str, str | None] = field(default_factory=dict)
     hash_answer: str | None = None  # what `config --hash` answers instead of the hashes
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
@@ -140,16 +173,7 @@ class ScriptedCompose:
 
     def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
         output = "\n".join(
-            json.dumps(
-                {
-                    "Service": service,
-                    "State": state,
-                    "ExitCode": 0,
-                    "Image": IMAGE,
-                    "Labels": self.labels_of(service),
-                }
-            )
-            for service, state in self.containers.items()
+            json.dumps(self.ps_line(service, state)) for service, state in self.containers.items()
         )
         for service in self.just_started & self.crash_loops:
             self.containers[service] = "restarting"
@@ -175,8 +199,28 @@ class ScriptedCompose:
             self.after_up()
         return ""
 
+    def ps_line(self, service: str, state: str) -> dict:
+        line = {"Service": service, "State": state, "ExitCode": 0}
+        if (image := self.image_of(service)) is not None:
+            line["Image"] = image
+        return line | {"Labels": self.labels_of(service)}
+
     def definition(self, service: str) -> str:
         return self.definitions.get(service, definition_hash(service))
+
+    def configured_image(self, service: str) -> str | None:
+        return self.config["services"][service].get("image")
+
+    def image_of(self, service: str) -> str | None:
+        return self.images.get(service, self.configured_image(service))
+
+    def change_image(self, service: str, reference: str) -> None:
+        """compose.yaml now names another image for the service, which changes its definition as
+        in Compose; its container keeps the image it was created from."""
+        if service in self.containers:
+            self.images[service] = self.image_of(service)
+        self.config["services"][service]["image"] = reference
+        self.definitions[service] = hashlib.sha256(f"{service} {reference}".encode()).hexdigest()
 
     def change_definition(self, service: str) -> None:
         """The checkout now defines the service otherwise than its container was created."""
@@ -192,6 +236,7 @@ class ScriptedCompose:
         self.containers_created += 1
         self.container_ids[service] = self.containers_created
         self.labels[service] = self.definition(service)
+        self.images[service] = self.configured_image(service)
 
     def put_containers(self, states: dict[str, str]) -> None:
         """Containers that exist before the command, each with its own id."""
@@ -216,6 +261,7 @@ class ScriptedCompose:
             self.containers.pop(service, None)
             self.container_ids.pop(service, None)
             self.labels.pop(service, None)
+            self.images.pop(service, None)
         return ""
 
     def changing_verbs(self) -> list[str]:
@@ -3141,10 +3187,27 @@ def test_a_follower_of_a_unit_the_catalog_does_not_name_is_never_planned(
     assert scripted.changing_verbs() == []
 
 
-def test_a_missing_traefik_mcp_yml_while_step_ca_is_on_cannot_be_planned(
-    step_ca_applied, switch, scripted, repository
+def disable_step_ca_and_remove_it(scripted, repository, _state) -> None:
+    write_fleet(repository, DISABLED)
+    for service in STEP_CA_SERVICES:
+        scripted.containers.pop(service)
+
+
+def switch_step_ca_off(_scripted, _repository, state) -> None:
+    switch_off(state)
+
+
+@pytest.mark.parametrize(
+    "put_step_ca",
+    [lambda *_: None, disable_step_ca_and_remove_it, switch_step_ca_off],
+    ids=["on", "disabled and gone", "switched off"],
+)
+def test_a_missing_traefik_mcp_yml_cannot_be_planned_whatever_step_cas_state(
+    step_ca_applied, switch, scripted, repository, state, put_step_ca
 ):
-    """#89 rule 6, cell F15: exit 2, naming the path."""
+    """#89 rule 6, cell F15, #34 finding 58, #91 cell E12: exit 2, naming the path, while step-ca
+    is on, disabled and gone, or switched off."""
+    put_step_ca(scripted, repository, state)
     (repository / FOLLOWER_FILE).unlink()
 
     exit_code, _, err = switch()
@@ -3152,3 +3215,230 @@ def test_a_missing_traefik_mcp_yml_while_step_ca_is_on_cannot_be_planned(
     assert exit_code == 2
     assert f"cannot plan, cannot read {repository / FOLLOWER_FILE}" in err
     assert scripted.changing_verbs() == []
+
+
+def kept_line(service: str, running: str, configured: str, unit: str = "step-ca") -> str:
+    """#91 rule 4: the wording of a kept image."""
+    return (
+        f"{unit}: {service} runs {running}, compose.yaml names {configured}; edge apply never "
+        "swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; "
+        "Keycloak with a dump first, K11b)"
+    )
+
+
+NEVER_SWAPS = "edge apply never swaps the image of a running unit"
+STEP_CA_KEPT = kept_line("step-ca", STEP_CA_IMAGE, STEP_CA_BUMP)
+
+
+def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
+    step_ca_applied, switch, scripted
+):
+    """#91 rules 3, 4, cell E1: the line names unit, service, both images and the upgrade's
+    owner; nothing to change, no prompt, no changing verb, the same ids; a second run is the
+    same."""
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+    ids = dict(scripted.container_ids)
+
+    runs = [switch(answer="no"), switch(answer="no")]
+
+    assert runs[0] == runs[1]
+    exit_code, out, _ = runs[0]
+    assert exit_code == 0
+    assert f"{apply.COMMAND}: {STEP_CA_KEPT}\n{apply.COMMAND}: nothing to change" in out
+    assert "Type" not in out
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+def test_a_unit_switched_on_names_its_running_service_whose_image_changed_after_its_line(
+    switch, scripted
+):
+    """#91 rule 4, cell E2: one `yes`; the plan holds "on" and then the line; the start never
+    recreates, so the running service keeps its id; the exited one is not named (rule 6)."""
+    scripted.put_containers(APP_EXITED)
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+    scripted.change_image("traefik-mcp", TRAEFIK_BUMP)
+    db_id = scripted.container_ids["step-ca"]
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert out.index("  step-ca: on (") < out.index(f"  {STEP_CA_KEPT}\n")
+    assert "traefik-mcp runs" not in out
+    assert up_calls(scripted) == [
+        ["--profile", "step-ca", "up", "-d", "--no-recreate", *STEP_CA_SERVICES]
+    ]
+    assert scripted.container_ids["step-ca"] == db_id
+
+
+def ps_container(state: str, exit_code: int) -> compose.Container:
+    line = json.dumps({"Service": "step-ca", "State": state, "ExitCode": exit_code, "Image": IMAGE})
+    [container] = compose.Compose(answering(line)).containers()
+    return container
+
+
+@pytest.mark.parametrize(
+    ("state", "exit_code", "named"),
+    [
+        ("running", 0, True),
+        ("restarting", 1, True),
+        ("paused", 0, True),
+        ("exited", 1, False),
+        ("exited", 0, False),  # completed
+        ("created", 0, False),
+    ],
+)
+def test_only_a_live_container_is_named_for_its_image(state, exit_code, named):
+    """#91 rules 2, 6, cell E3: running, restarting and paused are live; exited, completed and
+    created are not, so a completed one-shot never becomes a permanent line."""
+    config = resolved_configuration()
+    config["services"]["step-ca"]["image"] = STEP_CA_BUMP
+
+    kept = apply.plan_kept_images(
+        (catalog.Unit("step-ca", True, None),),
+        compose.profile_services(config),
+        config,
+        [ps_container(state, exit_code)],
+        [],
+        (),
+    )
+
+    assert kept == ([apply.KeptImage("step-ca", "step-ca", IMAGE, STEP_CA_BUMP)] if named else [])
+
+
+def test_a_unit_planned_off_is_not_named_for_its_image(switch, scripted, repository):
+    """#91 rule 2, cell E4: off removes its containers as today; no line."""
+    write_fleet(repository, DISABLED)
+    scripted.put_containers(STEP_CA_ON)
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert NEVER_SWAPS not in out
+    assert "step-ca is off" in out
+
+
+def test_a_switched_off_unit_with_a_running_container_is_named_and_stays_stopped(
+    switch, scripted, state
+):
+    """#91 rules 2, 4, cell E5: "stays stopped" and the line; nothing to change."""
+    switch_off(state)
+    scripted.put_containers({"step-ca": "running"})
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert out.index("step-ca stays stopped") < out.index(STEP_CA_KEPT)
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_traefik_bump_recreates_traefik_and_its_follower_and_names_no_image(
+    step_ca_applied, switch, scripted
+):
+    """#91 rule 2, cell E6: the core and the follower are recreated as today; neither they nor
+    the completed acme owner are named."""
+    for service in ("traefik", "traefik-mcp-acme-owner", "traefik-mcp"):
+        scripted.change_image(service, TRAEFIK_BUMP)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert up_calls(scripted) == [RECREATE_TRAEFIK, RECREATE_FOLLOWER]
+    assert NEVER_SWAPS not in out
+
+
+def test_a_socket_proxy_bump_is_the_core_recreate_only(applied_core, switch, scripted):
+    """#91 rule 2, cell E7: the core recreate of C4; no line."""
+    scripted.change_image("socket-proxy", SOCKET_PROXY_BUMP)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
+    assert NEVER_SWAPS not in out
+
+
+def test_a_service_of_a_profile_the_catalog_does_not_name_is_not_named(
+    step_ca_applied, switch, scripted
+):
+    """#91 rule 2, cell E8: a live container of a non-catalog profile; no line."""
+    scripted.config["services"]["echo"] = {"image": IMAGE, "profiles": ["echo"]}
+    scripted.put_containers({"echo": "running"})
+    scripted.change_image("echo", f"traefik/whoami:v1.12.1@sha256:{'4' * 64}")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert NEVER_SWAPS not in out
+    assert "nothing to change" in out
+
+
+def test_a_unit_service_whose_definition_names_no_image_is_not_compared(
+    step_ca_applied, switch, scripted
+):
+    """#91 rule 2, cell E9: no pin, nothing to compare."""
+    del scripted.config["services"]["step-ca"]["image"]
+    scripted.images["step-ca"] = STEP_CA_IMAGE
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert NEVER_SWAPS not in out
+    assert "nothing to change" in out
+
+
+def test_a_live_unit_container_whose_ps_line_names_no_image_cannot_be_planned(
+    step_ca_applied, switch, scripted
+):
+    """#91 rule 3, cell E10: exit 2, as a missing label is (#87); nothing changes."""
+    scripted.images["step-ca"] = None
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert "cannot plan, a live step-ca container's `docker compose ps` line names no Image" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_a_stop_still_closes_a_unit_whose_ps_line_names_no_image(stop, scripted, state):
+    """#91 rule 3: compose's parsing stays lenient, so `edge stop` never fails on it."""
+    scripted.put_containers(STEP_CA_ON)
+    scripted.images["step-ca"] = None
+
+    exit_code, _, _ = stop()
+
+    assert exit_code == 0
+    assert marker(state) is not None
+    assert "running" not in scripted.containers.values()
+
+
+def test_a_ps_line_without_an_image_is_read_as_naming_none():
+    """#91 rule 3: compose.py reads it leniently; the plan decides."""
+    line = json.loads(Q1_PS_LINE)
+    del line["Image"]
+
+    [container] = compose.Compose(answering(json.dumps(line))).containers()
+
+    assert container.image is None
+
+
+def test_a_kept_image_and_a_core_recreate_share_one_yes_core_first(
+    step_ca_applied, switch, scripted, repository
+):
+    """#91 rule 4, cell E11: one `yes`; the core line first, the kept image after it; the unit's
+    containers keep their ids."""
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+    edit_traefik_yml(repository)
+    unit_ids = {service: scripted.container_ids[service] for service in STEP_CA_SERVICES}
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert out.index("  traefik: recreate") < out.index(f"  {STEP_CA_KEPT}\n")
+    assert up_calls(scripted) == [RECREATE_TRAEFIK]
+    assert {service: scripted.container_ids[service] for service in STEP_CA_SERVICES} == unit_ids
