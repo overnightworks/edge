@@ -84,11 +84,11 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 # fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
 edge apply --closed
 # Traefik reads traefik.yml (its entrypoints) only when it starts. When traefik.yml changed
-# since it was last applied, the same `edge apply --closed` recreates a running Traefik, proves
-# every barrier again and only then records the file in ~/.local/state/edge/applied.json; a
-# stopped Traefik is named and not started. A changed definition of socket-proxy or traefik
-# (compose.yaml, its image, EDGE_DOMAIN in .env) still needs, until edge#50 S2.2d:
-docker compose --profile keycloak up -d --force-recreate socket-proxy traefik
+# since it was last applied, or the compose definition of socket-proxy or traefik changed
+# (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply --closed` recreates
+# the running core services concerned, socket-proxy first and traefik after it, proves every
+# barrier again and only then says so, ending in "the core is current"; a stopped one is named
+# and not started.
 ```
 
 Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
@@ -96,7 +96,7 @@ Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and 
 the `keycloak` network; switching it on again uses the same database. Removing the entry
 from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
 `127.0.0.1:8090` answer depends on Traefik, which `edge apply` recreates only for a changed
-`traefik.yml` and never starts.
+`traefik.yml` or compose definition and never starts.
 
 Readiness: the stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090`
 listen, an unknown host gets 404 on 8081, and Keycloak (with its database)
@@ -216,15 +216,19 @@ services:
 
 `edge apply --closed` bringt jede Einheit in den Zustand, den `enabled` sagt. An:
 `docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann
-`rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1). `socket-proxy`
-fasst es nicht an; `traefik` erstellt es vor allen Einheiten neu (`up -d --no-deps
---force-recreate traefik`, im selben Plan, mit demselben `yes`), wenn `traefik.yml` sich seit dem
-letzten vollstaendigen Lauf geaendert hat oder dafuer kein Eintrag in
-`~/.local/state/edge/applied.json` steht. Vor dem Neuerstellen leert es den Eintrag; erst wenn
-Traefik laeuft und jede aktive Sperre bewiesen ist, schreibt es ihn neu; scheitert ein Schritt,
+`rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1). Den Kern
+(`socket-proxy`, `traefik`) erstellt es vor allen Einheiten neu (`up -d --no-deps
+--force-recreate <Dienst>`, im selben Plan, mit demselben `yes`): einen Dienst, dessen
+Compose-Definition sich geaendert hat (`docker compose config --hash` weicht vom Label
+`com.docker.compose.config-hash` seines Containers ab), und `traefik` auch, wenn `traefik.yml`
+sich seit dem letzten vollstaendigen Lauf geaendert hat oder dafuer kein Eintrag in
+`~/.local/state/edge/applied.json` steht. Ein neu erstellter `socket-proxy` zieht `traefik` nach,
+`socket-proxy` zuerst. Vor dem Neuerstellen leert es den Eintrag; erst wenn jeder Dienst mit
+dem, wovon er abhaengt, laeuft und nach jedem Neuerstellen jede aktive Sperre bewiesen ist,
+schreibt es ihn neu und meldet am Ende "the core is current"; scheitert ein Schritt,
 ist der Lauf teilweise (Exit 1), keine Einheit wird geschaltet und der naechste Lauf versucht es
 wieder ("traefik: recreate (the last recreate did not finish)"), auch wenn `traefik.yml`
-inzwischen wieder auf dem alten Stand ist. Ein gestopptes Traefik
+inzwischen wieder auf dem alten Stand ist. Einen gestoppten Kerndienst
 nennt es nur ("traefik is not running and is not started") und startet es nie. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
@@ -858,8 +862,8 @@ switched-off Keycloak):
   --rm keycloak-config-cli`, because the `config-cli` client exists by then.
 - **5. Leave the overlay and start the edge** as in
   [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
-  Keycloak without the overlay, and the forced recreate starts Traefik with
-  the current `traefik.yml`. Wait until the readiness check prints `ready`.
+  Keycloak without the overlay, and `edge apply --closed` recreates Traefik with
+  the current `traefik.yml` and compose definition. Wait until the readiness check prints `ready`.
 - **6-7. Your part, then retire the bootstrap.** Create your permanent admin in the
   browser, as in step 6-7 above. Then delete `temp-admin` in the admin console and run
   `rm ~/.secrets/keycloak/bootstrap-admin-password`.

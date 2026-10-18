@@ -224,7 +224,7 @@ def plan_core(
     depend on it; one without is only named and pulls in nothing, because the core is never
     started here (#85 rule 4, #87 rule 3)."""
     reading = record.read()
-    states = compose.states_of(list(containers))
+    states = compose.states_of(containers)
     labels = _config_hash_labels(containers, core_services(config))
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):

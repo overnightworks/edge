@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -186,7 +186,7 @@ def has_running_container(states: Mapping[str, set[str]], services: tuple[str, .
     return any(states.get(name, set()) - _NOT_RUNNING for name in services)
 
 
-def states_of(containers: list[Container]) -> dict[str, set[str]]:
+def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
     """Each service that has a container, with the states of its containers."""
     states: dict[str, set[str]] = {}
     for container in containers:
