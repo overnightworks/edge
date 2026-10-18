@@ -63,8 +63,8 @@ def apply_command(
 
 def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:
     """Exit 2, naming why, unless `tree` is the live checkout on a clean main (#30 rules 2, 3)."""
-    if reason := checkout.not_live_checkout(tree, home):
-        refusals = [f"runs only from the live checkout {checkout.LIVE_CHECKOUT} ({reason})"]
+    if not_live := checkout.not_live_checkout_line(tree, home):
+        refusals = [not_live]
     else:
         refusals = checkout.not_clean_main(checkout.Git(tree, git))
     for line in refusals:

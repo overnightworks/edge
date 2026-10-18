@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from edge import cli
+from edge import checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
 from edge.external import secrets, tofu
@@ -644,6 +644,44 @@ def test_apply_with_a_failing_git_exits_2_saying_it_cannot_read_the_checkout(
     assert apply.finish() == 2
     assert "edge external apply: cannot read the live checkout, " in apply.output
     assert fake_tofu.calls() == []
+
+
+def git_exiting_128(tree, arguments, profile):
+    return subprocess.CompletedProcess(arguments, 128, b"", b"fatal: broken\n")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "git", "exit_code", "stderr_contains"),
+    [
+        pytest.param(a_linked_worktree_as_the_live_checkout, checkout.run_git, 2,
+                     f"{LIVE_ONLY}a linked worktree, not the main checkout)", id="E1-linked"),
+        pytest.param(on_a_branch, checkout.run_git, 2,
+                     f"{MAIN_ONLY}this is branch feature/x)", id="E3-branch"),
+        pytest.param(lambda live, _tmp: live, git_exiting_128, 2,
+                     f"{REFUSAL}cannot read the live checkout, ", id="E11-failing-git"),
+        pytest.param(lambda live, _tmp: live, checkout.run_git, 42, "", id="E7-clean-main"),
+    ],
+)  # fmt: skip
+def test_apply_command_asks_the_tree_after_the_terminal_and_before_the_tokens(
+    home,
+    fake_tofu,
+    capsys,
+    monkeypatch,
+    live_checkout,
+    tmp_path,
+    arrange,
+    git,
+    exit_code,
+    stderr_contains,
+):
+    """#124 rule 2 in process: the terminal refusal is lifted, the tree decides, `git=` is used."""
+    monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
+    monkeypatch.setattr(external_apply, "apply_plan", lambda _home, _tokens: 42)
+    tree = arrange(live_checkout, tmp_path)
+    assert external_cli.apply_command(home, tree, git) == exit_code
+    error = " ".join(capsys.readouterr().err.split())
+    assert stderr_contains in error
+    assert (error == "") == (exit_code == 42)
 
 
 def test_apply_without_a_terminal_from_a_wrong_tree_exits_1_first(

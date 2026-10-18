@@ -376,8 +376,8 @@ def apply_closed(
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
-    if reason := checkout.not_live_checkout(repository, home or Path.home()):
-        _say(f"runs only from the live checkout {checkout.LIVE_CHECKOUT} ({reason})")
+    if refusal := checkout.not_live_checkout_line(repository, home or Path.home()):
+        _say(refusal)
         return ApplyExit.CANNOT_PLAN
     if not checkout.has_environment_file(repository):
         _say(

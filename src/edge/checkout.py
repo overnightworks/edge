@@ -336,6 +336,13 @@ def not_live_checkout(tree: Path, home: Path) -> str | None:
     return None
 
 
+def not_live_checkout_line(tree: Path, home: Path) -> str | None:
+    """The refusal line for a `tree` that is not the live checkout; None when it is."""
+    if reason := not_live_checkout(tree, home):
+        return f"runs only from the live checkout {LIVE_CHECKOUT} ({reason})"
+    return None
+
+
 def has_environment_file(tree: Path) -> bool:
     """Whether `.env` is a file, followed through a symlink; it is never opened (#95 rule 3)."""
     return (tree / ENVIRONMENT_FILE).is_file()
