@@ -810,7 +810,7 @@ Keycloak in `start` mode caches themes, so a changed theme file shows after
 `docker compose --profile keycloak restart keycloak`; that is not a realm
 change. `/resources/<version>/...` is served with `Cache-Control:
 max-age=2592000` (30 days), and the five-character version survives a plain
-restart (and differs between fresh stacks), so it is no stable address. A
+restart, so a restart keeps the same URL. A
 CSS-only edit, which needs that restart to load, would still come from browser
 caches for up to 30 days under the same URL; a look change therefore names a
 new stylesheet in `theme.properties` (`styles=`) instead of editing one in
@@ -1048,8 +1048,8 @@ flock /tmp/probe-stack.lock \
 ```
 
 The proofs: the public issuer, the themed login and account pages in German
-and English and the path allow-list (1, 2a), the master issuer and the forced second factor on 8090, for the console and for a password grant
-(2b), a failing undefined variable, a fresh apply, an unchanged export after a
+and English and the path allow-list (1, 2a), the master issuer and the
+forced second factor on 8090, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
 cache-off second apply and a changed YAML that applies and deletes a
 console-made subgroup it does not list, with a seeded member untouched (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused

@@ -623,7 +623,8 @@ def page_message(page: Response) -> str:
 def totp(secret: str, period_offset: int = 0) -> str:
     """RFC 6238 code for Keycloak's default policy: HmacSHA1, 6 digits, 30 s, the raw secret."""
     counter = int(time.time()) // 30 + period_offset
-    # RFC 6238 TOTP uses HMAC-SHA1, which is what Keycloak verifies; the probe chooses no hash.
+    # Keycloak's default OTP policy (RFC 6238's default) is HmacSHA1; the probe answers it and
+    # chooses no hash.
     digest = hmac.new(
         secret.encode(),
         struct.pack(">Q", counter),
