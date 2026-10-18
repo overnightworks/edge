@@ -1,8 +1,0 @@
-claim_id = "5e6a4f84638e47b48a6a7fdd67d7c172"
-agent = "claude"
-role = "builder"
-base = "537674a96afe935d1e050db509e5582eb3577d06"
-branch = "claude/issue-89-traefik-mcp-follows"
-scope = ["README.md", "docs/architecture.md", "probe/step-ca/probe.py", "src/edge/apply.py", "src/edge/core.py", "tests/test_edge_apply.py", "tests/test_edge_core.py"]
-opened_commit = "27d4f97e500002d0fca5a9f7f71412abc740b181"
-whole_reason = "The follower set, its gate on the unit's switch and the switch-on record are one path: split, the first live switch-on would make the next apply recreate traefik-mcp (P15) or a recreate would ignore a marker (P7)."
