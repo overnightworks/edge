@@ -79,6 +79,9 @@ getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 ## Start, readiness, stop
 
 ```sh
+# Starts a core (socket-proxy, traefik) that is not running; edge apply never starts it.
+# `--no-recreate` leaves a running core service as it is, for the apply below to follow.
+docker compose up -d --no-recreate socket-proxy traefik
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
 # `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
 # fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
@@ -88,7 +91,7 @@ edge apply --closed
 # (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply --closed` recreates
 # the running core services concerned, socket-proxy first and traefik after it, proves every
 # barrier again and only then says so, ending in "the core is current"; a stopped one is named
-# and not started.
+# and not started, so start it with the `up` above first.
 ```
 
 Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
@@ -862,8 +865,10 @@ switched-off Keycloak):
   --rm keycloak-config-cli`, because the `config-cli` client exists by then.
 - **5. Leave the overlay and start the edge** as in
   [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
-  Keycloak without the overlay, and `edge apply --closed` recreates Traefik with
-  the current `traefik.yml` and compose definition. Wait until the readiness check prints `ready`.
+  Keycloak without the overlay, and `edge apply --closed` recreates a running Traefik whose
+  `traefik.yml` or compose definition changed; a Traefik that is not running it leaves stopped,
+  so start it first with `docker compose up -d --no-recreate socket-proxy traefik`. Wait until
+  the readiness check prints `ready`.
 - **6-7. Your part, then retire the bootstrap.** Create your permanent admin in the
   browser, as in step 6-7 above. Then delete `temp-admin` in the admin console and run
   `rm ~/.secrets/keycloak/bootstrap-admin-password`.
