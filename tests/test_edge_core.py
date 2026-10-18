@@ -1,5 +1,6 @@
-"""The core of the stack and its applied record (#85 rules 1, 2, 6): which files of the core are
-recorded, their digests, and `applied.json`, over a `tmp_path` checkout and state directory."""
+"""The core of the stack and its applied record (#85 rules 1, 2, 6; #87 rules 1-3, 6): which files
+of the core are recorded, their digests, `applied.json`, and which core services a changed compose
+definition recreates in which order, over a `tmp_path` checkout and state directory."""
 
 import hashlib
 import json
@@ -9,9 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from edge import core
+from edge import compose, core
 
 TRAEFIK_FILE = "traefik.yml"
+CORE = ("socket-proxy", "traefik")
+HASHES = {"socket-proxy": "a" * 64, "traefik": "b" * 64}  # `docker compose config --hash` now
+STALE = "0" * 64  # a label from a definition the checkout no longer has
+FOLLOWED = frozenset({"traefik"})
 
 
 def bind(source: Path, target: str) -> dict:
@@ -37,6 +42,9 @@ def bind_core_files(config: dict, checkout: Path) -> dict:
             "volume": {},
         },
     ]
+    services["traefik"]["depends_on"] = {
+        "socket-proxy": {"condition": "service_started", "required": True}
+    }
     services["traefik"]["volumes"] = [
         bind(checkout / TRAEFIK_FILE, "/etc/traefik/traefik.yml"),
         bind(checkout / "dynamic", "/dynamic"),
@@ -82,6 +90,34 @@ def record(tmp_path: Path) -> core.Record:
     return core.Record(tmp_path / "state")
 
 
+def containers(
+    states: dict[str, str], labels: dict[str, str | None] | None = None
+) -> list[compose.Container]:
+    """One container per service in `states`; its label is the current hash unless `labels` says
+    otherwise."""
+    labels = HASHES | (labels or {})
+    return [
+        compose.Container(service, state, labels.get(service), "image")
+        for service, state in states.items()
+    ]
+
+
+def plan_of(
+    config: dict,
+    checkout: Path,
+    record: core.Record,
+    states: dict[str, str] | None = None,
+    labels: dict[str, str | None] | None = None,
+) -> list[core.CorePlan]:
+    """`plan_core` over these containers; by default only traefik runs, as created from now."""
+    running = {"traefik": "running"} if states is None else states
+    return core.plan_core(config, containers(running, labels), HASHES, checkout, record)
+
+
+def lines(plans: list[core.CorePlan]) -> list[str]:
+    return [planned.describe() for planned in plans]
+
+
 def test_the_core_is_every_service_without_a_profile(config):
     """#85 rule 1: the core is derived from the resolved configuration, never a second list."""
     assert core.core_services(config) == ("socket-proxy", "traefik")
@@ -102,7 +138,7 @@ def test_a_missing_file_bind_cannot_be_planned_and_names_its_path(config, checko
     (checkout / TRAEFIK_FILE).unlink()
 
     with pytest.raises(core.CoreError, match=re.escape(str(checkout / TRAEFIK_FILE))):
-        core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+        plan_of(config, checkout, record)
 
 
 @pytest.fixture
@@ -124,7 +160,7 @@ def test_a_file_bind_behind_a_directory_it_cannot_enter_cannot_be_planned_and_na
     (checkout / TRAEFIK_FILE).symlink_to(locked_directory / TRAEFIK_FILE)
 
     with pytest.raises(core.CoreError, match=re.escape(str(checkout / TRAEFIK_FILE))):
-        core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+        plan_of(config, checkout, record)
 
 
 def test_the_digest_is_the_sha256_of_the_files_bytes(checkout):
@@ -162,7 +198,7 @@ def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
     if content is not None:
         write_record(record, content)
 
-    [plan] = core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+    [plan] = plan_of(config, checkout, record)
 
     assert plan.describe() == f"traefik: recreate ({why.replace('RECORD', str(record.path))})"
     assert plan.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
@@ -172,7 +208,7 @@ def test_a_record_that_cannot_be_read_counts_as_changed(config, checkout, record
     """#85 rule 2, cell U4: an unreadable record is changed, never a reason to stop."""
     record.path.mkdir(parents=True)  # a directory where the file belongs cannot be read
 
-    [plan] = core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+    [plan] = plan_of(config, checkout, record)
 
     assert plan.why == f"{record.path} cannot be read (Is a directory)"
 
@@ -184,25 +220,25 @@ def test_an_entry_naming_another_file_beside_the_current_one_counts_as_changed(
     digest = sha256(checkout / TRAEFIK_FILE)
     write_record(record, json.dumps({"traefik": {TRAEFIK_FILE: digest, "old.yml": digest}}))
 
-    [plan] = core.plan_core(config, {"traefik": {"running"}}, checkout, record)
+    [plan] = plan_of(config, checkout, record)
 
     assert plan.why == "applied.json names old.yml, which traefik does not mount"
 
 
 def test_a_current_record_plans_nothing(config, checkout, record):
     """#85 rule 2, cell U2: the file as recorded is no change."""
-    record.write("traefik", {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)})
+    record.write("traefik", {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}, FOLLOWED)
 
-    assert core.plan_core(config, {"traefik": {"running"}}, checkout, record) == []
+    assert plan_of(config, checkout, record) == []
 
 
 @pytest.mark.parametrize(
     ("states", "action"),
     [
-        ({"traefik": {"running"}}, core.CoreAction.RECREATE),
-        ({"traefik": {"restarting"}}, core.CoreAction.RECREATE),
-        ({"traefik": {"paused"}}, core.CoreAction.RECREATE),
-        ({"traefik": {"exited"}}, core.CoreAction.NOT_STARTED),
+        ({"traefik": "running"}, core.CoreAction.RECREATE),
+        ({"traefik": "restarting"}, core.CoreAction.RECREATE),
+        ({"traefik": "paused"}, core.CoreAction.RECREATE),
+        ({"traefik": "exited"}, core.CoreAction.NOT_STARTED),
         ({}, core.CoreAction.NOT_STARTED),
     ],
 )
@@ -210,24 +246,24 @@ def test_only_a_core_service_with_a_live_container_is_recreated(
     states, action, config, checkout, record
 ):
     """#85 rules 3 and 4, cells U5, U6: running, restarting or paused is recreated; else named."""
-    [plan] = core.plan_core(config, states, checkout, record)
+    [plan] = plan_of(config, checkout, record, states)
 
     assert plan.action is action
 
 
 def test_a_core_service_that_is_not_running_is_named_and_not_started(config, checkout, record):
     """#85 rule 4, cell U5: the wording of the non-action."""
-    record.write("traefik", {TRAEFIK_FILE: "0000"})
+    record.write("traefik", {TRAEFIK_FILE: "0000"}, FOLLOWED)
 
-    [plan] = core.plan_core(config, {}, checkout, record)
+    [plan] = plan_of(config, checkout, record, {})
 
-    assert plan.describe() == "traefik.yml changed; traefik is not running and is not started"
+    assert plan.describe() == "traefik: traefik.yml changed; it is not running and is not started"
 
 
 def test_the_record_is_written_into_a_new_state_directory_whole(record, tmp_path):
     """#85 rule 6, cell U15: the missing directory is created; only the finished file remains."""
-    record.write("traefik", {TRAEFIK_FILE: "abc"})
-    record.write("socket-proxy", {"proxy.yml": "def"})
+    record.write("traefik", {TRAEFIK_FILE: "abc"}, CORE)
+    record.write("socket-proxy", {"proxy.yml": "def"}, CORE)
 
     assert json.loads(record.path.read_text()) == {
         "socket-proxy": {"proxy.yml": "def"},
@@ -240,6 +276,186 @@ def test_writing_replaces_a_malformed_record(record):
     """#85 rule 6: an entry is written even where the record could not be trusted."""
     write_record(record, "not json")
 
-    record.write("traefik", {TRAEFIK_FILE: "abc"})
+    record.write("traefik", {TRAEFIK_FILE: "abc"}, FOLLOWED)
 
     assert record.read() == core.Reading({"traefik": {TRAEFIK_FILE: "abc"}})
+
+
+@pytest.mark.parametrize(
+    "keep",
+    [
+        lambda record: record.write("socket-proxy", {"proxy.yml": "def"}, FOLLOWED),
+        lambda record: record.mark_unfinished(["traefik", "socket-proxy"], FOLLOWED),
+    ],
+    ids=["write", "mark unfinished"],
+)
+def test_the_record_keeps_no_entry_for_a_service_edge_does_not_follow(record, keep):
+    """#87 rules 4, 6: socket-proxy binds no file, so whoever asks, the record keeps none for it."""
+    keep(record)
+
+    assert "socket-proxy" not in record.read().entries
+
+
+# --- #87: the core follows its compose definition --------------------------------------------
+
+BOTH_RUNNING = {"socket-proxy": "running", "traefik": "running"}
+
+
+@pytest.fixture
+def recorded(config, checkout, record) -> core.Record:
+    """traefik.yml as last applied, so only a definition can be changed."""
+    record.write("traefik", {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}, FOLLOWED)
+    return record
+
+
+def test_a_changed_socket_proxy_definition_recreates_it_and_pulls_in_traefik(
+    config, checkout, recorded
+):
+    """#87 rule 2, cell D1: socket-proxy's label differs from its hash, so socket-proxy is
+    recreated, then traefik because it depends on it; socket-proxy is followed through no file."""
+    plans = plan_of(config, checkout, recorded, BOTH_RUNNING, {"socket-proxy": STALE})
+
+    assert lines(plans) == [
+        "socket-proxy: recreate (its compose definition changed)",
+        "traefik: recreate (socket-proxy is recreated)",
+    ]
+    assert [planned.digests for planned in plans] == [
+        {},
+        {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)},
+    ]
+
+
+def test_a_changed_traefik_definition_recreates_only_traefik(config, checkout, recorded):
+    """#87 rule 2, cell D2: nothing depends on traefik, so socket-proxy is not named."""
+    plans = plan_of(config, checkout, recorded, BOTH_RUNNING, {"traefik": STALE})
+
+    assert lines(plans) == ["traefik: recreate (its compose definition changed)"]
+
+
+def test_a_changed_definition_and_traefik_yml_are_one_recreate_with_both_reasons(
+    config, checkout, recorded
+):
+    """#87 rule 2, cell D4: one plan line, with the plan-time digest of traefik.yml."""
+    (checkout / TRAEFIK_FILE).write_text("entryPoints: {edge: {}}\n")
+
+    [planned] = plan_of(config, checkout, recorded, BOTH_RUNNING, {"traefik": STALE})
+
+    assert (
+        planned.describe()
+        == "traefik: recreate (its compose definition changed; traefik.yml changed)"
+    )
+    assert planned.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
+
+
+def test_socket_proxy_comes_first_though_the_config_lists_traefik_first(config, checkout, recorded):
+    """#87 rule 2, cell D10: the order comes from `depends_on`, not from file order."""
+    services = config["services"]
+    config["services"] = {"traefik": services["traefik"], "socket-proxy": services["socket-proxy"]}
+
+    plans = plan_of(config, checkout, recorded, BOTH_RUNNING, {"socket-proxy": STALE})
+
+    assert [planned.service for planned in plans] == ["socket-proxy", "traefik"]
+
+
+@pytest.mark.parametrize(
+    ("state", "proxy_emptied"), [("exited", False), ("created", False), ("created", True)]
+)
+def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothing(
+    state, proxy_emptied, config, checkout, recorded
+):
+    """#87 rules 3 and 6, cell D5: a stopped core service is never started, so its dependents
+    keep running as they are; so is one created by hand, which no recreate of edge's left, even
+    beside an emptied socket-proxy entry, which edge follows through no file and so ignores."""
+    if proxy_emptied:
+        entries = json.loads(recorded.path.read_text()) | {"socket-proxy": {}}
+        recorded.path.write_text(json.dumps(entries))
+    states = {"socket-proxy": state, "traefik": "running"}
+
+    plans = plan_of(config, checkout, recorded, states, {"socket-proxy": STALE})
+
+    assert lines(plans) == [
+        "socket-proxy: its compose definition changed; it is not running and is not started"
+    ]
+    assert plans[0].action is core.CoreAction.NOT_STARTED
+
+
+@pytest.mark.parametrize(
+    ("label", "why"),
+    [
+        (None, "the last recreate did not finish"),
+        (STALE, "its compose definition changed; the last recreate did not finish"),
+    ],
+)
+def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_traefik(
+    label, why, config, checkout, recorded
+):
+    """#87 rule 4: a container created and never started while the record says the recreate that
+    took it in did not finish is what edge's recreate whose start failed leaves, with the new
+    label; nobody stopped it, so the next run recreates it again, whether the definition was fixed
+    since or not. socket-proxy keeps no entry; traefik's, emptied with it, speaks for it."""
+    recorded.mark_unfinished(["traefik"], FOLLOWED)
+    states = {"socket-proxy": "created", "traefik": "running"}
+    labels = {"socket-proxy": label} if label else {}
+
+    plans = plan_of(config, checkout, recorded, states, labels)
+
+    assert lines(plans) == [
+        f"socket-proxy: recreate ({why})",
+        "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)",
+    ]
+
+
+def test_a_traefik_its_recreate_left_created_is_recreated_again_for_one_reason(
+    config, checkout, recorded
+):
+    """#87 rule 4: a traefik whose start failed, as a taken port 80 leaves it, is created and
+    marked unfinished; the next run recreates it once, and socket-proxy is not pulled in."""
+    recorded.mark_unfinished(["traefik"], FOLLOWED)
+    states = {"socket-proxy": "running", "traefik": "created"}
+
+    plans = plan_of(config, checkout, recorded, states)
+
+    assert lines(plans) == ["traefik: recreate (the last recreate did not finish)"]
+
+
+def test_an_absent_core_container_has_no_definition_to_compare(config, checkout, recorded):
+    """#87 rule 3, cell D6: no container, no label, no line; a live one is still compared."""
+    assert plan_of(config, checkout, recorded, {"traefik": "running"}) == []
+    assert plan_of(config, checkout, recorded, {}) == []
+
+
+def test_a_core_container_without_the_label_cannot_be_planned(config, checkout, recorded):
+    """#87 rule 1, cell D11: a silent fallback would be a change on every run (P15)."""
+    with pytest.raises(
+        core.CoreError, match=r"a traefik container has no com\.docker\.compose\.config-hash label"
+    ):
+        plan_of(config, checkout, recorded, BOTH_RUNNING, {"traefik": None})
+
+
+def test_a_unit_container_without_the_label_is_no_core_concern(config, checkout, recorded):
+    """#87 rule 1: only the core's labels are read."""
+    states = BOTH_RUNNING | {"hello": "running"}
+
+    assert plan_of(config, checkout, recorded, states, {"hello": None}) == []
+
+
+def test_a_ghost_entry_is_ignored_and_dropped_at_the_next_write_while_a_followed_one_stays(
+    config, checkout, record
+):
+    """#87 rule 6, cell D13 (#34 finding 51): the prune goes by the services edge follows in the
+    config, of every profile, so traefik-mcp's entry survives while step-ca is off."""
+    config["services"]["traefik-mcp"] = {
+        "profiles": ["step-ca"],
+        "volumes": [bind(checkout / "traefik-mcp.yml", "/etc/traefik/traefik.yml")],
+    }
+    digest = sha256(checkout / TRAEFIK_FILE)
+    write_record(
+        record,
+        json.dumps({"traefik": {TRAEFIK_FILE: digest}, "ghost": {}, "traefik-mcp": {"x.yml": "1"}}),
+    )
+    followed = core.followed_services(config, checkout)
+
+    assert plan_of(config, checkout, record, BOTH_RUNNING) == []
+    record.mark_unfinished(["traefik"], followed)
+    assert record.read().entries == {"traefik": {}, "traefik-mcp": {"x.yml": "1"}}
+    assert followed == {"traefik", "traefik-mcp", "hello"}

@@ -1,17 +1,19 @@
 """`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml`.
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
-2 cannot plan. The core (socket-proxy and traefik) comes first: a core service whose recorded
-file, today `traefik.yml`, changed since it was last applied is recreated, observed running and
-every active barrier proven again before its record is written; one without a live container is
-named and never started (#85). A unit is a compose profile: on starts its services, off removes
-their containers. Volumes are never touched. A unit that would be switched on and is not set up
-is asked about separately; on `yes` its own setup command runs in the operator's terminal (key
-material is made there, never here) and `--check` must then pass before a fresh plan is shown. A
-unit with an emergency switch (`edge stop`) or a barrier a stop left is never started and its
-switch is never cleared here: only `edge start` ends it. It runs only from the live checkout
-`~/git/edge`: from any other tree it would bind the live compose project to that tree, so it
-refuses there with exit 2 (#79).
+2 cannot plan. The core (socket-proxy and traefik) comes first: a core service whose compose
+definition changed (Compose's `config --hash` against its container's label) or whose recorded
+file, today `traefik.yml`, changed since it was last applied is recreated together with the core
+services that depend on it, socket-proxy first; each is observed running with what it depends on
+and every active barrier proven again before its record is written and its success is said; one
+without a live container is named and never started (#85, #87). A unit is a compose profile: on
+starts its services, off removes their containers. Volumes are never touched. A unit that would be
+switched on and is not set up is asked about separately; on `yes` its own setup command runs in
+the operator's terminal (key material is made there, never here) and `--check` must then pass
+before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
+left is never started and its switch is never cleared here: only `edge start` ends it. It runs
+only from the live checkout `~/git/edge`: from any other tree it would bind the live compose
+project to that tree, so it refuses there with exit 2 (#79).
 """
 
 import sys
@@ -194,7 +196,9 @@ def _plan(
     engine: compose.Compose, marks: switches.Switches, record: core.Record, repository: Path
 ) -> Plan:
     fleet = read_fleet(engine, repository)
-    states = engine.states()
+    hashes = engine.config_hashes(core.core_services(fleet.config))
+    containers = engine.containers()
+    states = compose.states_of(containers)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
     plans = plan_switches(
         fleet.units,
@@ -203,7 +207,8 @@ def _plan(
         states,
         _switched_off(fleet, read, repository),
     )
-    return Plan(fleet, read, core.plan_core(fleet.config, states, repository, record), plans)
+    core_plans = core.plan_core(fleet.config, containers, hashes, repository, record)
+    return Plan(fleet, read, core_plans, plans)
 
 
 def _switched_off(
@@ -362,29 +367,44 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """Recreate, observe running, prove every active barrier, and only then record each
-        service with its plan-time digests (rule 3); the failure line of the first step that
-        fails, whose service is left marked unfinished, so the next run recreates it (rule 5)."""
-        for plan in planned.core:
-            if plan.action is not core.CoreAction.RECREATE:
-                continue
-            progress.unit = plan.service
-            try:
-                progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
-                self.record.mark_unfinished(plan.service)
+        """Mark every recorded service of the set unfinished, then in start order recreate each,
+        observe it running with the core services it depends on, prove every active barrier, and
+        only then record it with its plan-time digests (#85 rule 3, #87 rule 4); the failure line
+        of the first step that fails, whose set is left marked unfinished, so the next run
+        recreates it (#85 rule 5)."""
+        config = planned.fleet.config
+        recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
+        try:
+            followed: frozenset[str] = frozenset()
+            if recreates:
+                progress.step = "find the services edge follows"
+                followed = core.followed_services(config, self.repository)
+            if recorded := [plan.service for plan in recreates if plan.service in followed]:
+                progress.unit = recorded[0]
+                progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
+                self.record.mark_unfinished(recorded, followed)
+            for plan in recreates:
+                progress.unit = plan.service
                 progress.step = f"recreate {plan.service}"
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"
-                if not engine.stays_up(planned.fleet.config, (plan.service,), self.watch):
-                    return f"{plan.service} is not running after the recreate"
+                observed = (plan.service, *core.dependencies(config, plan.service))
+                if down := engine.down_while_watched(config, observed, self.watch):
+                    verb = "is" if len(down) == 1 else "are"
+                    return (
+                        f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
+                    )
                 progress.step = "prove the barriers"
                 if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
                     return unproven
-                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
-                self.record.write(plan.service, plan.digests)
-            except (compose.ComposeError, core.CoreError) as error:
-                return f"could not {progress.step}, {error}"
-            print(f"{COMMAND}: {plan.service} is recreated and runs the checked-out {plan.files}")
+                if plan.service in followed:
+                    progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+                    self.record.write(plan.service, plan.digests, followed)
+                print(f"{COMMAND}: {plan.recreated(followed)}")
+        except (compose.ComposeError, core.CoreError) as error:
+            return f"could not {progress.step}, {error}"
+        if recreates and len(recreates) == len(planned.core):
+            print(f"{COMMAND}: the core is current")
         return None
 
     def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:

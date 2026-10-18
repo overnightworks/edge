@@ -6,9 +6,10 @@ names a volume, so a unit switched off loses containers and keeps its data.
 """
 
 import json
+import re
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,13 @@ _SETTLE_POLL_SECONDS = 0.5
 _COMPLETES = "service_completed_successfully"
 _RUNNING = "running"
 _COMPLETED = "completed"  # a container that exited 0: a one-shot has done its job
-_NOT_RUNNING = {"exited", _COMPLETED, "created", "dead"}
+_CREATED = "created"  # created but never started: an `up` whose start failed
+_NOT_RUNNING = {"exited", _COMPLETED, _CREATED, "dead"}
+# Compose's record of the service definition a container was created from. Only this label is
+# read out of ps's comma-joined `Labels`, so another label's value may hold commas.
+CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
+_CONFIG_HASH = re.compile(rf"(?:^|,){re.escape(CONFIG_HASH_LABEL)}=([0-9a-f]{{64}})(?:,|$)")
+_HASH_LINE = re.compile(r"(\S+) ([0-9a-f]{64})")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
@@ -82,6 +89,17 @@ SETTLED = Watch()
 
 
 @dataclass(frozen=True)
+class Container:
+    """One container of the project as `ps` lists it. `config_hash` is the hash of the service
+    definition it was created from, as Compose labelled it; None when the label is missing."""
+
+    service: str
+    state: str
+    config_hash: str | None
+    image: str
+
+
+@dataclass(frozen=True)
 class Compose:
     run: Runner = run_docker
     repository: Path = REPOSITORY
@@ -94,13 +112,29 @@ class Compose:
         except json.JSONDecodeError as error:
             raise ComposeError("`docker compose config` did not answer JSON") from error
 
+    def containers(self) -> list[Container]:
+        """Every container of the project, of every profile."""
+        output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
+        return [_container(entry) for entry in _containers(output)]
+
     def states(self) -> dict[str, set[str]]:
         """Each service that has a container, with the states of its containers."""
-        output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
-        states: dict[str, set[str]] = {}
-        for container in _containers(output):
-            states.setdefault(container["Service"], set()).add(_state_of(container))
-        return states
+        return states_of(self.containers())
+
+    def config_hashes(self, services: tuple[str, ...]) -> dict[str, str]:
+        """Compose's hash of each service's definition as it resolves the checkout now; the
+        label of a container created from the same definition carries the same hash."""
+        output = self._call("*", "config", ["--hash", ",".join(services)], READ_SECONDS)
+        hashes = {}
+        for line in filter(str.strip, output.splitlines()):
+            if not (match := _HASH_LINE.fullmatch(line.strip())):
+                raise ComposeError(f"`docker compose config --hash` answered {line.strip()!r}")
+            hashes[match[1]] = match[2]
+        if missing := [service for service in services if service not in hashes]:
+            raise ComposeError(
+                f"`docker compose config --hash` named no hash for {', '.join(missing)}"
+            )
+        return hashes
 
     def start(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "up", ["-d", "--no-recreate", *services], CHANGE_SECONDS)
@@ -110,15 +144,18 @@ class Compose:
         services it depends on are left as they are, and its volumes are kept."""
         self._call("*", "up", ["-d", "--no-deps", "--force-recreate", service], CHANGE_SECONDS)
 
-    def stays_up(self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch) -> bool:
-        """The services are up at every look until the watch is over: a container that dies
-        right after it started and is restarting is not running."""
+    def down_while_watched(
+        self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch
+    ) -> tuple[str, ...]:
+        """The services found not up at the first look before the watch is over that finds one,
+        none when all stay up: a container that dies right after it started and is restarting is
+        not running."""
         deadline = watch.clock() + watch.seconds
-        while is_up(self.states(), config, services):
+        while not (down := not_up(self.states(), config, services)):
             if watch.clock() >= deadline:
-                return True
+                return ()
             watch.sleep(_SETTLE_POLL_SECONDS)
-        return False
+        return down
 
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)
@@ -141,17 +178,48 @@ def is_up(
     states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
 ) -> bool:
     """Every service of the unit has a container: running, or for a one-shot also completed."""
+    return not not_up(states, config, services)
+
+
+def not_up(
+    states: Mapping[str, set[str]], config: Mapping[str, Any], services: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The services without a container that is running, or for a one-shot also completed."""
     one_shots = one_shot_services(config)
-    return all(
-        states.get(name, set())
-        and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
+    return tuple(
+        name
         for name in services
+        if not (
+            states.get(name, set())
+            and states[name] <= ({_RUNNING, _COMPLETED} if name in one_shots else {_RUNNING})
+        )
     )
 
 
 def has_running_container(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     """Some container of the unit's services is alive: running, restarting or paused."""
     return any(states.get(name, set()) - _NOT_RUNNING for name in services)
+
+
+def never_started(states: Mapping[str, set[str]], service: str) -> bool:
+    """Every container of the service was created and never started, as an `up` whose start
+    failed leaves it; nobody stopped it."""
+    return states.get(service) == {_CREATED}
+
+
+def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
+    """Each service that has a container, with the states of its containers."""
+    states: dict[str, set[str]] = {}
+    for container in containers:
+        states.setdefault(container.service, set()).add(container.state)
+    return states
+
+
+def _container(entry: Mapping[str, Any]) -> Container:
+    label = _CONFIG_HASH.search(entry.get("Labels", ""))
+    return Container(
+        entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image", "")
+    )
 
 
 def _state_of(container: Mapping[str, Any]) -> str:
@@ -165,7 +233,7 @@ def is_gone(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     return not any(name in states for name in services)
 
 
-def _containers(output: str) -> list[dict[str, str]]:
+def _containers(output: str) -> list[dict[str, Any]]:
     """`ps --format json` is one JSON array or one object per line, by Compose version."""
     text = output.strip()
     try:
