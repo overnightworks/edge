@@ -454,8 +454,8 @@ class Waiting:
     """What waits on origin's `main` for the live checkout; nothing while it is current."""
 
     origin: checkout.Origin
-    commits: list[checkout.Commit]
-    files: list[checkout.ChangedFile]
+    commits: tuple[checkout.Commit, ...]
+    files: tuple[checkout.ChangedFile, ...]
 
     def describe(self, binds: core.CheckoutBinds) -> list[str]:
         """The waiting commits, their files by effect, the interim way to bring them in and what
@@ -503,7 +503,7 @@ def _fetched(git: checkout.Git) -> Waiting | None:
     standing = origin.standing
     if standing is checkout.Standing.CURRENT:
         print(f"{COMMAND}: live checkout current ({origin.short})")
-        return Waiting(origin, [], [])
+        return Waiting(origin, (), ())
     if standing is not checkout.Standing.BEHIND:
         stands = "is ahead of" if standing is checkout.Standing.AHEAD else "has diverged from"
         _say(
@@ -513,7 +513,8 @@ def _fetched(git: checkout.Git) -> Waiting | None:
         )
         return None
     try:
-        return Waiting(origin, git.waiting_commits(origin.sha), git.waiting_files(origin.sha))
+        commits = tuple(git.waiting_commits(origin.sha))
+        return Waiting(origin, commits, tuple(git.waiting_files(origin.sha)))
     except checkout.GitError as error:
         _say(f"cannot read what waits on origin {checkout.MAIN}, {error}; nothing changed")
         return None

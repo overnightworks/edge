@@ -634,7 +634,7 @@ def test_the_checkouts_binds_are_read_by_what_edge_apply_does_with_them(with_fol
 
 
 @pytest.mark.parametrize(
-    ("path", "bound", "binds"),
+    ("path", "binds", "bound"),
     [
         pytest.param("dynamic/x.yml", {"dynamic"}, True, id="under a directory bind"),
         pytest.param("dynamic", {"dynamic"}, True, id="the bind itself"),
@@ -643,6 +643,6 @@ def test_the_checkouts_binds_are_read_by_what_edge_apply_does_with_them(with_fol
         pytest.param("README.md", set(), False, id="nothing bound"),
     ],
 )  # fmt: skip
-def test_a_changed_path_is_bound_when_it_lies_at_or_under_a_bind(path, bound, binds):
+def test_a_changed_path_is_bound_when_it_lies_at_or_under_a_bind(path, binds, bound):
     """#98 rule 4: a file is bound by a bind of itself or of a directory it lies in."""
-    assert core.is_bound(path, frozenset(bound)) is binds
+    assert core.is_bound(path, frozenset(binds)) is bound
