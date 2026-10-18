@@ -156,6 +156,33 @@ services:
       - ./keycloak/entrypoint.sh:/opt/edge/entrypoint.sh:ro
       - ./keycloak:/config:ro
 
+  # Reads both realms through the admin API, GET only, and prints one JSON inventory
+  # (src/edge/realm/observe.py). No depends_on: an observe never starts Keycloak. Run it as
+  # `compose run -T --rm realm-observer [--base-url URL]` with the per-run digest key on stdin.
+  realm-observer:
+    # The probe's python pin (probe/keycloak/compose.probe.yaml); ci.yml checks the two are equal.
+    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    profiles: [apply]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [keycloak]
+    # -I ignores the PYTHON* environment, so -B is what keeps bytecode unwritten.
+    entrypoint:
+      - python
+      - -I
+      - -B
+      - /opt/observer/observe.py
+    command: ["--base-url", "http://keycloak:8080"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    secrets:
+      - source: keycloak_config_cli_secret
+        target: config_cli_secret
+    volumes:
+      - ./src/edge/realm/observe.py:/opt/observer/observe.py:ro
+
   step-ca:
     profiles: [step-ca]
     image: smallstep/step-ca:0.30.2@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270

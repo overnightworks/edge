@@ -797,9 +797,18 @@ app's cutover (K12–K14).
 > group it deletes **every** subgroup the YAML lacks, whoever created it: a
 > group made in the admin console under `/apps` or `/ki-abo` (say
 > `/apps/newtool`) disappears on the next apply, **with every membership in
-> it**. Removing or renaming a group in `realm.yaml` deletes it the same way.
+> it** (the probe's proof 3c removes `/apps/probe-console` with its one member).
+> Removing or renaming a group in `realm.yaml` deletes it the same way.
 > Renaming a group in the admin console first is safe only if no apply runs
-> before the matching YAML change lands.
+> before the matching YAML change lands. A console change inside a declared
+> object goes the same way: a protocol mapper added to the scope `groups`, a
+> realm role added to `service-account-config-cli`, a step added to
+> `browser-mfa-forms`, and a top-level flow made in the console in master. A
+> console-made client, identity provider, component, realm role, and a mapper
+> on `agent-service` survive. Each such removal shows around an apply: the
+> realm observer (`realm-observer`, `src/edge/realm/observe.py`) reads the
+> realms before and after, and `edge.realm` compares the two reads and prints
+> one line per change with its realm.
 
 ### Keycloak secrets
 
