@@ -535,6 +535,9 @@ RECOMMENDATIONS = {
     FindingRule.VERIFICATION_UNREACHABLE: "Prüfbefehl hing oder fehlt; später erneut",
 }
 
+# A remedy that depends on the entry's kind: a human's password is fetched back, because a new one locks out what the old one protected.
+KIND_RECOMMENDATIONS = {(FindingRule.MISSING, SecretKind.HUMAN_PASSWORD): "zurückholen, siehe Tabelle"}
+
 
 @dataclass(frozen=True)
 class SecretFinding:
@@ -543,10 +546,11 @@ class SecretFinding:
     detail: str = ""
     # The operator's one action that clears this finding, a command in backticks when it is one; `home next` shows it as a step.
     fix: str = ""
+    kind: SecretKind | None = None
 
     @property
     def recommendation(self) -> str:
-        return self.fix or RECOMMENDATIONS[self.rule]
+        return self.fix or KIND_RECOMMENDATIONS.get((self.rule, self.kind)) or RECOMMENDATIONS[self.rule]
 
     @property
     def identity(self) -> str:
@@ -697,7 +701,7 @@ def _entry_findings(status: SecretStatus) -> Iterator[SecretFinding]:
             yield SecretFinding(FindingRule.REVOCATION_UNCONFIRMED, name, status.entry.revoke_url)
         return
     if status.presence is Presence.MISSING and status.entry.expected_present:
-        yield SecretFinding(FindingRule.MISSING, name)
+        yield SecretFinding(FindingRule.MISSING, name, kind=status.entry.kind)
     if status.presence is Presence.UNKNOWN:
         yield SecretFinding(FindingRule.PRESENCE_UNKNOWN, name)
     if status.verification is Verification.FAILED:

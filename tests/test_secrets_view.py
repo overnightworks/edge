@@ -15,7 +15,8 @@ import pytest
 from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets, symlinked_folder_fix
 
 from home_tools import cli, secrets_view
-from home_tools.secrets_view import ManifestError, SecretKind, load_manifest
+from home_tools.secrets_setup import BY_HAND_STEP, Boundaries, Terminal
+from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 from home_tools.tidy_home import Layout
 
 NOW = datetime(2026, 10, 15, 9, 0)
@@ -44,7 +45,14 @@ INVENTORY = {
     "codex",
     "songmaker",
     "github/overnightworks-read-token",
+    "restic/password",
+    "cloudflared/tunnel",
+    "claude-measure-token",
 }
+RESTIC_RECREATE = (
+    "Aus deinem Passwortmanager zurückholen. "
+    "Nie neu erzeugen, solange unter ~/backups/restic Backups liegen: ein neues Passwort macht sie unlesbar."
+)
 RETIRED_ENTRY = """
 [[secret]]
 name = "github/token"
@@ -479,7 +487,12 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
     assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
-    assert {name for name, entry in manifest.items() if entry.optional} == {"ssh/id_ed25519.ppk", "claudebot-runtime.env", "secrets/README"}
+    assert {name for name, entry in manifest.items() if entry.optional} == {
+        "ssh/id_ed25519.ppk",
+        "claudebot-runtime.env",
+        "secrets/README",
+        "claude-measure-token",
+    }
 
 
 def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_with_its_place_and_rights() -> None:
@@ -500,7 +513,46 @@ def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_wi
     assert {entry.name: entry.kind for entry in first if entry.source is None} == {"opentofu/state-passphrase": SecretKind.SERVICE_PASSWORD}
 
 
+@pytest.mark.parametrize(
+    "expected",
+    [
+        SecretEntry(
+            name="restic/password",
+            kind=SecretKind.HUMAN_PASSWORD,
+            paths=(PurePosixPath(".secrets/restic/password"),),
+            read_by=("edge-backup.service", "edge-backup-restore-test.service"),
+            recreate=RESTIC_RECREATE,
+            purpose="edge-backup verschlüsselt damit die restic-Backups; ohne es sind sie unlesbar.",
+        ),
+        SecretEntry(
+            name="cloudflared/tunnel",
+            kind=SecretKind.TOOL_LOGIN,
+            paths=(PurePosixPath(".secrets/cloudflared/a903516a-2660-4507-90a5-5a27d20c82c4.json"),),
+            read_by=("cloudflared tunnel run (von Hand; credentials-file in /etc/cloudflared/config.yml)",),
+            recreate="`cloudflared tunnel create` (neuer Tunnel) oder die Datei aus /etc/cloudflared kopieren",
+            elsewhere="/etc/cloudflared (root), die Kopie, die der laufende Tunnel über LoadCredential liest",
+        ),
+        SecretEntry(
+            name="claude-measure-token",
+            kind=SecretKind.TOKEN,
+            paths=(PurePosixPath(".secrets/claude-measure-token"),),
+            read_by=("agent-providers#115, Messläufe 0b2/0e",),
+            recreate="`claude setup-token` im Browser",
+            purpose="Die Messläufe starten Claude damit unter einem eigenen, widerrufbaren Login.",
+            optional=True,
+        ),
+    ],
+    ids=lambda entry: entry.name,
+)
+def test_the_packaged_manifest_carries_the_ruled_contract_of_each_issue_42_entry(expected: SecretEntry) -> None:
+    """#42 rules 1-3: each new entry carries exactly its ruled kind, path, readers, recreate line and notes."""
+    manifest = {entry.name: entry for entry in load_manifest(PACKAGED_MANIFEST)}
+
+    assert manifest[expected.name] == expected
+
+
 def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#42 M1/M4: every planted file is known, none is an unknown file, and edge-backup.service lists restic/password."""
     home = tmp_path / "home"
     plant_secrets(home)
 
@@ -509,8 +561,57 @@ def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, 
 
     view, by_service = capsys.readouterr().out.split("# home secrets --by-service")
     assert set(rows_of(view)) == INVENTORY
+    assert findings_of(view, "unknown-file") == {}
     assert rows_of(view)["github/token"][-1] == "Widerruf: https://github.com/settings/tokens"
     assert "| ssh/id_ed25519 | ssh/id_ed25519.ppk |" in by_service
+    assert "| edge-backup.service | restic/password |" in by_service
+
+
+def never_asked(*_: object) -> object:
+    raise AssertionError("--setup asked the operator although nothing is set up by it")
+
+
+def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_never_generates_it(
+    tmp_path: Path, probe: FakeProbe, capsys
+) -> None:
+    """#42 rule 1: losing the restic password makes every backup unreadable, so `--setup` leaves it by hand."""
+    home = tmp_path / "home"
+    plant_secrets(home)
+    password = home / ".secrets" / "restic" / "password"
+    password.unlink()
+    operator_absent = Boundaries(Terminal(lambda: True, never_asked, never_asked, never_asked), never_asked, os.fsync)
+
+    view_code = home_secrets(home, probe)
+    view = capsys.readouterr().out
+    setup_code = cli.main(["secrets", "--setup"], home=home, probe=probe, now=NOW, secrets_setup_boundaries=operator_absent)
+    setup = capsys.readouterr().out.splitlines()
+
+    assert view_code == 1
+    assert findings_of(view, "missing") == {"restic/password": ["-", "zurückholen, siehe Tabelle"]}
+    assert rows_of(view)["restic/password"][-1] == RESTIC_RECREATE
+    assert setup_code == 1
+    assert f"Dafür gibt es noch keinen Assistenten; von Hand: {RESTIC_RECREATE}" in setup
+    assert BY_HAND_STEP + "restic/password" in setup
+    assert not password.exists()
+
+
+@pytest.mark.parametrize(
+    ("kind", "generated"),
+    [
+        ("human-password", False),
+        ("service-password", True),
+        ("tool-login", False),
+        ("token", False),
+    ],
+)
+def test_setup_generates_only_a_service_password_and_never_a_human_one(tmp_path: Path, kind: str, *, generated: bool) -> None:
+    """#42 rule 1: a human-password entry is never written by `--setup`, so a lost one is never silently replaced."""
+    manifest = tmp_path / "secrets_manifest.toml"
+    manifest.write_text(ENTRY.replace('kind = "token"', f'kind = "{kind}"'))
+
+    (entry,) = load_manifest(manifest)
+
+    assert entry.written_by_setup is generated
 
 
 def test_an_invalid_manifest_exits_2_naming_the_file(use_manifest, clean_home: Path, probe: FakeProbe, capsys) -> None:
