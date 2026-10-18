@@ -423,6 +423,7 @@ class Faults:
     unauthorized_times: int = 1
     truncate_children: bool = False
     redirect: dict[str, str] = field(default_factory=dict)  # path -> Location
+    not_json: set[str] = field(default_factory=set)  # paths answered 200 with a non-JSON body
 
 
 class FakeKeycloak(ThreadingHTTPServer):
@@ -470,6 +471,8 @@ class AdminApi(BaseHTTPRequestHandler):
         if self.headers["Authorization"] != f"Bearer {TOKEN}":
             return self.reply({"error": "no token"}, 401)
         time.sleep(faults.delay.get(path, 0))
+        if path in faults.not_json:
+            return self.reply_raw(200, b"<html>not JSON</html>")
         if path in faults.redirect:
             self.send_response(302)
             self.send_header("Location", faults.redirect[path])
@@ -548,7 +551,9 @@ class AdminApi(BaseHTTPRequestHandler):
         return None
 
     def reply(self, body: Any, status: int = 200) -> None:
-        payload = json.dumps(body).encode()
+        self.reply_raw(status, json.dumps(body).encode())
+
+    def reply_raw(self, status: int, payload: bytes) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -944,11 +949,30 @@ def test_a_401_right_after_signing_in_again_fails_loudly(keycloak: FakeKeycloak)
 # --- U21: required and optional fields ------------------------------------------------------
 
 
-def test_a_missing_required_field_fails_loudly(keycloak: FakeKeycloak) -> None:
-    """U21."""
-    del keycloak.realms["hallucinai"].clients[0]["enabled"]
+@pytest.mark.parametrize(
+    ("field_name", "message"),
+    [
+        ("enabled", r"^a client representation lacks enabled$"),
+        ("clientId", r"^a reply lacks the key 'clientId'$"),
+    ],
+)
+def test_a_missing_required_field_fails_loudly(
+    keycloak: FakeKeycloak, field_name: str, message: str
+) -> None:
+    """U21, also for the identity, which is read before the representation is projected."""
+    del keycloak.realms["hallucinai"].clients[0][field_name]
 
-    with pytest.raises(observer.ObserveError, match="a client representation lacks enabled"):
+    with pytest.raises(observer.ObserveError, match=message):
+        observe(keycloak)
+
+
+def test_a_reply_that_is_not_json_fails_naming_its_path(keycloak: FakeKeycloak) -> None:
+    """Rule 4: one line with the path, never the body."""
+    keycloak.faults.not_json = {"/admin/realms/master/components"}
+
+    with pytest.raises(
+        observer.ObserveError, match=r"^no JSON at /admin/realms/master/components$"
+    ):
         observe(keycloak)
 
 

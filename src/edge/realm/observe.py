@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 REALMS = ("master", "hallucinai")
 CLIENT_ID = "config-cli"
@@ -321,6 +321,9 @@ COVERAGE: dict[str, Coverage] = {
     "userFederationProviders": Gap("user federation"),
     "messageBundles": Gap("message bundles"),
     "userProfile": Gap("the user profile"),
+    "clients.secret": Gap(
+        "client secrets never leave, so a rotated config-cli secret is invisible"
+    ),
 }
 # keycloak-config-cli 6.5.1's import types (its `import.managed.*` switches and the realm and
 # user imports), each onto the realm representation key above it reads or leaves out.
@@ -347,8 +350,6 @@ IMPORT_TYPES = {
     "message-bundles": "messageBundles",
     "user-profile": "userProfile",
 }
-# Also named: a rotated config-cli secret is invisible, because client secrets never leave.
-SECRET_GAP = Gap("client secrets, so a rotated config-cli secret does not show")
 
 
 # --- Projection -------------------------------------------------------------------------------
@@ -431,7 +432,8 @@ class RefuseRedirects(HTTPRedirectHandler):
         return None
 
 
-OPENER = build_opener(RefuseRedirects)
+# No proxy either: Docker can inject HTTP(S)_PROXY into the container's environment.
+OPENER = build_opener(ProxyHandler({}), RefuseRedirects)
 
 
 @dataclass
@@ -457,7 +459,7 @@ class Session:
             raise ObserveError(f"sign-in refused (status {status} at {TOKEN_PATH})")
         if status != 200:
             raise ObserveError(f"sign-in answered status {status} at {TOKEN_PATH}")
-        self.token = json.loads(body)["access_token"]
+        self.token = parsed(body, TOKEN_PATH)["access_token"]
 
     def get(self, path: str, **query: Any) -> Any:
         """GET under /admin/realms; a 401 (master tokens live 60 s) signs in again once."""
@@ -468,7 +470,7 @@ class Session:
             status, body = self.send_get(target)
         if status != 200:
             raise ObserveError(f"status {status} at {ADMIN_PATH}{path}")
-        return json.loads(body)
+        return parsed(body, ADMIN_PATH + path)
 
     def send_get(self, target: str) -> tuple[int, bytes]:
         headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
@@ -502,6 +504,13 @@ class Session:
             items += page
             if len(page) < PAGE:
                 return items
+
+
+def parsed(body: bytes, path: str) -> Any:
+    try:
+        return json.loads(body)
+    except ValueError as error:
+        raise ObserveError(f"no JSON at {path}") from error
 
 
 def counted(path: str, items: list[Any], expected: int) -> list[Any]:
@@ -709,8 +718,12 @@ def step_identities(flow: str, steps: list[Any]) -> Iterator[tuple[str, Represen
 
 
 def observe(session: Session, digest: Digester, realms: tuple[str, ...] = REALMS) -> Inventory:
-    session.sign_in()
-    return {realm: RealmReader(session, realm, digest).read() for realm in realms}
+    try:
+        session.sign_in()
+        return {realm: RealmReader(session, realm, digest).read() for realm in realms}
+    except KeyError as error:
+        # An identity or a UUID read before its representation is projected and checked.
+        raise ObserveError(f"a reply lacks the key {error}") from error
 
 
 # --- The command ------------------------------------------------------------------------------
