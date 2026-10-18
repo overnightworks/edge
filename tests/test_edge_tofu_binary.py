@@ -142,10 +142,13 @@ def test_a_folder_a_parallel_run_installed_meanwhile_is_used_and_ours_removed(ro
     assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
 
 
-def test_leftover_temp_names_of_a_killed_run_are_cleaned(root):
-    """#101 T8: leftover temp names of a killed run are cleaned before a download."""
+@pytest.mark.parametrize("installed_before", [False, True], ids=["empty-root", "beside-install"])
+def test_leftover_temp_names_of_a_killed_run_are_cleaned(root, installed_before):
+    """#101 T8: leftover temp names of a killed run are cleaned, also beside a reused install."""
     archive = pinned_zip()
-    root.mkdir()
+    if installed_before:
+        tofu_binary.install(root, release_of(archive), Download(archive))
+    root.mkdir(exist_ok=True)
     (root / f"{tofu_binary.PARTIAL_PREFIX}download").write_bytes(b"half a zip")
     (root / f"{tofu_binary.PARTIAL_PREFIX}folder").mkdir()
     (root / f"{tofu_binary.PARTIAL_PREFIX}folder" / "tofu").write_bytes(b"half a binary")

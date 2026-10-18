@@ -97,9 +97,9 @@ def install(
     root.mkdir(parents=True, exist_ok=True)
     installed = root / release.version / _MEMBER
     with _exclusive(root):
+        _remove_partials(root)
         if installed.exists():
             return _verified_install(installed)
-        _remove_partials(root)
         with _verified_download(root, release, fetch, max_bytes) as archive:
             _install_member(root, archive, release)
     return _verified_install(installed)
