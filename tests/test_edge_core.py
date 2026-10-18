@@ -174,7 +174,7 @@ def test_a_record_that_cannot_be_read_counts_as_changed(config, checkout, record
 
     [plan] = core.plan_core(config, {"traefik": {"running"}}, checkout, record)
 
-    assert plan.why == "applied.json cannot be read (Is a directory)"
+    assert plan.why == f"{record.path} cannot be read (Is a directory)"
 
 
 def test_an_entry_naming_another_file_beside_the_current_one_counts_as_changed(

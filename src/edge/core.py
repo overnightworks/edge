@@ -95,7 +95,7 @@ class Record:
         except FileNotFoundError:
             return Reading({})
         except OSError as error:
-            return Reading({}, f"{APPLIED_FILE} cannot be read ({error.strerror})")
+            return Reading({}, f"{self.path} cannot be read ({error.strerror})")
         try:
             entries = json.loads(text)
         except ValueError:
