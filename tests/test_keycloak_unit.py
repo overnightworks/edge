@@ -20,7 +20,7 @@ def compose_document() -> dict:
 
 
 def resolved_like_compose(document: dict) -> dict:
-    """compose.yaml with short volumes and depends_on spelled out, like `docker compose config`."""
+    """compose.yaml with the short volume syntax spelled out, as `docker compose config` does."""
     services = {}
     for name, service in document["services"].items():
         mounts = [
@@ -29,11 +29,6 @@ def resolved_like_compose(document: dict) -> dict:
             if isinstance(mount, str) and mount.split(":")[0] in document.get("volumes", {})
         ]
         services[name] = {**service, "volumes": mounts}
-        if isinstance(service.get("depends_on"), list):
-            services[name]["depends_on"] = {
-                dependency: {"condition": "service_started", "required": True}
-                for dependency in service["depends_on"]
-            }
     return {"services": services}
 
 

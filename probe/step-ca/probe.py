@@ -98,6 +98,7 @@ RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
 STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|false)")
+KEYCLOAK_SWITCH = re.compile(r"( {2}keycloak:\n {4}run:\n {6}enabled: )(?:true|false)")
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 FOLLOWER = "traefik-mcp"
 FOLLOWER_FILE = "traefik-mcp.yml"
@@ -612,11 +613,17 @@ class Probe:
         return edge_copy.repository_copy(REPO, self.home, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
-        """Set step-ca's switch only: keycloak stays off, so apply never asks for its setup."""
+        """Set step-ca's switch; the copy switches keycloak off, so apply never asks its setup."""
         fleet = copy / "fleet.yaml"
-        fleet.write_text(
-            STEP_CA_SWITCH.sub(rf"\g<1>{str(enabled).lower()}", fleet.read_text(), count=1)
+        text, step_ca_matches = STEP_CA_SWITCH.subn(
+            rf"\g<1>{str(enabled).lower()}", fleet.read_text()
         )
+        text, keycloak_matches = KEYCLOAK_SWITCH.subn(r"\g<1>false", text)
+        expect(
+            (step_ca_matches, keycloak_matches) == (1, 1),
+            "fleet.yaml lacks exactly one step-ca and one keycloak switch",
+        )
+        fleet.write_text(text)
         edge_copy.publish(copy, f"probe: step-ca enabled {enabled}")
 
     def edge(
