@@ -1,0 +1,8 @@
+claim_id = "37a5472bfc76401e95942eb156eb1cae"
+agent = "claude"
+role = "builder"
+base = "6cfa67d8df9ba045ff3a3c61dc888ef9d1b4dd67"
+branch = "claude/issue-91-image-named"
+scope = ["README.md", "docs/architecture.md", "probe/step-ca/probe.py", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/compose.py", "tests/test_edge_apply.py"]
+opened_commit = "5bd6a84c4e89d635fec7617e98b12e9b6249bb0a"
+whole_reason = "The read (Container.image), the compare and its one plan line are one vertical; without the probe's real format the compare could name every unit forever."
