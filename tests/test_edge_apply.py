@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -19,7 +20,16 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_edge_checkout import committed_main
+from test_edge_checkout import (
+    advance,
+    checkout_state,
+    committed_main,
+    head_of,
+    local_commit,
+    plain_git,
+    subjects,
+    with_origin,
+)
 from test_edge_core import bind, bind_core_files, sha256
 
 from edge import (
@@ -356,6 +366,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     own global config there."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
+    monkeypatch.setenv("LC_ALL", "C")  # git's own lines in English, whatever the machine speaks
     return tmp_path / "home"
 
 
@@ -434,12 +445,17 @@ class Ingress:
         return compose.Watch(lambda: self.now, self.sleep)
 
 
+SCRIPTED_SHA = b"5" * 40
+
+
 @dataclass
 class ScriptedGit:
-    """Git as the guards ask it: a clean `main` unless told otherwise; `calls` records each."""
+    """Git as the guards and the fetch ask it: a clean `main` equal to origin's unless told
+    otherwise; the fetch raises `fetch_error` when one is set; `calls` records each."""
 
     reference: bytes = b"refs/heads/main\n"
     status: bytes = b""
+    fetch_error: Exception | None = None
     calls: list[list[str]] = field(default_factory=list)
 
     def __call__(
@@ -447,7 +463,16 @@ class ScriptedGit:
     ) -> subprocess.CompletedProcess[bytes]:
         self.calls.append(list(arguments))
         verb = next(argument for argument in arguments if not argument.startswith("-"))
-        stdout = {"symbolic-ref": self.reference, "rev-parse": b"", "status": self.status}[verb]
+        if verb == "fetch" and self.fetch_error:
+            raise self.fetch_error
+        stdout = {
+            "symbolic-ref": self.reference,
+            "rev-parse": SCRIPTED_SHA,
+            "status": self.status,
+            "remote": b"file:///srv/origin.git\n",
+            "fetch": b"",
+            "rev-list": b"0\t0\n",
+        }[verb]
         return subprocess.CompletedProcess(arguments, 0, stdout, b"")
 
 
@@ -1274,13 +1299,8 @@ def test_a_lock_that_flock_refuses_is_exit_2_and_leaves_no_descriptor_open(
 ):
     """#95 rule 4: a flock error other than contention (ENOLCK) is exit 2 with one line, and the
     descriptor opened for `apply.lock` is closed again."""
-    refused: list[int] = []
+    refused = refuse_flock(monkeypatch, OSError(errno.ENOLCK, os.strerror(errno.ENOLCK)))
 
-    def flock_without_locks(descriptor: int, _operation: int) -> None:
-        refused.append(descriptor)
-        raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))
-
-    monkeypatch.setattr(apply.fcntl, "flock", flock_without_locks)
     exit_code, _, err = switch()
 
     assert exit_code == 2
@@ -1288,8 +1308,38 @@ def test_a_lock_that_flock_refuses_is_exit_2_and_leaves_no_descriptor_open(
         f"edge apply --closed: cannot take {apply_lock(state)} ({os.strerror(errno.ENOLCK)})"
     ]
     assert scripted_git.calls == []
+    assert_closed(refused[0])
+
+
+def test_a_ctrl_c_inside_flock_closes_the_descriptor_and_propagates(
+    switch, scripted_git, monkeypatch
+):
+    """#95 rule 4 (#34 finding 67): `_take_apply_lock`'s path for an error that is no
+    BlockingIOError closes the descriptor and re-raises; nothing else runs."""
+    refused = refuse_flock(monkeypatch, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        switch()
+
+    assert scripted_git.calls == []
+    assert_closed(refused[0])
+
+
+def refuse_flock(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> list[int]:
+    """flock raises `error`; the descriptors it was asked for are returned."""
+    refused: list[int] = []
+
+    def flock(descriptor: int, _operation: int) -> None:
+        refused.append(descriptor)
+        raise error
+
+    monkeypatch.setattr(apply.fcntl, "flock", flock)
+    return refused
+
+
+def assert_closed(descriptor: int) -> None:
     with pytest.raises(OSError) as closed:
-        os.fstat(refused[0])
+        os.fstat(descriptor)
     assert closed.value.errno == errno.EBADF
 
 
@@ -1339,10 +1389,167 @@ def test_off_main_or_with_changes_it_refuses_naming_why(
 
 
 @pytest.fixture
-def real_main(repository: Path) -> Path:
-    """The live checkout as a real git repository: its files committed on a fresh `main`."""
+def real_main(repository: Path, tmp_path: Path) -> Path:
+    """The live checkout as a real git repository: its files committed on a fresh `main`, pushed
+    to its bare remote `origin` (`tmp_path/origin.git`)."""
     (repository / ".git").rmdir()
-    return committed_main(repository)
+    with_origin(committed_main(repository), tmp_path / "origin.git")
+    return repository
+
+
+@pytest.fixture
+def origin(real_main: Path, tmp_path: Path) -> Path:
+    return tmp_path / "origin.git"
+
+
+def short(tree: Path, revision: str = "HEAD") -> str:
+    return plain_git(tree, "rev-parse", "--short", revision).stdout.strip()
+
+
+def test_an_equal_main_says_current_and_plans_as_before(switch, scripted, real_main, origin):
+    """#98 rules 1 and 3, B1 (S5): the fetch URL, `live checkout current (<sha>)`, then the tree
+    phase as today."""
+    exit_code, out, _ = switch(git=checkout.run_git)
+
+    assert exit_code == 0
+    assert (
+        out.index(f"edge apply --closed: fetched main from {origin.as_uri()}\n")
+        < out.index(f"edge apply --closed: live checkout current ({short(real_main)})\n")
+        < out.index("edge apply --closed: the plan")
+    )
+    assert "step-ca is on" in out
+
+
+@pytest.fixture
+def bound(scripted, real_main) -> None:
+    """compose.yaml's binds as resolved: the core's `traefik.yml` and `dynamic/`, and keycloak's
+    `keycloak/` as a unit's."""
+    bind_core_files(scripted.config, real_main)
+    scripted.config["services"]["keycloak"]["volumes"] = [bind(real_main / "keycloak", "/config")]
+
+
+def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
+    switch, scripted, real_main, origin, bound
+):
+    """#98 rules 4 and 5, B2, B11 and B13 (C2, S10): three waiting commits, newest first, each its
+    short sha and escaped subject; their files grouped by effect from the resolved config; the
+    interim merge line; then the tree phase plans HEAD, whose fleet.yaml still enables step-ca.
+    HEAD, the index and the working tree stay byte-identical."""
+    files = {
+        b"traefik.yml": b"entryPoints: {}\n",
+        b"dynamic/x.yml": b"http: {}\n",
+        b"uv.lock": b"version = 1\n",
+        b"keycloak/realm.yaml": b"realm: x\n",
+        b"compose.yaml": b"services: {}\n",
+        b"fleet.yaml": DISABLED.encode(),
+    }
+    tip = advance(origin, (b"first", {}), (b"files", files), (b"third \x1b[2J", {}))
+    before = checkout_state(real_main)
+
+    exit_code, out, _ = switch("no", git=checkout.run_git)
+
+    lines = [line.removeprefix(f"{apply.COMMAND}: ") for line in out.splitlines()]
+    waiting = lines[lines.index("3 commits wait on origin main:") :]
+    assert waiting[: waiting.index("the plan")] == [
+        "3 commits wait on origin main:",
+        f"  {short(real_main, tip)} third \\x1b[2J",
+        f"  {short(real_main, tip + '~1')} files",
+        f"  {short(real_main, tip + '~2')} first",
+        "their files, by what an update does with them:",
+        "  live once updated:",
+        "    A dynamic/x.yml",
+        "  recreated by edge apply:",
+        "    A compose.yaml",
+        "    M traefik.yml",
+        "  stops for `uv sync`:",
+        "    A uv.lock",
+        "  not applied by edge apply (block 6):",
+        "    A keycloak/realm.yaml",
+        "  other:",
+        "    M fleet.yaml",
+        f"the live checkout is 3 commits behind; to bring them: git -C ~/git/edge merge "
+        f"--ff-only {tip}",
+        f"the plan below applies HEAD {short(real_main)}, without the waiting commits",
+    ]
+    assert "  step-ca: on (services step-ca, traefik-mcp-acme-owner, traefik-mcp)" in lines
+    assert exit_code == 1
+    assert checkout_state(real_main) == before
+
+
+@pytest.mark.parametrize("waiting", [0, 2], ids=["B3 ahead", "B4 diverged"])
+def test_a_checkout_ahead_of_or_beside_origin_is_refused_and_nothing_reset(
+    switch, scripted, real_main, origin, waiting
+):
+    """#98 rule 3, B3 and B4 (S3): exit 2 naming both shas; no compose call; nothing reset."""
+    local_commit(real_main)
+    tip = advance(origin, *subjects(*(f"waiting {n}" for n in range(waiting))))
+    head = head_of(real_main)
+    before = checkout_state(real_main)
+
+    exit_code, _, err = switch(git=checkout.run_git)
+
+    standing = "is ahead of" if waiting == 0 else "has diverged from"
+    assert exit_code == 2
+    assert err.splitlines() == [
+        f"edge apply --closed: the live checkout {standing} origin main (HEAD "
+        f"{short(real_main)}, origin main {short(real_main, tip)}); nothing reset, a change "
+        "reaches it through a pull request"
+    ]
+    assert scripted.calls == []
+    assert (head_of(real_main), checkout_state(real_main)) == (head, before)
+
+
+def remove_the_repository(_real_main: Path, origin: Path) -> None:
+    shutil.rmtree(origin)
+
+
+def point_at_a_password_url(real_main: Path, _origin: Path) -> None:
+    plain_git(real_main, "remote", "set-url", "origin", "https://u:s3cr3t-pw@127.0.0.1:1/x")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "line"),
+    [
+        pytest.param(remove_the_repository,
+                     "`git fetch` exited 128: fatal: Could not read from remote repository.",
+                     id="B5 the remote removed"),
+        pytest.param(point_at_a_password_url,
+                     "`git remote` exited 128: fatal: URL 'https://<redacted>@127.0.0.1:1/x' "
+                     "uses plaintext credentials", id="B6 a password in the URL"),
+    ],
+)  # fmt: skip
+def test_a_failed_fetch_is_exit_2_with_gits_line_and_changes_nothing(
+    switch, scripted, real_main, origin, state, arrange, line
+):
+    """#98 rule 2, B5 and B6 (S4, R3): exit 2 naming git's last error line, never the password;
+    no compose call; the checkout untouched; the lock free."""
+    arrange(real_main, origin)
+    before = checkout_state(real_main)
+
+    exit_code, _, err = switch(git=checkout.run_git)
+
+    assert exit_code == 2
+    assert err.splitlines() == [
+        f"edge apply --closed: cannot fetch main from origin, {line}; nothing changed"
+    ]
+    assert scripted.calls == []
+    assert checkout_state(real_main) == before
+    assert apply_lock_is_free(state)
+
+
+def test_a_fetch_that_times_out_is_exit_2_and_frees_the_lock(switch, scripted, scripted_git, state):
+    """#98 rule 2, B16 (S4): the transfer timeout is exit 2 with one line; the lock is free."""
+    scripted_git.fetch_error = subprocess.TimeoutExpired("git", 120)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert err.splitlines() == [
+        "edge apply --closed: cannot fetch main from origin, `git fetch` took longer than 120s; "
+        "nothing changed"
+    ]
+    assert scripted.calls == []
+    assert apply_lock_is_free(state)
 
 
 def test_a_clean_main_in_real_git_switches_on_as_before(switch, scripted, real_main):
@@ -3516,7 +3723,7 @@ def test_a_traefik_mcp_that_crash_loops_after_its_recreate_is_partial_with_its_e
     assert FOLLOWER_RECREATED not in out
 
 
-def test_a_traefik_mcp_stopped_while_the_prompt_waits_is_still_recreated(
+def test_l5_a_traefik_mcp_stopped_while_the_prompt_waits_is_still_recreated(
     step_ca_applied, switch, scripted, repository, state
 ):
     """#93 rule 3, #89 rules 2, 3, cell L5: a follower's decision does not depend on liveness,

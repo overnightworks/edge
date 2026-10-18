@@ -6,8 +6,10 @@ global git config is one a test wrote; GIT_CONFIG_GLOBAL is never set, because t
 every `GIT_*` variable and a test setting one would prove nothing."""
 
 import os
+import shutil
 import subprocess
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("LC_ALL", "C")  # git's own lines in English, whatever the machine speaks
     return home
 
 
@@ -426,7 +429,7 @@ def raising(error: Exception) -> checkout.Runner:
                      "`git status` answered 'garbage'", id="status garbage"),
         pytest.param(answering(b"\x1bHEAD\n"), checkout.not_on_main,
                      "`git symbolic-ref` answered '\\x1bHEAD'", id="symbolic-ref escaped once"),
-        pytest.param(answering(b"\x1bab\n"), checkout.Git.short_head,
+        pytest.param(answering(b"\x1bab\n"), checkout.Git.short,
                      "`git rev-parse` answered '\\x1bab'", id="rev-parse escaped once"),
         pytest.param(answering(b"\x1bgarbage\0"), checkout.Git.changed_paths,
                      "`git status` answered '\\x1bgarbage'", id="status escaped once"),
@@ -455,3 +458,369 @@ def test_a_missing_git_is_one_line(main_tree, tmp_path, monkeypatch):
 
     with pytest.raises(checkout.GitError, match=r"^cannot run git \(No such file or directory\)$"):
         checkout.not_on_main(git)
+
+
+# S2.4b (#98): the fetch of origin's main, pinned by its sha, and what waits on it.
+
+
+def with_origin(tree: Path, bare: Path) -> Path:
+    """`tree`'s `main` pushed to a fresh bare repository at `bare`, its `file://` remote."""
+    plain_git(tree, "init", "--quiet", "--bare", "--initial-branch", checkout.MAIN, str(bare))
+    plain_git(tree, "remote", "add", "origin", bare.as_uri())
+    plain_git(tree, "push", "--quiet", "origin", checkout.MAIN)
+    return bare
+
+
+def advance(bare: Path, *commits: tuple[bytes, Mapping[bytes, bytes]]) -> str:
+    """`commits` (each a raw message and the files it writes) appended to `bare`'s `main` by
+    `git fast-import`, as a merged pull request would bring them; the new tip's sha. Raw bytes,
+    so a message or a path may hold what no editor would type."""
+    tip = plain_git(bare, "rev-parse", checkout.MAIN).stdout.strip()
+    stream = bytearray()
+    for number, (message, files) in enumerate(commits):
+        stream += b"commit refs/heads/main\ncommitter edge test <test@edge.invalid> 0 +0000\n"
+        stream += b"data %d\n%s\n" % (len(message), message)
+        if number == 0:
+            stream += b"from %s\n" % tip.encode()
+        for path, content in files.items():
+            stream += b"M 100644 inline %s\ndata %d\n%s\n" % (quoted(path), len(content), content)
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    subprocess.run(
+        ["git", "-C", str(bare), "fast-import", "--quiet"],
+        input=bytes(stream), capture_output=True, check=True, env=environment,
+    )  # fmt: skip
+    return plain_git(bare, "rev-parse", checkout.MAIN).stdout.strip()
+
+
+def quoted(path: bytes) -> bytes:
+    """`path` C-quoted as fast-import reads it, so a newline in it stays part of the path."""
+    escaped = path.replace(b"\\", b"\\\\").replace(b'"', b'\\"').replace(b"\n", b"\\n")
+    return b'"%s"' % escaped
+
+
+def subjects(*names: str) -> list[tuple[bytes, Mapping[bytes, bytes]]]:
+    return [(name.encode(), {}) for name in names]
+
+
+def head_of(tree: Path) -> str:
+    return plain_git(tree, "rev-parse", "HEAD").stdout.strip()
+
+
+def local_commit(tree: Path, message: str = "local only") -> str:
+    plain_git(tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty",
+              "--message", message)  # fmt: skip
+    return head_of(tree)
+
+
+def checkout_state(tree: Path) -> dict[str, bytes]:
+    """Every file of the checkout, `.git` included but its objects and the three entries a fetch
+    may write (rule 5), by path: what must stay byte-identical."""
+    fetched = {"FETCH_HEAD", "refs/remotes/origin/main", "logs/refs/remotes/origin/main"}
+    state = {}
+    for path in sorted(tree.rglob("*")):
+        relative = path.relative_to(tree).as_posix()
+        inside_git = relative.removeprefix(".git/")
+        if path.is_file() and not inside_git.startswith("objects/") and inside_git not in fetched:
+            state[relative] = path.read_bytes()
+    state[".git/index mtime"] = str((tree / ".git" / "index").stat().st_mtime_ns).encode()
+    return state
+
+
+@pytest.fixture
+def origin(main_tree: Path, tmp_path: Path) -> Path:
+    return with_origin(main_tree, tmp_path / "origin.git")
+
+
+def test_an_equal_main_is_current_and_pinned_to_heads_sha(git, main_tree, origin):
+    """#98 rule 3, B1 (S5): HEAD equal to the fetched sha stands current; the URL is origin's."""
+    fetched = checkout.fetch_origin(git)
+
+    assert fetched.standing is checkout.Standing.CURRENT
+    assert fetched.sha == head_of(main_tree)
+    assert fetched.short == plain_git(main_tree, "rev-parse", "--short", "HEAD").stdout.strip()
+    assert fetched.url == origin.as_uri()
+
+
+@pytest.mark.parametrize(
+    ("local", "waiting", "standing", "ahead", "behind"),
+    [
+        pytest.param(0, 3, checkout.Standing.BEHIND, 0, 3, id="B2 behind by 3"),
+        pytest.param(1, 0, checkout.Standing.AHEAD, 1, 0, id="B3 ahead (S3)"),
+        pytest.param(1, 2, checkout.Standing.DIVERGED, 1, 2, id="B4 diverged (S3)"),
+    ],
+)  # fmt: skip
+def test_the_fetched_main_stands_to_head_and_nothing_in_the_checkout_changes(
+    git, main_tree, origin, local, waiting, standing, ahead, behind
+):
+    """#98 rules 3 and 5, B2-B4: behind, ahead or diverged by its counts; HEAD, the index and the
+    working tree stay byte-identical, and `.git` gains only objects, FETCH_HEAD and origin/main."""
+    for number in range(local):
+        local_commit(main_tree, f"local {number}")
+    tip = advance(origin, *subjects(*(f"waiting {n}" for n in range(waiting))))
+    before = checkout_state(main_tree)
+
+    fetched = checkout.fetch_origin(git)
+
+    assert (fetched.standing, fetched.ahead, fetched.behind) == (standing, ahead, behind)
+    assert fetched.sha == tip
+    assert fetched.head == plain_git(main_tree, "rev-parse", "--short", "HEAD").stdout.strip()
+    assert checkout_state(main_tree) == before
+    assert plain_git(main_tree, "rev-parse", "origin/main").stdout.strip() == tip
+
+
+@pytest.mark.parametrize("removed", ["the repository", "the remote"])
+def test_a_removed_remote_is_one_git_line_and_changes_nothing(git, main_tree, origin, removed):
+    """#98 rule 2, B5 (S4): the bare repository gone or `origin` removed is a GitError naming
+    git's last error line; the checkout is untouched."""
+    if removed == "the repository":
+        shutil.rmtree(origin)
+    else:
+        plain_git(main_tree, "remote", "remove", "origin")
+    before = checkout_state(main_tree)
+
+    with pytest.raises(checkout.GitError) as raised:
+        checkout.fetch_origin(git)
+
+    expected = {
+        "the repository": "`git fetch` exited 128: fatal: Could not read from remote repository.",
+        "the remote": "`git remote` exited 2: error: No such remote 'origin'",
+    }
+    assert str(raised.value) == expected[removed]
+    assert checkout_state(main_tree) == before
+
+
+def test_a_url_with_a_password_is_refused_before_connecting_and_never_printed(git, main_tree):
+    """#98 rules 1 and 2, B6 (R3): `transfer.credentialsInUrl=die` refuses the URL before any
+    connection; the password appears nowhere."""
+    plain_git(main_tree, "remote", "add", "origin", "https://u:s3cr3t-pw@127.0.0.1:1/x")
+    before = checkout_state(main_tree)
+
+    with pytest.raises(checkout.GitError) as raised:
+        checkout.fetch_origin(git)
+
+    assert "plaintext credentials" in str(raised.value)
+    assert "s3cr3t-pw" not in str(raised.value)
+    assert checkout_state(main_tree) == before
+
+
+@pytest.mark.parametrize(
+    ("url", "shown"),
+    [
+        pytest.param("https://token-as-user@example.invalid/x.git",
+                     "https://<redacted>@example.invalid/x.git", id="a user name"),
+        pytest.param("https://u:pw@example.invalid/x", "https://<redacted>@example.invalid/x",
+                     id="a user and password"),
+        pytest.param("https://u:can'a!$&()*+,;=ry@example.invalid/x",
+                     "https://<redacted>@example.invalid/x", id="punctuation userinfo allows"),
+        pytest.param("git@github.com:overnightworks/edge.git",
+                     "git@github.com:overnightworks/edge.git", id="scp-like ssh"),
+        pytest.param("file:///srv/edge.git", "file:///srv/edge.git", id="a path"),
+    ],
+)  # fmt: skip
+def test_the_shown_url_and_gits_lines_never_carry_a_user_or_password(url, shown):
+    """#98 rules 1 and 2 (R3): what stands before `@` in a `scheme://` URL is redacted."""
+    assert checkout.without_credentials(url) == shown
+    assert checkout.without_credentials(f"fatal: unable to access '{url}/': no") == (
+        f"fatal: unable to access '{shown}/': no"
+    )
+
+
+LOOPBACK_SERVER = r"""
+import http.server, socket, sys, time
+
+class Unauthorized(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="edge test"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_):
+        pass
+
+class Silent(http.server.BaseHTTPRequestHandler):
+    def handle(self):
+        time.sleep(3600)
+
+handler = Unauthorized if sys.argv[1] == "401" else Silent
+for port in range(8791, 8891):
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+        break
+    except OSError:
+        continue
+print(port, flush=True)
+server.serve_forever()
+"""
+
+
+@pytest.fixture
+def loopback() -> Iterator[Callable[[str], str]]:
+    """A loopback HTTP server on the first free port above 8790: `401` answers every request
+    unauthorized, `silent` accepts and never answers. Its base URL is returned; it is killed and
+    reaped at the end."""
+    servers: list[subprocess.Popen[str]] = []
+
+    def start(mode: str) -> str:
+        server = subprocess.Popen(
+            [sys.executable, "-I", "-c", LOOPBACK_SERVER, mode],
+            stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
+        )  # fmt: skip
+        servers.append(server)
+        assert server.stdout is not None
+        return f"http://127.0.0.1:{server.stdout.readline().strip()}"
+
+    yield start
+    for server in servers:
+        server.kill()
+        server.communicate()
+
+
+def test_a_refused_sign_in_is_one_line_without_a_prompt_or_a_credential(
+    git, main_tree, loopback, home, sentinel, tmp_path
+):
+    """#98 rules 1 and 2, B7 and B10 (R3): a server answering 401 is a GitError well within the
+    timeout; a global `core.askPass` sentinel runs for plain git (the positive control) and never
+    for the runner; the URL's user name is printed nowhere."""
+    url = loopback("401").replace("http://", "http://token-as-user@") + "/edge.git"
+    plain_git(main_tree, "remote", "add", "origin", url)
+    plain_git(main_tree, "config", "--global", "core.askPass",
+              str(sentinel_script(tmp_path / "askpass", sentinel)))  # fmt: skip
+    control = subprocess.run(
+        ["git", "-C", str(main_tree), "fetch", "origin", checkout.MAIN],
+        capture_output=True, stdin=subprocess.DEVNULL, check=False,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )  # fmt: skip
+    assert control.returncode != 0
+    assert sentinel.exists(), "positive control: plain git asks core.askPass"
+    sentinel.unlink()
+    before = checkout_state(main_tree)
+
+    with pytest.raises(checkout.GitError) as raised:
+        checkout.fetch_origin(git)
+
+    assert str(raised.value).startswith("`git fetch` exited 128: ")
+    assert "token-as-user" not in str(raised.value)
+    assert not sentinel.exists()
+    assert checkout_state(main_tree) == before
+
+
+def test_a_fetch_that_hangs_is_cut_at_the_timeout(git, main_tree, loopback, monkeypatch):
+    """#98 rule 2, B16 (S4): a server that never answers is a GitError at the transfer timeout,
+    and the cut ends the whole transfer: no git transport helper is left talking to the remote."""
+    url = loopback("silent") + "/edge.git"
+    plain_git(main_tree, "remote", "add", "origin", url)
+    monkeypatch.setitem(checkout.TIMEOUT_SECONDS, checkout.Profile.TRANSFER, 2)
+
+    with pytest.raises(checkout.GitError, match=r"^`git fetch` took longer than 2s$"):
+        checkout.fetch_origin(git)
+
+    assert processes_naming(url) == []
+
+
+def processes_naming(text: str) -> list[int]:
+    """The pids of every live process whose command line names `text`."""
+    naming = []
+    for command_line in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            if text.encode() in command_line.read_bytes():
+                naming.append(int(command_line.parent.name))
+        except OSError:
+            continue  # the process ended while it was read
+    return naming
+
+
+def test_fetch_head_is_written_though_the_repository_says_not_to(git, main_tree, origin):
+    """#98 rule 1, B8: with `fetch.writeFetchHead=false` and a FETCH_HEAD left by an earlier fetch,
+    the runner pins the fresh tip, not the stale one. (git 2.43 writes FETCH_HEAD for a fetch
+    anyway, so no positive control shows the setting biting; `--write-fetch-head` is what keeps
+    the cell true where it does.)"""
+    stale = advance(origin, *subjects("first"))
+    plain_git(main_tree, "fetch", "--quiet", "origin", checkout.MAIN)
+    plain_git(main_tree, "config", "fetch.writeFetchHead", "false")
+    fresh = advance(origin, *subjects("second"))
+
+    pinned = checkout.fetch_origin(git).sha
+
+    assert (pinned, pinned != stale) == (fresh, True)
+
+
+def test_no_reference_transaction_hook_runs_at_the_fetch(git, main_tree, origin, home, sentinel):
+    """#98 rule 1, B9: a `reference-transaction` sentinel in a global `core.hooksPath` runs for
+    plain git's fetch (the positive control), never for the runner's."""
+    sentinel_script(home / "hooks" / "reference-transaction", sentinel)
+    plain_git(main_tree, "config", "--global", "core.hooksPath", str(home / "hooks"))
+    advance(origin, *subjects("first"))
+    plain_git(main_tree, "fetch", "--quiet", "origin", checkout.MAIN)
+    assert sentinel.exists(), "positive control: plain git's fetch runs the hook"
+    advance(origin, *subjects("second"))
+    sentinel.unlink()
+
+    checkout.fetch_origin(git)
+
+    assert not sentinel.exists()
+
+
+def test_every_waiting_commit_is_one_line_with_its_short_sha_and_subject(git, main_tree, origin):
+    """#98 rule 4, B12: 1000 waiting commits are all shown, newest first, each its short sha."""
+    tip = advance(origin, *subjects(*(f"commit {n:04}" for n in range(1000))))
+    fetched = checkout.fetch_origin(git)
+
+    commits = git.waiting_commits(fetched.sha)
+
+    assert [commit.subject for commit in commits] == [
+        f"commit {n:04}" for n in reversed(range(1000))
+    ]
+    assert commits[0].short == plain_git(main_tree, "rev-parse", "--short", tip).stdout.strip()
+
+
+def test_a_subject_with_control_characters_is_escaped_onto_one_line(git, main_tree, origin):
+    """#98 rule 4, B11: ESC, a carriage return and a wrapped first paragraph stay one line."""
+    advance(origin, (b"red \x1b[31malert\r over\nwrapped\n\nbody", {}))
+    fetched = checkout.fetch_origin(git)
+
+    [commit] = git.waiting_commits(fetched.sha)
+
+    assert commit.subject == "red \\x1b[31malert\\r over wrapped"
+
+
+def test_the_waiting_files_are_named_with_their_status_and_escaped(git, main_tree, origin):
+    """#98 rule 4, B15: added, modified and deleted paths, a non-UTF-8 byte and a newline among
+    them, each escaped onto one line; renames are not detected."""
+    plain_git(main_tree, "rm", "--quiet", "fleet.yaml")
+    plain_git(main_tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--message", "rm")
+    plain_git(main_tree, "push", "--quiet", "origin", checkout.MAIN)
+    plain_git(main_tree, "reset", "--quiet", "--hard", "HEAD~1")
+    files = {b"traefik.yml": b"changed\n", b"latin\xe9": b"x", b"new\nline": b"y"}
+    advance(origin, (b"files", files))
+    fetched = checkout.fetch_origin(git)
+
+    changed = git.waiting_files(fetched.sha)
+
+    assert sorted((file.status, file.shown) for file in changed) == [
+        ("A", "latin\\xe9"), ("A", "new\\nline"), ("D", "fleet.yaml"), ("M", "traefik.yml"),
+    ]  # fmt: skip
+
+
+def test_a_file_ignored_only_globally_makes_the_checkout_dirty(git, main_tree, home):
+    """#98 rule 6, B14 (#34 finding 64): a file ignored only in `$XDG_CONFIG_HOME/git/ignore` is
+    hidden from plain git (the positive control) and named by the clean guard."""
+    (home / ".config" / "git").mkdir(parents=True)
+    (home / ".config" / "git" / "ignore").write_text("hidden.txt\n")
+    (main_tree / "hidden.txt").touch()
+    assert plain_git(main_tree, "status", "--porcelain").stdout == "", "positive control"
+
+    assert git.changed_paths() == ["hidden.txt"]
+
+
+def test_global_attributes_do_not_reach_the_runner(main_tree, home):
+    """#98 rule 6 (#34 finding 64): an attribute set only in `$XDG_CONFIG_HOME/git/attributes`
+    applies for plain git (the positive control), never through the runner."""
+    (home / ".config" / "git").mkdir(parents=True)
+    (home / ".config" / "git" / "attributes").write_text("fleet.yaml diff=x\n")
+    ask = ["check-attr", "diff", "fleet.yaml"]
+    assert plain_git(main_tree, *ask).stdout == "fleet.yaml: diff: x\n", "positive control"
+
+    answer = checkout.run_git(main_tree, ask, checkout.Profile.LOCAL)
+
+    assert answer.stdout == b"fleet.yaml: diff: unspecified\n"

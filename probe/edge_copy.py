@@ -6,9 +6,10 @@ state under its throwaway HOME without ever touching the checkout it runs from. 
 live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `edge apply`
 runs there and never against the operator's HOME (#79 rule 3). It is a clean `main` with a bare
 remote `<scratch>/origin.git` and an empty, ignored `.env`, as `edge apply --closed` requires; a
-probe publishes every edit it makes there (commit and push) before it applies (#95 rule 10). A
-probe adds this directory and the repository's `src` to `sys.path` before importing it, which also
-works when the probe is loaded by path.
+probe publishes every edit it makes there (commit and push) before it applies (#95 rule 10). To
+put the copy behind origin, as a pull request merged elsewhere does, a probe advances origin from
+a work clone `<scratch>/work` (#98 P1). A probe adds this directory and the repository's `src` to
+`sys.path` before importing it, which also works when the probe is loaded by path.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from edge import checkout, compose
 APPLY_SECONDS = 600
 DISCARD_OUTPUT = "/dev/null"
 REMOTE = "origin.git"
+WORK_CLONE = "work"
 # The probe's own identity, in the copy's config: its git reads no global one (checkout's local
 # profile).
 PROBE_IDENTITY = {"user.name": "edge probe", "user.email": "probe@edge.invalid"}
@@ -76,6 +78,24 @@ def publish(copy: Path, message: str) -> None:
     git(copy, "add", "--all")
     git(copy, "commit", "--quiet", "--allow-empty", "--message", message)
     git(copy, "push", "--quiet", "origin", checkout.MAIN)
+
+
+def advance_origin(scratch: Path, message: str, appended: Mapping[str, str]) -> str:
+    """One commit pushed to the bare remote from the work clone `<scratch>/work`, appending each
+    text to its file there, so the copy is behind origin's `main` until it merges; the commit's
+    short sha."""
+    work = scratch / WORK_CLONE
+    if (work / ".git").is_dir():
+        git(work, "pull", "--quiet", "--ff-only", "origin", checkout.MAIN)
+    else:
+        git(scratch, "clone", "--quiet", str(scratch / REMOTE), str(work))
+        for key, value in PROBE_IDENTITY.items():
+            git(work, "config", key, value)
+    for name, text in appended.items():
+        with (work / name).open("a") as file:
+            file.write(text)
+    publish(work, message)
+    return checkout.Git(work).short()
 
 
 def git(tree: Path, *arguments: str) -> None:

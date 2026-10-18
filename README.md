@@ -269,7 +269,52 @@ eine Datei (sonst Exit 2: "run `cp .env.example .env`"), kein anderes `edge appl
 Exit 2 mit Zweig oder kurzem Hash) und der Baum ist sauber (sonst Exit 2, jeder geaenderte oder
 unverfolgte Pfad auf eigener Zeile; ignorierte wie `.env` zaehlen nicht). `fleet.yaml` aenderst
 du per Pull Request; in den Live-Checkout kommt er bis S2.4c mit `git -C ~/git/edge pull
---ff-only`. Git laeuft dabei ohne Hooks, ohne fsmonitor und ohne deine globale Konfiguration. Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
+--ff-only`. Git laeuft dabei ohne Hooks, ohne fsmonitor und ohne deine globale Konfiguration;
+"ignoriert" heisst nur, was die `.gitignore` des Repositorys sagt, nicht deine globale
+`~/.config/git/ignore`.
+
+Danach holt er `main` von `origin` (`git fetch --no-tags --no-recurse-submodules
+--write-fetch-head origin main`) und haelt sich ab da an genau diesen Hash. Nur dieser Abruf
+liest deine globale Konfiguration, damit er sich wie dein `git pull` ueber deinen
+`gh`-Credential-Helper anmeldet; edge liest, uebergibt und druckt nie ein Credential, fragt nie
+nach einem Passwort und verweigert eine URL mit Passwort darin. Er schreibt nur Objekte,
+`FETCH_HEAD` und `origin/main`; HEAD, Index und Baum bleiben, wie sie sind. Die erste Zeile nennt
+die URL ("fetched main from https://github.com/..."; was vor einem `@` steht, als `<redacted>`).
+Scheitert der Abruf (kein Netz, kein `origin`, Anmeldung verweigert, Zeitlimit von 120 s), endet
+er mit Exit 2 und der letzten Fehlerzeile von git ("cannot fetch main from origin, ...; nothing
+changed"). Hat der Checkout Commits, die `origin/main` fehlen, oder ist er daneben gewachsen,
+endet er mit Exit 2 und nennt beide Hashes ("nothing reset"). Gleich: "live checkout current
+(<Hash>)", dann der Plan wie oben. Dahinter zeigt er jeden wartenden Commit mit kurzem Hash und
+Betreff, dann dessen Dateien nach Wirkung, gelesen aus den Binds der aufgeloesten `compose.yaml`:
+
+```text
+edge apply --closed: 2 commits wait on origin main:
+edge apply --closed:   4e1f0c2 Route the new app
+edge apply --closed:   9b7d3aa Pin traefik
+edge apply --closed: their files, by what an update does with them:
+edge apply --closed:   live once updated:
+edge apply --closed:     A dynamic/app.yml
+edge apply --closed:   recreated by edge apply:
+edge apply --closed:     M compose.yaml
+edge apply --closed:   stops for `uv sync`:
+edge apply --closed:     M uv.lock
+edge apply --closed:   not applied by edge apply (block 6):
+edge apply --closed:     M keycloak/realm.yaml
+edge apply --closed:   other:
+edge apply --closed:     M README.md
+edge apply --closed: the live checkout is 2 commits behind; to bring them: git -C ~/git/edge merge --ff-only 4e1f0c2...
+edge apply --closed: the plan below applies HEAD 1a2b3c4, without the waiting commits
+```
+
+"live once updated" sind die Verzeichnisse, die Kern und Follower binden (`dynamic/`,
+`mcp/dynamic/`): Traefik liest sie, sobald sie im Checkout stehen. "recreated by edge apply" sind
+ihre Datei-Binds (`traefik.yml`, `traefik-mcp.yml`) und `compose.yaml`. "stops for `uv sync`"
+sind `pyproject.toml` und `uv.lock`. "not applied by edge apply (block 6)" sind die Binds der
+Einheiten (`keycloak/`, `step-ca/ca.json`). Der Plan danach wendet HEAD an, nie die wartenden
+Commits; sie bringst du bis S2.4c mit der gezeigten `merge --ff-only`-Zeile selbst herein und
+rufst `edge apply --closed` noch einmal auf.
+
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
 Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
 nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder
@@ -286,7 +331,7 @@ fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `do
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert (auch: ein anderes Apply
 laeuft), abgebrochen, fehlgeschlagen oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem
 Live-Checkout `~/git/edge` gestartet, `.env` fehlt, nicht auf `main`, Baum nicht sauber, git nicht
-befragbar, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
+befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
 kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
