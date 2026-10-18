@@ -377,6 +377,7 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothin
         "socket-proxy: its compose definition changed; it is not running and is not started"
     ]
     assert plans[0].action is core.CoreAction.NOT_STARTED
+    assert not plans[0].left_unstarted
 
 
 @pytest.mark.parametrize(
@@ -392,7 +393,8 @@ def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_
     """#87 rule 4: a container created and never started while the record says the recreate that
     took it in did not finish is what edge's recreate whose start failed leaves, with the new
     label; nobody stopped it, so the next run recreates it again, whether the definition was fixed
-    since or not. socket-proxy keeps no entry; traefik's, emptied with it, speaks for it."""
+    since or not. socket-proxy keeps no entry; traefik's, emptied with it, speaks for it. The
+    plan says which it found so, and apply's liveness read asks it (#93 rule 2)."""
     recorded.mark_unfinished(["traefik"], FOLLOWED)
     states = {"socket-proxy": "created", "traefik": "running"}
     labels = {"socket-proxy": label} if label else {}
@@ -403,6 +405,7 @@ def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_
         f"socket-proxy: recreate ({why})",
         "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)",
     ]
+    assert [planned.left_unstarted for planned in plans] == [True, False]
 
 
 def test_a_traefik_its_recreate_left_created_is_recreated_again_for_one_reason(
@@ -416,6 +419,7 @@ def test_a_traefik_its_recreate_left_created_is_recreated_again_for_one_reason(
     plans = plan_of(config, checkout, recorded, states)
 
     assert lines(plans) == ["traefik: recreate (the last recreate did not finish)"]
+    assert plans[0].left_unstarted
 
 
 def test_an_absent_core_container_has_no_definition_to_compare(config, checkout, recorded):
