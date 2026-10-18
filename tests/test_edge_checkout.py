@@ -203,6 +203,7 @@ def test_an_unborn_main_has_no_commit(home):
 
 
 def test_a_clean_main_has_no_changed_path(git):
+    """#95 rule 6: a freshly committed main has no changed path, so the clean guard proceeds."""
     assert git.changed_paths() == []
 
 
