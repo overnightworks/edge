@@ -864,8 +864,8 @@ switched-off Keycloak):
   grant. Re-run it without the overlay, `docker compose --profile keycloak run
   --rm keycloak-config-cli`, because the `config-cli` client exists by then.
 - **5. Leave the overlay and start the edge** as in
-  [Start, readiness, stop](#start-readiness-stop): the `up -d` with the profile recreates
-  Keycloak without the overlay, and `edge apply --closed` recreates a running Traefik whose
+  [Start, readiness, stop](#start-readiness-stop): `docker compose --profile keycloak up -d
+  keycloak` recreates Keycloak without the overlay, and `edge apply --closed` recreates a running Traefik whose
   `traefik.yml` or compose definition changed; a Traefik that is not running it leaves stopped,
   so start it first with `docker compose up -d --no-recreate socket-proxy traefik`. Wait until
   the readiness check prints `ready`.
