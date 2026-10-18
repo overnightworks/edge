@@ -243,29 +243,59 @@ def plan_core(
     labels = _config_hash_labels(containers, core_services(config))
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):
-        sources = file_binds(config["services"][service], checkout)
-        current = digests(sources, checkout)
-        whys = []
-        if labels.get(service, set()) - {hashes[service]}:
-            whys.append(DEFINITION_CHANGED)
-        if sources and (why := _why_changed(current, reading, service)):
-            whys.append(why)
-        left_unstarted = compose.never_started(states, service) and _recreate_unfinished(
-            config, reading, checkout, service
-        )
+        current = digests(file_binds(config["services"][service], checkout), checkout)
+        whys = _own_changes(config, service, labels.get(service, set()), hashes, current, reading)
+        left_unstarted = _left_unstarted(config, states, reading, checkout, service)
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
         live = left_unstarted or compose.has_running_container(states, (service,))
         if live:
-            whys += [
-                f"{dependency} is recreated"
-                for dependency in dependencies(config, service)
-                if dependency in plans and plans[dependency].action is CoreAction.RECREATE
-            ]
+            whys += _pulled_in(config, service, plans)
         if whys:
             action = CoreAction.RECREATE if live else CoreAction.NOT_STARTED
             plans[service] = CorePlan(service, action, "; ".join(whys), current)
     return list(plans.values())
+
+
+def _own_changes(
+    config: Mapping[str, Any],
+    service: str,
+    labels: Collection[str],
+    hashes: Mapping[str, str],
+    current: Digests,
+    reading: Reading,
+) -> list[str]:
+    """Why the service itself changed: a container labelled with another definition hash, or a
+    file it binds that differs from the record."""
+    whys = []
+    if set(labels) - {hashes[service]}:
+        whys.append(DEFINITION_CHANGED)
+    if current and (why := _why_changed(current, reading, service)):
+        whys.append(why)
+    return whys
+
+
+def _left_unstarted(
+    config: Mapping[str, Any],
+    states: Mapping[str, set[str]],
+    reading: Reading,
+    checkout: Path,
+    service: str,
+) -> bool:
+    """The service's container was created and never started by a recreate of edge's that did
+    not finish (#87 rule 4)."""
+    return compose.never_started(states, service) and _recreate_unfinished(
+        config, reading, checkout, service
+    )
+
+
+def _pulled_in(config: Mapping[str, Any], service: str, plans: Mapping[str, CorePlan]) -> list[str]:
+    """A reason for each core service the service depends on that is recreated."""
+    return [
+        f"{dependency} is recreated"
+        for dependency in dependencies(config, service)
+        if dependency in plans and plans[dependency].action is CoreAction.RECREATE
+    ]
 
 
 def _recreate_unfinished(
