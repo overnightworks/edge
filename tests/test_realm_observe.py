@@ -8,6 +8,8 @@ import shutil
 import signal
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -362,6 +364,19 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
         if not (method == "GET" and path.startswith("/admin/realms/"))
     ]
     assert not_admin_reads == [("POST", "/realms/master/protocol/openid-connect/token")]
+
+
+@pytest.mark.parametrize("method", ["HEAD", "OPTIONS", "TRACE", "PUT", "PROPFIND"])
+def test_the_fake_records_every_method_the_read_only_test_judges(
+    keycloak: FakeKeycloak, method: str
+) -> None:
+    """Rule 1: a method the fake has no handler for still reaches its request log."""
+    path = "/admin/realms/hallucinai/clients"
+
+    with pytest.raises(urllib.error.HTTPError):
+        urllib.request.urlopen(urllib.request.Request(keycloak.url + path, method=method))
+
+    assert keycloak.requests == [(method, path)]
 
 
 @pytest.mark.parametrize(

@@ -438,9 +438,16 @@ def paged(items: list[Any], query: dict[str, list[str]]) -> list[Any]:
 class AdminApi(BaseHTTPRequestHandler):
     server: FakeKeycloak
 
+    def parse_request(self) -> bool:
+        """Records every request before dispatch, so the read-only test sees any method, even
+        one without a handler that the base class answers 501."""
+        parsed = super().parse_request()
+        if parsed:
+            self.server.requests.append((self.command, unquote(urlsplit(self.path).path)))
+        return parsed
+
     def do_POST(self) -> None:
         self.rfile.read(int(self.headers["Content-Length"]))
-        self.server.requests.append(("POST", self.path))
         if self.server.faults.token_status != 200:
             self.reply({"error": REFUSAL_BODY}, self.server.faults.token_status)
         else:
@@ -449,7 +456,6 @@ class AdminApi(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         split = urlsplit(self.path)
         path, query = unquote(split.path), parse_qs(split.query)
-        self.server.requests.append(("GET", path))
         faults = self.server.faults
         self.server.gets += 1
         expired = (
@@ -477,9 +483,7 @@ class AdminApi(BaseHTTPRequestHandler):
         self.reply(answer)
 
     def refuse_a_write(self) -> None:
-        """Records any other method, so the read-only test sees it, and answers 405."""
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        self.server.requests.append((self.command, unquote(urlsplit(self.path).path)))
         self.reply({"error": "method not allowed"}, 405)
 
     do_PUT = do_DELETE = do_PATCH = refuse_a_write
