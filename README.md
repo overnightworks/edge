@@ -289,19 +289,19 @@ Betreff, dann dessen Dateien nach Wirkung, gelesen aus den Binds der aufgeloeste
 
 ```text
 edge apply --closed: 2 commits wait on origin main:
-  4e1f0c2 Route the new app
-  9b7d3aa Pin traefik
+edge apply --closed:   4e1f0c2 Route the new app
+edge apply --closed:   9b7d3aa Pin traefik
 edge apply --closed: their files, by what an update does with them:
-  live once updated:
-    A dynamic/app.yml
-  recreated by edge apply:
-    M compose.yaml
-  stops for `uv sync`:
-    M uv.lock
-  not applied by edge apply (block 6):
-    M keycloak/realm.yaml
-  other:
-    M README.md
+edge apply --closed:   live once updated:
+edge apply --closed:     A dynamic/app.yml
+edge apply --closed:   recreated by edge apply:
+edge apply --closed:     M compose.yaml
+edge apply --closed:   stops for `uv sync`:
+edge apply --closed:     M uv.lock
+edge apply --closed:   not applied by edge apply (block 6):
+edge apply --closed:     M keycloak/realm.yaml
+edge apply --closed:   other:
+edge apply --closed:     M README.md
 edge apply --closed: the live checkout is 2 commits behind; to bring them: git -C ~/git/edge merge --ff-only 4e1f0c2...
 edge apply --closed: the plan below applies HEAD 1a2b3c4, without the waiting commits
 ```
