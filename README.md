@@ -72,7 +72,7 @@ labels:
 ## Configure
 
 ```sh
-cp .env.example .env     # .env is local; never commit it
+cp .env.example .env     # .env is local; never commit it; `edge apply --closed` needs it
 getent group docker | cut -d: -f3   # put this number into DOCKER_GID
 ```
 
@@ -85,6 +85,9 @@ docker compose up -d --no-recreate socket-proxy traefik
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
 # `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
 # fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
+# fleet.yaml is edited through a pull request and reaches the live checkout by the pull below
+# (until S2.4c); a local edit leaves the tree dirty, and the apply refuses it, naming the path.
+git -C ~/git/edge pull --ff-only
 edge apply --closed
 # Traefik reads traefik.yml (its entrypoints) only when it starts. When traefik.yml changed
 # since it was last applied, or the compose definition of socket-proxy or traefik changed
@@ -99,7 +102,8 @@ edge apply --closed
 # while step-ca is off or switched off it is only named and nothing starts.
 ```
 
-Switching Keycloak off (`enabled: false`, then `edge apply --closed`) stops and removes
+Switching Keycloak off (`enabled: false` through a pull request, `git -C ~/git/edge pull
+--ff-only`, then `edge apply --closed`) stops and removes
 `keycloak-db` and `keycloak` and keeps the volume `keycloak-db`, `~/.secrets/keycloak` and
 the `keycloak` network; switching it on again uses the same database. Removing the entry
 from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
@@ -257,8 +261,15 @@ und fragt dafuer allein nichts: der Lauf bleibt `nothing to change`, das Upgrade
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
-einer anderen Kopie verweigert er mit Exit 2 und nennt den Pfad, denn sonst haengte er das
-Live-Projekt an diesen Baum. Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
+einer anderen Kopie verweigert er mit Exit 2 und nennt den Grund (die andere Kopie, "a linked
+worktree" oder "no git checkout"), denn sonst haengte er das Live-Projekt an diesen Baum. Danach
+prueft er, in dieser Reihenfolge und jeweils mit nur der ersten Zeile, die verweigert: `.env` ist
+eine Datei (sonst Exit 2: "run `cp .env.example .env`"), kein anderes `edge apply --closed` laeuft
+(sonst Exit 1; `edge stop` und `edge start` warten nie darauf), HEAD steht auf `main` (sonst
+Exit 2 mit Zweig oder kurzem Hash) und der Baum ist sauber (sonst Exit 2, jeder geaenderte oder
+unverfolgte Pfad auf eigener Zeile; ignorierte wie `.env` zaehlen nicht). `fleet.yaml` aenderst
+du per Pull Request; in den Live-Checkout kommt er bis S2.4c mit `git -C ~/git/edge pull
+--ff-only`. Git laeuft dabei ohne Hooks, ohne fsmonitor und ohne deine globale Konfiguration. Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
 Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
 nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder
@@ -272,9 +283,10 @@ laeuft nie ein Setup.
 "An" heisst: jeder Dienst der Einheit hat seinen Container laufen (oder ein Einmal-Dienst ist
 fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `docker compose ps`.
 
-Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
-oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem Live-Checkout `~/git/edge`
-gestartet, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
+Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert (auch: ein anderes Apply
+laeuft), abgebrochen, fehlgeschlagen oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem
+Live-Checkout `~/git/edge` gestartet, `.env` fehlt, nicht auf `main`, Baum nicht sauber, git nicht
+befragbar, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
 kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
@@ -1004,12 +1016,13 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: set `enabled: true` in `fleet.yaml`, then run `edge apply --closed`, which asks
+Switch it on: set `enabled: true` in `fleet.yaml` through a pull request, pull it with
+`git -C ~/git/edge pull --ff-only`, then run `edge apply --closed`, which asks
 for `step-ca/init` first when it is missing. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
 the one switch, the compose profile `step-ca`, so a plain `docker compose up -d` starts none of
 them. `traefik-mcp` waits for the CA to listen before it starts Traefik, so the order of the two
-does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false` and
-`edge apply --closed`; the containers go, the volumes `step-ca` and `traefik-mcp-acme` stay, and
+does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false`
+through a pull request, the same pull, and `edge apply --closed`; the containers go, the volumes `step-ca` and `traefik-mcp-acme` stay, and
 switching on again serves the same intermediate. Removing the volumes (`docker volume rm
 <project>_traefik-mcp-acme`, `<project>_step-ca`) stays a manual command.
 
@@ -1033,8 +1046,8 @@ switched off or disabled; recorded at a switch-on, so the next apply changes not
 takes about 12 minutes, 10 of them proof 9's renewal wait, within the 2400 s timeout.
 Every call runs from a throwaway container on the network a client would sit on.
 
-The switch is one for the CA and the gateway together (`enabled: false`, then
-`edge apply --closed`). `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/`
+The switch is one for the CA and the gateway together (`enabled: false` through a pull request,
+`git -C ~/git/edge pull --ff-only`, then `edge apply --closed`). `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/`
 throw the CA away; they stay manual commands, and the gateway must be off first: it holds
 certificates from this CA.
 

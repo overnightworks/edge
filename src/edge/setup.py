@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from edge import catalog
+from edge import catalog, compose
 
 SETUP_CHECK_SECONDS = 300
 
@@ -33,11 +33,6 @@ def run_setup_check(command: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _last_line(result: subprocess.CompletedProcess[str]) -> str:
-    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
-    return lines[-1].strip() if lines else "no output"
-
-
 def not_set_up_line(unit: catalog.Unit, repository: Path, check: SetupCheck) -> str | None:
     """The check's last line when the unit is not set up, else None; raises SetupUnclear."""
     setup = unit.setup
@@ -49,9 +44,10 @@ def not_set_up_line(unit: catalog.Unit, repository: Path, check: SetupCheck) -> 
         raise SetupUnclear(f"`{setup} --check` did not run ({type(error).__name__})") from error
     if result.returncode == SetupCheckExit.SET_UP:
         return None
+    last = compose.last_line(result.stdout + result.stderr)
     if result.returncode == SetupCheckExit.NOT_SET_UP:
-        return _last_line(result)
-    raise SetupUnclear(f"`{setup} --check` cannot tell: {_last_line(result)}")
+        return last
+    raise SetupUnclear(f"`{setup} --check` cannot tell: {last}")
 
 
 def refusal(unit: catalog.Unit, repository: Path, check: SetupCheck, again: str) -> str | None:
