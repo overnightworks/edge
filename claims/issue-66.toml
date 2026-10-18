@@ -3,6 +3,6 @@ agent = "claude"
 role = "builder"
 base = "f780ef3577b58a5b6c4b70b20fbff974eac9a5de"
 branch = "claude/issue-66-realm-observer"
-scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "probe/keycloak/README.md", "probe/keycloak/compose.probe.yaml", "probe/keycloak/probe.py", "src/edge/realm/__init__.py", "src/edge/realm/observe.py", "tests/test_keycloak_probe.py", "tests/test_realm_observe.py"]
+scope = [".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "probe/keycloak/README.md", "probe/keycloak/compose.probe.yaml", "probe/keycloak/probe.py", "src/edge/realm/__init__.py", "src/edge/realm/observe.py", "tests/realm_fake.py", "tests/test_keycloak_probe.py", "tests/test_realm_observe.py"]
 opened_commit = "938441c43d8fc653eaa875bc73b40c391039620d"
 whole_reason = "The observer, its compose door and the probe proof that carries the ruled coverage claim are one vertical: without the probe the coverage is unproven, without the door the probe has nothing to run."
