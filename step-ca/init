@@ -455,7 +455,7 @@ class StepCaInit:
         if exit_code == 0 and changed:
             self.tools.say(
                 "step-ca/init: done. Switch it on: set `services.step-ca.run.enabled: true` "
-                "in fleet.yaml, then run `edge apply --closed`."
+                "in fleet.yaml (a pull request), then run `edge apply --closed`."
             )
         elif exit_code == 0:
             self.tools.say("step-ca/init: nothing changed, the key material is all in place.")
