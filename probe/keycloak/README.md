@@ -22,8 +22,9 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   holds when it lists exactly the console changes the apply removes; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an
   escaped line for a group named with ESC and a newline, that SIGINT and SIGTERM, sent as its
-  container starts and as its inventory arrives, end the observe non-zero without a container
-  left (stdout may then hold part of an inventory: only exit 0 carries one), and
+  container runs and as its inventory arrives, leave no container, and that an exit 0 carries
+  the whole inventory (a stopped `compose run` exits 130 and may leave part of one on stdout;
+  a signal it takes as the container begins to run may be lost, and the observe completes), and
   `does not answer` with Keycloak stopped.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing: callers create their own clients and users through the admin API.

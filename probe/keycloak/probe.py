@@ -341,12 +341,14 @@ class Stack:
         observing.send_signal(stop_signal)
         stdout, stderr = observing.communicate(timeout=OBSERVER_START_SECONDS)
         self.outputs.append(stdout + stderr)
-        # Stopped, compose stops relaying at once: stdout may hold part of an inventory, and the
-        # non-zero exit is what tells it from one.
+        # A stopped compose stops relaying at once, so stdout may hold part of an inventory and
+        # only the exit tells it from one; a signal compose takes this early may be lost, and the
+        # observe completes. The inventory is one JSON object on one line
+        # (json.dump escapes every newline), so it is whole exactly when it ends in "}\n".
         expect(
-            observing.returncode != 0,
-            f"the observe ended with 0 and an inventory before {stop_signal.name} reached it "
-            f"{moment.__name__}",
+            observing.returncode != 0 or stdout.endswith("}\n"),
+            f"the observe stopped by {stop_signal.name} {moment.__name__} exited 0 with "
+            f"{len(stdout)} bytes of a cut inventory",
         )
         deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
         while observer_containers() and time.monotonic() < deadline:
@@ -416,7 +418,8 @@ def docker(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
 
 
-def observer_containers() -> list[str]:
+def observer_containers(*states: str) -> list[str]:
+    """The observer's containers, of any state unless `states` names some."""
     listed = docker(
         "container",
         "ls",
@@ -426,6 +429,7 @@ def observer_containers() -> list[str]:
         f"label={PROJECT_LABEL}",
         "--filter",
         f"label=com.docker.compose.service={OBSERVER_SERVICE}",
+        *(option for state in states for option in ("--filter", f"status={state}")),
     )
     return listed.stdout.split()
 
@@ -433,8 +437,10 @@ def observer_containers() -> list[str]:
 Observing = subprocess.Popen[str]
 
 
-def as_its_container_starts(_observing: Observing) -> bool:
-    return bool(observer_containers())
+# Not as soon as the container exists: a signal compose takes while it still creates the
+# container can leave that container behind.
+def as_its_container_runs(_observing: Observing) -> bool:
+    return bool(observer_containers("running"))
 
 
 def as_the_inventory_arrives(observing: Observing) -> bool:
@@ -1283,7 +1289,7 @@ class Probe:
                 digest_key, stop, moment
             )
             for stop in (signal.SIGINT, signal.SIGTERM)
-            for moment in (as_its_container_starts, as_the_inventory_arrives)
+            for moment in (as_its_container_runs, as_the_inventory_arrives)
         }
         expect(not any(left.values()), f"a stopped observe left containers: {left}")
 
@@ -1301,8 +1307,8 @@ class Probe:
             "9",
             f"the observer runs as {door}; a console change of {CHANGED_CONFIG} is one change "
             "line and a group named with ESC and a newline one escaped line; SIGINT and SIGTERM "
-            "as its container starts and as the inventory arrives end it non-zero and leave no "
-            "container; with Keycloak stopped it says 'does not answer', exits "
+            "as its container runs and as the inventory arrives leave no container, and an exit "
+            "0 carries the whole inventory; with Keycloak stopped it says 'does not answer', exits "
             f"{refused.returncode} and starts nothing",
         )
 
