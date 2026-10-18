@@ -309,7 +309,26 @@ def marks(tmp_path: Path) -> switches.Switches:
 
 
 @pytest.fixture
-def go_live(golive: ModuleType, keycloak: Keycloak, session: Session, secrets_dir: Path, marks):
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The operator's HOME, empty: edge-backup is not set up in it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    return tmp_path
+
+
+def set_up_backup(home: Path, password_mode: int = 0o600) -> None:
+    password = home / ".secrets/restic/password"
+    password.parent.mkdir(parents=True)
+    password.write_text("planted")
+    password.chmod(password_mode)
+    repository = home / "backups/restic"
+    repository.mkdir(parents=True)
+    (repository / "config").write_text("planted")
+
+
+@pytest.fixture
+def go_live(
+    golive: ModuleType, keycloak: Keycloak, session: Session, secrets_dir: Path, marks, home: Path
+):
     tools = golive.Tools(
         run=keycloak.run,
         fetch=keycloak.fetch,
@@ -582,7 +601,7 @@ def test_the_backup_is_asked_even_when_the_secret_files_were_made_by_hand(
 
     go_live.run()
 
-    assert session.asked[0].startswith("K11b")
+    assert session.asked[0].startswith("edge-backup is not set up on this PC")
 
 
 def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, session):
@@ -672,6 +691,77 @@ def test_without_an_accepted_backup_nothing_is_created(
     assert not secrets_dir.exists()
     assert not keycloak.changed_something()
     assert "FAILED at backup" in session.printed[-1]
+
+
+def test_a_set_up_edge_backup_asks_no_backup_question(go_live, keycloak, session, home):
+    """B1, #127 rule 3: no question, no volume lookup; the run asks only Enter."""
+    set_up_backup(home)
+
+    assert go_live.run() == 0
+
+    assert not any("volume inspect" in command for command in keycloak.commands)
+    assert "backup" not in session.output.split("Step 2")[0]
+    assert len(session.asked) == 1
+    assert session.asked[0].startswith("Press Enter")
+
+
+def break_password_mode(home: Path) -> None:
+    (home / ".secrets/restic/password").chmod(0o644)
+
+
+def remove_repository_config(home: Path) -> None:
+    (home / "backups/restic/config").unlink()
+
+
+def remove_password_file(home: Path) -> None:
+    (home / ".secrets/restic/password").unlink()
+
+
+def make_password_a_directory(home: Path) -> None:
+    (home / ".secrets/restic/password").unlink()
+    (home / ".secrets/restic/password").mkdir()
+
+
+def hide_password_directory(home: Path) -> None:
+    (home / ".secrets/restic").chmod(0)
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        remove_password_file,
+        remove_repository_config,
+        break_password_mode,
+        make_password_a_directory,
+        hide_password_directory,
+    ],
+)
+def test_an_unclear_edge_backup_reads_as_not_set_up(go_live, session, home, spoil):
+    """B4, B5, #127 rule 5: missing, wrong mode, a directory or no permission means ask."""
+    set_up_backup(home)
+    spoil(home)
+    session.answers = ["no"]
+
+    try:
+        assert go_live.run() == 1
+    finally:
+        (home / ".secrets/restic").chmod(0o700)
+
+    assert session.asked[0].startswith("edge-backup is not set up on this PC")
+    assert "Traceback" not in session.output
+
+
+def test_a_set_up_edge_backup_never_fails_the_backup_step_on_a_down_docker(
+    go_live, keycloak, session, home
+):
+    """B8: no backup line and no question; Docker is first needed by a later step."""
+    set_up_backup(home)
+    keycloak.docker_daemon_down = True
+
+    go_live.run()
+
+    assert "FAILED at backup" not in session.output
+    assert not any(prompt.startswith("edge-backup is not set up") for prompt in session.asked)
 
 
 def test_the_backup_question_has_no_default(go_live, session):
