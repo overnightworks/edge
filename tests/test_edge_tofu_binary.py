@@ -268,6 +268,9 @@ PINS = """
 [versions."1.13.1"]
 url = "https://example.invalid/v{version}/tofu_{version}_{platform}.zip"
 sha256 = { linux_amd64 = "ab" }
+
+[versions."1.13.2"]
+sha256 = { linux_amd64 = "ab" }
 """
 
 
@@ -287,11 +290,12 @@ def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
     [
         ("1.14.0", "linux_amd64", "no entry for OpenTofu 1.14.0"),
         ("1.13.1", "darwin_arm64", "no sha256 for darwin_arm64"),
+        ("1.13.2", "linux_amd64", "no url for OpenTofu 1.13.2"),
     ],
-    ids=["unpinned-version", "other-platform"],
+    ids=["unpinned-version", "other-platform", "entry-without-url"],
 )
 def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platform, missing):
-    """#101 T4, T5: a version without an entry or a platform without a sha names the pins file."""
+    """#101 T4, T5, rule 1: a gap in the version's entry names the pins file."""
     pins = tomllib.loads(PINS)
 
     with pytest.raises(TofuError) as raised:
@@ -311,37 +315,25 @@ def test_the_committed_pins_cover_the_pinned_version_on_linux_amd64():
     assert len(release.sha256) == 64
 
 
-def pins_without_url() -> str:
-    platform_sha = f'{tofu_binary.current_platform()} = "ab"'
-    return f'[versions."{tofu.pinned_version()}"]\nsha256 = {{ {platform_sha} }}\n'
-
-
 @pytest.mark.parametrize(
     ("pins", "missing"),
     [
         (None, "is missing"),
         ("[versions\n", "is not valid TOML"),
-        (pins_without_url(), f"has no url for OpenTofu {tofu.pinned_version()}"),
     ],
-    ids=["no-pins-file", "malformed-pins-file", "entry-without-url"],
+    ids=["no-pins-file", "malformed-pins-file"],
 )
-def test_a_pins_file_it_cannot_use_fails_naming_it_without_a_traceback(
-    tmp_path, monkeypatch, capsys, pins, missing
-):
-    """#101 rule 1: a missing or malformed pins file, or an entry without url, names the file."""
-    pins_file = tmp_path / "external" / "opentofu.toml"
+def test_a_pins_file_it_cannot_parse_fails_naming_it(tmp_path, pins, missing):
+    """#101 rule 1: a missing or malformed pins file fails as a TofuError naming that file."""
+    pins_file = tmp_path / "opentofu.toml"
     if pins is not None:
-        pins_file.parent.mkdir()
         pins_file.write_text(pins)
-    monkeypatch.setattr(tofu_binary, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(tofu_binary, "PINS_FILE", pins_file)
 
-    exit_code = tofu_binary.main([str(tmp_path / "opentofu")])
+    with pytest.raises(TofuError) as raised:
+        tofu_binary.read_pins(pins_file)
 
-    error = capsys.readouterr().err
-    assert exit_code == 2
-    assert "external/opentofu.toml" in error
-    assert missing in error
+    assert str(pins_file) in str(raised.value)
+    assert missing in str(raised.value)
 
 
 def redirect_to(location: str) -> Callable:

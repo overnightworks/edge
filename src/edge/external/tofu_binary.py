@@ -93,16 +93,18 @@ def fetch_https(url: str) -> Iterator[bytes]:
 
 def ensure(root: Path, fetch: Fetch = fetch_https) -> Path:
     """The pinned tofu under `root`, downloaded and verified first when it is not there yet."""
-    return install(root, release_for(_read_pins(), pinned_version(), current_platform()), fetch)
+    pins = read_pins(PINS_FILE)
+    return install(root, release_for(pins, pinned_version(), current_platform()), fetch)
 
 
-def _read_pins() -> dict:
+def read_pins(pins_file: Path) -> dict:
+    """The parsed pins file; a file it cannot parse fails loud naming that file."""
     try:
-        return tomllib.loads(PINS_FILE.read_text())
+        return tomllib.loads(pins_file.read_text())
     except FileNotFoundError:
-        raise TofuError(f"{_pins_name()} is missing") from None
+        raise TofuError(f"{pins_file} is missing") from None
     except tomllib.TOMLDecodeError as error:
-        raise TofuError(f"{_pins_name()} is not valid TOML: {error}") from error
+        raise TofuError(f"{pins_file} is not valid TOML: {error}") from error
 
 
 def install(
