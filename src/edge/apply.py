@@ -232,10 +232,10 @@ def _gates(
 
 
 def _gate(unit: catalog.Unit, switched_off: Mapping[str, str | None]) -> core.Gate:
-    if not unit.enabled:
-        return core.Gate.OFF
     if unit.key in switched_off:
         return core.Gate.SWITCHED_OFF
+    if not unit.enabled:
+        return core.Gate.OFF
     return core.Gate.ON
 
 

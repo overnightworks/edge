@@ -2926,20 +2926,26 @@ def test_a_changed_traefik_mcp_definition_recreates_it_and_a_stale_step_ca_label
     assert scripted.container_ids["step-ca"] == ids["step-ca"]
 
 
+@pytest.mark.parametrize(
+    ("marked", "held"), [(False, HELD_OFF), (True, HELD_SWITCHED_OFF)], ids=["F5", "F5 marked"]
+)
 def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_only(
-    step_ca_applied, switch, scripted, repository, state
+    marked, held, step_ca_applied, switch, scripted, repository, state
 ):
-    """#89 rule 4, cell F5: a non-action; nothing to change, no up, the entry unchanged."""
+    """#89 rule 4, cell F5: a non-action; nothing to change, no up, the entry unchanged; a
+    marker left on the disabled unit names it switched off."""
     write_fleet(repository, DISABLED)
     for service in STEP_CA_SERVICES:
         scripted.containers.pop(service)
+    if marked:
+        switch_off(state)
     entry = follower_entry(state)
     edit_traefik_mcp_yml(repository)
 
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert HELD_OFF in out
+    assert held in out
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
     assert follower_entry(state) == entry
