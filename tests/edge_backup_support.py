@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from edge_backup import host
+from edge_backup.cli import DEFAULT_APPS
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
@@ -21,6 +22,7 @@ AUDIO = {"u1/one.mp3": b"ID3 one", "u1/two.mp3": b"ID3 two", "u2/cover.png": b"P
 SONGMAKER_CONTAINER = "c0ffee"
 RESTORE_SERVER_ID = "deadbeef" * 8
 RADIO_CONTAINER = "beef01"
+KEYCLOAK_CONTAINER = "kc01"
 STATUS_KEYS = {
     "schema",
     "state",
@@ -32,25 +34,28 @@ STATUS_KEYS = {
     "apps",
 }
 APP_HISTORY_KEYS = {"last_snapshot_id", "last_successful_backup", "last_successful_restore_test"}
-TWO_APPS_TOML = """
+SONGMAKER_TOML = """
 [app.songmaker]
 compose_project = "songmaker"
 db_service = "postgres"
 dump = "pg_dump_custom"
 db_user = "songmaker"
 db_name = "songmaker"
+postgres_major = 16
 volume = "audiofiles"
 [app.songmaker.restore_test]
 count_table = "songs"
 audio_reference_table = "generations"
 audio_reference_column = "mp3_path"
-
+"""
+RADIO_TOML = """
 [app.radio]
 compose_project = "radio"
 db_service = "postgres"
 dump = "pg_dump_custom"
 db_user = "radio"
 db_name = "radio"
+postgres_major = 16
 volume = "audiofiles"
 [app.radio.restore_test]
 count_table = "songs"
@@ -67,11 +72,13 @@ class Machine:
     """Answers each fixed argv the way docker, restic and the throwaway postgres would."""
 
     audio: dict[str, bytes] = field(default_factory=lambda: dict(AUDIO))
+    table_rows: dict[str, int] = field(default_factory=lambda: {"songs": 42, "realm": 2})
+    """The rows the restored database holds, by table."""
     references: list[str] = field(default_factory=lambda: ["u1/one.mp3", "u1/two.mp3"])
     db_containers: list[str] = field(default_factory=lambda: [SONGMAKER_CONTAINER])
     volumes: list[str] = field(default_factory=lambda: ["songmaker_audiofiles"])
     other_db_containers: dict[str, list[str]] = field(
-        default_factory=lambda: {"radio": [RADIO_CONTAINER]}
+        default_factory=lambda: {"radio": [RADIO_CONTAINER], "edge": [KEYCLOAK_CONTAINER]}
     )
     """The database containers of every project but songmaker, by compose project."""
     other_volumes: dict[str, list[str]] = field(
@@ -99,6 +106,8 @@ class Machine:
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
     failing: dict[str, int | type[BaseException]] = field(default_factory=dict)
+    restore_diagnostic: str = ""
+    """What pg_restore would print to stderr when it fails, as postgres quotes row values."""
     snapshots: list[dict] = field(default_factory=list)
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
     status_seen_during_backup: dict | None = None
@@ -250,6 +259,7 @@ class Machine:
     def _backup(self, argv, **_) -> bytes:
         self.status_seen_during_backup = json.loads(self.status_file.read_text())
         app = re.search(r"target=/backup/([^/,]+)/db", " ".join(argv))[1]
+        has_audio = any(a.endswith(f"target=/backup/{app}/audio,readonly") for a in argv)
         staging = Path(mount_source(argv, f"/backup/{app}/db"))
         self.private_modes["staging"] = mode_of(staging)
         self.private_modes |= {path.name: mode_of(path) for path in staging.iterdir()}
@@ -265,7 +275,7 @@ class Machine:
                     for path in staging.iterdir()
                     if path.name not in self.snapshot_without
                 },
-                "audio": self.audio | self.written_during_scan,
+                "audio": self.audio | self.written_during_scan if has_audio else {},
             }
         )
         status = {"message_type": "status", "percent_done": 1}
@@ -313,8 +323,12 @@ class Machine:
         self.server_accepting = True
         return b""
 
-    def _pg_restore(self, argv, *, stdin, **_) -> bytes:
+    def _pg_restore(self, argv, *, stdin, discard_stderr, **_) -> bytes:
         assert self.server_accepting, "pg_restore before pg_isready said the server accepts"
+        if self.restore_diagnostic:
+            if not discard_stderr:
+                print(self.restore_diagnostic, file=sys.stderr)
+            return exit_with("pg_restore", 1)
         if not stdin.read_bytes().startswith(b"PGDMP"):
             return exit_with("pg_restore", 1)
         return b""
@@ -323,7 +337,9 @@ class Machine:
         assert self.server_accepting, "psql before pg_isready said the server accepts"
         sql = argv[argv.index("--command") + 1]
         answers = {
-            'SELECT count(*) FROM "songs"': b"42\n",
+            f'SELECT count(*) FROM "{table}"': f"{rows}\n".encode()
+            for table, rows in self.table_rows.items()
+        } | {
             'SELECT "mp3_path" FROM "generations"'
             ' WHERE "mp3_path" IS NOT NULL AND "mp3_path" <> \'\'': b"".join(
                 reference.encode() + b"\0" for reference in self.references
@@ -334,11 +350,21 @@ class Machine:
         return answers[sql]
 
 
+def declare_apps(home: Path, toml: str) -> tuple[str, str]:
+    """The `--apps` arguments that declare exactly these records."""
+    declared = home / "declared-apps.toml"
+    declared.write_text(toml)
+    return "--apps", str(declared)
+
+
+def declare_shipped_apps() -> tuple[str, str]:
+    """The `--apps` arguments that declare what `backup/apps.toml` ships."""
+    return "--apps", str(DEFAULT_APPS)
+
+
 def declare_two_apps(home: Path) -> tuple[str, str]:
     """The `--apps` arguments that declare songmaker and radio."""
-    declared = home / "two-apps.toml"
-    declared.write_text(TWO_APPS_TOML)
-    return "--apps", str(declared)
+    return declare_apps(home, SONGMAKER_TOML + RADIO_TOML)
 
 
 def schema_one_status(snapshot_id: str) -> dict:

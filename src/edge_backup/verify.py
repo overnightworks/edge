@@ -16,7 +16,8 @@ class VerificationError(RuntimeError):
 @dataclass(frozen=True)
 class Manifest:
     app: str
-    audio_files: int
+    audio_files: int | None
+    """None for a DB-only app."""
 
     def as_json(self) -> str:
         document = {"schema": MANIFEST_SCHEMA, "app": self.app, "audio_files": self.audio_files}
@@ -28,7 +29,10 @@ class Manifest:
             document = json.loads(text)
             if document["schema"] != MANIFEST_SCHEMA:
                 raise ValueError(document["schema"])
-            return cls(app=document["app"], audio_files=int(document["audio_files"]))
+            audio_files = document["audio_files"]
+            return cls(
+                app=document["app"], audio_files=None if audio_files is None else int(audio_files)
+            )
         except (ValueError, KeyError, TypeError) as error:
             raise VerificationError("das Manifest im Snapshot ist unlesbar") from error
 
@@ -38,6 +42,11 @@ def check_audio_count(manifest: Manifest, restored: int) -> None:
         raise VerificationError(
             f"{restored} Audiodateien wiederhergestellt, das Manifest nennt {manifest.audio_files}"
         )
+
+
+def check_row_count(table: str, rows: int, *, require_rows: bool) -> None:
+    if require_rows and rows == 0:
+        raise VerificationError(f"die wiederhergestellte Tabelle {table} ist leer")
 
 
 def check_audio_references(references: list[str], restored_audio: Path) -> None:

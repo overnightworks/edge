@@ -492,7 +492,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 
 ## edge-backup
 
-A weekly encrypted backup of the declared apps (B1: Songmaker only) into a
+A weekly encrypted backup of the declared apps (Songmaker and Keycloak) into a
 local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
@@ -502,16 +502,18 @@ repository `~/backups/restic` sits on the same disk as the data, so it does
 a later slice.
 
 `backup/apps.toml` declares each app as a validated record (compose project,
-database service, dump kind, database user and name, audio volume, and what
-the restore test asks the restored database). There is no hook language.
-The database container and the volume are found by their
-`com.docker.compose.*` labels; exactly one of each must match.
+database service, dump kind, database user and name, the Postgres major, the
+audio volume with the table that names its files, and what the restore test
+asks the restored database). There is no hook language. Audio is optional and
+all or nothing: Keycloak is a DB-only app and mounts no volume. The database
+container and the volume are found by their `com.docker.compose.*` labels;
+exactly one of each must match.
 
 restic runs from the official image, pinned by version and digest
 (`restic/restic:0.19.1@sha256:…`, see `src/edge_backup/settings.py`), with no
 network, no capabilities and a read-only root, as your own user. Backup and
-restore test check first that the pinned restic and postgres images are
-present. `docker image prune -a` removes them; the next run pulls them again
+restore test check first that the pinned restic image and the restore image
+of each app's Postgres major are present. `docker image prune -a` removes them; the next run pulls them again
 by their digest-pinned reference and fails early, before staging anything,
 naming the image only if that pull fails. The password
 file is mounted read-only at `/run/secrets/restic-password` and handed to
@@ -545,7 +547,7 @@ The units expect the checkout at `~/git/edge`.
 
 | Timer | When | Does |
 |---|---|---|
-| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check` |
+| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check`, only when every app backed up |
 | `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database
@@ -567,10 +569,19 @@ uv run edge-backup snapshots
 
 Each snapshot (tag = app name, host `edge-backup`) holds `db/db.dump`
 (`pg_dump --format=custom`, transactional), `db/manifest.json` (the number of
-audio files counted just before the scan) and `audio/` (the volume, read
-live). No service is stopped, so the backup is crash-consistent: a file
-written during the scan may be missing or partial. The restore test catches
-exactly that, so such a backup never counts as good.
+audio files counted just before the scan) and, for an app with audio, `audio/`
+(the volume, read live). No service is stopped or started, so the backup is
+crash-consistent: a file written during the scan may be missing or partial. The
+restore test catches exactly that, so such a backup never counts as good.
+
+Keycloak's dump holds its realm signing keys, the credential hashes and the
+client secrets. In the repository it exists only encrypted (restic). In plain
+text it exists in exactly three places, each mode 0700: the staging directory
+during a backup and the restore test's directory during a restore test (both
+removed when the run ends), and the target of `edge-backup restore keycloak
+--target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
+waits 10 minutes for it, reports keycloak as failed and still backs up
+Songmaker.
 
 ### The restore test
 
@@ -580,10 +591,19 @@ It restores the last successful backup's snapshot into a private directory under
 - the restored audio file count equals the manifest's;
 - `pg_restore --list` reads the dump;
 - the dump loads with `pg_restore --exit-on-error --single-transaction` into a
-  throwaway PostgreSQL 16 container without network (removed afterwards);
-- the row count of `songs` answers;
-- every audio file the restored database references (`generations.mp3_path`)
-  exists in the copy with a size above zero.
+  throwaway PostgreSQL container without network (removed afterwards) of the
+  major the app's database runs: 16 for Songmaker, 17 for Keycloak, each image
+  pinned by version and digest in `src/edge_backup/settings.py` (so the test
+  proves the version the app really runs; an older server cannot read a newer
+  archive; the pin of major 17 equals `keycloak-db` in `compose.yaml`, a test
+  fails when they differ). The server's diagnostics are discarded because
+  PostgreSQL quotes row values in them: a failure shows the step and the exit
+  code only;
+- the row count of the app's table (`songs`, Keycloak's `realm`) answers; for
+  Keycloak (`require_rows = true` in `backup/apps.toml`) it is above zero;
+- for an app with audio: the restored audio file count equals the manifest's,
+  and every audio file the restored database references
+  (`generations.mp3_path`) exists in the copy with a size above zero.
 
 It never touches the live database or volume.
 
@@ -721,6 +741,50 @@ them.
 
 `cp -a` adds and overwrites; audio written after the snapshot stays in the
 volume. The copied files keep the owner restic restored them with (your user).
+
+### Restore Keycloak
+
+Only you restore Keycloak, and the block below overwrites only Keycloak's
+database. It stops `keycloak` only (Traefik and every other service keep
+running), loads the dump into `keycloak-db`, and starts `keycloak` again. First
+restore the snapshot as above, `uv run edge-backup restore keycloak --target
+~/restore-keycloak`; the dump holds keys, so the block deletes that directory
+after a successful `docker start`. Paste the block as a whole: it stops at the
+first failing command and never starts Keycloak after a failed load. If the
+load fails, `pg_restore`'s messages can quote rows of the dump, so they are
+discarded and the session runs with server error logging off (`keycloak` is the
+image's superuser, which may set that); only the exit code is printed. Delete
+`~/restore-keycloak` once you are done.
+
+```sh
+(
+set -euo pipefail
+umask 077
+restored=~/restore-keycloak
+container() {
+  docker ps --quiet --filter label=com.docker.compose.project=edge \
+    --filter label=com.docker.compose.service="$1" \
+    --filter label=com.docker.compose.oneoff=False
+}
+db=$(container keycloak-db)
+kc=$(container keycloak)
+[ "$(wc -w <<<"$db")" -eq 1 ] \
+  || { echo "need exactly one running keycloak-db, found: ${db:-none}" >&2; exit 1; }
+[ "$(wc -w <<<"$kc")" -eq 1 ] \
+  || { echo "need exactly one running keycloak, found: ${kc:-none}" >&2; exit 1; }
+docker stop "$kc"
+docker exec -i -e PGOPTIONS='-c log_min_messages=panic -c log_min_error_statement=panic' \
+  "$db" pg_restore --username keycloak --dbname keycloak \
+  --clean --if-exists --single-transaction --exit-on-error \
+  < "$restored/db/db.dump" 2>/dev/null \
+  || { code=$?; echo "pg_restore failed with exit $code; keycloak stays stopped, start it with: docker start $kc" >&2; exit 1; }
+docker start "$kc"
+rm -rf "$restored"
+)
+```
+
+A failed load changed nothing (`--single-transaction`); `docker start` with the
+printed ID brings the old Keycloak back.
 
 ### Stale locks
 
@@ -1018,14 +1082,14 @@ Last, **public login in Cloudflare** (unnumbered), as in the Cloudflare part abo
 
 ### Patch upgrade
 
-1. **Dump the database** (until K11b automates it). The dump holds signing keys
-   and credential hashes, so it goes beside the secrets, never into the
-   checkout, and only its owner may read it:
+1. **Back up the database.** The dump holds signing keys and credential
+   hashes; edge-backup keeps it encrypted (see [edge-backup](#edge-backup)):
 
    ```sh
-   (umask 077; docker compose --profile keycloak exec -T keycloak-db pg_dump --username=keycloak --format=custom keycloak \
-     > ~/.secrets/keycloak/keycloak-$(date +%F).dump)
+   uv run edge-backup backup
    ```
+
+   It must end with exit 0 before you go on.
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version
    and digest), and of keycloak-config-cli if a build for the new version exists.
 3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge

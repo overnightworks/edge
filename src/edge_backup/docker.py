@@ -8,9 +8,9 @@ from datetime import timedelta
 from pathlib import Path
 
 from edge_backup import host
-from edge_backup.apps import App
+from edge_backup.apps import App, Audio
 from edge_backup.restic import Mount, MountKind, container_argv
-from edge_backup.settings import POSTGRES_IMAGE, PROBE_TIMEOUT, RESTIC_IMAGE, Settings
+from edge_backup.settings import PROBE_TIMEOUT, RESTIC_IMAGE, RESTORE_IMAGES, Settings
 
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -49,9 +49,10 @@ def require_daemon() -> None:
         raise NotReadyError(f"Docker antwortet nicht: {error}") from error
 
 
-def ensure_pinned_images() -> None:
+def ensure_pinned_images(apps: tuple[App, ...]) -> None:
     """`docker image prune -a` removes the pinned images; a missing one is pulled by its digest."""
-    for image in (RESTIC_IMAGE, POSTGRES_IMAGE):
+    restore_images = dict.fromkeys(RESTORE_IMAGES[app.postgres_major] for app in apps)
+    for image in (RESTIC_IMAGE, *restore_images):
         if not _image_present(image):
             _pull(image)
 
@@ -105,18 +106,18 @@ def database_container(app: App) -> str:
     return ids[0]
 
 
-def audio_volume(app: App) -> str:
+def audio_volume(app: App, audio: Audio) -> str:
     names = _lines(
         host.run(
             ["docker", "volume", "ls", "--quiet",
              *_label_filter(PROJECT_LABEL, app.compose_project),
-             *_label_filter(VOLUME_LABEL, app.volume)],
+             *_label_filter(VOLUME_LABEL, audio.volume)],
             label="docker volume ls",
             timeout=PROBE_TIMEOUT,
         )
     )  # fmt: skip
     if len(names) != 1:
-        raise TargetError(f"{len(names)} Volumes {app.volume} für {app.name} statt genau einem")
+        raise TargetError(f"{len(names)} Volumes {audio.volume} für {app.name} statt genau einem")
     return names[0]
 
 
@@ -144,8 +145,13 @@ def count_audio_files(settings: Settings, kind: MountKind, source: str) -> int:
     return listing.count(b"\0")
 
 
+_SILENT_SERVER_SETTINGS = (
+    "-c", "log_min_messages=panic", "-c", "log_min_error_statement=panic",
+)  # fmt: skip
+
+
 @contextmanager
-def restore_server() -> Iterator["RestoreServer"]:
+def restore_server(image: str) -> Iterator["RestoreServer"]:
     """A PostgreSQL without network or volume of ours; removed again whatever happens.
 
     Removal goes by container ID and only to containers with our owner label: a foreign
@@ -155,9 +161,11 @@ def restore_server() -> Iterator["RestoreServer"]:
     started = host.run(
         ["docker", "run", "--detach", "--name", RESTORE_SERVER, "--network", "none",
          "--label", f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}",
+         # No container log and no server-side error logging: a failed COPY logs row values.
+         "--log-driver", "none",
          # trust is safe here: the server has no network and holds only the restored copy.
          "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", f"POSTGRES_DB={RESTORE_DATABASE}",
-         POSTGRES_IMAGE],
+         image, *_SILENT_SERVER_SETTINGS],
         label="Start der Wegwerf-Datenbank",
     )  # fmt: skip
     try:
@@ -231,6 +239,7 @@ class RestoreServer:
             label=label,
             stdin=stdin,
             timeout=timeout,
+            discard_stderr=True,  # pg_restore and psql quote row values of the restored tables
         )
 
 
