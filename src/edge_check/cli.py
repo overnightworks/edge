@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import sys
 from enum import IntEnum
 from pathlib import Path
@@ -54,7 +53,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def _read_allow_list(path: Path) -> str:
     try:
-        resolved = Path(os.path.realpath(path, strict=True))
+        path.stat()
+        resolved = path.resolve()
         if not resolved.is_file():
             raise AllowListError(f"cannot read {path}: not a regular file")
         return resolved.read_text(encoding="utf-8")

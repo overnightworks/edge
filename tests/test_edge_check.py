@@ -417,11 +417,16 @@ def _allow_list_symlink_loop(tmp_path):
     return loop
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through a mode-000 directory")
 @pytest.mark.parametrize(
     ("make_allow_list", "reason"),
     [
-        (_allow_list_in_unreadable_directory, "Permission denied"),
+        pytest.param(
+            _allow_list_in_unreadable_directory,
+            "Permission denied",
+            marks=pytest.mark.skipif(
+                os.geteuid() == 0, reason="root reads through a mode-000 directory"
+            ),
+        ),
         (_allow_list_symlink_loop, "Too many levels of symbolic links"),
         (lambda tmp_path: tmp_path / "absent.toml", "No such file or directory"),
     ],
@@ -430,7 +435,7 @@ def _allow_list_symlink_loop(tmp_path):
 def test_exits_2_naming_the_os_reason_an_allow_list_cannot_be_reached(
     run_edge_check, tmp_path, make_allow_list, reason
 ):
-    """defect: the allow-list path failing in the OS must exit 2, not crash with exit 1."""
+    """defect: PR #115 review B1 -- an allow-list path failing in the OS must exit 2, not 1."""
     allow_list = make_allow_list(tmp_path)
     try:
         exit_code, _, err = run_edge_check(Host(), "--allow-list", str(allow_list))
