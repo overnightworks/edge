@@ -78,7 +78,7 @@ class Run:
 @pytest.fixture
 def run_observer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> Iterator[Callable[[str], Run]]:
+) -> Iterator[Callable[..., Run]]:
     """The observer's command line as the compose service runs it, the key on stdin."""
     secret_file = tmp_path / "config-cli-secret"
     secret_file.write_text(SECRET + "\n")
