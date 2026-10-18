@@ -92,15 +92,28 @@ def client_secret_problems(realm: dict, compose_file: dict, overlay: dict) -> li
             problems.append(f"{name}: secret {source} is not the file {expected_file}")
         elif source not in overlay["secrets"]:
             problems.append(f"{name}: the probe overlay does not override secret {source}")
+        elif overlay["secrets"][source].get("file") != f"${{PROBE_SECRETS_DIR}}/clients/{name}":
+            problems.append(f"{name}: the probe overlay does not mount its scratch file")
     return problems
 
 
 def drop_mount(realm: dict, compose_file: dict, overlay: dict) -> None:
-    del compose_file["services"]["keycloak-config-cli"]["secrets"][-1]
+    secrets = compose_file["services"]["keycloak-config-cli"]["secrets"]
+    secrets.remove(next(s for s in secrets if s["target"] == "SONGMAKER_CLIENT_SECRET"))
 
 
 def drop_override(realm: dict, compose_file: dict, overlay: dict) -> None:
     del overlay["secrets"]["keycloak_client_songmaker"]
+
+
+def override_with_production_path(realm: dict, compose_file: dict, overlay: dict) -> None:
+    overlay["secrets"]["keycloak_client_songmaker"]["file"] = (
+        "${HOME}/.secrets/keycloak/clients/songmaker"
+    )
+
+
+def override_without_file(realm: dict, compose_file: dict, overlay: dict) -> None:
+    overlay["secrets"]["keycloak_client_songmaker"] = {}
 
 
 def move_file(realm: dict, compose_file: dict, overlay: dict) -> None:
@@ -108,8 +121,8 @@ def move_file(realm: dict, compose_file: dict, overlay: dict) -> None:
 
 
 def test_every_client_secret_in_realm_yaml_has_a_mount_a_file_and_a_probe_override():
-    """#108 rule 5: a client secret reaches keycloak-config-cli from its own file, and the probe
-    never mounts the operator's file."""
+    """#108 T11 (rule 5): a client secret reaches keycloak-config-cli from its own file, and
+    the probe never mounts the operator's file."""
     realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
     overlay = yaml.safe_load((REPOSITORY / "probe/keycloak/compose.probe.yaml").read_text())
 
@@ -117,9 +130,12 @@ def test_every_client_secret_in_realm_yaml_has_a_mount_a_file_and_a_probe_overri
     assert any(CLIENT_SECRET_REFERENCE.fullmatch(c.get("secret", "")) for c in realm["clients"])
 
 
-@pytest.mark.parametrize("break_wiring", [drop_mount, drop_override, move_file])
+@pytest.mark.parametrize(
+    "break_wiring",
+    [drop_mount, drop_override, override_with_production_path, override_without_file, move_file],
+)
 def test_a_client_secret_without_its_mount_file_or_probe_override_is_named(break_wiring):
-    """#108 rule 5: the cross-check goes red when the wiring of a client secret is incomplete."""
+    """#108 T11 (rule 5): the cross-check goes red when a client secret's wiring is incomplete."""
     realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
     overlay = yaml.safe_load((REPOSITORY / "probe/keycloak/compose.probe.yaml").read_text())
     compose_file = copy.deepcopy(compose_document())

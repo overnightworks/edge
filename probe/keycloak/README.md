@@ -31,9 +31,9 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `does not answer` with Keycloak stopped. Proof 8 also asserts the two themes, the locales and
   the master's untouched theme and language. Proof 10 signs a member of `/apps/songmaker/admin` in
   to songmaker's client through 8081 with PKCE, its secret a scratch file the overlay mounts.
-  Callers of `hold` get that `songmaker` client and must not create their own.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
-  It seeds nothing: callers create their own clients and users through the admin API.
+  It seeds nothing beyond the realm's `songmaker` client, which callers must not create
+  themselves; they create their other clients and users through the admin API.
 
 ## `hold` contract
 

@@ -143,8 +143,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class LocalhostIsSecure(DefaultCookiePolicy):
-    """Sends Secure cookies to a loopback origin (http://localhost, or 8081 on 127.0.0.1), as
-    browsers do."""
+    """Sends Secure cookies to a loopback origin (http://localhost, or 8081 on 127.0.0.1). 8081
+    with `X-Forwarded-Proto: https` stands in for the https origin auth.hallucinai.de, where a
+    browser does send them."""
 
     def return_ok_secure(self, cookie: Cookie, request: Request) -> bool:
         return urlsplit(request.full_url).hostname in LOOPBACK_HOSTS or super().return_ok_secure(
@@ -226,7 +227,10 @@ def through_tunnel(
 def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
     """Follows an absolute URL Keycloak gave out on the public host, through the tunnel."""
     target = urlsplit(url)
-    expect(target.hostname == PUBLIC_HOST, f"{url} is not on {PUBLIC_HOST}")
+    expect(
+        target.scheme == "https" and target.hostname == PUBLIC_HOST,
+        f"{url} is not https on {PUBLIC_HOST}",
+    )
     return through_tunnel(method, urlunsplit(("", "", target.path, target.query, "")), **kwargs)
 
 
@@ -1352,9 +1356,10 @@ class Probe:
             f"a member of {SONGMAKER_ADMIN_GROUP} signs in to songmaker with PKCE and gets a code "
             f"at exactly {SONGMAKER_CALLBACK}, exchanged with the scratch secret for an ID token "
             f"with groups {groups}; no code challenge, a callback with a suffix, plain http, the "
-            "password grant and client_credentials are refused; the end-session page asks before "
-            f"logging out for {SONGMAKER_LOGIN} and refuses an unregistered address; the client "
-            "has no front- or back-channel logout, a base URL and shows in the console",
+            "password grant, client_credentials and the offline_access scope are refused; the "
+            f"end-session page asks before logging out for {SONGMAKER_LOGIN} and refuses an "
+            "unregistered address; the client has no front- or back-channel logout or optional "
+            "scope, a base URL and shows in the console",
         )
 
     def songmaker_authorization_query(self, **changes: str) -> str:
@@ -1432,6 +1437,7 @@ class Probe:
                 page.status == 400 and "Invalid parameter: redirect_uri" in page.text,
                 f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
             )
+        self.songmaker_refuses_offline_access()
         for grant in ({"grant_type": "client_credentials"}, self.songmaker_password_grant()):
             refused = through_tunnel(
                 "POST",
@@ -1443,6 +1449,20 @@ class Probe:
                 error == "unauthorized_client",
                 f"{grant['grant_type']} on songmaker answered {refused.status}",
             )
+
+    def songmaker_refuses_offline_access(self) -> None:
+        """Cell T13: no optional scope is attached, so no offline token can be asked for."""
+        challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
+        query = self.songmaker_authorization_query(scope="openid offline_access", **challenge)
+        refused = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
+        location = refused.headers.get("Location", "")
+        error = parse_qs(urlsplit(location).query)
+        expect(
+            refused.status == 302
+            and error.get("error") == ["invalid_scope"]
+            and "code" not in error,
+            f"scope offline_access answered {refused.status} with {error}: {page_message(refused)}",
+        )
 
     def songmaker_password_grant(self) -> dict[str, str]:
         return {
@@ -1483,6 +1503,7 @@ class Probe:
                 "frontchannelLogout": False,
                 "baseUrl": f"{SONGMAKER_ORIGIN}/",
                 "alwaysDisplayInConsole": True,
+                "optionalClientScopes": [],
             }.items()
             if client.get(key) != value
         }
