@@ -1,7 +1,0 @@
-claim_id = "4048c965e0f447bb80952023529a44f2"
-agent = "claude"
-role = "builder"
-base = "89af9ad2b8f193a0635b64ba0f5bdef1eee068ac"
-branch = "fix/keycloak-stays-off"
-scope = ["README.md", "fleet.yaml", "tests/test_keycloak_unit.py"]
-opened_commit = "e4369df9a23fab04b65232447e4d5b30cf98de50"
