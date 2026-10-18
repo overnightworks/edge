@@ -99,7 +99,9 @@ def install(
     with _exclusive(root):
         _remove_partials(root)
         if installed.exists():
-            return _verified_install(installed)
+            if _reports_pin(installed):
+                return installed
+            _discard(installed.parent)
         with _verified_download(root, release, fetch, max_bytes) as archive:
             _install_member(root, archive, release)
     return _verified_install(installed)
@@ -122,6 +124,22 @@ def _verified_install(installed: Path) -> Path:
     except TofuError as error:
         raise TofuError(f"{installed} is not the pinned tofu: {error}") from error
     return installed
+
+
+def _reports_pin(installed: Path) -> bool:
+    try:
+        require_pinned_version(installed, _version_environment())
+    except TofuError:
+        return False
+    return True
+
+
+def _discard(folder: Path) -> None:
+    """Move the folder under a partial name before removing it: a run killed meanwhile leaves a
+    leftover the next run cleans, never a half-removed `<version>`."""
+    aside = Path(tempfile.mkdtemp(dir=folder.parent, prefix=PARTIAL_PREFIX))
+    folder.rename(aside / folder.name)
+    shutil.rmtree(aside)
 
 
 def _version_environment() -> dict[str, str]:

@@ -86,6 +86,22 @@ def test_an_installed_pinned_binary_is_reused_without_the_network(root):
     assert again.urls == []
 
 
+def test_an_installed_binary_off_the_pin_is_replaced_by_the_verified_download(root):
+    """#101 rule 2 Download: a `<version>/tofu` that does not report the pin is replaced."""
+    archive = pinned_zip()
+    stale = root / tofu.pinned_version() / "tofu"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(FAKE_TOFU % b"0.0.1")
+    stale.chmod(0o755)
+    download = Download(archive)
+
+    installed = tofu_binary.install(root, release_of(archive), download)
+
+    assert download.urls == [URL]
+    assert installed.read_bytes() == FAKE_TOFU % tofu.pinned_version().encode()
+    assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
+
+
 def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
     """#101 T3: a sha mismatch names the URL and both shas, and nothing is installed."""
     archive = pinned_zip()
