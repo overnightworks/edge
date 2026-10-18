@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Keycloak go-live as one command (README "Keycloak go-live"): the operator's tool.
 
-Runs the runbook's steps 2-5 and 7 and stops for the two human parts, the browser (steps 6-7) and
+Runs the runbook's steps 2-6 and the end of step 7, asks for the operator's admin name and first
+password (step 6), and stops for the two human parts, the browser (TOTP and passkey, step 7) and
 Cloudflare (unnumbered). Every step checks its own done-state first, so a run after an interruption
 continues at the first unfinished step. No secret is printed: command output is captured and a
 failure shows one scrubbed line.
@@ -13,6 +14,7 @@ failure shows one scrubbed line.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import re
@@ -21,6 +23,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import warnings
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -60,6 +63,8 @@ PUBLIC_HOST = "auth.hallucinai.de"
 PUBLIC_REALM = "hallucinai"
 CONFIG_CLIENT = "config-cli"
 ADMIN_ROLE = "admin"
+ADMIN_REQUIRED_ACTIONS = ["CONFIGURE_TOTP", "webauthn-register"]
+FACTORS = {"otp": "TOTP credential", "webauthn": "passkey"}  # Keycloak's credential types
 NO_SUCH_VOLUME = "no such volume"  # docker's answer for a volume that is absent
 READY_TIMEOUT_SECONDS = 240
 LONG_COMMAND_SECONDS = 900
@@ -118,9 +123,14 @@ def fetch(
     *,
     headers: dict[str, str] | None = None,
     form: dict[str, str] | None = None,
+    json_body: object | None = None,
 ) -> Reply:
+    request_headers = dict(headers or {})
     data = urlencode(form).encode() if form is not None else None
-    request = Request(url, data=data, method=method, headers=headers or {})
+    if json_body is not None:
+        data = json.dumps(json_body).encode()
+        request_headers["Content-Type"] = "application/json"
+    request = Request(url, data=data, method=method, headers=request_headers)
     try:
         with urlopen(request, timeout=HTTP_SECONDS) as reply:
             return Reply(reply.status, reply.read())
@@ -149,6 +159,16 @@ def run_command(
         raise DockerDidNotAnswer(f"cannot run {command[0]}: {error.strerror}") from error
 
 
+def ask_without_echo(prompt: str, read: Callable[[str], str] = getpass.getpass) -> str:
+    """getpass, but never its fallback: without a terminal it would read the password echoed."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            return read(prompt)
+        except getpass.GetPassWarning as warning:
+            raise StepFailure("no terminal for the password") from warning
+
+
 def new_secret_value() -> str:
     return secrets.token_hex(32)
 
@@ -170,6 +190,8 @@ class Tools:
     run: Callable[..., subprocess.CompletedProcess[str]] = run_command
     fetch: Callable[..., Reply] = fetch
     ask: Callable[[str], str] = input
+    ask_hidden: Callable[[str], str] = ask_without_echo
+    default_user: Callable[[], str] = getpass.getuser
     say: Callable[[str], None] = print
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
@@ -191,6 +213,8 @@ class GoLive:
         self.tools = tools
         self.secrets_dir = secrets_dir
         self.marks = marks
+        self.typed_secrets: list[str] = []  # what the operator typed: scrubbed from every failure
+        self.created_admin: str | None = None  # the admin step 6 made in this run
 
     # --- the emergency switch (README "Keycloak go-live") ---------------------
 
@@ -319,7 +343,7 @@ class GoLive:
         return [value for value in values if value]
 
     def scrubbed(self, text: str) -> str:
-        for value in self.secret_values():
+        for value in [*self.secret_values(), *self.typed_secrets]:
             text = text.replace(value, "***")
         return text
 
@@ -433,12 +457,16 @@ class GoLive:
 
     # --- steps ----------------------------------------------------------------------------
 
+    @staticmethod
+    def typed(ask: Callable[[str], str], prompt: str) -> str:
+        try:
+            return ask(prompt)
+        except EOFError as error:
+            raise StepFailure("no answer on standard input") from error
+
     def ask_yes_no(self, question: str) -> bool:
         while True:
-            try:
-                answer = self.tools.ask(f"{question} [yes/no] ").strip().lower()
-            except EOFError as error:
-                raise StepFailure("no answer on standard input") from error
+            answer = self.typed(self.tools.ask, f"{question} [yes/no] ").strip().lower()
             if answer in YES + NO:
                 return answer in YES
 
@@ -527,13 +555,36 @@ class GoLive:
             self.compose_must("up", "-d", "--force-recreate", "socket-proxy", "traefik")
         self.wait_until(self.edge_is_ready, "the edge")
 
-    # --- step 7: retire the bootstrap -----------------------------------------------------
+    # --- the admin API ---------------------------------------------------------------------
 
-    def admin_call(self, token: str, method: str, path: str, realm: str = "master") -> object:
-        reply = self.tools.fetch(
-            method, f"{ADMIN_REALMS}/{realm}{path}", headers={"Authorization": f"Bearer {token}"}
+    def admin_reply(
+        self,
+        token: str,
+        method: str,
+        path: str,
+        *,
+        realm: str = "master",
+        json_body: object | None = None,
+    ) -> Reply:
+        return self.tools.fetch(
+            method,
+            f"{ADMIN_REALMS}/{realm}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            json_body=json_body,
         )
-        if reply.status not in (200, 204):
+
+    def admin_call(
+        self,
+        token: str,
+        method: str,
+        path: str,
+        *,
+        realm: str = "master",
+        json_body: object | None = None,
+        accepted: tuple[int, ...] = (200, 204),
+    ) -> object:
+        reply = self.admin_reply(token, method, path, realm=realm, json_body=json_body)
+        if reply.status not in accepted:
             raise StepFailure(f"the admin API answered {reply.status} to {method} {path}")
         return json.loads(reply.body) if reply.body else None
 
@@ -562,67 +613,156 @@ class GoLive:
             raise StepFailure(f"the {CONFIG_CLIENT} sign-in answered {reply.status}")
         return json.loads(reply.body)["access_token"]
 
-    def require_second_admin_with_otp(self, token: str) -> None:
+    def service_account_ids(self, token: str) -> set[str]:
+        """The ids of the master users that are a client's service account. Neither the role
+        listing nor the full user representation says so; only the client's own link does."""
+        clients = self.admin_call(token, "GET", "/clients?max=1000")
+        return {
+            self.admin_call(token, "GET", f"/clients/{client['id']}/service-account-user")["id"]
+            for client in clients
+            if client.get("serviceAccountsEnabled")
+        }
+
+    def admin_people(self, token: str) -> list[dict]:
+        """The enabled master users with the realm role admin who are people: not temp-admin and
+        no service account. Step 6 asks whether there is one, step 7 whether one has both
+        factors."""
         holders = self.admin_call(token, "GET", f"/roles/{ADMIN_ROLE}/users?max=1000")
-        people = [
+        machines = self.service_account_ids(token)
+        return [
             user
             for user in holders
             if user["username"] != BOOTSTRAP_ADMIN
-            and not user.get("serviceAccountClientId")
+            and user["id"] not in machines
             and user["enabled"]
         ]
+
+    def user_named(self, token: str, username: str) -> list[dict]:
+        return self.admin_call(token, "GET", f"/users?username={quote(username)}&exact=true")
+
+    # --- step 6: the operator's admin -----------------------------------------------------
+
+    def admin_exists(self) -> bool:
+        return self.bootstrap_retired() or bool(self.admin_people(self.admin_token()))
+
+    def ask_admin_name(self) -> str:
+        default = self.tools.default_user()
+        while True:
+            answer = self.typed(self.tools.ask, f"User name of your admin [{default}]: ")
+            name = default if answer == "" else answer.strip()
+            if name:
+                return name.lower()
+            self.tools.say("The user name must not be empty.")
+
+    def ask_admin_password(self) -> str:
+        while True:
+            first = self.typed(self.tools.ask_hidden, "First password for your admin: ")
+            again = self.typed(self.tools.ask_hidden, "The same password again: ")
+            if first and first == again:
+                self.typed_secrets.append(first)
+                return first
+            self.tools.say("The two passwords differ or are empty; type them again.")
+
+    def create_admin(self) -> None:
+        username = self.ask_admin_name()
+        password = self.ask_admin_password()
+        token = self.admin_token()
+        created = self.admin_reply(
+            token,
+            "POST",
+            "/users",
+            json_body={
+                "username": username,
+                "enabled": True,
+                "requiredActions": ADMIN_REQUIRED_ACTIONS,
+                "credentials": [{"type": "password", "value": password, "temporary": False}],
+            },
+        )
+        if created.status == 409:
+            raise StepFailure(
+                f"the user {username} exists already; choose another name, or delete it in the "
+                f"console at {ADMIN_URL}/admin/"
+            )
+        if created.status != 201:
+            raise StepFailure(f"the admin API answered {created.status} to POST /users")
+        try:
+            self.map_admin_role(token, username)
+        except BaseException:
+            self.delete_unfinished_admin(token, username)
+            raise
+        self.created_admin = username
+
+    def map_admin_role(self, token: str, username: str) -> None:
+        user_id = self.user_named(token, username)[0]["id"]
+        role = self.admin_call(token, "GET", f"/roles/{ADMIN_ROLE}")
+        self.admin_call(
+            token, "POST", f"/users/{user_id}/role-mappings/realm", json_body=[role],
+            accepted=(204,),
+        )  # fmt: skip
+
+    def delete_unfinished_admin(self, token: str, username: str) -> None:
+        """The id is looked up again: the failure may have come before it was known."""
+        try:
+            for user in self.user_named(token, username):
+                self.admin_call(token, "DELETE", f"/users/{user['id']}")
+        except StepFailure as refused:
+            raise StepFailure(
+                f"the role {ADMIN_ROLE} could not be set and {username} could not be deleted "
+                f"again; delete it in the console at {ADMIN_URL}/admin/"
+            ) from refused
+
+    # --- step 7: retire the bootstrap -----------------------------------------------------
+
+    def require_second_admin_with_both_factors(self, token: str) -> None:
+        people = self.admin_people(token)
         if not people:
             raise StepFailure(
                 f"refusing to retire {BOOTSTRAP_ADMIN}: no other enabled master user has the "
                 f"realm role {ADMIN_ROLE}"
             )
+        lacking = []
         for person in people:
             credentials = self.admin_call(token, "GET", f"/users/{person['id']}/credentials")
-            if any(credential["type"] == "otp" for credential in credentials):
+            types = {credential["type"] for credential in credentials}
+            missing = [name for kind, name in FACTORS.items() if kind not in types]
+            if not missing:
                 return
-        names = ", ".join(person["username"] for person in people)
-        raise StepFailure(
-            f"refusing to retire {BOOTSTRAP_ADMIN}: {names} has the role {ADMIN_ROLE} "
-            "but no TOTP credential"
-        )
+            lacking.append(
+                f"{person['username']} has the role {ADMIN_ROLE} but no {' and no '.join(missing)}"
+            )
+        raise StepFailure(f"refusing to retire {BOOTSTRAP_ADMIN}: {'; '.join(lacking)}")
 
     def bootstrap_retired(self) -> bool:
         """Step 7 ran: the password file is gone and temp-admin no longer exists."""
         if self.bootstrap_present():
             return False
-        found = self.admin_call(
-            self.admin_token(), "GET", f"/users?username={quote(BOOTSTRAP_ADMIN)}&exact=true"
-        )
-        return not found
+        return not self.user_named(self.admin_token(), BOOTSTRAP_ADMIN)
 
     def retire_bootstrap(self) -> None:
-        if self.bootstrap_present():
-            start = (
-                f"open {ADMIN_URL}/admin/ and sign in as {BOOTSTRAP_ADMIN} (password: the file "
-                f"{self.secrets_dir / BOOTSTRAP_SECRET}; enrol TOTP when asked). Create"
+        if self.created_admin:
+            who = (
+                f"as {self.created_admin} with the password you typed; Keycloak asks for a TOTP "
+                "code to enrol and for a passkey to add"
             )
         else:
-            start = (
-                f"the {BOOTSTRAP_SECRET} file is gone, so only the second-admin check and the "
-                f"deletion of {BOOTSTRAP_ADMIN} remain. Unless your own admin is ready, open "
-                f"{ADMIN_URL}/admin/ and create"
-            )
+            people = self.admin_people(self.admin_token())
+            names = ", ".join(person["username"] for person in people)
+            who = f"as {names or 'your admin'} and enrol TOTP and a passkey if the account has none"
+        gone = (
+            ""
+            if self.bootstrap_present()
+            else f"The {BOOTSTRAP_SECRET} file is gone, so only the check of both factors and "
+            f"the deletion of {BOOTSTRAP_ADMIN} remain. "
+        )
         self.tools.say(
-            f"Your part, in the browser: {start} your own admin in the master realm with the "
-            f"realm role {ADMIN_ROLE}, sign out, sign in as that admin, enrol TOTP and add a "
-            "passkey. It worked when that second sign-in asked for the TOTP code and the "
-            "account page lists a passkey."
+            f"{gone}Your part, in the browser: open {ADMIN_URL}/admin/ and sign in {who}. Then "
+            "sign out and sign in once more. It worked when that second sign-in asked for the "
+            "TOTP code and the account page lists a passkey. Both must sit on the same person."
         )
-        try:
-            self.tools.ask("Press Enter when your admin has TOTP and a passkey. ")
-        except EOFError as error:
-            raise StepFailure("no answer on standard input") from error
-        token = self.admin_token()
-        self.require_second_admin_with_otp(token)
-        found = self.admin_call(
-            token, "GET", f"/users?username={quote(BOOTSTRAP_ADMIN)}&exact=true"
-        )
-        for user in found:
+        self.typed(self.tools.ask, "Press Enter when your admin has TOTP and a passkey. ")
+        token = self.admin_token()  # the browser part outlives a master token (60 s)
+        self.require_second_admin_with_both_factors(token)
+        for user in self.user_named(token, BOOTSTRAP_ADMIN):
             self.admin_call(token, "DELETE", f"/users/{user['id']}")
         (self.secrets_dir / BOOTSTRAP_SECRET).unlink(missing_ok=True)
 
@@ -695,12 +835,23 @@ class GoLive:
                 "both doors, then wait until it answers.",
             ),
             Step(
-                "6-7",
+                "6",
+                "admin created",
+                self.admin_exists,
+                self.create_admin,
+                "You type a user name and a first password (hidden, twice); the script creates "
+                "your master admin with the realm role admin. The password is permanent and goes "
+                "only to Keycloak on this PC. In the browser you then only enrol TOTP and a "
+                "passkey.",
+            ),
+            Step(
+                "7",
                 "bootstrap retired",
                 self.bootstrap_retired,
                 self.retire_bootstrap,
-                "You create your own admin in the browser. Only when that admin has a TOTP "
-                "credential does the script delete the temporary one and its password file.",
+                "In the browser you sign in as your admin, enrol TOTP and add a passkey. Only "
+                "when one admin has both does the script delete the temporary admin and its "
+                "password file.",
             ),
         ]
 

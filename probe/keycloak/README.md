@@ -17,7 +17,7 @@ its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown s
 proof window is bounded by that cap. A cap reached before `READY`, or a teardown that leaves the
 stack behind, ends with `PROBE FAILED` and exit 1.
 
-- `run` (the default) proves proofs 1-10 and ends with `PROBE PASSED: proofs 1-10 hold`. Proof 1
+- `run` (the default) proves proofs 1-11 and ends with `PROBE PASSED: proofs 1-11 hold`. Proof 1
   fetches the login and account pages through 8081 and holds when both link a 200 resource under
   `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
   `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
@@ -30,7 +30,13 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   a signal it takes as the container begins to run may be lost, and the observe completes), and
   `does not answer` with Keycloak stopped. Proof 8 also asserts the two themes, the locales and
   the master's untouched theme and language. Proof 10 signs a member of `/apps/songmaker/admin` in
-  to songmaker's client through 8081 with PKCE, its secret a scratch file the overlay mounts.
+  to songmaker's client through 8081 with PKCE, its secret a scratch file the overlay mounts. Proof 11 (#129) loads
+  `keycloak/go-live` and runs only its step 6 (never `run()`, whose compose calls would reach the
+  operator's project): the admin it creates holds `admin` with `CONFIGURE_TOTP` and
+  `webauthn-register` pending (both enabled in master), is refused a password grant without TOTP,
+  meets the TOTP enrolment and then the passkey page at the browser sign-in, and a second run asks
+  nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
+  are off. Passkey registration itself is not driven.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker` client, which callers must not create
   themselves; they create their other clients and users through the admin API.

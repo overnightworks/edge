@@ -19,6 +19,8 @@ import base64
 import grp
 import hashlib
 import hmac
+import importlib.machinery
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +38,7 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy, parse_ns_headers
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -106,6 +109,8 @@ ESCAPING_GROUP = "probe\x1b[31mconsole\nname"
 OBSERVER_SECRET = "/run/secrets/config_cli_secret"
 OBSERVER_SCRIPT = "/opt/observer/observe.py"
 OBSERVER_START_SECONDS = 60
+GO_LIVE_ADMIN = "probe-owner"
+ADMIN_REQUIRED_ACTIONS = ("CONFIGURE_TOTP", "webauthn-register")
 
 
 class ProbeFailure(Exception):
@@ -638,6 +643,25 @@ def form_with(page: Response, field_name: str) -> tuple[str, dict[str, str]]:
     raise ProbeFailure(f"page {page.status} has no form with a '{field_name}' field")
 
 
+def has_field(page: Response, field_name: str) -> bool:
+    collector = FormCollector()
+    collector.feed(page.text)
+    return any(field_name in inputs for _action, inputs in collector.forms)
+
+
+def load_go_live() -> ModuleType:
+    """keycloak/go-live as a module (it has no .py suffix), as the unit tests load it."""
+    loader = importlib.machinery.SourceFileLoader(
+        "keycloak_go_live", str(REPO / "keycloak/go-live")
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
+    loader.exec_module(module)
+    return module
+
+
 def page_message(page: Response) -> str:
     """The feedback a Keycloak page shows the user, for a failure message."""
     found = re.search(
@@ -768,6 +792,7 @@ class Probe:
         member_id = self.seed_member(admin)
         self.apply_removes_what_the_observer_names(admin, member_id)
         self.public_issuer_and_paths()
+        self.go_live_creates_the_admin(admin)
         self.admin_console_only_on_loopback(admin)
         self.changed_yaml_applies(admin, member_id)
         rp_secret = self.create_probe_rp(admin)
@@ -1087,15 +1112,12 @@ class Probe:
         self.say(f"{path} Cache-Control: {resource.headers.get('Cache-Control')}")
         return path
 
-    def admin_console_login(
-        self, holder: str, username: str, password: str, second_factor: Any
-    ) -> dict[str, Any]:
-        """Signs in to the admin console like a browser does and returns the token response.
-
-        `second_factor(page)` answers the page that follows the password: it returns the form
-        action and the fields to post. The PKCE verifier, the authorization code and the session
-        cookies are credentials as well, so proof 7 looks for them too.
-        """
+    def admin_console_password_step(
+        self, holder: str, username: str, password: str
+    ) -> tuple[OpenerDirector, str, Response]:
+        """Opens the admin console's login and posts the password like a browser does; returns the
+        session's opener, the PKCE verifier and the page that follows the password. The verifier
+        and the session cookies are credentials as well, so proof 7 looks for them too."""
         opener = new_opener(
             ReceivedCookies(lambda name, value: self.keep_secret(f"{holder} {name}", value))
         )
@@ -1129,6 +1151,17 @@ class Probe:
             factor_page.status == 200,
             f"password step answered {factor_page.status}: {page_message(factor_page)}",
         )
+        return opener, verifier, factor_page
+
+    def admin_console_login(
+        self, holder: str, username: str, password: str, second_factor: Any
+    ) -> dict[str, Any]:
+        """Signs in to the admin console like a browser does and returns the token response.
+
+        `second_factor(page)` answers the page that follows the password: it returns the form
+        action and the fields to post. The authorization code is a credential too.
+        """
+        opener, verifier, factor_page = self.admin_console_password_step(holder, username, password)
         action, fields = second_factor(factor_page)
         done = within_keycloak(
             http("POST", action, form=fields, opener=opener),
@@ -1153,6 +1186,139 @@ class Probe:
         return self.tokens_from(
             holder, http("POST", self.stack.master_token_url, form=token_form, opener=opener)
         )
+
+    def go_live_creates_the_admin(self, admin: Admin) -> None:
+        """Proof 11 (#129): go-live's admin step, driven as its own steps (never `run()`, whose
+        compose calls would reach the operator's project), makes an admin a real Keycloak accepts.
+        Runs before proof 2b, whose probe-admin would make the step's done-state true."""
+        listed = admin.get("/master/authentication/required-actions")
+        enabled = {action["alias"]: action["enabled"] for action in listed}
+        expect(
+            all(enabled.get(alias) is True for alias in ADMIN_REQUIRED_ACTIONS),
+            f"required actions enabled in master: "
+            f"{ {alias: enabled.get(alias) for alias in ADMIN_REQUIRED_ACTIONS} }",
+        )
+        password = self.keep_secret("go-live admin password", secrets.token_urlsafe(16))
+        step = self.go_live_admin_step(password, typed_answers=True)
+        expect(
+            not step.is_done(),
+            "go-live's admin step is done before it ran: config-cli's service account is no admin",
+        )
+        step.do()
+        expect(step.is_done(), "go-live's admin step is not done after it ran")
+
+        user = admin.find(
+            f"/master/users?username={GO_LIVE_ADMIN}&exact=true", "username", GO_LIVE_ADMIN
+        )
+        roles = [
+            role["name"] for role in admin.get(f"/master/users/{user['id']}/role-mappings/realm")
+        ]
+        expect(
+            user["enabled"] and "admin" in roles,
+            f"go-live's admin: enabled {user['enabled']}, roles {roles}",
+        )
+        expect(
+            sorted(user["requiredActions"]) == sorted(ADMIN_REQUIRED_ACTIONS),
+            f"go-live's admin has the required actions {user['requiredActions']}",
+        )
+        grant = http(
+            "POST",
+            self.stack.master_token_url,
+            form={
+                "grant_type": "password",
+                "client_id": "admin-cli",
+                "username": GO_LIVE_ADMIN,
+                "password": password,
+            },
+        )
+        expect(
+            grant.status == 401 and b"access_token" not in grant.body,
+            f"a password grant of go-live's admin without TOTP answered {grant.status}",
+        )
+
+        opener, _verifier, first_page = self.admin_console_password_step(
+            "go-live admin console", GO_LIVE_ADMIN, password
+        )
+        action, fields = form_with(first_page, "totpSecret")
+        self.keep_secret("go-live admin TOTP seed", fields["totpSecret"])
+        after_totp = within_keycloak(
+            http(
+                "POST",
+                action,
+                form=fields | {"totp": totp(fields["totpSecret"]), "userLabel": "probe"},
+                opener=opener,
+            ),
+            opener,
+            self.stack.admin_console_redirect,
+        )
+        expect(
+            after_totp.status == 200 and has_field(after_totp, "attestationObject"),
+            f"after the TOTP the next page was not the passkey page: {after_totp.status}, "
+            f"{page_message(after_totp)}",
+        )
+        expect(
+            not has_field(after_totp, "password-new"),
+            "the sign-in asks for a new password although the password is permanent",
+        )
+
+        rerun = self.go_live_admin_step(password, typed_answers=False)
+        expect(rerun.is_done(), "go-live's admin step is not done on its second run")
+        again = self.admin_console_password_step(
+            "go-live admin second console", GO_LIVE_ADMIN, password
+        )[2]
+        expect(
+            not has_field(again, "password"), "the typed password is refused on the second sign-in"
+        )
+        expect(
+            len(admin.get(f"/master/users?username={GO_LIVE_ADMIN}")) == 1,
+            "the second run made another user",
+        )
+
+        master = admin.get("/master")
+        expect(
+            not master.get("adminEventsEnabled") and not master.get("adminEventsDetailsEnabled"),
+            "master stores admin events, so the create body could be kept",
+        )
+        stored = json.dumps(admin.get("/master/admin-events?first=0&max=100000"))
+        expect(password not in stored, "the typed password is in master's admin events")
+        self.held(
+            "11",
+            f"go-live's admin step (step 6, driven on its own) created {GO_LIVE_ADMIN} with the "
+            "realm role admin and CONFIGURE_TOTP and webauthn-register pending (both enabled in "
+            "master); the password grant without TOTP is refused (401); the browser sign-in with "
+            "the typed password shows the TOTP enrolment, then the passkey page and no password "
+            "update; a second run asks nothing, adds no user and the password still signs in; "
+            "master's admin events are off and hold no password. Passkey registration itself is "
+            "not driven (no authenticator): the operator's go-live is its proof",
+        )
+
+    def go_live_admin_step(self, password: str, *, typed_answers: bool) -> Any:
+        """Step 6 of keycloak/go-live over the probe's stack. Its `run` raises on any call: no
+        compose command may run, because go-live's compose targets the operator's project. A
+        step that must not ask makes any prompt a failure."""
+        go_live = load_go_live()
+
+        def no_command(*_args: object, **_kwargs: object) -> object:
+            raise ProbeFailure("go-live's admin step ran a command")
+
+        def answer(prompt: str) -> str:
+            expect(typed_answers, f"go-live's admin step asked: {prompt}")
+            return ""
+
+        def answer_hidden(prompt: str) -> str:
+            expect(typed_answers, "go-live's admin step asked for a password")
+            return password
+
+        tools = go_live.Tools(
+            run=no_command,
+            ask=answer,
+            ask_hidden=answer_hidden,
+            default_user=lambda: GO_LIVE_ADMIN,
+            say=self.say,
+        )
+        marks = go_live.switches.Switches(self.stack.scratch / "switches")
+        steps = go_live.GoLive(tools, self.stack.secrets_dir, marks).steps()
+        return next(step for step in steps if step.number == "6")
 
     def admin_console_only_on_loopback(self, admin: Admin) -> None:
         master_discovery = http(
@@ -1645,7 +1811,7 @@ READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 # Per mode: the Probe method that runs it and the line that reports it ended well.
 MODES = {
-    "run": ("run", "PROBE PASSED: proofs 1-10 hold"),
+    "run": ("run", "PROBE PASSED: proofs 1-11 hold"),
     "hold": ("hold", "HOLD ENDED"),
 }
 
