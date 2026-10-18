@@ -90,6 +90,16 @@ def test_an_empty_root_gets_the_verified_binary_at_0755(root):
     assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
 
 
+def test_a_relative_root_is_installed_and_verified_where_it_points(tmp_path, monkeypatch):
+    """#101 rule 2: `ensure(root)` takes a root relative to the caller's working directory."""
+    archive = pinned_zip()
+    monkeypatch.chdir(tmp_path)
+
+    installed = tofu_binary.install(Path("opentofu"), release_of(archive), Download(archive))
+
+    assert installed == tmp_path / "opentofu" / tofu.pinned_version() / "tofu"
+
+
 def test_an_installed_pinned_binary_is_reused_without_the_network(root):
     """#101 T2: an installed binary reporting the pin is returned with no network call."""
     archive = pinned_zip()

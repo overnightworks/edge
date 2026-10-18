@@ -94,6 +94,7 @@ def ensure(root: Path, fetch: Fetch = fetch_https) -> Path:
 def install(
     root: Path, release: Release, fetch: Fetch, *, max_bytes: int = MAX_DOWNLOAD_BYTES
 ) -> Path:
+    root = root.resolve()  # tofu runs with its own working directory, so the path must be absolute
     root.mkdir(parents=True, exist_ok=True)
     installed = root / release.version / _MEMBER
     with _exclusive(root):
