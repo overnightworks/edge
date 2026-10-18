@@ -548,7 +548,7 @@ class AdminApi(BaseHTTPRequestHandler):
 @pytest.fixture
 def keycloak() -> Iterator[FakeKeycloak]:
     server = FakeKeycloak()
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
     yield server
     server.shutdown()
     server.server_close()

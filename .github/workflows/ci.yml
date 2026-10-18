@@ -66,6 +66,7 @@ jobs:
           if docker compose config --services | grep -xE 'keycloak|keycloak-db'; then exit 1; fi
           docker compose --profile keycloak config --services | grep -x keycloak
           docker compose --profile keycloak config --services | grep -x keycloak-db
+          docker compose --profile keycloak --profile apply config --services | grep -x realm-observer
           docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --profile keycloak --profile apply config -q
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
@@ -151,6 +152,38 @@ jobs:
               sys.exit("step-ca does not read its password from /run/secrets")
           if "./step-ca/ca.json:/etc/step-ca/ca.json:ro" not in step_ca["volumes"]:
               sys.exit("step-ca/ca.json is not mounted read-only")
+          PY
+
+      # The realm observer holds the config-cli secret and reads both realms (#66), so its door
+      # is pinned here: the probe's python image, hardening, the keycloak network alone, no
+      # depends_on, the secret as a file and observe.py mounted read-only.
+      - name: realm-observer is pinned like the probe, hardened and starts nothing
+        run: |
+          python3 - <<'PY'
+          import re, sys, yaml
+          observer = yaml.safe_load(open("compose.yaml"))["services"]["realm-observer"]
+          probe_rp = yaml.safe_load(open("probe/keycloak/compose.probe.yaml"))["services"]["probe-rp"]
+          if not re.search(r"@sha256:[0-9a-f]{64}$", observer["image"]):
+              sys.exit("the realm-observer image is not pinned by digest")
+          if observer["image"] != probe_rp["image"]:
+              sys.exit(f"realm-observer {observer['image']} is not the probe's {probe_rp['image']}")
+          hardening = (observer.get("user"), observer.get("read_only"), observer.get("cap_drop"))
+          if hardening != ("65534:65534", True, ["ALL"]):
+              sys.exit(f"realm-observer is not 65534, read_only, cap_drop ALL: {hardening}")
+          if observer.get("security_opt") != ["no-new-privileges:true"] or "cap_add" in observer:
+              sys.exit("realm-observer is not exactly no-new-privileges without cap_add")
+          if observer.get("networks") != ["keycloak"] or "network_mode" in observer or "ports" in observer:
+              sys.exit(f"realm-observer is not on keycloak alone without ports: {observer.get('networks')}")
+          if observer.get("profiles") != ["apply"] or "depends_on" in observer:
+              sys.exit("realm-observer is not in the apply profile alone, or depends on a service")
+          if observer.get("secrets") != [{"source": "keycloak_config_cli_secret", "target": "config_cli_secret"}]:
+              sys.exit(f"realm-observer's secret is not the config-cli secret file: {observer.get('secrets')}")
+          if observer.get("volumes") != ["./src/edge/realm/observe.py:/opt/observer/observe.py:ro"]:
+              sys.exit(f"realm-observer mounts more than observe.py read-only: {observer.get('volumes')}")
+          if observer.get("environment") != {"PYTHONDONTWRITEBYTECODE": "1"}:
+              sys.exit(f"realm-observer's environment is not exactly PYTHONDONTWRITEBYTECODE: {observer.get('environment')}")
+          if observer["entrypoint"][:3] != ["python", "-I", "-B"]:
+              sys.exit(f"realm-observer does not run python -I -B: {observer['entrypoint']}")
           PY
 
       # traefik-mcp has no host listener: it sits on the three internal MCP networks and nowhere
