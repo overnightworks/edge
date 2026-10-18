@@ -20,7 +20,7 @@ is made there, never here) and `--check` must then pass before a fresh plan is s
 emergency switch (`edge stop`) or a barrier a stop left is never started and its switch is never
 cleared here: only `edge start` ends it.
 
-Before any of that it guards, in this order, each refusing with its own line and nothing else
+Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
 the live compose project to that tree (#79, exit 2); its `.env` (exit 2); `apply.lock` in the state
 directory, held non-blocking for the whole run, so a second apply is refused (exit 1) while
@@ -401,6 +401,9 @@ def _take_apply_lock(state_directory: Path) -> int | None:
     except BlockingIOError:
         os.close(descriptor)
         return None
+    except BaseException:
+        os.close(descriptor)
+        raise
     return descriptor
 
 

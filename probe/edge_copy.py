@@ -19,7 +19,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-from edge import checkout
+from edge import checkout, compose
 
 APPLY_SECONDS = 600
 DISCARD_OUTPUT = "/dev/null"
@@ -81,8 +81,8 @@ def publish(copy: Path, message: str) -> None:
 def git(tree: Path, *arguments: str) -> None:
     """Git through edge's own isolated runner: no hook, no global config, no prompt."""
     result = checkout.run_git(tree, arguments, checkout.Profile.LOCAL)
-    tail = result.stderr.decode(errors="replace").strip().splitlines()
-    expect(result.returncode == 0, f"git {arguments[0]} exited {result.returncode}: {tail[-1:]}")
+    tail = compose.last_line(result.stderr.decode("utf-8", "backslashreplace"))
+    expect(result.returncode == 0, f"git {arguments[0]} exited {result.returncode}: {tail}")
 
 
 def run_edge(

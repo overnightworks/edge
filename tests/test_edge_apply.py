@@ -491,7 +491,7 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 @pytest.fixture
 def switch(
     repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
-    scripted_git,
+    scripted_git, monkeypatch,
 ):  # fmt: skip
     """Run `edge apply --closed` from the live checkout, a clean `main` (or from `tree`, with
     `git`); the operator types `yes` at a terminal unless told otherwise."""
@@ -508,7 +508,7 @@ def switch(
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
-            sys.stdin = io.StringIO(f"{answer}\n")
+            monkeypatch.setattr(sys, "stdin", io.StringIO(f"{answer}\n"))
         tree = tree or repository
         exit_code = apply.apply_closed(
             state,
@@ -1360,7 +1360,8 @@ def test_a_setup_child_that_outlives_the_apply_leaves_the_lock_free(
         assert exit_code == 0
         assert apply_lock_is_free(state)
     finally:
-        os.kill(int(pid_file.read_text()), signal.SIGTERM)
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
 
 
 GUARD_LINES = (

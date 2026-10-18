@@ -94,13 +94,13 @@ class Git:
             return None
         reference = _text(result.stdout).strip()
         if not reference.startswith(_BRANCH_PREFIX):
-            raise GitError(f"`git symbolic-ref` answered {compose.printable(reference)!r}")
+            raise GitError(f"`git symbolic-ref` answered '{compose.printable(reference)}'")
         return reference.removeprefix(_BRANCH_PREFIX)
 
     def short_head(self) -> str:
         head = _text(self._call(["rev-parse", "--short", "HEAD"]).stdout).strip()
         if not head or not all(digit in "0123456789abcdef" for digit in head):
-            raise GitError(f"`git rev-parse` answered {compose.printable(head)!r}")
+            raise GitError(f"`git rev-parse` answered '{compose.printable(head)}'")
         return head
 
     def has_commit(self) -> bool:
@@ -145,7 +145,7 @@ def _porcelain_paths(output: bytes) -> list[str]:
     paths = []
     for entry in entries:
         if len(entry) < 4 or entry[2:3] != b" ":
-            raise GitError(f"`git status` answered {compose.printable(_text(entry))!r}")
+            raise GitError(f"`git status` answered '{compose.printable(_text(entry))}'")
         paths.append(entry[3:])
         if {entry[0], entry[1]} & set(b"RC"):
             if (source := next(entries, None)) is None:
