@@ -1,30 +1,33 @@
-"""`home next`: what is needed from the operator right now, one numbered step each, with its exact command.
+"""`home next`: what only the operator can do right now, one numbered step each, with its exact command.
 
 It only reads, through the owners that decide each fact: the plan of `home setup`, the view of `home secrets`
-(presence by `stat`, never a value), the hook check and the dry run of `home tidy`. It changes nothing, asks for
-no password and needs no terminal, so agents may run it. A source it cannot read becomes one line, and the
-other sources' steps still show. Exit code: always 0, because it is a view, not a check.
+(presence by `stat`, never a value), the hook check and the dry run of `home tidy`. Each rule's owner says who
+closes its findings: a step for the operator, or bookkeeping an agent sorts in, which one closing line counts.
+It changes nothing, asks for no password and needs no terminal, so agents may run it. A source it cannot read
+becomes one line, and the other sources' steps still show. Exit code: always 0, because it is a view, not a check.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Iterator
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from home_tools import hook_check, secrets_setup, secrets_view, setup, tidy_home
 from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.tidy_home import Config, Layout
+from home_tools.tidy_home import ClosedBy, Config, Layout, Tally
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
 
 ANY_TERMINAL = "beliebiges Terminal"
+# Claude Code's `!` is no terminal either, so a command that refuses without one names the operator's own window.
+OWN_TERMINAL = "eigenes Terminalfenster"
 BY_HAND = "von Hand"
-NOTHING_TO_DO = "Nichts zu tun."
-NOTHING_ELSE_TO_DO = "Sonst nichts zu tun."
+BOOKKEEPING_LINE = "Außerdem zum Einsortieren: {counts}. Das macht ein Agent: sag „räum home auf“."
 UNREADABLE = "konnte {source} nicht lesen; den Fehler zeigt: {shows_error}"
 # What a source may fail on: a file it cannot read, an invalid manifest or configuration, a tool that will not run.
 SOURCE_FAILURES = (OSError, ValueError, hook_check.HookCheckUnavailable)
@@ -39,9 +42,17 @@ class OperatorStep:
 
 
 @dataclass(frozen=True)
+class Bookkeeping:
+    """How many findings of one kind an agent sorts in; it names no path."""
+
+    tally: Tally
+    count: int
+
+
+@dataclass(frozen=True)
 class Source:
     name: str
-    steps: Callable[[Layout, Ports], Iterator[OperatorStep]]
+    steps: Callable[[Layout, Ports], Iterator[OperatorStep | Bookkeeping]]
     shows_error: str
 
 
@@ -66,7 +77,8 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
     by_hand = [entry for entry in missing if not entry.written_by_setup]
     if guided:
         said = [*map(secrets_setup.stored_line, guided), f"zuletzt {secrets_setup.next_line([], by_hand, [])}"]
-        yield OperatorStep("home secrets --setup", ANY_TERMINAL, "; ".join(said))
+        where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
+        yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
         yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} vorhanden")
 
@@ -88,14 +100,27 @@ def _by_hand_step(finding: SecretFinding, entries: dict[str, SecretEntry]) -> Op
     return OperatorStep(f"{secrets_view.places(entries[finding.subject])}: {finding.recommendation}", BY_HAND, _cleared(finding))
 
 
-def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
-    """Every finding of the view is a step: its fix, the command its rule names, or else by hand; so none is left unsaid."""
+def _bookkeeping(kinds_in_order: Iterable[Tally | None], found: Iterable[tuple[Tally | None, int]]) -> Iterator[Bookkeeping]:
+    """One count per kind that has findings, in the owner's fixed order of its rules; each finding adds what it stands for."""
+    counts: Counter[Tally | None] = Counter()
+    for tally, count in found:
+        counts[tally] += count
+    for tally in kinds_in_order:
+        if tally is not None and counts[tally]:
+            yield Bookkeeping(tally, counts[tally])
+
+
+def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkeeping]:
+    """Every operator finding of the view is a step: its fix, the command its rule names, or else by hand; the rest is counted."""
     view, _report = secrets_view.inspect(layout, ports.probe, ports.now)
     entries = {status.entry.name: status.entry for status in view.statuses}
     fixable: list[SecretFinding] = []
     without_fix: dict[FindingRule, list[SecretFinding]] = {}
+    bookkeeping: list[SecretFinding] = []
     for finding in view.findings:
-        if finding.fix:
+        if finding.rule.closed_by is ClosedBy.BOOKKEEPING:
+            bookkeeping.append(finding)
+        elif finding.fix:
             fixable.append(finding)
         else:
             without_fix.setdefault(finding.rule, []).append(finding)
@@ -111,6 +136,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
         yield OperatorStep(entry.revoke_url, f"Browser, {entry.name} widerrufen", "das Token steht dort nicht mehr")
     for findings in without_fix.values():
         yield from (_by_hand_step(finding, entries) for finding in findings)
+    yield from _bookkeeping((rule.tally for rule in FindingRule), ((finding.rule.tally, 1) for finding in bookkeeping))
 
 
 def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
@@ -118,21 +144,19 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
         yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, f"home check meldet {finding.rule} für {finding.subject} nicht mehr")
 
 
-def _tidy_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
-    """The clean findings are one `home tidy --apply`; every audit finding is judged by hand, as its recommendation says.
+def _tidy_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkeeping]:
+    """The clean findings are one `home tidy --apply`; every audit rule is bookkeeping, so its findings are counted.
 
-    What `--apply` removes takes its audit findings with it, so those are no step of their own. Only home tidy reads the
-    config here, so an invalid one makes this source unreadable, and `home tidy` shows its error.
+    What `--apply` removes takes its audit findings with it, so those are neither a step nor counted. Only home tidy reads
+    the config here, so an invalid one makes this source unreadable, and `home tidy` shows its error.
     """
     findings, _report = tidy_home.dry_run(layout, ports.now, tidy_home.load_config(layout).tidy, ports.run)
     if findings.clean:
         yield OperatorStep("home tidy --apply", ANY_TERMINAL, tidy_home.mode_summary(findings, apply=True))
     cleaned = {finding.subject for finding in findings.clean}
-    for finding in findings.audit:
-        if finding.subject in cleaned:
-            continue
-        subject = tidy_home.relative_to_home(finding.subject, layout.home)
-        yield OperatorStep(f"{subject}: {finding.recommendation}", BY_HAND, f"home check meldet {finding.rule} für {subject} nicht mehr")
+    left = [(finding, tidy_home.rule_of(finding)) for finding in findings.audit if finding.subject not in cleaned]
+    bookkeeping = ((rule.tally, finding.count) for finding, rule in left if rule.closed_by is ClosedBy.BOOKKEEPING)
+    yield from _bookkeeping((rule.tally for rule in tidy_home.ALL_RULES), bookkeeping)
 
 
 # Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit, tidying only frees space.
@@ -148,21 +172,26 @@ SOURCES = (
 class Plan:
     steps: tuple[OperatorStep, ...]
     unreadable: tuple[Source, ...]
+    bookkeeping: tuple[Bookkeeping, ...] = ()
 
 
 def collect(layout: Layout, ports: Ports) -> Plan:
-    """Every source's steps in order, each command once; a source that fails is named instead."""
+    """Every source's steps in order, each command once, and its bookkeeping counts; a source that fails is named instead."""
     steps: dict[str, OperatorStep] = {}
     unreadable: list[Source] = []
+    bookkeeping: list[Bookkeeping] = []
     for source in SOURCES:
         try:
             found = list(source.steps(layout, ports))
         except SOURCE_FAILURES:
             unreadable.append(source)
             continue
-        for step in found:
-            steps.setdefault(step.command, step)
-    return Plan(tuple(steps.values()), tuple(unreadable))
+        for item in found:
+            if isinstance(item, Bookkeeping):
+                bookkeeping.append(item)
+            else:
+                steps.setdefault(item.command, item)
+    return Plan(tuple(steps.values()), tuple(unreadable), tuple(bookkeeping))
 
 
 def _numbered_lines(plan: Plan) -> Iterator[str]:
@@ -175,10 +204,19 @@ def _numbered_lines(plan: Plan) -> Iterator[str]:
             yield f"   warum: {why}"
 
 
+def _nothing_left(plan: Plan) -> str:
+    """Says "Nichts zu tun." only when nothing at all is open; with bookkeeping left, nothing is for the operator."""
+    nothing = "Sonst nichts" if plan.unreadable else "Nichts"
+    return f"{nothing} für dich zu tun." if plan.bookkeeping else f"{nothing} zu tun."
+
+
 def render(plan: Plan) -> str:
     lines = list(_numbered_lines(plan))
     if not plan.steps:
-        lines.append(NOTHING_ELSE_TO_DO if plan.unreadable else NOTHING_TO_DO)
+        lines.append(_nothing_left(plan))
+    if plan.bookkeeping:
+        counts = ", ".join(kind.tally.of(kind.count) for kind in plan.bookkeeping)
+        lines.append(BOOKKEEPING_LINE.format(counts=counts))
     return "\n".join(lines) + "\n"
 
 
@@ -189,7 +227,8 @@ def _next_from_args(_args: argparse.Namespace, layout: Layout, _config: Config, 
 
 NEXT_EXAMPLES = """\
 Beispiele:
-  home next    nummerierte Schritte, der dringendste zuerst, je mit Befehl, Ort und Erwartung
+  home next    nummerierte Schritte nur für dich, der dringendste zuerst, je mit Befehl, Ort und Erwartung;
+               zuletzt eine Zeile, die zählt, was ein Agent einsortiert
 
 Liest nur und ändert nichts; braucht kein Terminal, Agenten dürfen es fahren.
 Exit-Code: immer 0, auch mit Schritten; 3 bei einem unerwarteten Fehler.
@@ -200,7 +239,10 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "next",
         help="was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl",
-        description="Zeigt die offenen Schritte für dich aus home setup, home secrets, der Hook-Prüfung und home tidy; ändert nichts.",
+        description=(
+            "Zeigt die Schritte, die nur du tun kannst, aus home setup, home secrets, der Hook-Prüfung und home tidy,"
+            " und zählt in einer Zeile, was ein Agent einsortiert; ändert nichts."
+        ),
         epilog=NEXT_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

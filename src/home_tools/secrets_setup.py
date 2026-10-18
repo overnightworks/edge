@@ -171,6 +171,9 @@ def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch) -> 
 
 # --- the terminal boundary -------------------------------------------------
 
+# The one fact both `run_setup`'s refusal and `home next`'s "eigenes Terminalfenster" read: the walk asks a person.
+SETUP_NEEDS_A_TERMINAL = True
+
 
 def _both_ends_are_a_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
@@ -516,7 +519,7 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    if not boundaries.terminal.is_interactive():
+    if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
         print("home secrets --setup läuft nur am eigenen Terminal; ohne --setup zeigt home secrets nur an.", file=sys.stderr)
         return NO_TERMINAL_EXIT
     try:

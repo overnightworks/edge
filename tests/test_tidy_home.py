@@ -390,12 +390,12 @@ def test_a_symlinked_unknown_entry_is_told_to_check_its_target(layout: Layout) -
     assert findings == [Finding("unknown-home-entry", Action.REPORT, str(link), Verdict.REVIEW, "Symlink-Ziel prüfen")]
 
 
-def test_missing_readme_yields_exactly_one_finding(layout: Layout) -> None:
+def test_missing_readme_yields_exactly_one_finding_of_its_own_rule(layout: Layout) -> None:
     touch(layout.home / "leonardo.db", timedelta(0))
 
-    findings = tidy_home.unknown_home_entries(layout)
+    findings = tidy_home.collect_findings(layout, NOW, Options(), LIMITS, run=no_tools, issue_state=lambda r, n: None)
 
-    assert findings == [Finding("unknown-home-entry", Action.REPORT, "README.md fehlt", Verdict.REVIEW, "anlegen")]
+    assert findings.audit == (Finding("missing-readme", Action.REPORT, "README.md fehlt", Verdict.REVIEW, "anlegen"),)
 
 
 def test_known_entries_stop_at_the_removed_section_heading() -> None:

@@ -30,7 +30,7 @@ from enum import Enum
 from pathlib import Path, PurePosixPath
 
 from home_tools.report import findings_count, markdown_table, write_state_file
-from home_tools.tidy_home import Layout
+from home_tools.tidy_home import ClosedBy, Layout, Tally
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
 
@@ -514,9 +514,23 @@ def observe(manifest: tuple[SecretEntry, ...], layout: Layout, probe: ExitCodePr
 
 
 class FindingRule(Enum):
+    """Each rule says who closes its findings, and how bookkeeping is counted, so a reader never decides by its name."""
+
+    tally: Tally | None
+
+    def __new__(cls, value: str, tally: Tally | None = None) -> FindingRule:
+        rule = object.__new__(cls)
+        rule._value_ = value
+        rule.tally = tally
+        return rule
+
+    @property
+    def closed_by(self) -> ClosedBy:
+        return ClosedBy.counted_by(self.tally)
+
     MISSING = "missing"
     PRESENCE_UNKNOWN = "presence-unknown"
-    UNKNOWN_FILE = "unknown-file"
+    UNKNOWN_FILE = ("unknown-file", Tally("unbekannte Datei in ~/.secrets", "unbekannte Dateien in ~/.secrets"))
     LOOSE_MODE = "loose-mode"
     SYMLINKED_FOLDER = "symlinked-folder"
     NOT_A_FOLDER = "not-a-folder"

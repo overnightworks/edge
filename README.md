@@ -17,15 +17,27 @@ Timer einen fehlgeschlagenen Dienst, zu Recht.
 home next            # was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
 ```
 
-`home next` zeigt eine nummerierte Liste, der dringendste Schritt zuerst. Jeder
-Schritt nennt den Befehl, wo er läuft, und was danach zu sehen sein soll:
+`home next` zeigt nur, was du selbst tun musst: eine nummerierte Liste, der
+dringendste Schritt zuerst. Jeder Schritt nennt den Befehl, wo er läuft, und was
+danach zu sehen sein soll. Was ein Agent einsortieren kann, zählt eine
+Schlusszeile:
 
 ```
-1. home secrets --setup (beliebiges Terminal) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
+1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
 3. home setup --apply (beliebiges Terminal) — erwartet: Aktivierung: geändert
    warum: ohne den Hook prüft kein Commit auf Geheimnisse
+Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. Das macht ein Agent: sag „räum home auf“.
 ```
+
+Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
+Terminal (`home secrets --setup`, `home setup --apply`, `home tidy --apply`),
+eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
+Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
+Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.
+Ein Befehl, der ohne Terminal abbricht, steht mit „eigenes Terminalfenster“ da;
+das `!` in Claude Code ist kein Terminal. Nur ein Befehl, der auch ohne Terminal
+läuft, steht mit „beliebiges Terminal“ da.
 
 Die Schritte kommen aus den Besitzern der Fakten, die `home next` nur liest.
 Zuerst steht, was den Assistenten blockiert, der sonst nichts speichert, in der
@@ -34,27 +46,32 @@ welcher Art der Befund ist: zu offene Rechte (dann das `chmod`),
 ein Ordner, den sein Besitzer nicht öffnen kann (dann `chmod 700`), ein Symlink
 auf dem Weg zu einem Eintrag (dann der Befehl, der ihn durch den echten Ordner
 ersetzt) und eine Datei, wo ein Ordner hingehört (dann das `mv`, das sie
-beiseite legt). Dann unbekannte Dateien dort, fehlende Geheimnisse aus der
-Ansicht von `home secrets` (der Assistent für die, die er anlegen kann, die
-Seite aus `recreate` für die übrigen), ein fehlgeschlagener Login, ein
-unbestätigter Widerruf und jeder übrige Fund von `home secrets`, für den es
-keinen Befehl gibt, mit Ort und Empfehlung von Hand (etwa
-„~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann offene Schritte von
-`home setup` (dann `home setup --apply`), die Korrekturen der Hook-Prüfung, die
-clean-Funde von `home tidy` (dann `home tidy --apply`) und seine übrigen Funde
-mit ihrer Empfehlung, von Hand (etwa „~/.stray: in ~/README.md eintragen oder
-löschen“). Jeder Befehl steht nur einmal da.
+beiseite legt). Dann fehlende Geheimnisse aus der Ansicht von `home secrets`
+(der Assistent für die, die er anlegen kann, die Seite aus `recreate` für die
+übrigen), ein fehlgeschlagener Login, ein unbestätigter Widerruf und jeder
+übrige Fund von `home secrets`, den nur du klären kannst, mit Ort und Empfehlung
+von Hand (etwa „~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann
+offene Schritte von `home setup` (dann `home setup --apply`), die Korrekturen
+der Hook-Prüfung und die clean-Funde von `home tidy` (dann `home tidy --apply`).
+Jeder Befehl steht nur einmal da.
 
-Gibt es nichts, steht da „Nichts zu tun.“, und nur dann: meldet eine Quelle
-einen Fund, ist er ein Schritt. Kann `home next` eine Quelle nicht lesen (etwa
-ein ungültiges Manifest), steht ganz oben ein Schritt „1. konnte die
-Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die Schritte der
-anderen Quellen folgen. Eine ungültige Konfigurationsdatei liest nur `home tidy`;
-dann steht dort „konnte das Home (home tidy) nicht lesen; den Fehler zeigt: home
-tidy“. Es ändert nichts, fragt nach keinem Passwort und liest keinen Geheimniswert (nur
-`stat`, wie `home secrets`); Agenten dürfen es fahren. Exit-Code: immer `0`,
-auch mit Schritten, denn es ist eine Ansicht, keine Prüfung; `3` nur bei einem
-unerwarteten Fehler.
+Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
+Pfad: unbekannte Dateien in `~/.secrets`, „~/README.md fehlt“, Home-Einträge,
+die `~/README.md` nicht kennt, Reste in `~/git`, alte Worktrees, alte Downloads und alte
+Codex-Sitzungen. Die sortiert ein Agent ein; jede Löschentscheidung kommt als
+eine Liste zu dir. Die einzelnen Funde zeigen `home check`, `home tidy` und
+`home secrets`.
+
+Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
+„Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
+Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
+„1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
+Schritte der anderen Quellen folgen. Eine ungültige Konfigurationsdatei liest nur
+`home tidy`; dann steht dort „konnte das Home (home tidy) nicht lesen; den Fehler
+zeigt: home tidy“. Es ändert nichts, fragt nach keinem Passwort und liest keinen
+Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
+Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
+Prüfung; `3` nur bei einem unerwarteten Fehler.
 
 ## home check
 
@@ -354,6 +371,7 @@ nur in der `Wartung:`-Zeile am Ende des Berichts (im Dry-Run steht dort, dass
 
 | Regel | Was |
 |---|---|
+| `missing-readme` | `~/README.md` fehlt |
 | `unknown-home-entry` | Einträge im Home-Root, die `~/README.md` nicht kennt |
 | `git-root-litter` | alles in `~/git`, das weder Repo noch `<repo>-worktrees` ist |
 | `stale-worktree` | Worktrees mit geschlossenem Issue oder ohne Registrierung |
@@ -366,8 +384,8 @@ hier nicht mehr liegt“ in Backticks als Pfad nennt — `~/`, `.` oder `/` im
 Token, der erste Pfadabschnitt zählt, `.secrets/gitlab` macht `.secrets`
 bekannt — oder wenn es `README.md` selbst ist. Tokens danach oder ohne
 Pfadform (`uv`, `pip`, ...) zählen nicht. Fehlt `~/README.md` ganz, meldet
-`home tidy` genau einen Fund: „README.md fehlt“. Wer einen Ordner im Home
-anlegt, trägt ihn in `~/README.md` ein — eine zweite Liste gibt es nicht.
+`home tidy` genau einen Fund, `missing-readme`: „README.md fehlt“;
+`unknown-home-entry` läuft dann nicht. Wer einen Ordner im Home anlegt, trägt ihn in `~/README.md` ein — eine zweite Liste gibt es nicht.
 
 Der Bericht listet außerdem, welche Regeln liefen und nichts fanden
 („Geprüft, nichts gefunden: …“) und welche gar nicht laufen konnten, etwa

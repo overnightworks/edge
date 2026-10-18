@@ -87,6 +87,8 @@ class Finding:
     detail: str = ""
     command: tuple[str, ...] = ()
     reclaimable_bytes: int = 0
+    # How many things this one finding stands for: a summary such as the old Codex sessions counts each of them.
+    count: int = 1
 
     @property
     def is_cleanup(self) -> bool:
@@ -564,10 +566,15 @@ def _known_home_entry_names(readme_text: str) -> set[str]:
     return names
 
 
+def missing_readme(layout: Layout) -> list[Finding]:
+    """Without ~/README.md no home entry is known, so its absence is the one finding, not an unknown entry."""
+    if layout.readme.is_file():
+        return []
+    return [Finding("missing-readme", Action.REPORT, "README.md fehlt", verdict=Verdict.REVIEW, recommendation="anlegen")]
+
+
 def unknown_home_entries(layout: Layout) -> list[Finding]:
     """Anything in the home root that ~/README.md does not know is either new or litter."""
-    if not layout.readme.is_file():
-        return [Finding("unknown-home-entry", Action.REPORT, "README.md fehlt", verdict=Verdict.REVIEW, recommendation="anlegen")]
     known = _known_home_entry_names(layout.readme.read_text(errors="replace"))
     return [
         Finding(
@@ -683,6 +690,7 @@ def old_codex_sessions(layout: Layout, now: datetime, limits: Limits) -> list[Fi
             verdict=Verdict.REVIEW,
             recommendation=f"Sessions älter als {days} d löschen: `find ~/.codex/sessions -type f -mtime +{days} -delete`",
             detail=f"{len(old)} files older than {days} d, {size / 2**30:.1f} GiB",
+            count=len(old),
         )
     ]
 
@@ -720,6 +728,37 @@ class RuleKind(Enum):
     AUDIT = "audit"
 
 
+class ClosedBy(Enum):
+    """Who closes a finding: the operator, as a step only he can take, or an agent that sorts it in as bookkeeping."""
+
+    OPERATOR = "operator"
+    BOOKKEEPING = "bookkeeping"
+
+    @classmethod
+    def counted_by(cls, tally: Tally | None) -> ClosedBy:
+        """A rule is bookkeeping exactly when it says how its findings are counted, so no rule can be one without the other."""
+        return cls.OPERATOR if tally is None else cls.BOOKKEEPING
+
+
+@dataclass(frozen=True)
+class Tally:
+    """How a kind of bookkeeping finding is counted, singular and plural: "1 Download", "13 Downloads"."""
+
+    one: str
+    many: str
+    counted: bool = True
+
+    @classmethod
+    def fact(cls, text: str) -> Tally:
+        """A kind that is found at most once is said without a count: "~/README.md fehlt"."""
+        return cls(text, text, counted=False)
+
+    def of(self, count: int) -> str:
+        if not self.counted:
+            return self.one
+        return f"{count} {self.one if count == 1 else self.many}"
+
+
 class RuleStatus(Enum):
     CLEAN = "clean"
     FOUND = "found"
@@ -755,12 +794,24 @@ class Rule:
     name: str
     kind: RuleKind
     check: Callable[[RuleContext], RuleOutcome]
+    # Only bookkeeping is counted; a finding the operator closes is a step of its own.
+    tally: Tally | None = None
+
+    @property
+    def closed_by(self) -> ClosedBy:
+        return ClosedBy.counted_by(self.tally)
 
 
 def _rule_docker(ctx: RuleContext) -> RuleOutcome:
     if not _docker_available(ctx.run):
         return _not_applicable("nicht installiert")
     return _ran(_docker_findings(ctx.run, ctx.now, ctx.limits))
+
+
+def _rule_unknown_home_entries(ctx: RuleContext) -> RuleOutcome:
+    if not ctx.layout.readme.is_file():
+        return _not_applicable("~/README.md fehlt")
+    return _ran(unknown_home_entries(ctx.layout))
 
 
 def _rule_largest_entries(ctx: RuleContext) -> RuleOutcome:
@@ -774,13 +825,46 @@ RULES: tuple[Rule, ...] = (
     Rule("pasted-images", RuleKind.CLEAN, lambda ctx: _ran(pasted_images(ctx.layout, ctx.now, ctx.limits))),
     Rule("trash", RuleKind.CLEAN, lambda ctx: _ran(expired_trash(ctx.layout, ctx.now, ctx.limits))),
     Rule(DOCKER_RULE, RuleKind.CLEAN, _rule_docker),
-    Rule("unknown-home-entry", RuleKind.AUDIT, lambda ctx: _ran(unknown_home_entries(ctx.layout))),
-    Rule("git-root-litter", RuleKind.AUDIT, lambda ctx: _ran(git_root_litter(ctx.layout))),
-    Rule("stale-worktree", RuleKind.AUDIT, lambda ctx: _ran(stale_worktrees(ctx.layout, ctx.issue_state, ctx.run))),
-    Rule("downloads-inbox", RuleKind.AUDIT, lambda ctx: _ran(old_downloads(ctx.layout, ctx.now, ctx.limits))),
-    Rule("codex-sessions", RuleKind.AUDIT, lambda ctx: _ran(old_codex_sessions(ctx.layout, ctx.now, ctx.limits))),
+    Rule(
+        "missing-readme",
+        RuleKind.AUDIT,
+        lambda ctx: _ran(missing_readme(ctx.layout)),
+        Tally.fact("~/README.md fehlt"),
+    ),
+    Rule("unknown-home-entry", RuleKind.AUDIT, _rule_unknown_home_entries, Tally("Home-Eintrag", "Home-Einträge")),
+    Rule(
+        "git-root-litter",
+        RuleKind.AUDIT,
+        lambda ctx: _ran(git_root_litter(ctx.layout)),
+        Tally("Rest in ~/git", "Reste in ~/git"),
+    ),
+    Rule(
+        "stale-worktree",
+        RuleKind.AUDIT,
+        lambda ctx: _ran(stale_worktrees(ctx.layout, ctx.issue_state, ctx.run)),
+        Tally("alter Worktree", "alte Worktrees"),
+    ),
+    Rule(
+        "downloads-inbox",
+        RuleKind.AUDIT,
+        lambda ctx: _ran(old_downloads(ctx.layout, ctx.now, ctx.limits)),
+        Tally("Download", "Downloads"),
+    ),
+    Rule(
+        "codex-sessions",
+        RuleKind.AUDIT,
+        lambda ctx: _ran(old_codex_sessions(ctx.layout, ctx.now, ctx.limits)),
+        Tally("alte Codex-Sitzung", "alte Codex-Sitzungen"),
+    ),
 )
-LARGEST_ENTRIES_RULE = Rule("largest-entries", RuleKind.AUDIT, _rule_largest_entries)
+LARGEST_ENTRIES_RULE = Rule("largest-entries", RuleKind.AUDIT, _rule_largest_entries, Tally("großer Eintrag", "große Einträge"))
+ALL_RULES = (*RULES, LARGEST_ENTRIES_RULE)
+_RULES_BY_NAME = {rule.name: rule for rule in ALL_RULES}
+
+
+def rule_of(finding: Finding) -> Rule:
+    """The rule that found it, so a reader asks the rule who closes the finding."""
+    return _RULES_BY_NAME[finding.rule]
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,8 @@ import os
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,15 +15,20 @@ from home_tools import cli
 
 NOW = datetime(2026, 10, 17, 9, 0)
 
-# A secret the wizard generates and a retired token whose revocation nobody confirmed; neither is planted.
-OPEN_ENTRIES = """
+# A secret the wizard generates; it is never planted.
+WIZARD_ENTRY = """
 [[secret]]
 name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
 read_by = ["edge external plan"]
 recreate = "home secrets --setup"
+"""
 
+# The wizard's secret and a retired token whose revocation nobody confirmed; neither is planted.
+OPEN_ENTRIES = (
+    WIZARD_ENTRY
+    + """
 [[secret]]
 name = "github/old"
 kind = "token"
@@ -32,14 +38,16 @@ recreate = "nicht neu anlegen"
 retired_on = 2026-10-14
 revoke_url = "https://github.com/settings/tokens"
 """
+)
 
 # What the wizard says at the end of a walk that stores opentofu/passphrase: its stored line and its one `next:` line.
 WIZARD_STEP = (
-    "home secrets --setup (beliebiges Terminal) — erwartet: erzeugt und gespeichert: ~/.secrets/opentofu/passphrase (600);"
+    "home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/.secrets/opentofu/passphrase (600);"
     " zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
 )
 NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 UNREADABLE_SECRETS = "1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets"
+AGENT_SORTS_IT_IN = "Das macht ein Agent: sag „räum home auf“."
 
 SETUP_PENDING = (
     "1. home setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: geändert",
@@ -72,10 +80,123 @@ def files_under(home: Path) -> dict[str, int]:
     return {str(path.relative_to(home)): path.stat().st_mtime_ns for path in home.rglob("*") if not path.is_symlink()}
 
 
+@dataclass(frozen=True)
+class Arrangement:
+    """What a cell leaves open in an otherwise clean home with the hook installed; each count is that many findings."""
+
+    wizard_secret_missing: bool = False
+    unknown_secret_files: int = 0
+    unknown_home_entries: int = 0
+    git_litter: int = 0
+    old_downloads: int = 0
+    old_codex_sessions: int = 0
+    loose_secret: bool = False
+    pasted_image: bool = False
+    manifest_unreadable: bool = False
+    readme_missing: bool = False
+
+
+OLD = (NOW - timedelta(days=30)).timestamp()
+# Past the 90 days after which `home tidy` reports a Codex session.
+ANCIENT = (NOW - timedelta(days=100)).timestamp()
+
+
+def arrange(home: Path, use_manifest: Callable[[str], Path], leave_pasted_image: Callable[..., Path], cell: Arrangement) -> None:
+    use_manifest("[[secret]\n" if cell.manifest_unreadable else TEST_MANIFEST + (WIZARD_ENTRY if cell.wizard_secret_missing else ""))
+    if cell.readme_missing:
+        (home / "README.md").unlink(missing_ok=True)
+    else:
+        (home / "README.md").write_text(HOME_README + "`~/Downloads` and `~/.codex` too.\n")
+    for number in range(cell.unknown_secret_files):
+        (home / ".secrets" / f"stray-{number}.json").write_text("{}")
+        (home / ".secrets" / f"stray-{number}.json").chmod(0o600)
+    for number in range(cell.unknown_home_entries):
+        (home / f".stray-{number}").mkdir()
+    for number in range(cell.git_litter):
+        (home / "git" / f"loose-{number}.txt").parent.mkdir(exist_ok=True)
+        (home / "git" / f"loose-{number}.txt").write_text("")
+    for number in range(cell.old_downloads):
+        download = home / "Downloads" / f"download-{number}.pdf"
+        download.parent.mkdir(exist_ok=True)
+        download.write_text("")
+        os.utime(download, (OLD, OLD))
+    for number in range(cell.old_codex_sessions):
+        session = home / ".codex" / "sessions" / f"rollout-{number}.jsonl"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        session.write_text("")
+        os.utime(session, (ANCIENT, ANCIENT))
+    if cell.loose_secret:
+        (home / ".secrets" / "gitlab").chmod(0o664)
+    if cell.pasted_image:
+        leave_pasted_image(home / "git")
+
+
+LOOSE_GITLAB = (
+    "chmod 600 ~/.secrets/gitlab (beliebiges Terminal) — erwartet: home secrets meldet loose-mode für ~/.secrets/gitlab nicht mehr"
+)
+
+
 @pytest.mark.usefixtures("hook_installed")
-def test_a_home_with_nothing_open_says_nichts_zu_tun_and_exits_0(home: Path, probe: FakeProbe, capsys) -> None:
-    """#37 line 4: nothing to do is one line and exit 0."""
-    assert home_next(home, probe, capsys) == (0, ["Nichts zu tun."])
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        pytest.param(
+            Arrangement(wizard_secret_missing=True, unknown_secret_files=4, unknown_home_entries=25, old_downloads=13),
+            [
+                f"1. {WIZARD_STEP}",
+                "Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. " + AGENT_SORTS_IT_IN,
+            ],
+            id="N1-one-wizard-step-in-its-own-terminal-window-and-one-count-line",
+        ),
+        pytest.param(
+            Arrangement(unknown_home_entries=2, old_downloads=3),
+            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 Home-Einträge, 3 Downloads. {AGENT_SORTS_IT_IN}"],
+            id="N2-only-bookkeeping-is-nothing-for-you",
+        ),
+        pytest.param(
+            Arrangement(readme_missing=True, unknown_home_entries=2),
+            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: ~/README.md fehlt. {AGENT_SORTS_IT_IN}"],
+            id="N2-a-missing-readme-is-its-own-kind-and-no-home-entry",
+        ),
+        pytest.param(Arrangement(), ["Nichts zu tun."], id="N3-nothing-at-all"),
+        pytest.param(
+            Arrangement(loose_secret=True, unknown_secret_files=1),
+            [f"1. {LOOSE_GITLAB}", f"Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets. {AGENT_SORTS_IT_IN}"],
+            id="N4-a-loose-mode-is-still-a-step-with-its-chmod",
+        ),
+        pytest.param(
+            Arrangement(pasted_image=True),
+            ["1. home tidy --apply (beliebiges Terminal) — erwartet: Apply | 2 Funde"],
+            id="N5-tidy-clean-findings-are-one-apply-step",
+        ),
+        pytest.param(
+            Arrangement(manifest_unreadable=True, unknown_home_entries=2),
+            [UNREADABLE_SECRETS, "Sonst nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 Home-Einträge. {AGENT_SORTS_IT_IN}"],
+            id="N6-an-unreadable-source-keeps-its-line",
+        ),
+        pytest.param(
+            Arrangement(old_downloads=1, git_litter=1, unknown_home_entries=1, unknown_secret_files=1),
+            [
+                "Nichts für dich zu tun.",
+                "Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets, 1 Home-Eintrag, 1 Rest in ~/git, 1 Download. "
+                + AGENT_SORTS_IT_IN,
+            ],
+            id="N7-the-count-line-names-no-path-and-keeps-a-fixed-order-of-kinds",
+        ),
+        pytest.param(
+            Arrangement(old_codex_sessions=3),
+            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 3 alte Codex-Sitzungen. {AGENT_SORTS_IT_IN}"],
+            id="N7-old-codex-sessions-are-counted-each-although-home-tidy-sums-them-in-one-finding",
+        ),
+    ],
+)
+def test_home_next_lists_only_your_steps_and_counts_the_bookkeeping_in_one_line(
+    home: Path, use_manifest, leave_pasted_image, probe: FakeProbe, capsys, cell: Arrangement, expected: list[str]
+) -> None:
+    """#41 lines 1-4: a step is what only the operator can do; every finding an agent sorts in is one count per kind, last."""
+    arrange(home, use_manifest, leave_pasted_image, cell)
+
+    assert home_next(home, probe, capsys) == (0, expected)
 
 
 @pytest.mark.usefixtures("hook_installed")
@@ -114,20 +235,6 @@ def test_the_tidy_step_expects_what_home_tidy_apply_really_prints(home: Path, pr
     cli.main(["tidy", "--apply"], home=home, run=RunnerWithRealGitAndQuality(), now=NOW)
 
     assert expected in capsys.readouterr().out
-
-
-@pytest.mark.usefixtures("hook_installed")
-def test_a_home_entry_the_readme_does_not_know_is_a_step_by_hand(home: Path, probe: FakeProbe, capsys) -> None:
-    """#37 line 2: a `home check` finding of `home tidy` names its fix, so it is a step, not silence."""
-    (home / ".stray").mkdir()
-
-    assert home_next(home, probe, capsys) == (
-        0,
-        [
-            "1. ~/.stray: in ~/README.md eintragen oder löschen (von Hand)"
-            " — erwartet: home check meldet unknown-home-entry für ~/.stray nicht mehr"
-        ],
-    )
 
 
 SSH_KEY_ENTRY = """
@@ -196,14 +303,6 @@ def test_a_secrets_finding_without_a_command_is_a_step_by_hand_never_nichts_zu_t
     capsys.readouterr()
 
     assert home_next(home, probe, capsys) == (0, [f"1. {step}"])
-
-
-def test_on_an_empty_home_the_missing_readme_is_a_step(sandbox: Sandbox, probe: FakeProbe, capsys) -> None:
-    """#37 line 2: the tidy finding "README.md fehlt" names its fix "anlegen", so it is a step."""
-    _code, lines = home_next(sandbox.home, probe, capsys)
-
-    steps = [line.split(". ", 1)[1] for line in lines if line[:1].isdigit()]
-    assert "README.md fehlt: anlegen (von Hand) — erwartet: home check meldet unknown-home-entry für README.md fehlt nicht mehr" in steps
 
 
 def test_a_pending_setup_gives_home_setup_apply_once_although_the_hook_check_names_it_too(home: Path, probe: FakeProbe, capsys) -> None:
@@ -296,10 +395,10 @@ def test_on_an_empty_home_every_step_of_the_shipped_manifest_starts_with_somethi
 
 
 @pytest.mark.usefixtures("hook_installed")
-def test_loose_rights_and_an_unknown_file_come_with_their_fix_ahead_of_the_wizard(
+def test_loose_rights_come_with_their_fix_ahead_of_the_wizard_and_the_unknown_file_is_counted_last(
     home: Path, use_manifest, probe: FakeProbe, capsys
 ) -> None:
-    """#37 lines 1 and 2: a `home secrets` finding with an operator fix is a step, before the wizard it would block."""
+    """#37 lines 1 and 2: a `home secrets` finding the operator fixes is a step before the wizard; the unknown file is counted (#41)."""
     use_manifest(TEST_MANIFEST + OPEN_ENTRIES)
     (home / ".secrets").chmod(0o755)
     (home / ".secrets" / "gitlab").chmod(0o664)
@@ -308,13 +407,12 @@ def test_loose_rights_and_an_unknown_file_come_with_their_fix_ahead_of_the_wizar
 
     _code, lines = home_next(home, probe, capsys)
 
-    assert lines[:4] == [
+    assert lines[:3] == [
         "1. chmod 700 ~/.secrets (beliebiges Terminal) — erwartet: home secrets meldet loose-mode für ~/.secrets nicht mehr",
         "2. chmod 600 ~/.secrets/gitlab (beliebiges Terminal) — erwartet: home secrets meldet loose-mode für ~/.secrets/gitlab nicht mehr",
-        "3. ~/.secrets/stray.json ins Manifest eintragen oder löschen (von Hand)"
-        " — erwartet: home secrets meldet unknown-file für ~/.secrets/stray.json nicht mehr",
-        f"4. {WIZARD_STEP}",
+        f"3. {WIZARD_STEP}",
     ]
+    assert lines[-1] == f"Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets. {AGENT_SORTS_IT_IN}"
 
 
 def symlink_the_opentofu_folder(home: Path) -> tuple[str, str]:
