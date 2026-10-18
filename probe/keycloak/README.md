@@ -21,7 +21,9 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   runs the realm observer (`realm-observer`, #66) around a default apply with the cache off and
   holds when it lists exactly the console changes the apply removes; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an
-  escaped line for a group named with ESC and a newline, a clean stop on SIGINT and SIGTERM, and
+  escaped line for a group named with ESC and a newline, that SIGINT and SIGTERM, sent as its
+  container starts and as its inventory arrives, end the observe non-zero without a container
+  left (stdout may then hold part of an inventory: only exit 0 carries one), and
   `does not answer` with Keycloak stopped.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing: callers create their own clients and users through the admin API.

@@ -12,7 +12,9 @@ by its identity (never its UUID) with its allow-listed fields. Any other key of 
 leaves only as its name plus an HMAC-SHA256 digest under the per-run key the host writes to
 stdin, so a change in it still shows; the named secret keys never leave, not even as a digest.
 A failure is one line on stderr naming the status and the path, never a reply body or a token,
-and stdout stays empty.
+and stdout stays empty. A stop by SIGINT or SIGTERM exits 130; sent to `compose run`, it ends
+compose at once, which stops relaying the container's output, so stdout may hold the start of
+an inventory, which never parses. Stdout is an inventory only when the exit is 0.
 """
 
 from __future__ import annotations

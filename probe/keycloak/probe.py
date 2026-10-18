@@ -23,6 +23,7 @@ import json
 import os
 import re
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -318,8 +319,10 @@ class Stack:
         options = ["--name", keep_as] if keep_as else ["--rm"]
         return self.compose("run", "-T", *options, OBSERVER_SERVICE, stdin=digest_key + "\n")
 
-    def observe_stopped_by(self, digest_key: str, stop_signal: signal.Signals) -> list[str]:
-        """Sends `stop_signal` to an observe while its container runs; names what is left."""
+    def observe_stopped_by(
+        self, digest_key: str, stop_signal: signal.Signals, moment: Callable[[Observing], bool]
+    ) -> list[str]:
+        """Sends `stop_signal` to an observe once `moment` holds; names the containers left."""
         observing = subprocess.Popen(
             [*self.compose_command(), "run", "-T", "--rm", OBSERVER_SERVICE],
             env=self.environment(self.config_dir),
@@ -332,16 +335,18 @@ class Stack:
         observing.stdin.write(digest_key + "\n")
         observing.stdin.flush()
         deadline = time.monotonic() + OBSERVER_START_SECONDS
-        while not observer_containers() and observing.poll() is None:
-            expect(time.monotonic() < deadline, "the observer container did not start")
-            time.sleep(0.1)
+        while not moment(observing) and observing.poll() is None:
+            expect(time.monotonic() < deadline, f"the observe never reached {moment.__name__}")
+            time.sleep(0.05)
         observing.send_signal(stop_signal)
         stdout, stderr = observing.communicate(timeout=OBSERVER_START_SECONDS)
         self.outputs.append(stdout + stderr)
+        # Stopped, compose stops relaying at once: stdout may hold part of an inventory, and the
+        # non-zero exit is what tells it from one.
         expect(
-            observing.returncode != 0 and not stdout,
-            f"the observe ended with {observing.returncode} and an inventory before "
-            f"{stop_signal.name} reached it",
+            observing.returncode != 0,
+            f"the observe ended with 0 and an inventory before {stop_signal.name} reached it "
+            f"{moment.__name__}",
         )
         deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
         while observer_containers() and time.monotonic() < deadline:
@@ -423,6 +428,17 @@ def observer_containers() -> list[str]:
         f"label=com.docker.compose.service={OBSERVER_SERVICE}",
     )
     return listed.stdout.split()
+
+
+Observing = subprocess.Popen[str]
+
+
+def as_its_container_starts(_observing: Observing) -> bool:
+    return bool(observer_containers())
+
+
+def as_the_inventory_arrives(observing: Observing) -> bool:
+    return bool(select.select([observing.stdout], [], [], 0)[0])
 
 
 def remove_one_offs() -> None:
@@ -1263,8 +1279,11 @@ class Probe:
         expect(lines == expected, f"the console changes are listed as {lines}")
 
         left = {
-            stop.name: self.stack.observe_stopped_by(digest_key, stop)
+            f"{stop.name} {moment.__name__}": self.stack.observe_stopped_by(
+                digest_key, stop, moment
+            )
             for stop in (signal.SIGINT, signal.SIGTERM)
+            for moment in (as_its_container_starts, as_the_inventory_arrives)
         }
         expect(not any(left.values()), f"a stopped observe left containers: {left}")
 
@@ -1282,7 +1301,8 @@ class Probe:
             "9",
             f"the observer runs as {door}; a console change of {CHANGED_CONFIG} is one change "
             "line and a group named with ESC and a newline one escaped line; SIGINT and SIGTERM "
-            "mid-read leave no container; with Keycloak stopped it says 'does not answer', exits "
+            "as its container starts and as the inventory arrives end it non-zero and leave no "
+            "container; with Keycloak stopped it says 'does not answer', exits "
             f"{refused.returncode} and starts nothing",
         )
 
