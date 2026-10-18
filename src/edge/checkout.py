@@ -44,7 +44,7 @@ _ISOLATION = (
 )  # fmt: skip
 _NEVER_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
 _ERROR_PREFIXES = ("fatal:", "error:")
-_URL_CREDENTIALS = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/@\s'\"]+@", re.IGNORECASE)
+_URL_CREDENTIALS = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/\s]+@", re.IGNORECASE)
 _REDACTED = r"\1<redacted>@"
 _STATUS_LETTERS = frozenset("ADMT")
 _ORIGIN = "origin"
@@ -250,8 +250,9 @@ def fetch_origin(git: Git) -> Origin:
 
 
 def without_credentials(text: str) -> str:
-    """`text` with whatever stands before `@` in a `scheme://` URL redacted: a user name may be a
-    token as much as a password is (R3)."""
+    """`text` with the whole userinfo of a `scheme://` URL redacted, every character up to the last
+    `@` before the path, punctuation included: a user name may be a token as much as a password
+    is (R3)."""
     return _URL_CREDENTIALS.sub(_REDACTED, text)
 
 

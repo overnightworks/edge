@@ -610,6 +610,8 @@ def test_a_url_with_a_password_is_refused_before_connecting_and_never_printed(gi
                      "https://<redacted>@example.invalid/x.git", id="a user name"),
         pytest.param("https://u:pw@example.invalid/x", "https://<redacted>@example.invalid/x",
                      id="a user and password"),
+        pytest.param("https://u:can'a!$&()*+,;=ry@example.invalid/x",
+                     "https://<redacted>@example.invalid/x", id="punctuation userinfo allows"),
         pytest.param("git@github.com:overnightworks/edge.git",
                      "git@github.com:overnightworks/edge.git", id="scp-like ssh"),
         pytest.param("file:///srv/edge.git", "file:///srv/edge.git", id="a path"),
