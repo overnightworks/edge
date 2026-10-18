@@ -1198,9 +1198,9 @@ def real_compose_go_live(golive, secrets_dir, marks, monkeypatch):
     return golive.GoLive(golive.Tools(), secrets_dir, marks)
 
 
-def test_the_real_compose_file_names_no_client_secret_yet(real_compose_go_live):
-    """T9: the repository's compose.yaml; K11-SA2 makes this ["songmaker"]."""
-    assert real_compose_go_live.client_ids() == []
+def test_the_real_compose_file_names_songmakers_client_secret(real_compose_go_live):
+    """T9, and #108 T12: the repository's compose.yaml declares songmaker's client secret."""
+    assert real_compose_go_live.client_ids() == ["songmaker"]
 
 
 def test_the_real_compose_discovers_a_client_secret_it_declares(

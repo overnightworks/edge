@@ -236,10 +236,10 @@ services:
 
 ### songmaker: from its own login to the one login
 
-**Today songmaker signs people in itself.** It uses webauth's password login (`src/songmaker_cli/auth_api.py`: setup, login, password change). Its users and password hashes live in songmaker's own database. `realm.yaml` has no songmaker client: its only client is `agent-service`. So deploying songmaker behind the platform changes nothing for its users. D4 ("Keycloak for every app user") needs a cutover of its own.
+**Today songmaker signs people in itself.** It uses webauth's password login (`src/songmaker_cli/auth_api.py`: setup, login, password change). Its users and password hashes live in songmaker's own database. `realm.yaml` holds songmaker's client before the go-live, beside `agent-service`. So deploying songmaker behind the platform changes nothing for its users. D4 ("Keycloak for every app user") needs a cutover of its own.
 
 **The cutover item** (songmaker; neighbours edge#19 and webauth; after go-live):
-1. **Client.** edge adds a `songmaker` client to `realm.yaml`, with its redirect URI on `hallucinai.de`. Its secret goes into `~/.secrets/keycloak/` and the manifest.
+1. **Client.** edge's `realm.yaml` holds the `songmaker` client (#108), with its redirect URI on `songmaker.hallucinai.de`. Its secret is the file `~/.secrets/keycloak/clients/songmaker`.
 2. **Login.** songmaker switches to webauth's OIDC login (`webauth/src/webauth/oidc_login.py` exists) and checks the group `/apps/songmaker`.
 3. **Accounts.** Each songmaker user row gains the Keycloak user ID beside its own ID. Songs and albums stay keyed by songmaker's own ID, so no data moves. The operator first creates each person in Keycloak. A one-time mapping then pairs the two by username. He confirms each pair; nothing is matched silently. The admin role comes from a Keycloak group; the exact rule is a line in the item's expectation list.
 4. **Retire the old login.** After every user has signed in once through Keycloak, the password form goes and the stored password hashes are deleted (deletion: spoken yes).
