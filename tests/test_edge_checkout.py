@@ -284,8 +284,9 @@ def test_the_guards_leave_the_index_untouched(git, main_tree):
 
     checkout.not_on_main(git)
     git.changed_paths()
+    after = (index.read_bytes(), index.stat().st_mtime_ns)
 
-    assert (index.read_bytes(), index.stat().st_mtime_ns) == before
+    assert after == before
 
 
 def sentinel_script(path: Path, sentinel: Path, then: str = "exit 0") -> Path:
@@ -430,8 +431,10 @@ def test_a_git_that_answers_nonsense_or_hangs_is_one_line(
     main_tree, runner: checkout.Runner, ask: Callable, line: str
 ):
     """#95 G25: garbage, a failure or a timeout is a GitError of one line."""
+    git = checkout.Git(main_tree, runner)
+
     with pytest.raises(checkout.GitError) as raised:
-        ask(checkout.Git(main_tree, runner))
+        ask(git)
 
     assert str(raised.value) == line
 
@@ -439,6 +442,7 @@ def test_a_git_that_answers_nonsense_or_hangs_is_one_line(
 def test_a_missing_git_is_one_line(main_tree, tmp_path, monkeypatch):
     """#95 G25: no git on PATH is a GitError of one line."""
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    git = checkout.Git(main_tree)
 
     with pytest.raises(checkout.GitError, match=r"^cannot run git \(No such file or directory\)$"):
-        checkout.not_on_main(checkout.Git(main_tree))
+        checkout.not_on_main(git)
