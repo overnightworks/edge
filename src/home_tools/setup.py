@@ -21,8 +21,8 @@ from home_tools.tidy_home import Config, Layout
 if TYPE_CHECKING:
     from home_tools.cli import Ports
 
-# A commit SHA cannot move and needs no tag; a bump is a one-line change here.
-QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@615764ea67b0f8e2f615ee23a2432c50e11e5e68"
+# Quality v0.2.0. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
+QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@b16b5255e00adcb45bd1f52b3439b018d63d0364"
 # The engine of the system step; a bump is a one-line change here.
 ANSIBLE_SOURCE = "ansible-core==2.21.5"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
