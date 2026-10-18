@@ -374,12 +374,12 @@ class CorePhase:
         recreates it (#85 rule 5)."""
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
-        recorded = [plan.service for plan in recreates if plan.digests]
         try:
             followed: frozenset[str] = frozenset()
-            if recorded:
+            if recreates:
                 progress.step = "find the services edge follows"
                 followed = core.followed_services(config, self.repository)
+            if recorded := [plan.service for plan in recreates if plan.service in followed]:
                 progress.unit = recorded[0]
                 progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
                 self.record.mark_unfinished(recorded, followed)
@@ -395,7 +395,7 @@ class CorePhase:
                 progress.step = "prove the barriers"
                 if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
                     return unproven
-                if plan.digests:
+                if plan.service in followed:
                     progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
                     self.record.write(plan.service, plan.digests, followed)
                 print(f"{COMMAND}: {plan.recreated()}")

@@ -76,9 +76,13 @@ def start_order(config: Mapping[str, Any]) -> tuple[str, ...]:
 
 def followed_services(config: Mapping[str, Any], checkout: Path) -> frozenset[str]:
     """Every service, of any profile and running or not, that binds a file from the checkout."""
-    return frozenset(
-        name for name, service in config["services"].items() if file_binds(service, checkout)
-    )
+    return frozenset(name for name in config["services"] if follows(config, name, checkout))
+
+
+def follows(config: Mapping[str, Any], service: str, checkout: Path) -> bool:
+    """Edge follows the service, and keeps its entry in the record, while it binds a file from
+    the checkout (#87 rule 6)."""
+    return bool(file_binds(config["services"][service], checkout))
 
 
 def file_binds(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:
@@ -161,11 +165,13 @@ class Record:
         self._write({service: applied}, followed)
 
     def _write(self, changes: Mapping[str, Digests], followed: Collection[str]) -> None:
-        """Write the changed entries over the record, keeping only the services edge follows."""
-        kept = {
-            service: entry for service, entry in self.read().entries.items() if service in followed
+        """Write the changed entries over the record, keeping only the services edge follows: one
+        it follows through no file keeps no entry (#87 rules 4, 6)."""
+        entries = {
+            service: dict(entry)
+            for service, entry in (self.read().entries | dict(changes)).items()
+            if service in followed
         }
-        entries = kept | {service: dict(applied) for service, applied in changes.items()}
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             switches.write_atomically(
@@ -235,13 +241,9 @@ def plan_core(
     reading = record.read()
     states = compose.states_of(containers)
     labels = _config_hash_labels(containers, core_services(config))
-    binds = {
-        service: file_binds(config["services"][service], checkout)
-        for service in start_order(config)
-    }
-    recorded = {service for service, sources in binds.items() if sources}
     plans: dict[str, CorePlan] = {}
-    for service, sources in binds.items():
+    for service in start_order(config):
+        sources = file_binds(config["services"][service], checkout)
         current = digests(sources, checkout)
         whys = []
         if labels.get(service, set()) - {hashes[service]}:
@@ -249,7 +251,7 @@ def plan_core(
         if sources and (why := _why_changed(current, reading, service)):
             whys.append(why)
         left_unstarted = compose.never_started(states, service) and _recreate_unfinished(
-            config, reading, recorded, service
+            config, reading, checkout, service
         )
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
@@ -267,14 +269,14 @@ def plan_core(
 
 
 def _recreate_unfinished(
-    config: Mapping[str, Any], reading: Reading, recorded: set[str], service: str
+    config: Mapping[str, Any], reading: Reading, checkout: Path, service: str
 ) -> bool:
     """The record marks unfinished a recreate that took the service in: its own, or that of a core
     service depending on it, which a recreate of the service always pulls in while it is live. Only
     the entry of a service edge follows through a file bind counts (#87 rules 4, 6): socket-proxy
     keeps none, so traefik's entry speaks for it."""
     took_in = {service, *_dependents(config, service)}
-    return any(reading.unfinished(name) for name in took_in & recorded)
+    return any(reading.unfinished(name) for name in took_in if follows(config, name, checkout))
 
 
 def _dependents(config: Mapping[str, Any], service: str) -> set[str]:

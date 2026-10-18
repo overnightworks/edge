@@ -281,6 +281,21 @@ def test_writing_replaces_a_malformed_record(record):
     assert record.read() == core.Reading({"traefik": {TRAEFIK_FILE: "abc"}})
 
 
+@pytest.mark.parametrize(
+    "keep",
+    [
+        lambda record: record.write("socket-proxy", {"proxy.yml": "def"}, FOLLOWED),
+        lambda record: record.mark_unfinished(["traefik", "socket-proxy"], FOLLOWED),
+    ],
+    ids=["write", "mark unfinished"],
+)
+def test_the_record_keeps_no_entry_for_a_service_edge_does_not_follow(record, keep):
+    """#87 rules 4, 6: socket-proxy binds no file, so whoever asks, the record keeps none for it."""
+    keep(record)
+
+    assert "socket-proxy" not in record.read().entries
+
+
 # --- #87: the core follows its compose definition --------------------------------------------
 
 BOTH_RUNNING = {"socket-proxy": "running", "traefik": "running"}
