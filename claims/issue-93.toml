@@ -1,0 +1,7 @@
+claim_id = "1dfb8f07ab2c421c8fa7135aadf40e5e"
+agent = "claude"
+role = "builder"
+base = "1557838401b344791246bb6fe65ee470d7be484a"
+branch = "claude/issue-93-stopped-meanwhile"
+scope = ["README.md", "src/edge/apply.py", "tests/test_edge_apply.py"]
+opened_commit = "26f9306191a2482eba16d0f870d2148433be4951"
