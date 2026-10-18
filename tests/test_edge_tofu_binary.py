@@ -1,0 +1,206 @@
+"""`tofu_binary`: edge installs only the pinned tofu whose download matches its recorded sha256."""
+
+import hashlib
+import io
+import os
+import tomllib
+import zipfile
+from collections.abc import Callable, Iterator
+from pathlib import Path
+
+import pytest
+
+from edge.external import tofu, tofu_binary
+from edge.external.tofu import TofuError
+
+URL = "https://downloads.invalid/tofu.zip"
+FAKE_TOFU = b'#!/bin/sh\necho "OpenTofu v%s"\n'
+
+
+def release_zip(members: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def pinned_zip(**extra_members: bytes) -> bytes:
+    executable = FAKE_TOFU % tofu.pinned_version().encode()
+    return release_zip({"LICENSE": b"MPL-2.0", "tofu": executable, **extra_members})
+
+
+def release_of(archive: bytes, sha256: str | None = None) -> tofu_binary.Release:
+    return tofu_binary.Release(
+        version=tofu.pinned_version(),
+        url=URL,
+        sha256=sha256 or hashlib.sha256(archive).hexdigest(),
+    )
+
+
+class Download:
+    """The injected fetch: serves one archive and records every URL it was asked for."""
+
+    def __init__(self, archive: bytes, during: Callable[[], None] = lambda: None) -> None:
+        self.archive = archive
+        self.during = during
+        self.urls: list[str] = []
+
+    def __call__(self, url: str) -> Iterator[bytes]:
+        self.urls.append(url)
+        middle = len(self.archive) // 2
+        yield self.archive[:middle]
+        self.during()
+        yield self.archive[middle:]
+
+
+def tree(root: Path) -> set[str]:
+    return {str(path.relative_to(root)) for path in root.rglob("*")}
+
+
+@pytest.fixture
+def root(tmp_path) -> Path:
+    return tmp_path / "opentofu"
+
+
+def test_an_empty_root_gets_the_verified_binary_at_0755(root):
+    archive = pinned_zip()
+    download = Download(archive)
+
+    installed = tofu_binary.install(root, release_of(archive), download)
+
+    assert installed == root / tofu.pinned_version() / "tofu"
+    assert download.urls == [URL]
+    assert installed.stat().st_mode & 0o777 == 0o755
+    assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
+
+
+def test_an_installed_pinned_binary_is_reused_without_the_network(root):
+    archive = pinned_zip()
+    first = tofu_binary.install(root, release_of(archive), Download(archive))
+    again = Download(archive)
+
+    assert tofu_binary.install(root, release_of(archive), again) == first
+    assert again.urls == []
+
+
+def test_a_sha_mismatch_names_the_url_and_both_shas_and_installs_nothing(root):
+    archive = pinned_zip()
+    recorded = "0" * 64
+
+    with pytest.raises(TofuError) as raised:
+        tofu_binary.install(root, release_of(archive, sha256=recorded), Download(archive))
+
+    message = str(raised.value)
+    assert URL in message
+    assert recorded in message
+    assert hashlib.sha256(archive).hexdigest() in message
+    assert tree(root) == set()
+
+
+def test_a_network_error_names_the_url_and_installs_nothing(root):
+    def unreachable(url: str) -> Iterator[bytes]:
+        raise OSError("connection refused")
+        yield b""
+
+    with pytest.raises(TofuError, match=URL):
+        tofu_binary.install(root, release_of(b"archive"), unreachable)
+    assert tree(root) == set()
+
+
+def test_a_download_over_the_size_limit_is_refused_and_installs_nothing(root):
+    archive = pinned_zip()
+
+    with pytest.raises(TofuError, match="limit"):
+        tofu_binary.install(
+            root, release_of(archive), Download(archive), max_bytes=len(archive) - 1
+        )
+    assert tree(root) == set()
+
+
+def test_a_folder_a_parallel_run_installed_meanwhile_is_used_and_ours_removed(root):
+    archive = pinned_zip()
+    theirs = root / tofu.pinned_version() / "tofu"
+
+    def parallel_install() -> None:
+        theirs.parent.mkdir()
+        theirs.write_bytes(FAKE_TOFU % tofu.pinned_version().encode())
+        theirs.chmod(0o755)
+        os.utime(theirs, (0, 0))
+
+    installed = tofu_binary.install(root, release_of(archive), Download(archive, parallel_install))
+
+    assert installed == theirs
+    assert installed.stat().st_mtime == 0
+    assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
+
+
+def test_leftover_temp_names_of_a_killed_run_are_cleaned(root):
+    archive = pinned_zip()
+    root.mkdir()
+    (root / f"{tofu_binary.PARTIAL_PREFIX}download").write_bytes(b"half a zip")
+    (root / f"{tofu_binary.PARTIAL_PREFIX}folder").mkdir()
+    (root / f"{tofu_binary.PARTIAL_PREFIX}folder" / "tofu").write_bytes(b"half a binary")
+
+    tofu_binary.install(root, release_of(archive), Download(archive))
+
+    assert tree(root) == {tofu.pinned_version(), f"{tofu.pinned_version()}/tofu"}
+
+
+def test_member_names_that_escape_are_never_extracted(tmp_path, root):
+    archive = pinned_zip(**{"../tofu": b"escaped", "../../evil": b"escaped"})
+
+    installed = tofu_binary.install(root, release_of(archive), Download(archive))
+
+    assert installed.read_bytes() == FAKE_TOFU % tofu.pinned_version().encode()
+    assert tree(tmp_path) == {"opentofu", *(f"opentofu/{name}" for name in tree(root))}
+
+
+def test_an_archive_without_the_tofu_member_installs_nothing(root):
+    archive = release_zip({"../tofu": b"escaped"})
+
+    with pytest.raises(TofuError, match="tofu"):
+        tofu_binary.install(root, release_of(archive), Download(archive))
+    assert tree(root) == set()
+
+
+PINS = """
+[versions."1.13.1"]
+url = "https://example.invalid/v{version}/tofu_{version}_{platform}.zip"
+sha256 = { linux_amd64 = "ab" }
+"""
+
+
+def test_the_pinned_release_comes_from_its_entry_with_the_url_filled_in():
+    release = tofu_binary.release_for(tomllib.loads(PINS), "1.13.1", "linux_amd64")
+
+    assert release == tofu_binary.Release(
+        version="1.13.1",
+        url="https://example.invalid/v1.13.1/tofu_1.13.1_linux_amd64.zip",
+        sha256="ab",
+    )
+
+
+@pytest.mark.parametrize(
+    ("version", "platform", "missing"),
+    [
+        ("1.14.0", "linux_amd64", "no entry for OpenTofu 1.14.0"),
+        ("1.13.1", "darwin_arm64", "no sha256 for darwin_arm64"),
+    ],
+    ids=["unpinned-version", "other-platform"],
+)
+def test_a_release_without_its_entry_fails_naming_the_pins_file(version, platform, missing):
+    with pytest.raises(TofuError) as raised:
+        tofu_binary.release_for(tomllib.loads(PINS), version, platform)
+
+    assert missing in str(raised.value)
+    assert "external/opentofu.toml" in str(raised.value)
+
+
+def test_the_committed_pins_cover_the_pinned_version_on_linux_amd64():
+    pins = tomllib.loads(tofu_binary.PINS_FILE.read_text())
+
+    release = tofu_binary.release_for(pins, tofu.pinned_version(), "linux_amd64")
+
+    assert release.url.startswith("https://github.com/opentofu/opentofu/releases/download/")
+    assert len(release.sha256) == 64

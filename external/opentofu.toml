@@ -1,0 +1,9 @@
+# The OpenTofu releases edge installs and their sha256 per platform. The version pin itself is
+# `required_version` in main.tf; src/edge/external/tofu_binary.py reads the entry for it.
+# Each sha256 is checked against the release's published tofu_<version>_SHA256SUMS.
+
+[versions."1.13.1"]
+url = "https://github.com/opentofu/opentofu/releases/download/v{version}/tofu_{version}_{platform}.zip"
+
+[versions."1.13.1".sha256]
+linux_amd64 = "8ccbc6f8ee21d2827715f3c6e08a9b3e0209b1e62057c05067ef117e047c1a80"
