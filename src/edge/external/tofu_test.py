@@ -43,7 +43,7 @@ def _mocks(provider: str, content: str) -> bool:
 
 # Each of these could put a real, unmocked provider in a test's reach.
 FORBIDDEN_IN_TESTS = (
-    (re.compile(r'^\s*provider "', re.M), "configures a real provider"),
+    (re.compile(r"^\s*provider\b", re.M), "configures a real provider"),
     (re.compile(r"\balias\b"), "uses an alias, which can select a provider that is not mocked"),
     (re.compile(r"^\s*module\b", re.M), "loads a module, which may carry its own provider"),
 )
@@ -67,13 +67,12 @@ def refusals(external_directory: Path) -> list[str]:
     tests_directory = external_directory / TESTS_FOLDER
     for path in _files_to_guard(external_directory):
         content = path.read_text()
-        if path.is_relative_to(tests_directory):
+        if _is_tofu_test_file(path):
             found += [
                 f"{path} {reason}"
                 for pattern, reason in FORBIDDEN_IN_TESTS
                 if pattern.search(content)
             ]
-        if _is_tofu_test_file(path):
             if path.parent != tests_directory or not path.match(ACCEPTED_TEST_FILE):
                 found.append(
                     f"{path} is a test form the guard does not read: use tests/{ACCEPTED_TEST_FILE}"

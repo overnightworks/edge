@@ -38,7 +38,10 @@ ALIASED_REAL_PROVIDER = (
     'run "r" {\n  providers = {\n    github = github.real\n  }\n}\n'
 )
 REAL_PROVIDER = MOCKS + 'provider "github" {\n  owner = "edge-fixture.invalid"\n}\n'
+UNQUOTED_REAL_PROVIDER = MOCKS + 'provider github {\n  owner = "edge-fixture.invalid"\n}\n'
 HELPER_PROVIDER = 'provider "github" {}\n'
+HELPER_LOADED = MOCKS + 'run "r" {\n  module {\n    source = "./helper"\n  }\n}\n'
+RUN_WITH_PROVIDERS = MOCKS + 'run "r" {\n  providers = {\n    github = github\n  }\n}\n'
 OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
 
 
@@ -53,10 +56,11 @@ OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
         ({"tests/a.tftest.hcl": ALIASED_REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
         ({"tests/a.tftest.hcl": REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
         ({"tests/a.tftest.hcl": OUTSIDE_MODULE}, "a.tftest.hcl", "loads a module"),
+        ({"tests/a.tftest.hcl": UNQUOTED_REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
         (
-            {"tests/helper/main.tf": HELPER_PROVIDER, "tests/a.tftest.hcl": MOCKS},
-            "main.tf",
-            "real provider",
+            {"tests/helper/main.tf": HELPER_PROVIDER, "tests/a.tftest.hcl": HELPER_LOADED},
+            "a.tftest.hcl",
+            "loads a module",
         ),
         (
             {"tests/a.tftest.hcl": MOCKS, "tests/fixtures/org.yaml": "org: OvernightWorks"},
@@ -76,7 +80,7 @@ OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
         "no github mock", "no cloudflare mock", "commented mock", "aliased mock",
         "alias after a nested block",
         "aliased real provider", "real provider beside the mocks", "module outside tests",
-        "provider in a helper module",
+        "unquoted real provider", "provider in a helper module",
         "live org in a fixture", "live zone in a test",
         "test in the root folder", "tofutest form", "json form",
     ],
@@ -94,6 +98,19 @@ def test_accepts_mocked_tests_with_fixture_names(tmp_path):
     """#123 S3: mocked tests with invalid fixture names pass the guard."""
     files = {"tests/a.tftest.hcl": MOCKS, "tests/fixtures/empty.yaml": "org: edge-fixture.invalid"}
 
+    assert tofu_test.refusals(write_tree(tmp_path, files)) == []
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"tests/a.tftest.hcl": RUN_WITH_PROVIDERS},
+        {"tests/a.tftest.hcl": MOCKS, "tests/fixtures/hosts.yaml": "reason: the apex's alias"},
+    ],
+    ids=["run block selecting a mocked provider", "alias in a fixture"],
+)
+def test_accepts_what_cannot_select_an_unmocked_provider(tmp_path, files):
+    """#123 S4: only a test file's own provider and alias lines can reach a provider."""
     assert tofu_test.refusals(write_tree(tmp_path, files)) == []
 
 
