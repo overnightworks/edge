@@ -201,6 +201,11 @@ def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_ba
     start = machine.argv_of("Start der Wegwerf-Datenbank")
     assert start[start.index("--network") + 1] == "none"
     assert not any("--mount" in argv or "-v" in argv for argv in [start])
+    # #107 T10: the server keeps no log and logs no error, so no row value reaches one.
+    assert start[start.index("--log-driver") + 1] == "none"
+    assert start[-4:] == [
+        "-c", "log_min_messages=panic", "-c", "log_min_error_statement=panic",
+    ]  # fmt: skip
     restore_test_calls = machine.calls[machine.labels().index("restic snapshots") :]
     assert not any(SONGMAKER_CONTAINER in argv for _, argv in restore_test_calls)
     assert not any("songmaker_audiofiles" in " ".join(argv) for _, argv in restore_test_calls)
@@ -969,7 +974,7 @@ def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     outcome = edge_backup(*shipped, "restore-test")
 
     assert outcome.exit_code == 0, outcome.err
-    servers = [argv[-1] for label, argv in machine.calls if label == "Start der Wegwerf-Datenbank"]
+    servers = [argv[-5] for label, argv in machine.calls if label == "Start der Wegwerf-Datenbank"]
     assert servers == [RESTORE_IMAGES[major] for major in PostgresMajor]
     asked = [argv[argv.index("--command") + 1] for label, argv in machine.calls if label == "psql"]
     assert asked[-1] == 'SELECT count(*) FROM "realm"'

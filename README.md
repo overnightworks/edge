@@ -751,8 +751,9 @@ restore the snapshot as above, `uv run edge-backup restore keycloak --target
 ~/restore-keycloak`; the dump holds keys, so the block deletes that directory
 after a successful `docker start`. Paste the block as a whole: it stops at the
 first failing command and never starts Keycloak after a failed load. If the
-load fails, `pg_restore`'s messages can quote rows of the dump, so they go to
-a private file (mode 0600) and only its path is printed: delete that file and
+load fails, `pg_restore`'s messages can quote rows of the dump, so they are
+discarded and the session runs with server error logging off (`keycloak` is the
+image's superuser, which may set that); only the exit code is printed. Delete
 `~/restore-keycloak` once you are done.
 
 ```sh
@@ -772,12 +773,11 @@ kc=$(container keycloak)
 [ "$(wc -w <<<"$kc")" -eq 1 ] \
   || { echo "need exactly one running keycloak, found: ${kc:-none}" >&2; exit 1; }
 docker stop "$kc"
-errors=$(mktemp ~/keycloak-restore-errors.XXXXXX)
-docker exec -i "$db" pg_restore --username keycloak --dbname keycloak \
+docker exec -i -e PGOPTIONS='-c log_min_messages=panic -c log_min_error_statement=panic' \
+  "$db" pg_restore --username keycloak --dbname keycloak \
   --clean --if-exists --single-transaction --exit-on-error \
-  < "$restored/db/db.dump" 2>"$errors" \
-  || { echo "pg_restore failed; its messages may hold dump rows: $errors (delete it)" >&2; exit 1; }
-rm -f "$errors"
+  < "$restored/db/db.dump" 2>/dev/null \
+  || { code=$?; echo "pg_restore failed with exit $code; keycloak stays stopped, start it with: docker start $kc" >&2; exit 1; }
 docker start "$kc"
 rm -rf "$restored"
 )

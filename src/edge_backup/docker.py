@@ -145,6 +145,11 @@ def count_audio_files(settings: Settings, kind: MountKind, source: str) -> int:
     return listing.count(b"\0")
 
 
+_SILENT_SERVER_SETTINGS = (
+    "-c", "log_min_messages=panic", "-c", "log_min_error_statement=panic",
+)  # fmt: skip
+
+
 @contextmanager
 def restore_server(image: str) -> Iterator["RestoreServer"]:
     """A PostgreSQL without network or volume of ours; removed again whatever happens.
@@ -156,9 +161,11 @@ def restore_server(image: str) -> Iterator["RestoreServer"]:
     started = host.run(
         ["docker", "run", "--detach", "--name", RESTORE_SERVER, "--network", "none",
          "--label", f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}",
+         # No container log and no server-side error logging: a failed COPY logs row values.
+         "--log-driver", "none",
          # trust is safe here: the server has no network and holds only the restored copy.
          "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", f"POSTGRES_DB={RESTORE_DATABASE}",
-         image],
+         image, *_SILENT_SERVER_SETTINGS],
         label="Start der Wegwerf-Datenbank",
     )  # fmt: skip
     try:
