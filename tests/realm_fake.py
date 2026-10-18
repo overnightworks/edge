@@ -1,5 +1,5 @@
 """A fake Keycloak 26.8.1 admin API for the realm observer's tests (#66): the realms it
-serves, the faults it injects, and the `keycloak` fixture that runs it."""
+serves, the faults it injects, and the server that runs it."""
 
 import json
 import threading
@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
-
-import pytest
 
 from edge.realm import new_digest_key
 
@@ -566,16 +564,3 @@ def serving() -> Iterator[FakeKeycloak]:
     yield server
     server.shutdown()
     server.server_close()
-
-
-@pytest.fixture
-def keycloak() -> Iterator[FakeKeycloak]:
-    with serving() as server:
-        yield server
-
-
-@pytest.fixture
-def proxy() -> Iterator[FakeKeycloak]:
-    """A second fake that stands in for a proxy Docker injects: whatever reaches it is logged."""
-    with serving() as server:
-        yield server

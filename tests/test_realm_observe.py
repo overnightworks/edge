@@ -31,6 +31,7 @@ from realm_fake import (
     client_rep,
     component,
     role_rep,
+    serving,
     step_rep,
     uid,
 )
@@ -38,9 +39,20 @@ from realm_fake import (
 from edge.realm import change_lines
 from edge.realm import observe as observer
 
-pytest_plugins = ["realm_fake"]
-
 REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def keycloak() -> Iterator[FakeKeycloak]:
+    with serving() as server:
+        yield server
+
+
+@pytest.fixture
+def proxy() -> Iterator[FakeKeycloak]:
+    """A second fake that stands in for a proxy Docker injects: whatever reaches it is logged."""
+    with serving() as server:
+        yield server
 
 
 def observe(keycloak: FakeKeycloak) -> observer.Inventory:
