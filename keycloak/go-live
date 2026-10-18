@@ -161,12 +161,12 @@ def run_command(
         raise DockerDidNotAnswer(f"cannot run {command[0]}: {error.strerror}") from error
 
 
-def ask_without_echo(prompt: str) -> str:
+def ask_without_echo(prompt: str, read: Callable[[str], str] = getpass.getpass) -> str:
     """getpass, but never its fallback: without a terminal it would read the password echoed."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", getpass.GetPassWarning)
         try:
-            return getpass.getpass(prompt)
+            return read(prompt)
         except getpass.GetPassWarning as warning:
             raise StepFailure("no terminal for the password") from warning
 
@@ -568,12 +568,11 @@ class GoLive:
         realm: str = "master",
         json_body: object | None = None,
     ) -> Reply:
-        extra = {} if json_body is None else {"json_body": json_body}
         return self.tools.fetch(
             method,
             f"{ADMIN_REALMS}/{realm}{path}",
             headers={"Authorization": f"Bearer {token}"},
-            **extra,
+            json_body=json_body,
         )
 
     def admin_call(
@@ -677,24 +676,26 @@ class GoLive:
             )
         if created.status != 201:
             raise StepFailure(f"the admin API answered {created.status} to POST /users")
-        user_id = self.user_named(token, username)[0]["id"]
         try:
-            self.map_admin_role(token, user_id)
+            self.map_admin_role(token, username)
         except BaseException:
-            self.delete_unfinished_admin(token, user_id, username)
+            self.delete_unfinished_admin(token, username)
             raise
         self.created_admin = username
 
-    def map_admin_role(self, token: str, user_id: str) -> None:
+    def map_admin_role(self, token: str, username: str) -> None:
+        user_id = self.user_named(token, username)[0]["id"]
         role = self.admin_call(token, "GET", f"/roles/{ADMIN_ROLE}")
         self.admin_call(
             token, "POST", f"/users/{user_id}/role-mappings/realm", json_body=[role],
             accepted=(204,),
         )  # fmt: skip
 
-    def delete_unfinished_admin(self, token: str, user_id: str, username: str) -> None:
+    def delete_unfinished_admin(self, token: str, username: str) -> None:
+        """The id is looked up again: the failure may have come before it was known."""
         try:
-            self.admin_call(token, "DELETE", f"/users/{user_id}")
+            for user in self.user_named(token, username):
+                self.admin_call(token, "DELETE", f"/users/{user['id']}")
         except StepFailure as refused:
             raise StepFailure(
                 f"the role {ADMIN_ROLE} could not be set and {username} could not be deleted "
@@ -729,14 +730,14 @@ class GoLive:
         return not self.user_named(self.admin_token(), BOOTSTRAP_ADMIN)
 
     def retire_bootstrap(self) -> None:
-        token = self.admin_token()
         if self.created_admin:
             who = (
                 f"as {self.created_admin} with the password you typed; Keycloak asks for a TOTP "
                 "code to enrol and for a passkey to add"
             )
         else:
-            names = ", ".join(person["username"] for person in self.admin_people(token))
+            people = self.admin_people(self.admin_token())
+            names = ", ".join(person["username"] for person in people)
             who = f"as {names or 'your admin'} and enrol TOTP and a passkey if the account has none"
         gone = (
             ""
@@ -750,6 +751,7 @@ class GoLive:
             "TOTP code and the account page lists a passkey. Both must sit on the same person."
         )
         self.typed(self.tools.ask, "Press Enter when your admin has TOTP and a passkey. ")
+        token = self.admin_token()  # the browser part outlives a master token (60 s)
         self.require_second_admin_with_both_factors(token)
         for user in self.user_named(token, BOOTSTRAP_ADMIN):
             self.admin_call(token, "DELETE", f"/users/{user['id']}")

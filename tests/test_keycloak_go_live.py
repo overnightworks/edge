@@ -79,6 +79,9 @@ class Keycloak:
     stdin_seen: str | None = None
     stdin_of_this_command: str | None = None
     deleted: list[str] = field(default_factory=list)
+    issued_tokens: list[str] = field(default_factory=list)
+    expired_tokens: set[str] = field(default_factory=set)
+    failing_user_lookups: int = 0  # the next lookups of a user by name answer 500
 
     def add_admin(
         self, username: str, *, otp: bool, passkey: bool = True, enabled: bool = True
@@ -86,7 +89,9 @@ class Keycloak:
         self.users[username] = {"otp": otp, "webauthn": passkey, "enabled": enabled}
 
     def enrol_both_factors(self, username: str) -> None:
+        """The browser part takes longer than a master token (60 s) lives."""
         self.users[username].update(otp=True, webauthn=True)
+        self.expired_tokens.update(self.issued_tokens)
 
     def changed_something(self) -> bool:
         return any(
@@ -231,9 +236,12 @@ class Keycloak:
             assert parse_qs(form_text(form))["client_id"] == ["config-cli"]
             if not self.master_applied:  # master.yaml creates the client during the first apply
                 return from_script(401, b"")
-            return from_script(200, json.dumps({"access_token": "token"}).encode())
+            self.issued_tokens.append(f"token-{len(self.issued_tokens)}")
+            return from_script(200, json.dumps({"access_token": self.issued_tokens[-1]}).encode())
         if url == "http://localhost:8090/admin/realms/hallucinai":
             return self.realm_representation(from_script)
+        if headers["Authorization"].removeprefix("Bearer ") in self.expired_tokens:
+            return from_script(401, b"")
         path = url.split("/admin/realms/master")[1]
         return self.admin_api(method, path, from_script, json_body)
 
@@ -264,6 +272,9 @@ class Keycloak:
             return reply(200, json.dumps([{"type": kind} for kind in types]).encode())
         if method == "GET" and path.startswith("/users?username="):
             name = path.split("=")[1].split("&")[0]
+            if self.failing_user_lookups:
+                self.failing_user_lookups -= 1
+                return reply(500, b"")
             found = [{"id": name}] if name in self.users else []
             return reply(200, json.dumps(found).encode())
         if method == "POST" and path == "/users":
@@ -716,6 +727,16 @@ def test_the_bootstrap_stays_without_one_admin_who_has_both_factors(
     assert (secrets_dir / "bootstrap-admin-password").exists()
 
 
+def test_the_check_of_both_factors_uses_a_token_taken_after_the_browser_pause(
+    go_live, keycloak, session
+):
+    """#129 rule 7: master tokens live 60 s; the factors are enrolled after the first one."""
+    assert go_live.run() == 0
+
+    assert keycloak.expired_tokens
+    assert keycloak.deleted == ["temp-admin"]
+
+
 def leaks_of_the_password(keycloak: Keycloak, session: Session, tmp_path: Path) -> list[str]:
     """The places that hold the sentinel; only the body of the one create request may."""
     files = (path.read_text(errors="replace") for path in tmp_path.rglob("*") if path.is_file())
@@ -841,7 +862,7 @@ def test_the_exception_of_a_refused_create_does_not_hold_the_password(
     assert SENTINEL_PASSWORD not in str(refused.value)
 
 
-def test_a_name_that_exists_is_never_given_a_password(go_live, keycloak, session):
+def test_a_name_that_exists_is_never_given_a_password(go_live, keycloak, session, tmp_path):
     """#129 rule 4: U7: a user left without the role (a hard kill) is named, not taken over."""
     keycloak.users[OTP_ADMIN] = {"admin": False}
 
@@ -854,6 +875,7 @@ def test_a_name_that_exists_is_never_given_a_password(go_live, keycloak, session
     assert len(keycloak.created) == 1
     assert [method for method, url, _ in keycloak.requests if url.endswith("/users/alice")] == []
     assert keycloak.deleted == []
+    assert leaks_of_the_password(keycloak, session, tmp_path) == []
 
 
 @pytest.mark.parametrize(
@@ -891,17 +913,18 @@ def test_the_bootstrap_password_file_is_never_opened_by_the_admin_step(
 
 
 @pytest.mark.parametrize(
-    ("failing", "path"),
+    ("failing", "broken", "healthy", "path"),
     [
-        ("role_read_status", "GET /roles/admin"),
-        ("role_mapping_status", "POST /users/alice/role-mappings/realm"),
+        ("role_read_status", 500, 200, "GET /roles/admin"),
+        ("role_mapping_status", 500, 204, "POST /users/alice/role-mappings/realm"),
+        ("failing_user_lookups", 1, 0, "GET /users?username=alice&exact=true"),
     ],
 )
 def test_a_role_that_cannot_be_set_deletes_the_new_user_and_the_rerun_asks_again(
-    go_live, keycloak, session, tmp_path, failing, path
+    go_live, keycloak, session, tmp_path, failing, broken, healthy, path
 ):
     """#129 rule 4: U11: no half-made admin stays; the re-run starts from the prompt."""
-    setattr(keycloak, failing, 500)
+    setattr(keycloak, failing, broken)
 
     assert go_live.run() == 1
 
@@ -911,7 +934,7 @@ def test_a_role_that_cannot_be_set_deletes_the_new_user_and_the_rerun_asks_again
     assert keycloak.deleted == [OTP_ADMIN]
     assert OTP_ADMIN not in keycloak.users
     assert leaks_of_the_password(keycloak, session, tmp_path) == []
-    setattr(keycloak, failing, 204 if failing == "role_mapping_status" else 200)
+    setattr(keycloak, failing, healthy)
     session.answers = ["", ""]
     session.hidden = [SENTINEL_PASSWORD, SENTINEL_PASSWORD]
 
@@ -933,15 +956,22 @@ def test_a_user_that_cannot_be_deleted_after_a_failed_role_is_named(go_live, key
     )
 
 
-def test_an_interrupt_after_the_create_deletes_the_new_user(go_live, keycloak, session):
-    """#129 rule 4: the compensation also runs for Ctrl-C."""
-    keycloak.role_mapping_status = 500
+@pytest.mark.parametrize(
+    ("method", "url_ending"),
+    [("GET", "/users?username=alice&exact=true"), ("POST", "/role-mappings/realm")],
+    ids=["id lookup", "role mapping"],
+)
+def test_an_interrupt_after_the_create_deletes_the_new_user(
+    go_live, keycloak, session, method, url_ending
+):
+    """#129 rule 4: U11: the compensation also runs for Ctrl-C, before the id is known."""
     fetch = keycloak.fetch
+    interrupts = [KeyboardInterrupt]
 
-    def interrupted(method: str, url: str, **kwargs):
-        if method == "POST" and url.endswith("/role-mappings/realm"):
-            raise KeyboardInterrupt
-        return fetch(method, url, **kwargs)
+    def interrupted(call: str, url: str, **kwargs):
+        if call == method and url.endswith(url_ending) and interrupts:
+            raise interrupts.pop()
+        return fetch(call, url, **kwargs)
 
     go_live.tools = dataclasses.replace(go_live.tools, fetch=interrupted)
 
@@ -952,7 +982,7 @@ def test_an_interrupt_after_the_create_deletes_the_new_user(go_live, keycloak, s
 
 
 def test_without_a_terminal_the_password_is_not_read_and_nothing_is_sent(
-    go_live, golive, keycloak, session, monkeypatch
+    go_live, golive, keycloak, session
 ):
     """#129 rule 3: U12: getpass would warn and echo; the step fails before it reads."""
     read = []
@@ -962,8 +992,10 @@ def test_without_a_terminal_the_password_is_not_read_and_nothing_is_sent(
         read.append(prompt)
         return SENTINEL_PASSWORD
 
-    monkeypatch.setattr(getpass, "getpass", getpass_without_terminal)
-    go_live.tools = dataclasses.replace(go_live.tools, ask_hidden=golive.ask_without_echo)
+    go_live.tools = dataclasses.replace(
+        go_live.tools,
+        ask_hidden=lambda prompt: golive.ask_without_echo(prompt, getpass_without_terminal),
+    )
 
     assert go_live.run() == 1
 
@@ -972,10 +1004,11 @@ def test_without_a_terminal_the_password_is_not_read_and_nothing_is_sent(
     assert keycloak.created == []
 
 
-def test_with_a_terminal_the_password_is_read_hidden(golive, monkeypatch):
-    monkeypatch.setattr(getpass, "getpass", lambda prompt: SENTINEL_PASSWORD)
-
-    assert golive.ask_without_echo("password: ") == SENTINEL_PASSWORD
+def test_with_a_terminal_the_password_is_read_hidden(golive):
+    """#129 rule 3: U12: with a terminal the reader's answer is the password."""
+    assert golive.ask_without_echo("password: ", lambda prompt: SENTINEL_PASSWORD) == (
+        SENTINEL_PASSWORD
+    )
 
 
 def test_a_failure_with_an_unreadable_secret_file_is_still_one_line(go_live, secrets_dir, session):
