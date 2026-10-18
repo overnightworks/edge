@@ -447,7 +447,8 @@ def test_a_door_it_cannot_open_is_one_line_before_any_request(
     missing_secret: bool,
     line: str,
 ) -> None:
-    """The key and the secret are checked before the observer asks Keycloak anything."""
+    """Rule 1 and Rule 4: the door's secret file and the host's digest key are checked before
+    the observer asks Keycloak anything."""
     secret = tmp_path / "absent-secret" if missing_secret else tmp_path / "config-cli-secret"
 
     run = run_observer(keycloak.url, key_line=key_line, secret=secret)
