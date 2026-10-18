@@ -497,41 +497,67 @@ class CorePhase:
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
         try:
-            followed: frozenset[str] = frozenset()
-            if recreates:
-                followed = self._followed(config, progress)
+            followed = self._followed(config, progress) if recreates else frozenset()
             recorded = [plan.service for plan in recreates if plan.service in followed]
-            for plan in recreates:
+            for index, plan in enumerate(recreates):
                 progress.unit = plan.service
-                progress.step = f"look whether {plan.service} still runs"
-                if _stopped_since_the_plan(engine.states(), plan.service):
-                    return f"{plan.service} was stopped meanwhile; it is not started"
-                if recorded:
-                    progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
-                    self.record.mark_unfinished(recorded, followed)
-                    recorded = []
-                progress.step = f"recreate {plan.service}"
-                engine.recreate(plan.service)
-                progress.step = f"observe {plan.service} running"
-                observed = _in_start_order(
-                    config, {plan.service, *core.dependencies(config, plan.service)}
-                )
-                if down := engine.down_while_watched(config, observed, self.watch):
-                    verb = "is" if len(down) == 1 else "are"
-                    return (
-                        f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
-                    )
-                progress.step = "prove the barriers"
-                if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
-                    return unproven
-                if plan.service in followed:
-                    progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
-                    self.record.write(plan.service, plan.digests, followed)
-                print(f"{COMMAND}: {plan.recreated(followed)}")
+                if stopped := self._stopped_meanwhile(
+                    engine, plan, recorded if index == 0 else [], followed, progress
+                ):
+                    return stopped
+                if failure := self._recreate_one(engine, planned, marks, plan, followed, progress):
+                    return failure
         except (compose.ComposeError, core.CoreError) as error:
             return f"could not {progress.step}, {error}"
         if recreates and len(recreates) == len(planned.core):
             print(f"{COMMAND}: the core is current")
+        return None
+
+    def _stopped_meanwhile(
+        self,
+        engine: compose.Compose,
+        plan: core.CorePlan,
+        unmarked: Sequence[str],
+        followed: frozenset[str],
+        progress: Progress,
+    ) -> str | None:
+        """The failure line when the service has no live container now (#93 rules 1, 2);
+        otherwise the `unmarked` services are marked unfinished before its recreate begins."""
+        progress.step = f"look whether {plan.service} still runs"
+        if _stopped_since_the_plan(engine.states(), plan.service):
+            return f"{plan.service} was stopped meanwhile; it is not started"
+        if unmarked:
+            progress.step = f"mark {', '.join(unmarked)} unfinished in {core.APPLIED_FILE}"
+            self.record.mark_unfinished(unmarked, followed)
+        return None
+
+    def _recreate_one(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        plan: core.CorePlan,
+        followed: frozenset[str],
+        progress: Progress,
+    ) -> str | None:
+        """Recreate the service, observe it running with the core services it depends on, prove
+        every active barrier, and only then record it; the failure line of the first step that
+        fails."""
+        config = planned.fleet.config
+        progress.step = f"recreate {plan.service}"
+        engine.recreate(plan.service)
+        progress.step = f"observe {plan.service} running"
+        observed = _in_start_order(config, {plan.service, *core.dependencies(config, plan.service)})
+        if down := engine.down_while_watched(config, observed, self.watch):
+            verb = "is" if len(down) == 1 else "are"
+            return f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
+        progress.step = "prove the barriers"
+        if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
+            return unproven
+        if plan.service in followed:
+            progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+            self.record.write(plan.service, plan.digests, followed)
+        print(f"{COMMAND}: {plan.recreated(followed)}")
         return None
 
     def _recreate_followers(
