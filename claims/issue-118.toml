@@ -3,5 +3,6 @@ agent = "claude"
 role = "builder"
 base = "dbefed86208ea8074928638786d8190bc9badd30"
 branch = "claude/issue-118-k11-gl-the-catalog-switches-keycloak-on"
-scope = ["fleet.yaml", "tests/test_keycloak_unit.py"]
+scope = ["README.md", "fleet.yaml", "probe/step-ca/probe.py", "tests/test_keycloak_unit.py"]
 opened_commit = "3953a93cb2fcb9ed25d67a4c517a6ec166297add"
+whole_reason = "The switch-on and every file that pinned the shipped-off state change together, or a probe or test breaks on main."
