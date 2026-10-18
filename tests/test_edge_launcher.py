@@ -79,6 +79,7 @@ def machine(tmp_path) -> Machine:
 
 
 def test_syncs_the_checkout_locked_and_hands_edge_its_arguments_verbatim(machine):
+    """#102 rule 1, cell L1: the checkout syncs locked; edge gets every argument unchanged."""
     arguments = ["external", "plan", "two words", "", "--flag=$HOME"]
 
     result = machine.run(*arguments)
@@ -97,10 +98,12 @@ def test_syncs_the_checkout_locked_and_hands_edge_its_arguments_verbatim(machine
 
 
 def test_exits_with_edge_exit_code(machine):
+    """#102 rule 1, cell L2: the launcher exits with edge's own exit code."""
     assert machine.run("external", "apply", FAKE_EDGE_EXIT="3").returncode == 3
 
 
 def test_failed_sync_exits_2_with_one_line_and_never_runs_edge(machine):
+    """#102 rule 2, cell L3: a failed sync exits 2 with one closing line, and edge never runs."""
     result = machine.run("--help", FAKE_UV_FAILS="1")
 
     assert result.returncode == 2
@@ -113,12 +116,14 @@ def test_failed_sync_exits_2_with_one_line_and_never_runs_edge(machine):
 
 
 def test_edge_replaces_the_launcher_instead_of_running_under_a_shell(machine):
+    """#102 rule 1, cell L4: edge replaces the launcher process instead of running under a shell."""
     machine.run("--help")
 
     assert machine.logged("edge.ppid") == str(os.getpid())
 
 
 def test_another_projects_environment_reaches_neither_uv_nor_edge(machine, tmp_path):
+    """#102 rule 1, cell L5: another project's virtualenv reaches neither uv nor edge."""
     other = str(tmp_path / "other-project/.venv")
 
     machine.run("--help", VIRTUAL_ENV=other, UV_PROJECT_ENVIRONMENT=other)
@@ -128,6 +133,7 @@ def test_another_projects_environment_reaches_neither_uv_nor_edge(machine, tmp_p
 
 
 def test_finds_its_checkout_through_a_symlink_in_another_directory(machine, tmp_path):
+    """#102 rule 1, cell L6: a symlink elsewhere still finds its own checkout."""
     link = tmp_path / "home/.local/bin/edge"
     link.parent.mkdir(parents=True)
     link.symlink_to(machine.checkout / "bin/edge")
