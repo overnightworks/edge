@@ -5,7 +5,12 @@ import os
 from pathlib import Path
 
 import pytest
-from edge_backup_support import CANARY_PASSWORD, Machine, Outcome
+from edge_backup_support import (
+    CANARY_PASSWORD,
+    SONGMAKER_TOML,
+    Machine,
+    Outcome,
+)
 
 from edge_backup import cli, host
 
@@ -44,8 +49,13 @@ def _status_if_readable(status_file: Path) -> dict | None:
 
 @pytest.fixture
 def edge_backup(machine, home, capsys):
+    (home / "songmaker-only.toml").write_text(SONGMAKER_TOML)
+    songmaker_only = ("--apps", str(home / "songmaker-only.toml"))
+
     def run(*arguments: str) -> Outcome:
-        exit_code = cli.main(list(arguments))
+        """Songmaker alone unless the test declares its apps: most cases are about one app."""
+        declared = () if "--apps" in arguments else songmaker_only
+        exit_code = cli.main([*declared, *arguments])
         captured = capsys.readouterr()
         status_file = home / ".local/state/edge/backup-status.json"
         status = _status_if_readable(status_file)

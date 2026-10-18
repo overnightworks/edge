@@ -7,9 +7,22 @@ db_service = "postgres"
 dump = "pg_dump_custom"   # `pg_dump --format=custom` inside the db container
 db_user = "songmaker"
 db_name = "songmaker"
+postgres_major = 16       # the restore test runs a throwaway server of this major
 volume = "audiofiles"     # mounted read-only, scanned live (crash-consistent)
 
 [app.songmaker.restore_test]
 count_table = "songs"
 audio_reference_table = "generations"
 audio_reference_column = "mp3_path"  # relative to the audio volume's root
+
+# A DB-only app: no volume, so its snapshot holds the dump and the manifest only.
+[app.keycloak]
+compose_project = "edge"
+db_service = "keycloak-db"
+dump = "pg_dump_custom"
+db_user = "keycloak"
+db_name = "keycloak"
+postgres_major = 17       # compose.yaml's keycloak-db
+
+[app.keycloak.restore_test]
+count_table = "realm"

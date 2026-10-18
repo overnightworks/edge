@@ -83,14 +83,14 @@ def init(settings: Settings) -> None:
     _restic(settings, "restic init", ["init"])
 
 
-def backup(settings: Settings, app: str, staging: Path, volume: str) -> str:
-    """One snapshot holding dump, manifest and audio; any non-zero exit (3 too) is a failure."""
+def backup(settings: Settings, app: str, staging: Path, audio_volume: str | None) -> str:
+    """One snapshot holding dump, manifest and audio (none for a DB-only app); any non-zero
+    exit (3 too) is a failure."""
+    mounts = [Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}")]
+    if audio_volume is not None:
+        mounts.append(Mount(MountKind.VOLUME, audio_volume, f"{app_source(app)}/{AUDIO_FOLDER}"))
     output = _restic(
-        settings,
-        "restic backup",
-        ["backup", "--json", *_tag(app), app_source(app)],
-        Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}"),
-        Mount(MountKind.VOLUME, volume, f"{app_source(app)}/{AUDIO_FOLDER}"),
+        settings, "restic backup", ["backup", "--json", *_tag(app), app_source(app)], *mounts
     )
     return _snapshot_id(output)
 
