@@ -56,6 +56,7 @@ DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
 ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
+COMPOSE_FILE = "compose.yaml"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
@@ -564,7 +565,12 @@ class Probe:
         short_ca = self.scratch / "ca-short-lived.json"
         short_ca.write_text(json.dumps(ca))
         self.environment["PROBE_CA_JSON"] = str(short_ca)
-        self.compose_files = ["compose.yaml", str(OVERRIDE)]
+        self.compose_files = [COMPOSE_FILE, str(OVERRIDE)]
+
+    @property
+    def state_directory(self) -> Path:
+        """Where edge keeps its markers and its applied record under the probe's HOME."""
+        return self.home / ".local" / "state" / "edge"
 
     def traefik_started_at(self) -> str:
         container = self.compose("ps", "--quiet", "traefik-mcp").stdout.decode().strip()
@@ -670,7 +676,7 @@ class Probe:
 
     def proof_11_emergency_switch(self) -> None:
         copy = self.repository_copy()
-        marker = self.home / ".local" / "state" / "edge" / "stopped" / "step-ca"
+        marker = self.state_directory / "stopped" / "step-ca"
         self.set_enabled(copy, True)
 
         self.edge(copy, "stop", "step-ca", terminal=False)  # 1. A x stop: R4, no terminal
@@ -773,7 +779,7 @@ class Probe:
         """Compose as edge calls it in the copy: its project directory, every profile."""
         return self.run(
             ["docker", "compose", "--project-directory", str(copy), "--file",
-             str(copy / "compose.yaml"), "--profile", "*", *arguments]
+             str(copy / COMPOSE_FILE), "--profile", "*", *arguments]
         ).stdout.decode()  # fmt: skip
 
     def container_id(self, service: str) -> str:
@@ -783,7 +789,7 @@ class Probe:
         return self.container_id(FOLLOWER), self.container_id("step-ca")
 
     def follower_entry(self) -> dict | None:
-        record = self.home / ".local" / "state" / "edge" / core.APPLIED_FILE
+        record = self.state_directory / core.APPLIED_FILE
         return json.loads(record.read_text()).get(FOLLOWER) if record.exists() else None
 
     def follower_digest(self, copy: Path) -> dict:
@@ -842,7 +848,7 @@ class Probe:
 
     def proof_13d_definition_follows(self, copy: Path) -> None:
         follower, step_ca = self.ids()
-        compose_file = copy / "compose.yaml"
+        compose_file = copy / COMPOSE_FILE
         text = compose_file.read_text()
         for anchor in LABEL_AFTER.values():
             text = text.replace(anchor, anchor + PROBE_LABEL, 1)
@@ -875,7 +881,7 @@ class Probe:
         self.apply_says_nothing_to_change(copy, "P13 acme owner")
 
     def proof_13e_switched_off(self, copy: Path) -> None:
-        marker = self.home / ".local" / "state" / "edge" / "stopped" / "step-ca"
+        marker = self.state_directory / "stopped" / "step-ca"
         recorded = (copy / FOLLOWER_FILE).read_text()
         self.edge(copy, "stop", "step-ca", terminal=False)
         written = marker.read_text()

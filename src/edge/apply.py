@@ -418,8 +418,7 @@ class CorePhase:
         try:
             followed: frozenset[str] = frozenset()
             if recreates:
-                progress.step = "find the services edge follows"
-                followed = core.followed_services(config, self.repository)
+                followed = self._followed(config, progress)
             if recorded := [plan.service for plan in recreates if plan.service in followed]:
                 progress.unit = recorded[0]
                 progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
@@ -469,8 +468,7 @@ class CorePhase:
             return None
         config = planned.fleet.config
         try:
-            progress.step = "find the services edge follows"
-            followed = core.followed_services(config, self.repository)
+            followed = self._followed(config, progress)
             for plan in recreates:
                 progress.unit = plan.service
                 with marks.lock():
@@ -507,12 +505,15 @@ class CorePhase:
         ]
         if not started:
             return
-        progress.step = "find the services edge follows"
-        followed = core.followed_services(planned.fleet.config, self.repository)
+        followed = self._followed(planned.fleet.config, progress)
         for plan in started:
             progress.unit = plan.unit
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
             self.record.write(plan.service, plan.digests, followed)
+
+    def _followed(self, config: Mapping[str, Any], progress: Progress) -> frozenset[str]:
+        progress.step = "find the services edge follows"
+        return core.followed_services(config, self.repository)
 
     def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
         """Say each proven barrier; the failure line naming every one that is not, after all
@@ -546,6 +547,22 @@ def _in_start_order(config: Mapping[str, Any], services: set[str]) -> tuple[str,
     return tuple(service for service in core.start_order(config) if service in services)
 
 
+def _observe_and_record(
+    engine: compose.Compose,
+    planned: Plan,
+    core_phase: CorePhase,
+    started: Sequence[UnitPlan],
+    progress: Progress,
+) -> list[UnitPlan]:
+    """The started plans not observed as planned; each unit observed on records the followers
+    that started with it (#89, P15)."""
+    progress.step = "observe the result"
+    mismatched = _unobserved(engine, started, planned.fleet.config)
+    switched_on = [plan for plan in started if plan.action is Action.ON and plan not in mismatched]
+    core_phase.record_switched_on(planned, switched_on, progress)
+    return mismatched
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
@@ -564,7 +581,7 @@ def _confirm_and_switch(
         )
         print(f"{COMMAND}: aborted, {outcome}", file=sys.stderr)
         return ApplyExit.REFUSED
-    plans, config, read = planned.plans, planned.fleet.config, planned.read
+    plans, read = planned.plans, planned.read
     changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()
     withheld: dict[str, str] = {}
@@ -578,11 +595,8 @@ def _confirm_and_switch(
         for plan in changes:
             if since := _switch(engine, plan, progress, marks, read):
                 withheld[plan.unit.key] = since
-        progress.step = "observe the result"
         started = [plan for plan in changes if plan.unit.key not in withheld]
-        mismatched = _unobserved(engine, started, config)
-        switched_on = [p for p in started if p.action is Action.ON and p not in mismatched]
-        core_phase.record_switched_on(planned, switched_on, progress)
+        mismatched = _observe_and_record(engine, planned, core_phase, started, progress)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
