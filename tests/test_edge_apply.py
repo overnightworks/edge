@@ -1,22 +1,38 @@
 """`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
+import fcntl
 import hashlib
 import io
 import json
+import os
+import signal
 import stat
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 import yaml
+from test_edge_checkout import committed_main
 from test_edge_core import bind, bind_core_files, sha256
 
-from edge import apply, barrier, catalog, cli, compose, emergency, setup, switches
+from edge import (
+    apply,
+    barrier,
+    catalog,
+    checkout,
+    cli,
+    compose,
+    emergency,
+    setup,
+    switches,
+    tunnel,
+)
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -335,8 +351,10 @@ class InterruptedWaitForLock(switches.Switches):
 
 @pytest.fixture(autouse=True)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A stray real marker would keep a live unit down: every test gets its own HOME."""
+    """A stray real marker would keep a live unit down: every test gets its own HOME, and git its
+    own global config there."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
     return tmp_path / "home"
 
 
@@ -364,6 +382,7 @@ def edge_tree(tree: Path) -> Path:
     (tree / "fleet.yaml").write_text(ENABLED)
     (tree / "dynamic").mkdir()
     (tree / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
+    (tree / ".env").touch()
     return tree
 
 
@@ -414,6 +433,28 @@ class Ingress:
         return compose.Watch(lambda: self.now, self.sleep)
 
 
+@dataclass
+class ScriptedGit:
+    """Git as the guards ask it: a clean `main` unless told otherwise; `calls` records each."""
+
+    reference: bytes = b"refs/heads/main\n"
+    status: bytes = b""
+    calls: list[list[str]] = field(default_factory=list)
+
+    def __call__(
+        self, _tree: Path, arguments: list[str], _profile: checkout.Profile
+    ) -> subprocess.CompletedProcess[bytes]:
+        self.calls.append(list(arguments))
+        verb = next(argument for argument in arguments if not argument.startswith("-"))
+        stdout = {"symbolic-ref": self.reference, "rev-parse": b"", "status": self.status}[verb]
+        return subprocess.CompletedProcess(arguments, 0, stdout, b"")
+
+
+@pytest.fixture
+def scripted_git() -> ScriptedGit:
+    return ScriptedGit()
+
+
 @pytest.fixture
 def ingress(repository: Path) -> Ingress:
     return Ingress(repository)
@@ -448,21 +489,37 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 
 
 @pytest.fixture
-def switch(repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress):
-    """Run `edge apply --closed` from the live checkout; the operator types `yes` unless told
-    otherwise."""
+def switch(
+    repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
+    scripted_git,
+):  # fmt: skip
+    """Run `edge apply --closed` from the live checkout, a clean `main` (or from `tree`, with
+    `git`); the operator types `yes` at a terminal unless told otherwise."""
 
-    def run(answer: str = "yes", while_prompt_waits=None) -> tuple[int, str, str]:
+    def run(
+        answer: str = "yes",
+        while_prompt_waits=None,
+        *,
+        tree: Path | None = None,
+        from_home: Path | None = None,
+        git: checkout.Runner | None = None,
+        run_setup: setup.SetupRunner | None = None,
+        at_a_terminal: bool = True,
+    ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
+        if not at_a_terminal:
+            sys.stdin = io.StringIO(f"{answer}\n")
+        tree = tree or repository
         exit_code = apply.apply_closed(
             state,
-            compose.Compose(scripted.run, repository),
-            repository,
+            compose.Compose(scripted.run, tree),
+            tree,
             setup_check,
-            setup_run,
-            home,
+            run_setup or setup_run,
+            from_home or home,
             ingress.verifier,
             ingress.watch,
+            git or scripted_git,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1032,81 +1089,309 @@ def any_tree(request, repository: Path, tmp_path: Path) -> Path:
     return repository if request.param == "live checkout" else edge_tree(tmp_path / "x" / "edge")
 
 
+def apply_lock(state: Path) -> Path:
+    return state / apply.APPLY_LOCK
+
+
+@contextmanager
+def apply_lock_held(state: Path) -> Iterator[None]:
+    """`apply.lock` held as another apply holds it: its own open file, flocked."""
+    state.mkdir(parents=True, exist_ok=True)
+    with apply_lock(state).open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        yield
+
+
+def apply_lock_is_free(state: Path) -> bool:
+    with apply_lock(state).open("a") as probe:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+
 def test_without_a_terminal_it_refuses_before_anything_else(
-    any_tree, scripted, missing_setup, setup_run, monkeypatch, capsys, state, home
+    any_tree, scripted, missing_setup, setup_run, monkeypatch, capsys, state, home, scripted_git
 ):
-    """#52 rule 4: no terminal refuses first (exit 1); #79 cell 6: before the live-checkout check,
-    from any tree."""
+    """#52 rule 4: no terminal refuses first (exit 1); #79 cell 6, #95 R1 and G1: before every
+    other guard, from any tree: no git call, no lock file, `.env` untouched."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
+    environment_file = (any_tree / ".env").stat()
 
     exit_code = apply.apply_closed(
-        state, compose.Compose(scripted.run, any_tree), any_tree, missing_setup, setup_run, home
-    )
+        state, compose.Compose(scripted.run, any_tree), any_tree, missing_setup, setup_run, home,
+        git=scripted_git,
+    )  # fmt: skip
 
     assert exit_code == 1
     assert "refused, stdin and stdout must be a terminal" in capsys.readouterr().err
     assert scripted.calls == []
     assert missing_setup.commands == []
     assert setup_run.commands == []
+    assert scripted_git.calls == []
+    assert not apply_lock(state).exists()
+    assert (any_tree / ".env").stat() == environment_file
 
 
-def linked_worktree(tree: Path) -> Path:
-    """`tree` turned into a linked worktree: its `.git` is a file pointing at the main one."""
-    (tree / ".git").rmdir()
-    (tree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/issue-9-y\n")
-    return tree
+def test_from_another_copy_it_refuses_naming_the_tree_and_runs_nothing(
+    switch, scripted, setup_check, setup_run, scripted_git, state, tmp_path
+):
+    """#79 rule 1 cell 3, #95 rule 2 and G2/G5: the one apply-level cell of the live-checkout
+    guard; exit 2, one line naming the tree, no compose or git call, no lock."""
+    copy = edge_tree(tmp_path / "x" / "edge")
 
-
-@pytest.mark.parametrize(
-    "foreign_tree",
-    [
-        pytest.param(
-            lambda home, tmp: linked_worktree(edge_tree(tmp / "edge-worktrees" / "issue-9-y")),
-            id="cell 2: a linked worktree",
-        ),
-        pytest.param(lambda home, tmp: edge_tree(tmp / "x" / "edge"), id="cell 3: another copy"),
-        pytest.param(
-            lambda home, tmp: linked_worktree(home / "git" / "edge"),
-            id="cell 5: ~/git/edge with a .git file",
-        ),
-    ],
-)
-def test_outside_the_live_checkout_it_refuses_naming_the_tree_and_runs_nothing(
-    repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, tmp_path,
-    foreign_tree,
-):  # fmt: skip
-    """#79 rule 1, cells 2, 3 and 5: exit 2, one line naming the tree, no compose call."""
-    tree = foreign_tree(home, tmp_path)
-    at_terminal("yes")
-
-    exit_code = apply.apply_closed(
-        state, compose.Compose(scripted.run, tree), tree, setup_check, setup_run, home
-    )
+    exit_code, _, err = switch(tree=copy)
 
     assert exit_code == 2
-    assert capsys.readouterr().err.splitlines() == [
-        f"edge apply --closed: runs only from the live checkout ~/git/edge (this is {tree})"
+    assert err.splitlines() == [
+        f"edge apply --closed: runs only from the live checkout ~/git/edge (this is {copy})"
     ]
     assert scripted.calls == []
+    assert scripted_git.calls == []
     assert setup_check.commands == []
     assert setup_run.commands == []
+    assert not apply_lock(state).exists()
 
 
 def test_the_live_checkout_reached_through_a_symlinked_home_applies(
-    repository, scripted, setup_check, setup_run, at_terminal, state, home, tmp_path
+    switch, scripted, home, tmp_path
 ):
     """#79 cell 4: a HOME that resolves to the code tree's home proceeds as from the checkout."""
     linked_home = tmp_path / "linked-home"
     linked_home.symlink_to(home)
-    at_terminal("yes")
 
-    exit_code = apply.apply_closed(
-        state, compose.Compose(scripted.run, repository), repository, setup_check, setup_run,
-        linked_home,
-    )  # fmt: skip
+    exit_code, _, _ = switch(from_home=linked_home)
 
     assert exit_code == 0
     assert scripted.containers["step-ca"] == "running"
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        pytest.param(lambda env: None, id="missing"),
+        pytest.param(lambda env: env.mkdir(), id="a directory"),
+        pytest.param(lambda env: env.symlink_to(env.parent / "gone"), id="a dangling symlink"),
+    ],
+)
+def test_without_an_environment_file_it_names_the_copy_command(
+    switch, scripted, scripted_git, repository, state, make
+):
+    """#95 rule 3, S6 and G6: exit 2 naming `cp .env.example .env`; no git or compose call, no
+    lock, and no `.env` written."""
+    (repository / ".env").unlink()
+    make(repository / ".env")
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert err.splitlines() == [
+        "edge apply --closed: ~/git/edge has no .env file; run `cp .env.example .env` there "
+        "and fill it in"
+    ]
+    assert scripted.calls == []
+    assert scripted_git.calls == []
+    assert not apply_lock(state).exists()
+    assert not (repository / ".env").is_file()
+
+
+def test_while_another_apply_runs_it_refuses_and_touches_nothing(
+    switch, scripted, scripted_git, state
+):
+    """#95 rule 4, S8 and G8: exit 1, "another `edge apply --closed` is running"; no git or
+    compose call."""
+    with apply_lock_held(state):
+        exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert err.splitlines() == [
+        "edge apply --closed: another `edge apply --closed` is running; nothing changed"
+    ]
+    assert scripted.calls == []
+    assert scripted_git.calls == []
+
+
+def test_the_state_directory_and_the_lock_are_created_private(switch, state):
+    """#95 rule 4, G11: a missing state directory is created 0700, `apply.lock` 0600."""
+    assert not state.exists()
+
+    switch()
+
+    assert stat.S_IMODE(state.stat().st_mode) == 0o700
+    assert stat.S_IMODE(apply_lock(state).stat().st_mode) == 0o600
+
+
+def interrupted_at_the_prompt() -> None:
+    raise KeyboardInterrupt
+
+
+def git_that_is_missing(_tree, _arguments, _profile):
+    raise FileNotFoundError(2, "No such file or directory")
+
+
+def git_that_breaks(_tree, _arguments, _profile):
+    raise RuntimeError("a defect")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "outcome"),
+    [
+        pytest.param({}, 0, id="exit 0"),
+        pytest.param({"answer": "no"}, 1, id="exit 1"),
+        pytest.param({"git": git_that_is_missing}, 2, id="exit 2, git missing (G25)"),
+        pytest.param({"git": git_that_breaks}, RuntimeError, id="an exception"),
+        pytest.param({"while_prompt_waits": interrupted_at_the_prompt}, KeyboardInterrupt,
+                     id="Ctrl-C"),
+    ],
+)  # fmt: skip
+def test_the_lock_is_free_again_however_the_apply_ends(switch, state, arrange, outcome):
+    """#95 rule 4, G9 and G25: after exit 0, 1, 2, an exception or Ctrl-C the lock is free."""
+    if isinstance(outcome, int):
+        exit_code, _, _ = switch(**arrange)
+        assert exit_code == outcome
+    else:
+        with pytest.raises(outcome):
+            switch(**arrange)
+
+    assert apply_lock_is_free(state)
+
+
+def test_a_missing_git_is_one_line(switch):
+    """#95 G25: git missing is exit 2 with one line."""
+    exit_code, _, err = switch(git=git_that_is_missing)
+
+    assert exit_code == 2
+    assert err.splitlines() == [
+        "edge apply --closed: cannot read the live checkout, cannot run git "
+        "(No such file or directory)"
+    ]
+
+
+def test_a_stop_never_waits_for_a_running_apply(switch, stop, state, ingress):
+    """#95 rule 4, P7 and G10: `edge stop S` and `edge stop --all` complete while an apply holds
+    the lock at its prompt."""
+    stopped: list[int] = []
+
+    def stop_both() -> None:
+        assert not apply_lock_is_free(state)
+        stopped.append(stop()[0])
+        marks = switches.Switches(state)
+        door = tunnel.Tunnel(run=lambda command: subprocess.CompletedProcess(command, 0, ""))
+        emergency.stop_all(marks, NOW, door)
+        stopped.append(int(marks.global_mark() is not None))
+
+    switch("no", while_prompt_waits=stop_both)
+
+    assert stopped == [0, 1]
+    assert marker(state) == NOW.isoformat(timespec="seconds")
+
+
+@pytest.mark.parametrize(
+    ("reference", "status", "lines"),
+    [
+        pytest.param(b"refs/heads/feature\n", b"", ["runs only on main (this is branch feature)"],
+                     id="G12 another branch"),
+        pytest.param(b"refs/heads/main\n", b" M fleet.yaml\0?? dynamic/x.yml\0", [
+            "the live checkout has local changes, nothing changed; a change reaches it through "
+            "a pull request and `git pull --ff-only`:",
+            "  fleet.yaml",
+            "  dynamic/x.yml",
+        ], id="G15 G17 changed paths"),
+    ],
+)  # fmt: skip
+def test_off_main_or_with_changes_it_refuses_naming_why(
+    switch, scripted, scripted_git, reference, status, lines
+):
+    """#95 rules 5 and 6: exit 2, the reason or every changed path; no compose call."""
+    scripted_git.reference, scripted_git.status = reference, status
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert err.splitlines() == [f"edge apply --closed: {line}" for line in lines]
+    assert scripted.calls == []
+
+
+@pytest.fixture
+def real_main(repository: Path) -> Path:
+    """The live checkout as a real git repository: its files committed on a fresh `main`."""
+    (repository / ".git").rmdir()
+    return committed_main(repository)
+
+
+def test_a_clean_main_in_real_git_switches_on_as_before(switch, scripted, real_main):
+    """#95 G30: real git, a clean `main`: the switch-on cell of #52 rule 2 passes unchanged."""
+    exit_code, out, _ = switch(git=checkout.run_git)
+
+    assert exit_code == 0
+    assert scripted.containers["step-ca"] == "running"
+    assert "step-ca is on" in out
+
+
+def test_traefik_yml_replaced_by_a_directory_refuses_before_compose(switch, scripted, real_main):
+    """#95 rule 6, G19 (#34 finding 49): real git; exit 2 naming `traefik.yml`, no compose call."""
+    (real_main / "traefik.yml").unlink()
+    (real_main / "traefik.yml").mkdir()
+
+    exit_code, _, err = switch(git=checkout.run_git)
+
+    assert exit_code == 2
+    assert "edge apply --closed:   traefik.yml" in err.splitlines()
+    assert scripted.calls == []
+
+
+def test_a_setup_child_that_outlives_the_apply_leaves_the_lock_free(
+    switch, missing_setup, repository, state, tmp_path
+):
+    """#95 rule 4, G28: a real setup leaves a child running; it inherited no lock descriptor."""
+    pid_file = tmp_path / "child.pid"
+    (repository / "step-ca" / "init").write_text(
+        f"#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\necho $! > {pid_file}\n"
+    )
+
+    def real_setup(command: Path, working_directory: Path) -> setup.SetupRun:
+        ran = setup.run_setup(command, working_directory)
+        missing_setup.exit_code, missing_setup.line = 0, "step-ca/init --check: set up"
+        return ran
+
+    try:
+        exit_code, _, _ = switch("yes\nyes", run_setup=real_setup)
+        assert exit_code == 0
+        assert apply_lock_is_free(state)
+    finally:
+        os.kill(int(pid_file.read_text()), signal.SIGTERM)
+
+
+GUARD_LINES = (
+    "refused, stdin and stdout must be a terminal",
+    "runs only from the live checkout",
+    "has no .env file",
+    "is running; nothing changed",
+    "runs only on main",
+    "the live checkout has local changes",
+)
+
+
+@pytest.mark.parametrize("first", range(len(GUARD_LINES)), ids=GUARD_LINES)
+def test_only_the_first_failing_guard_speaks(
+    switch, scripted, scripted_git, repository, state, tmp_path, first
+):
+    """#95 rule 1 and G29: with every guard from `first` on failing, only its line appears, in the
+    order terminal, live checkout, `.env`, `apply.lock`, `main`, clean."""
+    tree = repository if first > 1 else edge_tree(tmp_path / "x" / "edge")
+    if first <= 2:
+        (tree / ".env").unlink()
+    if first <= 4:
+        scripted_git.reference = b"refs/heads/feature\n"
+    scripted_git.status = b" M fleet.yaml\0"
+
+    with apply_lock_held(state) if first <= 3 else nullcontext():
+        exit_code, _, err = switch(tree=tree, at_a_terminal=first > 0)
+
+    assert [line for line in GUARD_LINES if line in err] == [GUARD_LINES[first]]
+    assert exit_code == (1 if first in (0, 3) else 2)
+    assert scripted.calls == []
 
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", "yes please"])
@@ -2243,6 +2528,7 @@ def test_a_record_that_cannot_be_written_is_partial_names_the_step_and_touches_n
     after it leaves the entry unfinished; either way exit 1 names the step and no unit moves."""
     write_fleet(repository, ENABLED)
     state.mkdir(parents=True, exist_ok=True)
+    apply_lock(state).touch(mode=0o600)  # an earlier apply left it; it is never unlinked
     ids = dict(scripted.container_ids)
     if recreated:
         scripted.after_up = lambda: state.chmod(0o500)

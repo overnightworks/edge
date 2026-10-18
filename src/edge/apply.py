@@ -18,11 +18,18 @@ here, and the line alone asks nothing (#91). A unit that would be switched on an
 asked about separately; on `yes` its own setup command runs in the operator's terminal (key material
 is made there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
 emergency switch (`edge stop`) or a barrier a stop left is never started and its switch is never
-cleared here: only `edge start` ends it. It runs only from the live checkout `~/git/edge`: from any
-other tree it would bind the live compose project to that tree, so it refuses there with exit 2
-(#79).
+cleared here: only `edge start` ends it.
+
+Before any of that it guards, in this order, each refusing with its own line and nothing else
+(#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
+the live compose project to that tree (#79, exit 2); its `.env` (exit 2); `apply.lock` in the state
+directory, held non-blocking for the whole run, so a second apply is refused (exit 1) while
+`edge stop` and `edge start` never wait for it; HEAD on `main` (exit 2); and a clean tree, every
+changed path named (exit 2), since a change reaches the live checkout through a pull request.
 """
 
+import fcntl
+import os
 import sys
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -33,6 +40,9 @@ from typing import Any
 from edge import barrier, catalog, checkout, compose, core, setup, switches, terminal
 
 COMMAND = "edge apply --closed"
+APPLY_LOCK = "apply.lock"
+_PRIVATE_DIRECTORY = 0o700
+_PRIVATE_FILE = 0o600
 # The emergency command's name; `emergency` owns the verb but imports this module, so it
 # cannot be imported here.
 EMERGENCY_STOP = "edge stop --all"
@@ -341,16 +351,88 @@ def apply_closed(
     home: Path | None = None,
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
     watch: compose.Watch = compose.SETTLED,
+    git: checkout.Runner = checkout.run_git,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
-    if not checkout.is_live_checkout(repository, home or Path.home()):
-        print(
-            f"{COMMAND}: runs only from the live checkout {checkout.LIVE_CHECKOUT} "
-            f"(this is {repository})",
-            file=sys.stderr,
+    if reason := checkout.not_live_checkout(repository, home or Path.home()):
+        _say(f"runs only from the live checkout {checkout.LIVE_CHECKOUT} ({reason})")
+        return ApplyExit.CANNOT_PLAN
+    if not checkout.has_environment_file(repository):
+        _say(
+            f"{checkout.LIVE_CHECKOUT} has no {checkout.ENVIRONMENT_FILE} file; run "
+            f"`{checkout.ENVIRONMENT_FILE_HINT}` there and fill it in"
         )
         return ApplyExit.CANNOT_PLAN
+    try:
+        lock = _take_apply_lock(state_directory)
+    except OSError as error:
+        _say(f"cannot take {state_directory / APPLY_LOCK} ({error.strerror})")
+        return ApplyExit.CANNOT_PLAN
+    if lock is None:
+        _say(f"another `{COMMAND}` is running; nothing changed")
+        return ApplyExit.REFUSED
+    try:
+        if not _on_clean_main(checkout.Git(repository, git)):
+            return ApplyExit.CANNOT_PLAN
+        return _plan_and_apply(
+            state_directory, engine, repository, check, run_setup, verifier, watch
+        )
+    finally:
+        os.close(lock)
+
+
+def _say(line: str) -> None:
+    print(f"{COMMAND}: {line}", file=sys.stderr)
+
+
+def _take_apply_lock(state_directory: Path) -> int | None:
+    """The descriptor holding `apply.lock`, or None while another apply holds it; raises OSError.
+
+    The file is private and never unlinked, so every apply locks the same inode; the descriptor
+    is not inherited, so no child outlives the lock with it (#95 rule 4).
+    """
+    state_directory.mkdir(mode=_PRIVATE_DIRECTORY, parents=True, exist_ok=True)
+    descriptor = os.open(
+        state_directory / APPLY_LOCK, os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC, _PRIVATE_FILE
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return None
+    return descriptor
+
+
+def _on_clean_main(git: checkout.Git) -> bool:
+    """True on a born `main` with nothing changed; else False, after saying why (#95 rules 5, 6)."""
+    try:
+        if reason := checkout.not_on_main(git):
+            _say(f"runs only on {checkout.MAIN} ({reason})")
+            return False
+        changed = git.changed_paths()
+    except checkout.GitError as error:
+        _say(f"cannot read the live checkout, {error}")
+        return False
+    if changed:
+        _say(
+            "the live checkout has local changes, nothing changed; a change reaches it through "
+            "a pull request and `git pull --ff-only`:"
+        )
+        for path in changed:
+            _say(f"  {path}")
+    return not changed
+
+
+def _plan_and_apply(
+    state_directory: Path,
+    engine: compose.Compose | None,
+    repository: Path,
+    check: setup.SetupCheck,
+    run_setup: setup.SetupRunner,
+    verifier: barrier.Verifier,
+    watch: compose.Watch,
+) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     record = core.Record(state_directory)
