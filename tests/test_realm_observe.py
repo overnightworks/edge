@@ -641,6 +641,7 @@ def new_uuids_and_access(realms: dict[str, FakeRealm]) -> None:
         if old_id in realm.client_roles:
             realm.client_roles[client["id"]] = realm.client_roles.pop(old_id)
     realms["hallucinai"].realm["id"] = str(uuid.uuid4())
+    realms["hallucinai"].realm["defaultRole"]["id"] = str(uuid.uuid4())
     realms["hallucinai"].realm["attributes"]["de.adorsys.keycloak.config.state-default"] = "x"
 
 

@@ -390,8 +390,17 @@ def project(form: Shape, representation: Representation, digest: Digester) -> En
         elif key in form.listed:
             fields[key] = canonical(value)
         else:
-            digests[key] = digest(value)
+            digests[key] = digest(without_volatile(value))
     return {"fields": fields, "digests": digests}
+
+
+def without_volatile(value: Any) -> Any:
+    """A UUID nested in a digested value (the realm's defaultRole) is no identity either."""
+    if isinstance(value, dict):
+        return {key: without_volatile(item) for key, item in value.items() if key not in VOLATILE}
+    if isinstance(value, list):
+        return [without_volatile(item) for item in value]
+    return value
 
 
 def project_map(
