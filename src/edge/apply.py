@@ -487,23 +487,29 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """Mark every recorded service of the set unfinished, then in start order recreate each,
+        """In start order, look again whether each still has a live container, mark every
+        recorded service of the set unfinished before the first recreate, then recreate each,
         observe it running with the core services it depends on, prove every active barrier, and
         only then record it with its plan-time digests (#85 rule 3, #87 rule 4); the failure line
-        of the first step that fails, whose set is left marked unfinished, so the next run
-        recreates it (#85 rule 5)."""
+        of the first step that fails, whose set is left marked unfinished once its recreate began,
+        so the next run recreates it (#85 rule 5). One stopped since the plan is not started
+        (C3, #93 rule 2)."""
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
         try:
             followed: frozenset[str] = frozenset()
             if recreates:
                 followed = self._followed(config, progress)
-            if recorded := [plan.service for plan in recreates if plan.service in followed]:
-                progress.unit = recorded[0]
-                progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
-                self.record.mark_unfinished(recorded, followed)
+            recorded = [plan.service for plan in recreates if plan.service in followed]
             for plan in recreates:
                 progress.unit = plan.service
+                progress.step = f"look whether {plan.service} still runs"
+                if _stopped_since_the_plan(engine.states(), plan.service):
+                    return f"{plan.service} was stopped meanwhile; it is not started"
+                if recorded:
+                    progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
+                    self.record.mark_unfinished(recorded, followed)
+                    recorded = []
                 progress.step = f"recreate {plan.service}"
                 engine.recreate(plan.service)
                 progress.step = f"observe {plan.service} running"
@@ -620,6 +626,15 @@ class CorePhase:
             f"{barriers} not proven after the {service} recreate ({failures}): {units} may be "
             f"reachable through Traefik; to close the tunnel now: {EMERGENCY_STOP}"
         )
+
+
+def _stopped_since_the_plan(states: Mapping[str, set[str]], service: str) -> bool:
+    """The core service planned for a recreate has no live container now; one created and never
+    started is the container edge's unfinished recreate left, which the plan recreates (#87 rule
+    4), so it was not stopped (#93 rule 1)."""
+    return not (
+        compose.has_running_container(states, (service,)) or compose.never_started(states, service)
+    )
 
 
 def _in_start_order(config: Mapping[str, Any], services: set[str]) -> tuple[str, ...]:

@@ -2862,6 +2862,56 @@ def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes
     assert out.index(CORE_CURRENT) < out.index("step-ca is on")
 
 
+# --- #93: a core service stopped between the plan and the yes is not started ------------------
+
+
+def stopped_meanwhile(service: str) -> str:
+    return f"partial, {service} was stopped meanwhile; it is not started; no unit switched"
+
+
+@pytest.mark.parametrize(
+    ("change", "stopped", "ups", "record_left"),
+    [
+        (lambda scripted, repository: edit_traefik_yml(repository), "traefik", [], None),
+        (
+            lambda scripted, repository: scripted.change_definition("socket-proxy"),
+            "socket-proxy",
+            [],
+            None,
+        ),
+        (
+            lambda scripted, repository: scripted.change_definition("socket-proxy"),
+            "traefik",
+            [RECREATE_SOCKET_PROXY],
+            UNFINISHED,
+        ),
+    ],
+    ids=["L1 traefik planned and stopped", "L2 socket-proxy stopped", "L3 traefik stopped"],
+)
+def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_unit_switches(
+    change, stopped, ups, record_left, applied_core, switch, scripted, repository, state
+):
+    """#93 rules 1, 2, C3, #87 rule 3, cells L1-L3: the liveness read just before its recreate
+    finds it stopped, so it is not started; partial, exit 1, no unit touched; its entry stays as
+    the plan left it (`record_left` None) unless the recreate of its set had begun."""
+    write_fleet(repository, ENABLED)
+    change(scripted, repository)
+    planned_record = applied(state)
+
+    def stop_it() -> None:
+        scripted.containers[stopped] = "exited"
+
+    exit_code, out, err = switch(while_prompt_waits=stop_it)
+
+    assert exit_code == 1
+    assert f"{stopped}: recreate" in out
+    assert stopped_meanwhile(stopped) in err
+    assert up_calls(scripted) == ups
+    assert scripted.containers[stopped] == "exited"
+    assert unit_calls(scripted) == []
+    assert applied(state) == (record_left or planned_record)
+
+
 # --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
 
 FOLLOWER_FILE = "traefik-mcp.yml"
@@ -3075,6 +3125,25 @@ def test_a_traefik_mcp_that_crash_loops_after_its_recreate_is_partial_with_its_e
     assert "partial, traefik-mcp is not running after the traefik-mcp recreate" in err
     assert follower_entry(state) == {}
     assert FOLLOWER_RECREATED not in out
+
+
+def test_a_traefik_mcp_stopped_while_the_prompt_waits_is_still_recreated(
+    step_ca_applied, switch, scripted, repository, state
+):
+    """#93 rule 3, #89 rules 2, 3, cell L5: a follower's decision does not depend on liveness,
+    so the stop meanwhile changes nothing."""
+    edit_traefik_mcp_yml(repository)
+
+    def stop_traefik_mcp() -> None:
+        scripted.containers["traefik-mcp"] = "exited"
+
+    exit_code, out, _ = switch(while_prompt_waits=stop_traefik_mcp)
+
+    assert exit_code == 0
+    assert up_calls(scripted) == [RECREATE_FOLLOWER]
+    assert scripted.containers["traefik-mcp"] == "running"
+    assert FOLLOWER_RECREATED in out
+    assert follower_entry(state) == follower_digest(repository)
 
 
 def test_a_fixed_file_reaches_traefik_mcp_before_a_crashed_step_ca_is_started(
