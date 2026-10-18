@@ -534,8 +534,9 @@ def test_a_one_shot_container_left_behind_is_removed_when_switched_off(
 def test_off_never_takes_a_volume_or_a_project_down_and_never_names_the_core(
     switch, scripted, repository
 ):
-    """#52 rule 2: no `down`, `-v` or volume command; while the core's files are as recorded
-    (here it has none), traefik and socket-proxy are never named (#85 rule 3)."""
+    """#52 rule 2: no `down`, `-v` or volume command; while the core's definition and files are
+    as recorded (here it has no file and no container), traefik and socket-proxy are never named
+    (#85 rule 3, #87 rule 3)."""
     switch()
     write_fleet(repository, DISABLED)
     switch()
@@ -623,7 +624,9 @@ SWITCH_ON_CELLS = {
         "step-ca is on",
     ),
     "cell 5, no containers, the unit was off": ({}, set(), "step-ca is on"),
-    "cell 6, one-shot already exited, nothing changed": (APP_EXITED, set(), "step-ca is on"),
+    # #34 finding 39: APP_EXITED with nothing changed is cell 2 without the changed definition;
+    # cell 6 (an exited one-shot counts as up) is cell 1's data
+    "cell 2 without a changed definition": (APP_EXITED, set(), "step-ca is on"),
 }
 
 
@@ -1873,8 +1876,8 @@ def test_apply_leaves_the_barrier_in_b_to_e_and_in_e_with_a_marker_to_b(
     catalog_text, probe_unit, switch, scripted, ingress, state
 ):
     """#61 rule 5, narrowed by #85 S9: apply never writes or removes a barrier; it re-renders
-    and proves them only after a Traefik recreate, which this core without file binds never
-    plans."""
+    and proves them only after a core recreate, which this core, with no container and no file
+    bind, never plans."""
     put_probe_in_b(scripted, state, ingress)
     ingress.barrier_file().write_text("the barrier")
     write_fleet(ingress.repository, catalog_text)
@@ -1970,7 +1973,10 @@ def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, se
 
 RECREATE_TRAEFIK = ["--profile", "*", "up", "-d", "--no-deps", "--force-recreate", "traefik"]
 PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
+RECREATE_SOCKET_PROXY = [*RECREATE_TRAEFIK[:-1], "socket-proxy"]
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
+SOCKET_PROXY_RECREATED = f"{apply.COMMAND}: socket-proxy is recreated"
+CORE_CURRENT = "the core is current"
 UNFINISHED = {"traefik": {}}
 
 
@@ -2355,6 +2361,309 @@ def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
 def test_the_scripted_compose_fails_a_test_that_takes_volumes_or_the_project_down(
     arguments, scripted
 ):
-    """#85 P13, cell U14: every test above runs on a fake that refuses these."""
+    """#85 P13, cells U14, #87 D15: every test above runs on a fake that refuses these."""
     with pytest.raises(AssertionError):
         scripted.run(["docker", "compose", "-p", "d", "-f", "f", "--profile", "*", *arguments], 1)
+
+
+# --- #87: the core follows its compose definition, socket-proxy first ------------------------
+
+
+def up_calls(scripted) -> list[list[str]]:
+    return [call for call in scripted.calls if call[2] == "up"]
+
+
+@pytest.fixture
+def applied_core(core_files, switch, scripted):
+    """The core as last applied: traefik.yml recorded, both containers from the current
+    definitions; the calls of that first run are forgotten."""
+    assert switch()[0] == 0
+    scripted.calls.clear()
+
+
+def test_a_changed_socket_proxy_definition_recreates_socket_proxy_then_traefik(
+    applied_core, switch, scripted, state, repository
+):
+    """#87 rules 2, 4, 5, cell D1: the plan names both, socket-proxy first; each gets a new
+    container by exactly edge's recreate argv; both success lines, then the core is current."""
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("socket-proxy")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.index("socket-proxy: recreate (its compose definition changed)") < out.index(
+        "traefik: recreate (socket-proxy is recreated)"
+    )
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
+    assert all(scripted.container_ids[service] != ids[service] for service in ids)
+    assert out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT)
+    assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
+
+
+def test_a_changed_traefik_definition_recreates_only_traefik(applied_core, switch, scripted):
+    """#87 rule 2, cell D2 (#85 U1): socket-proxy's container is kept."""
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("traefik")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (its compose definition changed)" in out
+    assert up_calls(scripted) == [RECREATE_TRAEFIK]
+    assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
+    assert CORE_CURRENT in out
+
+
+@pytest.mark.parametrize("service", ["socket-proxy", "traefik"])
+def test_a_second_run_after_a_definition_recreate_changes_nothing(
+    service, applied_core, switch, scripted
+):
+    """#87 P15, cell D3: Compose labels the new container with the hash, so nothing is left."""
+    scripted.change_definition(service)
+    assert switch()[0] == 0
+    ids = dict(scripted.container_ids)
+    scripted.calls.clear()
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert "apply exactly this plan" not in out
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+def test_a_changed_traefik_definition_and_traefik_yml_are_one_recreate_recording_the_plan_time_file(
+    applied_core, switch, scripted, repository, state
+):
+    """#87 rule 4, cell D4 (#85 U10): one recreate; the record holds the digest as planned."""
+    scripted.change_definition("traefik")
+    edit_traefik_yml(repository)
+    planned = sha256(repository / "traefik.yml")
+    scripted.after_up = lambda: edit_traefik_yml(repository)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (its compose definition changed; traefik.yml changed)" in out
+    assert up_calls(scripted) == [RECREATE_TRAEFIK]
+    assert applied(state) == {"traefik": {"traefik.yml": planned}}
+
+
+@pytest.mark.parametrize("state_of_proxy", ["exited", None])
+def test_a_changed_socket_proxy_that_is_not_running_is_named_and_traefik_is_left_as_it_is(
+    state_of_proxy, applied_core, switch, scripted
+):
+    """#87 rule 3, cells D5, D6: a stopped socket-proxy with a stale label is named, never
+    started, and does not pull traefik in; an absent one has nothing to compare."""
+    scripted.change_definition("socket-proxy")
+    if state_of_proxy:
+        scripted.containers["socket-proxy"] = state_of_proxy
+    else:
+        scripted.containers.pop("socket-proxy")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    named = "its compose definition changed; socket-proxy is not running and is not started"
+    assert (named in out) is bool(state_of_proxy)
+    assert "traefik: recreate" not in out
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and_touches_no_unit(
+    applied_core, switch, scripted, repository, state
+):
+    """#87 rule 4, cell D7: traefik's entry is emptied before the first recreate and traefik is
+    untouched; the next run plans both again."""
+    write_fleet(repository, ENABLED)
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("socket-proxy")
+    scripted.failing_verb = "up"
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, could not recreate socket-proxy, `docker compose up` exited 1" in err
+    assert applied(state) == UNFINISHED
+    assert scripted.container_ids == ids
+    assert unit_calls(scripted) == []
+    assert SOCKET_PROXY_RECREATED not in out
+    scripted.failing_verb = None
+    _, again, _ = switch("no")
+    assert "socket-proxy: recreate (its compose definition changed)" in again
+    assert (
+        "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)" in again
+    )
+
+
+def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_again(
+    applied_core, switch, scripted, state
+):
+    """#87 rule 4, P15, cell D8: traefik is observed together with socket-proxy, so a proxy that
+    restarts after its recreate never lets a later run say the core is current."""
+    scripted.change_definition("socket-proxy")
+    scripted.crash_loops.add("socket-proxy")
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, socket-proxy is not running after the socket-proxy recreate" in err
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
+    assert applied(state) == UNFINISHED
+    exit_code, out, err = switch()
+    assert exit_code == 1
+    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert "partial, traefik or socket-proxy is not running after the traefik recreate" in err
+    assert CORE_CURRENT not in out
+
+
+def test_every_core_recreate_proves_the_barriers_before_its_success_line(
+    applied_core, switch, scripted, repository, state
+):
+    """#87 rule 4, S9, cell D9: after socket-proxy's recreate and again after traefik's."""
+    probe_switched_off(scripted, repository, state)
+    scripted.change_definition("socket-proxy")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    proven = "the barrier of probe is proven"
+    assert out.index(proven) < out.index(SOCKET_PROXY_RECREATED)
+    assert out.index(SOCKET_PROXY_RECREATED) < out.rindex(proven) < out.index(RECREATED)
+    assert out.count(proven) == 2
+
+
+def test_an_unproven_barrier_after_the_socket_proxy_recreate_names_the_unit_and_the_stop(
+    applied_core, switch, scripted, repository, state, ingress
+):
+    """#87 rule 4, S9, cell D9 (#85 rule 5): partial, traefik not recreated, no success line."""
+    probe_switched_off(scripted, repository, state)
+    scripted.change_definition("socket-proxy")
+    ingress.rejecting = True
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "the barrier of probe is not proven after the socket-proxy recreate (" in err
+    assert "probe may be reachable through Traefik; to close the tunnel now: edge stop --all" in err
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
+    assert SOCKET_PROXY_RECREATED not in out
+    assert applied(state) == UNFINISHED
+
+
+HASH_FAILURES = {
+    "a malformed line": ("garbage\n", None, "`docker compose config --hash` answered 'garbage'"),
+    "a missing service": (
+        f"socket-proxy {definition_hash('socket-proxy')}\n",
+        None,
+        "`docker compose config --hash` named no hash for traefik",
+    ),
+    "a core container without the label": (
+        None,
+        "traefik",
+        "a traefik container has no com.docker.compose.config-hash label",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("answer", "unlabelled", "line"), HASH_FAILURES.values(), ids=HASH_FAILURES
+)
+def test_an_unreadable_hash_or_label_cannot_be_planned(
+    answer, unlabelled, line, applied_core, switch, scripted
+):
+    """#87 rule 1, cell D11: exit 2 and nothing changed; a fallback would churn (P15)."""
+    scripted.hash_answer = answer
+    if unlabelled:
+        scripted.labels[unlabelled] = None
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert f"cannot plan, {line}" in err
+    assert scripted.changing_verbs() == []
+
+
+# A real `ps --format json` line and `config --hash` answer, Compose 2.40.3 (#87 Q1).
+Q1_PS_LINE = json.dumps(
+    {
+        "ExitCode": 0,
+        "ID": "d9d8994eda15",
+        "Image": IMAGE,
+        "Labels": (
+            "com.docker.compose.config-hash="
+            "6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4,"
+            f"{OTHER_LABELS},com.docker.compose.project=edge87q1scratch,"
+            "com.docker.compose.service=a"
+        ),
+        "Project": "edge87q1scratch",
+        "Service": "a",
+        "State": "running",
+    }
+)
+Q1_HASHES = (
+    "a 6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4\n"
+    "b 8cd73dfe1764c0c8c02569ca3860a15172725ae7e146cc50d08d6e651078db83\n"
+)
+
+
+def answering(output: str) -> compose.Runner:
+    return lambda command, _timeout: subprocess.CompletedProcess(command, 0, output, "")
+
+
+def test_the_definition_hash_is_read_from_a_real_ps_line_beside_labels_holding_commas():
+    """#87 rule 1, cells D11, Q1: only the config-hash label is read out of `Labels`."""
+    [container] = compose.Compose(answering(Q1_PS_LINE)).containers()
+
+    assert container == compose.Container(
+        "a", "running", "6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4", IMAGE
+    )
+
+
+def test_the_config_hashes_are_read_from_a_real_config_hash_answer():
+    """#87 rule 1, cell Q1: `name hash` lines, one per asked service."""
+    hashes = compose.Compose(answering(Q1_HASHES)).config_hashes(("a", "b"))
+
+    assert hashes == {
+        "a": "6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4",
+        "b": "8cd73dfe1764c0c8c02569ca3860a15172725ae7e146cc50d08d6e651078db83",
+    }
+
+
+def test_the_core_is_not_current_while_a_changed_core_service_is_not_started(
+    applied_core, switch, scripted, repository
+):
+    """#87 rule 5, cell D12: socket-proxy is recreated, traefik is only named."""
+    scripted.change_definition("socket-proxy")
+    scripted.containers["traefik"] = "exited"
+    edit_traefik_yml(repository)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik.yml changed; traefik is not running and is not started" in out
+    assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
+    assert SOCKET_PROXY_RECREATED in out
+    assert CORE_CURRENT not in out
+
+
+def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes_first(
+    applied_core, switch, scripted, repository
+):
+    """#87 rule 4, cell D14 (#85 U11): one plan, one yes, socket-proxy, traefik, then step-ca;
+    a core failure touching no unit is D7."""
+    write_fleet(repository, ENABLED)
+    scripted.change_definition("socket-proxy")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    starting_step_ca = unit_calls(scripted)[0]
+    assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
+    assert up_calls(scripted)[:2] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
+    assert out.index(CORE_CURRENT) < out.index("step-ca is on")
