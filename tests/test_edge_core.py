@@ -381,6 +381,19 @@ def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_
     ]
 
 
+def test_a_traefik_its_recreate_left_created_is_recreated_again_for_one_reason(
+    config, checkout, recorded
+):
+    """#87 rule 4: a traefik whose start failed, as a taken port 80 leaves it, is created and
+    marked unfinished; the next run recreates it once, and socket-proxy is not pulled in."""
+    recorded.mark_unfinished(["traefik"], FOLLOWED)
+    states = {"socket-proxy": "running", "traefik": "created"}
+
+    plans = plan_of(config, checkout, recorded, states)
+
+    assert lines(plans) == ["traefik: recreate (the last recreate did not finish)"]
+
+
 def test_an_absent_core_container_has_no_definition_to_compare(config, checkout, recorded):
     """#87 rule 3, cell D6: no container, no label, no line; a live one is still compared."""
     assert plan_of(config, checkout, recorded, {"traefik": "running"}) == []

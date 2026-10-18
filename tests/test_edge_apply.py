@@ -2530,6 +2530,26 @@ def test_a_socket_proxy_its_recreate_left_created_is_recreated_by_the_next_run(
     assert scripted.containers["socket-proxy"] == "running"
 
 
+def test_a_traefik_its_recreate_left_created_is_recreated_by_the_next_run(
+    applied_core, switch, scripted, repository
+):
+    """#87 rule 4: a traefik that cannot start, as a taken port 80 leaves it, stays created and
+    marked unfinished; once it can start, the next run recreates only traefik, once."""
+    edit_traefik_yml(repository)
+    scripted.unstartable.add("traefik")
+
+    assert switch()[0] == 1
+    assert scripted.containers["traefik"] == "created"
+    scripted.unstartable.clear()
+    scripted.calls.clear()
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "traefik: recreate (the last recreate did not finish)\n" in out
+    assert up_calls(scripted) == [RECREATE_TRAEFIK]
+    assert out.index(RECREATED) < out.index(CORE_CURRENT)
+
+
 def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_again(
     applied_core, switch, scripted, state
 ):
