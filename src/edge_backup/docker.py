@@ -232,6 +232,7 @@ class RestoreServer:
             label=label,
             stdin=stdin,
             timeout=timeout,
+            discard_stderr=True,  # pg_restore and psql quote row values of the restored tables
         )
 
 

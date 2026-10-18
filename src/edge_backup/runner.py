@@ -310,8 +310,11 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
         with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
             server.list_dump(dump)
             server.load_dump(dump)
+            restore_test = app.restore_test
             check_row_count(
-                app.restore_test.count_table, server.row_count(app.restore_test.count_table)
+                restore_test.count_table,
+                server.row_count(restore_test.count_table),
+                require_rows=restore_test.require_rows,
             )
             references = (
                 server.column_values(app.audio.reference_table, app.audio.reference_column)

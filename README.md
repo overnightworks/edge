@@ -547,7 +547,7 @@ The units expect the checkout at `~/git/edge`.
 
 | Timer | When | Does |
 |---|---|---|
-| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check` |
+| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check`, only when every app backed up |
 | `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database
@@ -575,9 +575,11 @@ crash-consistent: a file written during the scan may be missing or partial. The
 restore test catches exactly that, so such a backup never counts as good.
 
 Keycloak's dump holds its realm signing keys, the credential hashes and the
-client secrets. Like everything in the repository it exists only encrypted
-(restic), never as a file outside the private staging directory that is removed
-when the run ends. If Keycloak is off or its database is down, the weekly run
+client secrets. In the repository it exists only encrypted (restic). In plain
+text it exists in exactly three places, each mode 0700: the staging directory
+during a backup and the restore test's directory during a restore test (both
+removed when the run ends), and the target of `edge-backup restore keycloak
+--target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
 waits 10 minutes for it, reports keycloak as failed and still backs up
 Songmaker.
 
@@ -591,10 +593,14 @@ It restores the last successful backup's snapshot into a private directory under
 - the dump loads with `pg_restore --exit-on-error --single-transaction` into a
   throwaway PostgreSQL container without network (removed afterwards) of the
   major the app's database runs: 16 for Songmaker, 17 for Keycloak, each image
-  pinned by version and digest in `src/edge_backup/settings.py` (a custom dump
-  loads only into its own major; the pin of major 17 equals `keycloak-db` in
-  `compose.yaml`, a test fails when they differ);
-- the row count of the app's table (`songs`, Keycloak's `realm`) is above zero;
+  pinned by version and digest in `src/edge_backup/settings.py` (so the test
+  proves the version the app really runs; an older server cannot read a newer
+  archive; the pin of major 17 equals `keycloak-db` in `compose.yaml`, a test
+  fails when they differ). The server's diagnostics are discarded because
+  PostgreSQL quotes row values in them: a failure shows the step and the exit
+  code only;
+- the row count of the app's table (`songs`, Keycloak's `realm`) answers; for
+  Keycloak (`require_rows = true` in `backup/apps.toml`) it is above zero;
 - for an app with audio: the restored audio file count equals the manifest's,
   and every audio file the restored database references
   (`generations.mp3_path`) exists in the copy with a size above zero.
@@ -742,13 +748,17 @@ Only you restore Keycloak, and the block below overwrites only Keycloak's
 database. It stops `keycloak` only (Traefik and every other service keep
 running), loads the dump into `keycloak-db`, and starts `keycloak` again. First
 restore the snapshot as above, `uv run edge-backup restore keycloak --target
-~/restore-keycloak`; the dump holds keys, so delete that directory afterwards.
-Paste the block as a whole: it stops at the first failing command and never
-starts Keycloak after a failed load.
+~/restore-keycloak`; the dump holds keys, so the block deletes that directory
+after a successful `docker start`. Paste the block as a whole: it stops at the
+first failing command and never starts Keycloak after a failed load. If the
+load fails, `pg_restore`'s messages can quote rows of the dump, so they go to
+a private file (mode 0600) and only its path is printed: delete that file and
+`~/restore-keycloak` once you are done.
 
 ```sh
 (
 set -euo pipefail
+umask 077
 restored=~/restore-keycloak
 container() {
   docker ps --quiet --filter label=com.docker.compose.project=edge \
@@ -762,9 +772,14 @@ kc=$(container keycloak)
 [ "$(wc -w <<<"$kc")" -eq 1 ] \
   || { echo "need exactly one running keycloak, found: ${kc:-none}" >&2; exit 1; }
 docker stop "$kc"
+errors=$(mktemp ~/keycloak-restore-errors.XXXXXX)
 docker exec -i "$db" pg_restore --username keycloak --dbname keycloak \
-  --clean --if-exists --single-transaction --exit-on-error < "$restored/db/db.dump"
+  --clean --if-exists --single-transaction --exit-on-error \
+  < "$restored/db/db.dump" 2>"$errors" \
+  || { echo "pg_restore failed; its messages may hold dump rows: $errors (delete it)" >&2; exit 1; }
+rm -f "$errors"
 docker start "$kc"
+rm -rf "$restored"
 )
 ```
 

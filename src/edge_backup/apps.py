@@ -22,6 +22,7 @@ _APP_KEYS = frozenset(
 _AUDIO_VOLUME_KEY = "volume"
 _AUDIO_REFERENCE_KEYS = frozenset({"audio_reference_table", "audio_reference_column"})
 _RESTORE_TEST_KEYS = frozenset({"count_table"})
+_REQUIRE_ROWS_KEY = "require_rows"
 
 
 class AppsError(ValueError):
@@ -33,7 +34,10 @@ class DumpKind(StrEnum):
 
 
 class PostgresMajor(IntEnum):
-    """The server major an app's dump needs: a custom dump only restores into the same major."""
+    """The major the app's database runs; the restore test proves the dump on that same major.
+
+    An older server cannot read a newer archive (PG17 into PG16: "unsupported version (1.16)").
+    """
 
     SIXTEEN = 16
     SEVENTEEN = 17
@@ -55,6 +59,8 @@ class RestoreTest:
     """What the restore test asks the restored database: a row count, and the audio it names."""
 
     count_table: str
+    require_rows: bool
+    """The restored table must hold rows; without it, a count that answers is enough."""
 
 
 @dataclass(frozen=True)
@@ -111,7 +117,7 @@ def _parse_app(name: str, record: object) -> App:
 
 def _postgres_major(label: str, record: dict) -> PostgresMajor:
     value = record["postgres_major"]
-    if value not in {major.value for major in PostgresMajor}:
+    if type(value) is not int or value not in {major.value for major in PostgresMajor}:
         raise AppsError(
             f"{label}: postgres_major muss einer von {[m.value for m in PostgresMajor]} sein, "
             f"nicht {value!r}"
@@ -126,8 +132,17 @@ def _table(label: str, record: object) -> dict:
 
 
 def _parse_restore_test(label: str, record: dict) -> RestoreTest:
-    _require_exact_keys(label, record, _RESTORE_TEST_KEYS, optional=_AUDIO_REFERENCE_KEYS)
-    return RestoreTest(count_table=_identifier(label, record, "count_table"))
+    _require_exact_keys(
+        label, record, _RESTORE_TEST_KEYS, optional=_AUDIO_REFERENCE_KEYS | {_REQUIRE_ROWS_KEY}
+    )
+    require_rows = record.get(_REQUIRE_ROWS_KEY, False)
+    if not isinstance(require_rows, bool):
+        raise AppsError(
+            f"{label}: {_REQUIRE_ROWS_KEY} muss true oder false sein, nicht {require_rows!r}"
+        )
+    return RestoreTest(
+        count_table=_identifier(label, record, "count_table"), require_rows=require_rows
+    )
 
 
 def _parse_audio(label: str, record: dict, restore_test_record: dict) -> Audio | None:

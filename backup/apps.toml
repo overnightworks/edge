@@ -26,3 +26,4 @@ postgres_major = 17       # compose.yaml's keycloak-db
 
 [app.keycloak.restore_test]
 count_table = "realm"
+require_rows = true   # a Keycloak without a realm is no backup

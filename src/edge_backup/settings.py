@@ -9,8 +9,9 @@ from edge_backup.apps import PostgresMajor
 RESTIC_IMAGE = (
     "restic/restic:0.19.1@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510"
 )
-# The restore test loads a dump into a throwaway server of the major version that wrote it
-# (`pg_restore` of a custom dump needs that major). Major 17 is compose.yaml's keycloak-db pin.
+# The restore test loads a dump into a throwaway server of the app's own major, so it proves the
+# version the app really runs; an older server cannot read a newer archive. Major 17 is
+# compose.yaml's keycloak-db pin.
 RESTORE_IMAGES = {
     PostgresMajor.SIXTEEN: (
         "postgres:16.15-alpine"

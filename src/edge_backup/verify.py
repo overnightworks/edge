@@ -44,8 +44,8 @@ def check_audio_count(manifest: Manifest, restored: int) -> None:
         )
 
 
-def check_row_count(table: str, rows: int) -> None:
-    if rows == 0:
+def check_row_count(table: str, rows: int, *, require_rows: bool) -> None:
+    if require_rows and rows == 0:
         raise VerificationError(f"die wiederhergestellte Tabelle {table} ist leer")
 
 

@@ -106,6 +106,8 @@ class Machine:
     written_during_scan: dict[str, bytes] = field(default_factory=dict)
     """Audio that lands in the volume after the manifest's count, before restic's scan."""
     failing: dict[str, int | type[BaseException]] = field(default_factory=dict)
+    restore_diagnostic: str = ""
+    """What pg_restore would print to stderr when it fails, as postgres quotes row values."""
     snapshots: list[dict] = field(default_factory=list)
     calls: list[tuple[str, list[str]]] = field(default_factory=list)
     status_seen_during_backup: dict | None = None
@@ -321,8 +323,12 @@ class Machine:
         self.server_accepting = True
         return b""
 
-    def _pg_restore(self, argv, *, stdin, **_) -> bytes:
+    def _pg_restore(self, argv, *, stdin, discard_stderr, **_) -> bytes:
         assert self.server_accepting, "pg_restore before pg_isready said the server accepts"
+        if self.restore_diagnostic:
+            if not discard_stderr:
+                print(self.restore_diagnostic, file=sys.stderr)
+            return exit_with("pg_restore", 1)
         if not stdin.read_bytes().startswith(b"PGDMP"):
             return exit_with("pg_restore", 1)
         return b""
