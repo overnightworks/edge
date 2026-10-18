@@ -652,30 +652,28 @@ for port in range(8791, 8891):
 print(port, flush=True)
 server.serve_forever()
 """
-SERVER_SECONDS = 60
 
 
 @pytest.fixture
-def loopback(tmp_path: Path) -> Iterator[Callable[[str], str]]:
-    """A loopback HTTP server on the first free port above 8790, under `timeout`: `401` answers
-    every request unauthorized, `silent` accepts and never answers. Its pid is kept in
-    `tmp_path/server.pid` and it is killed at the end; its base URL is returned."""
+def loopback() -> Iterator[Callable[[str], str]]:
+    """A loopback HTTP server on the first free port above 8790: `401` answers every request
+    unauthorized, `silent` accepts and never answers. Its base URL is returned; it is killed and
+    reaped at the end."""
     servers: list[subprocess.Popen[str]] = []
 
     def start(mode: str) -> str:
         server = subprocess.Popen(
-            ["timeout", str(SERVER_SECONDS), sys.executable, "-I", "-c", LOOPBACK_SERVER, mode],
+            [sys.executable, "-I", "-c", LOOPBACK_SERVER, mode],
             stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
         )  # fmt: skip
         servers.append(server)
-        (tmp_path / "server.pid").write_text(f"{server.pid}\n")
         assert server.stdout is not None
         return f"http://127.0.0.1:{server.stdout.readline().strip()}"
 
     yield start
     for server in servers:
         server.kill()
-        server.wait()
+        server.communicate()
 
 
 def test_a_refused_sign_in_is_one_line_without_a_prompt_or_a_credential(
