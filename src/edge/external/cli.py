@@ -6,6 +6,7 @@ from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
 
+from edge import checkout
 from edge.external import apply, secrets, tofu
 
 
@@ -39,15 +40,36 @@ def plan_command(home: Path) -> int:
     return _guarded("plan", home, secrets.Access.READ, _plan, ExitCode.CANNOT_PLAN)
 
 
-def apply_command(home: Path) -> int:
+def apply_command(
+    home: Path, tree: Path | None = None, git: checkout.Runner = checkout.run_git
+) -> int:
+    """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
+    live one, on a clean main."""
+
+    def refusal() -> int | None:
+        return apply.refusal_without_terminal() or _refusal_off_clean_live_main(
+            tree or tofu.PROJECT_ROOT, home, git
+        )
+
     return _guarded(
         "apply",
         home,
         secrets.Access.WRITE,
         apply.apply_plan,
         apply.ApplyExit.CANNOT_PLAN,
-        refusal=apply.refusal_without_terminal,
+        refusal=refusal,
     )
+
+
+def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:
+    """Exit 2, naming why, unless `tree` is the live checkout on a clean main (#30 rules 2, 3)."""
+    if not_live := checkout.not_live_checkout_line(tree, home):
+        refusals = [not_live]
+    else:
+        refusals = checkout.not_clean_main(checkout.Git(tree, git))
+    for line in refusals:
+        print(f"edge external apply: {line}", file=sys.stderr)
+    return ExitCode.CANNOT_PLAN if refusals else None
 
 
 def _guarded(
