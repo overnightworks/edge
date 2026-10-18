@@ -367,22 +367,22 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """Mark every service of the set unfinished, then in start order recreate each, observe it
-        running with the core services it depends on, prove every active barrier, and only then
-        record it finished with its plan-time digests (#85 rule 3, #87 rule 4); the failure line
+        """Mark every recorded service of the set unfinished, then in start order recreate each,
+        observe it running with the core services it depends on, prove every active barrier, and
+        only then record it with its plan-time digests (#85 rule 3, #87 rule 4); the failure line
         of the first step that fails, whose set is left marked unfinished, so the next run
         recreates it (#85 rule 5)."""
         config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
-        recreated = [plan.service for plan in recreates]
+        recorded = [plan.service for plan in recreates if plan.digests]
         try:
             followed: frozenset[str] = frozenset()
-            if recreated:
+            if recorded:
                 progress.step = "find the services edge follows"
                 followed = core.followed_services(config, self.repository)
-                progress.unit = recreated[0]
-                progress.step = f"mark {', '.join(recreated)} unfinished in {core.APPLIED_FILE}"
-                self.record.mark_unfinished(recreated, followed)
+                progress.unit = recorded[0]
+                progress.step = f"mark {', '.join(recorded)} unfinished in {core.APPLIED_FILE}"
+                self.record.mark_unfinished(recorded, followed)
             for plan in recreates:
                 progress.unit = plan.service
                 progress.step = f"recreate {plan.service}"
@@ -395,8 +395,9 @@ class CorePhase:
                 progress.step = "prove the barriers"
                 if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
                     return unproven
-                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
-                self.record.write(plan.service, plan.digests, followed)
+                if plan.digests:
+                    progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
+                    self.record.write(plan.service, plan.digests, followed)
                 print(f"{COMMAND}: {plan.recreated()}")
         except (compose.ComposeError, core.CoreError) as error:
             return f"could not {progress.step}, {error}"

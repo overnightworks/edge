@@ -1985,7 +1985,6 @@ RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 SOCKET_PROXY_RECREATED = f"{apply.COMMAND}: socket-proxy is recreated"
 CORE_CURRENT = "the core is current"
 UNFINISHED = {"traefik": {}}
-CORE_UNFINISHED = {"socket-proxy": {}, "traefik": {}}
 
 
 @pytest.fixture
@@ -2496,7 +2495,7 @@ def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and
 
     assert exit_code == 1
     assert "partial, could not recreate socket-proxy, `docker compose up` exited 1" in err
-    assert applied(state) == CORE_UNFINISHED
+    assert applied(state) == UNFINISHED
     assert scripted.container_ids == ids
     assert unit_calls(scripted) == []
     assert SOCKET_PROXY_RECREATED not in out
@@ -2566,7 +2565,7 @@ def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_aga
     assert exit_code == 1
     assert "partial, socket-proxy is not running after the socket-proxy recreate" in err
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
-    assert applied(state) == CORE_UNFINISHED
+    assert applied(state) == UNFINISHED
     exit_code, out, err = switch()
     assert exit_code == 1
     assert "traefik: recreate (the last recreate did not finish)" in out
@@ -2605,7 +2604,7 @@ def test_an_unproven_barrier_after_the_socket_proxy_recreate_names_the_unit_and_
     assert "probe may be reachable through Traefik; to close the tunnel now: edge stop --all" in err
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert SOCKET_PROXY_RECREATED not in out
-    assert applied(state) == CORE_UNFINISHED
+    assert applied(state) == UNFINISHED
 
 
 HASH_FAILURES = {

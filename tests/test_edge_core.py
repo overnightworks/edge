@@ -342,12 +342,18 @@ def test_socket_proxy_comes_first_though_the_config_lists_traefik_first(config, 
     assert [planned.service for planned in plans] == ["socket-proxy", "traefik"]
 
 
-@pytest.mark.parametrize("state", ["exited", "created"])
+@pytest.mark.parametrize(
+    ("state", "proxy_emptied"), [("exited", False), ("created", False), ("created", True)]
+)
 def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothing(
-    state, config, checkout, recorded
+    state, proxy_emptied, config, checkout, recorded
 ):
-    """#87 rule 3, cell D5: a stopped core service is never started, so its dependents keep
-    running as they are; so is one created by hand, which no recreate of edge's left."""
+    """#87 rules 3 and 6, cell D5: a stopped core service is never started, so its dependents
+    keep running as they are; so is one created by hand, which no recreate of edge's left, even
+    beside an emptied socket-proxy entry, which edge follows through no file and so ignores."""
+    if proxy_emptied:
+        entries = json.loads(recorded.path.read_text()) | {"socket-proxy": {}}
+        recorded.path.write_text(json.dumps(entries))
     states = {"socket-proxy": state, "traefik": "running"}
 
     plans = plan_of(config, checkout, recorded, states, {"socket-proxy": STALE})
@@ -368,11 +374,11 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothin
 def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_traefik(
     label, why, config, checkout, recorded
 ):
-    """#87 rule 4: a container created and never started while the record says its recreate did
-    not finish is what edge's recreate whose start failed leaves, with the new label; nobody
-    stopped it, so the next run recreates it again, whether the definition was fixed since or
-    not."""
-    recorded.mark_unfinished(["socket-proxy"], FOLLOWED)
+    """#87 rule 4: a container created and never started while the record says the recreate that
+    took it in did not finish is what edge's recreate whose start failed leaves, with the new
+    label; nobody stopped it, so the next run recreates it again, whether the definition was fixed
+    since or not. socket-proxy keeps no entry; traefik's, emptied with it, speaks for it."""
+    recorded.mark_unfinished(["traefik"], FOLLOWED)
     states = {"socket-proxy": "created", "traefik": "running"}
     labels = {"socket-proxy": label} if label else {}
 
@@ -380,7 +386,7 @@ def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_
 
     assert lines(plans) == [
         f"socket-proxy: recreate ({why})",
-        "traefik: recreate (socket-proxy is recreated)",
+        "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)",
     ]
 
 

@@ -150,14 +150,13 @@ class Record:
 
     def mark_unfinished(self, services: Iterable[str], followed: Collection[str]) -> None:
         """Empty the services' entries before their recreates start, so a run that ends partial
-        leaves nothing that could match the files later, and the next run knows a container it
-        finds created and never started is edge's own."""
+        leaves nothing that could match the files later, and the next run knows a core container
+        it finds created and never started is edge's own."""
         self._write({service: {} for service in services}, followed)
 
     def write(self, service: str, applied: Digests, followed: Collection[str]) -> None:
-        """Set the service's entry once its recreate finished; one edge follows through no file
-        keeps none. An unreadable or malformed record is replaced whole."""
-        self._write({service: applied} if service in followed else {}, followed)
+        """Set the service's entry; an unreadable or malformed record is replaced whole."""
+        self._write({service: applied}, followed)
 
     def _write(self, changes: Mapping[str, Digests], followed: Collection[str]) -> None:
         """Write the changed entries over the record, keeping only the services edge follows."""
@@ -229,21 +228,27 @@ def plan_core(
     --hash`. One with a live container is recreated and pulls in the live core services that
     depend on it; one without is only named and pulls in nothing, because the core is never
     started here (#85 rule 4, #87 rule 3). A core container that was created and never started
-    while the record says its recreate did not finish is no stopped service: edge's recreate
-    left it so, and it is recreated again (#87 rule 4)."""
+    while the record says a recreate that took it in did not finish is no stopped service: edge's
+    recreate left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
     states = compose.states_of(containers)
     labels = _config_hash_labels(containers, core_services(config))
+    binds = {
+        service: file_binds(config["services"][service], checkout)
+        for service in start_order(config)
+    }
+    recorded = {service for service, sources in binds.items() if sources}
     plans: dict[str, CorePlan] = {}
-    for service in start_order(config):
-        sources = file_binds(config["services"][service], checkout)
+    for service, sources in binds.items():
         current = digests(sources, checkout)
         whys = []
         if labels.get(service, set()) - {hashes[service]}:
             whys.append(DEFINITION_CHANGED)
         if sources and (why := _why_changed(current, reading, service)):
             whys.append(why)
-        left_unstarted = compose.never_started(states, service) and reading.unfinished(service)
+        left_unstarted = compose.never_started(states, service) and _recreate_unfinished(
+            config, reading, recorded, service
+        )
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
         live = left_unstarted or compose.has_running_container(states, (service,))
@@ -257,6 +262,29 @@ def plan_core(
             action = CoreAction.RECREATE if live else CoreAction.NOT_STARTED
             plans[service] = CorePlan(service, action, "; ".join(whys), current)
     return list(plans.values())
+
+
+def _recreate_unfinished(
+    config: Mapping[str, Any], reading: Reading, recorded: set[str], service: str
+) -> bool:
+    """The record marks unfinished a recreate that took the service in: its own, or that of a core
+    service depending on it, which a recreate of the service always pulls in while it is live. Only
+    the entry of a service edge follows through a file bind counts (#87 rules 4, 6): socket-proxy
+    keeps none, so traefik's entry speaks for it."""
+    took_in = {service, *_dependents(config, service)}
+    return any(reading.unfinished(name) for name in took_in & recorded)
+
+
+def _dependents(config: Mapping[str, Any], service: str) -> set[str]:
+    """The core services that depend on the service, directly or through another."""
+    found: set[str] = set()
+    for name in start_order(config):
+        if any(
+            dependency == service or dependency in found
+            for dependency in dependencies(config, name)
+        ):
+            found.add(name)
+    return found
 
 
 def _config_hash_labels(
