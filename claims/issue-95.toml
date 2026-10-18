@@ -1,0 +1,8 @@
+claim_id = "2b97d67dc41c45f1ac810cdf189c4b37"
+agent = "claude"
+role = "builder"
+base = "1557838401b344791246bb6fe65ee470d7be484a"
+branch = "claude/issue-95-clean-main-guards"
+scope = ["README.md", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/checkout.py", "src/edge/compose.py", "src/edge/setup.py", "step-ca/init", "tests/test_edge_apply.py", "tests/test_edge_checkout.py"]
+opened_commit = "21af7b593205e713baebbf91fa1ebbe44b86d827"
+whole_reason = "The guards, the git runner they use and the probes that must publish to stay green are one vertical: without the probe copy's remote, S1 refuses every probe cell."
