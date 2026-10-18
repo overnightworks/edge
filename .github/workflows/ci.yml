@@ -209,14 +209,12 @@ jobs:
               sys.exit(f"an ingress line targets the admin entrypoint 8090: {admin_targets}")
           PY
 
-      # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same pinned tofu.
+      # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same pinned tofu
+      # through edge's own installer, verified against external/opentofu.toml.
       - name: Install pinned tofu
         run: |
-          cd "$RUNNER_TEMP"
-          curl --proto '=https' --proto-redir '=https' -sSfLO https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_amd64.zip
-          echo "8ccbc6f8ee21d2827715f3c6e08a9b3e0209b1e62057c05067ef117e047c1a80  tofu_1.13.1_linux_amd64.zip" | sha256sum --check
-          unzip -q tofu_1.13.1_linux_amd64.zip tofu
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          folder="$(PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_binary "$RUNNER_TEMP/opentofu")"
+          echo "$folder" >> "$GITHUB_PATH"
 
       - name: "#32 X1a rule 1: OpenTofu root is formatted, pinned by the lock file and valid"
         working-directory: external
