@@ -21,7 +21,6 @@ import json
 import os
 import secrets
 import signal
-import stat
 import sys
 import urllib.error
 import urllib.request
@@ -33,6 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode
 
 from home_tools import secrets_view
@@ -41,19 +41,22 @@ from home_tools.secrets_view import (
     LOOSEST_DIRECTORY_MODE,
     LOOSEST_FILE_MODE,
     PROBE_STOP_SIGNALS,
-    ExitCodeProbe,
     Presence,
     Provider,
     SecretEntry,
+    SecretFinding,
     TokenSource,
     load_manifest,
     presence,
     show,
     show_by_service,
     stat_matches,
-    too_loose,
+    unfit_folder,
 )
 from home_tools.tidy_home import Config, Layout
+
+if TYPE_CHECKING:
+    from home_tools.cli import Ports
 
 NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
@@ -62,8 +65,12 @@ ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
 PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
 NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
+PLAN_READER = "edge external plan"
 NEXT_STEP = "next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
-RETRY_STEP = "next: `home secrets --setup` noch einmal, für: "
+PLAN_NEEDS = "next: erst {names} anlegen; `uv run edge external plan` in ~/git/edge braucht sie"
+RETRY_STEP = "next: {first}`home secrets --setup` noch einmal"
+STILL_OPEN = "noch offen: "
+BY_HAND_STEP = "von Hand offen, siehe oben: "
 UNSENDABLE_PASTE = (
     "abgelehnt: ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft, nichts gespeichert."
     " Noch einmal einfügen oder leer lassen."
@@ -189,8 +196,7 @@ class Boundaries:
     sync: DiskSync
 
 
-# Tests replace this one object; the walk reads it when it starts.
-BOUNDARIES = Boundaries(Terminal(_both_ends_are_a_terminal, input, getpass.getpass, webbrowser.open), verify_token, os.fsync)
+TERMINAL_BOUNDARIES = Boundaries(Terminal(_both_ends_are_a_terminal, input, getpass.getpass, webbrowser.open), verify_token, os.fsync)
 
 
 # --- the filesystem boundary ------------------------------------------------
@@ -200,18 +206,35 @@ class StoreRefused(Exception):
     """A secret could not be written where the manifest puts it; the message names the place, never a value."""
 
 
+def _levels(home: Path, directory: Path) -> tuple[Path, ...]:
+    """The directories from the home down to `directory`, outermost first, relative to the home."""
+    relative = directory.relative_to(home)
+    return (*reversed(relative.parents[:-1]), relative)
+
+
+def _refused_below(unfit: SecretFinding) -> str:
+    return f"{unfit.subject} {unfit.detail}: erst {unfit.fix}"
+
+
 def _private_directories(home: Path, directory: Path) -> None:
     """Every directory from the home down to `directory` exists as a real directory open to its owner only."""
-    for path in (*reversed(directory.relative_to(home).parents[:-1]), directory.relative_to(home)):
-        absolute = home / path
+    for relative in _levels(home, directory):
         with contextlib.suppress(FileExistsError):
-            absolute.mkdir(mode=LOOSEST_DIRECTORY_MODE)
-        mode = absolute.lstat().st_mode
-        if not stat.S_ISDIR(mode):
-            raise StoreRefused(f"{HOME_PREFIX}{path} ist kein Ordner")
-        if (allowed := too_loose(mode)) is not None:
-            place = f"{HOME_PREFIX}{path}"
-            raise StoreRefused(f"{place} hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}: erst `chmod {allowed:o} {place}`")
+            (home / relative).mkdir(mode=LOOSEST_DIRECTORY_MODE)
+        if unfit := unfit_folder(PurePosixPath(relative), (home / relative).lstat().st_mode):
+            raise StoreRefused(_refused_below(unfit))
+
+
+def _store_refusal(layout: Layout, place: PurePosixPath) -> SecretFinding | None:
+    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for."""
+    for relative in _levels(layout.home, (layout.home / place).parent):
+        try:
+            mode = (layout.home / relative).lstat().st_mode
+        except FileNotFoundError:
+            return None  # the store creates this level and every one below it, private
+        if unfit := unfit_folder(PurePosixPath(relative), mode):
+            return unfit
+    return None
 
 
 @contextlib.contextmanager
@@ -323,13 +346,19 @@ def _say(*lines: str) -> None:
         print(line)
 
 
-def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str, done: str) -> bool:
+def stored_line(entry: SecretEntry) -> str:
+    """What the walk says once an entry is stored: a token after its provider confirmed it, a service password unseen."""
+    done = "geprüft" if entry.source else "erzeugt"
+    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({LOOSEST_FILE_MODE:o})"
+
+
+def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
     try:
         store_new_secret(layout, entry.place, value, boundaries.sync)
     except StoreRefused as refused:
         _say(f"nicht gespeichert: {refused}")
         return False
-    _say(f"{done} und gespeichert: {HOME_PREFIX}{entry.place} (600)")
+    _say(stored_line(entry))
     return True
 
 
@@ -366,7 +395,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
     page = guide.page(entry, source)
     _say(f"Geöffnet: {page}" if boundaries.terminal.open_page(page) else f"{NO_BROWSER} {page}")
     value = _accepted_paste(source, boundaries)
-    return value is not None and _stored(entry, layout, boundaries, value, "geprüft")
+    return value is not None and _stored(entry, layout, boundaries, value)
 
 
 class Step(Enum):
@@ -422,36 +451,67 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     if not entry.written_by_setup:
         _say(f"Dafür gibt es noch keinen Assistenten; von Hand: {entry.recreate}")
         return Step.BY_HAND
+    if refusal := _store_refusal(layout, entry.place):
+        _say(f"nicht gespeichert: {_refused_below(refusal)}")
+        return Step.STILL_MISSING
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
     else:
         _say("Wird zufällig erzeugt und nie gezeigt.")
-        stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES), "erzeugt")
+        stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))
     return Step.STORED if stored else Step.STILL_MISSING
 
 
+def next_line(still_open: list[SecretEntry], by_hand: list[SecretEntry], unblocking: list[str]) -> str:
+    """The walk's one `next:` line: what unblocks the open entries and the walk again, else the plan step or what it lacks."""
+    if still_open:
+        return RETRY_STEP.format(first="".join(f"{command}, dann " for command in unblocking))
+    plan_lacks = [entry.name for entry in by_hand if PLAN_READER in entry.read_by]
+    return PLAN_NEEDS.format(names=", ".join(plan_lacks)) if plan_lacks else NEXT_STEP
+
+
+def _ending(still_open: list[SecretEntry], by_hand: list[SecretEntry], unblocking: list[str]) -> list[str]:
+    """What is still open and what is left by hand, then the one `next:` line."""
+    lines = [STILL_OPEN + ", ".join(entry.name for entry in still_open)] if still_open else []
+    if by_hand:
+        lines.append(BY_HAND_STEP + ", ".join(entry.name for entry in by_hand))
+    return [*lines, next_line(still_open, by_hand, unblocking)]
+
+
+def _unblocking(still_open: list[SecretEntry], layout: Layout) -> list[str]:
+    """The commands that clear what the store still refuses for the open entries, each once, as the disk shows it now."""
+    refusals = (_store_refusal(layout, entry.place) for entry in still_open if entry.written_by_setup)
+    return list(dict.fromkeys(refusal.fix for refusal in refusals if refusal))
+
+
+def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step | None:
+    """One live entry: kept, skipped or set up; None when it is kept or optional."""
+    found = _presence_on_disk(entry, layout)
+    if found is Presence.PRESENT:
+        _say(f"{entry.name}: vorhanden, bleibt unverändert")
+        return None
+    if found is Presence.UNKNOWN:
+        _say(f"{entry.name}: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen")
+        return Step.STILL_MISSING
+    if not entry.expected_present:
+        _say(f"{entry.name}: fehlt, ist optional; übersprungen")
+        return None
+    return _set_up_or_fail(entry, layout, boundaries, now)
+
+
 def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    """Every live entry in manifest order; the last line names the plan step, after what is still open."""
-    still_open: list[str] = []
-    by_hand = False
+    """Every live entry in manifest order; the closing lines name what is still open and the plan step."""
+    still_open: list[SecretEntry] = []
+    by_hand: list[SecretEntry] = []
     for entry in load_manifest(secrets_view.MANIFEST_PATH):
         if entry.retired:
             continue
-        found = _presence_on_disk(entry, layout)
-        if found is Presence.PRESENT:
-            _say(f"{entry.name}: vorhanden, bleibt unverändert")
-        elif found is Presence.UNKNOWN:
-            _say(f"{entry.name}: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen")
-            still_open.append(entry.name)
-        else:
-            step = _set_up_or_fail(entry, layout, boundaries, now)
-            by_hand |= step is Step.BY_HAND
-            if step is Step.STILL_MISSING:
-                still_open.append(entry.name)
-    _say("")
-    if still_open:
-        _say(RETRY_STEP + ", ".join(still_open))
-    _say(NEXT_STEP)
+        step = _visit(entry, layout, boundaries, now)
+        if step is Step.BY_HAND:
+            by_hand.append(entry)
+        elif step is Step.STILL_MISSING:
+            still_open.append(entry)
+    _say("", *_ending(still_open, by_hand, _unblocking(still_open, layout)))
     return 1 if still_open or by_hand else 0
 
 
@@ -488,10 +548,10 @@ unerwarteter Fehler bei einem Geheimnis, 3 sonst unerwarteter Fehler, 130 abgebr
 """
 
 
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, _run: object, probe: ExitCodeProbe, now: datetime) -> int:
+def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
     if args.setup:
-        return run_setup(layout, BOUNDARIES, now)
-    return show_by_service() if args.by_service else show(layout, probe, now)
+        return run_setup(layout, ports.secrets_setup, ports.now)
+    return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

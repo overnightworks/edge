@@ -4,15 +4,16 @@ import os
 import select
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 import pytest
-from conftest import FakeProbe, RecordingRunner, Sandbox
+from conftest import FakeProbe, RunnerWithRealGitAndQuality, Sandbox
 
 from home_tools import cli
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
-from home_tools.tidy_home import Layout, run_command
+from home_tools.tidy_home import Layout
 
 READY_DEADLINE_SECONDS = 30  # a pass returns at once; the deadline only bounds a hang under load
 
@@ -21,16 +22,6 @@ READY_DEADLINE_SECONDS = 30  # a pass returns at once; the deadline only bounds 
 def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
     """The conftest's clean home, inside the sandbox's HOME so that `home setup` can install the hook there."""
     return furnish_clean_home(sandbox.home)
-
-
-class RunnerWithRealGitAndQuality(RecordingRunner):
-    """The hook check reads git and the stub quality, so these two run for real; every other tool stays as in RecordingRunner."""
-
-    def __call__(self, argv):
-        if Path(argv[0]).name in {"git", "quality"}:
-            self.calls.append(list(argv))
-            return run_command(argv)
-        return super().__call__(argv)
 
 
 @pytest.fixture
@@ -284,36 +275,45 @@ def break_tidy(home: Path) -> Path:
     return home / "git"
 
 
-def break_secrets(home: Path) -> Path:
-    shutil.copy(home / "README.md", home / "Eingefügtes Bild.png")
-    os.utime(home / "Eingefügtes Bild.png", (0, 0))  # a tidy finding that must stay visible
-    return home / ".secrets" / "cloudflared"
+class ProbeThatCannotStart(FakeProbe):
+    """`gh` is there but not executable: starting the probe raises, and the secrets checker breaks on it."""
+
+    def __call__(self, argv: Sequence[str]) -> int | None:
+        raise PermissionError(argv[0])
 
 
-def home_check_with_an_unreadable_secret(home: Path, runner) -> None:
-    locked = home / ".secrets" / "cloudflared"
+@contextmanager
+def broken_tidy(home: Path) -> Iterator[FakeProbe]:
+    locked = break_tidy(home)
     locked.chmod(0)
     try:
-        home_check(home, runner)
+        yield FakeProbe()
     finally:
         locked.chmod(0o700)
+
+
+@contextmanager
+def broken_secrets(home: Path) -> Iterator[FakeProbe]:
+    shutil.copy(home / "README.md", home / "Eingefügtes Bild.png")
+    os.utime(home / "Eingefügtes Bild.png", (0, 0))  # a tidy finding that must stay visible
+    yield ProbeThatCannotStart()
+
+
+def home_check_with_a_secrets_check_that_breaks(home: Path, runner) -> None:
+    home_check(home, runner, ProbeThatCannotStart())
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 @pytest.mark.parametrize(
     ("break_one", "broken", "still_visible"),
-    [(break_tidy, "tidy", "| missing | gitlab |"), (break_secrets, "secrets", "| pasted-images |")],
+    [(broken_tidy, "tidy", "| missing | gitlab |"), (broken_secrets, "secrets", "| pasted-images |")],
     ids=["tidy breaks", "secrets breaks"],
 )
 def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_3(
-    clean_home, runner, capsys, break_one: Callable[[Path], Path], broken: str, still_visible: str
+    clean_home, runner, capsys, break_one: Callable[[Path], AbstractContextManager[FakeProbe]], broken: str, still_visible: str
 ) -> None:
-    locked = break_one(clean_home)
-    locked.chmod(0)
-    try:
-        code = home_check(clean_home, runner)
-    finally:
-        locked.chmod(0o700)
+    with break_one(clean_home) as probe:
+        code = home_check(clean_home, runner, probe)
 
     report = Layout(clean_home).check_report_file.read_text()
     error = capsys.readouterr().err
@@ -347,7 +347,7 @@ def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(clean_home, runner) -> None:
-    home_check_with_an_unreadable_secret(clean_home, runner)
+    home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
     code = home_check(clean_home, runner)
 
@@ -358,7 +358,7 @@ def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(clean_home, runner) -> None:
-    home_check_with_an_unreadable_secret(clean_home, runner)
+    home_check_with_a_secrets_check_that_breaks(clean_home, runner)
     runner.notify_delivers = False
     home_check(clean_home, runner)
     runner.notify_delivers = True

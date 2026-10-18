@@ -18,11 +18,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from home_tools import hook_check, secrets_view, tidy_home
 from home_tools.report import findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe
 from home_tools.tidy_home import CommandRunner, Config, Layout
+
+if TYPE_CHECKING:
+    from home_tools.cli import Ports
 
 
 class CheckFailed(Exception):
@@ -225,10 +229,8 @@ Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwar
 """
 
 
-def _check_from_args(
-    _args: argparse.Namespace, layout: Layout, config: Config, run: CommandRunner, probe: ExitCodeProbe, now: datetime
-) -> int:
-    return check(CheckContext(layout, config, run, probe, now))
+def _check_from_args(_args: argparse.Namespace, layout: Layout, config: Config, ports: Ports) -> int:
+    return check(CheckContext(layout, config, ports.run, ports.probe, ports.now))
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

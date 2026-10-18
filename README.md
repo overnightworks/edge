@@ -4,12 +4,57 @@ Ein Befehl, `home`, hält das Home in der Form, die `~/README.md` beschreibt.
 Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
-Alle Befehle teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
+Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/home-check.service` trägt
 `SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
 Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
+
+## home next
+
+```
+home next            # was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
+```
+
+`home next` zeigt eine nummerierte Liste, der dringendste Schritt zuerst. Jeder
+Schritt nennt den Befehl, wo er läuft, und was danach zu sehen sein soll:
+
+```
+1. home secrets --setup (beliebiges Terminal) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
+2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
+3. home setup --apply (beliebiges Terminal) — erwartet: Aktivierung: geändert
+   warum: ohne den Hook prüft kein Commit auf Geheimnisse
+```
+
+Die Schritte kommen aus den Besitzern der Fakten, die `home next` nur liest.
+Zuerst steht, was den Assistenten blockiert, der sonst nichts speichert, in der
+Reihenfolge des Baums unter `~/.secrets`, also nach Pfad sortiert, gleich
+welcher Art der Befund ist: zu offene Rechte (dann das `chmod`),
+ein Ordner, den sein Besitzer nicht öffnen kann (dann `chmod 700`), ein Symlink
+auf dem Weg zu einem Eintrag (dann der Befehl, der ihn durch den echten Ordner
+ersetzt) und eine Datei, wo ein Ordner hingehört (dann das `mv`, das sie
+beiseite legt). Dann unbekannte Dateien dort, fehlende Geheimnisse aus der
+Ansicht von `home secrets` (der Assistent für die, die er anlegen kann, die
+Seite aus `recreate` für die übrigen), ein fehlgeschlagener Login, ein
+unbestätigter Widerruf und jeder übrige Fund von `home secrets`, für den es
+keinen Befehl gibt, mit Ort und Empfehlung von Hand (etwa
+„~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann offene Schritte von
+`home setup` (dann `home setup --apply`), die Korrekturen der Hook-Prüfung, die
+clean-Funde von `home tidy` (dann `home tidy --apply`) und seine übrigen Funde
+mit ihrer Empfehlung, von Hand (etwa „~/.stray: in ~/README.md eintragen oder
+löschen“). Jeder Befehl steht nur einmal da.
+
+Gibt es nichts, steht da „Nichts zu tun.“, und nur dann: meldet eine Quelle
+einen Fund, ist er ein Schritt. Kann `home next` eine Quelle nicht lesen (etwa
+ein ungültiges Manifest), steht ganz oben ein Schritt „1. konnte die
+Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die Schritte der
+anderen Quellen folgen. Eine ungültige Konfigurationsdatei liest nur `home tidy`;
+dann steht dort „konnte das Home (home tidy) nicht lesen; den Fehler zeigt: home
+tidy“. Es ändert nichts, fragt nach keinem Passwort und liest keinen Geheimniswert (nur
+`stat`, wie `home secrets`); Agenten dürfen es fahren. Exit-Code: immer `0`,
+auch mit Schritten, denn es ist eine Ansicht, keine Prüfung; `3` nur bei einem
+unerwarteten Fehler.
 
 ## home check
 
@@ -109,23 +154,23 @@ nach 20 Sekunden ab.
 Beispiel (gekürzt):
 
 ```
-# home secrets 15.10.2026 09:00 | 4 Funde
+# home secrets 15.10.2026 09:00 | 2 Funde
 
 | Name | Art | Datei | Prüfung | Ablauf | Ort | Neu anlegen |
 |---|---|---|---|---|---|---|
 | gitlab | Token | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/gitlab | https://code.siemens.com/-/user_settings/personal_access_tokens |
 | gh | Tool-Login | vorhanden | geprüft: gültig | Ablauf unbekannt | ~/.config/gh | `gh auth login --web` |
-| ssh/id_ed25519.ppk | abgeleitete Kopie | fehlt | nicht geprüft | Ablauf unbekannt | ~/.ssh/id_ed25519.ppk | `puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk` |
-| github/token | Token | zurückgezogen | Widerruf unbestätigt | Ablauf unbekannt | ~/.secrets/github/token | Widerruf: https://github.com/settings/tokens |
+| secrets/README | Dokumentation | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/README | ~/.secrets/README anlegen: je Datei eine Zeile, was sie ist (kein Geheimnis) |
+| cloudflared | Tool-Login | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/cloudflared/cert.pem; Tunnel-Config und Zugangsdatei des laufenden Tunnels: /etc/cloudflared (root) | `cloudflared tunnel login` im Browser |
+| ssh/id_ed25519.ppk | abgeleitete Kopie | fehlt (optional) | nicht geprüft | Ablauf unbekannt | ~/.ssh/id_ed25519.ppk | `puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk` |
+| github/token | Token | zurückgezogen | Widerruf bestätigt 15.10.2026 | Ablauf unbekannt | ~/.secrets/github/token | Widerruf: https://github.com/settings/tokens |
 
 ## Funde
 
 | Regel | Gegenstand | Befund | Empfehlung |
 |---|---|---|---|
-| missing | ssh/id_ed25519.ppk | - | neu anlegen, siehe Tabelle |
-| revocation-unconfirmed | github/token | https://github.com/settings/tokens | beim Anbieter widerrufen, siehe Tabelle |
-| unknown-file | ~/.secrets/README | - | unbekannt: ins Manifest eintragen oder von Hand löschen |
-| loose-mode | ~/.secrets/gmail-cleanup | 775, höchstens 700 | von Hand enger setzen; home ändert keine Rechte |
+| unknown-file | ~/.secrets/cloudflared/old.json | - | ~/.secrets/cloudflared/old.json ins Manifest eintragen oder löschen |
+| loose-mode | ~/.secrets/gmail-cleanup | hat Rechte 775, höchstens 700 | `chmod 700 ~/.secrets/gmail-cleanup` |
 
 Keine Werte: home secrets liest Geheimnisdateien nur per stat und öffnet sie nie.
 ```
@@ -134,17 +179,26 @@ So liest sich die Tabelle:
 
 | Spalte | Werte |
 |---|---|
-| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, abgeleitete Kopie — genau eine je Eintrag |
-| Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen` |
+| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
+| Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen`; ein optionaler Eintrag trägt `(optional)` |
+| Prüfung | bei einem zurückgezogenen Eintrag `Widerruf unbestätigt` oder `Widerruf bestätigt <Datum>` |
+| Ort | die Pfade im Home; liegen Kopien woanders (etwa `/etc/cloudflared`, root), nennt sie die Zelle dahinter, gelesen werden sie nie |
 | Prüfung | nur `gh` wird geprüft (`geprüft: gültig`, `geprüft: ungültig`, `Prüfung nicht möglich` bei Zeitüberschreitung oder fehlendem `gh`); alle anderen `nicht geprüft` |
 | Ablauf | heute immer `Ablauf unbekannt`: ein Datum erscheint erst mit Herkunft (Antwort des Anbieters oder ein vom Assistenten geschriebenes `rotated_on`); das Dateialter zählt nie |
 
-Funde sind: ein fehlender oder unbekannter Eintrag, ein zurückgezogenes
+Funde sind: ein fehlender Eintrag (außer einem optionalen) oder ein unbekannter, ein zurückgezogenes
 Geheimnis, dessen Widerruf unbestätigt ist, eine fehlgeschlagene oder nicht
 mögliche Prüfung, eine Datei oder ein Ordner unter `~/.secrets`, den kein
 Eintrag nennt („unbekannt“; bleibt unangetastet), und Rechte lockerer als
-`600` für Dateien oder `700` für Ordner unter `~/.secrets`. `home` setzt nie
-Rechte; `chmod` bleibt ein Handgriff.
+`600` für Dateien oder `700` für Ordner unter `~/.secrets`, ein Ordner dort,
+den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder“;
+was darin liegt, ist „unbekannt“), ein Symlink
+auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
+den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
+Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
+`<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
+`--setup` das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
+`chmod` bleibt ein Handgriff.
 
 ### Einrichten: `home secrets --setup`
 
@@ -161,6 +215,10 @@ einen Admin-Schlüssel auf der Platte. Den Login im Browser macht deshalb der
 Mensch, alles andere der Assistent. Je Token:
 
 1. Er sagt, was kommt: welche Seite, welcher Login, welche Rechte, wofür.
+   Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
+   seinen Besitzer verschlossen, ein Symlink („ist ein Symlink“) oder kein
+   Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
+   damit kein frisch angelegtes Token verloren geht.
 2. Nach Enter öffnet er die Seite. GitHubs Formular ist über die dokumentierten
    URL-Parameter vorausgefüllt (Name, Resource owner `overnightworks`, Ablauf,
    Beschreibung, Rechte); „Repository access: All repositories“ kann kein Link
@@ -174,13 +232,13 @@ Mensch, alles andere der Assistent. Je Token:
    mit einer Zeile abgewiesen und nicht geschrieben; danach darf man noch
    einmal einfügen.
 5. Er schreibt die Datei mit `600` in einen Ordner mit `700` und geht zum
-   nächsten Eintrag. Ein Ordner, der lockerer ist oder ein Symlink, wird nicht
-   benutzt; `home` setzt keine Rechte.
+   nächsten Eintrag. Die Ordner prüft er dabei noch einmal; `home` setzt keine
+   Rechte.
 
 Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
-`recreate` genannt. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
+`recreate` genannt, ein optionaler, der fehlt, übersprungen. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
 (Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
 Die letzte Zeile nennt den nächsten Schritt.
 
@@ -212,9 +270,14 @@ erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600)
 next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 ```
 
-Fehlt danach noch etwas, nennt die vorletzte Zeile die offenen Einträge und
-`home secrets --setup` für sie; die letzte bleibt der Plan-Schritt, denn er
-braucht nur die Lese-Einträge. Exit-Code: `0` nichts fehlt mehr,
+Fehlt danach noch etwas, nennen die Zeilen vor der letzten die offenen
+Einträge: die für einen neuen Lauf („noch offen: cloudflare/fleet-read“) und die
+von Hand („von Hand offen, siehe oben: gitlab, sonarcloud/token“). Genau eine
+Zeile beginnt mit `next:`, die letzte: Ist noch etwas offen, nennt sie zuerst den
+Befehl, der eine Weigerung aufhebt, dann den neuen Lauf („next: `chmod 700
+~/.secrets`, dann `home secrets --setup` noch einmal“); sonst den Plan-Schritt,
+oder, fehlt von Hand noch ein Eintrag, den `edge external plan` liest, diesen
+(„next: erst <Eintrag> anlegen; …“). Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
 Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
@@ -242,8 +305,12 @@ recreate = "wird beim Einrichten erzeugt"
 
 `paths` beginnt mit `~/`, nur der letzte Teil darf einen Platzhalter tragen
 (`~/.secrets/cloudflared/*.json`). Ein zurückgezogener Eintrag trägt
-`retired_on = 2026-10-14` und `revoke_url`, eine abgeleitete Kopie
-`mirror_of`. `purpose` sagt in einem Satz, wofür es da ist. Ein Token, durch
+`retired_on = 2026-10-14` und `revoke_url`, nach geprüftem Widerruf auch
+`revocation_confirmed = 2026-10-15`; eine abgeleitete Kopie trägt
+`mirror_of`. `optional = true` heißt: Fehlen ist kein Fund, `--setup`
+überspringt den Eintrag; so stehen auch die bekannten Dateien ohne Geheimnis
+(`~/.secrets/README`, `claudebot-runtime.env`) im Manifest. `elsewhere` nennt Kopien außerhalb des Homes für die
+Spalte „Ort“. `purpose` sagt in einem Satz, wofür es da ist. Ein Token, durch
 das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
@@ -360,12 +427,13 @@ Eine Datei für alle Befehle: `~/.config/home/config.toml`, eine Tabelle je
 Befehl mit Einstellungen. Ohne die Datei gelten die Defaults. Eine unbekannte
 Tabelle, ein unbekannter Schlüssel, ein negativer Tageswert oder ein falscher
 Werttyp ist ein Konfigurationsfehler: `home` meldet ihn auf stderr und beendet
-sich mit Exit-Code 2, statt mit falschen Grenzen weiterzulaufen.
+sich mit Exit-Code 2, statt mit falschen Grenzen weiterzulaufen (`home next`
+zeigt ihn stattdessen als Schritt und endet mit `0`, siehe dort).
 
 Liegt noch die alte `~/.config/tidy-home/config.toml` und die neue fehlt,
-bricht `home` ebenso mit Exit-Code 2 ab und nennt den genauen Befehl, der die
-alte Datei einmalig unter `[tidy]` in die neue umzieht — es gibt keinen
-stillen Rückfall auf die Defaults.
+bricht `home` ebenso mit Exit-Code 2 ab (`home next` auch hier als Schritt,
+siehe dort) und nennt den genauen Befehl, der die alte Datei einmalig unter
+`[tidy]` in die neue umzieht — es gibt keinen stillen Rückfall auf die Defaults.
 
 ### `[tidy]`
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import os
+import shlex
 import signal
 import stat
 import subprocess
@@ -44,17 +45,24 @@ LOOSEST_FILE_MODE = 0o600
 LOOSEST_DIRECTORY_MODE = 0o700
 EXPIRY_UNKNOWN = "Ablauf unbekannt"
 REVOCATION_UNCONFIRMED = "Widerruf unbestätigt"
+REVOCATION_CONFIRMED = "Widerruf bestätigt {date:%d.%m.%Y}"
 RETIRED = "zurückgezogen"
+OPTIONAL = "{presence} (optional)"
 
 
 class SecretKind(Enum):
-    """How a secret is recreated; this decides what a later wizard does with it."""
+    """What an entry is and how it is recreated; this decides what a later wizard does with it.
+
+    Documentation and configuration are the known files under ~/.secrets that hold no secret.
+    """
 
     HUMAN_PASSWORD = "human-password"
     TOOL_LOGIN = "tool-login"
     TOKEN = "token"
     SERVICE_PASSWORD = "service-password"
     DERIVED_MIRROR = "derived-mirror"
+    CONFIGURATION = "configuration"
+    DOCUMENTATION = "documentation"
 
     @property
     def label(self) -> str:
@@ -67,6 +75,8 @@ KIND_LABELS = {
     SecretKind.TOKEN: "Token",
     SecretKind.SERVICE_PASSWORD: "Dienstpasswort",
     SecretKind.DERIVED_MIRROR: "abgeleitete Kopie",
+    SecretKind.CONFIGURATION: "Konfiguration",
+    SecretKind.DOCUMENTATION: "Dokumentation",
 }
 
 
@@ -122,13 +132,21 @@ class SecretEntry:
     verifier: Verifier | None = None
     retired_on: date | None = None
     revoke_url: str = ""
+    revocation_confirmed: date | None = None
     mirror_of: str = ""
     purpose: str = ""
     source: TokenSource | None = None
+    optional: bool = False
+    elsewhere: str = ""
 
     @property
     def retired(self) -> bool:
         return self.retired_on is not None
+
+    @property
+    def expected_present(self) -> bool:
+        """A live entry that is not optional; only its absence is a gap to close."""
+        return not self.retired and not self.optional
 
     @property
     def written_by_setup(self) -> bool:
@@ -150,7 +168,8 @@ class ManifestError(ValueError):
 
 REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by", "recreate"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
-OPTIONAL_KEYS = frozenset({"verify", "retired_on", "revoke_url", "mirror_of", "purpose"}) | SOURCE_KEYS
+RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
+OPTIONAL_KEYS = frozenset({"verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
@@ -201,19 +220,40 @@ def _enum_value[E: Enum](path: Path, where: str, raw: Mapping[str, object], key:
         raise _fail(path, where, f"{key} must be one of {allowed}") from None
 
 
-def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> tuple[date | None, str]:
-    """A retired entry always carries the page where it is revoked, and only a retired one does."""
+def _date(path: Path, where: str, raw: Mapping[str, object], key: str) -> date:
+    value = raw[key]
+    if not isinstance(value, date) or isinstance(value, datetime):
+        raise _fail(path, where, f"{key} must be a date like 2026-10-14")
+    return value
+
+
+@dataclass(frozen=True)
+class Retirement:
+    retired_on: date | None = None
+    revoke_url: str = ""
+    revocation_confirmed: date | None = None
+
+
+def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> Retirement:
+    """A retired entry always carries the page where it is revoked, and only a retired one does or records a confirmed revocation."""
     if ("retired_on" in raw) != ("revoke_url" in raw):
         raise _fail(path, where, "retired_on and revoke_url come together or not at all")
     if "retired_on" not in raw:
-        return None, ""
-    retired_on = raw["retired_on"]
-    if not isinstance(retired_on, date) or isinstance(retired_on, datetime):
-        raise _fail(path, where, "retired_on must be a date like 2026-10-14")
+        if "revocation_confirmed" in raw:
+            raise _fail(path, where, "revocation_confirmed belongs to a retired entry only")
+        return Retirement()
     revoke_url = _string(path, where, raw, "revoke_url")
     if not revoke_url.startswith("https://"):
         raise _fail(path, where, "revoke_url must be an https:// link")
-    return retired_on, revoke_url
+    confirmed = _date(path, where, raw, "revocation_confirmed") if "revocation_confirmed" in raw else None
+    return Retirement(_date(path, where, raw, "retired_on"), revoke_url, confirmed)
+
+
+def _flag(path: Path, where: str, raw: Mapping[str, object], key: str) -> bool:
+    value = raw.get(key, False)
+    if not isinstance(value, bool):
+        raise _fail(path, where, f"{key} must be true or false")
+    return value
 
 
 def _is_github_right(right: str) -> bool:
@@ -256,7 +296,7 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     kind = _enum_value(path, where, raw, "kind", SecretKind)
     if (kind is SecretKind.DERIVED_MIRROR) != ("mirror_of" in raw):
         raise _fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
-    retired_on, revoke_url = _retirement(path, where, raw)
+    retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     entry = SecretEntry(
         name=_string(path, where, raw, "name"),
@@ -265,11 +305,14 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         read_by=_strings(path, where, raw, "read_by"),
         recreate=_string(path, where, raw, "recreate"),
         verifier=_enum_value(path, where, raw, "verify", Verifier) if "verify" in raw else None,
-        retired_on=retired_on,
-        revoke_url=revoke_url,
+        retired_on=retirement.retired_on,
+        revoke_url=retirement.revoke_url,
+        revocation_confirmed=retirement.revocation_confirmed,
         mirror_of=_string(path, where, raw, "mirror_of") if "mirror_of" in raw else "",
         purpose=_string(path, where, raw, "purpose") if "purpose" in raw else "",
         source=source,
+        optional=_flag(path, where, raw, "optional"),
+        elsewhere=_string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
     )
     if entry.written_by_setup:
         _require_one_plain_place(path, where, entry.paths)
@@ -311,21 +354,38 @@ class PathFact:
     mode: int
 
 
-def _raise(error: OSError) -> None:
-    raise error
+def closed_to_owner(mode: int) -> bool:
+    """A folder its owner cannot list, enter or write into; nothing below it can be seen or stored."""
+    return stat.S_ISDIR(mode) and stat.S_IMODE(mode) & stat.S_IRWXU != stat.S_IRWXU
+
+
+def _lstat_below(directory: Path, home: Path) -> Iterator[PathFact]:
+    """Every path below a folder by lstat, entering only real folders open to their owner; a refused listing fails loud."""
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            fact = PathFact(Path(entry.path).relative_to(home), entry.stat(follow_symlinks=False).st_mode)
+            yield fact
+            if stat.S_ISDIR(fact.mode) and not closed_to_owner(fact.mode):
+                yield from _lstat_below(Path(entry.path), home)
+
+
+def _lstat_from(root: Path, home: Path) -> Iterator[PathFact]:
+    """The place itself whatever stands there, then everything below it when it is a real folder open to its owner."""
+    try:
+        root_fact = PathFact(root.relative_to(home), root.lstat().st_mode)
+    except FileNotFoundError:
+        return
+    yield root_fact
+    if root.is_dir() and not closed_to_owner(root.stat().st_mode):
+        yield from _lstat_below(root, home)
 
 
 def scan_secrets_tree(layout: Layout) -> tuple[PathFact, ...]:
-    """Every path under ~/.secrets, the directory itself included, by lstat; nothing is opened."""
-    root = layout.secrets_dir
-    if not root.is_dir():
-        return ()
-    facts = [PathFact(root.relative_to(layout.home), root.lstat().st_mode)]
-    for directory, subdirectories, files in os.walk(root, onerror=_raise):
-        for name in sorted(subdirectories + files):
-            path = Path(directory) / name
-            facts.append(PathFact(path.relative_to(layout.home), path.lstat().st_mode))
-    return tuple(sorted(facts, key=lambda fact: fact.relative))
+    """Every path under ~/.secrets, the place itself included, by lstat; nothing is opened, a closed folder is not entered.
+
+    ~/.secrets itself is recorded whatever stands there, so a file or a link in its place is judged like any folder on the way.
+    """
+    return tuple(sorted(_lstat_from(layout.secrets_dir, layout.home), key=lambda fact: fact.relative))
 
 
 def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...] | None:
@@ -458,20 +518,18 @@ class FindingRule(Enum):
     PRESENCE_UNKNOWN = "presence-unknown"
     UNKNOWN_FILE = "unknown-file"
     LOOSE_MODE = "loose-mode"
+    SYMLINKED_FOLDER = "symlinked-folder"
+    NOT_A_FOLDER = "not-a-folder"
+    CLOSED_FOLDER = "closed-folder"
     REVOCATION_UNCONFIRMED = "revocation-unconfirmed"
     VERIFICATION_FAILED = "verification-failed"
     VERIFICATION_UNREACHABLE = "verification-unreachable"
 
-    @property
-    def recommendation(self) -> str:
-        return RECOMMENDATIONS[self]
 
-
+# The generic remedy per rule; a rule whose remedy depends on the finding names it in SecretFinding.fix instead.
 RECOMMENDATIONS = {
     FindingRule.MISSING: "neu anlegen, siehe Tabelle",
     FindingRule.PRESENCE_UNKNOWN: "Rechte des Elternordners prüfen",
-    FindingRule.UNKNOWN_FILE: "unbekannt: ins Manifest eintragen oder von Hand löschen",
-    FindingRule.LOOSE_MODE: "von Hand enger setzen; home ändert keine Rechte",
     FindingRule.REVOCATION_UNCONFIRMED: "beim Anbieter widerrufen, siehe Tabelle",
     FindingRule.VERIFICATION_FAILED: "neu anmelden, siehe Tabelle",
     FindingRule.VERIFICATION_UNREACHABLE: "Prüfbefehl hing oder fehlt; später erneut",
@@ -483,6 +541,12 @@ class SecretFinding:
     rule: FindingRule
     subject: str
     detail: str = ""
+    # The operator's one action that clears this finding, a command in backticks when it is one; `home next` shows it as a step.
+    fix: str = ""
+
+    @property
+    def recommendation(self) -> str:
+        return self.fix or RECOMMENDATIONS[self.rule]
 
     @property
     def identity(self) -> str:
@@ -542,20 +606,97 @@ def too_loose(mode: int) -> int | None:
     return allowed if allowed is not None and stat.S_IMODE(mode) & ~allowed else None
 
 
-def _mode_findings(tree: tuple[PathFact, ...]) -> Iterator[SecretFinding]:
+def _in_shell(relative: PurePosixPath) -> str:
+    return f"{HOME_PREFIX}{shlex.quote(str(relative))}"
+
+
+def mode_fix(relative: PurePosixPath, allowed: int) -> str:
+    return f"`chmod {allowed:o} {_in_shell(relative)}`"
+
+
+def symlinked_folder_fix(relative: PurePosixPath) -> str:
+    """Moves the folder the link points to into the link's place, so it becomes a real one; nothing is deleted but the link.
+
+    A link whose target is gone leaves an empty folder in its place, so the command clears the finding either way.
+    """
+    place = _in_shell(relative)
+    real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
+    return f"`t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod {LOOSEST_DIRECTORY_MODE:o} {place}`"
+
+
+def _moved_aside_fix(relative: PurePosixPath) -> str:
+    """Moves what stands in a folder's place aside, unchanged, so the folder can be created; nothing is deleted."""
+    return f"`mv -n {_in_shell(relative)} {_in_shell(relative.with_name(f'{relative.name}.alt'))}`"
+
+
+@dataclass(frozen=True)
+class _Flaw:
+    detail: str
+    fix: str
+
+
+def _symlinked(relative: PurePosixPath, mode: int) -> _Flaw | None:
+    return _Flaw("ist ein Symlink", symlinked_folder_fix(relative)) if stat.S_ISLNK(mode) else None
+
+
+def _not_a_folder(relative: PurePosixPath, mode: int) -> _Flaw | None:
+    return None if stat.S_ISDIR(mode) else _Flaw("ist kein Ordner", _moved_aside_fix(relative))
+
+
+def _closed(relative: PurePosixPath, mode: int) -> _Flaw | None:
+    if not closed_to_owner(mode):
+        return None
+    needed = LOOSEST_DIRECTORY_MODE
+    return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, der Besitzer braucht {needed:o}", mode_fix(relative, needed))
+
+
+def _loose(relative: PurePosixPath, mode: int) -> _Flaw | None:
+    allowed = too_loose(mode)
+    return None if allowed is None else _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}", mode_fix(relative, allowed))
+
+
+# What can be wrong with a folder on the way to a secret, in the order `unfit_folder` names the first one found.
+_FOLDER_FLAWS = {
+    FindingRule.SYMLINKED_FOLDER: _symlinked,
+    FindingRule.NOT_A_FOLDER: _not_a_folder,
+    FindingRule.CLOSED_FOLDER: _closed,
+    FindingRule.LOOSE_MODE: _loose,
+}
+
+# `home secrets --setup` stores nothing below a folder `unfit_folder` refuses, so their fix comes before it.
+SETUP_BLOCKERS = frozenset(_FOLDER_FLAWS)
+
+
+def _flaw_finding(rule: FindingRule, relative: PurePosixPath, flaw: _Flaw | None) -> SecretFinding | None:
+    return flaw and SecretFinding(rule, f"{HOME_PREFIX}{relative}", flaw.detail, flaw.fix)
+
+
+def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
+    """Why nothing may be stored below this place on the way to a secret, with its fix; None for a real folder open to its owner only."""
+    for rule, flaw in _FOLDER_FLAWS.items():
+        if finding := _flaw_finding(rule, relative, flaw(relative, mode)):
+            return finding
+    return None
+
+
+def _tree_findings(tree: tuple[PathFact, ...], patterns: tuple[PurePosixPath, ...]) -> Iterator[SecretFinding]:
+    """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode alone."""
     for fact in tree:
-        if (allowed := too_loose(fact.mode)) is not None:
-            yield SecretFinding(
-                FindingRule.LOOSE_MODE, f"{HOME_PREFIX}{fact.relative}", f"{stat.S_IMODE(fact.mode):o}, höchstens {allowed:o}"
-            )
+        if stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns):
+            finding = unfit_folder(fact.relative, fact.mode)
+        else:
+            finding = _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, _loose(fact.relative, fact.mode))
+        if finding:
+            yield finding
 
 
 def _entry_findings(status: SecretStatus) -> Iterator[SecretFinding]:
     name = status.entry.name
     if status.entry.retired:
-        yield SecretFinding(FindingRule.REVOCATION_UNCONFIRMED, name, status.entry.revoke_url)
+        if status.entry.revocation_confirmed is None:
+            yield SecretFinding(FindingRule.REVOCATION_UNCONFIRMED, name, status.entry.revoke_url)
         return
-    if status.presence is Presence.MISSING:
+    if status.presence is Presence.MISSING and status.entry.expected_present:
         yield SecretFinding(FindingRule.MISSING, name)
     if status.presence is Presence.UNKNOWN:
         yield SecretFinding(FindingRule.PRESENCE_UNKNOWN, name)
@@ -572,11 +713,19 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     unknown = (
-        SecretFinding(FindingRule.UNKNOWN_FILE, f"{HOME_PREFIX}{fact.relative}")
+        SecretFinding(
+            FindingRule.UNKNOWN_FILE,
+            f"{HOME_PREFIX}{fact.relative}",
+            fix=f"{HOME_PREFIX}{fact.relative} ins Manifest eintragen oder löschen",
+        )
         for fact in observation.tree
         if not _is_named(fact.relative, patterns)
     )
-    findings = (*(f for status in statuses for f in _entry_findings(status)), *unknown, *_mode_findings(observation.tree))
+    findings = (
+        *(f for status in statuses for f in _entry_findings(status)),
+        *unknown,
+        *_tree_findings(observation.tree, patterns),
+    )
     return SecretsView(statuses, findings)
 
 
@@ -585,13 +734,22 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
 NO_VALUES_NOTE = "Keine Werte: home secrets liest Geheimnisdateien nur per stat und öffnet sie nie."
 
 
+def places(entry: SecretEntry) -> str:
+    listed = ", ".join(f"{HOME_PREFIX}{pattern}" for pattern in entry.paths)
+    return f"{listed}; {entry.elsewhere}" if entry.elsewhere else listed
+
+
+def _revocation(entry: SecretEntry) -> str:
+    confirmed = entry.revocation_confirmed
+    return REVOCATION_CONFIRMED.format(date=confirmed) if confirmed else REVOCATION_UNCONFIRMED
+
+
 def _status_row(status: SecretStatus) -> list[str]:
     entry = status.entry
-    places = ", ".join(f"{HOME_PREFIX}{pattern}" for pattern in entry.paths)
     if entry.retired:
-        return [entry.name, entry.kind.label, RETIRED, REVOCATION_UNCONFIRMED, EXPIRY_UNKNOWN, places, f"Widerruf: {entry.revoke_url}"]
-    presence, verification = status.presence.value, status.verification.value
-    return [entry.name, entry.kind.label, presence, verification, EXPIRY_UNKNOWN, places, entry.recreate]
+        return [entry.name, entry.kind.label, RETIRED, _revocation(entry), EXPIRY_UNKNOWN, places(entry), f"Widerruf: {entry.revoke_url}"]
+    presence = OPTIONAL.format(presence=status.presence.value) if entry.optional else status.presence.value
+    return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.recreate]
 
 
 def render_view(view: SecretsView, now: datetime) -> str:
@@ -599,7 +757,7 @@ def render_view(view: SecretsView, now: datetime) -> str:
     status_headers = ["Name", "Art", "Datei", "Prüfung", "Ablauf", "Ort", "Neu anlegen"]
     lines = [header, "", *markdown_table(status_headers, [_status_row(status) for status in view.statuses]), ""]
     if view.findings:
-        rows = [[f.rule.value, f.subject, f.detail, f.rule.recommendation] for f in view.findings]
+        rows = [[f.rule.value, f.subject, f.detail, f.recommendation] for f in view.findings]
         lines += ["## Funde", "", *markdown_table(["Regel", "Gegenstand", "Befund", "Empfehlung"], rows), ""]
     else:
         lines += ["Keine Funde.", ""]

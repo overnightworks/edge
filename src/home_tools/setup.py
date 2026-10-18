@@ -8,12 +8,14 @@ import sys
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from shlex import quote
+from typing import TYPE_CHECKING
 
-from home_tools.secrets_view import ExitCodeProbe
 from home_tools.tidy_home import CommandRunner, Config, Layout
+
+if TYPE_CHECKING:
+    from home_tools.cli import Ports
 
 # A commit SHA cannot move and needs no tag; a bump is a one-line change here.
 QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@615764ea67b0f8e2f615ee23a2432c50e11e5e68"
@@ -116,6 +118,11 @@ def _applied(step: Step) -> bool:
         return False
 
 
+def pending(layout: Layout, run: CommandRunner) -> tuple[str, ...]:
+    """The names of the steps `home setup --apply` would change; `home next` reads the plan through this."""
+    return tuple(step.name for step in _steps(layout, run) if not step.is_current())
+
+
 def setup(layout: Layout, run: CommandRunner, apply: bool) -> int:
     """Stops at the first failed step, so a missing scanner never gets a hook activated."""
     for step in _steps(layout, run):
@@ -131,10 +138,8 @@ def setup(layout: Layout, run: CommandRunner, apply: bool) -> int:
     return 0
 
 
-def _setup_from_args(
-    args: argparse.Namespace, layout: Layout, _config: Config, run: CommandRunner, _probe: ExitCodeProbe, _now: datetime
-) -> int:
-    return setup(layout, run, args.apply)
+def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+    return setup(layout, ports.run, args.apply)
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

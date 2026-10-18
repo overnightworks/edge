@@ -5,18 +5,33 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from home_tools import check, secrets_setup, secrets_view, setup, tidy_home
+from home_tools import next as next_steps
+from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
-from home_tools.tidy_home import CommandRunner, Layout, load_config, run_command
+from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
 
-SUBCOMMANDS = (check, tidy_home, secrets_setup, setup)
+
+@dataclass(frozen=True)
+class Ports:
+    """Every boundary a subcommand handler may cross; `main` builds the real ones, tests hand in fakes."""
+
+    run: CommandRunner
+    probe: ExitCodeProbe
+    secrets_setup: Boundaries
+    now: datetime
+
+
+SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
 UNEXPECTED_ERROR_EXIT = 3
 
 EXAMPLES = """\
 Beispiele:
+  home next            was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
   home check           tägliche Prüfung, wie der Timer sie fährt
   home tidy            zeigt, was im Home liegt, wo es nicht hingehört
   home tidy --apply    räumt die clean-Funde weg
@@ -51,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _with_german_help(parser)
-    parser.set_defaults(error_may_quote_a_secret=False)
+    parser.set_defaults(error_may_quote_a_secret=False, reads_config_as_a_source=False)
     subcommands = parser.add_subparsers(title="Befehle", metavar="<befehl>", required=True)
     add_parser = _subcommand_adder(subcommands)
     for subcommand in SUBCOMMANDS:
@@ -65,17 +80,19 @@ def main(
     run: CommandRunner = run_command,
     probe: ExitCodeProbe = probe_exit_code,
     now: datetime | None = None,
+    secrets_setup_boundaries: Boundaries = TERMINAL_BOUNDARIES,
 ) -> int:
     args = build_parser().parse_args(argv)
     layout = Layout(home or Path.home())
     try:
-        config = load_config(layout)
+        # A subcommand that reads the config as one of its sources turns an invalid one into its own line, never exit 2.
+        config = Config() if args.reads_config_as_a_source else load_config(layout)
     except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
         print(f"home: {error}", file=sys.stderr)
         return 2
     # Exit 1 means "findings" and the timer counts it as success, so a crash must end with its own code.
     try:
-        return args.handler(args, layout, config, run, probe, now or datetime.now())
+        return args.handler(args, layout, config, Ports(run, probe, secrets_setup_boundaries, now or datetime.now()))
     except secrets_view.ManifestError as error:
         print(f"home: {error}", file=sys.stderr)
         return 2

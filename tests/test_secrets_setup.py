@@ -16,15 +16,18 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, FakeProbe
+from conftest import FAKE_SECRET_VALUE, FakeProbe, symlinked_folder_fix
 
 from home_tools import cli, secrets_setup
 from home_tools.secrets_setup import (
+    BY_HAND_STEP,
     CLOUDFLARE_TOKEN_PAGE,
     EXPOSED_INPUT_REFUSAL,
     NEXT_STEP,
     NO_BROWSER,
     RETRY_STEP,
+    STILL_OPEN,
+    TERMINAL_BOUNDARIES,
     UNSENDABLE_PASTE,
     Boundaries,
     Outcome,
@@ -77,8 +80,17 @@ TOKEN_FILES = (".secrets/cloudflare/read", ".secrets/github/read")
 PASSPHRASE_FILE = ".secrets/opentofu/passphrase"
 EVERY_FILE = (*TOKEN_FILES, PASSPHRASE_FILE)
 
-# An entry the wizard has no way for, one whose presence cannot be told, and a retired one it never touches.
+# An entry the wizard has no way for, one whose presence cannot be told, an optional one and a retired one it never touches.
 OTHER_ENTRIES = """
+[[secret]]
+name = "ssh/key.ppk"
+kind = "derived-mirror"
+paths = ["~/.ssh/key.ppk"]
+read_by = []
+recreate = "puttygen"
+mirror_of = "gitlab"
+optional = true
+
 [[secret]]
 name = "gitlab"
 kind = "token"
@@ -188,15 +200,18 @@ def disk() -> FakeDisk:
 
 
 @pytest.fixture
-def terminal(monkeypatch: pytest.MonkeyPatch, verifier: FakeVerifier, disk: FakeDisk) -> FakeTerminal:
+def terminal() -> FakeTerminal:
+    return FakeTerminal()
+
+
+@pytest.fixture
+def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeDisk) -> Boundaries:
     """The operator at the keyboard; the walk sees only these fakes, never a browser, a prompt or a provider."""
-    fake = FakeTerminal()
-    monkeypatch.setattr(secrets_setup, "BOUNDARIES", Boundaries(fake.boundary(), verifier, disk.sync))
-    return fake
+    return Boundaries(terminal.boundary(), verifier, disk.sync)
 
 
-def home_secrets_setup(home: Path) -> int:
-    return cli.main(["secrets", "--setup"], home=home, probe=FakeProbe(), now=NOW)
+def home_secrets_setup(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES) -> int:
+    return cli.main(["secrets", "--setup"], home=home, probe=FakeProbe(), now=NOW, secrets_setup_boundaries=boundaries)
 
 
 def private_directory(home: Path, relative: str) -> Path:
@@ -213,12 +228,12 @@ def files_under(home: Path) -> set[str]:
 
 
 def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_with_the_next_step(
-    home: Path, terminal: FakeTerminal, verifier: FakeVerifier, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
     """#36 rule 2 / rule 5: the walk takes the missing entries one at a time in manifest order and ends with the plan step."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     output = capsys.readouterr().out
     assert code == 0
@@ -234,11 +249,11 @@ def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_with_the_
     assert output.splitlines()[-1] == NEXT_STEP
 
 
-def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal) -> None:
+def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:
     """#36 rule 2.5: every secret is written 0600 in directories kept 0700."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home)
+    home_secrets_setup(home, boundaries)
 
     assert {name: stat.S_IMODE((home / name).stat().st_mode) for name in EVERY_FILE} == dict.fromkeys(EVERY_FILE, 0o600)
     directories = {".secrets", ".secrets/cloudflare", ".secrets/github", ".secrets/opentofu"}
@@ -246,12 +261,12 @@ def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, termi
     assert {name: (home / name).read_text() for name in TOKEN_FILES} == dict.fromkeys(TOKEN_FILES, PASTED_VALUE)
 
 
-def test_no_value_reaches_stdout_stderr_or_a_log(home: Path, terminal: FakeTerminal, capsys, caplog) -> None:
+def test_no_value_reaches_stdout_stderr_or_a_log(home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, caplog) -> None:
     """#36 rule 3 / #10 line 3: no pasted or generated value reaches the screen, a prompt, a page or a log."""
     caplog.set_level(logging.DEBUG)
     terminal.pastes = [WRONG_VALUE, PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home)
+    home_secrets_setup(home, boundaries)
 
     captured = capsys.readouterr()
     passphrase = (home / PASSPHRASE_FILE).read_text()
@@ -262,7 +277,7 @@ def test_no_value_reaches_stdout_stderr_or_a_log(home: Path, terminal: FakeTermi
 
 
 def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_unwritten(
-    home: Path, terminal: FakeTerminal, verifier: FakeVerifier, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
     """#36 rule 3 / #10 line 2: an error whose message carries the pasted value never shows it and writes nothing."""
 
@@ -272,7 +287,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
     verifier.side_effect = quote_the_value
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -286,7 +301,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
 
 
 def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
-    home: Path, terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """#36 rule 3 / #10 line 2: an error that comes once the entry is stored says so, instead of claiming nothing was."""
     real_unlink = Path.unlink
@@ -299,7 +314,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
     monkeypatch.setattr(Path, "unlink", refuse_to_remove_the_fresh_name)
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -312,7 +327,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
 
 
 def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_stored_nor_missing(
-    home: Path, terminal: FakeTerminal, verifier: FakeVerifier, monkeypatch: pytest.MonkeyPatch, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """#36 rule 3 / #10 line 2: when the disk refuses to say what the error left, the report says it cannot tell."""
     secrets_dir = home / ".secrets"
@@ -330,7 +345,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
     verifier.side_effect = hide_the_disk_and_fail
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -347,19 +362,19 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
     ids=["the provider refuses it", "the provider cannot be reached"],
 )
 def test_a_value_the_provider_does_not_confirm_is_never_written(
-    home: Path, terminal: FakeTerminal, verifier: FakeVerifier, capsys, refusal: Verdict
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys, refusal: Verdict
 ) -> None:
     """#36 rule 2.4 / #10 line 4: a value the provider does not confirm is never written."""
     verifier.refusal = refusal
     terminal.pastes = [WRONG_VALUE, "", PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     lines = capsys.readouterr().out.splitlines()
     assert code == 1
     assert f"abgelehnt: {refusal.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen." in lines
     assert files_under(home) == {".secrets/github/read", PASSPHRASE_FILE}
-    assert lines[-2:] == [RETRY_STEP + "cloudflare/read", NEXT_STEP]
+    assert lines[-2:] == [STILL_OPEN + "cloudflare/read", RETRY_STEP.format(first="")]
 
 
 def interrupt_at_the_open_prompt(terminal: FakeTerminal, _disk: FakeDisk) -> None:
@@ -384,12 +399,12 @@ def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeDisk) 
     [interrupt_at_the_open_prompt, interrupt_at_the_paste, end_the_input_at_the_paste, interrupt_while_the_file_is_written],
 )
 def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
-    home: Path, terminal: FakeTerminal, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None]
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None]
 ) -> None:
     """#36 rule 2.3 / #10 line 7: Ctrl-C or the end of the input leaves no file, and the next run goes on."""
     interrupt(terminal, disk)
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     assert code == 130
     assert files_under(home) == set()
@@ -408,27 +423,29 @@ def ctrl_c_interrupts() -> Iterator[None]:
 
 @pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
-    home: Path, terminal: FakeTerminal, disk: FakeDisk, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys
 ) -> None:
     """#36 rule 2.3 / #10 line 7: a Ctrl-C while a secret is stored waits until the file is whole, never half-made."""
     terminal.pastes = [PASTED_VALUE]
     disk.ctrl_c = True
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     assert code == 130
     assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: home secrets --setup"
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
 
-def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(home: Path, terminal: FakeTerminal, capsys) -> None:
+def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
+) -> None:
     """#36 rule 4: a secret already present stays untouched and its page is not opened."""
     existing = private_directory(home, ".secrets/cloudflare") / "read"
     existing.write_text("FAKE-OLD-VALUE")
     before = existing.stat()
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     assert code == 0
     assert "cloudflare/read: vorhanden, bleibt unverändert" in capsys.readouterr().out.splitlines()
@@ -438,7 +455,7 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(hom
 
 
 def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
-    home: Path, terminal: FakeTerminal, verifier: FakeVerifier, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
     """#36 rule 4: a file that appears while the operator pastes is never replaced."""
     rival = home / ".secrets" / "cloudflare" / "read"
@@ -451,7 +468,7 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     verifier.side_effect = another_run_stores_it_first
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     assert code == 1
     assert "nicht gespeichert: ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in capsys.readouterr().out
@@ -459,44 +476,69 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     assert files_under(home) == set(EVERY_FILE)
 
 
-def loosen_the_secrets_directory(home: Path) -> str:
+def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused_at_the_store(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
+) -> None:
+    """#36 rule 2.5: the store judges the directories again, so one replaced after the check before the page is never used."""
+    directory = private_directory(home, ".secrets/github")
+
+    def replace_the_directory_by_a_file() -> None:
+        directory.rmdir()
+        directory.write_text("not a directory")
+
+    verifier.side_effect = replace_the_directory_by_a_file
+    terminal.pastes = ["", PASTED_VALUE]
+
+    code = home_secrets_setup(home, boundaries)
+
+    assert code == 1
+    refused = "nicht gespeichert: ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    assert refused in capsys.readouterr().out.splitlines()
+    assert files_under(home) == {".secrets/github", PASSPHRASE_FILE}
+
+
+def loosen_the_secrets_directory(home: Path) -> tuple[str, str]:
     (home / ".secrets").mkdir(mode=0o700)
     (home / ".secrets").chmod(0o755)
-    return "~/.secrets hat Rechte 755, höchstens 700: erst `chmod 700 ~/.secrets`"
+    return "~/.secrets hat Rechte 755, höchstens 700", "`chmod 700 ~/.secrets`"
 
 
-def make_the_secrets_directory_a_symlink(home: Path) -> str:
+def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
     elsewhere = home.parent / "elsewhere"
     elsewhere.mkdir(mode=0o700)
     (home / ".secrets").symlink_to(elsewhere)
-    return "~/.secrets ist kein Ordner"
+    return "~/.secrets ist ein Symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
 
 
 @pytest.mark.parametrize("damage", [loosen_the_secrets_directory, make_the_secrets_directory_a_symlink])
-def test_a_secrets_directory_that_is_not_private_is_refused_and_nothing_is_written(
-    home: Path, terminal: FakeTerminal, capsys, damage: Callable[[Path], str]
+def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_opens_and_nothing_is_written(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, damage: Callable[[Path], tuple[str, str]]
 ) -> None:
-    """#36 rule 2.5: a secrets directory that is not private is refused and nothing is written."""
-    refusal = damage(home)
+    """#36 rule 2.5 / #17 finding 21 (c, d): an unfit secrets directory is named before a page opens, so no fresh token is lost;
+    the one `next:` line repeats the command that clears it before the walk again."""
+    reason, fix = damage(home)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     output = capsys.readouterr().out
     assert code == 1
-    assert output.count(f"nicht gespeichert: {refusal}") == 3
-    assert {path.name for path in (home / ".secrets").iterdir()} == set()
+    assert output.count(f"nicht gespeichert: {reason}: erst {fix}") == 3
+    assert [line for line in output.splitlines() if line.startswith("next:")] == [RETRY_STEP.format(first=f"{fix}, dann ")]
+    assert (terminal.opened, terminal.prompts) == ([], [])
+    assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
 
 
 def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retired_ones_are_left_alone(
-    home: Path, use_manifest, terminal: FakeTerminal, capsys
+    home: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
-    """#36 rule 2 / rule 5: an entry without a wizard is named with its page, an unknown one stays open, a retired one is left alone."""
+    """#36 rule 2 / rule 5 / #17 finding 21 (a): an entry without a wizard is named with its page and again at the end,
+    an unknown one stays open, an optional or retired one is left alone."""
     use_manifest(SETUP_MANIFEST + OTHER_ENTRIES)
     private_directory(home, ".secrets/locked").chmod(0o000)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
     try:
-        code = home_secrets_setup(home)
+        code = home_secrets_setup(home, boundaries)
     finally:
         (home / ".secrets" / "locked").chmod(0o700)
 
@@ -505,7 +547,12 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert "Dafür gibt es noch keinen Assistenten; von Hand: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
     assert "locked/token: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen" in lines
     assert not any("github/old" in line for line in lines)
-    assert lines[-2:] == [RETRY_STEP + "locked/token", NEXT_STEP]
+    assert "ssh/key.ppk: fehlt, ist optional; übersprungen" in lines
+    assert lines[-3:] == [
+        STILL_OPEN + "locked/token",
+        BY_HAND_STEP + "gitlab",
+        RETRY_STEP.format(first="`chmod 700 ~/.secrets/locked`, dann "),
+    ]
 
 
 def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, capsys) -> None:
@@ -518,13 +565,12 @@ def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, 
 
 
 def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_read(
-    home: Path, monkeypatch: pytest.MonkeyPatch, verifier: FakeVerifier, disk: FakeDisk, capsys
+    home: Path, verifier: FakeVerifier, disk: FakeDisk, capsys
 ) -> None:
     """#36 rule 2.3 / #10 line 3: a terminal that cannot hide the paste is refused before anything is read."""
     echoing = Terminal(lambda: True, lambda _prompt: "", getpass.fallback_getpass, lambda _page: True)
-    monkeypatch.setattr(secrets_setup, "BOUNDARIES", Boundaries(echoing, verifier, disk.sync))
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, Boundaries(echoing, verifier, disk.sync))
 
     assert code == 2
     assert capsys.readouterr().err.strip() == EXPOSED_INPUT_REFUSAL
@@ -532,11 +578,13 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     assert files_under(home) == set()
 
 
-def test_the_briefing_names_the_page_the_login_and_every_right_to_tick(home: Path, terminal: FakeTerminal, capsys) -> None:
+def test_the_briefing_names_the_page_the_login_and_every_right_to_tick(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
+) -> None:
     """#36 rule 2.1: the briefing names the page, the login and every right to tick."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home)
+    home_secrets_setup(home, boundaries)
 
     output = capsys.readouterr().out
     cloudflare, github = output.split("== github/read")[0], output.split("== github/read")[1].split("== opentofu")[0]
@@ -551,12 +599,14 @@ def test_the_briefing_names_the_page_the_login_and_every_right_to_tick(home: Pat
     assert "Wird zufällig erzeugt und nie gezeigt." in output
 
 
-def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(home: Path, terminal: FakeTerminal, capsys) -> None:
+def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
+) -> None:
     """#36 rule 2.2: a page no browser opens is named for opening by hand, never reported as opened."""
     terminal.browser_opens = False
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, boundaries)
 
     lines = capsys.readouterr().out.splitlines()
     assert code == 0
@@ -710,15 +760,14 @@ def canary_with(character: str) -> str:
 
 @pytest.mark.parametrize("character", UNSENDABLE_CHARACTERS.values(), ids=UNSENDABLE_CHARACTERS.keys())
 def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritten(
-    home: Path, terminal: FakeTerminal, local_server: LocalServer, monkeypatch: pytest.MonkeyPatch, capsys, character: str
+    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys, character: str
 ) -> None:
     """#36 rule 3 / #10 line 2: a paste no token can be is refused with a fixed line; it is never sent, shown or written."""
     canary = canary_with(character)
     real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync)
-    monkeypatch.setattr(secrets_setup, "BOUNDARIES", real_check)
     terminal.pastes = [canary, "", canary, ""]
 
-    code = home_secrets_setup(home)
+    code = home_secrets_setup(home, real_check)
 
     captured = capsys.readouterr()
     assert code == 1
@@ -737,7 +786,9 @@ def test_a_value_http_cannot_send_is_refused_without_quoting_it(local_server: Lo
     assert verdict == Verdict(Outcome.REFUSED, "der Wert lässt sich GitHub nicht als Token senden")
 
 
-def test_a_service_password_is_generated_fresh_for_each_home(tmp_path: Path, use_manifest, terminal: FakeTerminal) -> None:
+def test_a_service_password_is_generated_fresh_for_each_home(
+    tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries
+) -> None:
     """#36 rule 2 / #10 line 12: a service password is generated fresh for each home."""
     use_manifest(SETUP_MANIFEST)
     passphrases = []
@@ -745,7 +796,7 @@ def test_a_service_password_is_generated_fresh_for_each_home(tmp_path: Path, use
         home = tmp_path / name
         home.mkdir()
         terminal.pastes = ["", ""]
-        home_secrets_setup(home)
+        home_secrets_setup(home, boundaries)
         passphrases.append((home / PASSPHRASE_FILE).read_text())
 
     assert passphrases[0] != passphrases[1]

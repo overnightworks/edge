@@ -28,8 +28,12 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from home_tools.report import findings_count, markdown_table
+
+if TYPE_CHECKING:
+    from home_tools.cli import Ports
 
 PASTED_IMAGE_GLOB = "Eingefügtes Bild*.png"
 LARGEST_ENTRIES_SHOWN = 10
@@ -839,7 +843,7 @@ def apply_finding(finding: Finding, run: CommandRunner = run_command) -> str:
     return ""
 
 
-def _relative_to_home(subject: str, home: Path) -> str:
+def relative_to_home(subject: str, home: Path) -> str:
     try:
         return f"~/{Path(subject).relative_to(home)}"
     except ValueError:
@@ -859,6 +863,12 @@ def _maintenance_footer(apply: bool, housekeeping: str) -> str:
     return HOUSEKEEPING_DRY_RUN_NOTE
 
 
+def mode_summary(findings: Findings, apply: bool) -> str:
+    """The report header's mode and count, such as "Apply | 2 Funde"; `home next` quotes it as what `--apply` prints."""
+    mode = "Apply" if apply else "Dry-Run"
+    return f"{mode} | {findings_count(len(list(findings)))}"
+
+
 def render_report(
     findings: Findings,
     now: datetime,
@@ -869,10 +879,9 @@ def render_report(
 ) -> str:
     applied = applied or {}
     all_findings = list(findings)
-    mode = "Apply" if apply else "Dry-Run"
     reclaimable = sum(f.reclaimable_bytes for f in all_findings if f.rule == DOCKER_RULE)
     reclaim_clause = f" | docker meldet ~{_format_gb(reclaimable)} wiederverwendbar" if reclaimable else ""
-    header = f"# home tidy {now:%d.%m.%Y %H:%M}  {mode} | {findings_count(len(all_findings))}{reclaim_clause}"
+    header = f"# home tidy {now:%d.%m.%Y %H:%M}  {mode_summary(findings, apply)}{reclaim_clause}"
 
     footnotes = []
     if findings.checked_clean:
@@ -896,7 +905,7 @@ def render_report(
     for finding in all_findings:
         row = [
             finding.rule,
-            _relative_to_home(finding.subject, home),
+            relative_to_home(finding.subject, home),
             finding.detail,
             finding.verdict.value,
             _recommendation_cell(finding),
@@ -943,8 +952,8 @@ Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration ungültig, 3 unerwarteter Fehler.
 """
 
 
-def _tidy_from_args(args: argparse.Namespace, layout: Layout, config: Config, run: CommandRunner, _probe: object, now: datetime) -> int:
-    return tidy(Options(apply=args.apply, sizes=args.sizes), layout, config, run, now)
+def _tidy_from_args(args: argparse.Namespace, layout: Layout, config: Config, ports: Ports) -> int:
+    return tidy(Options(apply=args.apply, sizes=args.sizes), layout, config, ports.run, ports.now)
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

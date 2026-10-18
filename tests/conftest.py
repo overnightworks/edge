@@ -12,7 +12,7 @@ import pytest
 from home_tools import secrets_view
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
-from home_tools.tidy_home import Layout
+from home_tools.tidy_home import Layout, run_command
 
 DAY_SECONDS = 24 * 60 * 60
 
@@ -21,6 +21,13 @@ HOME_README = "`.local/state`, `.config/home`, `.secrets` and `git/` belong here
 
 # Every planted secret file holds this; no output and no report may ever contain any of it.
 FAKE_SECRET_VALUE = "FAKE-SECRET-VALUE ghp_0000notarealtoken glpat-0000notarealtoken"
+
+
+def symlinked_folder_fix(place: str) -> str:
+    """The command `home secrets` names for a symlink on the way to a secret: the folder it points to, or a new one, takes its place."""
+    real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
+    return f"t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod 700 {place}"
+
 
 # A small manifest of three kinds of place: one file, a wildcard plus a file, and a verified tool login.
 TEST_MANIFEST = """\
@@ -137,6 +144,16 @@ class RecordingRunner:
 @pytest.fixture
 def runner() -> RecordingRunner:
     return RecordingRunner()
+
+
+class RunnerWithRealGitAndQuality(RecordingRunner):
+    """The hook check reads git and the stub quality, so these two run for real; every other tool stays as in RecordingRunner."""
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        if Path(argv[0]).name in {"git", "quality"}:
+            self.calls.append(list(argv))
+            return run_command(argv)
+        return super().__call__(argv)
 
 
 class FakeProbe:

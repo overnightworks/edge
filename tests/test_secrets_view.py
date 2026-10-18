@@ -8,11 +8,11 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets
+from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets, symlinked_folder_fix
 
 from home_tools import cli, secrets_view
 from home_tools.secrets_view import ManifestError, SecretKind, load_manifest
@@ -33,6 +33,8 @@ INVENTORY = {
     "gitlab",
     "sonarcloud/token",
     "claudebot.env",
+    "claudebot-runtime.env",
+    "secrets/README",
     "cloudflared",
     "gmail-cleanup",
     "ssh/id_ed25519",
@@ -245,7 +247,7 @@ def test_a_file_no_entry_names_is_reported_as_unknown_and_left_alone(clean_home:
     assert code == 1
     unknown = findings_of(output, "unknown-file")
     assert list(unknown) == ["~/.secrets/latest", "~/.secrets/old-backup.env"]
-    assert all(recommendation.startswith("unbekannt") for _detail, recommendation in unknown.values())
+    assert unknown["~/.secrets/latest"] == ["-", "~/.secrets/latest ins Manifest eintragen oder löschen"]
     assert not findings_of(output, "loose-mode")
     assert stray.read_text() == FAKE_SECRET_VALUE
 
@@ -273,40 +275,176 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
 
     loose = findings_of(capsys.readouterr().out, "loose-mode")
     assert code == 1
-    assert {subject: detail for subject, (detail, _recommendation) in loose.items()} == {
-        "~/.secrets/gitlab": "644, höchstens 600",
-        "~/.secrets/cloudflared": "755, höchstens 700",
+    assert loose == {
+        "~/.secrets/gitlab": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/gitlab`"],
+        "~/.secrets/cloudflared": ["hat Rechte 755, höchstens 700", "`chmod 700 ~/.secrets/cloudflared`"],
     }
     assert (stat.S_IMODE(token.stat().st_mode), stat.S_IMODE(directory.stat().st_mode)) == (0o644, 0o755)
 
 
-def test_a_retired_entry_shows_its_revoke_link_and_unconfirmed_revocation(use_manifest, clean_home: Path, probe: FakeProbe, capsys) -> None:
-    use_manifest(TEST_MANIFEST + RETIRED_ENTRY)
+@pytest.mark.parametrize(
+    ("recorded", "shown", "findings"),
+    [("", "Widerruf unbestätigt", ["github/token"]), ("revocation_confirmed = 2026-10-15\n", "Widerruf bestätigt 15.10.2026", [])],
+    ids=["revocation unconfirmed", "revocation confirmed"],
+)
+def test_a_retired_entry_shows_its_revoke_link_and_whether_its_revocation_is_confirmed(
+    use_manifest, clean_home: Path, probe: FakeProbe, capsys, recorded: str, shown: str, findings: list[str]
+) -> None:
+    """#21 point 1: a confirmed revocation is shown with its date and raises no revocation-unconfirmed finding."""
+    use_manifest(TEST_MANIFEST + RETIRED_ENTRY + recorded)
 
     code = home_secrets(clean_home, probe)
 
     output = capsys.readouterr().out
     retired = rows_of(output)["github/token"]
-    assert code == 1
-    assert output.splitlines()[0].endswith("| 1 Fund")
-    assert retired[2:5] == ["zurückgezogen", "Widerruf unbestätigt", "Ablauf unbekannt"]
+    assert code == (1 if findings else 0)
+    assert retired[2:5] == ["zurückgezogen", shown, "Ablauf unbekannt"]
     assert retired[-1] == "Widerruf: https://github.com/settings/tokens"
-    assert list(findings_of(output, "revocation-unconfirmed")) == ["github/token"]
+    assert list(findings_of(output, "revocation-unconfirmed")) == findings
     assert "github/token" not in findings_of(output, "missing")
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
-def test_a_directory_under_secrets_that_cannot_be_listed_breaks_the_run_with_exit_3(clean_home: Path, probe: FakeProbe, capsys) -> None:
-    locked = clean_home / ".secrets" / "cloudflared"
-    locked.chmod(0)
-    try:
-        code = home_secrets(clean_home, probe)
-    finally:
-        locked.chmod(0o700)
+KNOWN_FILES = """
+[[secret]]
+name = "secrets/README"
+kind = "documentation"
+paths = ["~/.secrets/README"]
+read_by = []
+recreate = "von Hand"
 
-    assert code == 3
-    # The secrets command names only the error's type: an unexpected error's message may quote a value.
-    assert capsys.readouterr().err == "home: unerwarteter Fehler (PermissionError)\n"
+[[secret]]
+name = "runtime.env"
+kind = "configuration"
+paths = ["~/.secrets/runtime.env"]
+read_by = ["bot.service"]
+recreate = "von Hand"
+
+[[secret]]
+name = "ppk"
+kind = "derived-mirror"
+paths = ["~/.secrets/ppk"]
+read_by = []
+recreate = "puttygen"
+mirror_of = "gitlab"
+optional = true
+elsewhere = "/etc/example (root)"
+"""
+
+
+def test_known_non_secret_files_show_their_kind_and_a_missing_optional_entry_is_no_finding(
+    use_manifest, clean_home: Path, probe: FakeProbe, capsys
+) -> None:
+    """#21 points 2-4: documentation and configuration are known files; an optional entry may be absent; copies elsewhere are named."""
+    use_manifest(TEST_MANIFEST + KNOWN_FILES)
+    for name in ("README", "runtime.env"):
+        (clean_home / ".secrets" / name).write_text("no secret")
+        (clean_home / ".secrets" / name).chmod(0o600)
+
+    code = home_secrets(clean_home, probe)
+
+    output = capsys.readouterr().out
+    rows = rows_of(output)
+    assert code == 0
+    assert {name: rows[name][1:3] for name in ("secrets/README", "runtime.env", "ppk")} == {
+        "secrets/README": ["Dokumentation", "vorhanden"],
+        "runtime.env": ["Konfiguration", "vorhanden"],
+        "ppk": ["abgeleitete Kopie", "fehlt (optional)"],
+    }
+    assert rows["ppk"][5] == "~/.secrets/ppk; /etc/example (root)"
+    assert "Keine Funde." in output
+
+
+def close_to(mode: int, folder: str) -> Callable[[Path], None]:
+    def close(secrets: Path) -> None:
+        (secrets / folder).chmod(mode)
+
+    return close
+
+
+@pytest.fixture
+def reopened_secrets(clean_home: Path) -> Iterator[Path]:
+    """Gives ~/.secrets and the folders directly under it back to their owner afterwards, so the temporary home can be removed."""
+    secrets = clean_home / ".secrets"
+    yield secrets
+    if secrets.is_dir() and not secrets.is_symlink():
+        secrets.chmod(0o700)
+        for place in secrets.iterdir():
+            if place.is_dir() and not place.is_symlink():
+                place.chmod(0o700)
+
+
+def put_a_file_in_place_of(secrets: Path) -> None:
+    shutil.rmtree(secrets)
+    secrets.write_text("not a folder")
+
+
+def point_a_dangling_link_from(secrets: Path) -> None:
+    shutil.rmtree(secrets)
+    secrets.symlink_to(secrets.with_name("gone"))
+
+
+NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+
+
+@pytest.mark.parametrize(
+    ("block", "rule", "place", "finding", "held"),
+    [
+        pytest.param(
+            close_to(0, "cloudflared"),
+            "closed-folder",
+            "~/.secrets/cloudflared",
+            ["hat Rechte 0, der Besitzer braucht 700", "`chmod 700 ~/.secrets/cloudflared`"],
+            "unbekannt",
+            id="closed-subfolder",
+            marks=NOT_AS_ROOT,
+        ),
+        pytest.param(
+            close_to(0o600, "."),
+            "closed-folder",
+            "~/.secrets",
+            ["hat Rechte 600, der Besitzer braucht 700", "`chmod 700 ~/.secrets`"],
+            "unbekannt",
+            id="closed-secrets-folder",
+            marks=NOT_AS_ROOT,
+        ),
+        pytest.param(
+            put_a_file_in_place_of,
+            "not-a-folder",
+            "~/.secrets",
+            ["ist kein Ordner", "`mv -n ~/.secrets ~/.secrets.alt`"],
+            "unbekannt",
+            id="file-in-place-of-secrets",
+        ),
+        pytest.param(
+            point_a_dangling_link_from,
+            "symlinked-folder",
+            "~/.secrets",
+            ["ist ein Symlink", f"`{symlinked_folder_fix('~/.secrets')}`"],
+            "fehlt",
+            id="dangling-link-in-place-of-secrets",
+        ),
+    ],
+)
+def test_a_folder_on_the_way_that_cannot_hold_a_secret_is_a_finding_with_its_fix_and_nothing_below_it_shows_present(
+    clean_home: Path,
+    reopened_secrets: Path,
+    probe: FakeProbe,
+    capsys,
+    block: Callable[[Path], None],
+    rule: str,
+    place: str,
+    finding: list[str],
+    held: str,
+) -> None:
+    """#37 line 7: a closed folder, or a file or link where ~/.secrets belongs, is named with its fix, never a dead end."""
+    block(reopened_secrets)
+
+    code = home_secrets(clean_home, probe)
+
+    output = capsys.readouterr().out
+    assert code == 1
+    assert findings_of(output, rule) == {place: finding}
+    assert rows_of(output)["cloudflared"][2] == held
 
 
 def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_home: Path, probe: FakeProbe, capsys) -> None:
@@ -327,6 +465,21 @@ def test_the_packaged_manifest_names_every_inventory_entry_without_a_value() -> 
     assert {entry.name for entry in manifest} == INVENTORY
     assert {entry.name for entry in manifest if entry.retired} == {"github/token", "github/overnightworks-read-token"}
     assert {entry.name for entry in manifest if entry.verifier} == {"gh"}
+
+
+def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
+    """#21 points 1-4: confirmed revocations, the known non-secret files, the cloudflared layout; ppk and non-secret files are optional."""
+    manifest = {entry.name: entry for entry in load_manifest(PACKAGED_MANIFEST)}
+
+    retired = {name: entry.revocation_confirmed for name, entry in manifest.items() if entry.retired}
+    assert retired == dict.fromkeys(("github/token", "github/overnightworks-read-token"), date(2026, 10, 15))
+    assert {name: entry.kind for name, entry in manifest.items() if entry.kind in (SecretKind.CONFIGURATION, SecretKind.DOCUMENTATION)} == {
+        "claudebot-runtime.env": SecretKind.CONFIGURATION,
+        "secrets/README": SecretKind.DOCUMENTATION,
+    }
+    assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
+    assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
+    assert {name for name, entry in manifest.items() if entry.optional} == {"ssh/id_ed25519.ppk", "claudebot-runtime.env", "secrets/README"}
 
 
 def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_with_its_place_and_rights() -> None:
@@ -399,6 +552,11 @@ SOURCE = 'provider = "github"\nresource = "o"\nscope = ["metadata:read"]\nexpire
         (ENTRY + 'retired_on = "yesterday"\nrevoke_url = "https://x"\n', "retired_on"),
         (ENTRY + 'retired_on = 2026-10-14T10:00:00\nrevoke_url = "https://x"\n', "retired_on"),
         (ENTRY + 'retired_on = 2026-10-14\nrevoke_url = "http://x"\n', "revoke_url"),
+        # #21 points 1 and 4: a confirmed revocation is a date on a retired entry; optional is true or false.
+        (ENTRY + "revocation_confirmed = 2026-10-15\n", "retired entry only"),
+        (ENTRY + 'retired_on = 2026-10-14\nrevoke_url = "https://x"\nrevocation_confirmed = "today"\n', "revocation_confirmed"),
+        (ENTRY + 'optional = "yes"\n', "optional"),
+        (ENTRY + 'elsewhere = " "\n', "elsewhere"),
         (ENTRY + ENTRY, "e"),
         (ENTRY.replace('"token"', '"derived-mirror"') + 'mirror_of = "gone"\n', "gone"),
         # #36 rule 1 / rule 2.2: a token the wizard guides names its provider, resource, rights and expiry, and one place.
