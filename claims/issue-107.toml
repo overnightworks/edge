@@ -1,8 +1,0 @@
-claim_id = "4d20b4c9383d443e812ffacc7168f2aa"
-agent = "claude"
-role = "builder"
-base = "8d7301a5e731e78f09c05a8e3a97880484514f61"
-branch = "claude/issue-107-k11b-edge-backup-backs-up-and-restore-te"
-scope = ["README.md", "backup/apps.toml", "docs/architecture.md", "src/edge_backup", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_restore_safety.py"]
-opened_commit = "65ac03c244d4b23b6eda12c142756f6bb9b47b96"
-whole_reason = "Declaring a DB-only app needs the optional-audio record, the per-major restore server and the runner paths at once; the split point (DB-only support, then the keycloak record) stays available if the build runs long."
