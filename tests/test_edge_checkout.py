@@ -706,12 +706,28 @@ def test_a_refused_sign_in_is_one_line_without_a_prompt_or_a_credential(
 
 
 def test_a_fetch_that_hangs_is_cut_at_the_timeout(git, main_tree, loopback, monkeypatch):
-    """#98 rule 2, B16 (S4): a server that never answers is a GitError at the transfer timeout."""
-    plain_git(main_tree, "remote", "add", "origin", loopback("silent") + "/edge.git")
+    """#98 rule 2, B16 (S4): a server that never answers is a GitError at the transfer timeout,
+    and the cut ends the whole transfer: no git transport helper is left talking to the remote."""
+    url = loopback("silent") + "/edge.git"
+    plain_git(main_tree, "remote", "add", "origin", url)
     monkeypatch.setitem(checkout.TIMEOUT_SECONDS, checkout.Profile.TRANSFER, 2)
 
     with pytest.raises(checkout.GitError, match=r"^`git fetch` took longer than 2s$"):
         checkout.fetch_origin(git)
+
+    assert processes_naming(url) == []
+
+
+def processes_naming(text: str) -> list[int]:
+    """The pids of every live process whose command line names `text`."""
+    naming = []
+    for command_line in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            if text.encode() in command_line.read_bytes():
+                naming.append(int(command_line.parent.name))
+        except OSError:
+            continue  # the process ended while it was read
+    return naming
 
 
 def test_fetch_head_is_written_though_the_repository_says_not_to(git, main_tree, origin):

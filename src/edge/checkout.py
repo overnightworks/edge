@@ -20,8 +20,10 @@ fetch writes only objects, FETCH_HEAD and `origin/main`; HEAD, the index and the
 they are. A credential is never printed: whatever stands before `@` in a URL is redacted.
 """
 
+import contextlib
 import os
 import re
+import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -91,17 +93,34 @@ Runner = Callable[[Path, Sequence[str], Profile], subprocess.CompletedProcess[by
 def run_git(
     tree: Path, arguments: Sequence[str], profile: Profile
 ) -> subprocess.CompletedProcess[bytes]:
-    """One git call on `tree`, isolated as rule 7 says; raises OSError or TimeoutExpired."""
-    return subprocess.run(
-        ["git", "--no-pager", "-C", str(tree), *_ISOLATION, *_PROFILE_ARGUMENTS[profile],
-         *arguments],
+    """One git call on `tree`, isolated as rule 7 says; raises OSError or TimeoutExpired. git runs
+    in its own process group, and a call that does not finish ends with that whole group killed:
+    a fetch's transport helpers would otherwise outlive the cut and go on writing objects after
+    edge has said nothing changed (#98 rule 2)."""
+    command = ["git", "--no-pager", "-C", str(tree), *_ISOLATION, *_PROFILE_ARGUMENTS[profile],
+               *arguments]  # fmt: skip
+    with subprocess.Popen(
+        command,
         env=git_environment(os.environ, profile),
         stdin=subprocess.DEVNULL,
-        capture_output=True,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         close_fds=True,
-        timeout=TIMEOUT_SECONDS[profile],
-    )  # fmt: skip
+        process_group=0,
+    ) as git:
+        try:
+            stdout, stderr = git.communicate(timeout=TIMEOUT_SECONDS[profile])
+        except BaseException:
+            _kill_group(git)
+            raise
+    return subprocess.CompletedProcess(command, git.returncode, stdout, stderr)
+
+
+def _kill_group(git: subprocess.Popen[bytes]) -> None:
+    """Kill every process of `git`'s group and wait until the last has closed its pipes."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(git.pid, signal.SIGKILL)
+    git.communicate()
 
 
 def git_environment(inherited: Mapping[str, str], profile: Profile) -> dict[str, str]:
