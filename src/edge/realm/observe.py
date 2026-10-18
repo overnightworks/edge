@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -419,6 +419,7 @@ class Session:
     base_url: str
     secret: str
     client_id: str = CLIENT_ID
+    timeout: float = REQUEST_SECONDS
     token: str = field(default="", repr=False)
 
     def sign_in(self) -> None:
@@ -454,7 +455,7 @@ class Session:
     def send(self, request: Request) -> tuple[int, bytes]:
         path = request.selector.split("?", 1)[0]
         try:
-            with urlopen(request, timeout=REQUEST_SECONDS) as reply:
+            with urlopen(request, timeout=self.timeout) as reply:
                 return reply.status, reply.read()
         except HTTPError as error:
             error.close()
@@ -697,7 +698,8 @@ def stop(_signum: int, _frame: object) -> None:
     raise KeyboardInterrupt
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
+    """The command; `stdin` carries the digest key line and defaults to the process's stdin."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base-url", required=True, help="Keycloak, e.g. http://keycloak:8080")
     parser.add_argument("--secret-file", type=Path, required=True, help="config-cli's secret")
@@ -705,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
     # PID 1 in a container ignores SIGTERM unless it handles it.
     signal.signal(signal.SIGTERM, stop)
     try:
-        key = digest_key(sys.stdin.readline())
+        key = digest_key((stdin or sys.stdin).readline())
         session = Session(arguments.base_url.rstrip("/"), read_secret(arguments.secret_file))
         inventory = observe(session, Digester(key))
     except ObserveError as error:

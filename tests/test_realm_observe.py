@@ -576,7 +576,7 @@ class Run:
 
 @pytest.fixture
 def run_observer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> Iterator[Callable[[str], Run]]:
     """The observer's command line as the compose service runs it, the key on stdin."""
     secret_file = tmp_path / "config-cli-secret"
@@ -584,8 +584,8 @@ def run_observer(
     previous = signal.getsignal(signal.SIGTERM)
 
     def run(base_url: str) -> Run:
-        monkeypatch.setattr(sys, "stdin", io.StringIO(KEY + "\n"))
-        code = observer.main(["--base-url", base_url, "--secret-file", str(secret_file)])
+        arguments = ["--base-url", base_url, "--secret-file", str(secret_file)]
+        code = observer.main(arguments, stdin=io.StringIO(KEY + "\n"))
         captured = capsys.readouterr()
         return Run(code, captured.out, captured.err)
 
@@ -826,35 +826,30 @@ def test_a_wrong_secret_is_one_sign_in_refused_line_without_body_or_token(
     assert REFUSAL_BODY not in run.stderr and SECRET not in run.stderr
 
 
-@pytest.mark.parametrize(
-    ("fault", "message"),
-    [
-        pytest.param(
-            {"status": {"/admin/realms/hallucinai/client-scopes": 503}},
-            "realm-observer: status 503 at /admin/realms/hallucinai/client-scopes",
-            id="5xx",
-        ),
-        pytest.param(
-            {"delay": {"/admin/realms/master/components": 1.0}},
-            "realm-observer: Keycloak does not answer /admin/realms/master/components (timed out)",
-            id="timeout",
-        ),
-    ],
-)
-def test_a_failure_mid_read_is_one_line_and_no_inventory(
-    keycloak: FakeKeycloak,
-    run_observer: Callable[[str], Run],
-    monkeypatch: pytest.MonkeyPatch,
-    fault: dict[str, Any],
-    message: str,
+def test_a_5xx_mid_read_is_one_line_and_no_inventory(
+    keycloak: FakeKeycloak, run_observer: Callable[[str], Run]
 ) -> None:
     """U20."""
-    monkeypatch.setattr(observer, "REQUEST_SECONDS", 0.3)
-    keycloak.faults = Faults(**fault)
+    keycloak.faults.status = {"/admin/realms/hallucinai/client-scopes": 503}
 
     run = run_observer(keycloak.url)
 
-    assert (run.exit_code, run.stdout, run.stderr.splitlines()) == (1, "", [message])
+    assert (run.exit_code, run.stdout) == (1, "")
+    assert run.stderr.splitlines() == [
+        "realm-observer: status 503 at /admin/realms/hallucinai/client-scopes"
+    ]
+
+
+def test_a_timeout_mid_read_fails_the_observe_naming_the_path(keycloak: FakeKeycloak) -> None:
+    """U20: the 5xx case above proves a failed observe prints one line and no inventory."""
+    keycloak.faults.delay = {"/admin/realms/master/components": 1.0}
+    session = observer.Session(keycloak.url, SECRET, timeout=0.3)
+
+    with pytest.raises(
+        observer.ObserveError,
+        match=r"^Keycloak does not answer /admin/realms/master/components \(timed out\)$",
+    ):
+        observer.observe(session, observer.Digester(bytes.fromhex(KEY)))
 
 
 def test_keycloak_that_does_not_answer_is_one_line(run_observer: Callable[[str], Run]) -> None:
