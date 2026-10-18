@@ -1,8 +1,0 @@
-claim_id = "8a3a841143384356b55df4623b8a220e"
-agent = "claude"
-role = "builder"
-base = "8d7301a5e731e78f09c05a8e3a97880484514f61"
-branch = "claude/issue-106-k11-sa1-keycloak-go-live-creates-one-sec"
-scope = ["README.md", "docs/architecture.md", "keycloak/go-live", "tests/test_keycloak_go_live.py"]
-opened_commit = "d15ff361fd8e8f8551738fd5a7cfcbe869696aab"
-whole_reason = "The step, its check, its test and the two documents that name the Keycloak secret files change together or the docs lie."
