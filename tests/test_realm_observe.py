@@ -566,7 +566,8 @@ def test_a_redirect_is_refused_as_its_status_and_never_followed(
 
 
 def test_a_reordered_set_keeps_its_digest_while_reordered_objects_change_it() -> None:
-    """Keycloak returns its sets in no fixed order; a list of objects keeps the order it has."""
+    """U23 and U25: Keycloak returns its sets in no fixed order, so their order is volatile; a list
+    of objects keeps the order it has (U11)."""
     digest = observer.Digester(bytes.fromhex(KEY))
 
     assert digest(["b", "a"]) == digest(["a", "b"])
