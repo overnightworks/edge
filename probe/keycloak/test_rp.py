@@ -36,4 +36,5 @@ class BackchannelLogoutHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("", PORT), BackchannelLogoutHandler).serve_forever()
+    # Plain HTTP on purpose: the throwaway probe network has no CA to issue this RP a certificate.
+    HTTPServer(("", PORT), BackchannelLogoutHandler).serve_forever()  # NOSONAR(S5332)

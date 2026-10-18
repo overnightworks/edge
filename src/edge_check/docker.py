@@ -68,6 +68,10 @@ def _parse_container(container: dict) -> Container:
     )
 
 
+def _checked_host_ip(host_ip: str | None) -> str:
+    return checked_address(host_ip) if host_ip else ""
+
+
 def _publications(name: str, container: dict) -> tuple[Publication, ...]:
     port_bindings = container["HostConfig"].get("PortBindings") or {}
     if container["HostConfig"].get("PublishAllPorts"):
@@ -76,7 +80,7 @@ def _publications(name: str, container: dict) -> tuple[Publication, ...]:
         Publication(
             container=name,
             protocol=_protocol(container_port),
-            host_ip=checked_address(host_ip) if (host_ip := binding.get("HostIp")) else "",
+            host_ip=_checked_host_ip(binding.get("HostIp")),
             host_ports=_host_ports(binding.get("HostPort") or ""),
         )
         for container_port, bindings in port_bindings.items()

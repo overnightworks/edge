@@ -817,7 +817,8 @@ routed through the tunnel.
 
 The secrets (the database password, the password of the tool that applies the
 configuration, and a temporary admin password) are three files in
-`~/.secrets/keycloak/`. No file of this repository holds one.
+`~/.secrets/keycloak/`; each confidential app client has one more file of its own in
+`~/.secrets/keycloak/clients/`. No file of this repository holds one.
 
 "Realm as code" means the settings of the logins (groups, clients, login rules)
 are YAML files in `keycloak/`, applied by a tool, not clicked together in the
@@ -855,6 +856,31 @@ applied by keycloak-config-cli. People and their group memberships are managed
 only in the admin console; no file lists a person. App clients arrive with each
 app's cutover (K12–K14).
 
+#### Theme and language
+
+Keycloak's login and account pages use the realm theme `hallucinai`
+(`loginTheme` and `accountTheme` in `realm.yaml`). Its files sit in
+`keycloak/themes/hallucinai/{login,account}/theme.properties`, which for now
+only name the parents `keycloak.v2` and `keycloak.v3`; compose mounts the
+directory read-only into the `keycloak` service. A later look (logo, colours,
+font) therefore changes theme files only, never the realm. The email and
+admin themes, the master realm and the admin console stay Keycloak's own.
+
+The pages appear in German and English: the browser's language decides,
+English applies when neither is asked for, and the pages carry a language
+switcher (`internationalizationEnabled`, `supportedLocales`, `defaultLocale`
+in `realm.yaml`).
+
+Keycloak in `start` mode caches themes, so a changed theme file shows after
+`docker compose --profile keycloak restart keycloak`; that is not a realm
+change. `/resources/<version>/...` is served with `Cache-Control:
+max-age=2592000` (30 days), and the five-character version survives a plain
+restart, so a restart keeps the same URL. A
+CSS-only edit, which needs that restart to load, would still come from browser
+caches for up to 30 days under the same URL; a look change therefore names a
+new stylesheet in `theme.properties` (`styles=`) instead of editing one in
+place.
+
 > **Managed in full.** Groups are created and renamed only in `realm.yaml`.
 > The apply deletes every top-level group, client, client scope and flow that
 > an earlier apply created and the YAML no longer lists, and below a listed
@@ -883,12 +909,18 @@ the others from `/run/secrets` into the process and `exec`s Keycloak or
 keycloak-config-cli. `keycloak/go-live` creates them; by hand, once:
 
 ```sh
-install -d -m 0700 ~/.secrets/keycloak
+install -d -m 0700 ~/.secrets/keycloak ~/.secrets/keycloak/clients
 for name in db-password config-cli-secret bootstrap-admin-password; do
   openssl rand -hex 32 > ~/.secrets/keycloak/$name
 done
-chmod 0644 ~/.secrets/keycloak/*   # the container users must read them; the 0700 directory keeps everyone else out
+chmod 0644 ~/.secrets/keycloak/{db-password,config-cli-secret,bootstrap-admin-password}
+# 0644: the container users must read the files; the 0700 directories keep everyone else out
 ```
+
+Every confidential app client has its own file, `~/.secrets/keycloak/clients/<clientId>`
+(0644 in the 0700 directory; by hand, `openssl rand -hex 32 > …/<clientId>` and `chmod 0644` on that file only). `compose.yaml` names them as top-level secrets; go-live reads that
+list (with `--profile apply`) and creates only the missing files, once, never over an existing one.
+A later app adds one secret to `compose.yaml`, and the next go-live creates only its file.
 
 `bootstrap-admin-password` lives only until the go-live's step 7.
 The quality gate (`quality / hygiene`) scans the whole history for literal-looking
@@ -948,6 +980,11 @@ marker. `edge apply --closed` runs only `keycloak/go-live --check`, never go-liv
    `bootstrap-admin-password` alone means step 7 has already retired it, and the
    run goes on. If the database volume is missing as well, the line names the volume
    `keycloak-db`; nothing is deleted.
+- **2b. Client secrets.** It creates one random secret file per confidential app client
+   that `compose.yaml` names, in `~/.secrets/keycloak/clients/`. Only a missing file is
+   created; an existing one is never overwritten. A client name that is not lower-case
+   letters, digits and hyphens is refused. A run after the go-live, with one such file
+   missing, creates only that file.
 - **3. First start** with the temporary admin `temp-admin`.
 - **4a. Master on the admin entrypoint**, with `temp-admin`. The apply cannot move the
    master realm itself, because the move changes the issuer of the token it signs in with.
@@ -986,7 +1023,9 @@ keycloak/go-live --check
 It reads only go-live's durable trace, so Keycloak need not run: it is done when
 `db-password` and `config-cli-secret` exist in `~/.secrets/keycloak/`,
 `bootstrap-admin-password` does not (only step 7 deletes it, after it deleted
-`temp-admin`), and the `keycloak-db` volume exists. It is also the setup check of `edge apply
+`temp-admin`), the `keycloak-db` volume exists, and every client secret file that
+`compose.yaml` names exists (`docker compose config` needs no daemon; a missing file gives
+exit 1 and the line `the secret of client <id> is missing (...); run keycloak/go-live`). It is also the setup check of `edge apply
 --closed` for the unit `keycloak`. It asks nothing, prints no
 secret and creates or changes no file, directory, volume or container. A
 bootstrap file deleted by hand reads as done; a full `keycloak/go-live` run still
@@ -1007,6 +1046,8 @@ switched-off Keycloak):
 - **1. Backup.** Decide once whether to continue without the Keycloak backup
    (K11b has not landed); stop here if you do not accept that.
 - **2. Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
+- **2b. Client secrets.** Create `~/.secrets/keycloak/clients/<clientId>` for each client
+   secret `compose.yaml` names, the same way (`openssl rand -hex 32`, mode 0644).
 - **3. First start**, with the temporary bootstrap admin `temp-admin`:
    `docker compose --profile keycloak --file compose.yaml --file keycloak/bootstrap.compose.yaml up -d keycloak`
 - **4a. Master on the admin entrypoint**, with the overlay:
@@ -1086,9 +1127,9 @@ flock /tmp/probe-stack.lock \
   timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
 ```
 
-The proofs: the public issuer and the path allow-list (1, 2a), the master issuer
-and the forced second factor on 8090, for the console and for a password grant
-(2b), a failing undefined variable, a fresh apply, an unchanged export after a
+The proofs: the public issuer, the themed login and account pages in German
+and English and the path allow-list (1, 2a), the master issuer and the
+forced second factor on 8090, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
 cache-off second apply and a changed YAML that applies and deletes a
 console-made subgroup it does not list, with a seeded member untouched (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused

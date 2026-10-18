@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -39,6 +40,10 @@ UNIT = "keycloak"  # the catalog key of the unit, and so the name of its switch 
 BOOTSTRAP_ADMIN = "temp-admin"
 BOOTSTRAP_OVERLAY = "keycloak/bootstrap.compose.yaml"
 KEYCLOAK_PROFILE = "keycloak"
+# keycloak-config-cli lives behind it, and so do the client secrets it reads
+APPLY_PROFILE = "apply"
+CLIENT_SECRETS_DIR = "clients"
+CLIENT_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
 BOOTSTRAP_ENV = "KC_BOOTSTRAP_ADMIN_USERNAME"
 DATABASE_VOLUME = "keycloak-db"
 ADMIN_URL = "http://localhost:8090"
@@ -142,6 +147,10 @@ def run_command(
         raise DockerDidNotAnswer(f"cannot run {command[0]}: {error.strerror}") from error
 
 
+def new_secret_value() -> str:
+    return secrets.token_hex(32)
+
+
 @dataclass(frozen=True)
 class Tools:
     """Everything outside the script's logic: processes, HTTP, the operator, the clock."""
@@ -152,6 +161,7 @@ class Tools:
     say: Callable[[str], None] = print
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
+    new_secret: Callable[[], str] = new_secret_value
 
 
 @dataclass(frozen=True)
@@ -223,24 +233,77 @@ class GoLive:
         self.secrets_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.secrets_dir.chmod(0o700)
         for name in SECRET_FILES:
-            # O_EXCL: an existing file is never overwritten. The container users must read the
-            # file; the 0700 directory keeps everyone else out.
-            descriptor = os.open(
-                self.secrets_dir / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644
-            )
+            self.create_secret_file(self.secrets_dir / name)
+
+    def create_secret_file(self, path: Path) -> None:
+        # O_EXCL: an existing file is never overwritten. The container users must read the
+        # file; the 0700 directory keeps everyone else out.
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
             with os.fdopen(descriptor, "w") as secret_file:
                 os.fchmod(secret_file.fileno(), 0o644)
-                secret_file.write(secrets.token_hex(32))
+                secret_file.write(self.tools.new_secret())
+        except BaseException:
+            # An empty file would read as done on the next run; only this call's file goes.
+            path.unlink()
+            raise
+
+    # --- client secrets (step 2b): compose names the clients, go-live creates the files --------
+
+    @property
+    def client_secrets_dir(self) -> Path:
+        return self.secrets_dir / CLIENT_SECRETS_DIR
+
+    def client_ids(self) -> list[str]:
+        config = self.compose(
+            "config",
+            "--format",
+            "json",
+            bootstrap=False,
+            profiles=(KEYCLOAK_PROFILE, APPLY_PROFILE),
+        )
+        if config.returncode != 0:
+            raise DockerDidNotAnswer(self.failure_line("config", config))
+        prefix = f"{self.client_secrets_dir}/"
+        declared = json.loads(config.stdout).get("secrets", {}).values()
+        files = [secret["file"] for secret in declared if "file" in secret]
+        client_ids = [file.removeprefix(prefix) for file in files if file.startswith(prefix)]
+        for client_id in client_ids:
+            if not CLIENT_ID.fullmatch(client_id):
+                raise StepFailure(
+                    f"compose names the client secret file {prefix}{client_id}; a client id is "
+                    "lower-case letters, digits and hyphens, so fix compose.yaml"
+                )
+        return client_ids
+
+    def missing_client_ids(self) -> list[str]:
+        return [
+            client_id
+            for client_id in self.client_ids()
+            if not (self.client_secrets_dir / client_id).exists()
+        ]
+
+    def client_secrets_are_complete(self) -> bool:
+        return not self.missing_client_ids()
+
+    def create_client_secrets(self) -> None:
+        self.client_secrets_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.client_secrets_dir.chmod(0o700)
+        for client_id in self.missing_client_ids():
+            self.create_secret_file(self.client_secrets_dir / client_id)
 
     def secret_values(self) -> list[str]:
         """What can be read: a file that cannot be read cannot leak into a failure line either."""
+        paths = [self.secrets_dir / name for name in SECRET_FILES]
+        if self.client_secrets_dir.is_dir():
+            paths += sorted(self.client_secrets_dir.iterdir())
         values = []
-        for name in SECRET_FILES:
+        for path in paths:
             try:
-                values.append((self.secrets_dir / name).read_text().strip())
+                values.append(path.read_text().strip())
             except OSError:
                 continue
-        return values
+        return [value for value in values if value]
 
     def scrubbed(self, text: str) -> str:
         for value in self.secret_values():
@@ -273,9 +336,11 @@ class GoLive:
         bootstrap: bool,
         timeout: int = LONG_COMMAND_SECONDS,
         stdin: str | None = None,
+        profiles: tuple[str, ...] = (KEYCLOAK_PROFILE,),
     ):
         command = ["docker", "compose", "--project-directory", str(REPO), "--file", "compose.yaml"]
-        command += ["--profile", KEYCLOAK_PROFILE]
+        for profile in profiles:
+            command += ["--profile", profile]
         if bootstrap:
             command += ["--file", BOOTSTRAP_OVERLAY]
         return self.tools.run([*command, *args], timeout, stdin)
@@ -570,6 +635,15 @@ class GoLive:
                 "replaced.",
             ),
             Step(
+                "2b",
+                "client secrets",
+                self.client_secrets_are_complete,
+                self.create_client_secrets,
+                "Create one random secret per confidential app client that compose.yaml names, in "
+                "~/.secrets/keycloak/clients/. Only a missing file is created; they are never "
+                "printed and an existing file is never replaced.",
+            ),
+            Step(
                 "3",
                 "keycloak start",
                 self.keycloak_answers,
@@ -623,6 +697,12 @@ class GoLive:
                 reason = (
                     f"{BOOTSTRAP_SECRET} still exists, so steps 6-7 (retire {BOOTSTRAP_ADMIN}) "
                     "are not done; run keycloak/go-live"
+                )
+            elif missing_clients := self.missing_client_ids():
+                client_id = missing_clients[0]
+                reason = (
+                    f"the secret of client {client_id} is missing "
+                    f"(~/.secrets/keycloak/{CLIENT_SECRETS_DIR}/{client_id}); run keycloak/go-live"
                 )
             else:
                 self.tools.say(f"{prefix}: set up")
