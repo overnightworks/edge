@@ -389,7 +389,8 @@ def fresh_observer(name: str) -> ModuleType:
     """observe.py loaded anew from its file, so its opener is built under the current
     environment rather than the one the test session imported it in."""
     spec = importlib.util.spec_from_file_location(name, REPOSITORY / "src/edge/realm/observe.py")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     try:
