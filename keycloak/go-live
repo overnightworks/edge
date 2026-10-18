@@ -33,6 +33,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))  # the emergency switch has one owner: edge.switches
 
 from edge import switches  # noqa: E402
+from edge_backup import runner as backup_runner  # noqa: E402
+from edge_backup.settings import Settings as BackupSettings  # noqa: E402
 
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 BOOTSTRAP_SECRET = "bootstrap-admin-password"
@@ -151,6 +153,16 @@ def new_secret_value() -> str:
     return secrets.token_hex(32)
 
 
+def edge_backup_is_set_up() -> bool:
+    """edge-backup's own check; anything unclear reads as not set up, so the question is asked."""
+    settings = BackupSettings.for_home(Path.home(), os.getuid(), os.getgid())
+    try:
+        backup_runner.require_secret_and_repository(settings)
+    except (backup_runner.StepFailed, OSError):
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class Tools:
     """Everything outside the script's logic: processes, HTTP, the operator, the clock."""
@@ -162,6 +174,7 @@ class Tools:
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
     new_secret: Callable[[], str] = new_secret_value
+    backup_is_set_up: Callable[[], bool] = edge_backup_is_set_up
 
 
 @dataclass(frozen=True)
@@ -431,7 +444,8 @@ class GoLive:
 
     def confirm_no_backup(self) -> None:
         if not self.ask_yes_no(
-            "K11b (the Keycloak backup) has not landed. Continue without a backup?"
+            "edge-backup is not set up on this PC, so Keycloak's data will not be backed up. "
+            "Continue without the Keycloak backup?"
         ):
             raise StepFailure("stopped: no backup yet and you did not accept that")
 
@@ -614,16 +628,20 @@ class GoLive:
 
     # --- the run --------------------------------------------------------------------------
 
+    def backup_is_settled(self) -> bool:
+        return self.tools.backup_is_set_up() or self.database_volume_exists()
+
     def steps(self) -> list[Step]:
         return [
             Step(
                 "1",
                 "backup",
-                self.database_volume_exists,
+                self.backup_is_settled,
                 self.confirm_no_backup,
-                "Keycloak will hold every login. Its backup (K11b) is not built yet, so you "
-                "decide once whether to go live without one. The question is not asked again once "
-                "Keycloak's database exists.",
+                "Keycloak will hold every login. While edge-backup is not set up on this PC, you "
+                "decide once whether to go live without a Keycloak backup. Nothing is asked once "
+                "edge-backup is set up (password file and repository exist) or Keycloak's "
+                "database exists.",
             ),
             Step(
                 "2",

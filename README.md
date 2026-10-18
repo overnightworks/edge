@@ -971,10 +971,12 @@ keycloak`), go-live refuses at the start of its run, asks nothing and starts not
 step 4b, step 5), so a stop made during the run wins. `--check` starts nothing and ignores the
 marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply --closed` asks and runs it in your terminal on yes (`--check` first).
 
-- **1. Backup.** It asks once whether to continue without the Keycloak backup
-   (K11b has not landed). There is no default; the answer is yours. It is done once
-   Keycloak's database volume exists (the first start creates it), so a "no"
-   is asked again and a finished install is never asked, even with Keycloak stopped.
+- **1. Backup.** It asks whether to continue without the Keycloak backup only while
+   [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
+   initialised repository). There is no default; the answer is yours. Nothing is asked once
+   edge-backup is set up (its next weekly run covers Keycloak; the check does not prove a
+   snapshot exists) or Keycloak's database volume exists (the first start creates it), so a
+   "no" is asked again and a finished install is never asked, even with Keycloak stopped.
 - **2. Secrets.** It creates the three files with random values, in a 0700
    directory with 0644 files. An existing file is never overwritten; if only
    some of the files exist it refuses and names the missing ones.
@@ -1045,8 +1047,8 @@ If the script cannot be used, the same steps by hand, in this order (they do not
 marker `stopped/keycloak`: check `ls ~/.local/state/edge/stopped` first and do not start a
 switched-off Keycloak):
 
-- **1. Backup.** Decide once whether to continue without the Keycloak backup
-   (K11b has not landed); stop here if you do not accept that.
+- **1. Backup.** Unless [edge-backup](#edge-backup) is set up on this PC, decide once whether to
+   continue without the Keycloak backup; stop here if you do not accept that.
 - **2. Secrets.** Create the three files as in [Keycloak secrets](#keycloak-secrets).
 - **2b. Client secrets.** Create `~/.secrets/keycloak/clients/<clientId>` for each client
    secret `compose.yaml` names, the same way (`openssl rand -hex 32`, mode 0644).
