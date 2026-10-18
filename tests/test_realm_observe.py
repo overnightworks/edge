@@ -867,12 +867,13 @@ def test_a_timeout_mid_read_fails_the_observe_naming_the_path(keycloak: FakeKeyc
     """U20: the 5xx case above proves a failed observe prints one line and no inventory."""
     keycloak.faults.delay = {"/admin/realms/master/components": 1.0}
     session = observer.Session(keycloak.url, SECRET, timeout=0.3)
+    digest = observer.Digester(bytes.fromhex(KEY))
 
     with pytest.raises(
         observer.ObserveError,
         match=r"^Keycloak does not answer /admin/realms/master/components \(timed out\)$",
     ):
-        observer.observe(session, observer.Digester(bytes.fromhex(KEY)))
+        observer.observe(session, digest)
 
 
 def test_keycloak_that_does_not_answer_is_one_line(run_observer: Callable[[str], Run]) -> None:
