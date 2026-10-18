@@ -139,6 +139,7 @@ class ScriptedCompose:
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
     failing_verb: str | None = None
+    failure_line: str = "last line"  # the last line a failing verb writes
     # `up` creates a new container of these but cannot start it: it stays created, `up` exits 1
     unstartable: set[str] = field(default_factory=set)
     starts_nothing: bool = False
@@ -156,7 +157,9 @@ class ScriptedCompose:
         refused = NEVER_RUN & {verb, *arguments}
         assert not refused, f"edge ran docker compose {verb} {' '.join(arguments)}"
         if verb == self.failing_verb:
-            return subprocess.CompletedProcess(command, 1, "", f"{verb} broke\nlast line")
+            return subprocess.CompletedProcess(
+                command, 1, "", f"{verb} broke\n{self.failure_line}\n\n"
+            )
         output = getattr(self, f"verb_{verb}")(profile, arguments)
         if verb == "up" and self.unstartable & set(arguments):
             return subprocess.CompletedProcess(command, 1, output, "up broke\ncannot start")
@@ -601,6 +604,33 @@ def test_off_never_takes_a_volume_or_a_project_down_and_never_names_the_core(
     changing = [call for call in scripted.calls if call[2] not in {"config", "ps"}]
     assert not {"traefik", "socket-proxy"} & {word for call in changing for word in call}
     assert {call[2] for call in changing} == {"up", "stop", "rm"}
+
+
+@pytest.mark.parametrize(
+    ("line", "printed"),
+    [
+        ("\x1b[31mred\x1b[0m", "\\x1b[31mred\\x1b[0m"),
+        ("bell\x07 and tab\t", "bell\\x07 and tab"),
+        ("über ✓", "über ✓"),
+    ],
+)
+def test_a_commands_last_line_is_printed_escaped_on_one_line(
+    switch, scripted, setup_check, repository, line, printed
+):
+    """#95 rule 8: Compose's and a setup check's last line pass through the one sanitizer, so ESC
+    and other control characters reach the terminal escaped."""
+    write_fleet(repository, DISABLED)
+    scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "running")
+    scripted.failing_verb = "rm"
+    scripted.failure_line = line
+
+    _, _, err = switch()
+
+    assert f"`docker compose rm` exited 1: {printed}" in err
+    assert "\x1b" not in err
+    setup_check.exit_code, setup_check.line = 1, f"step-ca/init --check:\n{line}"
+    step_ca = catalog.Unit("step-ca", True, "step-ca/init")
+    assert setup.not_set_up_line(step_ca, repository, setup_check) == printed
 
 
 def test_a_failed_removal_is_partial_and_never_reported_as_applied(switch, scripted, repository):

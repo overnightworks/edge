@@ -256,6 +256,21 @@ def _containers(output: str) -> list[dict[str, Any]]:
 
 
 def _failure_line(verb: str, result: subprocess.CompletedProcess[str]) -> str:
-    lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
-    last = lines[-1].strip() if lines else "no output"
+    last = last_line(result.stderr + result.stdout)
     return f"`docker compose {verb}` exited {result.returncode}: {last}"
+
+
+def last_line(output: str) -> str:
+    """The last non-empty line of a command's output, stripped and printable; `no output` when
+    there is none. The one owner for every refusal that quotes a command's own words."""
+    lines = [line for line in output.splitlines() if line.strip()]
+    return printable(lines[-1].strip()) if lines else "no output"
+
+
+def printable(text: str) -> str:
+    """`text` with every character a terminal would act on escaped (a newline as `\\n`, ESC as
+    `\\x1b`), so text from outside, a path or a command's line, stays one line of plain text."""
+    return "".join(
+        character if character.isprintable() else character.encode("unicode_escape").decode()
+        for character in text
+    )
