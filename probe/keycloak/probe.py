@@ -58,6 +58,7 @@ KEYCLOAK_PROFILE = "keycloak"
 PROJECT_LABEL = f"com.docker.compose.project={PROJECT}"
 DOMAIN = "hallucinai.de"
 REALM = "hallucinai"
+THEME = "hallucinai"
 REALM_FILE = "realm.yaml"
 CONFIG_FILES = ("master.yaml", REALM_FILE)
 PUBLIC_HOST = f"auth.{DOMAIN}"
@@ -622,9 +623,12 @@ def page_message(page: Response) -> str:
 def totp(secret: str, period_offset: int = 0) -> str:
     """RFC 6238 code for Keycloak's default policy: HmacSHA1, 6 digits, 30 s, the raw secret."""
     counter = int(time.time()) // 30 + period_offset
-    # HmacSHA1 is the algorithm the master realm's OTP policy demands (Keycloak's default, the one
-    # every authenticator app supports); the probe answers that challenge, it chooses no hash.
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()  # NOSONAR
+    # RFC 6238 TOTP uses HMAC-SHA1, which is what Keycloak verifies; the probe chooses no hash.
+    digest = hmac.new(
+        secret.encode(),
+        struct.pack(">Q", counter),
+        hashlib.sha1,  # NOSONAR(S4790)
+    ).digest()
     offset = digest[-1] & 0x0F
     number = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
     return f"{number % 1_000_000:06d}"
@@ -919,8 +923,8 @@ class Probe:
             "eventsEnabled": True,
             "eventsExpiration": 2592000,
             "adminEventsEnabled": True,
-            "loginTheme": "hallucinai",
-            "accountTheme": "hallucinai",
+            "loginTheme": THEME,
+            "accountTheme": THEME,
             "internationalizationEnabled": True,
             "defaultLocale": "en",
         }
@@ -1041,9 +1045,9 @@ class Probe:
     def themed_resource(self, page: Response, area: str) -> str:
         """The first /resources/<version>/<area>/hallucinai/ link of a page, fetched and 200."""
         link = re.search(
-            rf'(?:href|src)="([^"]*/resources/[a-z0-9]{{5}}/{area}/{REALM}/[^"]+)"', page.text
+            rf'(?:href|src)="([^"]*/resources/[a-z0-9]{{5}}/{area}/{THEME}/[^"]+)"', page.text
         )
-        expect(link is not None, f"the {area} page links nothing under {area}/{REALM}/")
+        expect(link is not None, f"the {area} page links nothing under {area}/{THEME}/")
         path = link.group(1)
         resource = through_tunnel("GET", path[path.index("/resources/") :])
         expect(resource.status == 200, f"{path} answered {resource.status}")

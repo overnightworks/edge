@@ -73,7 +73,7 @@ def test_keycloak_that_is_off_and_gone_needs_no_change(keycloak_unit):
     [("loginTheme", "login", "keycloak.v2"), ("accountTheme", "account", "keycloak.v3")],
 )
 def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_setting, area, parent):
-    """K11-SB rule 1: a realm theme is mounted on keycloak alone and only names its parent."""
+    """#105 rule 1, cell T2: a realm theme is mounted on keycloak only and names its parent."""
     realm = yaml.safe_load((REPOSITORY / "keycloak" / "realm.yaml").read_text())
     theme = realm[realm_setting]
     document = compose_document()

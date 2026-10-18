@@ -28,7 +28,8 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   container runs and as its inventory arrives, leave no container, and that an exit 0 carries
   the whole inventory (a stopped `compose run` exits 130 and may leave part of one on stdout;
   a signal it takes as the container begins to run may be lost, and the observe completes), and
-  `does not answer` with Keycloak stopped.
+  `does not answer` with Keycloak stopped. Proof 8 also asserts the two themes, the locales and
+  the master's untouched theme and language.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing: callers create their own clients and users through the admin API.
 
