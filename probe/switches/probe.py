@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Probe of the ingress barrier of `edge stop` (#61 proofs 1-7), of the Traefik that follows its
-`traefik.yml` (#85 cells P1-P7) and of the core that follows its compose definition (#87 cells
-Q1-Q6): a throwaway compose project, HOME and copy of the repository.
+`traefik.yml` (#85 cells P1-P7), of the core that follows its compose definition (#87 cells
+Q1-Q6) and of a running unit whose image is named, never swapped (#91 cells Z1-Z3): a throwaway
+compose project, HOME and copy of the repository.
 
 It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml under their own
 project name, drives the real `edge stop`, `edge start` and `edge apply --closed` of a copy, and
@@ -26,7 +27,13 @@ lane); Q2 a harmless label on socket-proxy in the copy's compose.yaml recreates 
 then traefik, and `hello` answers through Traefik again; Q3 a label on traefik alone keeps
 socket-proxy's container; Q4 a second apply changes nothing; Q5 with `probe` switched off a
 socket-proxy change proves its barrier before the success line; Q6 the volumes, the marker and
-the barrier survive Q2-Q5. Every transcript line names its item. It never touches the live stack
+the barrier survive Q2-Q5.
+
+The #91 cells, after Q6's `edge start` of hello and hello-mcp: Z1 prints each one's resolved
+`image` and ps `Image` and requires them equal (else #91 rule 5 stops the lane); Z2 hello's image
+respelled in the copy with the same digest (a `docker.io/` prefix, nothing pulled) is named with
+both strings, and the apply still changes nothing and asks nothing; Z3 reverted, nothing is named.
+Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
@@ -88,6 +95,14 @@ NOT_RUNNABLE = 3
 SYSTEMCTL_SECONDS = 60
 BOOT_DROP_IN_SOURCE = REPO / "tunnel" / f"{tunnel.CLOUDFLARED_UNIT}.d" / tunnel.BOOT_DROP_IN
 TUNNEL_UNIT_TEXT = "[Service]\nExecStart=/usr/bin/sleep infinity\n"
+PROBE_SERVICES = ("hello", "hello-mcp")
+WHOAMI_IMAGE = (
+    "traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"
+)
+WHOAMI_ANCHOR = f"image: &whoami {WHOAMI_IMAGE}"
+WHOAMI_ALIAS = "image: *whoami"
+RESPELLED_WHOAMI = f"docker.io/{WHOAMI_IMAGE}"  # the same digest, so nothing is pulled
+NEVER_SWAPS = "edge apply never swaps the image of a running unit"
 
 
 class Probe:
@@ -109,6 +124,7 @@ class Probe:
         self.record = core.Record(self.state)
         self.volumes_before_p3: set[str] = set()
         self.volumes_before_q2: set[str] = set()
+        self.compose_before_z2 = ""
         self.barrier = self.copy / "dynamic" / f"switch-{UNIT}.yml"
 
     # --- the stack ---------------------------------------------------------------------------
@@ -449,6 +465,57 @@ class Probe:
             "#87 Q6 held: socket-proxy-run, the named volumes, the marker and the barrier survived"
         )
 
+    def images_of_the_unit(self) -> dict[str, tuple[str | None, str | None]]:
+        """Each service of `probe` with its resolved `image` and its container's ps `Image`."""
+        engine = self.engine()
+        services = engine.resolved_configuration()["services"]
+        running = {c.service: c.image for c in engine.containers()}
+        return {name: (services[name].get("image"), running.get(name)) for name in PROBE_SERVICES}
+
+    def cell_z1_the_image_fact(self) -> None:
+        for service, (configured, running) in self.images_of_the_unit().items():
+            print(f"#91 Z1 {service}: config image {configured!r}, ps Image {running!r}")
+            expect(
+                configured is not None and configured == running,
+                f"#91 rule 5: {service}'s ps Image is not its resolved image; stop the lane",
+            )
+        print("#91 Z1 held: after edge's own start, resolved image == ps Image of both services")
+
+    def respell_hello_image(self) -> None:
+        """Respell hello's image and name hello-mcp's as before, without their shared anchor."""
+        text = self.compose_before_z2.replace(WHOAMI_ANCHOR, f"image: {RESPELLED_WHOAMI}")
+        (self.copy / COMPOSE_FILE).write_text(text.replace(WHOAMI_ALIAS, f"image: {WHOAMI_IMAGE}"))
+
+    def cell_z2_a_respelled_image(self) -> None:
+        self.compose_before_z2 = (self.copy / COMPOSE_FILE).read_text()
+        self.respell_hello_image()
+        before = self.container_ids()
+        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        named = (
+            f"{UNIT}: hello runs {WHOAMI_IMAGE}, compose.yaml names {RESPELLED_WHOAMI}; "
+            "edge apply never swaps the image of a running unit"
+        )
+        lines = [line for line in out.splitlines() if NEVER_SWAPS in line]
+        print(f"#91 Z2 the line: {lines!r}")
+        expect(
+            len(lines) == 1 and named in lines[0] and NOTHING_TO_CHANGE in out,
+            f"apply after the respelled image said: {out[-400:]}",
+        )
+        expect("Type" not in out, "the kept image asked a question")
+        expect(self.container_ids() == before, "the kept image replaced a container")
+        print("#91 Z2 held: probe, hello and both images named; nothing to change; the same ids")
+
+    def cell_z3_reverted(self) -> None:
+        (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)
+        before = self.container_ids()
+        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        expect(
+            NEVER_SWAPS not in out and NOTHING_TO_CHANGE in out,
+            f"apply after the revert said: {out[-400:]}",
+        )
+        expect(self.container_ids() == before, "the revert replaced a container")
+        print("#91 Z3 held: reverted, no image is named; nothing to change; the same ids")
+
     def cell_1_control(self) -> None:
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(f"#61 proof 1 held: {HOST} answers whoami without a switch")
@@ -631,6 +698,9 @@ def prove(probe: Probe) -> int:
         probe.cell_q4_second_run()
         probe.cell_q5_barrier_after_a_socket_proxy_recreate()
         probe.cell_q6_what_survives()
+        probe.cell_z1_the_image_fact()
+        probe.cell_z2_a_respelled_image()
+        probe.cell_z3_reverted()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
@@ -661,7 +731,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7 and #87 Q1-Q6 hold")
+        print("PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3 hold")
     return exit_code
 
 

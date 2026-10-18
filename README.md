@@ -245,7 +245,13 @@ nicht abgeschaltet), erstellt der Lauf nur `traefik-mcp` neu (`up -d --no-deps -
 traefik-mcp`, `step-ca` behaelt Container und Zertifikat) und schreibt den Eintrag, sobald es laeuft;
 ist `step-ca` aus oder abgeschaltet, nennt er es nur ("traefik-mcp: traefik-mcp.yml changed; step-ca
 is off, so it is not started") und startet nichts. Schaltet ein Lauf `step-ca` an, schreibt er den
-Eintrag von `traefik-mcp`, sobald die Einheit laeuft, damit der naechste Lauf nichts aendert. Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
+Eintrag von `traefik-mcp`, sobald die Einheit laeuft, damit der naechste Lauf nichts aendert.
+Laeuft ein Dienst einer Einheit, die nicht ausgeschaltet wird, auf einem anderen Image, als
+`compose.yaml` jetzt nennt (etwa nachdem ein Pull `step-ca` oder `keycloak-db` anhebt), nennt der
+Plan ihn nach den Zeilen der Einheiten ("step-ca: step-ca runs <laufend>, compose.yaml names
+<konfiguriert>; edge apply never swaps the image of a running unit, ..."), tauscht das Image nie
+und fragt dafuer allein nichts: der Lauf bleibt `nothing to change`, das Upgrade ist deins (Block
+6; Keycloak erst mit Dump, K11b). Der Befehl zeigt den Plan, laeuft nur an einem Terminal und
 wendet ihn erst nach der Eingabe `yes` an (alles andere: Abbruch, Exit 1). Danach liest er die
 Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `nothing to change`.
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
@@ -266,8 +272,10 @@ fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `do
 
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert, abgebrochen, fehlgeschlagen
 oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem Live-Checkout `~/git/edge`
-gestartet, Katalog ungueltig, Compose unlesbar, `traefik.yml` fehlt oder ist unlesbar, ein
-Setup-Check, der es nicht sagen kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
+gestartet, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
+ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
+Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
+kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
 Publish-Phase gibt es noch nicht.
 
 Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt nichts an und
@@ -1020,7 +1028,7 @@ the off, nothing is started past it, and `edge start` at a terminal ends it. Pro
 `traefik-mcp` follow `traefik-mcp.yml` and its definition: recreated alone while step-ca is on,
 with step-ca's container, intermediate and served certificate kept; named only while step-ca is
 switched off or disabled; recorded at a switch-on, so the next apply changes nothing. The run
-takes about 30 to 38 minutes, within the 2400 s timeout.
+takes about 12 minutes, 10 of them proof 9's renewal wait, within the 2400 s timeout.
 Every call runs from a throwaway container on the network a client would sit on.
 
 The switch is one for the CA and the gateway together (`enabled: false`, then

@@ -11,18 +11,20 @@ without a live container is named and never started (#85, #87). After the core, 
 definition changed is recreated alone while its unit is on, under the switch lock so a marker
 stops it, and recorded once observed running; while its unit is off or switched off it is named
 and nothing starts, and one that starts with its unit is recorded once the unit is on (#89).
-A unit is a compose profile: on
-starts its services, off removes their containers. Volumes are never touched. A unit that would be
-switched on and is not set up is asked about separately; on `yes` its own setup command runs in
-the operator's terminal (key material is made there, never here) and `--check` must then pass
-before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
-left is never started and its switch is never cleared here: only `edge start` ends it. It runs
-only from the live checkout `~/git/edge`: from any other tree it would bind the live compose
-project to that tree, so it refuses there with exit 2 (#79).
+A unit is a compose profile: on starts its services, off removes their containers. Volumes are never
+touched. A live service of a unit not planned off whose container runs another image than
+compose.yaml now names is named after the unit lines and keeps running: its image is never swapped
+here, and the line alone asks nothing (#91). A unit that would be switched on and is not set up is
+asked about separately; on `yes` its own setup command runs in the operator's terminal (key material
+is made there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
+emergency switch (`edge stop`) or a barrier a stop left is never started and its switch is never
+cleared here: only `edge start` ends it. It runs only from the live checkout `~/git/edge`: from any
+other tree it would bind the live compose project to that tree, so it refuses there with exit 2
+(#79).
 """
 
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -119,6 +121,77 @@ def plan_switches(
     return plans
 
 
+KEPT_IMAGE_OWNER = "the upgrade is yours (block 6; Keycloak with a dump first, K11b)"
+
+
+@dataclass(frozen=True)
+class KeptImage:
+    """A live service of a unit that runs another image than compose.yaml names now."""
+
+    unit: str
+    service: str
+    running: str
+    configured: str
+
+    def describe(self) -> str:
+        return (
+            f"{self.unit}: {self.service} runs {self.running}, compose.yaml names "
+            f"{self.configured}; edge apply never swaps the image of a running unit, so it "
+            f"keeps running; {KEPT_IMAGE_OWNER}"
+        )
+
+
+def plan_kept_images(
+    units: Sequence[catalog.Unit],
+    profile_services: Mapping[str, tuple[str, ...]],
+    config: Mapping[str, Any],
+    containers: Sequence[compose.Container],
+    plans: Sequence[UnitPlan],
+    followers: Collection[str],
+) -> list[KeptImage]:
+    """Each live service of a unit whose container's image is not the exact reference its
+    resolved definition names, in catalog and file order (#91 rules 2, 3). The core has no
+    profile, the followers are recreated by their own plan, a unit planned off loses its
+    containers, and a service whose definition names no image has no pin to compare."""
+    planned_off = {plan.unit.key for plan in plans if plan.action is Action.OFF}
+    live = [container for container in containers if container.live]
+    kept: dict[KeptImage, None] = {}
+    for unit in units:
+        if unit.key not in planned_off:
+            services = [
+                service for service in profile_services[unit.key] if service not in followers
+            ]
+            kept.update(dict.fromkeys(_kept_images_of(unit.key, services, config, live)))
+    return list(kept)
+
+
+def _kept_images_of(
+    unit: str, services: Sequence[str], config: Mapping[str, Any], live: Sequence[compose.Container]
+) -> Iterator[KeptImage]:
+    for service in services:
+        configured = config["services"][service].get("image")
+        if configured is None:
+            continue
+        for running in _running_images(service, live):
+            if running != configured:
+                yield KeptImage(unit, service, running, configured)
+
+
+def _running_images(service: str, live: Sequence[compose.Container]) -> list[str]:
+    """The images the service's live containers were created from; a ps line naming none cannot
+    be compared, so it cannot be planned, as a missing label is (#87)."""
+    images = []
+    for container in live:
+        if container.service != service:
+            continue
+        if container.image is None:
+            raise compose.ComposeError(
+                f"a live {service} container's `docker compose ps` line names no Image"
+            )
+        images.append(container.image)
+    return images
+
+
 @dataclass
 class Progress:
     unit: str = ""
@@ -185,6 +258,7 @@ class Plan:
     core: list[core.CorePlan]
     followers: list[core.FollowerPlan]
     plans: list[UnitPlan]
+    images: list[KeptImage]
 
     @property
     def changes_nothing(self) -> bool:
@@ -195,7 +269,9 @@ class Plan:
         )
 
     def describe(self) -> list[str]:
-        return [plan.describe() for plan in (*self.core, *self.followers, *self.plans)]
+        return [
+            plan.describe() for plan in (*self.core, *self.followers, *self.plans, *self.images)
+        ]
 
 
 @dataclass(frozen=True)
@@ -220,7 +296,10 @@ def _plan(
     follower_plans = core.plan_followers(
         fleet.config, containers, hashes, repository, record, gates
     )
-    return Plan(fleet, read, core_plans, follower_plans, plans)
+    images = plan_kept_images(
+        fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
+    )
+    return Plan(fleet, read, core_plans, follower_plans, plans, images)
 
 
 def _gates(
