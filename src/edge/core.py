@@ -342,8 +342,7 @@ def plan_followers(
     `docker compose config --hash` (#89 rules 1-6). A follower with any container whose unit is on
     is recreated, so a fixed file reaches one that crash-loops on a broken one; one without a
     container starts with its unit; one whose unit is off or switched off is held. A file bind
-    that cannot be read is an error only for a follower that would start; a held one is named
-    with it, because nothing starts that could run it."""
+    that cannot be read is an error whatever the unit's state (#89 rule 6)."""
     reading = record.read()
     states = compose.states_of(containers)
     units = follower_units(config, gates)
@@ -351,13 +350,7 @@ def plan_followers(
     plans = []
     for follower, unit in units.items():
         gate = gates[unit]
-        try:
-            current = digests(file_binds(config["services"][follower], checkout), checkout)
-        except CoreError as error:
-            if gate is Gate.ON:
-                raise
-            plans.append(FollowerPlan(follower, unit, FollowerAction.HELD, str(error), {}, gate))
-            continue
+        current = digests(file_binds(config["services"][follower], checkout), checkout)
         whys = _own_changes(
             config, follower, labels.get(follower, set()), hashes, checkout, current, reading
         )

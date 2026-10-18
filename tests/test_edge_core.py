@@ -598,26 +598,12 @@ def test_a_follower_whose_profile_is_no_catalog_unit_is_skipped(with_follower, c
     assert followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, {}) == []
 
 
+@pytest.mark.parametrize("gate", list(core.Gate))
 def test_a_missing_follower_file_cannot_be_planned_and_names_its_path(
-    with_follower, checkout, record
+    gate, with_follower, checkout, record
 ):
-    """#89 rule 6, cell F15: while step-ca is on."""
+    """#89 rule 6, cell F15: whether step-ca is on, off or switched off."""
     (checkout / FOLLOWER_FILE).unlink()
 
     with pytest.raises(core.CoreError, match=re.escape(str(checkout / FOLLOWER_FILE))):
-        followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, ON)
-
-
-@pytest.mark.parametrize("gate", [core.Gate.OFF, core.Gate.SWITCHED_OFF])
-def test_a_missing_file_of_a_held_follower_is_named_in_its_held_line(
-    gate, with_follower, checkout, record
-):
-    """#89 rules 4, 6 (#87 rule 6, cell D13): nothing starts that could run the file, so a held
-    follower names the path instead of stopping the plan."""
-    (checkout / FOLLOWER_FILE).unlink()
-
-    [plan] = followers_of(with_follower, checkout, record, {}, {"step-ca": gate})
-
-    assert plan.action is core.FollowerAction.HELD
-    assert plan.describe().startswith(f"traefik-mcp: cannot read {checkout / FOLLOWER_FILE} (")
-    assert plan.describe().endswith(f"; step-ca is {gate}, so it is not started")
+        followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, {"step-ca": gate})

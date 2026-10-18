@@ -2664,6 +2664,7 @@ def test_apply_drops_a_ghost_entry_and_keeps_the_entry_of_a_switched_off_file_bi
     scripted.config["services"]["traefik-mcp"]["volumes"].append(
         bind(repository / "traefik-mcp.yml", "/etc/traefik/traefik.yml")
     )
+    (repository / "traefik-mcp.yml").write_text("entryPoints: {}\n")
     kept = {"traefik-mcp.yml": "1" * 64}
     (state / "applied.json").write_text(
         json.dumps(applied(state) | {"ghost": {}, "traefik-mcp": kept})
