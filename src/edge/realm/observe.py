@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REALMS = ("master", "hallucinai")
 CLIENT_ID = "config-cli"
@@ -414,6 +414,17 @@ def project_map(
 # --- Reading ----------------------------------------------------------------------------------
 
 
+class RefuseRedirects(HTTPRedirectHandler):
+    """urllib follows a 30x with the Authorization header, even to another host or a path outside
+    /admin/realms; refused, the 30x surfaces as its status."""
+
+    def redirect_request(self, *_: Any) -> None:
+        return None
+
+
+OPENER = build_opener(RefuseRedirects)
+
+
 @dataclass
 class Session:
     """The admin API as config-cli sees it: one token POST, then GET only."""
@@ -457,7 +468,7 @@ class Session:
     def send(self, request: Request) -> tuple[int, bytes]:
         path = request.selector.split("?", 1)[0]
         try:
-            with urlopen(request, timeout=self.timeout) as reply:
+            with OPENER.open(request, timeout=self.timeout) as reply:
                 return reply.status, reply.read()
         except HTTPError as error:
             error.close()

@@ -422,6 +422,7 @@ class Faults:
     unauthorized_after: int | None = None  # 401 for the GET after this many GETs
     unauthorized_times: int = 1
     truncate_children: bool = False
+    redirect: dict[str, str] = field(default_factory=dict)  # path -> Location
 
 
 class FakeKeycloak(ThreadingHTTPServer):
@@ -469,6 +470,11 @@ class AdminApi(BaseHTTPRequestHandler):
         if self.headers["Authorization"] != f"Bearer {TOKEN}":
             return self.reply({"error": "no token"}, 401)
         time.sleep(faults.delay.get(path, 0))
+        if path in faults.redirect:
+            self.send_response(302)
+            self.send_header("Location", faults.redirect[path])
+            self.send_header("Content-Length", "0")
+            return self.end_headers()
         if path in faults.status:
             return self.reply({"error": "server error"}, faults.status[path])
         _, _, _, realm_name, *rest = path.split("/")
@@ -884,6 +890,25 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
         if not (method == "GET" and path.startswith("/admin/realms/"))
     ]
     assert not_admin_reads == [("POST", "/realms/master/protocol/openid-connect/token")]
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["{url}/realms/elsewhere", "http://localhost:{port}/admin/realms/hallucinai"],
+    ids=["outside-the-admin-path", "another-origin"],
+)
+def test_a_redirect_is_refused_as_its_status_and_never_followed(
+    keycloak: FakeKeycloak, location: str
+) -> None:
+    """Rule 1: GET only under /admin/realms/ of the base URL; the token never follows a 30x."""
+    redirecting = "/admin/realms/hallucinai/client-scopes"
+    keycloak.faults.redirect = {
+        redirecting: location.format(url=keycloak.url, port=keycloak.server_port)
+    }
+
+    with pytest.raises(observer.ObserveError, match=f"^status 302 at {redirecting}$"):
+        observe(keycloak)
+    assert keycloak.requests[-1] == ("GET", redirecting)
 
 
 def test_two_observes_of_an_unchanged_keycloak_are_equal(keycloak: FakeKeycloak) -> None:
