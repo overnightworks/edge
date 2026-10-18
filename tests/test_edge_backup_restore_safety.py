@@ -7,11 +7,12 @@ from edge_backup_support import (
     DUMP,
     Machine,
     app_history,
+    declare_shipped_apps,
     declare_two_apps,
     schema_one_status,
 )
 
-from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
+from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
 
 
 def _leave_a_partial_snapshot(machine: Machine) -> str:
@@ -68,15 +69,20 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
     assert not target.exists()
 
 
-@pytest.mark.parametrize("image", [RESTIC_IMAGE, POSTGRES_IMAGE], ids=["restic", "postgres"])
+@pytest.mark.parametrize(
+    "image",
+    [RESTIC_IMAGE, *RESTORE_IMAGES.values()],
+    ids=["restic", *(f"postgres-{major}" for major in RESTORE_IMAGES)],
+)
 @pytest.mark.parametrize("command", ["backup", "restore-test"])
 def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
     edge_backup, machine, command, image
 ):
-    edge_backup("backup")
+    shipped = declare_shipped_apps()
+    edge_backup(*shipped, "backup")
     machine.missing_images = {image}
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*shipped, command)
 
     assert outcome.exit_code == 0, outcome.err
     pulls = [argv for label, argv in machine.calls if label == "docker pull"]

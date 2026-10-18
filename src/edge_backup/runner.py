@@ -19,6 +19,7 @@ from edge_backup.restic import MountKind
 from edge_backup.settings import (
     READINESS_POLL_SECONDS,
     READINESS_TIMEOUT,
+    RESTORE_IMAGES,
     RESTORE_SERVER_POLL_SECONDS,
     RESTORE_SERVER_TIMEOUT,
     Settings,
@@ -38,6 +39,7 @@ from edge_backup.verify import (
     VerificationError,
     check_audio_count,
     check_audio_references,
+    check_row_count,
 )
 
 # A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
@@ -165,7 +167,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     first_readiness = _Deadline.start(READINESS_TIMEOUT)
-    _require_docker_with_pinned_images(run, first_readiness)
+    _require_docker_with_pinned_images(run, apps, first_readiness)
     with run.phase(Phase.PREPARE):
         run.attribute_legacy_evidence(settings, apps)
     for index, app in enumerate(apps):
@@ -182,7 +184,7 @@ def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
 def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    _require_docker_with_pinned_images(run, _Deadline.start())
+    _require_docker_with_pinned_images(run, apps, _Deadline.start())
     with run.phase(Phase.PREPARE):
         run.attribute_legacy_evidence(settings, apps)
     verified = []
@@ -196,12 +198,14 @@ def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
     run.raise_first_app_failure()
 
 
-def _require_docker_with_pinned_images(run: Run, readiness: _Deadline) -> None:
+def _require_docker_with_pinned_images(
+    run: Run, apps: tuple[App, ...], readiness: _Deadline
+) -> None:
     """A daemon that is still starting is waited for; only then are missing images pulled."""
     with run.phase(Phase.READINESS):
         _wait_until_ready(docker.require_daemon, readiness, READINESS_POLL_SECONDS)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
-        _resolved(docker.ensure_pinned_images)
+        _resolved(lambda: docker.ensure_pinned_images(apps))
 
 
 def previous_status(settings: Settings) -> Status | None:
@@ -261,16 +265,20 @@ def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> No
         container = _wait_until_ready(
             lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
         )
-        volume = _resolved(lambda: docker.audio_volume(app))
+        audio_volume = _resolved(lambda: docker.audio_volume(app, app.audio)) if app.audio else None
     with _private_directory(settings.work_dir) as staging:
         with run.phase(Phase.DUMP):
             docker.dump_database(app, container, staging / DUMP_NAME)
         with run.phase(Phase.MANIFEST):
-            audio_files = docker.count_audio_files(settings, MountKind.VOLUME, volume)
+            audio_files = (
+                docker.count_audio_files(settings, MountKind.VOLUME, audio_volume)
+                if audio_volume
+                else None
+            )
             manifest = Manifest(app.name, audio_files)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
-            run.backed_up(app.name, restic.backup(settings, app.name, staging, volume))
+            run.backed_up(app.name, restic.backup(settings, app.name, staging, audio_volume))
 
 
 def _restore_test(settings: Settings, app: App, run: Run) -> None:
@@ -289,10 +297,11 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     manifest_file = _restored_file(restored_db / MANIFEST_NAME, "kein Manifest")
     manifest = Manifest.from_json(manifest_file.read_text(encoding="utf-8"))
     dump = _restored_file(restored_db / DUMP_NAME, "keinen Datenbank-Dump")
-    check_audio_count(
-        manifest, docker.count_audio_files(settings, MountKind.BIND, str(restored_audio))
-    )
-    with docker.restore_server() as server:
+    if app.audio:
+        check_audio_count(
+            manifest, docker.count_audio_files(settings, MountKind.BIND, str(restored_audio))
+        )
+    with docker.restore_server(RESTORE_IMAGES[app.postgres_major]) as server:
         _wait_until_ready(
             lambda: _ready_or_raise(server),
             _Deadline.start(RESTORE_SERVER_TIMEOUT),
@@ -301,9 +310,16 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
         with run.phase(Phase.VERIFY, failing=ExitCategory.VERIFICATION_FAILED):
             server.list_dump(dump)
             server.load_dump(dump)
-            server.row_count(app.restore_test.count_table)
-            references = server.column_values(
-                app.restore_test.audio_reference_table, app.restore_test.audio_reference_column
+            restore_test = app.restore_test
+            check_row_count(
+                restore_test.count_table,
+                server.row_count(restore_test.count_table),
+                require_rows=restore_test.require_rows,
+            )
+            references = (
+                server.column_values(app.audio.reference_table, app.audio.reference_column)
+                if app.audio
+                else []
             )
     check_audio_references(references, restored_audio)
 
@@ -318,22 +334,30 @@ def _recorded_snapshot(settings: Settings, apps: tuple[App, ...], app: App) -> s
 
 def _last_successful_snapshot(settings: Settings, app: App, recorded: str | None) -> str:
     """Never a newer snapshot a failed run left behind; if it is gone, the newest is only named."""
-    newest = _latest_snapshot(settings, app)
-    named = f"der neueste Snapshot ist {newest[:8]}; wählbar mit: " + (
-        f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>"
-    )
     if recorded is None:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"kein erfolgreiches Backup von {app.name} aufgezeichnet; {named}",
+            f"kein erfolgreiches Backup von {app.name} aufgezeichnet"
+            + _newest_snapshot_hint(settings, app),
         )
     if not restic.has_snapshot(settings, app.name, recorded):
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"der aufgezeichnete Snapshot {recorded[:8]} von {app.name} fehlt im Repository; "
-            f"{named}",
+            f"der aufgezeichnete Snapshot {recorded[:8]} von {app.name} fehlt im Repository"
+            + _newest_snapshot_hint(settings, app),
         )
     return recorded
+
+
+def _newest_snapshot_hint(settings: Settings, app: App) -> str:
+    """An app restic holds no snapshot of has nothing to name."""
+    newest = restic.latest_snapshot(settings, app.name)
+    if newest is None:
+        return ""
+    return (
+        f"; der neueste Snapshot ist {newest[:8]}; wählbar mit: "
+        f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>"
+    )
 
 
 def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
@@ -350,13 +374,6 @@ def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
             f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `edge-backup snapshots`)",
         )
     return matches[0]
-
-
-def _latest_snapshot(settings: Settings, app: App) -> str:
-    snapshot_id = restic.latest_snapshot(settings, app.name)
-    if snapshot_id is None:
-        raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"kein Snapshot von {app.name}")
-    return snapshot_id
 
 
 def _wait_until_ready[T](probe: Callable[[], T], deadline: _Deadline, poll_seconds: float) -> T:

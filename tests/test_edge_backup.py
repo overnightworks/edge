@@ -21,6 +21,7 @@ from edge_backup_support import (
     SYSTEMD,
     Machine,
     app_history,
+    declare_shipped_apps,
     declare_two_apps,
     mode_of,
     mount_of,
@@ -30,10 +31,10 @@ from edge_backup_support import (
 )
 
 from edge_backup import cli, host
-from edge_backup.apps import AppsError, DumpKind, parse_apps
+from edge_backup.apps import AppsError, Audio, DumpKind, PostgresMajor, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
-from edge_backup.settings import POSTGRES_IMAGE, RESTIC_IMAGE
+from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
 
 
 def test_backup_puts_dump_manifest_and_audio_into_one_snapshot(edge_backup, machine, home):
@@ -84,12 +85,13 @@ def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_b
 
 
 def test_every_container_runs_a_digest_pinned_image(edge_backup, machine):
-    edge_backup("backup")
-    edge_backup("restore-test")
+    shipped = declare_shipped_apps()
+    edge_backup(*shipped, "backup")
+    edge_backup(*shipped, "restore-test")
 
     images = {argument for _, argv in machine.calls for argument in argv if "@sha256:" in argument}
     docker_runs = [argv for _, argv in machine.calls if argv[:2] == ["docker", "run"]]
-    assert images == {RESTIC_IMAGE, POSTGRES_IMAGE}
+    assert images == {RESTIC_IMAGE, *RESTORE_IMAGES.values()}
     assert all(any(image in argv for image in images) for argv in docker_runs)
 
 
@@ -199,6 +201,11 @@ def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_ba
     start = machine.argv_of("Start der Wegwerf-Datenbank")
     assert start[start.index("--network") + 1] == "none"
     assert not any("--mount" in argv or "-v" in argv for argv in [start])
+    # #107 T10: the server keeps no log and logs no error, so no row value reaches one.
+    assert start[start.index("--log-driver") + 1] == "none"
+    assert start[-4:] == [
+        "-c", "log_min_messages=panic", "-c", "log_min_error_statement=panic",
+    ]  # fmt: skip
     restore_test_calls = machine.calls[machine.labels().index("restic snapshots") :]
     assert not any(SONGMAKER_CONTAINER in argv for _, argv in restore_test_calls)
     assert not any("songmaker_audiofiles" in " ".join(argv) for _, argv in restore_test_calls)
@@ -288,10 +295,12 @@ def test_host_run_fails_on_every_nonzero_exit_and_a_missing_binary(argv, exit_co
 
 
 def test_host_run_kills_a_command_that_outlasts_its_timeout():
+    timeout = timedelta(milliseconds=50)
+
     with pytest.raises(
         host.HostCommandError, match=re.escape("probe antwortete nicht binnen 0.05 s")
     ):
-        host.run(["sleep", "5"], label="probe", timeout=timedelta(milliseconds=50))
+        host.run(["sleep", "5"], label="probe", timeout=timeout)
 
 
 def test_host_run_returns_stdout_or_writes_it_into_a_new_private_file(tmp_path):
@@ -556,7 +565,7 @@ def test_restore_test_without_a_snapshot_fails(edge_backup):
     outcome = edge_backup("restore-test")
 
     assert outcome.exit_code == 1
-    assert "kein Snapshot von songmaker" in outcome.err
+    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
     assert outcome.status["failing_phase"] == "restore"
 
 
@@ -872,16 +881,204 @@ def test_init_creates_a_private_repository_directory(edge_backup, machine, home)
     assert machine.labels() == ["restic init"]
 
 
-def test_the_projects_apps_toml_declares_songmaker():
-    [songmaker] = parse_apps(cli.DEFAULT_APPS.read_text())
+def test_the_projects_apps_toml_declares_songmaker_with_audio_and_keycloak_without():
+    """#107 T1: songmaker keeps its audio, keycloak is DB-only on major 17."""
+    songmaker, keycloak = parse_apps(cli.DEFAULT_APPS.read_text())
 
     assert (songmaker.name, songmaker.compose_project, songmaker.db_service) == (
         "songmaker",
         "songmaker",
         "postgres",
     )
-    assert (songmaker.dump, songmaker.volume) == (DumpKind.PG_DUMP_CUSTOM, "audiofiles")
+    assert (songmaker.dump, songmaker.postgres_major) == (
+        DumpKind.PG_DUMP_CUSTOM,
+        PostgresMajor.SIXTEEN,
+    )
+    assert songmaker.audio == Audio("audiofiles", "generations", "mp3_path")
     assert songmaker.restore_test.count_table == "songs"
+    assert (keycloak.name, keycloak.compose_project, keycloak.db_service) == (
+        "keycloak",
+        "edge",
+        "keycloak-db",
+    )
+    assert (keycloak.db_user, keycloak.db_name) == ("keycloak", "keycloak")
+    assert (keycloak.postgres_major, keycloak.audio) == (PostgresMajor.SEVENTEEN, None)
+    assert keycloak.restore_test.count_table == "realm"
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    [
+        pytest.param(["volume"], id="references-without-a-volume"),
+        pytest.param(["audio_reference_table", "audio_reference_column"], id="volume-alone"),
+        pytest.param(["audio_reference_column"], id="a-table-without-its-column"),
+    ],
+)
+def test_apps_toml_refuses_audio_that_is_not_declared_whole(dropped):
+    """#107 T2: a reference table without a volume (or the reverse) is refused at load."""
+    text = "\n".join(
+        line
+        for line in cli.DEFAULT_APPS.read_text().splitlines()
+        if not any(line.startswith(f"{key} =") for key in dropped)
+    )
+
+    with pytest.raises(AppsError, match="Audio braucht volume und audio_reference_table"):
+        parse_apps(text)
+
+
+@pytest.mark.parametrize("major", ["15", "[17]", "true", '"17"'])
+def test_apps_toml_refuses_a_postgres_major_without_a_restore_image(major):
+    """#107 rule 2: a major that is no pinned plain integer is refused at load."""
+    text = cli.DEFAULT_APPS.read_text().replace("postgres_major = 17", f"postgres_major = {major}")
+
+    with pytest.raises(AppsError, match="postgres_major muss einer von"):
+        parse_apps(text)
+
+
+def test_the_restore_image_of_major_17_is_the_pin_of_composes_keycloak_db():
+    """#107 T9: the major-17 restore pin equals compose.yaml's keycloak-db pin."""
+    compose = (cli.DEFAULT_APPS.parents[1] / "compose.yaml").read_text()
+    [pinned] = re.findall(r"^  keycloak-db:\n(?:(?!  \S).*\n)*?    image: (\S+)", compose, re.M)
+
+    assert RESTORE_IMAGES[PostgresMajor.SEVENTEEN] == pinned
+
+
+def test_a_backup_run_saves_the_keycloak_dump_without_any_audio_volume(edge_backup, machine):
+    """#107 T3: both dumps are in the repository and keycloak mounts no volume."""
+    outcome = edge_backup(*declare_shipped_apps(), "backup")
+
+    assert outcome.exit_code == 0, outcome.err
+    keycloak = next(s for s in machine.snapshots if s["app"] == "keycloak")
+    assert keycloak["db"].keys() == {"db.dump", "manifest.json"}
+    assert json.loads(keycloak["db"]["manifest.json"]) == {
+        "schema": 1,
+        "app": "keycloak",
+        "audio_files": None,
+    }
+    assert keycloak["audio"] == {}
+    assert app_history(outcome.status, "keycloak")["last_snapshot_id"] == keycloak["id"]
+    keycloak_backup = next(
+        argv for label, argv in machine.calls if label == "restic backup" and "keycloak" in argv
+    )
+    assert not any("/audio" in argument for argument in keycloak_backup)
+    assert machine.labels().count("docker volume ls") == 1
+
+
+def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
+    edge_backup, machine
+):
+    """#107 T4: keycloak's dump loads into a throwaway postgres 17 and `realm` rows are counted."""
+    shipped = declare_shipped_apps()
+    edge_backup(*shipped, "backup")
+
+    outcome = edge_backup(*shipped, "restore-test")
+
+    assert outcome.exit_code == 0, outcome.err
+    servers = [argv[-5] for label, argv in machine.calls if label == "Start der Wegwerf-Datenbank"]
+    assert servers == [RESTORE_IMAGES[major] for major in PostgresMajor]
+    asked = [argv[argv.index("--command") + 1] for label, argv in machine.calls if label == "psql"]
+    assert asked[-1] == 'SELECT count(*) FROM "realm"'
+    assert app_history(outcome.status, "keycloak")["last_successful_restore_test"] is not None
+
+
+def test_a_restored_table_without_rows_fails_the_restore_test(edge_backup, machine):
+    """#107 T4: a keycloak `realm` table without rows fails the restore test."""
+    shipped = declare_shipped_apps()
+    edge_backup(*shipped, "backup")
+    machine.table_rows["realm"] = 0
+
+    outcome = edge_backup(*shipped, "restore-test")
+
+    assert outcome.exit_code == 1
+    assert "die wiederhergestellte Tabelle realm ist leer" in outcome.err
+    assert outcome.status["failing_app"] == "keycloak"
+    assert outcome.status["exit_category"] == "verification-failed"
+
+
+def test_songmaker_without_songs_still_passes_the_restore_test(edge_backup, machine):
+    """#107 T5: songmaker's verification is unchanged; only keycloak requires rows (rule 3)."""
+    machine.table_rows["songs"] = 0
+    edge_backup("backup")
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert app_history(outcome.status)["last_successful_restore_test"] is not None
+
+
+def test_apps_toml_refuses_require_rows_that_is_not_a_boolean():
+    """#107 rule 3: require_rows is a declared yes or no."""
+    text = cli.DEFAULT_APPS.read_text().replace("require_rows = true", 'require_rows = "yes"')
+
+    with pytest.raises(AppsError, match="require_rows muss true oder false sein"):
+        parse_apps(text)
+
+
+def test_a_failing_restore_shows_no_row_value_of_the_dump(edge_backup, machine, home):
+    """#107 T10: pg_restore's diagnostic quotes rows; only the step and exit code are shown."""
+    marker = "SECRET-ROW-VALUE-4711"
+    edge_backup("backup")
+    machine.restore_diagnostic = f'COPY credential, line 1: "{marker}"'
+
+    outcome = edge_backup("restore-test")
+
+    assert outcome.exit_code == 1
+    assert "pg_restore endete mit Exit 1" in outcome.err
+    shown = outcome.out + outcome.err + machine.status_file.read_text()
+    assert marker not in shown
+    assert no_restore_server_left(machine)
+    assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+def test_an_app_never_backed_up_is_named_so_by_restore_and_restore_test(edge_backup, machine, home):
+    """#107 T6: an app never backed up is named so by restore and restore-test."""
+    edge_backup("backup")
+    shipped = declare_shipped_apps()
+
+    restored = edge_backup(*shipped, "restore", "keycloak", "--target", str(home / "restored"))
+    tested = edge_backup(*shipped, "restore-test")
+
+    expected = "kein erfolgreiches Backup von keycloak aufgezeichnet"
+    assert expected in restored.err
+    assert expected in tested.err
+    assert not (home / "restored").exists()
+
+
+def test_keycloak_reported_failed_while_songmaker_is_still_backed_up_when_keycloak_db_is_down(
+    edge_backup, machine
+):
+    """#107 T7: keycloak is recorded failed, songmaker is still backed up."""
+    machine.other_db_containers["edge"] = []
+
+    outcome = edge_backup(*declare_shipped_apps(), "backup")
+
+    assert outcome.exit_code == 1
+    assert "kein Datenbank-Container für keycloak" in outcome.err
+    assert (outcome.status["failing_app"], outcome.status["exit_category"]) == (
+        "keycloak",
+        "not-ready",
+    )
+    assert [s["app"] for s in machine.snapshots] == ["songmaker"]
+    assert app_history(outcome.status)["last_snapshot_id"] == machine.snapshots[0]["id"]
+
+
+def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine):
+    """#107 T8: no run stops or starts an edge service."""
+    shipped = declare_shipped_apps()
+    edge_backup(*shipped, "backup")
+    edge_backup(*shipped, "restore-test")
+
+    docker_verbs = {argv[1] for _, argv in machine.calls if argv[0] == "docker"}
+    assert docker_verbs.isdisjoint({"stop", "start", "restart", "kill", "pause", "compose", "up"})
+
+
+def test_no_output_or_status_holds_the_dump(edge_backup, machine):
+    """#107 T10: no output or status holds dump content."""
+    shipped = declare_shipped_apps()
+    runs = [edge_backup(*shipped, "backup"), edge_backup(*shipped, "restore-test")]
+
+    shown = "".join(run.out + run.err for run in runs) + machine.status_file.read_text()
+    assert DUMP.decode() not in shown
 
 
 @pytest.mark.parametrize(
