@@ -3,6 +3,6 @@ agent = "claude"
 role = "builder"
 base = "7b53b656fdafd85b800ed66608cf6f98134fcff2"
 branch = "fix/sonar-main-green"
-scope = ["probe/keycloak/test_rp.py", "src/edge_check/cli.py", "src/edge_check/docker.py", "src/edge_check/listeners.py"]
+scope = ["probe/keycloak/test_rp.py", "src/edge_check/cli.py", "src/edge_check/docker.py", "src/edge_check/listeners.py", "tests/test_edge_check.py"]
 opened_commit = "a6ccea85374ba0e8f90a4b6d68e137dedd4fa11b"
 whole_reason = "four pre-existing Sonar findings that turned main red under quality v0.2.0; one green main"
