@@ -266,7 +266,7 @@ def test_a_component_identity_includes_its_sub_type(keycloak: FakeKeycloak) -> N
     components = observe(keycloak)["hallucinai"]["component"]
 
     assert sorted(components) == [
-        "org.keycloak.keys.KeyProvider/rsa-generated/rsa-generated",
+        "org.keycloak.keys.KeyProvider/rsa-generated//rsa-generated",
         "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy/"
         "allowed-client-templates/anonymous/Allowed Client Scopes",
         "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy/"
@@ -287,7 +287,20 @@ def test_a_component_without_a_name_is_known_by_its_type_and_provider(
 
     components = observe(keycloak)["master"]["component"]
 
-    assert "org.keycloak.userprofile.UserProfileProvider/declarative-user-profile" in components
+    assert "org.keycloak.userprofile.UserProfileProvider/declarative-user-profile//" in components
+
+
+def test_a_missing_sub_type_and_a_missing_name_keep_their_places(keycloak: FakeKeycloak) -> None:
+    """Rule 5: a component named `x` without a sub-type differs from one of sub-type `x`
+    without a name."""
+    named = component("master", "x", "T", "P")
+    typed = component("master", "", "T", "P", sub_type="x")
+    typed["name"] = None
+    keycloak.realms["master"].components += [named, typed]
+
+    components = observe(keycloak)["master"]["component"]
+
+    assert {"T/P//x", "T/P/x/"} <= components.keys()
 
 
 def test_a_duplicate_component_identity_fails_loudly(keycloak: FakeKeycloak) -> None:

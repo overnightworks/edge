@@ -686,9 +686,9 @@ class RealmReader:
     def read_components(self) -> None:
         for component in self.get("/components"):
             project(COMPONENT, component, self.digest)  # fails loudly on a missing identity part
-            parts = [component["providerType"], component["providerId"]]
-            parts += [component[part] for part in ("subType", "name") if component.get(part)]
-            self.keep(COMPONENT.name, "/".join(parts), empty())
+            identity = [component["providerType"], component["providerId"]]
+            identity += [component.get(part) or "" for part in ("subType", "name")]
+            self.keep(COMPONENT.name, "/".join(identity), empty())
 
 
 REALM_SCOPES = {
