@@ -1,6 +1,7 @@
 """`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
+import errno
 import fcntl
 import hashlib
 import io
@@ -1266,6 +1267,30 @@ def test_a_missing_git_is_one_line(switch):
         "edge apply --closed: cannot read the live checkout, cannot run git "
         "(No such file or directory)"
     ]
+
+
+def test_a_lock_that_flock_refuses_is_exit_2_and_leaves_no_descriptor_open(
+    switch, state, scripted_git, monkeypatch
+):
+    """#95 rule 4: a flock error other than contention (ENOLCK) is exit 2 with one line, and the
+    descriptor opened for `apply.lock` is closed again."""
+    refused: list[int] = []
+
+    def flock_without_locks(descriptor: int, _operation: int) -> None:
+        refused.append(descriptor)
+        raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))
+
+    monkeypatch.setattr(apply.fcntl, "flock", flock_without_locks)
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert err.splitlines() == [
+        f"edge apply --closed: cannot take {apply_lock(state)} ({os.strerror(errno.ENOLCK)})"
+    ]
+    assert scripted_git.calls == []
+    with pytest.raises(OSError) as closed:
+        os.fstat(refused[0])
+    assert closed.value.errno == errno.EBADF
 
 
 def test_a_stop_never_waits_for_a_running_apply(switch, stop, state, ingress):
