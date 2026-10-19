@@ -20,6 +20,7 @@ from edge.external.cloudflare_read import (
     Snapshot,
 )
 from edge.external.host_check import Problem
+from edge.external.host_probe import Answer, FailureKind, Unreachable
 
 ZONE = "example.test"
 TUNNEL = "t-1"
@@ -87,8 +88,27 @@ def snapshot(*records: Record, apps: tuple[App, ...] | None = (), groups=GROUPS)
     return Snapshot(TUNNEL, records, groups, apps)
 
 
+CLEAN_PUBLIC_ANSWER = Answer(200, None, True, False)
+ACCESS_ANSWER = Answer(302, "https://team.cloudflareaccess.com/cdn-cgi/access/login/x", True, False)
+
+
+def right_answers(hosts, current: Snapshot) -> dict[str, Answer]:
+    """What every probed name answers when its host is exposed as declared."""
+    return {
+        name: ACCESS_ANSWER if host.exposure is Exposure.PROTECTED else CLEAN_PUBLIC_ANSWER
+        for name, host in host_check.names_to_probe(hosts, current).items()
+    }
+
+
+def compared(hosts, current: Snapshot, answers: dict | None = None) -> host_check.HostCheck:
+    """`compare` over the declared zone; without `answers` every probed name answers rightly."""
+    return host_check.compare(
+        ZONE, hosts, current, right_answers(hosts, current) if answers is None else answers
+    )
+
+
 def found(hosts, current: Snapshot) -> list[tuple[str, str]]:
-    check = host_check.compare(ZONE, hosts, current)
+    check = compared(hosts, current)
     return [(finding.problem.value, finding.subject) for finding in check.findings]
 
 
@@ -106,8 +126,8 @@ def test_a_state_that_matches_the_catalog_has_no_findings_in_any_order():
     reordered = snapshot(
         *reversed(LIVE.records), apps=tuple(reversed(LIVE.apps)), groups=tuple(reversed(GROUPS))
     )
-    forward = host_check.compare(ZONE, LIVE_HOSTS, LIVE)
-    backward = host_check.compare(ZONE, list(reversed(LIVE_HOSTS)), reordered)
+    forward = compared(LIVE_HOSTS, LIVE)
+    backward = compared(list(reversed(LIVE_HOSTS)), reordered)
     assert forward.findings == () == backward.findings
     assert host_check.as_text(forward) == host_check.as_text(backward) == "no findings (3 hosts)"
     assert host_check.as_json(forward) == host_check.as_json(backward) == "[]"
@@ -122,7 +142,7 @@ def test_todays_live_state_reports_the_www_record_and_the_stray_one_and_notes_ac
         tunnel_record("presentator"),
         apps=None,
     )
-    check = host_check.compare(ZONE, hosts, live)
+    check = compared(hosts, live)
     assert [(f.problem.value, f.subject) for f in check.findings] == [
         ("record-wrong", fqdn("www")),
         ("undeclared-record", fqdn("presentator")),
@@ -250,7 +270,7 @@ def test_the_public_apex_is_not_covered_by_the_wildcard_app():
 def test_two_apps_for_one_host_make_its_policy_undecidable():
     """C6."""
     apps = (bypass_app("www"), bypass_app("www"))
-    findings = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=apps))
+    findings = compared([bypass("www")], snapshot(tunnel_record("www"), apps=apps))
     assert [(f.problem, "several apps" in f.detail) for f in findings.findings] == [
         (Problem.POLICY_WRONG, True)
     ]
@@ -286,7 +306,7 @@ def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
 ):
     """C6."""
     current = snapshot(*LIVE.records, apps=(*LIVE.apps, extra_app))
-    check = host_check.compare(ZONE, hosts, current)
+    check = compared(hosts, current)
     label, detail = expected_detail
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, fqdn(label), detail)
@@ -296,14 +316,14 @@ def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
 def test_an_own_app_may_carry_a_path_destination_beside_the_whole_host():
     """C6: the same policy covers the whole host, so the extra path changes nothing."""
     own = app(fqdn("www"), fqdn("www") + "/admin", policies=(BYPASS_POLICY,))
-    check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(own,)))
+    check = compared([bypass("www")], snapshot(tunnel_record("www"), apps=(own,)))
     assert not check.findings
 
 
 def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
     """C6."""
     only = app(fqdn("www") + "/admin", policies=(BYPASS_POLICY,))
-    check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(only,)))
+    check = compared([bypass("www")], snapshot(tunnel_record("www"), apps=(only,)))
     assert [(f.problem, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, "the app is scoped to the path /admin")
     ]
@@ -339,7 +359,7 @@ def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy
     """C4: the policy is right, but a path or a method still reaches the origin without Access."""
     leaky = app(destination, policies=policies, **facts_at(destination))
     current = snapshot(tunnel_record(label), apps=(leaky,))
-    check = host_check.compare(ZONE, [host], current)
+    check = compared([host], current)
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, fqdn(label), expected_detail)
     ]
@@ -361,7 +381,7 @@ def test_a_policy_with_extra_conditions_does_not_match_the_declared_one(
     access, but the check compares with the declaration."""
     restricted = Policy(decision, (include,), extra_conditions=True)
     current = snapshot(tunnel_record(label), apps=(app(host.fqdn, policies=(restricted,)),))
-    check = host_check.compare(ZONE, [host], current)
+    check = compared([host], current)
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, host.fqdn, "the policy has extra conditions")
     ]
@@ -395,7 +415,7 @@ def test_a_host_that_needs_access_needs_a_self_hosted_app_not_another_type(
     """C6: an app of another type at the host is wrong however right its policy looks."""
     other = app(destination, policies=policies, kind=kind)
     current = snapshot(tunnel_record(label), apps=(other,))
-    check = host_check.compare(ZONE, [host], current)
+    check = compared([host], current)
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, fqdn(label), "the app at this host is not a self-hosted app")
     ]
@@ -483,7 +503,7 @@ def test_access_off_is_one_finding_when_a_declared_host_needs_access():
 
 def test_access_off_is_only_a_note_when_every_declared_host_is_public():
     """C8."""
-    check = host_check.compare(ZONE, [public("@")], snapshot(tunnel_record("@"), apps=None))
+    check = compared([public("@")], snapshot(tunnel_record("@"), apps=None))
     assert (check.findings, check.access_unused) == ((), True)
 
 
@@ -503,7 +523,7 @@ def test_one_host_with_several_faults_is_sorted_with_one_finding_per_cause():
 
 def test_every_finding_serialises_as_four_string_values():
     """K1."""
-    result = host_check.compare(ZONE, [public("www")], snapshot())
+    result = compared([public("www")], snapshot())
     document = json.loads(host_check.as_json(result))
     assert [set(item) for item in document] == [{"problem", "subject", "detail", "next"}]
     assert all(isinstance(value, str) for value in document[0].values())
@@ -518,3 +538,246 @@ def test_the_operator_group_and_address_types_are_those_of_the_tofu_root():
     assert types
     assert group.group(1) == host_check.OPERATOR_GROUP_NAME
     assert re.findall(r'"(\w+)"', types.group(1)) == list(host_check.ADDRESS_RECORD_TYPES)
+
+
+PROBE_FAULTS = (Problem.ANSWER_WRONG, Problem.UNREACHABLE)
+TEAM_LOGIN = "https://team.cloudflareaccess.com/cdn-cgi/access/login/x"
+
+
+def probe_findings(host: catalog.Host, outcome) -> list[tuple[str, str, str]]:
+    """What the probe alone says about one host whose probed name answers `outcome`."""
+    current = snapshot(tunnel_record("*" if host.name == "*" else host.name))
+    names = host_check.names_to_probe([host], current)
+    check = compared([host], current, {name: outcome for name in names})
+    return [
+        (f.problem.value, f.subject, f.detail) for f in check.findings if f.problem in PROBE_FAULTS
+    ]
+
+
+def redirect(location: str, status: int = 302, cf_ray: bool = True, challenge: bool = False):
+    return Answer(status, location, cf_ray, challenge)
+
+
+FAILED = Unreachable(FailureKind.TIMEOUT)
+ANSWERS = {
+    "access-redirect": redirect(TEAM_LOGIN),
+    "200": Answer(200, None, True, False),
+    "404": Answer(404, None, True, False),
+    "502": Answer(502, None, True, False),
+    "challenge": Answer(403, None, True, True),
+    "no-cf-ray": Answer(200, None, False, False),
+    "redirect-without-cf-ray": redirect(TEAM_LOGIN, cf_ray=False),
+    "redirect-with-challenge": redirect(TEAM_LOGIN, challenge=True),
+    "failed": FAILED,
+}
+# None: the probe adds nothing. Open hosts must not redirect to Access; the wildcard must.
+OPEN_VERDICTS = {
+    "access-redirect": Problem.ANSWER_WRONG,
+    "200": None,
+    "404": None,
+    "502": None,
+    "challenge": None,
+    "no-cf-ray": Problem.ANSWER_WRONG,
+    "redirect-without-cf-ray": Problem.ANSWER_WRONG,
+    "redirect-with-challenge": None,
+    "failed": Problem.UNREACHABLE,
+}
+PROTECTED_VERDICTS = {
+    "access-redirect": None,
+    "200": Problem.ANSWER_WRONG,
+    "404": Problem.ANSWER_WRONG,
+    "502": Problem.ANSWER_WRONG,
+    "challenge": Problem.ANSWER_WRONG,
+    "no-cf-ray": Problem.ANSWER_WRONG,
+    "redirect-without-cf-ray": Problem.ANSWER_WRONG,
+    "redirect-with-challenge": Problem.ANSWER_WRONG,
+    "failed": Problem.UNREACHABLE,
+}
+
+
+@pytest.mark.parametrize("answer", ANSWERS)
+@pytest.mark.parametrize(
+    ("host", "verdicts"),
+    [
+        pytest.param(public("www"), OPEN_VERDICTS, id="public"),
+        pytest.param(bypass("www"), OPEN_VERDICTS, id="bypass"),
+        pytest.param(protected_wildcard(), PROTECTED_VERDICTS, id="protected"),
+    ],
+)
+def test_the_answer_is_judged_against_the_declared_exposure(host, verdicts, answer):
+    """PB4: one finding per failed probe, subject the declared FQDN, nothing else on a pass."""
+    expected = verdicts[answer]
+    problems = [(problem, subject) for problem, subject, _ in probe_findings(host, ANSWERS[answer])]
+    assert problems == ([] if expected is None else [(expected.value, host.fqdn)])
+
+
+ACCESS_PATH_FORMS = [
+    ("https://{host}/cdn-cgi/access/login", True),
+    ("/other/../cdn-cgi/access/login", True),
+    ("https://{host}/other/../cdn-cgi/access/login", True),
+    ("//{host}/other/../cdn-cgi/access/login", True),
+    ("https://{host}./cdn-cgi/access/login", True),
+    ("https://{HOST}:443/cdn-cgi/access/login", True),
+    ("https://team.cloudflareaccess.com./x", True),
+    ("/cdn-cgi/access/../../public", False),
+    ("https://{host}/cdn-cgi/access/../../public", False),
+    ("//{host}/cdn-cgi/access/../../public", False),
+    ("https://{host}/cdn-cgi/access/%2e%2e/%2e%2e/public", False),
+    ("//{host}/cdn-cgi/access/%2E%2E/public", False),
+    ("https://x@team.cloudflareaccess.com.evil/", False),
+    ("https://{host}:bad/cdn-cgi/access/login", False),
+    ("https://team.cloudflareaccess.com:bad/", False),
+    ("https://{host}:8443/cdn-cgi/access/login", False),
+    ("http://team.cloudflareaccess.com/x", False),
+    ("//evil.example/cdn-cgi/access/", False),
+    ("https://evil.example/cdn-cgi/access/", False),
+    ("https://[::1/cdn-cgi/access/", False),
+    ("", False),
+]
+
+
+@pytest.mark.parametrize(("location", "is_access"), ACCESS_PATH_FORMS)
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+@pytest.mark.parametrize("protected", [False, True], ids=["open-host", "protected-wildcard"])
+def test_only_a_real_access_redirect_counts_as_one(location, is_access, status, protected):
+    """PB4: open hosts fail on it, the wildcard needs it; the redirect is only classified."""
+    host = protected_wildcard() if protected else public("www")
+    probed = f"edge-host-check.{ZONE}" if protected else host.fqdn
+    answer = redirect(location.format(host=probed, HOST=probed.upper()), status)
+    wrong = bool(probe_findings(host, answer))
+    assert wrong is (not is_access if protected else is_access)
+
+
+@pytest.mark.parametrize("status", [200, 404, 502])
+def test_a_location_on_a_non_redirect_status_is_not_access(status):
+    """PB4."""
+    assert probe_findings(public("www"), redirect(TEAM_LOGIN, status)) == []
+
+
+def test_the_wildcard_is_asked_at_the_probe_name_and_judged_under_its_own():
+    """PB4, PB5: the detail names the probed name; the subject is the declared host."""
+    ((problem, subject, detail),) = probe_findings(protected_wildcard(), ANSWERS["200"])
+    assert (problem, subject) == ("answer-wrong", f"*.{ZONE}")
+    assert detail == f"asked at edge-host-check.{ZONE}: status 200, not an Access redirect"
+
+
+class FakeCloudflare:
+    def __init__(self, current: Snapshot) -> None:
+        self.current = current
+
+    def read(self, _zone: str) -> Snapshot:
+        return self.current
+
+
+class CountingProber:
+    def __init__(self, outcome=ANSWERS["200"], wildcard_outcome=ACCESS_ANSWER) -> None:
+        self.outcome, self.wildcard_outcome = outcome, wildcard_outcome
+        self.asked: list[str] = []
+
+    def ask(self, name: str):
+        self.asked.append(name)
+        return self.wildcard_outcome if name.startswith(catalog.PROBE_NAME) else self.outcome
+
+
+def catalog_document(*hosts: dict, enabled: bool = True) -> dict:
+    run = {} if enabled else {"run": {"enabled": False}}
+    return {"cloudflare": {"zone": ZONE}, "services": {"svc": {"hosts": list(hosts), **run}}}
+
+
+def host_entry(name: str, exposure: str) -> dict:
+    return {"name": name, "exposure": exposure, "reason": "test"}
+
+
+@pytest.mark.parametrize(
+    ("records", "document", "asked"),
+    [
+        pytest.param([], catalog_document(host_entry("www", "public")), [], id="no-record"),
+        pytest.param(
+            [tunnel_record("www", content=ZONE)],
+            catalog_document(host_entry("www", "public")),
+            [fqdn("www")],
+            id="record-wrong-host",
+        ),
+        pytest.param(
+            [tunnel_record("www")],
+            catalog_document(host_entry("www", "public"), enabled=False),
+            [],
+            id="disabled-entry",
+        ),
+        pytest.param(
+            [tunnel_record("*"), tunnel_record("stray")],
+            catalog_document({"name": "*", "exposure": "protected"}),
+            [f"edge-host-check.{ZONE}"],
+            id="wildcard-only-at-the-probe-name",
+        ),
+    ],
+)
+def test_only_declared_hosts_with_a_record_are_asked(records, document, asked):
+    """PB5."""
+    prober = CountingProber()
+    host_check.check_hosts(
+        document, FakeCloudflare(snapshot(*records, apps=(operator_app(),))), prober
+    )
+    assert prober.asked == asked
+
+
+@pytest.mark.parametrize("with_public_host", [True, False], ids=["public-host", "wildcard-only"])
+def test_while_access_is_off_the_wildcard_is_not_asked_at_all(with_public_host):
+    """PB6: no request and no finding for `*`; public hosts are still asked and judged."""
+    entries = [{"name": "*", "exposure": "protected"}]
+    records = [tunnel_record("*")]
+    if with_public_host:
+        entries.append(host_entry("@", "public"))
+        records.append(tunnel_record("@"))
+    prober = CountingProber(outcome=FAILED, wildcard_outcome=ANSWERS["200"])
+    check = host_check.check_hosts(
+        catalog_document(*entries), FakeCloudflare(snapshot(*records, apps=None)), prober
+    )
+    found_here = [(f.problem.value, f.subject) for f in check.findings]
+    assert prober.asked == ([ZONE] if with_public_host else [])
+    assert found_here == [("access-not-enabled", "account")] + (
+        [("unreachable", ZONE)] if with_public_host else []
+    )
+
+
+def test_only_public_hosts_with_access_off_is_a_note_and_the_hosts_are_asked():
+    """PB6."""
+    prober = CountingProber()
+    check = host_check.check_hosts(
+        catalog_document(host_entry("www", "public")),
+        FakeCloudflare(snapshot(tunnel_record("www"), apps=None)),
+        prober,
+    )
+    assert check.findings == ()
+    assert check.access_unused
+    assert prober.asked == [fqdn("www")]
+
+
+def test_nothing_response_controlled_is_quoted_in_a_finding():
+    """PB10: a hostile Location is never repeated, in text or JSON."""
+    hostile = "https://x/\r\n\x1b[31m" + "sentinel-" * 200
+    check = compared(
+        [protected_wildcard()],
+        snapshot(tunnel_record("*")),
+        {f"edge-host-check.{ZONE}": redirect(hostile)},
+    )
+    assert [f.problem for f in check.findings if f.problem in PROBE_FAULTS] == [
+        Problem.ANSWER_WRONG
+    ]
+    assert "sentinel" not in host_check.as_text(check) + host_check.as_json(check)
+
+
+def test_the_probe_problems_sort_after_every_app_and_record_problem():
+    """PB11."""
+    stray_app = app("stray." + ZONE, policies=(BYPASS_POLICY,))
+    check = compared(
+        [public("www")],
+        snapshot(tunnel_record("www"), tunnel_record("stray"), apps=(stray_app,)),
+        {fqdn("www"): ACCESS_ANSWER},
+    )
+    assert [f.problem for f in check.findings] == [
+        Problem.UNDECLARED_RECORD,
+        Problem.UNDECLARED_APP,
+        Problem.ANSWER_WRONG,
+    ]
+    assert [p.value for p in list(Problem)[-2:]] == ["answer-wrong", "unreachable"]

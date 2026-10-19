@@ -192,7 +192,7 @@ services:
 
 | Field | Type | Default | Rule |
 |---|---|---|---|
-| `name` | string, required | none | `@` (the zone's apex), `*` (the wildcard) or one lowercase DNS label, no dot |
+| `name` | string, required | none | `@` (the zone's apex), `*` (the wildcard) or one lowercase DNS label, no dot; `edge-host-check` is reserved (the host check asks the wildcard there), also in a disabled entry |
 | `exposure` | `public` \| `bypass` \| `protected`, required | none | `protected` only on `*`, and `*` only `protected`; `public` on a label is refused while `*` exists (it needs its own `bypass`); one FQDN once |
 | `reason` | string | none | required and non-blank for `public` and `bypass` |
 | `ready` | path | none | starts with one `/`; the publish guard of X8a |

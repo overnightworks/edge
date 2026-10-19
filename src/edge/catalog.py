@@ -35,6 +35,7 @@ _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost"}
 APEX = "@"
 WILDCARD = "*"
+PROBE_NAME = "edge-host-check"  # the host check asks the wildcard here (#154)
 # Gap 35 (docs/architecture.md section 7): these hosts still bypass Traefik. Their `target` stands
 # once, in fleet.yaml. Deleted when the songmaker cutover (X11) lands.
 GAP_35_HOSTS = frozenset({("songmaker", APEX), ("songmaker", "www")})
@@ -230,6 +231,8 @@ def _host(service: str, path: str, item: Any, zone: str) -> Host:
 def _name(path: str, name: Any) -> str:
     if not isinstance(name, str) or not (name in (APEX, WILDCARD) or _LABEL.fullmatch(name)):
         raise CatalogError(f"{path}.name: must be '@', '*' or one lowercase DNS label")
+    if name == PROBE_NAME:
+        raise CatalogError(f"{path}.name: reserved for the host check")
     return name
 
 

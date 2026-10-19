@@ -220,6 +220,16 @@ nachdem die Apps geantwortet haben, widerspricht sich die Abfrage: Exit 2). Mit
 `--json` ist stdout genau eine Liste von `{problem, subject, detail, next}` (bei
 Exit 2 leer, die Ursache auf stderr).
 
+Zusaetzlich fragt der Check jeden deklarierten Host mit Record einmal mit
+`GET /` ueber HTTPS, ohne Anmeldedaten, ohne Cookies und ohne Weiterleitungen
+(10 s je blockierender Operation; die Wildcard unter `edge-host-check.<zone>`,
+nur solange Access an ist; der Name ist im Katalog reserviert). `answer-wrong`:
+die Antwort hat kein `cf-ray`, ein oeffentlicher oder `bypass`-Host leitet auf
+Access um, oder die geschuetzte Wildcard leitet nicht auf Access um (oder ist
+eine Challenge). `unreachable`: die Anfrage scheiterte (DNS, TLS, Verbindung,
+Zeitueberschreitung). Ein 5xx mit `cf-ray` besteht: ob der Dienst lebt, sagt
+`ready`, nicht dieser Check. Kein Befund zitiert Header, Ziel oder Fehlertext.
+
 ```bash
 bin/edge external check --hosts [--json]
 ```
