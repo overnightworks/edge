@@ -82,6 +82,7 @@ class FakeCloudflare:
         return CloudflareClient(TOKEN, base_url=self.url, **keywords)
 
     def serve(self, path: str, items: list) -> None:
+        items = [{"id": f"object-{number}", **item} for number, item in enumerate(items)]
         self.routes[path] = lambda query: (200, page_of(items, int(query["page"]), PAGE, path))
 
     def close(self) -> None:
@@ -190,12 +191,11 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
 
 @pytest.mark.parametrize(
     "refused_paths",
-    [[APPS_PATH], [GROUPS_PATH], [APPS_PATH, GROUPS_PATH]],
-    ids=["the apps only", "the groups after the apps", "every access path"],
+    [[APPS_PATH], [APPS_PATH, GROUPS_PATH]],
+    ids=["the apps only", "every access path"],
 )
-def test_access_off_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
-    """R2: Access off at any access read is the same answer, and the groups are not asked for when
-    the apps say so."""
+def test_access_off_at_the_apps_read_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
+    """R2: Access off at the apps read is a typed answer, and the groups are not asked for."""
     for path in refused_paths:
         cloudflare.routes[path] = lambda _query: (
             403,
@@ -204,6 +204,15 @@ def test_access_off_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
     snapshot = cloudflare.client().read(ZONE)
     assert (snapshot.apps, snapshot.groups) == (None, ())
     assert len(snapshot.records) == len(RECORDS)
+
+
+def test_access_off_at_the_groups_read_after_the_apps_answered_is_a_contradiction(cloudflare):
+    """R8: only the apps read may answer Access off."""
+    cloudflare.routes[GROUPS_PATH] = lambda _query: (
+        403,
+        failure(9999, "access.api.error.not_enabled"),
+    )
+    assert read_error(cloudflare).startswith(f"{GROUPS_PATH}: HTTP 403, Cloudflare error code 9999")
 
 
 @pytest.mark.parametrize(
@@ -256,9 +265,14 @@ def test_a_refused_apps_read_raises_naming_path_status_and_code_but_never_body_o
     ("path", "items", "expected"),
     [
         pytest.param("/zones", [], "exactly one zone, found 0", id="no zone"),
-        pytest.param("/zones", [{"id": "z"}] * 2, "exactly one zone, found 2", id="two zones"),
         pytest.param(
-            TUNNELS_PATH, [{"id": "t"}] * 2, "exactly one tunnel, found 2", id="two tunnels"
+            "/zones", [{"id": "z"}, {"id": "y"}], "exactly one zone, found 2", id="two zones"
+        ),
+        pytest.param(
+            TUNNELS_PATH,
+            [{"id": "t"}, {"id": "u"}],
+            "exactly one tunnel, found 2",
+            id="two tunnels",
         ),
         pytest.param(TUNNELS_PATH, [], "exactly one tunnel, found 0", id="no tunnel"),
     ],
@@ -420,6 +434,27 @@ def test_pagination_fails_closed(cloudflare, answer, expected):
     assert message.startswith(f"{APPS_PATH}: ") and expected in message
 
 
+REPEATED_ID = "secret-object-id"
+LISTINGS = {
+    RECORDS_PATH: {"name": f"a.{ZONE}", "type": "CNAME", "content": "x"},
+    APPS_PATH: VALID_APP,
+    GROUPS_PATH: {"name": "operator"},
+    TUNNELS_PATH: {},
+}
+
+
+@pytest.mark.parametrize("path", LISTINGS)
+@pytest.mark.parametrize(
+    "ids",
+    [[REPEATED_ID, REPEATED_ID], [REPEATED_ID, "other", REPEATED_ID]],
+    ids=["within a page", "across pages"],
+)
+def test_a_repeated_object_id_fails_closed_without_naming_the_id(cloudflare, path, ids):
+    """R7: a repeat can fill the announced count while an object is left out."""
+    cloudflare.serve(path, [{**LISTINGS[path], "id": object_id} for object_id in ids])
+    assert read_error(cloudflare) == f"{path}: the results repeat an object"
+
+
 @pytest.mark.parametrize("total_pages", [0, 1])
 def test_an_empty_list_may_announce_zero_or_one_page(cloudflare, total_pages):
     """R5: the schema leaves open how many pages nothing fills."""
@@ -556,6 +591,26 @@ def test_the_overrides_of_a_public_destination_are_read_with_their_path_patterns
     cloudflare.serve(APPS_PATH, [with_destination(overrides=overrides)])
     (app,) = cloudflare.client().read(ZONE).apps
     assert app.overrides == (Override(f"www.{ZONE}", "/admin/*"),)
+
+
+@pytest.mark.parametrize(
+    ("uri", "kept"),
+    [
+        (f"WWW.{ZONE.upper()}/Admin/Path", f"www.{ZONE}/Admin/Path"),
+        (f"Www.{ZONE}", f"www.{ZONE}"),
+        (f"www.{ZONE}/ADMIN/*", f"www.{ZONE}/ADMIN/*"),
+    ],
+    ids=["host and path", "host only", "path pattern"],
+)
+def test_only_the_host_of_a_destination_is_lower_cased_the_path_is_kept(cloudflare, uri, kept):
+    """C10: the destination, and the override that names it, keep the path byte for byte."""
+    overrides = [{"behavior": "public", "path_pattern": "/Admin/*"}]
+    cloudflare.serve(
+        APPS_PATH,
+        [public_app(destinations=[{"type": "public", "uri": uri, "overrides": overrides}])],
+    )
+    (app,) = cloudflare.client().read(ZONE).apps
+    assert (app.destinations, app.overrides) == ((kept,), (Override(kept, "/Admin/*"),))
 
 
 @pytest.mark.parametrize("preflight", [True, False])
@@ -790,7 +845,7 @@ def test_an_id_that_is_not_32_lower_case_hex_never_enters_a_request_path(
 
 def test_the_tunnel_list_is_paged_by_its_documented_shape_without_total_pages(cloudflare):
     """R5."""
-    tunnels = [{"id": TUNNEL_ID}] * 3
+    tunnels = [{"id": f"tunnel-{number}"} for number in range(3)]
     cloudflare.serve(TUNNELS_PATH, tunnels)
     assert "found 3" in read_error(cloudflare)
     assert [q["page"] for path, q, _ in cloudflare.requests if path == TUNNELS_PATH] == ["1", "2"]

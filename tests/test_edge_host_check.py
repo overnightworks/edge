@@ -447,6 +447,11 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
             [("undeclared-app", "tool." + ZONE + "/x")],
             id="a path-scoped destination",
         ),
+        pytest.param(
+            app("tool." + ZONE + "/Admin"),
+            [("undeclared-app", "tool." + ZONE + "/Admin")],
+            id="C10: the path keeps its case",
+        ),
         pytest.param(app("elsewhere.invalid"), [], id="outside the zone"),
         pytest.param(app(fqdn("www"), policies=(BYPASS_POLICY,)), [], id="a declared host"),
     ],

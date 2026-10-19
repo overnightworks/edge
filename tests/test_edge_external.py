@@ -22,7 +22,7 @@ import pytest
 from edge import checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
-from edge.external import cloudflare_read, secrets, tofu
+from edge.external import cloudflare_read, host_check, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1321,7 +1321,7 @@ class BrokenChunkedServer:
 def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
     home, hosts_catalog, capfd, status, chunks
 ):
-    """K5 (rule 13): both response-reading branches end as a read error, with no chained cause."""
+    """K5 (rule 12): both response-reading branches end as a read error, with no chained cause."""
     (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
     broken = BrokenChunkedServer(status, chunks)
     try:
@@ -1371,20 +1371,44 @@ def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
-def test_an_interrupt_while_the_output_is_written_exits_130_with_stdout_empty(
-    home, hosts_catalog, capsys, interrupt
+def test_an_interrupt_while_the_result_is_rendered_exits_130_with_stdout_empty(
+    home, hosts_catalog, capsys, monkeypatch, interrupt
 ):
-    """K7: the protection lasts through rendering and the final write."""
+    """K7: the protection lasts until the writing begins."""
 
-    def interrupted_before_writing(_text: str) -> None:
+    def interrupted_while_rendering(_result) -> str:
         os.kill(os.getpid(), interrupt)
+        return "unreached"
+
+    monkeypatch.setattr(host_check, "as_text", interrupted_while_rendering)
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 130
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert "interrupted" in printed.err
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    ("snapshot", "verdict"), [(CLEAN_SNAPSHOT, 0), (STRAY_SNAPSHOT, 1)], ids=["clean", "findings"]
+)
+def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_verdict(
+    home, hosts_catalog, capsys, interrupt, snapshot, verdict
+):
+    """K8: writing the result is the commit point, so no signal cuts the document or the exit."""
+
+    def interrupted_halfway(text: str) -> None:
+        middle = len(text) // 2
+        sys.stdout.write(text[:middle])
+        os.kill(os.getpid(), interrupt)
+        sys.stdout.write(text[middle:] + "\n")
 
     code = external_cli.check_command(
-        home, cloudflare=FakeReader(CLEAN_SNAPSHOT), emit=interrupted_before_writing
+        home, as_json=True, cloudflare=FakeReader(snapshot), emit=interrupted_halfway
     )
     printed = capsys.readouterr()
-    assert (code, printed.out) == (130, "")
-    assert "interrupted" in printed.err
+    assert code == verdict
+    assert isinstance(json.loads(printed.out), list)
+    assert "interrupted" not in printed.err
 
 
 @pytest.mark.usefixtures("loopback_only")

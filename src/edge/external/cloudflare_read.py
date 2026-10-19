@@ -206,14 +206,15 @@ class CloudflareClient:
         )
 
     def _access(self, path: str) -> tuple[tuple[App, ...], tuple[AccessGroup, ...]] | None:
-        """The apps and the groups, or None when Access is off at either read."""
+        """The apps and the groups, or None when Access is off at the apps read. The same answer
+        at the groups read, after the apps answered, is a contradiction and stays an error."""
         try:
             apps = tuple(_app(item, f"{path}/apps") for item in self._pages(f"{path}/apps"))
-            groups = tuple(_group(item, f"{path}/groups") for item in self._pages(f"{path}/groups"))
         except _Refusal as refusal:
             if refusal.access_not_enabled:
                 return None
             raise
+        groups = tuple(_group(item, f"{path}/groups") for item in self._pages(f"{path}/groups"))
         return apps, groups
 
     def _one(
@@ -246,6 +247,8 @@ class CloudflareClient:
             page += 1
         if len(items) != total_count:
             raise CloudflareReadError(f"{path}: {len(items)} results of {total_count} announced")
+        if len({_text(item, "id", path) for item in items}) != len(items):
+            raise CloudflareReadError(f"{path}: the results repeat an object")
         return items
 
     def _get(self, path: str, query: Mapping[str, str | int]) -> dict:
@@ -386,7 +389,7 @@ def _app(item: dict, path: str) -> App:
         _require_only_fields(item, UNDERSTOOD_APP_FIELDS, "an Access app", path)
     for destination in public:
         _require_only_fields(destination, PUBLIC_DESTINATION_FIELDS, "a public destination", path)
-    uris = [_text(destination, "uri", path).lower() for destination in public]
+    uris = [_with_lower_case_host(_text(destination, "uri", path)) for destination in public]
     if not all(PLAIN_HOSTNAME.fullmatch(destination_host(uri)) for uri in uris):
         raise CloudflareReadError(f"{path}: a destination host is not a plain lower-case hostname")
     if secures_hostnames:
@@ -412,6 +415,12 @@ def destination_host(destination: str) -> str:
     return destination.split("/", 1)[0]
 
 
+def _with_lower_case_host(destination: str) -> str:
+    """Hostnames are case-insensitive, paths are not."""
+    host = destination_host(destination)
+    return host.lower() + destination.removeprefix(host)
+
+
 def _public_destinations(destinations: list, path: str) -> list[dict]:
     for destination in destinations:
         kind = destination.get("type") if isinstance(destination, dict) else None
@@ -429,7 +438,7 @@ def _require_secured_hosts_among(item: dict, public_hosts: set[str], path: str) 
     secured = [item["domain"]] if "domain" in item else []
     secured += _optional_list(item, "self_hosted_domains", path, False)
     for domain in secured:
-        if not isinstance(domain, str) or destination_host(domain.lower()) not in public_hosts:
+        if not isinstance(domain, str) or destination_host(domain).lower() not in public_hosts:
             raise CloudflareReadError(f"{path}: a secured domain is not among the destinations")
 
 

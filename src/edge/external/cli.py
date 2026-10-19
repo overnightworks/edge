@@ -1,6 +1,7 @@
 """`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` and `check`."""
 
 import argparse
+import signal
 import sys
 from collections.abc import Callable
 from enum import IntEnum
@@ -11,6 +12,7 @@ from edge import catalog, checkout
 from edge.external import apply, cloudflare_read, host_check, secrets, tofu
 
 INTERRUPTED = 130
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 
 class ExitCode(IntEnum):
@@ -92,7 +94,7 @@ def check_command(
     emit: Callable[[str], None] = lambda text: sys.stdout.write(f"{text}\n"),
 ) -> int:
     """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `emit` writes
-    the one output, so an interrupt anywhere up to it leaves stdout empty."""
+    the one output: an interrupt before it leaves stdout empty, none during it cuts the document."""
     token_values: dict[str, str] = {}
     try:
         with apply.terminate_like_interrupt():
@@ -104,7 +106,7 @@ def check_command(
                 document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
-            emit(secrets.redact(rendered, token_values))
+            _emit_uninterrupted(emit, secrets.redact(rendered, token_values))
             return result.exit_code
     except KeyboardInterrupt:
         print("edge external check: interrupted", file=sys.stderr)
@@ -124,6 +126,17 @@ def check_command(
             "check",
         )
     return host_check.CheckExit.CANNOT_CHECK
+
+
+def _emit_uninterrupted(emit: Callable[[str], None], text: str) -> None:
+    """Writing the result is the commit point: from here the verdict's exit code stands."""
+    previous = {number: signal.signal(number, signal.SIG_IGN) for number in _STOP_SIGNALS}
+    try:
+        emit(text)
+        sys.stdout.flush()
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:

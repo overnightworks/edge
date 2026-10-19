@@ -210,10 +210,12 @@ Tunnel und vergleicht sie mit den Hosts aus `fleet.yaml` (aus dem Checkout,
 in dem es laeuft): fehlende oder falsche Records und Apps, falsche Policies,
 unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand
 deklariert hat (`apply` loescht sie nie). Exit 0 keine Befunde, 1 Befunde,
-2 nicht pruefbar, 130 unterbrochen; ohne Access auf dem Konto ist das nur
-dann ein Befund, wenn ein Host `bypass` oder `protected` ist. Mit `--json`
-ist stdout genau eine Liste von `{problem, subject, detail, next}` (bei Exit 2
-leer, die Ursache auf stderr).
+2 nicht pruefbar, 130 unterbrochen (nur vor der Ausgabe: sobald sie beginnt,
+gilt der Exit-Code des Befunds); ohne Access auf dem Konto ist das nur
+dann ein Befund, wenn ein Host `bypass` oder `protected` ist (meldet nur die
+Apps-Abfrage "Access aus", die Gruppen-Abfrage danach aber nicht, ist das
+Exit 2). Mit `--json` ist stdout genau eine Liste von
+`{problem, subject, detail, next}` (bei Exit 2 leer, die Ursache auf stderr).
 
 ```bash
 bin/edge external check --hosts [--json]
