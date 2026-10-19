@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the edge CLI of the checkout this file lives in, with that checkout's locked dependencies,
-# from any directory and through any symlink to this file.
+# Runs the command this file is called by (edge, or home through the symlink bin/home) of the checkout
+# this file lives in, with that checkout's locked dependencies, from any directory and through any symlink.
 set -eu
 
 checkout=$(dirname "$(dirname "$(readlink -f "$0")")")
@@ -9,9 +9,9 @@ checkout=$(dirname "$(dirname "$(readlink -f "$0")")")
 unset VIRTUAL_ENV UV_PROJECT_ENVIRONMENT
 
 if ! uv sync --locked --inexact --no-dev --quiet --project "$checkout"; then
-    echo "edge: cannot sync the live checkout's dependencies; run \`uv sync --locked\` in $checkout" >&2
+    echo "$(basename "$0"): cannot sync the live checkout's dependencies; run \`uv sync --locked\` in $checkout" >&2
     exit 2
 fi
 
-# exec, not a child: edge stays the shell's direct child, so Ctrl-C reaches it alone.
-exec "$checkout/.venv/bin/edge" "$@"
+# exec, not a child: the command stays the shell's direct child, so Ctrl-C reaches it alone.
+exec "$checkout/.venv/bin/$(basename "$0")" "$@"

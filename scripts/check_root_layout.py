@@ -31,12 +31,38 @@ ROOT_FILES = CONTAINER_FILES | frozenset(
         "HEART.md",
         "LICENSE",
         "README.md",
+        "cloudflared-config.example.yml",
+        "edge-check.toml",
+        "fleet.yaml",
         "pyproject.toml",
         "sonar-project.properties",
+        "traefik-mcp.yml",
+        "traefik.yml",
         "uv.lock",
     }
 )
-ROOT_DIRECTORIES = frozenset({".aco", ".github", "quality", "scripts", "src", "systemd", "tests"})
+# Compose bind-mounts the edge entries, and the edge tools find them at these paths.
+ROOT_DIRECTORIES = frozenset(
+    {
+        ".aco",
+        ".github",
+        "backup",
+        "bin",
+        "docs",
+        "dynamic",
+        "external",
+        "keycloak",
+        "mcp",
+        "probe",
+        "quality",
+        "scripts",
+        "src",
+        "step-ca",
+        "systemd",
+        "tests",
+        "tunnel",
+    }
+)
 HOME_BY_SUFFIX = {
     ".py": "a module belongs in the package under src/home_tools/, a helper under scripts/",
     ".service": "a systemd unit belongs under systemd/",

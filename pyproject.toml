@@ -43,6 +43,13 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "scripts/check_root_layout.py" = ["E501"]
 "tests/home/**" = ["E501", "I001", "RUF001", "RUF009", "RUF043", "RUF100"]
 
+[tool.coverage.run]
+branch = true
+
+# No fail_under: edge is not at 100 %. home's floor is per path, in CI's check job.
+[tool.coverage.report]
+exclude_also = ['if __name__ == "__main__":']
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
