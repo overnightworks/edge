@@ -265,7 +265,7 @@ def _ready(path: str, item: dict) -> str | None:
 
 
 def _loopback_port(target: Any) -> int | None:
-    """The port of a loopback `target` written as scheme, 127.0.0.1 or localhost, and port; else None."""
+    """The port of a loopback `target` (127.0.0.1 or localhost, explicit port); else None."""
     if not isinstance(target, str):
         return None
     parts = urlsplit(target)
