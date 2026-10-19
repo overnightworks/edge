@@ -1377,7 +1377,11 @@ def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
 def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_verdict(
     home, hosts_catalog, capsys, interrupt, snapshot, verdict
 ):
-    """K8: writing the result is the commit point, so no signal cuts the document or the exit."""
+    """K8: writing the result is the commit point, so no signal cuts the document or the exit.
+
+    Row 3 (the gap before the write) is proven by code order, as no injected seam reaches it: the
+    redaction runs before the ignored region and the commit mark is set inside it.
+    """
 
     def interrupted_halfway(text: str) -> None:
         middle = len(text) // 2

@@ -215,8 +215,9 @@ gilt der Exit-Code des Befunds); ohne Access auf dem Konto ist das nur
 dann ein Befund, wenn ein Host `bypass` oder `protected` ist (meldet die erste
 Seite der Apps-Abfrage "Access aus", entfaellt die Gruppen-Abfrage; kommt
 "Access aus" erst auf einer spaeteren Apps-Seite oder bei der Gruppen-Abfrage,
-nachdem die Apps geantwortet haben, widerspricht sich die Abfrage: Exit 2). Mit `--json` ist stdout genau eine Liste von
-`{problem, subject, detail, next}` (bei Exit 2 leer, die Ursache auf stderr).
+nachdem die Apps geantwortet haben, widerspricht sich die Abfrage: Exit 2). Mit
+`--json` ist stdout genau eine Liste von `{problem, subject, detail, next}` (bei
+Exit 2 leer, die Ursache auf stderr).
 
 ```bash
 bin/edge external check --hosts [--json]

@@ -3,7 +3,8 @@
 import argparse
 import signal
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,11 @@ def check_command(
                 document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
-            verdict_stands = result.exit_code
-            _emit_uninterrupted(emit, secrets.redact(rendered, token_values))
+            text = secrets.redact(rendered, token_values)
+            with _signals_ignored():
+                verdict_stands = result.exit_code
+                emit(text)
+                sys.stdout.flush()
             return result.exit_code
     except KeyboardInterrupt:
         if verdict_stands is not None:
@@ -132,12 +136,12 @@ def check_command(
     return host_check.CheckExit.CANNOT_CHECK
 
 
-def _emit_uninterrupted(emit: Callable[[str], None], text: str) -> None:
-    """Writing the result is the commit point: from here the verdict's exit code stands."""
+@contextmanager
+def _signals_ignored() -> Iterator[None]:
+    """The protected region of the result's write: inside it, the verdict's exit code stands."""
     previous = {number: signal.signal(number, signal.SIG_IGN) for number in _STOP_SIGNALS}
     try:
-        emit(text)
-        sys.stdout.flush()
+        yield
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
