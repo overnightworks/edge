@@ -1336,7 +1336,7 @@ def test_an_interrupt_while_the_output_is_written_exits_130_with_stdout_empty(
 def test_check_through_main_stops_at_a_missing_token_before_any_network(
     home, hosts_catalog, capsys
 ):
-    """The wiring of `--hosts --json` to the command, ended before a real client is built."""
+    """K4: the wiring of `--hosts --json` to the command, ended before a real client is built."""
     (home / ".secrets/cloudflare/fleet-read").unlink()
     assert cli.main(["external", "check", "--hosts", "--json"]) == 2
     assert capsys.readouterr().out == ""

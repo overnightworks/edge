@@ -102,6 +102,7 @@ LIVE = snapshot(
 
 
 def test_a_state_that_matches_the_catalog_has_no_findings_in_any_order():
+    """C1."""
     reordered = snapshot(
         *reversed(LIVE.records), apps=tuple(reversed(LIVE.apps)), groups=tuple(reversed(GROUPS))
     )
@@ -151,6 +152,7 @@ def test_todays_live_state_reports_the_www_record_and_the_stray_one_and_notes_ac
     ],
 )
 def test_a_declared_host_needs_exactly_one_proxied_cname_to_the_tunnel(records, expected):
+    """C3."""
     result = found([public("www")], snapshot(*records))
     assert result == [(problem.value, fqdn("www")) for problem in expected]
 
@@ -178,6 +180,7 @@ def test_a_declared_host_needs_exactly_one_proxied_cname_to_the_tunnel(records, 
     ],
 )
 def test_a_bypass_host_needs_its_own_app_with_one_bypass_policy_for_everyone(apps, expected):
+    """C4."""
     result = found([bypass("www")], snapshot(tunnel_record("www"), apps=apps))
     assert result == [(problem.value, fqdn("www")) for problem in expected]
 
@@ -213,6 +216,7 @@ def test_a_bypass_host_needs_its_own_app_with_one_bypass_policy_for_everyone(app
 def test_a_protected_host_needs_one_allow_policy_for_the_operator_group_only(
     wildcard_policies, groups, expected
 ):
+    """C4."""
     wildcard = app(f"*.{ZONE}", policies=wildcard_policies)
     current = snapshot(tunnel_record("*"), apps=(wildcard,), groups=groups)
     result = found([protected_wildcard()], current)
@@ -230,6 +234,7 @@ def test_a_protected_host_needs_one_allow_policy_for_the_operator_group_only(
     ],
 )
 def test_a_public_host_must_not_be_covered_by_an_access_app(apps, expected):
+    """C5."""
     result = found([public("www")], snapshot(tunnel_record("www"), apps=apps))
     assert [problem for problem, _ in result if problem == "app-unexpected"] == [
         "app-unexpected"
@@ -237,11 +242,13 @@ def test_a_public_host_must_not_be_covered_by_an_access_app(apps, expected):
 
 
 def test_the_public_apex_is_not_covered_by_the_wildcard_app():
+    """C5."""
     current = snapshot(tunnel_record("@"), apps=(operator_app(),))
     assert found([public("@"), protected_wildcard()], current) == [("record-missing", fqdn("*"))]
 
 
 def test_two_apps_for_one_host_make_its_policy_undecidable():
+    """C6."""
     apps = (bypass_app("www"), bypass_app("www"))
     findings = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=apps))
     assert [(f.problem, "several apps" in f.detail) for f in findings.findings] == [
@@ -250,6 +257,7 @@ def test_two_apps_for_one_host_make_its_policy_undecidable():
 
 
 def test_an_app_with_a_second_destination_is_the_hosts_own_app_and_the_second_is_undeclared():
+    """C6."""
     own = app(fqdn("www"), fqdn("other"), policies=(BYPASS_POLICY,))
     assert found([bypass("www")], snapshot(tunnel_record("www"), apps=(own,))) == [
         ("undeclared-app", fqdn("other"))
@@ -276,6 +284,7 @@ def test_an_app_with_a_second_destination_is_the_hosts_own_app_and_the_second_is
 def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
     hosts, extra_app, expected_detail
 ):
+    """C6."""
     current = snapshot(*LIVE.records, apps=(*LIVE.apps, extra_app))
     check = host_check.compare(ZONE, hosts, current)
     label, detail = expected_detail
@@ -285,6 +294,7 @@ def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
 
 
 def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
+    """C6."""
     only = app(fqdn("www") + "/admin", policies=(BYPASS_POLICY,))
     check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(only,)))
     assert [(f.problem, f.detail) for f in check.findings] == [
@@ -319,7 +329,7 @@ def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
 def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy_wrong(
     host, label, policies, destination, facts_at, expected_detail
 ):
-    """C: the policy is right, but a path or a method still reaches the origin without Access."""
+    """C4: the policy is right, but a path or a method still reaches the origin without Access."""
     leaky = app(destination, policies=policies, **facts_at(destination))
     current = snapshot(tunnel_record(label), apps=(leaky,))
     check = host_check.compare(ZONE, [host], current)
@@ -340,7 +350,7 @@ def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy
 def test_a_policy_with_extra_conditions_does_not_match_the_declared_one(
     host, label, decision, include
 ):
-    """C: exclude, require, approval, isolation, a justification or connection rules only narrow
+    """C4: exclude, require, approval, isolation, a justification or connection rules only narrow
     access, but the check compares with the declaration."""
     restricted = Policy(decision, (include,), extra_conditions=True)
     current = snapshot(tunnel_record(label), apps=(app(host.fqdn, policies=(restricted,)),))
@@ -351,6 +361,7 @@ def test_a_policy_with_extra_conditions_does_not_match_the_declared_one(
 
 
 def test_an_override_on_a_destination_of_another_host_does_not_taint_this_host():
+    """C4."""
     own = app(
         fqdn("www"),
         fqdn("other"),
@@ -374,7 +385,7 @@ def test_an_override_on_a_destination_of_another_host_does_not_taint_this_host()
 def test_a_host_that_needs_access_needs_a_self_hosted_app_not_another_type(
     host, label, policies, destination, kind
 ):
-    """C: an app of another type at the host is wrong however right its policy looks."""
+    """C6: an app of another type at the host is wrong however right its policy looks."""
     other = app(destination, policies=policies, kind=kind)
     current = snapshot(tunnel_record(label), apps=(other,))
     check = host_check.compare(ZONE, [host], current)
@@ -402,6 +413,7 @@ def test_a_host_that_needs_access_needs_a_self_hosted_app_not_another_type(
     ],
 )
 def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extra, expected):
+    """C7."""
     result = found([public("@")], snapshot(tunnel_record("@"), *extra))
     assert result == expected
 
@@ -433,17 +445,20 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
     ],
 )
 def test_apps_with_destinations_nobody_declared_are_reported(stray_app, expected):
+    """C7."""
     current = snapshot(tunnel_record("www"), apps=(stray_app,))
     result = [item for item in found([bypass("www")], current) if item[0] == "undeclared-app"]
     assert result == expected
 
 
 def test_a_host_without_an_address_record_gets_no_app_findings():
+    """C9."""
     wrong_app = app(fqdn("www"), policies=(OPERATOR_POLICY,))
     assert found([bypass("www")], snapshot(apps=(wrong_app,))) == [("record-missing", fqdn("www"))]
 
 
 def test_access_off_is_one_finding_when_a_declared_host_needs_access():
+    """C8."""
     hosts = [bypass("www"), protected_wildcard(), public("@")]
     current = snapshot(tunnel_record("@"), address_record("stray"), apps=None)
     assert found(hosts, current) == [
@@ -455,11 +470,13 @@ def test_access_off_is_one_finding_when_a_declared_host_needs_access():
 
 
 def test_access_off_is_only_a_note_when_every_declared_host_is_public():
+    """C8."""
     check = host_check.compare(ZONE, [public("@")], snapshot(tunnel_record("@"), apps=None))
     assert (check.findings, check.access_unused) == ((), True)
 
 
 def test_one_host_with_several_faults_is_sorted_with_one_finding_per_cause():
+    """C9."""
     hosts = [bypass("www"), public("@")]
     current = snapshot(
         address_record("zzz"), address_record("aaa"), tunnel_record("@", proxied=False), apps=()
@@ -473,6 +490,7 @@ def test_one_host_with_several_faults_is_sorted_with_one_finding_per_cause():
 
 
 def test_every_finding_serialises_as_four_string_values():
+    """K1."""
     result = host_check.compare(ZONE, [public("www")], snapshot())
     document = json.loads(host_check.as_json(result))
     assert [set(item) for item in document] == [{"problem", "subject", "detail", "next"}]

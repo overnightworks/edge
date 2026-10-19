@@ -17,14 +17,16 @@ The one documented wire shape, from Cloudflare's published OpenAPI schema
   map with the one key `everyone` or `group` (`{"id": ...}`). Of every app `destinations[]`: a
   `public` destination is `{type, uri, overrides[]}` and an override is
   `{behavior: "public", path_pattern}`, "each rule can make a matching path public, bypassing
-  Access authentication". A `destination` is one of the types of `DESTINATION_TYPES`. `domain` is
-  the primary hostname of the apps of `HOSTNAME_APP_TYPES`; it and the deprecated
-  `self_hosted_domains` are not read as destinations but must each be one of the public
-  destinations' hosts, so no secured hostname hides outside `destinations`.
+  Access authentication". A `destination` is one of the types of `DESTINATION_TYPES`; an app with
+  one of `WORKER_DESTINATIONS` is refused, since a Worker route can protect a public host and this
+  check does not judge it. `domain` is the primary hostname of the apps of `HOSTNAME_APP_TYPES`;
+  it and the deprecated `self_hosted_domains` are not read as destinations but must each be one of
+  the public destinations' hosts, so no secured hostname hides outside `destinations`.
 - The schema lists `access_page` and `access_per_page` (default 1000, maximum 1000) for the apps
   and the groups; `page` and `per_page` are sent and answered. Paging fails closed: `result_info`
   must name the requested page and page size, the same `total_pages` and `total_count` on every
-  page and a `count` equal to the page's results, and every page but the last must be full.
+  page, a `total_pages` that is `ceil(total_count / per_page)` (0 or 1 when empty, which the schema
+  leaves open) and a `count` equal to the page's results, and every page but the last must be full.
 - An app that secures hostnames may carry only the fields of `UNDERSTOOD_APP_FIELDS`, the union of
   the response properties of every app variant in the published schema; a policy only those of
   `UNDERSTOOD_POLICY_FIELDS`. A field beyond them, and any key of a public destination or of an
@@ -58,8 +60,9 @@ MAXIMUM_BODY_BYTES = 16 * 1024 * 1024
 LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 SELF_HOSTED = "self_hosted"
 PUBLIC_DESTINATION = "public"
+WORKER_DESTINATIONS = frozenset({"worker", "all_workers", "preview_worker", "all_preview_workers"})
 DESTINATION_TYPES = frozenset(
-    {PUBLIC_DESTINATION, "private", "worker", "all_workers", "via_mcp_server_portal"}
+    {PUBLIC_DESTINATION, "private", "via_mcp_server_portal"} | WORKER_DESTINATIONS
 )
 HOSTNAME_APP_TYPES = frozenset({SELF_HOSTED, "ssh", "vnc", "rdp", "mcp_portal", "end_user"})
 # Every property of the app variants in the response schema of the revision named above.
@@ -270,6 +273,12 @@ def _require_cloudflare_or_loopback(base_url: str) -> None:
         raise ValueError(f"the Cloudflare base URL must be {BASE_URL} (or http on loopback)")
 
 
+def _consistent_page_counts(total_count: int) -> set[int]:
+    """The `total_pages` an honest answer gives; the schema is silent on an empty list (0 or 1)."""
+    pages = -(-total_count // PAGE_SIZE)
+    return {pages, 1} if total_count == 0 else {pages}
+
+
 def _checked_page(
     path: str, answer: dict, page: int, announces_total_pages: bool
 ) -> tuple[list[dict], tuple[int, int]]:
@@ -287,6 +296,8 @@ def _checked_page(
         total_pages = _count(info, "total_pages", path)
     else:
         total_pages = max(1, -(-total_count // PAGE_SIZE))
+    if total_pages not in _consistent_page_counts(total_count):
+        raise CloudflareReadError(f"{path}: total_pages contradicts total_count")
     if total_pages > MAXIMUM_PAGES:
         raise CloudflareReadError(f"{path}: more than {MAXIMUM_PAGES} pages")
     if _count(info, "count", path) != len(page_items) or len(page_items) > PAGE_SIZE:
@@ -401,6 +412,10 @@ def _public_destinations(destinations: list, path: str) -> list[dict]:
         kind = destination.get("type") if isinstance(destination, dict) else None
         if not isinstance(kind, str) or kind not in DESTINATION_TYPES:
             raise CloudflareReadError(f"{path}: a destination is not of a published type")
+        if kind in WORKER_DESTINATIONS:
+            raise CloudflareReadError(
+                f"{path}: an Access app has a Worker destination, which this check does not judge"
+            )
     return [d for d in destinations if d["type"] == PUBLIC_DESTINATION]
 
 

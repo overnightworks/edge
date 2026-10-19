@@ -318,7 +318,7 @@ def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch):
             lambda page: listing([VALID_APP], page, total_count=3), id="fewer than counted"
         ),
         pytest.param(
-            lambda page: listing([VALID_APP], 1, total_pages=3, total_count=3), id="same page"
+            lambda page: listing([VALID_APP] * 2, 1, total_pages=2, total_count=4), id="same page"
         ),
         pytest.param(
             lambda page: listing([VALID_APP] * 2, page, count=1), id="count is not the results"
@@ -327,16 +327,28 @@ def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch):
             lambda page: listing([VALID_APP], page, per_page=PAGE + 1), id="another page size"
         ),
         pytest.param(
-            lambda page: listing([VALID_APP], page, total_pages=2, total_count=2),
+            lambda page: listing([VALID_APP], page, total_pages=2, total_count=3),
             id="a short page that is not the last",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP] * 2, page, total_pages=4 - page, total_count=4),
+            lambda page: listing([VALID_APP] * 2, page, total_pages=3 - page, total_count=4),
             id="a page count that changes between pages",
         ),
         pytest.param(
             lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=3 + page),
             id="an object count that changes between pages",
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP], page, total_pages=0, total_count=1),
+            id="no pages for a counted object",
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=2),
+            id="more pages than the count fills",
+        ),
+        pytest.param(
+            lambda page: listing([], page, total_pages=2, total_count=0),
+            id="two pages for no object",
         ),
     ],
 )
@@ -344,6 +356,16 @@ def test_pagination_fails_closed(cloudflare, answer):
     """R5."""
     cloudflare.routes[APPS_PATH] = lambda query: (200, answer(int(query["page"])))
     assert read_error(cloudflare).startswith(APPS_PATH)
+
+
+@pytest.mark.parametrize("total_pages", [0, 1])
+def test_an_empty_list_may_announce_zero_or_one_page(cloudflare, total_pages):
+    """R5: the schema leaves open how many pages nothing fills."""
+    cloudflare.routes[APPS_PATH] = lambda query: (
+        200,
+        listing([], int(query["page"]), total_pages=total_pages, total_count=0),
+    )
+    assert cloudflare.client().read(ZONE).apps == ()
 
 
 def test_a_failing_middle_page_is_an_error_not_a_short_snapshot(cloudflare):
@@ -387,6 +409,7 @@ def test_only_the_live_tunnel_is_asked_for(cloudflare):
     ],
 )
 def test_the_token_goes_only_to_cloudflares_api_or_to_http_on_loopback(base_url):
+    """R4."""
     with pytest.raises(ValueError):
         CloudflareClient(TOKEN, base_url=base_url)
 
@@ -395,19 +418,23 @@ def test_the_token_goes_only_to_cloudflares_api_or_to_http_on_loopback(base_url)
     "base_url", [cloudflare_read.BASE_URL, "http://127.0.0.1:8080", "http://localhost"]
 )
 def test_cloudflares_api_and_loopback_are_accepted(base_url):
+    """R4."""
     CloudflareClient(TOKEN, base_url=base_url)
 
 
 def test_the_default_base_url_is_cloudflares_https_api():
+    """R4."""
     assert cloudflare_read.BASE_URL == "https://api.cloudflare.com/client/v4"
 
 
 def test_the_backstop_refuses_a_connection_beyond_loopback():
+    """R4."""
     with pytest.raises(AssertionError, match="leaves loopback"):
         socket.create_connection(("192.0.2.1", 9), timeout=0.1)
 
 
 def test_a_deeply_nested_answer_is_a_malformed_answer_not_a_crash(cloudflare):
+    """R3."""
     cloudflare.routes[APPS_PATH] = lambda _query: (200, b"[" * 200_000)
     assert "HTTP 200, malformed JSON answer" in read_error(cloudflare)
 
@@ -422,6 +449,7 @@ def with_destination(**changes) -> dict:
 
 @pytest.mark.parametrize("app_type", ["self_hosted", "ssh"])
 def test_an_app_with_a_field_the_published_schema_lacks_is_refused_by_count(cloudflare, app_type):
+    """R3."""
     cloudflare.serve(APPS_PATH, [public_app(type=app_type, path_rules=[])])
     message = read_error(cloudflare)
     assert message == f"{APPS_PATH}: an Access app carries 1 fields this check does not understand"
@@ -432,14 +460,14 @@ def test_an_app_with_a_field_the_published_schema_lacks_is_refused_by_count(clou
 def test_a_documented_field_beyond_the_ones_the_check_judges_is_accepted(
     cloudflare, app_type, field
 ):
-    """R: the whitelist is the published response schema, not the provider's resource."""
+    """R1: the whitelist is the published response schema, not the provider's resource."""
     cloudflare.serve(APPS_PATH, [public_app(type=app_type, **{field: True})])
     assert cloudflare.client().read(ZONE).apps[0].type == app_type
 
 
 @pytest.mark.parametrize("name", [TOKEN, "q" * 40, "Capital", "x" * 41, "has space"], ids=str)
 def test_unknown_fields_are_counted_per_level_but_never_named(cloudflare, name):
-    """R: rule 12, a response is never quoted, not even a plain-looking 40 character name."""
+    """R3: rule 12, a response is never quoted, not even a plain-looking 40 character name."""
     cloudflare.serve(
         APPS_PATH,
         [
@@ -461,7 +489,7 @@ def test_unknown_fields_are_counted_per_level_but_never_named(cloudflare, name):
 
 
 def test_the_overrides_of_a_public_destination_are_read_with_their_path_patterns(cloudflare):
-    """R: the schema's shape, destinations[].overrides[] = {behavior, path_pattern}."""
+    """R1: the schema's shape, destinations[].overrides[] = {behavior, path_pattern}."""
     overrides = [{"behavior": "public", "path_pattern": "/admin/*"}]
     cloudflare.serve(APPS_PATH, [with_destination(overrides=overrides)])
     (app,) = cloudflare.client().read(ZONE).apps
@@ -470,6 +498,7 @@ def test_the_overrides_of_a_public_destination_are_read_with_their_path_patterns
 
 @pytest.mark.parametrize("preflight", [True, False])
 def test_options_preflight_bypass_is_read(cloudflare, preflight):
+    """R1."""
     cloudflare.serve(APPS_PATH, [public_app(options_preflight_bypass=preflight)])
     assert cloudflare.client().read(ZONE).apps[0].options_preflight_bypass is preflight
 
@@ -501,11 +530,13 @@ def test_options_preflight_bypass_is_read(cloudflare, preflight):
 def test_a_destination_or_override_beyond_the_documented_shape_is_refused(
     cloudflare, destination, expected
 ):
+    """R3."""
     cloudflare.serve(APPS_PATH, [public_app(destinations=[destination])])
     assert expected in read_error(cloudflare)
 
 
 def test_an_app_that_secures_no_hostname_may_carry_any_field(cloudflare):
+    """R1."""
     cloudflare.serve(APPS_PATH, [{"type": "app_launcher", "something_new": 1}])
     assert cloudflare.client().read(ZONE).apps == (App("app_launcher", (), ()),)
 
@@ -543,13 +574,14 @@ FOO = f"foo.{ZONE}"
     ],
 )
 def test_a_secured_hostname_outside_the_public_destinations_is_refused(cloudflare, app):
-    """R: `domain` is required for these apps and not deprecated; nothing may hide in it."""
+    """R3: `domain` is required for these apps and not deprecated; nothing may hide in it."""
     cloudflare.serve(APPS_PATH, [{**app, "policies": []}])
     assert read_error(cloudflare).startswith(APPS_PATH)
 
 
 @pytest.mark.parametrize("domain", [FOO, f"{FOO}/admin", FOO.upper()])
 def test_a_domain_among_the_public_destinations_is_accepted(cloudflare, domain):
+    """R1."""
     app = {"type": "ssh", "domain": domain, "destinations": [{"type": "public", "uri": FOO}]}
     cloudflare.serve(APPS_PATH, [{**app, "policies": []}])
     assert cloudflare.client().read(ZONE).apps == (App("ssh", (FOO,), ()),)
@@ -565,6 +597,7 @@ def test_a_domain_among_the_public_destinations_is_accepted(cloudflare, domain):
     ],
 )
 def test_a_destination_that_is_no_map_of_a_published_type_is_refused(cloudflare, destination):
+    """R3."""
     cloudflare.serve(APPS_PATH, [public_app(destinations=[destination])])
     assert read_error(cloudflare) == f"{APPS_PATH}: a destination is not of a published type"
 
@@ -572,16 +605,33 @@ def test_a_destination_that_is_no_map_of_a_published_type_is_refused(cloudflare,
 @pytest.mark.parametrize(
     "destination",
     [
-        {"type": "worker", "worker_id": "w"},
-        {"type": "all_workers"},
         {"type": "private", "cidr": "10.0.0.0/8"},
         {"type": "via_mcp_server_portal", "mcp_server_id": "m"},
     ],
 )
 def test_destinations_of_the_other_published_types_are_not_public_hosts(cloudflare, destination):
+    """R1."""
     app = public_app(destinations=[{"type": "public", "uri": f"www.{ZONE}"}, destination])
     cloudflare.serve(APPS_PATH, [app])
     assert cloudflare.client().read(ZONE).apps[0].destinations == (f"www.{ZONE}",)
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        {"type": "worker", "worker_id": "w"},
+        {"type": "all_workers"},
+        {"type": "preview_worker", "worker_id": "w"},
+        {"type": "all_preview_workers"},
+    ],
+)
+def test_an_app_with_a_worker_destination_is_refused_as_not_judged(cloudflare, destination):
+    """R3: a Worker route can protect a public host, which the check cannot see."""
+    app = public_app(destinations=[{"type": "public", "uri": f"www.{ZONE}"}, destination])
+    cloudflare.serve(APPS_PATH, [app])
+    assert read_error(cloudflare) == (
+        f"{APPS_PATH}: an Access app has a Worker destination, which this check does not judge"
+    )
 
 
 @pytest.mark.parametrize(
@@ -589,6 +639,7 @@ def test_destinations_of_the_other_published_types_are_not_public_hosts(cloudfla
     [f"{FOO}.", f"{FOO}:443", f"https://{FOO}", f"/{FOO}", f"a..{ZONE}", f"*{ZONE}", f"a b.{ZONE}"],
 )
 def test_a_destination_host_that_is_no_plain_hostname_is_refused(cloudflare, uri):
+    """R3."""
     cloudflare.serve(APPS_PATH, [public_app(destinations=[{"type": "public", "uri": uri}])])
     assert read_error(cloudflare) == (
         f"{APPS_PATH}: a destination host is not a plain lower-case hostname"
@@ -597,6 +648,7 @@ def test_a_destination_host_that_is_no_plain_hostname_is_refused(cloudflare, uri
 
 @pytest.mark.parametrize("uri", [f"*.{ZONE}", f"{FOO}/admin/*", ZONE])
 def test_a_wildcard_or_a_path_after_the_host_is_accepted(cloudflare, uri):
+    """R1."""
     app = public_app(domain=uri, destinations=[{"type": "public", "uri": uri}])
     cloudflare.serve(APPS_PATH, [app])
     assert cloudflare.client().read(ZONE).apps[0].destinations == (uri,)
@@ -604,6 +656,7 @@ def test_a_wildcard_or_a_path_after_the_host_is_accepted(cloudflare, uri):
 
 @pytest.mark.parametrize("value", ["true", "false", 1, 0, None, []])
 def test_a_malformed_options_preflight_bypass_is_refused(cloudflare, value):
+    """R3."""
     cloudflare.serve(APPS_PATH, [public_app(options_preflight_bypass=value)])
     assert read_error(cloudflare) == f"{APPS_PATH}: options_preflight_bypass is not a boolean"
 
@@ -622,6 +675,7 @@ def test_a_malformed_options_preflight_bypass_is_refused(cloudflare, value):
 def test_a_policy_restricted_beyond_its_include_is_marked_with_extra_conditions(
     cloudflare, condition
 ):
+    """R1."""
     policy = {"decision": "bypass", "include": [{"everyone": {}}], **condition}
     cloudflare.serve(APPS_PATH, [public_app(policies=[policy])])
     assert cloudflare.client().read(ZONE).apps[0].policies[0].extra_conditions is True
@@ -637,6 +691,7 @@ def test_a_policy_restricted_beyond_its_include_is_marked_with_extra_conditions(
     ],
 )
 def test_a_policy_with_empty_or_unset_restrictions_has_no_extra_conditions(cloudflare, idle):
+    """R1."""
     policy = {"decision": "bypass", "include": [{"everyone": {}}], **idle}
     cloudflare.serve(APPS_PATH, [public_app(policies=[policy])])
     assert cloudflare.client().read(ZONE).apps[0].policies[0].extra_conditions is False
@@ -647,6 +702,7 @@ def test_a_policy_with_empty_or_unset_restrictions_has_no_extra_conditions(cloud
     [{"exclude": "x"}, {"require": {}}, {"approval_required": "true"}, {"connection_rules": []}],
 )
 def test_a_malformed_policy_restriction_is_refused(cloudflare, malformed):
+    """R3."""
     policy = {"decision": "bypass", "include": [{"everyone": {}}], **malformed}
     cloudflare.serve(APPS_PATH, [public_app(policies=[policy])])
     assert read_error(cloudflare).startswith(APPS_PATH)
@@ -659,6 +715,7 @@ def test_a_malformed_policy_restriction_is_refused(cloudflare, malformed):
 def test_an_id_that_is_not_32_lower_case_hex_never_enters_a_request_path(
     cloudflare, where, identifier
 ):
+    """R3."""
     zone = {"id": ZONE_ID, "name": ZONE, "account": {"id": ACCOUNT_ID}}
     if where == "zone":
         zone["id"] = identifier
@@ -670,6 +727,7 @@ def test_an_id_that_is_not_32_lower_case_hex_never_enters_a_request_path(
 
 
 def test_the_tunnel_list_is_paged_by_its_documented_shape_without_total_pages(cloudflare):
+    """R5."""
     tunnels = [{"id": TUNNEL_ID}] * 3
     cloudflare.serve(TUNNELS_PATH, tunnels)
     assert "found 3" in read_error(cloudflare)
@@ -677,6 +735,7 @@ def test_the_tunnel_list_is_paged_by_its_documented_shape_without_total_pages(cl
 
 
 def test_the_tunnel_list_fails_closed_when_its_total_count_is_not_met(cloudflare):
+    """R5."""
     cloudflare.routes[TUNNELS_PATH] = lambda query: (
         200,
         listing([{"id": TUNNEL_ID}], int(query["page"]), total_pages=None, total_count=3),
