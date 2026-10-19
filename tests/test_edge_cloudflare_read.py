@@ -163,8 +163,9 @@ def cloudflare() -> Iterator[FakeCloudflare]:
 
 
 def read_error(cloudflare: FakeCloudflare, **client_keywords) -> str:
+    client = cloudflare.client(**client_keywords)
     with pytest.raises(CloudflareReadError) as raised:
-        cloudflare.client(**client_keywords).read(ZONE)
+        client.read(ZONE)
     return str(raised.value)
 
 
@@ -311,7 +312,8 @@ def test_a_timeout_is_an_error_without_a_body(cloudflare):
 
     cloudflare.routes["/zones"] = hang
     message = read_error(cloudflare, timeout_seconds=0.2)
-    assert message.startswith("/zones: ") and TOKEN not in message
+    assert message.startswith("/zones: ")
+    assert TOKEN not in message
 
 
 def test_a_redirect_is_not_followed_and_the_token_never_reaches_its_target(cloudflare):
@@ -363,9 +365,10 @@ def test_the_https_environment_proxy_is_not_used_for_the_production_url(monkeypa
             else real_getaddrinfo(host, *rest, **keywords)
         ),
     )
+    client = CloudflareClient(TOKEN)
     try:
         with pytest.raises(AssertionError, match=r"leaves loopback: 192\.0\.2\.1"):
-            CloudflareClient(TOKEN).read(ZONE)
+            client.read(ZONE)
     finally:
         proxy.shutdown()
         proxy.server_close()
@@ -450,7 +453,8 @@ def test_pagination_fails_closed(cloudflare, answer, expected):
     """R5: each case ends at its own check."""
     cloudflare.routes[APPS_PATH] = lambda query: (200, answer(int(query["page"])))
     message = read_error(cloudflare)
-    assert message.startswith(f"{APPS_PATH}: ") and expected in message
+    assert message.startswith(f"{APPS_PATH}: ")
+    assert expected in message
 
 
 REPEATED_ID = "secret-object-id"

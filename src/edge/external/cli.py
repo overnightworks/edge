@@ -139,8 +139,10 @@ def check_command(
 @contextmanager
 def _signals_ignored() -> Iterator[None]:
     """The protected region of the result's write: inside it, the verdict's exit code stands."""
-    previous = {number: signal.signal(number, signal.SIG_IGN) for number in _STOP_SIGNALS}
+    previous: dict[int, Any] = {}
     try:
+        for number in _STOP_SIGNALS:
+            previous[number] = signal.signal(number, signal.SIG_IGN)
         yield
     finally:
         for number, handler in previous.items():

@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 BASE_URL = "https://api.cloudflare.com/client/v4"
+ZONES_PATH = "/zones"
 PAGE_SIZE = 50
 MAXIMUM_PAGES = 200
 TIMEOUT_SECONDS = 20.0
@@ -188,9 +189,9 @@ class CloudflareClient:
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _DoNotFollow)
 
     def read(self, zone: str) -> Snapshot:
-        zone_answer = self._one("/zones", {"name": zone}, "zone")
-        account_id = _identifier(zone_answer.get("account"), "/zones")
-        zone_id = _identifier(zone_answer, "/zones")
+        zone_answer = self._one(ZONES_PATH, {"name": zone}, "zone")
+        account_id = _identifier(zone_answer.get("account"), ZONES_PATH)
+        zone_id = _identifier(zone_answer, ZONES_PATH)
         tunnel_path = f"/accounts/{account_id}/cfd_tunnel"
         tunnel = self._one(
             tunnel_path, {"is_deleted": "false"}, "tunnel", announces_total_pages=False
