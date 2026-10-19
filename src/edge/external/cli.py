@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
 
-from edge import checkout
+from edge import catalog, checkout
 from edge.external import apply, secrets, tofu
 
 
@@ -37,7 +37,14 @@ def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
 
 
 def plan_command(home: Path) -> int:
-    return _guarded("plan", home, secrets.Access.READ, _plan, ExitCode.CANNOT_PLAN)
+    return _guarded(
+        "plan",
+        home,
+        secrets.Access.READ,
+        _plan,
+        ExitCode.CANNOT_PLAN,
+        refusal=lambda: _refusal_invalid_catalog("plan"),
+    )
 
 
 def apply_command(
@@ -47,8 +54,10 @@ def apply_command(
     live one, on a clean main."""
 
     def refusal() -> int | None:
-        return apply.refusal_without_terminal() or _refusal_off_clean_live_main(
-            tree or tofu.PROJECT_ROOT, home, git
+        return (
+            apply.refusal_without_terminal()
+            or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
+            or _refusal_invalid_catalog("apply")
         )
 
     return _guarded(
@@ -70,6 +79,16 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     for line in refusals:
         print(f"edge external apply: {line}", file=sys.stderr)
     return ExitCode.CANNOT_PLAN if refusals else None
+
+
+def _refusal_invalid_catalog(command: str) -> int | None:
+    """Exit 2, naming the key, when the catalog tofu reads is not a valid one (#131 rule 5)."""
+    try:
+        catalog.hosts(catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE))
+    except catalog.CatalogError as error:
+        print(f"edge external {command}: {error}", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
+    return None
 
 
 def _guarded(

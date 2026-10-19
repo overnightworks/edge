@@ -195,6 +195,7 @@ def live_checkout(home) -> Path:
     (tree / "external").mkdir(parents=True)
     (tree / "external" / "main.tf").write_text("# catalog\n")
     (tree / ".gitignore").write_text((PROJECT_ROOT / ".gitignore").read_text())
+    (tree / "fleet.yaml").write_text((PROJECT_ROOT / "fleet.yaml").read_text())
     plain_git(tree, "init", "--quiet", "--initial-branch", "main")
     plain_git(tree, "add", "--all")
     plain_git(tree, "commit", "--quiet", "--message", "init")
@@ -696,6 +697,60 @@ def test_plan_runs_from_any_checkout(home, fake_tofu, live_checkout, tmp_path, m
     """#124 rule 4, E8: plan asks nothing of the tree it runs from."""
     monkeypatch.setattr(tofu, "PROJECT_ROOT", another_copy(live_checkout, tmp_path))
     assert edge_external_plan() == 0
+
+
+INVALID_CATALOG = """\
+cloudflare: {zone: edge-fixture.invalid}
+services:
+  songmaker:
+    hosts:
+      - {name: www, exposure: private}
+"""
+CATALOG_LINE = "services.songmaker.hosts[0].exposure: must be one of public, bypass, protected"
+
+
+def commit_catalog(tree: Path, text: str) -> None:
+    (tree / "fleet.yaml").write_text(text)
+    plain_git(tree, "commit", "--quiet", "--all", "--message", "catalog")
+
+
+def without_tokens(home) -> None:
+    for token_file in TOKEN_FILES | WRITE_TOKEN_FILES:
+        (home / token_file).unlink()
+
+
+def test_plan_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
+    home, fake_tofu, live_checkout, monkeypatch, capsys
+):
+    """#131 P1: the pre-flight names the key; no token file is read and tofu never starts."""
+    commit_catalog(live_checkout, INVALID_CATALOG)
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
+    without_tokens(home)
+    assert edge_external_plan() == 2
+    assert capsys.readouterr().err == f"edge external plan: {CATALOG_LINE}\n"
+    assert fake_tofu.calls() == []
+
+
+def test_apply_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
+    home, fake_tofu, live_checkout, terminal
+):
+    """#131 P1: after the terminal and live-main refusals, before the tokens."""
+    commit_catalog(live_checkout, INVALID_CATALOG)
+    without_tokens(home)
+    apply = terminal()
+    assert apply.finish() == 2
+    assert f"edge external apply: {CATALOG_LINE}" in apply.output
+    assert fake_tofu.calls() == []
+
+
+def test_apply_without_a_terminal_refuses_before_the_catalog_is_read(
+    home, fake_tofu, live_checkout, monkeypatch, capsys
+):
+    """#131 P2: the terminal refusal still comes first."""
+    commit_catalog(live_checkout, INVALID_CATALOG)
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
+    assert cli.main(["external", "apply"]) == 1
+    assert "terminal" in capsys.readouterr().err
 
 
 def test_apply_without_a_terminal_exits_1_even_when_the_write_tokens_are_missing(

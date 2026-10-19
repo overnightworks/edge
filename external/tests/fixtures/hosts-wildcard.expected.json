@@ -1,0 +1,23 @@
+{
+  "edge-fixture.invalid": {
+    "service": "songmaker",
+    "exposure": "public",
+    "reason": "the apex is not covered by the wildcard",
+    "ready": null,
+    "target": "http://localhost:8080"
+  },
+  "*.edge-fixture.invalid": {
+    "service": "edge",
+    "exposure": "protected",
+    "reason": null,
+    "ready": null,
+    "target": "http://127.0.0.1:8081"
+  },
+  "hopin.edge-fixture.invalid": {
+    "service": "hopin",
+    "exposure": "bypass",
+    "reason": "own login",
+    "ready": "/health",
+    "target": "http://127.0.0.1:8081"
+  }
+}
