@@ -345,8 +345,8 @@ fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `do
 
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert (auch: ein anderes Apply
 laeuft), abgebrochen, fehlgeschlagen oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem
-Live-Checkout `~/git/edge` gestartet, nicht auf `main`, Baum nicht sauber, `.env` abweichend, unlesbar oder nicht schreibbar, keine Gruppe `docker`, `cloudflare.zone` ungültig, git nicht
-befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
+Live-Checkout `~/git/edge` gestartet, nicht auf `main`, Baum nicht sauber, `.env` abweichend, unlesbar oder nicht schreibbar, keine Gruppe `docker`,
+`cloudflare.zone` ungueltig, git nicht befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
 kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
