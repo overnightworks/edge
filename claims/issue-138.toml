@@ -1,8 +1,0 @@
-claim_id = "90df4b15f11d4b3c8f13a93fe811b3e3"
-agent = "claude"
-role = "builder"
-base = "4b456cd139de12713001643f45b09366e1728490"
-branch = "claude/issue-138-x5c1-host-check"
-scope = ["README.md", "src/edge/external/cli.py", "src/edge/external/cloudflare_read.py", "src/edge/external/host_check.py", "src/edge/external/secrets.py", "tests/test_edge_cloudflare_read.py", "tests/test_edge_external.py", "tests/test_edge_host_check.py"]
-opened_commit = "114eff458940365cf9e2f99087108130ef55c04c"
-whole_reason = "The read client, the comparison and the command share the Snapshot and the finding shape; a part alone is a client nobody calls or a comparison with no input."
