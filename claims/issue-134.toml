@@ -3,6 +3,6 @@ agent = "claude"
 role = "builder"
 base = "e98ab6e7c32ef2b5f511392b2e973326d3315970"
 branch = "claude/issue-134-x4b-cloudflare-adopt"
-scope = ["docs/architecture.md", "external/cloudflare.tf", "external/tests/cloudflare.tftest.hcl", "external/tests/fixtures"]
+scope = ["docs/architecture.md", "external/cloudflare.tf", "external/tests/catalog.tftest.hcl", "external/tests/cloudflare.tftest.hcl", "external/tests/fixtures", "external/tests/hosts.tftest.hcl"]
 opened_commit = "422690a80880042628b14de47c1c8b576318fe7a"
 whole_reason = "One adoption: the lookups, the imports and the deletion path act on the same live objects in one plan; a part alone either imports nothing or plans creates over existing records."
