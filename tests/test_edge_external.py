@@ -2085,18 +2085,25 @@ def signalling_as_it_returns(real_apply_plan, interrupt):
 
 
 class SignallingOnce(io.StringIO):
-    """A stream that sends a signal instead of taking the first write that contains `marker`."""
+    """A stream that sends a signal instead of taking the first write that contains `marker`,
+    or, with `after_the_write`, right after taking it."""
 
-    def __init__(self, marker: str, interrupt: int) -> None:
+    def __init__(self, marker: str, interrupt: int, *, after_the_write: bool = False) -> None:
         super().__init__()
         self.marker = marker
         self.interrupt = interrupt
+        self.after_the_write = after_the_write
         self.pending = True
 
     def write(self, text: str) -> int:
-        if self.pending and self.marker in text:
-            self.pending = False
+        if not (self.pending and self.marker in text):
+            return super().write(text)
+        self.pending = False
+        if self.after_the_write:
+            written = super().write(text)
             interrupt_myself(self.interrupt)
+            return written
+        interrupt_myself(self.interrupt)
         return super().write(text)
 
 
@@ -2112,43 +2119,42 @@ def plan_file_failing_to_leave(home_directory):
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 def test_a_cleanup_failure_of_any_kind_after_an_interrupted_apply_still_reports_the_interrupt(
-    home, fake_tofu, apply_in_process, capsys, monkeypatch, interrupt
+    home, fake_tofu, capsys, monkeypatch, interrupt
 ):
-    """AC7 (row 7) with AC9 (a): the cleanup replaced the interrupt; exit 1, no check, both lines.
+    """AC7 (row 7) with AC9 (a): the cleanup replaced the interrupt; the step failed in the
+    cleanup, no check follows, and the interrupt is still reported.
 
-    Wraps `external.apply.apply_plan` (the body's "Signal-timing seams"): the real function runs,
-    with a cleanup port that fails.
+    Calls `apply_plan` directly with its own cleanup port, which fails with a non-OSError.
     """
     fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
     monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
-    monkeypatch.setattr(
-        external_apply,
-        "apply_plan",
-        functools.partial(external_apply.apply_plan, plan_file_scope=plan_file_failing_to_leave),
-    )
-    reader = FakeReader(CLEAN_SNAPSHOT)
-    assert apply_in_process(reader) == 1
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    with pytest.raises(external_apply.StepFailed) as failure:
+        external_apply.apply_plan(home, {}, plan_file_scope=plan_file_failing_to_leave)
+    assert failure.value.step is external_apply.Step.CLEANUP
+    assert failure.value.closing is external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
     error = capsys.readouterr().err
     assert "interrupted during tofu apply, live services may be partly changed" in error
-    assert apply_line("the cleanup failed, RuntimeError") in error
-    assert reader.tokens == []
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
-def test_a_signal_while_the_interrupt_line_is_printed_still_ends_with_that_line(
-    home, fake_tofu, apply_in_process, monkeypatch, interrupt
+@pytest.mark.parametrize("after_the_write", [False, True], ids=["before-it", "right-after-it"])
+def test_a_signal_while_the_interrupt_line_is_published_shows_it_exactly_once(
+    home, fake_tofu, apply_in_process, monkeypatch, interrupt, after_the_write
 ):
-    """AC9 (a): the line `apply_plan` was printing is reported by the handler, not lost.
+    """AC9 (a), rule 22 (B3-2): the line and its `reported` record are one step under the mask.
 
-    Real signals on replaced streams; no module attribute is wrapped.
+    Real signals on replaced streams; no module attribute is wrapped. A signal after the write
+    would, unmasked, abort the step and have the handler print the line a second time.
     """
     fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
-    stderr = SignallingOnce("interrupted during", interrupt)
+    stderr = SignallingOnce("interrupted during", interrupt, after_the_write=after_the_write)
     monkeypatch.setattr(sys, "stderr", stderr)
     monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
     reader = FakeReader(CLEAN_SNAPSHOT)
     assert apply_in_process(reader) == 1
-    assert "interrupted during tofu apply, live services may be partly changed" in stderr.getvalue()
+    line = "interrupted during tofu apply, live services may be partly changed"
+    assert stderr.getvalue().count(line) == 1
     assert reader.tokens == []
 
 

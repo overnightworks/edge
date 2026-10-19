@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import Enum, IntEnum, StrEnum, auto
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from edge import terminal
 from edge.external import secrets, tofu
@@ -24,6 +24,7 @@ PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
 _OWNED_SUFFIXES = {_PLAN_SUFFIX, _LOCK_SUFFIX}
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 UNCHECKED_CONSEQUENCE = "live services may be partly changed; run edge external check --hosts"
 
 
@@ -192,6 +193,19 @@ def terminate_like_interrupt() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
+@contextmanager
+def signals_ignored() -> Iterator[None]:
+    """A protected region: a stop signal inside it is dropped, so its work is one step."""
+    previous: dict[int, Any] = {}
+    try:
+        for number in _STOP_SIGNALS:
+            previous[number] = signal.signal(number, signal.SIG_IGN)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def show_tofu_output(text: str, stream: TextIO) -> None:
     """The one publication of tofu's output: what `stream` cannot encode becomes a replacement,
     so printing it after a live apply never raises."""
@@ -269,11 +283,12 @@ def report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> N
     step = progress.step
     consequence = UNCHECKED_CONSEQUENCE if progress.apply_reached else "nothing was applied"
     plan_file = "; the plan file is deleted" if plan_file_deleted else ""
-    print(
-        f"\nedge external apply: interrupted during {step}, {consequence}{plan_file}",
-        file=sys.stderr,
-    )
-    progress.reported = True
+    with signals_ignored():  # the line and the record that it was printed are one step
+        print(
+            f"\nedge external apply: interrupted during {step}, {consequence}{plan_file}",
+            file=sys.stderr,
+        )
+        progress.reported = True
 
 
 def _show_confirm_apply(

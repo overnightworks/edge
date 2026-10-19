@@ -2,10 +2,8 @@
 the host check) and `check`."""
 
 import argparse
-import signal
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
@@ -15,7 +13,6 @@ from edge import catalog, checkout
 from edge.external import apply, cloudflare_read, host_check, host_probe, secrets, tofu
 
 INTERRUPTED = 130
-_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 
 class ExitCode(IntEnum):
@@ -73,36 +70,37 @@ def apply_command(
     live one, on a clean main. An apply that may have changed the services, or found nothing to
     do, ends on the host check (#30 rule 8): its verdict decides the exit.
 
-    The `try` is the first statement, so every setup step is inside it; SIGTERM is an interrupt
-    from the run's setup to the exit, and the one `except KeyboardInterrupt` decides every
-    interrupt that reaches it: before the tofu session "nothing was applied"; after it the line of
-    the disposition known so far; once the check committed its verdict, that verdict's exit.
+    The `try` is the first statement and SIGTERM becomes an interrupt as its first step, so every
+    setup step is inside both; the one `except KeyboardInterrupt` decides every interrupt that
+    reaches it: before the tofu session "nothing was applied"; after it the line of the
+    disposition known so far; once the check committed its verdict, that verdict's exit.
     Always exit 1 but the last. Accepted windows, named and not covered: from process start until
-    this first statement, between `check_command`'s return and the mask, between the two handler
-    swaps of `_signals_ignored`, and after the mask until the process exits."""
+    this first statement, while the interrupt handler writes its own line, between
+    `check_command`'s return and the mask, between the two handler swaps of `_signals_ignored`,
+    and after the mask until the process exits."""
     try:
-        run = _ApplyRun()
-        closing = apply.ClosingCheck.NO_CHECK_REFUSED
-
-        def refusal() -> int | None:
-            return (
-                apply.refusal_without_terminal()
-                or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
-                or _refusal_invalid_catalog("apply")
-                or _refusal_unreadable_cloudflare_read_file(home)
-            )
-
-        def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
-            nonlocal closing
-            try:
-                outcome = apply.apply_plan(home, token_values, progress=run.progress)
-            except apply.StepFailed as failure:
-                closing = failure.closing
-                raise
-            closing = outcome.closing
-            return outcome.exit
-
         with apply.terminate_like_interrupt():
+            run = _ApplyRun()
+            closing = apply.ClosingCheck.NO_CHECK_REFUSED
+
+            def refusal() -> int | None:
+                return (
+                    apply.refusal_without_terminal()
+                    or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
+                    or _refusal_invalid_catalog("apply")
+                    or _refusal_unreadable_cloudflare_read_file(home)
+                )
+
+            def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
+                nonlocal closing
+                try:
+                    outcome = apply.apply_plan(home, token_values, progress=run.progress)
+                except apply.StepFailed as failure:
+                    closing = failure.closing
+                    raise
+                closing = outcome.closing
+                return outcome.exit
+
             exit_code = _guarded(
                 "apply",
                 home,
@@ -252,17 +250,9 @@ def check_command(
     return host_check.CheckExit.CANNOT_CHECK
 
 
-@contextmanager
-def _signals_ignored() -> Iterator[None]:
-    """The protected region of the result's write: inside it, the verdict's exit code stands."""
-    previous: dict[int, Any] = {}
-    try:
-        for number in _STOP_SIGNALS:
-            previous[number] = signal.signal(number, signal.SIG_IGN)
-        yield
-    finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
+# The protected region of the result's write: inside it, the verdict's exit code stands. A name of
+# this module, so the timing cells wrap the closing's mask and not the interrupt line's.
+_signals_ignored = apply.signals_ignored
 
 
 def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:
