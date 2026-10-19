@@ -12,7 +12,6 @@ from typing import Any
 
 from edge import catalog
 from edge.external.cloudflare_read import (
-    SELF_HOSTED,
     App,
     CloudflareRead,
     Include,
@@ -108,6 +107,7 @@ def check_hosts(document: Any, cloudflare: CloudflareRead) -> HostCheck:
 def compare(zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot) -> HostCheck:
     declared = {host.fqdn: host for host in hosts}
     findings = [finding for host in hosts for finding in _record_findings(host, snapshot)]
+    hosts_without_record = {f.subject for f in findings if f.problem is Problem.RECORD_MISSING}
     findings += _undeclared_records(declared, snapshot.records)
     access_unused = False
     if snapshot.apps is None:
@@ -118,11 +118,13 @@ def compare(zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot) -> Hos
                 Finding(Problem.ACCESS_NOT_ENABLED, ACCOUNT, "Access is not enabled on the account")
             )
     else:
-        apps = tuple(app for app in snapshot.apps if app.type == SELF_HOSTED)
         findings += [
-            finding for host in hosts for finding in _app_findings(zone, host, apps, snapshot)
+            finding
+            for host in hosts
+            if host.fqdn not in hosts_without_record
+            for finding in _app_findings(zone, host, snapshot.apps, snapshot)
         ]
-        findings += _undeclared_apps(zone, declared, apps)
+        findings += _undeclared_apps(zone, declared, snapshot.apps)
     ordered = sorted(findings, key=lambda f: (_ORDER[f.problem], f.subject, f.detail))
     return HostCheck(tuple(ordered), len(hosts), access_unused)
 
@@ -185,13 +187,21 @@ def _app_findings(
                 Problem.APP_UNEXPECTED, host.fqdn, f"covered by the Access app at {covering[0]}"
             )
         ]
-    own_apps = [app for app in apps if host.fqdn in app.destinations]
+    own_apps = [app for app in apps if _destinations_at(app, host.fqdn)]
     if not own_apps:
         return [Finding(Problem.APP_MISSING, host.fqdn, "no Access app has this host")]
     if len(own_apps) > 1:
         return [Finding(Problem.POLICY_WRONG, host.fqdn, "several apps have this host")]
-    wrong = _policy_fault(host.exposure, own_apps[0].policies, snapshot)
+    (own_app,) = own_apps
+    if scoped := [d for d in _destinations_at(own_app, host.fqdn) if "/" in d]:
+        detail = f"the app is scoped to the path {scoped[0].removeprefix(host.fqdn)}"
+        return [Finding(Problem.POLICY_WRONG, host.fqdn, detail)]
+    wrong = _policy_fault(host.exposure, own_app.policies, snapshot)
     return [Finding(Problem.POLICY_WRONG, host.fqdn, wrong)] if wrong else []
+
+
+def _destinations_at(app: App, fqdn: str) -> list[str]:
+    return [d for d in app.destinations if _destination_host(d) == fqdn]
 
 
 def _covering_destinations(zone: str, fqdn: str, apps: Sequence[App]) -> list[str]:
@@ -250,25 +260,21 @@ def _describe_policy(expected: str, policy: Policy) -> str:
 def _undeclared_apps(
     zone: str, declared: dict[str, catalog.Host], apps: Sequence[App]
 ) -> list[Finding]:
+    """Every in-zone destination that is neither a declared Access host nor a public host's."""
     access_hosts = {
         fqdn for fqdn, host in declared.items() if host.exposure is not catalog.Exposure.PUBLIC
     }
-    findings = []
-    for app in apps:
-        in_zone = [d for d in app.destinations if _in_zone(zone, _destination_host(d))]
-        hosts = {_destination_host(destination) for destination in app.destinations}
-        covers_public_host = any(
-            _covering_destinations(zone, host.fqdn, [app])
-            for host in declared.values()
-            if host.exposure is catalog.Exposure.PUBLIC
-        )
-        if in_zone and not hosts & access_hosts and not covers_public_host:
-            findings.append(
-                Finding(
-                    Problem.UNDECLARED_APP, in_zone[0], "a self-hosted Access app nobody declared"
-                )
-            )
-    return findings
+    public_hosts = [
+        host.fqdn for host in declared.values() if host.exposure is catalog.Exposure.PUBLIC
+    ]
+    return [
+        Finding(Problem.UNDECLARED_APP, destination, "an Access app nobody declared")
+        for app in apps
+        for destination in app.destinations
+        if _in_zone(zone, _destination_host(destination))
+        and _destination_host(destination) not in access_hosts
+        and not any(_covers(zone, _destination_host(destination), fqdn) for fqdn in public_hosts)
+    ]
 
 
 def _in_zone(zone: str, destination_host: str) -> bool:

@@ -243,9 +243,47 @@ def test_two_apps_for_one_host_make_its_policy_undecidable():
     ]
 
 
-def test_an_app_with_a_second_destination_still_is_the_hosts_own_app():
+def test_an_app_with_a_second_destination_is_the_hosts_own_app_and_the_second_is_undeclared():
     own = app(fqdn("www"), fqdn("other"), policies=(BYPASS_POLICY,))
-    assert found([bypass("www")], snapshot(tunnel_record("www"), apps=(own,))) == []
+    assert found([bypass("www")], snapshot(tunnel_record("www"), apps=(own,))) == [
+        ("undeclared-app", fqdn("other"))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("hosts", "extra_app", "expected_detail"),
+    [
+        pytest.param(
+            LIVE_HOSTS,
+            app(f"*.{ZONE}/admin", policies=(BYPASS_POLICY,)),
+            ("*", "several apps have this host"),
+            id="a bypass app at a path of the protected wildcard",
+        ),
+        pytest.param(
+            LIVE_HOSTS,
+            app(fqdn("www") + "/admin", policies=(OPERATOR_POLICY,)),
+            ("www", "several apps have this host"),
+            id="a second app at a path of the bypass host",
+        ),
+    ],
+)
+def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
+    hosts, extra_app, expected_detail
+):
+    current = snapshot(*LIVE.records, apps=(*LIVE.apps, extra_app))
+    check = host_check.compare(ZONE, hosts, current)
+    label, detail = expected_detail
+    assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
+        (Problem.POLICY_WRONG, fqdn(label), detail)
+    ]
+
+
+def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
+    only = app(fqdn("www") + "/admin", policies=(BYPASS_POLICY,))
+    check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(only,)))
+    assert [(f.problem, f.detail) for f in check.findings] == [
+        (Problem.POLICY_WRONG, "the app is scoped to the path /admin")
+    ]
 
 
 @pytest.mark.parametrize(
@@ -278,16 +316,34 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
             app("tool." + ZONE), [("undeclared-app", "tool." + ZONE)], id="in-zone domain"
         ),
         pytest.param(app(), [], id="no domain"),
-        pytest.param(app("tool." + ZONE, kind="app_launcher"), [], id="app launcher"),
-        pytest.param(app("tool." + ZONE, kind="warp"), [], id="warp"),
+        pytest.param(app(kind="app_launcher"), [], id="app launcher"),
+        pytest.param(app(kind="warp"), [], id="warp"),
+        *[
+            pytest.param(
+                app("tool." + ZONE, kind=kind),
+                [("undeclared-app", "tool." + ZONE)],
+                id=f"a {kind} app with a public destination",
+            )
+            for kind in ("ssh", "vnc", "rdp")
+        ],
+        pytest.param(
+            app("tool." + ZONE + "/x"),
+            [("undeclared-app", "tool." + ZONE + "/x")],
+            id="a path-scoped destination",
+        ),
         pytest.param(app("elsewhere.invalid"), [], id="outside the zone"),
         pytest.param(app(fqdn("www"), policies=(BYPASS_POLICY,)), [], id="a declared host"),
     ],
 )
-def test_self_hosted_apps_nobody_declared_are_reported(stray_app, expected):
+def test_apps_with_destinations_nobody_declared_are_reported(stray_app, expected):
     current = snapshot(tunnel_record("www"), apps=(stray_app,))
     result = [item for item in found([bypass("www")], current) if item[0] == "undeclared-app"]
     assert result == expected
+
+
+def test_a_host_without_an_address_record_gets_no_app_findings():
+    wrong_app = app(fqdn("www"), policies=(OPERATOR_POLICY,))
+    assert found([bypass("www")], snapshot(apps=(wrong_app,))) == [("record-missing", fqdn("www"))]
 
 
 def test_access_off_is_one_finding_when_a_declared_host_needs_access():
@@ -314,7 +370,6 @@ def test_one_host_with_several_faults_is_sorted_with_one_finding_per_cause():
     assert found(hosts, current) == [
         ("record-missing", fqdn("www")),
         ("record-wrong", fqdn("@")),
-        ("app-missing", fqdn("www")),
         ("undeclared-record", fqdn("aaa")),
         ("undeclared-record", fqdn("zzz")),
     ]

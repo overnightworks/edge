@@ -27,27 +27,21 @@ ZONE = "example.test"
 ZONE_ID = "zone-1"
 ACCOUNT_ID = "account-1"
 TUNNEL_ID = "11111111-2222-3333-4444-555555555555"
-LOOPBACK = {"127.0.0.1", "::1"}
+PAGE = 2
 APPS_PATH = f"/accounts/{ACCOUNT_ID}/access/apps"
 RECORDS_PATH = f"/zones/{ZONE_ID}/dns_records"
 TUNNELS_PATH = f"/accounts/{ACCOUNT_ID}/cfd_tunnel"
 GROUPS_PATH = f"/accounts/{ACCOUNT_ID}/access/groups"
+
+pytestmark = pytest.mark.usefixtures("loopback_only")
 
 Answer = tuple[int, dict | bytes]
 Route = Callable[[dict[str, str]], Answer]
 
 
 @pytest.fixture(autouse=True)
-def no_connection_leaves_loopback(monkeypatch):
-    """The backstop: whatever a test builds, a connection beyond loopback fails loudly."""
-    real_connect = socket.socket.connect
-
-    def connect(self, address):
-        if self.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in LOOPBACK:
-            raise AssertionError(f"a test connection leaves loopback: {address[0]}")
-        return real_connect(self, address)
-
-    monkeypatch.setattr(socket.socket, "connect", connect)
+def small_pages(monkeypatch):
+    monkeypatch.setattr(cloudflare_read, "PAGE_SIZE", PAGE)
 
 
 class FakeCloudflare:
@@ -85,8 +79,8 @@ class FakeCloudflare:
     def client(self, **keywords) -> CloudflareClient:
         return CloudflareClient(TOKEN, base_url=self.url, **keywords)
 
-    def serve(self, path: str, items: list, page_size: int = 2) -> None:
-        self.routes[path] = lambda query: (200, page_of(items, int(query["page"]), page_size))
+    def serve(self, path: str, items: list) -> None:
+        self.routes[path] = lambda query: (200, page_of(items, int(query["page"]), PAGE))
 
     def close(self) -> None:
         self.release.set()
@@ -96,12 +90,25 @@ class FakeCloudflare:
 
 def page_of(items: list, page: int, page_size: int) -> dict:
     total_pages = max(1, -(-len(items) // page_size))
-    return ok(
+    return listing(
         items[(page - 1) * page_size : page * page_size],
-        page=page,
+        page,
         total_pages=total_pages,
         total_count=len(items),
     )
+
+
+def listing(result: list, page: int, **changes: int | None) -> dict:
+    """A complete page; a change of None leaves that `result_info` key out."""
+    info = {
+        "page": page,
+        "per_page": PAGE,
+        "count": len(result),
+        "total_pages": 1,
+        "total_count": len(result),
+        **changes,
+    }
+    return ok(result, **{key: value for key, value in info.items() if value is not None})
 
 
 def ok(result: list, **info) -> dict:
@@ -121,6 +128,7 @@ def self_hosted(domain: str, decision: str, include: list) -> dict:
     }
 
 
+VALID_APP = {"type": "app_launcher"}
 RECORDS = [
     {"name": f"{label}.{ZONE}", "type": "CNAME", "content": "x", "proxied": True}
     for label in ("a", "b", "c")
@@ -128,6 +136,11 @@ RECORDS = [
 APPS = [
     self_hosted(f"www.{ZONE}", "bypass", [{"everyone": {}}]),
     self_hosted(f"*.{ZONE}", "allow", [{"group": {"id": "g1"}}]),
+    {
+        "type": "ssh",
+        "destinations": [{"type": "public", "uri": f"ssh.{ZONE}"}],
+        "policies": [],
+    },
     {"type": "app_launcher"},
 ]
 GROUPS = [{"id": "g1", "name": "operator"}]
@@ -162,6 +175,7 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
         apps=(
             App("self_hosted", (f"www.{ZONE}",), (Policy("bypass", (Include("everyone"),)),)),
             App("self_hosted", (f"*.{ZONE}",), (Policy("allow", (Include("group", "g1"),)),)),
+            App("ssh", (f"ssh.{ZONE}",), ()),
             App("app_launcher", (), ()),
         ),
     )
@@ -171,13 +185,21 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
     assert TOKEN not in json.dumps([query for _, query, _ in cloudflare.requests])
 
 
-def test_access_off_is_a_typed_answer_not_an_error(cloudflare):
-    """R2."""
-    cloudflare.routes[APPS_PATH] = lambda _query: (
-        403,
-        failure(9999, "access.api.error.not_enabled"),
-    )
-    assert cloudflare.client().read(ZONE).apps is None
+@pytest.mark.parametrize(
+    "refused_paths",
+    [[APPS_PATH], [APPS_PATH, GROUPS_PATH]],
+    ids=["the apps only", "every access path"],
+)
+def test_access_off_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
+    """R2: the groups are not asked for when the apps say Access is off."""
+    for path in refused_paths:
+        cloudflare.routes[path] = lambda _query: (
+            403,
+            failure(9999, "access.api.error.not_enabled"),
+        )
+    snapshot = cloudflare.client().read(ZONE)
+    assert (snapshot.apps, snapshot.groups) == (None, ())
+    assert len(snapshot.records) == len(RECORDS)
 
 
 @pytest.mark.parametrize(
@@ -269,10 +291,9 @@ def test_a_redirect_is_not_followed_and_the_token_never_reaches_its_target(cloud
     assert elsewhere.requests == []
 
 
-@pytest.mark.parametrize("variable", ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"])
-def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch, variable):
-    """R4."""
-    monkeypatch.setenv(variable, "http://127.0.0.1:9")
+def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch):
+    """R4: the fake is http, so only HTTP_PROXY is driven; HTTPS_PROXY is not claimed."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "")
     assert cloudflare.client().read(ZONE).tunnel_id == TUNNEL_ID
     assert cloudflare.requests
@@ -284,13 +305,35 @@ def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch, variable):
         pytest.param(
             lambda page: {"success": True, "errors": [], "result": []}, id="no result_info"
         ),
-        pytest.param(lambda page: ok([{}], page=page, total_count=1), id="no total_pages"),
-        pytest.param(lambda page: ok([{}], page=page, total_pages=1), id="no total_count"),
+        *[
+            pytest.param(
+                lambda page, key=key: listing([VALID_APP], page, **{key: None}), id=f"no {key}"
+            )
+            for key in ("total_pages", "total_count", "count", "per_page")
+        ],
         pytest.param(
-            lambda page: ok([{}], page=page, total_pages=1, total_count=3), id="fewer than counted"
+            lambda page: listing([VALID_APP], page, total_count=3), id="fewer than counted"
         ),
         pytest.param(
-            lambda page: ok([{}], page=1, total_pages=3, total_count=3), id="the same page again"
+            lambda page: listing([VALID_APP], 1, total_pages=3, total_count=3), id="same page"
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP] * 2, page, count=1), id="count is not the results"
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP], page, per_page=PAGE + 1), id="another page size"
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP], page, total_pages=2, total_count=2),
+            id="a short page that is not the last",
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP] * 2, page, total_pages=4 - page, total_count=4),
+            id="a page count that changes between pages",
+        ),
+        pytest.param(
+            lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=3 + page),
+            id="an object count that changes between pages",
         ),
     ],
 )
@@ -306,8 +349,8 @@ def test_a_failing_middle_page_is_an_error_not_a_short_snapshot(cloudflare):
     def third_pages(query: dict[str, str]) -> Answer:
         if query["page"] == "2":
             return 500, failure(1000)
-        return 200, ok(
-            [{"type": "app_launcher"}], page=int(query["page"]), total_pages=3, total_count=3
+        return 200, listing(
+            [{"type": "app_launcher"}] * 2, int(query["page"]), total_pages=3, total_count=5
         )
 
     cloudflare.routes[APPS_PATH] = third_pages
@@ -319,7 +362,9 @@ def test_only_the_live_tunnel_is_asked_for(cloudflare):
     cloudflare.routes[TUNNELS_PATH] = lambda query: (
         200,
         page_of(
-            [{"id": TUNNEL_ID}] if query["is_deleted"] == "false" else [{"id": "gone"}] * 2, 1, 5
+            [{"id": TUNNEL_ID}] if query["is_deleted"] == "false" else [{"id": "gone"}] * 2,
+            1,
+            PAGE,
         ),
     )
     assert cloudflare.client().read(ZONE).tunnel_id == TUNNEL_ID
@@ -327,11 +372,26 @@ def test_only_the_live_tunnel_is_asked_for(cloudflare):
 
 @pytest.mark.parametrize(
     "base_url",
-    ["http://example.com", "ftp://127.0.0.1", "http://127.0.0.1.example.com"],
+    [
+        "http://example.com",
+        "ftp://127.0.0.1",
+        "http://127.0.0.1.example.com",
+        "https://example.com/client/v4",
+        "https://api.cloudflare.com.evil.test/client/v4",
+        "https://api.cloudflare.com/client/v4/",
+        "https://127.0.0.1",
+    ],
 )
-def test_the_token_goes_only_over_https_or_to_loopback(base_url):
+def test_the_token_goes_only_to_cloudflares_api_or_to_http_on_loopback(base_url):
     with pytest.raises(ValueError):
         CloudflareClient(TOKEN, base_url=base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url", [cloudflare_read.BASE_URL, "http://127.0.0.1:8080", "http://localhost"]
+)
+def test_cloudflares_api_and_loopback_are_accepted(base_url):
+    CloudflareClient(TOKEN, base_url=base_url)
 
 
 def test_the_default_base_url_is_cloudflares_https_api():
@@ -341,3 +401,22 @@ def test_the_default_base_url_is_cloudflares_https_api():
 def test_the_backstop_refuses_a_connection_beyond_loopback():
     with pytest.raises(AssertionError, match="leaves loopback"):
         socket.create_connection(("192.0.2.1", 9), timeout=0.1)
+
+
+def test_a_deeply_nested_answer_is_a_malformed_answer_not_a_crash(cloudflare):
+    cloudflare.routes[APPS_PATH] = lambda _query: (200, b"[" * 200_000)
+    assert "HTTP 200, malformed JSON answer" in read_error(cloudflare)
+
+
+@pytest.mark.parametrize("app_type", ["self_hosted", "ssh"])
+def test_an_app_with_a_field_the_check_does_not_understand_is_refused(cloudflare, app_type):
+    """A path override that makes a path public is not understood, so it is never ignored."""
+    app = {**self_hosted(f"www.{ZONE}", "bypass", [{"everyone": {}}]), "type": app_type}
+    cloudflare.serve(APPS_PATH, [{**app, "overrides": [{"path_pattern": "/admin/*"}]}])
+    message = read_error(cloudflare)
+    assert message.startswith(APPS_PATH) and message.endswith("understand: overrides")
+
+
+def test_an_app_without_destinations_may_carry_any_field(cloudflare):
+    cloudflare.serve(APPS_PATH, [{"type": "app_launcher", "something_new": 1}])
+    assert cloudflare.client().read(ZONE).apps == (App("app_launcher", (), ()),)

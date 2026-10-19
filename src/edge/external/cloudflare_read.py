@@ -11,13 +11,19 @@ The one documented wire shape, from Cloudflare's published OpenAPI schema
 - `GET /accounts/{id}/cfd_tunnel?is_deleted=false`: `result[].id`.
 - `GET /accounts/{id}/access/groups`: `result[].id`, `result[].name` (an include rule names a
   group by id only).
-- `GET /accounts/{id}/access/apps`: `result[].type`; of a `self_hosted` app `destinations[]`
-  (`uri` of a `public` destination; `domain` and `self_hosted_domains` are deprecated and never
-  read) and the embedded `policies[]` (`decision`, `include[]`), so no policies read exists.
-  A rule of `include[]` is a map with the one key `everyone` or `group` (`{"id": ...}`).
-  The schema documents no paging parameters for this one endpoint but does document
-  `result_info`; both are used, and an answer whose `result_info.page` is not the requested
-  page fails closed instead of being counted twice.
+- `GET /accounts/{id}/access/apps`: `result[].type`; of every app `destinations[]` (`uri` of a
+  `public` destination; `domain` and `self_hosted_domains` are deprecated and never read) and
+  the embedded `policies[]` (`decision`, `include[]`), so no policies read exists. A rule of
+  `include[]` is a map with the one key `everyone` or `group` (`{"id": ...}`).
+- The schema lists `access_page` and `access_per_page` (default 1000, maximum 1000) for the apps
+  and the groups (openapi.json of 19.10.2026); `page` and `per_page` are sent and answered.
+  Paging fails closed: `result_info` must name the requested page and page size, the same
+  `total_pages` and `total_count` on every page and a `count` equal to the page's results, and
+  every page but the last must be full.
+- An app that has destinations may carry only the fields of `UNDERSTOOD_APP_FIELDS`. Whether and
+  how a path rule or override can make a path public is not documented in any schema this check
+  could read (the pinned provider's resource schema, 5.28.0, has none), so a field beyond them
+  is refused (fail closed) instead of ignored.
 
 The token travels only in the `Authorization` header, set as an unredirected header on an opener
 that follows no redirect and uses no environment proxy. No message names a body or the token.
@@ -40,6 +46,24 @@ MAXIMUM_BODY_BYTES = 16 * 1024 * 1024
 LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 SELF_HOSTED = "self_hosted"
 PUBLIC_DESTINATION = "public"
+# The attributes of `cloudflare_zero_trust_access_application` (provider 5.28.0, `tofu providers
+# schema`, 19.10.2026) and the response-only metadata of the API object. The union of every app
+# type, so one set serves them all.
+UNDERSTOOD_APP_FIELDS = frozenset(
+    {
+        "id", "uid", "aud", "created_at", "updated_at", "name", "type", "domain", "domain_type",
+        "destinations", "self_hosted_domains", "policies", "allow_authenticate_via_warp",
+        "allow_iframe", "allowed_idps", "app_launcher_logo_url", "app_launcher_url",
+        "app_launcher_visible", "auto_redirect_to_identity", "bg_color", "cors_headers",
+        "custom_deny_message", "custom_deny_url", "custom_non_identity_deny_url", "custom_pages",
+        "enable_binding_cookie", "footer_links", "header_bg_color", "http_only_cookie_attribute",
+        "landing_page_design", "logo_url", "mfa_config", "oauth_configuration",
+        "options_preflight_bypass", "path_cookie_attribute", "read_service_tokens_from_header",
+        "saas_app", "same_site_cookie_attribute", "scim_config", "service_auth_401_redirect",
+        "session_duration", "skip_app_launcher_login_page", "skip_interstitial", "tags",
+        "target_criteria",
+    }
+)  # fmt: skip
 ACCESS_NOT_ENABLED = (403, 9999, "access.api.error.not_enabled")
 
 
@@ -111,7 +135,7 @@ class CloudflareClient:
     def __init__(
         self, token: str, base_url: str = BASE_URL, timeout_seconds: float = TIMEOUT_SECONDS
     ) -> None:
-        _require_https_or_loopback(base_url)
+        _require_cloudflare_or_loopback(base_url)
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
@@ -125,12 +149,16 @@ class CloudflareClient:
         tunnel = self._one(tunnel_path, {"is_deleted": "false"}, "tunnel")
         records_path = f"/zones/{_segment(zone_id)}/dns_records"
         groups_path = f"/accounts/{_segment(account_id)}/access/groups"
+        apps = self._apps(f"/accounts/{_segment(account_id)}/access/apps")
         return Snapshot(
             tunnel_id=_text(tunnel, "id", tunnel_path),
             records=tuple(_record(item, records_path) for item in self._pages(records_path)),
-            groups=tuple(_group(item, groups_path) for item in self._pages(groups_path)),
-            apps=self._apps(f"/accounts/{_segment(account_id)}/access/apps"),
+            groups=() if apps is None else self._groups(groups_path),
+            apps=apps,
         )
+
+    def _groups(self, path: str) -> tuple[AccessGroup, ...]:
+        return tuple(_group(item, path) for item in self._pages(path))
 
     def _apps(self, path: str) -> tuple[App, ...] | None:
         try:
@@ -148,22 +176,17 @@ class CloudflareClient:
 
     def _pages(self, path: str, query: Mapping[str, str] | None = None) -> list[dict]:
         items: list[dict] = []
-        page, total_pages, total_count = 1, 1, 0
-        while page <= total_pages:
+        page, announced = 1, None
+        while True:
             answer = self._get(path, {**(query or {}), "page": str(page), "per_page": PAGE_SIZE})
-            page_items = answer.get("result")
-            info = answer.get("result_info")
-            if not isinstance(page_items, list) or not isinstance(info, dict):
-                raise CloudflareReadError(f"{path}: the answer is not a paged list")
-            if info.get("page") != page:
-                raise CloudflareReadError(f"{path}: the answer is not page {page}")
-            total_pages = _count(info, "total_pages", path)
-            total_count = _count(info, "total_count", path)
-            if total_pages > MAXIMUM_PAGES:
-                raise CloudflareReadError(f"{path}: more than {MAXIMUM_PAGES} pages")
-            if not all(isinstance(item, dict) for item in page_items):
-                raise CloudflareReadError(f"{path}: the list holds something but maps")
+            page_items, totals = _checked_page(path, answer, page)
+            if announced not in (None, totals):
+                raise CloudflareReadError(f"{path}: the pages announce different totals")
+            announced = totals
+            total_pages, total_count = totals
             items += page_items
+            if page >= total_pages:
+                break
             page += 1
         if len(items) != total_count:
             raise CloudflareReadError(f"{path}: {len(items)} results of {total_count} announced")
@@ -186,12 +209,35 @@ class CloudflareClient:
         return _answer(path, status, body)
 
 
-def _require_https_or_loopback(base_url: str) -> None:
+def _require_cloudflare_or_loopback(base_url: str) -> None:
+    """The bearer token goes to Cloudflare's own API or, in a test, to http on loopback."""
     parts = urllib.parse.urlsplit(base_url)
-    if parts.scheme != "https" and not (
-        parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTNAMES
-    ):
-        raise ValueError("the Cloudflare base URL must be https (http only on loopback)")
+    on_loopback = parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTNAMES
+    if base_url != BASE_URL and not on_loopback:
+        raise ValueError(f"the Cloudflare base URL must be {BASE_URL} (or http on loopback)")
+
+
+def _checked_page(path: str, answer: dict, page: int) -> tuple[list[dict], tuple[int, int]]:
+    """The results of one page and the (total_pages, total_count) it announces."""
+    page_items = answer.get("result")
+    info = answer.get("result_info")
+    if not isinstance(page_items, list) or not isinstance(info, dict):
+        raise CloudflareReadError(f"{path}: the answer is not a paged list")
+    if info.get("page") != page:
+        raise CloudflareReadError(f"{path}: the answer is not page {page}")
+    if info.get("per_page") != PAGE_SIZE:
+        raise CloudflareReadError(f"{path}: the answer does not keep the page size {PAGE_SIZE}")
+    total_pages = _count(info, "total_pages", path)
+    total_count = _count(info, "total_count", path)
+    if total_pages > MAXIMUM_PAGES:
+        raise CloudflareReadError(f"{path}: more than {MAXIMUM_PAGES} pages")
+    if _count(info, "count", path) != len(page_items) or len(page_items) > PAGE_SIZE:
+        raise CloudflareReadError(f"{path}: page {page} holds other than the counted results")
+    if page < total_pages and len(page_items) != PAGE_SIZE:
+        raise CloudflareReadError(f"{path}: page {page} is not full but is not the last")
+    if not all(isinstance(item, dict) for item in page_items):
+        raise CloudflareReadError(f"{path}: the list holds something but maps")
+    return page_items, (total_pages, total_count)
 
 
 def _answer(path: str, status: int, body: bytes) -> dict:
@@ -199,7 +245,7 @@ def _answer(path: str, status: int, body: bytes) -> dict:
         raise CloudflareReadError(f"{path}: HTTP {status}, the answer is too large")
     try:
         payload = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         payload = None
     errors = payload.get("errors") if isinstance(payload, dict) else None
     first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
@@ -255,18 +301,35 @@ def _group(item: dict, path: str) -> AccessGroup:
 
 def _app(item: dict, path: str) -> App:
     app_type = _text(item, "type", path)
-    if app_type != SELF_HOSTED:
-        return App(type=app_type, destinations=(), policies=())
+    required = app_type == SELF_HOSTED
+    destinations = tuple(
+        _text(destination, "uri", path).lower()
+        for destination in _optional_list(item, "destinations", path, required)
+        if isinstance(destination, dict)
+        and destination.get("type", PUBLIC_DESTINATION) == PUBLIC_DESTINATION
+    )
+    if required or destinations:
+        _require_understood_fields(item, path)
     return App(
         type=app_type,
-        destinations=tuple(
-            _text(destination, "uri", path).lower()
-            for destination in _list(item, "destinations", path)
-            if isinstance(destination, dict)
-            and destination.get("type", PUBLIC_DESTINATION) == PUBLIC_DESTINATION
+        destinations=destinations,
+        policies=tuple(
+            _policy(policy, path) for policy in _optional_list(item, "policies", path, required)
         ),
-        policies=tuple(_policy(policy, path) for policy in _list(item, "policies", path)),
     )
+
+
+def _optional_list(item: dict, key: str, path: str, required: bool) -> list:
+    return _list(item, key, path) if required or key in item else []
+
+
+def _require_understood_fields(item: dict, path: str) -> None:
+    unknown = sorted(set(item) - UNDERSTOOD_APP_FIELDS)
+    if unknown:
+        raise CloudflareReadError(
+            f"{path}: an Access app carries fields this check does not understand: "
+            f"{', '.join(map(str, unknown))}"
+        )
 
 
 def _policy(policy: Any, path: str) -> Policy:

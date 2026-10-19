@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from edge import checkout, cli
+from edge import catalog, checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
-from edge.external import cloudflare_read, secrets, tofu
+from edge.external import cloudflare_read, host_check, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1300,6 +1300,31 @@ def test_an_interrupt_exits_130_with_stdout_empty(home, hosts_catalog, capsys, i
     printed = capsys.readouterr()
     assert printed.out == ""
     assert "interrupted" in printed.err
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_a_sigterm_during_the_token_read_exits_130_with_stdout_empty(
+    home, hosts_catalog, capsys, monkeypatch
+):
+    """K7: the whole command body, not only the Cloudflare read, is covered."""
+    monkeypatch.setattr(
+        secrets, "read_cloudflare_token", lambda _home: os.kill(os.getpid(), signal.SIGTERM)
+    )
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 130
+    assert capsys.readouterr().out == ""
+
+
+def test_a_catalog_error_raised_while_checking_exits_2_not_with_a_traceback(
+    home, hosts_catalog, capsys, monkeypatch
+):
+    """K3: the zone is read from the one document the pre-flight validated."""
+
+    def invalid(_document):
+        raise catalog.CatalogError(CATALOG_LINE)
+
+    monkeypatch.setattr(host_check.catalog, "zone", invalid)
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 2
+    assert capsys.readouterr().err == f"edge external check: {CATALOG_LINE}\n"
 
 
 def test_check_through_main_stops_at_a_missing_token_before_any_network(

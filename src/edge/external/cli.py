@@ -92,17 +92,18 @@ def check_command(
     """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader."""
     token_values: dict[str, str] = {}
     try:
-        refused = _refusal_invalid_catalog("check")
-        if refused is not None:
-            return refused
-        token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
-        document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
-        reader = cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
         with apply.terminate_like_interrupt():
-            result = host_check.check_hosts(document, reader)
+            document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
+            catalog.hosts(document)
+            token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
+            result = host_check.check_hosts(
+                document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
+            )
     except KeyboardInterrupt:
         print("edge external check: interrupted", file=sys.stderr)
         return INTERRUPTED
+    except catalog.CatalogError as error:
+        print(f"edge external check: {error}", file=sys.stderr)
     except (secrets.SecretFileError, cloudflare_read.CloudflareReadError) as error:
         _report(f"edge external check: cannot check, {error}", error, token_values, "check")
     except OSError as error:
