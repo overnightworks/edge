@@ -5,6 +5,7 @@ import sys
 from collections.abc import Callable
 from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 from edge import catalog, checkout
 from edge.external import apply, cloudflare_read, host_check, secrets, tofu
@@ -88,22 +89,26 @@ def check_command(
     *,
     as_json: bool = False,
     cloudflare: Callable[[str], cloudflare_read.CloudflareRead] = cloudflare_read.CloudflareClient,
+    emit: Callable[[str], None] = lambda text: sys.stdout.write(f"{text}\n"),
 ) -> int:
-    """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader."""
+    """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `emit` writes
+    the one output, so an interrupt anywhere up to it leaves stdout empty."""
     token_values: dict[str, str] = {}
     try:
         with apply.terminate_like_interrupt():
-            document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
-            catalog.hosts(document)
+            document = _valid_catalog("check")
+            if document is None:
+                return host_check.CheckExit.CANNOT_CHECK
             token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
             result = host_check.check_hosts(
                 document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
             )
+            rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
+            emit(secrets.redact(rendered, token_values))
+            return result.exit_code
     except KeyboardInterrupt:
         print("edge external check: interrupted", file=sys.stderr)
         return INTERRUPTED
-    except catalog.CatalogError as error:
-        print(f"edge external check: {error}", file=sys.stderr)
     except (secrets.SecretFileError, cloudflare_read.CloudflareReadError) as error:
         _report(f"edge external check: cannot check, {error}", error, token_values, "check")
     except OSError as error:
@@ -118,10 +123,6 @@ def check_command(
             token_values,
             "check",
         )
-    else:
-        rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
-        print(secrets.redact(rendered, token_values))
-        return result.exit_code
     return host_check.CheckExit.CANNOT_CHECK
 
 
@@ -136,14 +137,19 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     return ExitCode.CANNOT_PLAN if refusals else None
 
 
-def _refusal_invalid_catalog(command: str) -> int | None:
-    """Exit 2, naming the key, when the catalog tofu reads is not a valid one (#131 rule 5)."""
+def _valid_catalog(command: str) -> Any | None:
+    """The catalog tofu reads, or None after naming the key when it is not valid (#131 rule 5)."""
     try:
-        catalog.hosts(catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE))
+        document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
+        catalog.hosts(document)
     except catalog.CatalogError as error:
         print(f"edge external {command}: {error}", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
-    return None
+        return None
+    return document
+
+
+def _refusal_invalid_catalog(command: str) -> int | None:
+    return ExitCode.CANNOT_PLAN if _valid_catalog(command) is None else None
 
 
 def _guarded(

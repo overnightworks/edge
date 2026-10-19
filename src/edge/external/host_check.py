@@ -12,6 +12,7 @@ from typing import Any
 
 from edge import catalog
 from edge.external.cloudflare_read import (
+    SELF_HOSTED,
     App,
     CloudflareRead,
     Include,
@@ -187,17 +188,28 @@ def _app_findings(
                 Problem.APP_UNEXPECTED, host.fqdn, f"covered by the Access app at {covering[0]}"
             )
         ]
-    own_apps = [app for app in apps if _destinations_at(app, host.fqdn)]
-    if not own_apps:
+    apps_here = [app for app in apps if _destinations_at(app, host.fqdn)]
+    if not apps_here:
         return [Finding(Problem.APP_MISSING, host.fqdn, "no Access app has this host")]
-    if len(own_apps) > 1:
+    if len(apps_here) > 1:
         return [Finding(Problem.POLICY_WRONG, host.fqdn, "several apps have this host")]
-    (own_app,) = own_apps
+    (own_app,) = apps_here
+    if own_app.type != SELF_HOSTED:
+        detail = "the app at this host is not a self-hosted app"
+        return [Finding(Problem.POLICY_WRONG, host.fqdn, detail)]
     if scoped := [d for d in _destinations_at(own_app, host.fqdn) if "/" in d]:
         detail = f"the app is scoped to the path {scoped[0].removeprefix(host.fqdn)}"
         return [Finding(Problem.POLICY_WRONG, host.fqdn, detail)]
-    wrong = _policy_fault(host.exposure, own_app.policies, snapshot)
-    return [Finding(Problem.POLICY_WRONG, host.fqdn, wrong)] if wrong else []
+    faults = [
+        f"a path rule makes {override.path_pattern} public, bypassing Access"
+        for override in own_app.overrides
+        if _destination_host(override.destination) == host.fqdn
+    ]
+    if own_app.options_preflight_bypass:
+        faults.append("OPTIONS requests bypass Access")
+    if policy_fault := _policy_fault(host.exposure, own_app.policies, snapshot):
+        faults.append(policy_fault)
+    return [Finding(Problem.POLICY_WRONG, host.fqdn, fault) for fault in faults]
 
 
 def _destinations_at(app: App, fqdn: str) -> list[str]:

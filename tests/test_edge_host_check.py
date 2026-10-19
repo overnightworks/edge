@@ -14,6 +14,7 @@ from edge.external.cloudflare_read import (
     AccessGroup,
     App,
     Include,
+    Override,
     Policy,
     Record,
     Snapshot,
@@ -65,8 +66,13 @@ BYPASS_POLICY = policy("bypass", Include("everyone"))
 OPERATOR_POLICY = policy("allow", Include("group", OPERATOR.id))
 
 
-def app(*destinations: str, policies: tuple[Policy, ...] = (), kind: str = SELF_HOSTED) -> App:
-    return App(kind, destinations, policies)
+def app(
+    *destinations: str,
+    policies: tuple[Policy, ...] = (),
+    kind: str = SELF_HOSTED,
+    **exposure_facts,
+) -> App:
+    return App(kind, destinations, policies, **exposure_facts)
 
 
 def bypass_app(label: str) -> App:
@@ -283,6 +289,75 @@ def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
     check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(only,)))
     assert [(f.problem, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, "the app is scoped to the path /admin")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("host", "label", "policies", "destination"),
+    [
+        pytest.param(bypass("www"), "www", (BYPASS_POLICY,), fqdn("www"), id="a bypass host"),
+        pytest.param(
+            protected_wildcard(), "*", (OPERATOR_POLICY,), f"*.{ZONE}", id="a protected host"
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("facts_at", "expected_detail"),
+    [
+        pytest.param(
+            lambda destination: {"overrides": (Override(destination, "/admin/*"),)},
+            "a path rule makes /admin/* public, bypassing Access",
+            id="a public path override",
+        ),
+        pytest.param(
+            lambda _destination: {"options_preflight_bypass": True},
+            "OPTIONS requests bypass Access",
+            id="OPTIONS requests bypass Access",
+        ),
+    ],
+)
+def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy_wrong(
+    host, label, policies, destination, facts_at, expected_detail
+):
+    """C: the policy is right, but a path or a method still reaches the origin without Access."""
+    leaky = app(destination, policies=policies, **facts_at(destination))
+    current = snapshot(tunnel_record(label), apps=(leaky,))
+    check = host_check.compare(ZONE, [host], current)
+    assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
+        (Problem.POLICY_WRONG, fqdn(label), expected_detail)
+    ]
+
+
+def test_an_override_on_a_destination_of_another_host_does_not_taint_this_host():
+    own = app(
+        fqdn("www"),
+        fqdn("other"),
+        policies=(BYPASS_POLICY,),
+        overrides=(Override(fqdn("other"), "/x"),),
+    )
+    current = snapshot(tunnel_record("www"), apps=(own,))
+    assert found([bypass("www")], current) == [("undeclared-app", fqdn("other"))]
+
+
+@pytest.mark.parametrize(
+    ("host", "label", "policies", "destination"),
+    [
+        pytest.param(bypass("www"), "www", (BYPASS_POLICY,), fqdn("www"), id="a bypass host"),
+        pytest.param(
+            protected_wildcard(), "*", (OPERATOR_POLICY,), f"*.{ZONE}", id="a protected host"
+        ),
+    ],
+)
+@pytest.mark.parametrize("kind", ["ssh", "vnc", "rdp"])
+def test_a_host_that_needs_access_needs_a_self_hosted_app_not_another_type(
+    host, label, policies, destination, kind
+):
+    """C: an app of another type at the host is wrong however right its policy looks."""
+    other = app(destination, policies=policies, kind=kind)
+    current = snapshot(tunnel_record(label), apps=(other,))
+    check = host_check.compare(ZONE, [host], current)
+    assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
+        (Problem.POLICY_WRONG, fqdn(label), "the app at this host is not a self-hosted app")
     ]
 
 

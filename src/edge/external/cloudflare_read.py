@@ -11,19 +11,25 @@ The one documented wire shape, from Cloudflare's published OpenAPI schema
 - `GET /accounts/{id}/cfd_tunnel?is_deleted=false`: `result[].id`.
 - `GET /accounts/{id}/access/groups`: `result[].id`, `result[].name` (an include rule names a
   group by id only).
-- `GET /accounts/{id}/access/apps`: `result[].type`; of every app `destinations[]` (`uri` of a
-  `public` destination; `domain` and `self_hosted_domains` are deprecated and never read) and
-  the embedded `policies[]` (`decision`, `include[]`), so no policies read exists. A rule of
-  `include[]` is a map with the one key `everyone` or `group` (`{"id": ...}`).
+- `GET /accounts/{id}/access/apps`: `result[].type`, `options_preflight_bypass` and the embedded
+  `policies[]` (`decision`, `include[]`), so no policies read exists. A rule of `include[]` is a
+  map with the one key `everyone` or `group` (`{"id": ...}`). Of every app `destinations[]`: a
+  `public` destination is `{type, uri, overrides[]}` and an override is
+  `{behavior: "public", path_pattern}`, "each rule can make a matching path public, bypassing
+  Access authentication" (`domain` and `self_hosted_domains` are deprecated and never read).
 - The schema lists `access_page` and `access_per_page` (default 1000, maximum 1000) for the apps
-  and the groups (openapi.json of 19.10.2026); `page` and `per_page` are sent and answered.
-  Paging fails closed: `result_info` must name the requested page and page size, the same
-  `total_pages` and `total_count` on every page and a `count` equal to the page's results, and
-  every page but the last must be full.
-- An app that has destinations may carry only the fields of `UNDERSTOOD_APP_FIELDS`. Whether and
-  how a path rule or override can make a path public is not documented in any schema this check
-  could read (the pinned provider's resource schema, 5.28.0, has none), so a field beyond them
-  is refused (fail closed) instead of ignored.
+  and the groups; `page` and `per_page` are sent and answered. Paging fails closed: `result_info`
+  must name the requested page and page size, the same `total_pages` and `total_count` on every
+  page and a `count` equal to the page's results, and every page but the last must be full.
+- An app that has destinations may carry only the fields of `UNDERSTOOD_APP_FIELDS`, the union of
+  the response properties of every app variant in the published schema. A field beyond them, and
+  any key of a public destination or of an override beyond the documented ones, is refused (fail
+  closed) instead of ignored. The refusal names a field only when its name is a plain one.
+
+Schema revision: cloudflare/api-schemas commit 8e378c74caeffd3cf8b458dc215b1c2e9bd48b9f
+(19.10.2026), `openapi.json` (git blob b3375cb4e6e8caa4c318b3ae0d305159ddd20b46), the 200 answer
+of `GET /accounts/{account_id}/access/apps`; the same shape is cloudflare-python's
+`types/zero_trust/access/application_list_response.py`.
 
 The token travels only in the `Authorization` header, set as an unredirected header on an opener
 that follows no redirect and uses no environment proxy. No message names a body or the token.
@@ -31,6 +37,7 @@ that follows no redirect and uses no environment proxy. No message names a body 
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,24 +53,25 @@ MAXIMUM_BODY_BYTES = 16 * 1024 * 1024
 LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 SELF_HOSTED = "self_hosted"
 PUBLIC_DESTINATION = "public"
-# The attributes of `cloudflare_zero_trust_access_application` (provider 5.28.0, `tofu providers
-# schema`, 19.10.2026) and the response-only metadata of the API object. The union of every app
-# type, so one set serves them all.
+# Every property of the app variants in the response schema of the revision named above.
 UNDERSTOOD_APP_FIELDS = frozenset(
     {
-        "id", "uid", "aud", "created_at", "updated_at", "name", "type", "domain", "domain_type",
-        "destinations", "self_hosted_domains", "policies", "allow_authenticate_via_warp",
-        "allow_iframe", "allowed_idps", "app_launcher_logo_url", "app_launcher_url",
-        "app_launcher_visible", "auto_redirect_to_identity", "bg_color", "cors_headers",
-        "custom_deny_message", "custom_deny_url", "custom_non_identity_deny_url", "custom_pages",
+        "allow_authenticate_via_warp", "allow_iframe", "allowed_idps", "app_launcher_logo_url",
+        "app_launcher_visible", "aud", "auto_redirect_to_identity", "bg_color", "cors_headers",
+        "created_at", "custom_deny_message", "custom_deny_url", "custom_non_identity_deny_url",
+        "custom_pages", "destinations", "domain", "eager_redirect_cookie_setting",
         "enable_binding_cookie", "footer_links", "header_bg_color", "http_only_cookie_attribute",
-        "landing_page_design", "logo_url", "mfa_config", "oauth_configuration",
-        "options_preflight_bypass", "path_cookie_attribute", "read_service_tokens_from_header",
-        "saas_app", "same_site_cookie_attribute", "scim_config", "service_auth_401_redirect",
-        "session_duration", "skip_app_launcher_login_page", "skip_interstitial", "tags",
-        "target_criteria",
+        "id", "landing_page_design", "logo_url", "mfa_config", "name", "oauth_configuration",
+        "options_preflight_bypass", "path_cookie_attribute", "policies",
+        "read_service_tokens_from_header", "saas_app", "same_site_cookie_attribute", "scim_config",
+        "self_hosted_domains", "service_auth_401_redirect", "session_duration",
+        "skip_app_launcher_login_page", "skip_interstitial", "tags", "target_criteria", "type",
+        "updated_at", "use_clientless_isolation_app_launcher_url", "user_populations",
     }
 )  # fmt: skip
+PUBLIC_DESTINATION_FIELDS = frozenset({"type", "uri", "overrides"})
+OVERRIDE_FIELDS = frozenset({"behavior", "path_pattern"})
+PLAIN_FIELD_NAME = re.compile(r"[a-z][a-z_]{0,39}")
 ACCESS_NOT_ENABLED = (403, 9999, "access.api.error.not_enabled")
 
 
@@ -94,10 +102,20 @@ class Policy:
 
 
 @dataclass(frozen=True)
+class Override:
+    """A rule that makes a path of a public destination public, bypassing Access."""
+
+    destination: str
+    path_pattern: str
+
+
+@dataclass(frozen=True)
 class App:
     type: str
     destinations: tuple[str, ...]
     policies: tuple[Policy, ...]
+    overrides: tuple[Override, ...] = ()
+    options_preflight_bypass: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,25 +166,25 @@ class CloudflareClient:
         tunnel_path = f"/accounts/{_segment(account_id)}/cfd_tunnel"
         tunnel = self._one(tunnel_path, {"is_deleted": "false"}, "tunnel")
         records_path = f"/zones/{_segment(zone_id)}/dns_records"
-        groups_path = f"/accounts/{_segment(account_id)}/access/groups"
-        apps = self._apps(f"/accounts/{_segment(account_id)}/access/apps")
+        access = self._access(f"/accounts/{_segment(account_id)}/access")
+        apps, groups = access if access is not None else (None, ())
         return Snapshot(
             tunnel_id=_text(tunnel, "id", tunnel_path),
             records=tuple(_record(item, records_path) for item in self._pages(records_path)),
-            groups=() if apps is None else self._groups(groups_path),
+            groups=groups,
             apps=apps,
         )
 
-    def _groups(self, path: str) -> tuple[AccessGroup, ...]:
-        return tuple(_group(item, path) for item in self._pages(path))
-
-    def _apps(self, path: str) -> tuple[App, ...] | None:
+    def _access(self, path: str) -> tuple[tuple[App, ...], tuple[AccessGroup, ...]] | None:
+        """The apps and the groups, or None when Access is off at either read."""
         try:
-            return tuple(_app(item, path) for item in self._pages(path))
+            apps = tuple(_app(item, f"{path}/apps") for item in self._pages(f"{path}/apps"))
+            groups = tuple(_group(item, f"{path}/groups") for item in self._pages(f"{path}/groups"))
         except _Refusal as refusal:
             if refusal.access_not_enabled:
                 return None
             raise
+        return apps, groups
 
     def _one(self, path: str, query: Mapping[str, str], what: str) -> dict:
         items = self._pages(path, query)
@@ -302,20 +320,29 @@ def _group(item: dict, path: str) -> AccessGroup:
 def _app(item: dict, path: str) -> App:
     app_type = _text(item, "type", path)
     required = app_type == SELF_HOSTED
-    destinations = tuple(
-        _text(destination, "uri", path).lower()
+    public = [
+        destination
         for destination in _optional_list(item, "destinations", path, required)
         if isinstance(destination, dict)
         and destination.get("type", PUBLIC_DESTINATION) == PUBLIC_DESTINATION
-    )
-    if required or destinations:
-        _require_understood_fields(item, path)
+    ]
+    if required or public:
+        _require_only_fields(item, UNDERSTOOD_APP_FIELDS, "an Access app", path)
+    for destination in public:
+        _require_only_fields(destination, PUBLIC_DESTINATION_FIELDS, "a public destination", path)
+    uris = [_text(destination, "uri", path).lower() for destination in public]
     return App(
         type=app_type,
-        destinations=destinations,
+        destinations=tuple(uris),
         policies=tuple(
             _policy(policy, path) for policy in _optional_list(item, "policies", path, required)
         ),
+        overrides=tuple(
+            _override(uri, override, path)
+            for uri, destination in zip(uris, public, strict=True)
+            for override in _optional_list(destination, "overrides", path, False)
+        ),
+        options_preflight_bypass=item.get("options_preflight_bypass") is True,
     )
 
 
@@ -323,12 +350,23 @@ def _optional_list(item: dict, key: str, path: str, required: bool) -> list:
     return _list(item, key, path) if required or key in item else []
 
 
-def _require_understood_fields(item: dict, path: str) -> None:
-    unknown = sorted(set(item) - UNDERSTOOD_APP_FIELDS)
+def _override(destination: str, override: Any, path: str) -> Override:
+    if not isinstance(override, dict):
+        raise CloudflareReadError(f"{path}: an override is not a map")
+    _require_only_fields(override, OVERRIDE_FIELDS, "an override", path)
+    return Override(destination, _text(override, "path_pattern", path))
+
+
+def _require_only_fields(item: dict, understood: frozenset[str], what: str, path: str) -> None:
+    """Refuse a field beyond `understood`, naming only plain names: a response is never quoted."""
+    unknown = sorted(set(item) - understood)
     if unknown:
+        named = [name for name in unknown if PLAIN_FIELD_NAME.fullmatch(name)]
+        if len(named) < len(unknown):
+            named.append("a field with an unusual name")
         raise CloudflareReadError(
-            f"{path}: an Access app carries fields this check does not understand: "
-            f"{', '.join(map(str, unknown))}"
+            f"{path}: {what} carries {len(unknown)} fields this check does not understand: "
+            + ", ".join(named)
         )
 
 

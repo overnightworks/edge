@@ -17,6 +17,7 @@ from edge.external.cloudflare_read import (
     CloudflareClient,
     CloudflareReadError,
     Include,
+    Override,
     Policy,
     Record,
     Snapshot,
@@ -187,11 +188,12 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
 
 @pytest.mark.parametrize(
     "refused_paths",
-    [[APPS_PATH], [APPS_PATH, GROUPS_PATH]],
-    ids=["the apps only", "every access path"],
+    [[APPS_PATH], [GROUPS_PATH], [APPS_PATH, GROUPS_PATH]],
+    ids=["the apps only", "the groups after the apps", "every access path"],
 )
 def test_access_off_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
-    """R2: the groups are not asked for when the apps say Access is off."""
+    """R2: Access off at any access read is the same answer, and the groups are not asked for when
+    the apps say so."""
     for path in refused_paths:
         cloudflare.routes[path] = lambda _query: (
             403,
@@ -408,13 +410,89 @@ def test_a_deeply_nested_answer_is_a_malformed_answer_not_a_crash(cloudflare):
     assert "HTTP 200, malformed JSON answer" in read_error(cloudflare)
 
 
+def public_app(**changes) -> dict:
+    return {**self_hosted(f"www.{ZONE}", "bypass", [{"everyone": {}}]), **changes}
+
+
+def with_destination(**changes) -> dict:
+    return public_app(destinations=[{"type": "public", "uri": f"www.{ZONE}", **changes}])
+
+
 @pytest.mark.parametrize("app_type", ["self_hosted", "ssh"])
-def test_an_app_with_a_field_the_check_does_not_understand_is_refused(cloudflare, app_type):
-    """A path override that makes a path public is not understood, so it is never ignored."""
-    app = {**self_hosted(f"www.{ZONE}", "bypass", [{"everyone": {}}]), "type": app_type}
-    cloudflare.serve(APPS_PATH, [{**app, "overrides": [{"path_pattern": "/admin/*"}]}])
+def test_an_app_with_a_field_the_published_schema_lacks_is_refused_naming_it(cloudflare, app_type):
+    cloudflare.serve(APPS_PATH, [public_app(type=app_type, path_rules=[])])
     message = read_error(cloudflare)
-    assert message.startswith(APPS_PATH) and message.endswith("understand: overrides")
+    assert message.startswith(APPS_PATH) and message.endswith(
+        "1 fields this check does not understand: path_rules"
+    )
+
+
+@pytest.mark.parametrize("field", ["eager_redirect_cookie_setting", "user_populations"])
+@pytest.mark.parametrize("app_type", ["self_hosted", "ssh", "vnc", "rdp"])
+def test_a_documented_field_beyond_the_ones_the_check_judges_is_accepted(
+    cloudflare, app_type, field
+):
+    """R: the whitelist is the published response schema, not the provider's resource."""
+    cloudflare.serve(APPS_PATH, [public_app(type=app_type, **{field: True})])
+    assert cloudflare.client().read(ZONE).apps[0].type == app_type
+
+
+@pytest.mark.parametrize(
+    "unusual_name", [TOKEN, "Capital", "x" * 41, "has space", "with-hyphen"], ids=str
+)
+def test_a_field_with_an_unusual_name_is_counted_but_never_quoted(cloudflare, unusual_name):
+    """R: rule 12, a response is never quoted."""
+    cloudflare.serve(APPS_PATH, [public_app(**{unusual_name: 1, "path_rules": 1})])
+    message = read_error(cloudflare)
+    assert unusual_name not in message
+    assert message.endswith(
+        "2 fields this check does not understand: path_rules, a field with an unusual name"
+    )
+
+
+def test_the_overrides_of_a_public_destination_are_read_with_their_path_patterns(cloudflare):
+    """R: the schema's shape, destinations[].overrides[] = {behavior, path_pattern}."""
+    overrides = [{"behavior": "public", "path_pattern": "/admin/*"}]
+    cloudflare.serve(APPS_PATH, [with_destination(overrides=overrides)])
+    (app,) = cloudflare.client().read(ZONE).apps
+    assert app.overrides == (Override(f"www.{ZONE}", "/admin/*"),)
+
+
+@pytest.mark.parametrize("preflight", [True, False])
+def test_options_preflight_bypass_is_read(cloudflare, preflight):
+    cloudflare.serve(APPS_PATH, [public_app(options_preflight_bypass=preflight)])
+    assert cloudflare.client().read(ZONE).apps[0].options_preflight_bypass is preflight
+
+
+@pytest.mark.parametrize(
+    ("destination", "expected"),
+    [
+        pytest.param(
+            with_destination(extra=1)["destinations"][0],
+            "a public destination carries 1 fields this check does not understand: extra",
+            id="a public destination with another key",
+        ),
+        pytest.param(
+            {
+                "type": "public",
+                "uri": f"www.{ZONE}",
+                "overrides": [{"behavior": "public", "path_pattern": "/x", "more": 1}],
+            },
+            "an override carries 1 fields this check does not understand: more",
+            id="an override with another key",
+        ),
+        pytest.param(
+            {"type": "public", "uri": f"www.{ZONE}", "overrides": ["/x"]},
+            "an override is not a map",
+            id="an override that is not a map",
+        ),
+    ],
+)
+def test_a_destination_or_override_beyond_the_documented_shape_is_refused(
+    cloudflare, destination, expected
+):
+    cloudflare.serve(APPS_PATH, [public_app(destinations=[destination])])
+    assert expected in read_error(cloudflare)
 
 
 def test_an_app_without_destinations_may_carry_any_field(cloudflare):
