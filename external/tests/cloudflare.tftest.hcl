@@ -372,11 +372,11 @@ run "c12_without_hosts_nothing_is_looked_up" {
   }
 }
 
-run "x3_apply_the_public_hosts" {
+run "r7_apply_the_public_hosts" {
   command = apply
 }
 
-run "x3_a_changed_tunnel_updates_every_record_content" {
+run "r7_a_changed_tunnel_updates_every_record_content" {
   command = plan
 
   override_data {
