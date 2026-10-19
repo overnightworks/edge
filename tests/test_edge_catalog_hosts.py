@@ -110,6 +110,9 @@ def test_a_host_without_target_is_asked_on_traefik():
         pytest.param("songmaker", "@", "http://example.com:8080", False, id="not-loopback"),
         pytest.param("songmaker", "@", "https://localhost:8080", False, id="not-http"),
         pytest.param("songmaker", "@", "http://localhost", False, id="no-port"),
+        pytest.param("songmaker", "@", "http://localhost:8080/x", False, id="with-path"),
+        pytest.param("songmaker", "@", "http://localhost:8080?x", False, id="with-query"),
+        pytest.param("songmaker", "@", "http://me@localhost:8080", False, id="with-user-info"),
         pytest.param("songmaker", "@", "http://localhost:99999", False, id="port-out-of-range"),
         pytest.param("app", "app", "http://127.0.0.1:8081", True, id="the-default-anywhere"),
     ],
@@ -176,6 +179,17 @@ def test_the_cross_host_rules_refuse_naming_the_rule(hosts_of_the_catalog, rule)
     assert rule in refusal(document(hosted(*hosts_of_the_catalog)))
 
 
+@pytest.mark.parametrize(
+    "disabled_host,rule",
+    [
+        pytest.param(host("*", "public"), "wildcard must be protected", id="public-wildcard"),
+        pytest.param(host("app", "protected"), "only the wildcard", id="protected-label"),
+    ],
+)
+def test_the_single_host_rules_hold_for_a_disabled_entry(disabled_host, rule):
+    assert rule in refusal(document(hosted(disabled_host, run={"enabled": False})))
+
+
 def test_the_same_fqdn_across_entries_is_refused():
     assert "listed twice" in refusal(document(hosted(host(), key="a"), hosted(host(), key="b")))
 
@@ -207,9 +221,10 @@ def test_the_hosts_of_a_disabled_entry_are_still_validated():
 def test_an_enabled_that_is_no_boolean_is_refused_by_hosts_and_units(enabled, tmp_path):
     entry = hosted(host(), key="songmaker", run={"enabled": enabled})
     message = "services.songmaker.run.enabled: must be true or false"
-    assert refusal(document(entry)) == message
+    catalog_document = document(entry)
+    assert refusal(catalog_document) == message
     with pytest.raises(catalog.CatalogError, match="must be true or false"):
-        catalog.units(document(entry), PROFILES, tmp_path)
+        catalog.units(catalog_document, PROFILES, tmp_path)
 
 
 @pytest.mark.parametrize("written", ["no", "on", "yes", "off", '"false"', "True"])
@@ -246,10 +261,21 @@ def test_a_hosts_value_of_the_wrong_shape_is_refused(listed, message):
 
 
 @pytest.mark.parametrize(
-    "name", ["", "Hopin", "hopin.edge-fixture.invalid", "a.b", "-x", "a" * 64, 7]
+    "name",
+    ["", "Hopin", "hopin.edge-fixture.invalid", "a.b", "-x", "a" * 64, 7],
 )
 def test_a_name_that_is_no_apex_wildcard_or_label_is_refused(name):
     assert refusal(document(hosted(host(name)))).startswith("services.app.hosts[0].name:")
+
+
+@pytest.mark.parametrize("written", ["1e3", "0o17"])
+def test_a_label_that_tofu_reads_as_a_number_is_refused(written, tmp_path):
+    (tmp_path / catalog.FLEET_FILE).write_text(
+        f"cloudflare:\n  zone: {ZONE}\nservices:\n  app:\n    hosts:\n"
+        f"      - {{name: {written}, exposure: bypass, reason: own login}}\n"
+    )
+    with pytest.raises(catalog.CatalogError, match=r"hosts\[0\]\.name:"):
+        catalog.hosts(catalog.read(tmp_path / catalog.FLEET_FILE))
 
 
 @pytest.mark.parametrize("name", ["hopin", "a", "a" * 63, "a-b", "9"])
@@ -258,6 +284,6 @@ def test_a_lowercase_label_is_accepted(name):
     assert found.fqdn == f"{name}.{ZONE}"
 
 
-@pytest.mark.parametrize("zone", ["Edge-Fixture.invalid", "edge-fixture.invalid.", None])
+@pytest.mark.parametrize("zone", ["Edge-Fixture.invalid", "edge-fixture.invalid.", None, "", "a b"])
 def test_a_zone_with_a_capital_or_a_trailing_dot_is_refused(zone):
     assert refusal(document(hosted(host()), zone=zone)).startswith("cloudflare.zone:")

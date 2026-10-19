@@ -198,7 +198,7 @@ services:
 | `ready` | path | none | starts with one `/`; the publish guard of X8a |
 | `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker `@` and `www`) |
 
-`run.enabled` decides both the units and the hosts: only `true` and `false` count (YAML 1.2, as OpenTofu reads them), so `no` or `"false"` is refused. A disabled entry's hosts are validated but not published.
+`run.enabled` decides both the units and the hosts: only `true` and `false` count: OpenTofu's `yamldecode` also reads YAML 1.1 words (`yes`, `no`, `on`, `off`, `y`, `n`, `True`) as booleans and PyYAML disagrees on some of them, so every other spelling, `no` and `"false"` included, is refused. A disabled entry's hosts are validated but not published.
 
 ### What the catalog drives, and what it must not duplicate
 

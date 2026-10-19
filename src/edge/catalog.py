@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -21,12 +22,17 @@ FLEET_FILE = "fleet.yaml"
 _RUN_KEYS = {"enabled", "setup"}
 _BOOL_TAG = "tag:yaml.org,2002:bool"
 _TRUE_OR_FALSE = re.compile(r"^(?:true|false)$")
+_FLOAT_TAG = "tag:yaml.org,2002:float"
+_INT_TAG = "tag:yaml.org,2002:int"
+# Forms tofu reads as numbers and PyYAML leaves as strings, so they must not pass as labels.
+_EXPONENT_NUMBER = re.compile(r"^[-+]?\d+[eE][-+]?\d+$")
+_OCTAL_NUMBER = re.compile(r"^0o[0-7]+$")
 
 DEFAULT_TARGET = "http://127.0.0.1:8081"  # Traefik
 ADMIN_PORT = 8090
 _HOST_KEYS = {"name", "exposure", "reason", "ready", "target"}
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
-_LOOPBACK_TARGET = re.compile(r"http://(?:127\.0\.0\.1|localhost):(?P<port>[0-9]{1,5})")
+_LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost"}
 APEX = "@"
 WILDCARD = "*"
 # Gap 35 (docs/architecture.md section 7): these hosts still bypass Traefik. Their `target` stands
@@ -39,7 +45,12 @@ class CatalogError(Exception):
 
 
 class _CatalogLoader(yaml.SafeLoader):
-    """YAML 1.2 booleans, as tofu's `yamldecode` reads them: `no` and `on` stay strings."""
+    """Only `true` and `false` are booleans, and the numbers tofu reads are no strings.
+
+    tofu's `yamldecode` also reads YAML 1.1 words (`yes`, `no`, `on`, `off`, `y`, `n`, `True`)
+    as booleans and PyYAML disagrees on some of them; only `true` and `false` mean the same to
+    both readers, so every other spelling is refused.
+    """
 
 
 _CatalogLoader.yaml_implicit_resolvers = {
@@ -47,6 +58,8 @@ _CatalogLoader.yaml_implicit_resolvers = {
     for first_character, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 _CatalogLoader.add_implicit_resolver(_BOOL_TAG, _TRUE_OR_FALSE, list("tf"))
+_CatalogLoader.add_implicit_resolver(_FLOAT_TAG, _EXPONENT_NUMBER, list("-+0123456789"))
+_CatalogLoader.add_implicit_resolver(_INT_TAG, _OCTAL_NUMBER, ["0"])
 
 
 @dataclass(frozen=True)
@@ -166,9 +179,14 @@ def hosts(document: Any) -> tuple[Host, ...]:
 def _zone(document: dict) -> str:
     cloudflare = document.get("cloudflare")
     zone = cloudflare.get("zone") if isinstance(cloudflare, dict) else None
-    if not isinstance(zone, str) or zone != zone.lower() or zone.endswith("."):
+    if not isinstance(zone, str) or not _is_dotted_labels(zone):
         raise CatalogError("cloudflare.zone: must be a lowercase name without a trailing dot")
     return zone
+
+
+def _is_dotted_labels(zone: str) -> bool:
+    labels = zone.split(".")
+    return len(labels) >= 2 and all(_LABEL.fullmatch(label) for label in labels)
 
 
 def _entry_enabled(key: str, entry: dict) -> bool:
@@ -196,6 +214,7 @@ def _host(service: str, path: str, item: Any, zone: str) -> Host:
             raise CatalogError(f"{path}.{field}: unknown key")
     name = _name(path, item.get("name"))
     exposure = _exposure(path, item.get("exposure"))
+    _check_exposure_fits_name(path, name, exposure)
     return Host(
         service=service,
         name=name,
@@ -221,6 +240,13 @@ def _exposure(path: str, exposure: Any) -> Exposure:
         raise CatalogError(f"{path}.exposure: must be one of {values}") from None
 
 
+def _check_exposure_fits_name(path: str, name: str, exposure: Exposure) -> None:
+    if name == WILDCARD and exposure is not Exposure.PROTECTED:
+        raise CatalogError(f"{path}.exposure: the wildcard must be protected")
+    if exposure is Exposure.PROTECTED and name != WILDCARD:
+        raise CatalogError(f"{path}.exposure: only the wildcard may be protected")
+
+
 def _reason(path: str, reason: Any, exposure: Exposure) -> str | None:
     if reason is not None and not isinstance(reason, str):
         raise CatalogError(f"{path}.reason: must be a string")
@@ -238,13 +264,28 @@ def _ready(path: str, item: dict) -> str | None:
     return ready
 
 
+def _loopback_port(target: Any) -> int | None:
+    """The port of a loopback `target` written as scheme, 127.0.0.1 or localhost, and port; else None."""
+    if not isinstance(target, str):
+        return None
+    parts = urlsplit(target)
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    spelled_out = f"{parts.scheme}://{parts.netloc}"
+    if parts.scheme != "http" or parts.hostname not in _LOOPBACK_HOSTNAMES or not port:
+        return None
+    return port if target == spelled_out and parts.netloc == f"{parts.hostname}:{port}" else None
+
+
 def _target(path: str, service: str, name: str, target: Any) -> str:
-    matched = _LOOPBACK_TARGET.fullmatch(target) if isinstance(target, str) else None
-    if not matched or not 0 < int(matched["port"]) < 65536:
+    port = _loopback_port(target)
+    if port is None:
         raise CatalogError(
             f"{path}.target: must be http://127.0.0.1:<port> or http://localhost:<port>"
         )
-    if int(matched["port"]) == ADMIN_PORT:
+    if port == ADMIN_PORT:
         raise CatalogError(f"{path}.target: must not be the admin entrypoint :{ADMIN_PORT}")
     if target != DEFAULT_TARGET and (service, name) not in GAP_35_HOSTS:
         raise CatalogError(f"{path}.target: only gap-35 hosts may differ from {DEFAULT_TARGET}")
@@ -255,10 +296,6 @@ def _check_together(enabled_hosts: list[tuple[str, Host]]) -> None:
     wildcard_exists = any(host.name == WILDCARD for _, host in enabled_hosts)
     seen: set[str] = set()
     for path, host in enabled_hosts:
-        if host.name == WILDCARD and host.exposure is not Exposure.PROTECTED:
-            raise CatalogError(f"{path}.exposure: the wildcard must be protected")
-        if host.exposure is Exposure.PROTECTED and host.name != WILDCARD:
-            raise CatalogError(f"{path}.exposure: only the wildcard may be protected")
         if wildcard_exists and host.exposure is Exposure.PUBLIC and host.name != APEX:
             raise CatalogError(
                 f"{path}.exposure: a public host needs its own bypass while '*' exists"
