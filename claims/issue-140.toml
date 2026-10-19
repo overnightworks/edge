@@ -1,0 +1,8 @@
+claim_id = "0e0b87d1b8574ab49efed90dcb22c207"
+agent = "claude"
+role = "builder"
+base = "4b456cd139de12713001643f45b09366e1728490"
+branch = "claude/issue-140-h1a-import-home-tools"
+scope = [".aco/board.toml", "AGENTS.md", "docs/home.md", "pyproject.toml", "scripts", "src/home_tools", "systemd/home-check.service", "systemd/home-check.timer", "tests/home"]
+opened_commit = "8ce6a211164bc885a81dde871001e9cdb0ff700e"
+whole_reason = "One import: the history-preserving merge of home-tools, its layout moves and the config union that keeps CI green; a part alone leaves a red tree or a lost history."
