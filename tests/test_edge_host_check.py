@@ -657,6 +657,15 @@ ACCESS_PATH_FORMS = [
     ("//evil.example/cdn-cgi/access/", False),
     ("https://evil.example/cdn-cgi/access/", False),
     ("https://[::1/cdn-cgi/access/", False),
+    # Authority characters, each refused on its own (Opus O4-1, Grok G4-1).
+    ("https://evil.example\\team.cloudflareaccess.com/", False),
+    ("https://evil.example\\.cloudflareaccess.com/x", False),
+    ("https://x@team.cloudflareaccess.com/", False),
+    # The query and fragment are never inspected, newlines included; the path stays strict.
+    ("/cdn-cgi/access?x=\nfoo", True),
+    ("/cdn-cgi/access#\nfoo", True),
+    ("https://team.cloudflareaccess.com/cdn-cgi/access/login?x=\nfoo", True),
+    ("/cdn-cgi/acc\ness", False),
     ("", False),
 ]
 

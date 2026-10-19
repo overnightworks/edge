@@ -24,7 +24,7 @@ ACCESS_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # Only Cloudflare's canonical Access URL counts: a Location outside these two forms is never read
 # further, because no two URL parsers agree on what a non-canonical one means.
 _PATH_CHARACTERS = r"[A-Za-z0-9\-._~!$&'()*+,;=:@/]"
-_QUERY_AND_FRAGMENT = r"(?:[?#].*)?"
+_QUERY_AND_FRAGMENT = r"(?:[?#][\s\S]*)?"
 _ABSOLUTE_LOCATION = re.compile(
     rf"https://(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.?)(?::443)?"
     rf"(?P<path>/{_PATH_CHARACTERS}*){_QUERY_AND_FRAGMENT}"
