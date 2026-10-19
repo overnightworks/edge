@@ -560,10 +560,10 @@ systemctl --user enable --now home-check.timer
 den Starter `bin/edge`, der `.venv/bin/home` des Checkouts ausführt; der Link
 unter `~/.local/bin` muss deshalb `home` heißen. Die systemd-Unit ruft
 `~/git/edge/.venv/bin/home` direkt auf und hängt so an keinem Link. `home`
-läuft mit dem Python der `.venv` (heute 3.14; `requires-python >= 3.12`). Das
+läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
-Neuinstallation; nach einem Pull, der Abhängigkeiten ändert, frischt
-`uv sync --locked` die `.venv` auf, bevor der Timer sie sieht.
+Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
+ausführen (oder `home` über `bin/home` aufrufen), bevor der Timer läuft.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
 nach) und fährt nur `home check`. `home tidy --apply` bleibt ein bewusster
