@@ -620,12 +620,21 @@ def test_the_answer_is_judged_against_the_declared_exposure(host, verdicts, wher
 
 ACCESS_PATH_FORMS = [
     ("https://{host}/cdn-cgi/access/login", True),
-    ("/other/../cdn-cgi/access/login", True),
-    ("https://{host}/other/../cdn-cgi/access/login", True),
-    ("//{host}/other/../cdn-cgi/access/login", True),
+    ("/cdn-cgi/access/login", True),
+    ("https://{host}:443/cdn-cgi/access/authorized", True),
     ("https://{host}./cdn-cgi/access/login", True),
     ("https://{HOST}:443/cdn-cgi/access/login", True),
     ("https://team.cloudflareaccess.com./x", True),
+    ("https://TEAM.cloudflareaccess.com./x", True),
+    # A dot segment is never canonical, whatever it would resolve to.
+    ("/other/../cdn-cgi/access/login", False),
+    ("https://{host}/other/../cdn-cgi/access/login", False),
+    ("//{host}/other/../cdn-cgi/access/login", False),
+    # Parser differentials (Codex round 3): none of these is a canonical form.
+    ("https://evil.example\\@team.cloudflareaccess.com/", False),
+    ("//evil.example\\@{host}/cdn-cgi/access/login", False),
+    ("///evil.example/../cdn-cgi/access/login", False),
+    ("https:///evil.example/../cdn-cgi/access/login", False),
     ("https://team.cloudflareaccess.com/cdn-cgi/access/login/x", True),
     ("/cdn-cgi/access/..\\..\\public", False),
     ("/cdn-cgi/access/..%2fpublic", False),
@@ -634,7 +643,7 @@ ACCESS_PATH_FORMS = [
     ("/x%5C/../cdn-cgi/access/login", False),
     ("/x\\/../cdn-cgi/access/login", False),
     ("/cdn-cgi/access/..%%32F..%%32Fpublic", False),
-    ("https://team.cloudflareaccess.com/cdn-cgi/access/login/host?kid=k&redirect_url=%2F", True),
+    ("https://team.cloudflareaccess.com/cdn-cgi/access/login/{host}?kid=k&redirect_url=%2F", True),
     ("/cdn-cgi/access/../../public", False),
     ("https://{host}/cdn-cgi/access/../../public", False),
     ("//{host}/cdn-cgi/access/../../public", False),

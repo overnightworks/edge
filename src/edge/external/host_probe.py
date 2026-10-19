@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 from edge.external.cloudflare_read import LOOPBACK_HOSTNAMES
 
@@ -20,9 +20,16 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 USER_AGENT = "edge-host-check/1"
 ACCESS_TEAM_SUFFIX = ".cloudflareaccess.com"
 ACCESS_PATH = "/cdn-cgi/access"
-HTTPS_PORT = 443
 ACCESS_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-_ESCAPED_UNRESERVED = re.compile(r"%(2[dDeE]|3[0-9]|[46][1-9a-fA-F]|[57][0-9aA]|5[fF]|7[eE])")
+# Only Cloudflare's canonical Access URL counts: a Location outside these two forms is never read
+# further, because no two URL parsers agree on what a non-canonical one means.
+_PATH_CHARACTERS = r"[A-Za-z0-9\-._~!$&'()*+,;=:@/]"
+_QUERY_AND_FRAGMENT = r"(?:[?#].*)?"
+_ABSOLUTE_LOCATION = re.compile(
+    rf"https://(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.?)(?::443)?"
+    rf"(?P<path>/{_PATH_CHARACTERS}*){_QUERY_AND_FRAGMENT}"
+)
+_ROOT_RELATIVE_LOCATION = re.compile(rf"(?P<path>/(?!/){_PATH_CHARACTERS}*){_QUERY_AND_FRAGMENT}")
 
 
 class FailureKind(StrEnum):
@@ -53,8 +60,6 @@ class Prober(Protocol):
 
 
 ConnectionFactory = Callable[[str, float], http.client.HTTPConnection]
-
-_ENCODED_SEPARATOR = re.compile(r"%(2[fF]|5[cC])")
 
 
 def _connection_to_origin(origin: str | None) -> ConnectionFactory:
@@ -130,51 +135,14 @@ def is_access_redirect(answer: Answer, probed_host: str) -> bool:
     """Whether the answer sends the visitor to Cloudflare Access; never follows the redirect."""
     if answer.status not in ACCESS_REDIRECT_STATUSES or answer.location is None or answer.challenge:
         return False
-    try:
-        raw_path = urlsplit(answer.location).path
-        target = urlsplit(urljoin(f"https://{probed_host}/", answer.location))
-        port, hostname = target.port, target.hostname
-    except ValueError:
+    absolute = _ABSOLUTE_LOCATION.fullmatch(answer.location)
+    relative = _ROOT_RELATIVE_LOCATION.fullmatch(answer.location)
+    canonical = absolute or relative
+    if canonical is None or any(segment in (".", "..") for segment in canonical["path"].split("/")):
         return False
-    if target.scheme != "https" or port not in (None, HTTPS_PORT) or hostname is None:
-        return False
-    path = normalized_path(target.path)
-    if any(_hides_a_path_separator(each) for each in (raw_path, target.path, path)):
-        return False
-    host = hostname.removesuffix(".")
+    probed = probed_host.lower().removesuffix(".")
+    host = absolute["host"].lower().removesuffix(".") if absolute else probed
     if host.endswith(ACCESS_TEAM_SUFFIX):
         return True
-    on_access_path = path == ACCESS_PATH or path.startswith(f"{ACCESS_PATH}/")
-    return host == probed_host.lower().removesuffix(".") and on_access_path
-
-
-def _hides_a_path_separator(path: str) -> bool:
-    """A browser may read a backslash or an encoded slash as a separator the server did not."""
-    return "\\" in path or _ENCODED_SEPARATOR.search(path) is not None
-
-
-def normalized_path(path: str) -> str:
-    """RFC 3986 6.2.2.2 (unreserved escapes decoded once), then 5.2.4 (dot segments removed)."""
-    remaining = _ESCAPED_UNRESERVED.sub(lambda escape: chr(int(escape[1], 16)), path)
-    output: list[str] = []
-    while remaining:
-        if remaining.startswith("../"):
-            remaining = remaining[3:]
-        elif remaining.startswith(("./", "/./")):
-            remaining = remaining[2:]
-        elif remaining == "/.":
-            remaining = "/"
-        elif remaining.startswith("/../"):
-            remaining = remaining[3:]
-            output = output[:-1]
-        elif remaining == "/..":
-            remaining = "/"
-            output = output[:-1]
-        elif remaining in (".", ".."):
-            remaining = ""
-        else:
-            segment_end = remaining.find("/", 1)
-            segment_end = len(remaining) if segment_end == -1 else segment_end
-            output.append(remaining[:segment_end])
-            remaining = remaining[segment_end:]
-    return "".join(output)
+    path = canonical["path"]
+    return host == probed and (path == ACCESS_PATH or path.startswith(f"{ACCESS_PATH}/"))

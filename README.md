@@ -229,8 +229,9 @@ Access um, oder die geschuetzte Wildcard leitet nicht auf Access um (oder ist
 eine Challenge). `unreachable`: die Anfrage scheiterte (DNS, TLS, Verbindung,
 Zeitueberschreitung, fehlerhafte Antwort). Eine Challenge auf einem
 oeffentlichen oder `bypass`-Host besteht. Ein 5xx mit `cf-ray` besteht: ob der
-Dienst lebt, sagt `ready`, nicht dieser Check. Kein Befund zitiert Header,
-Ziel oder Fehlertext.
+Dienst lebt, sagt `ready`, nicht dieser Check. Als Access-Umleitung zaehlt nur
+Cloudflares kanonische Access-URL; jede andere Schreibweise des Ziels gilt als
+keine. Kein Befund zitiert Header, Ziel oder Fehlertext.
 
 ```bash
 bin/edge external check --hosts [--json]

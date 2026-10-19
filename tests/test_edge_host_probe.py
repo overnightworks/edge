@@ -277,19 +277,15 @@ def test_a_long_hostile_header_is_carried_as_data_not_raised():
 
 
 @pytest.mark.parametrize(
-    ("path", "normalized"),
+    ("location", "is_access"),
     [
-        ("/cdn-cgi/access/../../public", "/public"),
-        ("/cdn-cgi/access/%2e%2e/%2E%2e/public", "/public"),
-        ("/other/../cdn-cgi/access/login", "/cdn-cgi/access/login"),
-        ("/a/./b/../c", "/a/c"),
-        ("/cdn-cgi/access", "/cdn-cgi/access"),
-        ("/cdn-cgi/access/", "/cdn-cgi/access/"),
-        ("/../../x", "/x"),
-        ("/a/b/..", "/a/"),
-        ("/a/%7Eb%2F", "/a/~b%2F"),
+        pytest.param("/x", True, id="one-slash-is-on-the-probed-host"),
+        pytest.param("//evil.example/x", False, id="two-slashes-name-another-authority"),
+        pytest.param("///evil.example/x", False, id="three-slashes"),
+        pytest.param("/\\evil.example/x", False, id="slash-backslash"),
     ],
 )
-def test_the_path_is_normalized_like_rfc_3986(path, normalized):
-    """PB4: unreserved escapes decoded once, dot segments removed, reserved escapes kept."""
-    assert host_probe.normalized_path(path) == normalized
+def test_only_a_single_leading_slash_is_root_relative(location, is_access):
+    """PB4: probed on an Access team host, where any location on the probed host counts."""
+    answer = Answer(302, location, True, False)
+    assert host_probe.is_access_redirect(answer, "team.cloudflareaccess.com") is is_access
