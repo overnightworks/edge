@@ -292,8 +292,9 @@ def test_a_failing_close_keeps_the_verdict_already_decided(failure, decided):
 def test_an_interrupt_during_close_propagates():
     """PB3."""
     connection = ScriptedConnection(close_failure=KeyboardInterrupt())
+    prober = HttpProber(connection=lambda _name, _timeout: connection)
     with pytest.raises(KeyboardInterrupt):
-        HttpProber(connection=lambda _name, _timeout: connection).ask(FQDN)
+        prober.ask(FQDN)
 
 
 def test_the_two_unreachable_network_errors_share_the_generic_phrase():
