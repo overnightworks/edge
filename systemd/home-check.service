@@ -3,6 +3,6 @@ Description=home check: berichtet, was von ~/README.md und dem Geheimnis-Manifes
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/home check
+ExecStart=%h/git/edge/.venv/bin/home check
 # Exit 1 means "findings exist": news, not a failure. Exit 2 (invalid config) and 3 (unexpected error) still fail the unit.
 SuccessExitStatus=1
