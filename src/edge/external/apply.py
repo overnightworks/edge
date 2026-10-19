@@ -67,6 +67,7 @@ class Progress:
     plan_was_empty: bool = False
     apply_exit_code: int | None = None
     interrupted: bool = False  # recorded where the interrupt is caught, never inferred later
+    reported: bool = False  # set once `report_interrupt` has printed the interrupt line
 
 
 def closing_after(progress: Progress) -> ClosingCheck:
@@ -224,16 +225,22 @@ def apply_plan(
     except OSError as error:
         if progress.step is Step.PLAN:
             raise
-        step = progress.step
-        if progress.interrupted:  # the body re-raised the interrupt: only the cleanup failed
-            _report_interrupt(progress, plan_file_deleted=False)
-            step = Step.CLEANUP
-        raise StepFailed(step, error, closing_after(progress)) from error
+        raise _failed_during_cleanup_or_step(progress, error) from error
     except Exception as error:
         if not progress.apply_reached:
             raise
-        raise StepFailed(progress.step, error, closing_after(progress)) from error
+        raise _failed_during_cleanup_or_step(progress, error) from error
     return ApplyOutcome(result, closing_after(progress))
+
+
+def _failed_during_cleanup_or_step(progress: Progress, error: Exception) -> StepFailed:
+    """An interrupt the body re-raised was replaced by the cleanup's own failure: report the
+    interrupt, which `_interrupted` can no longer do, and name the cleanup as the failed step."""
+    step = progress.step
+    if progress.interrupted:
+        report_interrupt(progress, plan_file_deleted=False)
+        step = Step.CLEANUP
+    return StepFailed(step, error, closing_after(progress))
 
 
 def _recording_interrupts(
@@ -254,11 +261,11 @@ def _recording_interrupts(
 
 def _interrupted(progress: Progress) -> ApplyOutcome:
     progress.interrupted = True
-    _report_interrupt(progress)
+    report_interrupt(progress)
     return ApplyOutcome(ApplyExit.REFUSED, closing_after(progress))
 
 
-def _report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> None:
+def report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> None:
     step = progress.step
     consequence = UNCHECKED_CONSEQUENCE if progress.apply_reached else "nothing was applied"
     plan_file = "; the plan file is deleted" if plan_file_deleted else ""
@@ -266,6 +273,7 @@ def _report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> 
         f"\nedge external apply: interrupted during {step}, {consequence}{plan_file}",
         file=sys.stderr,
     )
+    progress.reported = True
 
 
 def _show_confirm_apply(

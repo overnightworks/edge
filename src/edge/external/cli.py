@@ -73,35 +73,36 @@ def apply_command(
     live one, on a clean main. An apply that may have changed the services, or found nothing to
     do, ends on the host check (#30 rule 8): its verdict decides the exit.
 
-    SIGTERM is an interrupt from the first line to the exit, and the one `except KeyboardInterrupt`
-    decides every interrupt that reaches it: before the tofu session "nothing was applied"; after
-    it the line of the disposition known so far; once the check committed its verdict, that
-    verdict's exit. Always exit 1 but the last. Accepted windows, named and not covered: between
-    `check_command`'s return and the mask, between the two handler swaps of `_signals_ignored`,
-    and after the mask until the process exits."""
-    run = _ApplyRun()
-    closing = apply.ClosingCheck.NO_CHECK_REFUSED
+    The `try` is the first statement, so every setup step is inside it; SIGTERM is an interrupt
+    from the run's setup to the exit, and the one `except KeyboardInterrupt` decides every
+    interrupt that reaches it: before the tofu session "nothing was applied"; after it the line of
+    the disposition known so far; once the check committed its verdict, that verdict's exit.
+    Always exit 1 but the last. Accepted windows, named and not covered: from process start until
+    this first statement, between `check_command`'s return and the mask, between the two handler
+    swaps of `_signals_ignored`, and after the mask until the process exits."""
+    try:
+        run = _ApplyRun()
+        closing = apply.ClosingCheck.NO_CHECK_REFUSED
 
-    def refusal() -> int | None:
-        return (
-            apply.refusal_without_terminal()
-            or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
-            or _refusal_invalid_catalog("apply")
-            or _refusal_unreadable_cloudflare_read_file(home)
-        )
+        def refusal() -> int | None:
+            return (
+                apply.refusal_without_terminal()
+                or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
+                or _refusal_invalid_catalog("apply")
+                or _refusal_unreadable_cloudflare_read_file(home)
+            )
 
-    def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
-        nonlocal closing
-        try:
-            outcome = apply.apply_plan(home, token_values, progress=run.progress)
-        except apply.StepFailed as failure:
-            closing = failure.closing
-            raise
-        closing = outcome.closing
-        return outcome.exit
+        def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
+            nonlocal closing
+            try:
+                outcome = apply.apply_plan(home, token_values, progress=run.progress)
+            except apply.StepFailed as failure:
+                closing = failure.closing
+                raise
+            closing = outcome.closing
+            return outcome.exit
 
-    with apply.terminate_like_interrupt():
-        try:
+        with apply.terminate_like_interrupt():
             exit_code = _guarded(
                 "apply",
                 home,
@@ -113,8 +114,9 @@ def apply_command(
             if not closing.runs_the_check:
                 return exit_code
             return _close_on_host_check(home, closing, exit_code, run)
-        except KeyboardInterrupt:
-            return _exit_after_interrupt(run)
+    except KeyboardInterrupt:
+        # an interrupt before the record exists left nothing behind: the fresh record says so
+        return _exit_after_interrupt(locals().get("run") or _ApplyRun())
 
 
 @dataclass
@@ -128,13 +130,17 @@ class _ApplyRun:
 def _exit_after_interrupt(run: _ApplyRun) -> int:
     if run.committed_exit is not None:
         return run.committed_exit
-    if not run.progress.interrupted:  # an interrupt `apply_plan` met has been reported by it
-        closing = apply.closing_after(run.progress)
-        if closing.runs_the_check:
-            line = _CLOSING_LINES[(closing, INTERRUPTED)]
-        else:
-            line = "interrupted, nothing was applied"
-        print(f"edge external apply: {line}", file=sys.stderr)
+    progress = run.progress
+    if progress.interrupted:
+        if not progress.reported:  # the signal landed before `apply_plan` printed its line
+            apply.report_interrupt(progress, plan_file_deleted=False)
+        return apply.ApplyExit.REFUSED
+    closing = apply.closing_after(progress)
+    if closing.runs_the_check:
+        line = _CLOSING_LINES[(closing, INTERRUPTED)]
+    else:
+        line = "interrupted, nothing was applied"
+    print(f"edge external apply: {line}", file=sys.stderr)
     return apply.ApplyExit.REFUSED
 
 
@@ -361,10 +367,10 @@ def _plan(home: Path, token_values: dict[str, str]) -> int:
     exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
     redacted_output = secrets.redact(planned.output, token_values)
     if exit_code is ExitCode.CANNOT_PLAN:
-        print(redacted_output, file=sys.stderr)
+        apply.show_tofu_output(redacted_output, sys.stderr)
         print(f"edge external plan: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
         return exit_code
-    print(redacted_output.rstrip("\n"))
+    apply.show_tofu_output(redacted_output.rstrip("\n"), sys.stdout)
     if exit_code is ExitCode.CHANGES:
         print("edge external plan: changes pending, the live services differ from external/")
     return exit_code
