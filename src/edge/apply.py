@@ -22,10 +22,11 @@ cleared here: only `edge start` ends it.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
-the live compose project to that tree (#79, exit 2); its `.env` (exit 2); `apply.lock` in the state
-directory, held non-blocking for the whole run, so a second apply is refused (exit 1) while
-`edge stop` and `edge start` never wait for it; HEAD on `main` (exit 2); and a clean tree, every
-changed path named (exit 2), since a change reaches the live checkout through a pull request.
+the live compose project to that tree (#79, exit 2); `apply.lock` in the state directory, held
+non-blocking for the whole run, so a second apply is refused (exit 1) while `edge stop` and
+`edge start` never wait for it; HEAD on `main` (exit 2); a clean tree, every changed path named
+(exit 2), since a change reaches the live checkout through a pull request; and its `.env`, which
+is written when missing and otherwise named and left alone when it differs (exit 2, #136).
 
 Then it fetches origin's `main` through the operator's credential helper and pins its sha (#98): a
 failed fetch is exit 2 with git's last error line; a checkout ahead of or beside it is exit 2,
@@ -38,14 +39,25 @@ in the checkout changes: only `.git` gains the fetched objects, FETCH_HEAD and `
 import fcntl
 import os
 import sys
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import barrier, catalog, checkout, compose, core, setup, switches, terminal
+from edge import (
+    barrier,
+    catalog,
+    checkout,
+    compose,
+    core,
+    environment,
+    setup,
+    switches,
+    terminal,
+)
 
+EnsureEnvironment = Callable[[Path], str | None]
 COMMAND = "edge apply --closed"
 APPLY_LOCK = "apply.lock"
 _PRIVATE_DIRECTORY = 0o700
@@ -373,17 +385,12 @@ def apply_closed(
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
     watch: compose.Watch = compose.SETTLED,
     git: checkout.Runner = checkout.run_git,
+    ensure_environment: EnsureEnvironment = environment.ensure,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
     if refusal := checkout.not_live_checkout_line(repository, home or Path.home()):
         _say(refusal)
-        return ApplyExit.CANNOT_PLAN
-    if not checkout.has_environment_file(repository):
-        _say(
-            f"{checkout.LIVE_CHECKOUT} has no {checkout.ENVIRONMENT_FILE} file; run "
-            f"`{checkout.ENVIRONMENT_FILE_HINT}` there and fill it in"
-        )
         return ApplyExit.CANNOT_PLAN
     try:
         lock = _take_apply_lock(state_directory)
@@ -395,7 +402,9 @@ def apply_closed(
         return ApplyExit.REFUSED
     try:
         live = checkout.Git(repository, git)
-        if not _on_clean_main(live) or (waiting := _fetched(live)) is None:
+        if not (_on_clean_main(live) and _environment_ready(repository, ensure_environment)):
+            return ApplyExit.CANNOT_PLAN
+        if (waiting := _fetched(live)) is None:
             return ApplyExit.CANNOT_PLAN
         return _plan_and_apply(
             state_directory, engine, repository, check, run_setup, verifier, watch, waiting
@@ -435,6 +444,19 @@ def _on_clean_main(git: checkout.Git) -> bool:
     for line in refusals:
         _say(line)
     return not refusals
+
+
+def _environment_ready(repository: Path, ensure_environment: EnsureEnvironment) -> bool:
+    """True when `.env` holds the derived settings, written now or before; else False, after
+    saying why (#136)."""
+    try:
+        written = ensure_environment(repository)
+    except environment.EnvironmentRefused as refusal:
+        _say(str(refusal))
+        return False
+    if written:
+        _say(written)
+    return True
 
 
 @dataclass(frozen=True)

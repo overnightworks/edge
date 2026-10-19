@@ -20,7 +20,6 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `compose.yaml` | the services, image pins (version and digest), the socket directory, the Keycloak database, `step-ca` and `traefik-mcp-acme` volumes, the Keycloak secrets and `step_ca_password` |
 | `traefik.yml` | the two entrypoints (`edge`, `admin`) and the providers |
 | `dynamic/` | file-provider routes for host processes (empty for now) and the emergency barriers `switch-<unit>.yml`, written by `edge stop` and git-ignored |
-| `.env.example` | the two settings the stack needs (Keycloak's secrets are files, see [Keycloak](#keycloak-auth)) |
 | `keycloak/` | the realms as code, the secrets entrypoint, the bootstrap overlay and its master step, the secret check's rules |
 | `keycloak/go-live` | the one command that takes Keycloak live (see [Keycloak go-live](#keycloak-go-live)) |
 | `probe/keycloak/` | the Keycloak probe, re-run for every Keycloak upgrade |
@@ -80,10 +79,11 @@ Slice S2b of overnightworks/edge#100 puts it on PATH as `edge`.
 
 ## Configure
 
-```sh
-cp .env.example .env     # .env is local; never commit it; `edge apply --closed` needs it
-getent group docker | cut -d: -f3   # put this number into DOCKER_GID
-```
+The first `edge apply --closed` writes `.env` itself: `EDGE_DOMAIN` is `fleet.yaml`'s
+`cloudflare.zone` and `DOCKER_GID` the id of this PC's `docker` group (Keycloak's secrets are files,
+see [Keycloak](#keycloak-auth)). `.env` is local and never committed. A `.env` that differs, or
+lacks one of the two keys, is named and left alone: delete it and `edge apply --closed` writes it
+again.
 
 ## Start, readiness, stop
 
@@ -274,11 +274,15 @@ Container noch einmal und meldet nur, was er sieht; ein zweiter Lauf meldet `not
 Er laeuft nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree; aus einem Lane-Worktree oder
 einer anderen Kopie verweigert er mit Exit 2 und nennt den Grund (die andere Kopie, "a linked
 worktree" oder "no git checkout"), denn sonst haengte er das Live-Projekt an diesen Baum. Danach
-prueft er, in dieser Reihenfolge und jeweils mit nur der ersten Zeile, die verweigert: `.env` ist
-eine Datei (sonst Exit 2: "run `cp .env.example .env`"), kein anderes `edge apply --closed` laeuft
-(sonst Exit 1; `edge stop` und `edge start` warten nie darauf), HEAD steht auf `main` (sonst
-Exit 2 mit Zweig oder kurzem Hash) und der Baum ist sauber (sonst Exit 2, jeder geaenderte oder
-unverfolgte Pfad auf eigener Zeile; ignorierte wie `.env` zaehlen nicht). `fleet.yaml` aenderst
+prueft er, in dieser Reihenfolge und jeweils mit nur der ersten Zeile, die verweigert: kein anderes
+`edge apply --closed` laeuft (sonst Exit 1; `edge stop` und `edge start` warten nie darauf), HEAD
+steht auf `main` (sonst Exit 2 mit Zweig oder kurzem Hash), der Baum ist sauber (sonst Exit 2,
+jeder geaenderte oder unverfolgte Pfad auf eigener Zeile; ignorierte wie `.env` zaehlen nicht) und
+`.env` stimmt. Fehlt `.env`, schreibt `edge apply --closed` sie selbst (`EDGE_DOMAIN` aus
+`cloudflare.zone` in `fleet.yaml`, `DOCKER_GID` aus der Gruppe `docker` dieses PCs) und sagt es in
+einer Zeile; steht eine abweichende da, fehlt ihr einer der beiden Schluessel oder ist sie nicht
+lesbar, haelt er mit Exit 2 an, nennt Schluessel, den Wert in der Datei und den abgeleiteten Wert
+und laesst die Datei unberuehrt: du loeschst sie, `edge apply --closed` schreibt sie neu. `fleet.yaml` aenderst
 du per Pull Request; in den Live-Checkout kommt er bis S2.4c mit `git -C ~/git/edge pull
 --ff-only`. Git laeuft dabei ohne Hooks, ohne fsmonitor und ohne deine globale Konfiguration;
 "ignoriert" heisst nur, was die `.gitignore` des Repositorys sagt, nicht deine globale
@@ -341,8 +345,8 @@ fertig), nicht, dass er schon gesund ist und antwortet; die Gesundheit zeigt `do
 
 Exit 0 angewendet und beobachtet oder nichts zu tun, 1 verweigert (auch: ein anderes Apply
 laeuft), abgebrochen, fehlgeschlagen oder nur teilweise angewendet, 2 nicht planbar (nicht aus dem
-Live-Checkout `~/git/edge` gestartet, `.env` fehlt, nicht auf `main`, Baum nicht sauber, git nicht
-befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
+Live-Checkout `~/git/edge` gestartet, nicht auf `main`, Baum nicht sauber, `.env` abweichend, unlesbar oder nicht schreibbar, keine Gruppe `docker`,
+`cloudflare.zone` ungueltig, git nicht befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
 kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die

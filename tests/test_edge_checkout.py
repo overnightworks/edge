@@ -25,8 +25,6 @@ HOOK_NAMES = (
     "post-update", "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite",
     "sendemail-validate", "fsmonitor-watchman", "post-index-change",
 )  # fmt: skip
-AS_ROOT = os.geteuid() == 0
-ROOT_REASON = "root reads a mode-000 file anyway, so the cell cannot show it is never opened"
 
 
 @pytest.fixture(autouse=True)
@@ -141,39 +139,6 @@ def test_a_tree_without_git_says_it_is_no_git_checkout(home):
     code_tree.mkdir(parents=True)
 
     assert checkout.not_live_checkout(code_tree, home) == "no git checkout"
-
-
-@pytest.mark.parametrize(
-    "make",
-    [
-        pytest.param(lambda env: None, id="missing"),
-        pytest.param(lambda env: env.mkdir(), id="a directory"),
-        pytest.param(lambda env: env.symlink_to(env.parent / "gone"), id="a dangling symlink"),
-    ],
-)
-def test_an_environment_file_that_is_no_file_is_missing(tmp_path, make):
-    """#95 rule 3, G6: `.env` missing, a directory or a dangling symlink is no `.env`."""
-    make(tmp_path / ".env")
-
-    assert not checkout.has_environment_file(tmp_path)
-
-
-def test_an_environment_file_reached_through_a_symlink_is_present(tmp_path):
-    """#95 rule 3, G7: a symlink to a file is a `.env`."""
-    (tmp_path / "real.env").touch()
-    (tmp_path / ".env").symlink_to(tmp_path / "real.env")
-
-    assert checkout.has_environment_file(tmp_path)
-
-
-@pytest.mark.skipif(AS_ROOT, reason=ROOT_REASON)
-def test_an_unreadable_environment_file_is_present_and_never_opened(tmp_path):
-    """#95 rule 3, G7: a mode-000 `.env` passes; opening it would have failed."""
-    environment_file = tmp_path / ".env"
-    environment_file.touch(mode=0o000)
-    environment_file.chmod(0o000)
-
-    assert checkout.has_environment_file(tmp_path)
 
 
 def test_a_born_main_is_on_main(git):

@@ -16,7 +16,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -40,6 +42,7 @@ from edge import (
     cli,
     compose,
     emergency,
+    environment,
     setup,
     switches,
     tunnel,
@@ -57,6 +60,8 @@ PROBE_DISABLED = ENABLED + "  probe:\n    run: {enabled: false}\n"
 NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
 PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-route answer
 WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
+ZONE = "edge-fixture.invalid"
+DOCKER_GID = 998
 NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 NEVER_RUN = {"down", "-v", "--volumes", "-V", "--renew-anon-volumes"}
 # The labels beside the definition hash in a real `ps --format json` line (frozen from #87 Q1,
@@ -391,11 +396,31 @@ def edge_tree(tree: Path) -> Path:
         setup = tree / directory / "init"
         setup.write_text("#!/bin/sh\n")
         setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
-    (tree / "fleet.yaml").write_text(ENABLED)
+    (tree / "fleet.yaml").write_text(f"cloudflare:\n  zone: {ZONE}\n" + ENABLED)
     (tree / "dynamic").mkdir()
     (tree / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
-    (tree / ".env").touch()
+    (tree / ".env").write_text(f"EDGE_DOMAIN={ZONE}\nDOCKER_GID={DOCKER_GID}\n")
     return tree
+
+
+def docker_group(name: str) -> SimpleNamespace:
+    """The group lookup of a PC whose `docker` group has `DOCKER_GID`."""
+    if name != environment.DOCKER_GROUP:
+        raise KeyError(name)
+    return SimpleNamespace(gr_gid=DOCKER_GID)
+
+
+def without_docker_group(name: str) -> SimpleNamespace:
+    raise KeyError(name)
+
+
+def writing_environment(group_lookup=docker_group) -> apply.EnsureEnvironment:
+    """The real `.env` step on a PC with that group lookup."""
+    return partial(environment.ensure, group_lookup=group_lookup)
+
+
+def trusted_environment(_tree: Path) -> None:
+    """The `.env` step of the tests that are about something else: it is happy."""
 
 
 @pytest.fixture
@@ -531,6 +556,7 @@ def switch(
         git: checkout.Runner | None = None,
         run_setup: setup.SetupRunner | None = None,
         at_a_terminal: bool = True,
+        ensure_environment: apply.EnsureEnvironment = trusted_environment,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -546,6 +572,7 @@ def switch(
             ingress.verifier,
             ingress.watch,
             git or scripted_git,
+            ensure_environment,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1193,33 +1220,106 @@ def test_the_live_checkout_reached_through_a_symlinked_home_applies(
     assert scripted.containers["step-ca"] == "running"
 
 
-@pytest.mark.parametrize(
-    "make",
-    [
-        pytest.param(lambda env: None, id="missing"),
-        pytest.param(lambda env: env.mkdir(), id="a directory"),
-        pytest.param(lambda env: env.symlink_to(env.parent / "gone"), id="a dangling symlink"),
-    ],
-)
-def test_without_an_environment_file_it_names_the_copy_command(
-    switch, scripted, scripted_git, repository, state, make
-):
-    """#95 rule 3, S6 and G6: exit 2 naming `cp .env.example .env`; no git or compose call, no
-    lock, and no `.env` written."""
-    (repository / ".env").unlink()
-    make(repository / ".env")
+ENVIRONMENT_FILE_LINES = f"EDGE_DOMAIN={ZONE}\nDOCKER_GID={DOCKER_GID}\n"
 
-    exit_code, _, err = switch()
+
+def test_a_missing_environment_file_is_written_and_the_plan_follows(switch, scripted, repository):
+    """#136 E1: `.env` written with both settings, private, one line saying so; then the plan."""
+    (repository / ".env").unlink()
+
+    exit_code, out, err = switch(ensure_environment=writing_environment())
+
+    assert exit_code == 0
+    assert (repository / ".env").read_text().endswith(ENVIRONMENT_FILE_LINES)
+    assert stat.S_IMODE((repository / ".env").stat().st_mode) == 0o600
+    assert [line for line in err.splitlines() if ".env" in line] == [
+        f"edge apply --closed: wrote {repository / '.env'}: "
+        f"EDGE_DOMAIN={ZONE}, DOCKER_GID={DOCKER_GID}"
+    ]
+    assert "step-ca" in out
+    assert scripted.containers["step-ca"] == "running"
+
+
+def test_a_matching_environment_file_is_untouched_and_silent(switch, repository):
+    """#136 E2, E3: the right two keys, with a hand-added key besides, stay as they are."""
+    (repository / ".env").write_text("HAND_ADDED=1\n" + ENVIRONMENT_FILE_LINES)
+    before = (repository / ".env").stat()
+    content = (repository / ".env").read_text()
+
+    exit_code, _, err = switch(ensure_environment=writing_environment())
+
+    assert exit_code == 0
+    assert ".env" not in err
+    after = (repository / ".env").stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert (repository / ".env").read_text() == content
+
+
+def test_a_differing_environment_file_is_named_and_left_alone(
+    switch, scripted, scripted_git, repository
+):
+    """#136 E4, rule 4: exit 2 with the key, both values and the way out; no fetch, no compose."""
+    (repository / ".env").write_text(f"EDGE_DOMAIN=old.invalid\nDOCKER_GID={DOCKER_GID}\n")
+
+    exit_code, _, err = switch(ensure_environment=writing_environment())
 
     assert exit_code == 2
     assert err.splitlines() == [
-        "edge apply --closed: ~/git/edge has no .env file; run `cp .env.example .env` there "
-        "and fill it in"
+        f'edge apply --closed: {repository / ".env"}: EDGE_DOMAIN is "old.invalid" but edge '
+        f'derives "{ZONE}"; delete it and `edge apply --closed` writes it again'
     ]
+    assert (repository / ".env").read_text().startswith("EDGE_DOMAIN=old.invalid")
     assert scripted.calls == []
-    assert scripted_git.calls == []
-    assert not apply_lock(state).exists()
-    assert not (repository / ".env").is_file()
+    assert "fetch" not in [call[0] for call in scripted_git.calls]
+
+
+def test_without_a_docker_group_it_refuses_and_writes_nothing(switch, repository):
+    """#136 E7: exit 2 naming the group."""
+    (repository / ".env").unlink()
+
+    exit_code, _, err = switch(ensure_environment=writing_environment(without_docker_group))
+
+    assert exit_code == 2
+    assert "`docker` group" in err
+    assert not (repository / ".env").exists()
+
+
+def refused_by(guard: str, repository: Path, scripted_git: ScriptedGit, tmp_path: Path):
+    """Arranges `guard` to fail; returns the tree to run in and the kwargs for the switch."""
+    if guard == "another copy":
+        return edge_tree(tmp_path / "x" / "edge"), {}
+    if guard == "no terminal":
+        return repository, {"at_a_terminal": False}
+    if guard == "off main":
+        scripted_git.reference = b"refs/heads/feature\n"
+    if guard == "dirty":
+        scripted_git.status = b" M fleet.yaml\0"
+    return repository, {}
+
+
+@pytest.mark.parametrize("guard", ["another copy", "no terminal", "off main", "dirty"])
+def test_a_run_a_guard_refuses_never_writes_an_environment_file(
+    guard, switch, repository, scripted_git, tmp_path
+):
+    """#136 E9, E10, E11: refused by I1, R1, S2 or S1 first; no `.env` written anywhere."""
+    tree, options = refused_by(guard, repository, scripted_git, tmp_path)
+    (tree / ".env").unlink()
+
+    exit_code, _, _ = switch(tree=tree, ensure_environment=writing_environment(), **options)
+
+    assert exit_code != 0
+    assert not (tree / ".env").exists()
+
+
+def test_while_another_apply_runs_it_never_writes_an_environment_file(switch, repository, state):
+    """#136 E11: refused by S8 first."""
+    (repository / ".env").unlink()
+
+    with apply_lock_held(state):
+        exit_code, _, _ = switch(ensure_environment=writing_environment())
+
+    assert exit_code == 1
+    assert not (repository / ".env").exists()
 
 
 def test_while_another_apply_runs_it_refuses_and_touches_nothing(
@@ -1599,10 +1699,10 @@ def test_a_setup_child_that_outlives_the_apply_leaves_the_lock_free(
 GUARD_LINES = (
     "refused, stdin and stdout must be a terminal",
     "runs only from the live checkout",
-    "has no .env file",
     "is running; nothing changed",
     "runs only on main",
     "the live checkout has local changes",
+    "delete it and `edge apply --closed` writes it again",
 )
 
 
@@ -1610,20 +1710,22 @@ GUARD_LINES = (
 def test_only_the_first_failing_guard_speaks(
     switch, scripted, scripted_git, repository, state, tmp_path, first
 ):
-    """#95 rule 1 and G29: with every guard from `first` on failing, only its line appears, in the
-    order terminal, live checkout, `.env`, `apply.lock`, `main`, clean."""
+    """#95 rule 1 and G29, #136 E14: with every guard from `first` on failing, only its line
+    appears, in the order terminal, live checkout, `apply.lock`, `main`, clean, `.env`."""
     tree = repository if first > 1 else edge_tree(tmp_path / "x" / "edge")
-    if first <= 2:
-        (tree / ".env").unlink()
-    if first <= 4:
+    (tree / ".env").write_text("")
+    if first <= 3:
         scripted_git.reference = b"refs/heads/feature\n"
-    scripted_git.status = b" M fleet.yaml\0"
+    if first <= 4:
+        scripted_git.status = b" M fleet.yaml\0"
 
-    with apply_lock_held(state) if first <= 3 else nullcontext():
-        exit_code, _, err = switch(tree=tree, at_a_terminal=first > 0)
+    with apply_lock_held(state) if first <= 2 else nullcontext():
+        exit_code, _, err = switch(
+            tree=tree, at_a_terminal=first > 0, ensure_environment=writing_environment()
+        )
 
     assert [line for line in GUARD_LINES if line in err] == [GUARD_LINES[first]]
-    assert exit_code == (1 if first in (0, 3) else 2)
+    assert exit_code == (1 if first in (0, 2) else 2)
     assert scripted.calls == []
 
 

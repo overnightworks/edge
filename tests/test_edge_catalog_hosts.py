@@ -288,3 +288,13 @@ def test_a_lowercase_label_is_accepted(name):
 @pytest.mark.parametrize("zone", ["Edge-Fixture.invalid", "edge-fixture.invalid.", None, "", "a b"])
 def test_a_zone_with_a_capital_or_a_trailing_dot_is_refused(zone):
     assert refusal(document(hosted(host()), zone=zone)).startswith("cloudflare.zone:")
+
+
+def test_the_zone_is_readable_alone_for_the_other_readers_of_the_catalog():
+    assert catalog.zone(document()) == ZONE
+
+
+@pytest.mark.parametrize("broken", [None, [], "zone", {"cloudflare": "zone"}])
+def test_a_catalog_without_a_cloudflare_map_has_no_zone(broken):
+    with pytest.raises(catalog.CatalogError, match=r"^cloudflare\.zone:"):
+        catalog.zone(broken)

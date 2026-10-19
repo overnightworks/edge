@@ -505,7 +505,7 @@ They survive a dead PC because they live at the provider.
 | 8 | Deploy checkout = work clone | `~/git/songmaker` is both; the workaround is the extra `~/git/songmaker-land` | the songmaker migration item (section 5, step 3) |
 | 9 | Monitoring stack | Prometheus, Grafana and Alertmanager live in songmaker's compose, though they serve the platform | edge#4: **ruled 16.10.2026:** they move into edge and serve every service. songmaker keeps only its metrics endpoint and its dashboards as files edge loads |
 | 10 | Two publishers | E3 X8 lets `keycloak/go-live` call `edge external apply`; section 6 publishes in `edge apply` | E3 X8, changed once (section 3): go-live never publishes |
-| 11 | The zone name | `fleet.yaml` `cloudflare.zone`, `.env.example` `EDGE_DOMAIN`, ci.yml `EDGE_DOMAIN` | E3 X1d: CI fails when they differ |
+| 11 | The zone name | `fleet.yaml` `cloudflare.zone` only: `edge apply --closed` writes it to `.env`, and CI derives `EDGE_DOMAIN` from the same key | landed: edge#136 |
 
 ### Gaps: something missing
 
