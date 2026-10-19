@@ -15,6 +15,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import Enum, IntEnum, StrEnum, auto
 from pathlib import Path
+from typing import TextIO
 
 from edge import terminal
 from edge.external import secrets, tofu
@@ -65,41 +66,32 @@ class Progress:
     apply_reached: bool = False
     plan_was_empty: bool = False
     apply_exit_code: int | None = None
+    interrupted: bool = False  # recorded where the interrupt is caught, never inferred later
 
 
-def closing_after(progress: Progress, *, interrupted: bool) -> ClosingCheck:
+def closing_after(progress: Progress) -> ClosingCheck:
     """The one decider of the closing; cleanup runs after it, so a cleanup failure keeps it."""
     if progress.apply_reached:
-        if interrupted:
+        if progress.interrupted:
             return ClosingCheck.NO_CHECK_INTERRUPTED
         if progress.apply_exit_code == 0:
             return ClosingCheck.CHECK_APPLIED
         return ClosingCheck.CHECK_APPLY_FAILED
-    if progress.plan_was_empty and not interrupted:
+    if progress.plan_was_empty and not progress.interrupted:
         return ClosingCheck.CHECK_NO_CHANGES
     return ClosingCheck.NO_CHECK_REFUSED
 
 
 class StepFailed(Exception):
-    """A step after the plan failed on the machine; `cause` is the OSError."""
+    """A step after the plan failed; `cause` is the OSError, or after `apply_reached` any error."""
 
     exit_code = ApplyExit.REFUSED
 
-    def __init__(self, step: Step, cause: OSError, closing: ClosingCheck) -> None:
+    def __init__(self, step: Step, cause: Exception, closing: ClosingCheck) -> None:
         super().__init__(step)
         self.step = step
         self.cause = cause
         self.closing = closing
-
-
-def _interrupt_in_flight(error: BaseException) -> bool:
-    """A cleanup that fails while an interrupt unwinds carries that interrupt as its context."""
-    context = error.__context__
-    while context is not None:
-        if isinstance(context, tofu.Interrupted | KeyboardInterrupt):
-            return True
-        context = context.__context__
-    return False
 
 
 def refusal_without_terminal() -> ApplyExit | None:
@@ -199,48 +191,79 @@ def terminate_like_interrupt() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
+def show_tofu_output(text: str, stream: TextIO) -> None:
+    """The one publication of tofu's output: what `stream` cannot encode becomes a replacement,
+    so printing it after a live apply never raises."""
+    encoding = stream.encoding or "utf-8"
+    print(text.encode(encoding, errors="replace").decode(encoding), file=stream)
+
+
 def print_interrupted_output(interrupted: tofu.Interrupted, token_values: dict[str, str]) -> None:
-    print(secrets.redact(interrupted.completed.output, token_values), file=sys.stderr)
+    show_tofu_output(secrets.redact(interrupted.completed.output, token_values), sys.stderr)
 
 
 def apply_plan(
     home: Path,
     token_values: dict[str, str],
     plan_file_scope: Callable[[Path], AbstractContextManager[Path]] = private_plan_file,
+    progress: Progress | None = None,
 ) -> ApplyOutcome:
-    progress = Progress()
+    """`progress` is the caller's record of this run: an interrupt that arrives after this function
+    returned is decided from it, since the outcome is lost with the raise."""
+    progress = progress or Progress()
     try:
         with (
             terminate_like_interrupt(),
             tofu.session(home, token_values) as session,
             plan_file_scope(home) as plan_file,
         ):
-            result = _show_confirm_apply(session, plan_file, token_values, progress)
+            result = _recording_interrupts(session, plan_file, token_values, progress)
             progress.step = Step.CLEANUP
-    except tofu.Interrupted as interrupted:
-        print_interrupted_output(interrupted, token_values)
-        return _interrupted(progress)
-    except KeyboardInterrupt:
+    except (tofu.Interrupted, KeyboardInterrupt):
         return _interrupted(progress)
     except OSError as error:
         if progress.step is Step.PLAN:
             raise
-        closing = closing_after(progress, interrupted=_interrupt_in_flight(error))
-        raise StepFailed(progress.step, error, closing) from error
-    return ApplyOutcome(result, closing_after(progress, interrupted=False))
+        step = progress.step
+        if progress.interrupted:  # the body re-raised the interrupt: only the cleanup failed
+            _report_interrupt(progress, plan_file_deleted=False)
+            step = Step.CLEANUP
+        raise StepFailed(step, error, closing_after(progress)) from error
+    except Exception as error:
+        if not progress.apply_reached:
+            raise
+        raise StepFailed(progress.step, error, closing_after(progress)) from error
+    return ApplyOutcome(result, closing_after(progress))
+
+
+def _recording_interrupts(
+    session: tofu.Session, plan_file: Path, token_values: dict[str, str], progress: Progress
+) -> ApplyExit:
+    """The interrupt is recorded here, before the cleanup runs, so the cleanup's own failure
+    cannot be mistaken for it."""
+    try:
+        return _show_confirm_apply(session, plan_file, token_values, progress)
+    except tofu.Interrupted as interrupted:
+        progress.interrupted = True
+        print_interrupted_output(interrupted, token_values)
+        raise
+    except KeyboardInterrupt:
+        progress.interrupted = True
+        raise
 
 
 def _interrupted(progress: Progress) -> ApplyOutcome:
+    progress.interrupted = True
     _report_interrupt(progress)
-    return ApplyOutcome(ApplyExit.REFUSED, closing_after(progress, interrupted=True))
+    return ApplyOutcome(ApplyExit.REFUSED, closing_after(progress))
 
 
-def _report_interrupt(progress: Progress) -> None:
+def _report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> None:
     step = progress.step
     consequence = UNCHECKED_CONSEQUENCE if progress.apply_reached else "nothing was applied"
+    plan_file = "; the plan file is deleted" if plan_file_deleted else ""
     print(
-        f"\nedge external apply: interrupted during {step}, {consequence}; "
-        "the plan file is deleted",
+        f"\nedge external apply: interrupted during {step}, {consequence}{plan_file}",
         file=sys.stderr,
     )
 
@@ -254,13 +277,13 @@ def _show_confirm_apply(
     shown = secrets.redact(planned.output, token_values)
     if planned.exit_code == tofu.PlanExit.NO_CHANGES:
         progress.plan_was_empty = True
-        print(shown.rstrip("\n"))
+        show_tofu_output(shown.rstrip("\n"), sys.stdout)
         return ApplyExit.APPLIED_OR_NOTHING
     if planned.exit_code != tofu.PlanExit.CHANGES:
-        print(shown, file=sys.stderr)
+        show_tofu_output(shown, sys.stderr)
         print(f"edge external apply: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
-    print(shown.rstrip("\n"))
+    show_tofu_output(shown.rstrip("\n"), sys.stdout)
     progress.step = Step.CONFIRMATION
     if not terminal.confirmed("apply exactly this plan"):
         print("edge external apply: aborted, nothing applied", file=sys.stderr)
@@ -268,9 +291,9 @@ def _show_confirm_apply(
     progress.step = Step.APPLY
     progress.apply_reached = True
     applied = tofu.run(session.tofu, ["apply", str(plan_file)], session.environment)
+    show_tofu_output(secrets.redact(applied.output, token_values).rstrip("\n"), sys.stdout)
     progress.apply_exit_code = applied.exit_code
     progress.step = Step.CLEANUP
-    print(secrets.redact(applied.output, token_values).rstrip("\n"))
     if applied.exit_code != 0:
         print(f"edge external apply: tofu apply failed (exit {applied.exit_code})", file=sys.stderr)
         return ApplyExit.REFUSED

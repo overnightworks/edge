@@ -6,6 +6,7 @@ import signal
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -70,7 +71,15 @@ def apply_command(
 ) -> int:
     """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
     live one, on a clean main. An apply that may have changed the services, or found nothing to
-    do, ends on the host check (#30 rule 8): its verdict decides the exit."""
+    do, ends on the host check (#30 rule 8): its verdict decides the exit.
+
+    SIGTERM is an interrupt from the first line to the exit, and the one `except KeyboardInterrupt`
+    decides every interrupt that reaches it: before the tofu session "nothing was applied"; after
+    it the line of the disposition known so far; once the check committed its verdict, that
+    verdict's exit. Always exit 1 but the last. Accepted windows, named and not covered: between
+    `check_command`'s return and the mask, between the two handler swaps of `_signals_ignored`,
+    and after the mask until the process exits."""
+    run = _ApplyRun()
     closing = apply.ClosingCheck.NO_CHECK_REFUSED
 
     def refusal() -> int | None:
@@ -84,31 +93,49 @@ def apply_command(
     def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
         nonlocal closing
         try:
-            outcome = apply.apply_plan(home, token_values)
+            outcome = apply.apply_plan(home, token_values, progress=run.progress)
         except apply.StepFailed as failure:
             closing = failure.closing
-            if closing is apply.ClosingCheck.NO_CHECK_INTERRUPTED:
-                print(
-                    f"edge external apply: interrupted during {failure.step}, "
-                    f"{apply.UNCHECKED_CONSEQUENCE}",
-                    file=sys.stderr,
-                )
             raise
         closing = outcome.closing
         return outcome.exit
 
     with apply.terminate_like_interrupt():
-        exit_code = _guarded(
-            "apply",
-            home,
-            secrets.Access.WRITE,
-            plan_and_apply,
-            apply.ApplyExit.CANNOT_PLAN,
-            refusal=refusal,
-        )
-        if not closing.runs_the_check:
-            return exit_code
-        return _close_on_host_check(home, closing, exit_code)
+        try:
+            exit_code = _guarded(
+                "apply",
+                home,
+                secrets.Access.WRITE,
+                plan_and_apply,
+                apply.ApplyExit.CANNOT_PLAN,
+                refusal=refusal,
+            )
+            if not closing.runs_the_check:
+                return exit_code
+            return _close_on_host_check(home, closing, exit_code, run)
+        except KeyboardInterrupt:
+            return _exit_after_interrupt(run)
+
+
+@dataclass
+class _ApplyRun:
+    """What the interrupt handler of `apply_command` knows, recorded where each fact is true."""
+
+    progress: apply.Progress = field(default_factory=apply.Progress)
+    committed_exit: int | None = None
+
+
+def _exit_after_interrupt(run: _ApplyRun) -> int:
+    if run.committed_exit is not None:
+        return run.committed_exit
+    if not run.progress.interrupted:  # an interrupt `apply_plan` met has been reported by it
+        closing = apply.closing_after(run.progress)
+        if closing.runs_the_check:
+            line = _CLOSING_LINES[(closing, INTERRUPTED)]
+        else:
+            line = "interrupted, nothing was applied"
+        print(f"edge external apply: {line}", file=sys.stderr)
+    return apply.ApplyExit.REFUSED
 
 
 _CLOSING_LINES = {
@@ -142,18 +169,20 @@ _CLOSING_LINES = {
 }
 
 
-def _close_on_host_check(home: Path, closing: apply.ClosingCheck, apply_exit: int) -> int:
+def _close_on_host_check(
+    home: Path, closing: apply.ClosingCheck, apply_exit: int, run: _ApplyRun
+) -> int:
     """The check after the tofu session, under the apply's own signal handling. Once
-    `check_command` returned its verdict, the mapping and the lines run with the signals ignored:
-    a clean verdict is never turned into "interrupted"."""
-    try:
-        check_exit = check_command(home)
-    except KeyboardInterrupt:
-        check_exit = INTERRUPTED
+    `check_command` returned its verdict, the mapping and the lines run with the signals ignored
+    and the exit is recorded: a clean verdict is never turned into "interrupted"."""
+    check_exit = check_command(home)
     with _signals_ignored():
+        run.committed_exit = (
+            apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
+        )
         if line := _CLOSING_LINES.get((closing, check_exit)):
             print(f"edge external apply: {line}", file=sys.stderr)
-        return apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
+        return run.committed_exit
 
 
 def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
@@ -304,7 +333,9 @@ def _guarded(
     return cannot_plan
 
 
-def _describe(error: OSError) -> str:
+def _describe(error: Exception) -> str:
+    if not isinstance(error, OSError):
+        return type(error).__name__  # another error's message may quote what tofu printed
     # The filename can be child-controlled (a failed cleanup names what the child left).
     where = f" ({error.filename})" if error.filename else ""
     return f"{type(error).__name__}: {error.strerror}{where}"
