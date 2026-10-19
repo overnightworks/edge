@@ -1,8 +1,0 @@
-claim_id = "46a59c786d8b491b9aff7c5b759cfe61"
-agent = "claude"
-role = "builder"
-base = "4ed79bdf099296f5cd2a16812264d0516827e26e"
-branch = "claude/issue-142-h1b-ci-union"
-scope = [".github/workflows/ci.yml", ".gitignore", "AGENTS.md", "README.md", "bin/edge", "bin/home", "pyproject.toml", "scripts/check_root_layout.py", "scripts/system-proof/drive.sh", "sonar-project.properties", "tests/test_edge_launcher.py"]
-opened_commit = "d0867fca1aaf1c8c9aee5b3189051c75bef26563"
-whole_reason = "One gate: the CI steps, the coverage floor, the root allowlist, the launcher and the docs that make the imported tree checked like the rest; a part alone leaves home's code unchecked or a red gate."
