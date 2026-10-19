@@ -190,19 +190,42 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
     assert TOKEN not in json.dumps([query for _, query, _ in cloudflare.requests])
 
 
-def test_access_off_at_the_apps_read_is_a_typed_answer_not_an_error(cloudflare):
+ACCESS_OFF_KEY = "access.api.error.not_enabled"
+ACCESS_OFF_LIVE_MESSAGE = (
+    f"{ACCESS_OFF_KEY}: Access is not enabled. Visit the Access dashboard at "
+    "https://dash.cloudflare.com/ and click the 'Enable Access' button."
+)
+
+
+@pytest.mark.parametrize(
+    "message", [ACCESS_OFF_LIVE_MESSAGE, ACCESS_OFF_KEY], ids=["live message", "bare key"]
+)
+def test_access_off_at_the_apps_read_is_a_typed_answer_not_an_error(cloudflare, message):
     """R2: Access off at the apps read is a typed answer, and the groups are not asked for."""
-    cloudflare.routes[APPS_PATH] = lambda _query: (
-        403,
-        failure(9999, "access.api.error.not_enabled"),
-    )
+    cloudflare.routes[APPS_PATH] = lambda _query: (403, failure(9999, message))
     snapshot = cloudflare.client().read(ZONE)
     assert (snapshot.apps, snapshot.groups) == (None, ())
     assert len(snapshot.records) == len(RECORDS)
     assert GROUPS_PATH not in {path for path, _query, _header in cloudflare.requests}
 
 
-ACCESS_OFF = (403, failure(9999, "access.api.error.not_enabled"))
+@pytest.mark.parametrize(
+    "message",
+    [
+        f"{ACCESS_OFF_KEY}_x: Access is not enabled.",
+        f"x {ACCESS_OFF_KEY}: Access is not enabled.",
+        "Access is not enabled",
+        ["access.api.error.not_enabled"],
+    ],
+    ids=["longer key", "prefixed key", "sentence only", "not a string"],
+)
+def test_a_message_whose_key_differs_is_never_access_off(cloudflare, message):
+    """R2b: only the exact key before the first colon is Access off."""
+    cloudflare.routes[APPS_PATH] = lambda _query: (403, failure(9999, message))
+    assert read_error(cloudflare) == f"{APPS_PATH}: HTTP 403, Cloudflare error code 9999"
+
+
+ACCESS_OFF = (403, failure(9999, ACCESS_OFF_LIVE_MESSAGE))
 
 
 def apps_page_one_then_access_off(query: dict[str, str]) -> Answer:

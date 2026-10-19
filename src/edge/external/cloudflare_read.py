@@ -100,6 +100,11 @@ IDENTIFIER = re.compile(r"[0-9a-f]{32}")
 ACCESS_NOT_ENABLED = (403, 9999, "access.api.error.not_enabled")
 
 
+def _message_key(message: Any) -> str | None:
+    """Cloudflare writes a key, then a human sentence after the first colon."""
+    return message.split(":", 1)[0] if isinstance(message, str) else None
+
+
 class CloudflareReadError(Exception):
     """A read failed; the message names the path, the status and the first Cloudflare error code."""
 
@@ -342,7 +347,7 @@ def _answer(path: str, status: int, body: bytes) -> dict:
         detail = "malformed JSON answer"
     raise _Refusal(
         f"{path}: HTTP {status}, {detail}",
-        access_not_enabled=(status, code, first.get("message")) == ACCESS_NOT_ENABLED,
+        access_not_enabled=(status, code, _message_key(first.get("message"))) == ACCESS_NOT_ENABLED,
     )
 
 
