@@ -1,7 +1,8 @@
-"""The scripted Docker host and the CLI driver that edge-backup's test modules share."""
+"""The scripted Docker host, the CLI driver and the network backstop that test modules share."""
 
 import json
 import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,24 @@ from edge_backup_support import (
 )
 
 from edge_backup import cli, host
+
+LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
+
+
+@pytest.fixture
+def loopback_only(monkeypatch):
+    """The backstop: whatever a test builds, a connection beyond loopback fails loudly."""
+    real_connect = socket.socket.connect
+
+    def connect(self, address):
+        if (
+            self.family in (socket.AF_INET, socket.AF_INET6)
+            and address[0] not in LOOPBACK_ADDRESSES
+        ):
+            raise AssertionError(f"a test connection leaves loopback: {address[0]}")
+        return real_connect(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
 
 
 @pytest.fixture

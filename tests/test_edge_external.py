@@ -6,8 +6,10 @@ import os
 import pty
 import select
 import signal
+import socketserver
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterator
@@ -20,7 +22,7 @@ import pytest
 from edge import checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
-from edge.external import secrets, tofu
+from edge.external import cloudflare_read, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -351,6 +353,7 @@ def test_edge_external_help_exits_0_and_edge_help_lists_it(capsys):
     with pytest.raises(SystemExit) as external_help:
         cli.main(["external", "--help"])
     assert external_help.value.code == 0
+    assert "check" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         cli.main(["--help"])
     assert "external" in capsys.readouterr().out
@@ -1137,3 +1140,290 @@ def test_the_changes_pending_line_follows_the_plan_without_a_blank_line(home, fa
     fake_tofu.configure(plan=2, echo_environment=True)
     edge_external_plan()
     assert "\n\n" not in capsys.readouterr().out
+
+
+HOSTS_CATALOG = """\
+cloudflare: {zone: example.test}
+services:
+  site:
+    hosts:
+      - {name: "@", exposure: public, reason: the site}
+"""
+TUNNEL_TARGET = "t-1.cfargotunnel.com"
+CLEAN_SNAPSHOT = cloudflare_read.Snapshot(
+    "t-1", (cloudflare_read.Record("example.test", "CNAME", TUNNEL_TARGET, True),), (), ()
+)
+STRAY_SNAPSHOT = cloudflare_read.Snapshot(
+    "t-1",
+    (
+        cloudflare_read.Record("example.test", "A", "192.0.2.1", True),
+        cloudflare_read.Record("stray.example.test", "CNAME", TUNNEL_TARGET, True),
+    ),
+    (),
+    (),
+)
+
+
+class FakeReader:
+    """The injected port: answers a snapshot, raises an exception, or runs a callable first."""
+
+    def __init__(self, outcome) -> None:
+        self.outcome = outcome
+        self.tokens: list[str] = []
+        self.reads = 0
+
+    def __call__(self, token: str):
+        self.tokens.append(token)
+        return self
+
+    def read(self, _zone: str):
+        self.reads += 1
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        if callable(self.outcome):
+            self.outcome()
+            return CLEAN_SNAPSHOT
+        return self.outcome
+
+
+@pytest.fixture
+def hosts_catalog(tmp_path, monkeypatch) -> Path:
+    """A checkout that is not the live main, declaring one public apex."""
+    tree = tmp_path / "elsewhere"
+    tree.mkdir()
+    (tree / "fleet.yaml").write_text(HOSTS_CATALOG)
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", tree)
+    return tree
+
+
+def run_check(home, reader: FakeReader, *, as_json: bool = False) -> int:
+    return external_cli.check_command(home, as_json=as_json, cloudflare=reader)
+
+
+def test_a_clean_check_exits_0_and_says_how_many_hosts(home, hosts_catalog, capsys):
+    """K1."""
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 0
+    assert capsys.readouterr().out == "no findings (1 hosts)\n"
+
+
+def test_findings_exit_1_and_json_is_one_document_of_four_strings(home, hosts_catalog, capsys):
+    """K1."""
+    assert run_check(home, FakeReader(STRAY_SNAPSHOT), as_json=True) == 1
+    printed = capsys.readouterr()
+    findings = json.loads(printed.out)
+    assert [item["problem"] for item in findings] == ["record-wrong", "undeclared-record"]
+    assert all(set(item) == {"problem", "subject", "detail", "next"} for item in findings)
+    assert all(isinstance(value, str) for item in findings for value in item.values())
+    assert printed.err == ""
+
+
+def test_check_without_hosts_exits_2_naming_the_flag_and_reads_nothing(home, capsys):
+    """K2."""
+    without_tokens(home)
+    with pytest.raises(SystemExit) as refused:
+        cli.main(["external", "check"])
+    assert refused.value.code == 2
+    assert "--hosts" in capsys.readouterr().err
+
+
+def test_check_help_lists_hosts_and_json(capsys):
+    """K2."""
+    with pytest.raises(SystemExit) as shown:
+        cli.main(["external", "check", "--help"])
+    assert shown.value.code == 0
+    assert {"--hosts", "--json"} <= set(capsys.readouterr().out.split())
+
+
+def test_an_invalid_catalog_exits_2_with_the_pre_flight_line_before_any_token(
+    home, hosts_catalog, capsys
+):
+    """K3."""
+    (hosts_catalog / "fleet.yaml").write_text(INVALID_CATALOG)
+    without_tokens(home)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert run_check(home, reader) == 2
+    assert capsys.readouterr().err == f"edge external check: {CATALOG_LINE}\n"
+    assert reader.reads == 0
+
+
+def test_check_reads_only_the_cloudflare_read_file(home, hosts_catalog):
+    """K4."""
+    (home / ".secrets/github/fleet-read").unlink()
+    (home / ".secrets/opentofu/state-passphrase").unlink()
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert run_check(home, reader) == 0
+    assert reader.tokens == ["cloudflare-token"]
+
+
+def test_a_missing_cloudflare_file_exits_2_naming_it(home, hosts_catalog, capsys):
+    """K4."""
+    cloudflare_file = home / ".secrets/cloudflare/fleet-read"
+    cloudflare_file.unlink()
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert run_check(home, reader) == 2
+    assert str(cloudflare_file) in capsys.readouterr().err
+    assert reader.reads == 0
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(cloudflare_read.CloudflareReadError(f"/zones: {SENTINEL}"), id="a read error"),
+        pytest.param(OSError(5, SENTINEL), id="an OS error"),
+    ],
+)
+def test_a_reader_failure_names_a_cause_without_the_token_and_leaves_stdout_empty(
+    home, hosts_catalog, capsys, failure
+):
+    """K5: the token file holds the sentinel; no output line carries it."""
+    (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
+    assert run_check(home, FakeReader(failure), as_json=True) == 2
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith("edge external check: cannot check, ")
+    assert printed.err.count("\n") == 1
+    assert SENTINEL not in printed.err
+
+
+class BrokenChunkedServer:
+    """A loopback server whose every answer is a chunked body that breaks off."""
+
+    def __init__(self, status: int, chunks: bytes) -> None:
+        answer = (
+            f"HTTP/1.1 {status} X\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        ).encode() + chunks
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.recv(65536)
+                self.request.sendall(answer)
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.mark.usefixtures("loopback_only")
+@pytest.mark.parametrize("status", [200, 500])
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        pytest.param(SENTINEL.encode() + b"\r\n", id="a malformed chunk size"),
+        pytest.param(b"5\r\nab", id="a truncated chunk"),
+    ],
+)
+def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
+    home, hosts_catalog, capfd, status, chunks
+):
+    """K5 (rule 12): both response-reading branches end as a read error, with no chained cause."""
+    (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
+    broken = BrokenChunkedServer(status, chunks)
+    try:
+        code = external_cli.check_command(
+            home,
+            cloudflare=lambda token: cloudflare_read.CloudflareClient(token, base_url=broken.url),
+        )
+    finally:
+        broken.close()
+    printed = capfd.readouterr()
+    assert code == 2
+    assert printed.out == ""
+    assert printed.err.startswith("edge external check: cannot check, /zones: ")
+    assert SENTINEL not in printed.out + printed.err
+
+
+def test_check_starts_no_tofu_and_keeps_a_leftover_plan(home, fake_tofu, hosts_catalog):
+    """K6: the sweep belongs to plan and apply."""
+    leftover = leave_a_killed_run_behind(home)
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 0
+    assert fake_tofu.calls() == []
+    assert leftover.exists()
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_an_interrupt_exits_130_with_stdout_empty(home, hosts_catalog, capsys, interrupt, as_json):
+    """K7."""
+    reader = FakeReader(lambda: os.kill(os.getpid(), interrupt))
+    assert run_check(home, reader, as_json=as_json) == 130
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert "interrupted" in printed.err
+
+
+def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
+    home, hosts_catalog, capsys
+):
+    """K7: the whole command body, not only the Cloudflare read, is covered."""
+
+    def build_and_get_terminated(_token: str):
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    code = external_cli.check_command(home, cloudflare=build_and_get_terminated)
+    assert code == 130
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    ("snapshot", "verdict"), [(CLEAN_SNAPSHOT, 0), (STRAY_SNAPSHOT, 1)], ids=["clean", "findings"]
+)
+def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_verdict(
+    home, hosts_catalog, capsys, interrupt, snapshot, verdict
+):
+    """K8: writing the result is the commit point, so no signal cuts the document or the exit.
+
+    Row 3 (the gap before the write) is proven by code order, as no injected seam reaches it: the
+    redaction runs before the ignored region and the commit mark is set inside it.
+    """
+
+    def interrupted_halfway(text: str) -> None:
+        middle = len(text) // 2
+        sys.stdout.write(text[:middle])
+        os.kill(os.getpid(), interrupt)
+        sys.stdout.write(text[middle:] + "\n")
+
+    code = external_cli.check_command(
+        home, as_json=True, cloudflare=FakeReader(snapshot), emit=interrupted_halfway
+    )
+    printed = capsys.readouterr()
+    assert code == verdict
+    assert isinstance(json.loads(printed.out), list)
+    assert "interrupted" not in printed.err
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "verdict"), [(CLEAN_SNAPSHOT, 0), (STRAY_SNAPSHOT, 1)], ids=["clean", "findings"]
+)
+def test_an_interrupt_after_the_whole_document_is_written_keeps_the_verdict(
+    home, hosts_catalog, capsys, snapshot, verdict
+):
+    """K8: a signal that lands once the handlers are restored is not an interruption."""
+
+    def written_then_interrupted(text: str) -> None:
+        sys.stdout.write(text + "\n")
+        raise KeyboardInterrupt
+
+    code = external_cli.check_command(
+        home, as_json=True, cloudflare=FakeReader(snapshot), emit=written_then_interrupted
+    )
+    printed = capsys.readouterr()
+    assert code == verdict
+    assert isinstance(json.loads(printed.out), list)
+    assert "interrupted" not in printed.err
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_check_through_main_stops_at_a_missing_token_before_any_network(
+    home, hosts_catalog, capsys
+):
+    """K4: the wiring of `--hosts --json` to the command, ended before a real client is built."""
+    (home / ".secrets/cloudflare/fleet-read").unlink()
+    assert cli.main(["external", "check", "--hosts", "--json"]) == 2
+    assert capsys.readouterr().out == ""
