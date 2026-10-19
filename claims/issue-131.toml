@@ -1,8 +1,0 @@
-claim_id = "ec132263c771411ca208efd53c76e5cd"
-agent = "claude"
-role = "builder"
-base = "14600fc3d89fb06d609550b6b6a2c8ea291336c1"
-branch = "claude/issue-131-x4a-host-shape"
-scope = ["docs/architecture.md", "external/hosts.tf", "external/tests/fixtures", "external/tests/hosts.tftest.hcl", "fleet.yaml", "src/edge/catalog.py", "src/edge/external/cli.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_external.py"]
-opened_commit = "435c770f963b3b901792cbca4648769b0b3bff70"
-whole_reason = "One shape with one validator: the Python reader, its pre-flight in the CLI, the tofu locals that must agree with it, and the catalog and architecture lines that use it; a part alone leaves two definitions of a host."
