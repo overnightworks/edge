@@ -1,6 +1,7 @@
 """`edge external apply`: the plan is shown, written encrypted, applied only after `yes`.
 
-Exit 0 applied or nothing to apply, 1 refused, aborted or failed, 2 cannot plan.
+Exit 0 applied or nothing to apply, 1 refused, aborted or failed, 2 cannot plan; `ClosingCheck`
+says whether the host check follows, and `cli.apply_command` maps its verdict into the exit.
 The guard stops accidental and non-interactive runs; it does not identify the operator.
 """
 
@@ -12,7 +13,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import Enum, IntEnum, StrEnum, auto
 from pathlib import Path
 
 from edge import terminal
@@ -22,6 +23,7 @@ PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
 _OWNED_SUFFIXES = {_PLAN_SUFFIX, _LOCK_SUFFIX}
+UNCHECKED_CONSEQUENCE = "live services may be partly changed; run edge external check --hosts"
 
 
 class ApplyExit(IntEnum):
@@ -37,10 +39,45 @@ class Step(StrEnum):
     CLEANUP = "the cleanup"
 
 
+class ClosingCheck(Enum):
+    """What follows the tofu session: the host check, or why it does not run."""
+
+    NO_CHECK_REFUSED = auto()  # nothing was applied and no plan was empty
+    CHECK_NO_CHANGES = auto()
+    CHECK_APPLIED = auto()
+    CHECK_APPLY_FAILED = auto()  # tofu apply was reached and did not exit 0
+    NO_CHECK_INTERRUPTED = auto()  # interrupted after tofu apply was reached
+
+    @property
+    def runs_the_check(self) -> bool:
+        return self.name.startswith("CHECK_")
+
+
+@dataclass(frozen=True)
+class ApplyOutcome:
+    exit: ApplyExit
+    closing: ClosingCheck
+
+
 @dataclass
 class Progress:
     step: Step = Step.PLAN
     apply_reached: bool = False
+    plan_was_empty: bool = False
+    apply_exit_code: int | None = None
+
+
+def closing_after(progress: Progress, *, interrupted: bool) -> ClosingCheck:
+    """The one decider of the closing; cleanup runs after it, so a cleanup failure keeps it."""
+    if progress.apply_reached:
+        if interrupted:
+            return ClosingCheck.NO_CHECK_INTERRUPTED
+        if progress.apply_exit_code == 0:
+            return ClosingCheck.CHECK_APPLIED
+        return ClosingCheck.CHECK_APPLY_FAILED
+    if progress.plan_was_empty and not interrupted:
+        return ClosingCheck.CHECK_NO_CHANGES
+    return ClosingCheck.NO_CHECK_REFUSED
 
 
 class StepFailed(Exception):
@@ -48,10 +85,21 @@ class StepFailed(Exception):
 
     exit_code = ApplyExit.REFUSED
 
-    def __init__(self, step: Step, cause: OSError) -> None:
+    def __init__(self, step: Step, cause: OSError, closing: ClosingCheck) -> None:
         super().__init__(step)
         self.step = step
         self.cause = cause
+        self.closing = closing
+
+
+def _interrupt_in_flight(error: BaseException) -> bool:
+    """A cleanup that fails while an interrupt unwinds carries that interrupt as its context."""
+    context = error.__context__
+    while context is not None:
+        if isinstance(context, tofu.Interrupted | KeyboardInterrupt):
+            return True
+        context = context.__context__
+    return False
 
 
 def refusal_without_terminal() -> ApplyExit | None:
@@ -159,7 +207,7 @@ def apply_plan(
     home: Path,
     token_values: dict[str, str],
     plan_file_scope: Callable[[Path], AbstractContextManager[Path]] = private_plan_file,
-) -> int:
+) -> ApplyOutcome:
     progress = Progress()
     try:
         with (
@@ -169,27 +217,27 @@ def apply_plan(
         ):
             result = _show_confirm_apply(session, plan_file, token_values, progress)
             progress.step = Step.CLEANUP
-            return result
     except tofu.Interrupted as interrupted:
         print_interrupted_output(interrupted, token_values)
-        _report_interrupt(progress)
-        return ApplyExit.REFUSED
+        return _interrupted(progress)
     except KeyboardInterrupt:
-        _report_interrupt(progress)
-        return ApplyExit.REFUSED
+        return _interrupted(progress)
     except OSError as error:
         if progress.step is Step.PLAN:
             raise
-        raise StepFailed(progress.step, error) from error
+        closing = closing_after(progress, interrupted=_interrupt_in_flight(error))
+        raise StepFailed(progress.step, error, closing) from error
+    return ApplyOutcome(result, closing_after(progress, interrupted=False))
+
+
+def _interrupted(progress: Progress) -> ApplyOutcome:
+    _report_interrupt(progress)
+    return ApplyOutcome(ApplyExit.REFUSED, closing_after(progress, interrupted=True))
 
 
 def _report_interrupt(progress: Progress) -> None:
     step = progress.step
-    consequence = (
-        "live services may be partly changed, check `edge external plan`"
-        if progress.apply_reached
-        else "nothing was applied"
-    )
+    consequence = UNCHECKED_CONSEQUENCE if progress.apply_reached else "nothing was applied"
     print(
         f"\nedge external apply: interrupted during {step}, {consequence}; "
         "the plan file is deleted",
@@ -199,12 +247,13 @@ def _report_interrupt(progress: Progress) -> None:
 
 def _show_confirm_apply(
     session: tofu.Session, plan_file: Path, token_values: dict[str, str], progress: Progress
-) -> int:
+) -> ApplyExit:
     planned = tofu.run(
         session.tofu, [*tofu.PLAN_ARGUMENTS, f"-out={plan_file}"], session.environment
     )
     shown = secrets.redact(planned.output, token_values)
     if planned.exit_code == tofu.PlanExit.NO_CHANGES:
+        progress.plan_was_empty = True
         print(shown.rstrip("\n"))
         return ApplyExit.APPLIED_OR_NOTHING
     if planned.exit_code != tofu.PlanExit.CHANGES:
@@ -219,6 +268,7 @@ def _show_confirm_apply(
     progress.step = Step.APPLY
     progress.apply_reached = True
     applied = tofu.run(session.tofu, ["apply", str(plan_file)], session.environment)
+    progress.apply_exit_code = applied.exit_code
     progress.step = Step.CLEANUP
     print(secrets.redact(applied.output, token_values).rstrip("\n"))
     if applied.exit_code != 0:

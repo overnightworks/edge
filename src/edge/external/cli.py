@@ -1,4 +1,5 @@
-"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` and `check`."""
+"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` (which ends on
+the host check) and `check`."""
 
 import argparse
 import signal
@@ -68,23 +69,101 @@ def apply_command(
     home: Path, tree: Path | None = None, git: checkout.Runner = checkout.run_git
 ) -> int:
     """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
-    live one, on a clean main."""
+    live one, on a clean main. An apply that may have changed the services, or found nothing to
+    do, ends on the host check (#30 rule 8): its verdict decides the exit."""
+    closing = apply.ClosingCheck.NO_CHECK_REFUSED
 
     def refusal() -> int | None:
         return (
             apply.refusal_without_terminal()
             or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
             or _refusal_invalid_catalog("apply")
+            or _refusal_unreadable_cloudflare_read_file(home)
         )
 
-    return _guarded(
-        "apply",
-        home,
-        secrets.Access.WRITE,
-        apply.apply_plan,
-        apply.ApplyExit.CANNOT_PLAN,
-        refusal=refusal,
-    )
+    def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
+        nonlocal closing
+        try:
+            outcome = apply.apply_plan(home, token_values)
+        except apply.StepFailed as failure:
+            closing = failure.closing
+            if closing is apply.ClosingCheck.NO_CHECK_INTERRUPTED:
+                print(
+                    f"edge external apply: interrupted during {failure.step}, "
+                    f"{apply.UNCHECKED_CONSEQUENCE}",
+                    file=sys.stderr,
+                )
+            raise
+        closing = outcome.closing
+        return outcome.exit
+
+    with apply.terminate_like_interrupt():
+        exit_code = _guarded(
+            "apply",
+            home,
+            secrets.Access.WRITE,
+            plan_and_apply,
+            apply.ApplyExit.CANNOT_PLAN,
+            refusal=refusal,
+        )
+        if not closing.runs_the_check:
+            return exit_code
+        return _close_on_host_check(home, closing, exit_code)
+
+
+_CLOSING_LINES = {
+    (apply.ClosingCheck.CHECK_NO_CHANGES, host_check.CheckExit.CANNOT_CHECK): (
+        "the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_NO_CHANGES, INTERRUPTED): (
+        "the host check was interrupted; run edge external check --hosts"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.FINDINGS): (
+        "applied; the host check has findings, see above"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.CANNOT_CHECK): (
+        "applied, but the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, INTERRUPTED): (
+        "applied; the host check was interrupted; run edge external check --hosts"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CLEAN): (
+        "the apply failed; the host check ran"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.FINDINGS): (
+        "the apply failed; the host check ran"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CANNOT_CHECK): (
+        "the apply failed; the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, INTERRUPTED): (
+        "the apply failed; the host check was interrupted; run edge external check --hosts"
+    ),
+}
+
+
+def _close_on_host_check(home: Path, closing: apply.ClosingCheck, apply_exit: int) -> int:
+    """The check after the tofu session, under the apply's own signal handling. Once
+    `check_command` returned its verdict, the mapping and the lines run with the signals ignored:
+    a clean verdict is never turned into "interrupted"."""
+    try:
+        check_exit = check_command(home)
+    except KeyboardInterrupt:
+        check_exit = INTERRUPTED
+    with _signals_ignored():
+        if line := _CLOSING_LINES.get((closing, check_exit)):
+            print(f"edge external apply: {line}", file=sys.stderr)
+        return apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
+
+
+def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
+    """Exit 2 naming the file when the host check could not read its token after the apply."""
+    try:
+        secrets.read_cloudflare_token(home)
+    except secrets.SecretFileError as error:
+        print(f"edge external apply: {error}", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
+    return None
 
 
 def check_command(
