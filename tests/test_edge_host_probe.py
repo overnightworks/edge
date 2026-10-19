@@ -117,9 +117,24 @@ RAY = ("CF-RAY", "8a1b2c3d-FRA")
             id="challenge-leading-tab-capital",
         ),
         pytest.param(
-            Behaviour(403, [RAY, ("cf-mitigated", "challenged")]),
-            Answer(403, None, True, False),
-            id="challenged-is-not-a-challenge",
+            Behaviour(403, [RAY, ("cf-mitigated", "managed")]),
+            Answer(403, None, True, True),
+            id="challenge-any-other-value",
+        ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "challenge, managed")]),
+            Answer(403, None, True, True),
+            id="challenge-list-valued",
+        ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "challenge"), ("cf-mitigated", "challenge")]),
+            Answer(403, None, True, True),
+            id="challenge-header-repeated",
+        ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "")]),
+            Answer(403, None, True, True),
+            id="challenge-empty-value",
         ),
     ],
 )
@@ -180,7 +195,10 @@ def test_a_test_origin_must_be_http_on_a_loopback_name(origin):
 
 
 class ScriptedConnection:
-    """The transport boundary: raises `failure` at `stage`, otherwise answers headers only."""
+    """The transport boundary: raises `failure` at "request" or "getresponse", else answers.
+
+    The factory stage is raised by the test's own factory, not here.
+    """
 
     def __init__(self, failure=None, stage="getresponse", close_failure=None):
         self.failure, self.stage, self.close_failure = failure, stage, close_failure

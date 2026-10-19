@@ -1553,9 +1553,13 @@ def test_an_os_error_in_the_transport_is_one_unreachable_finding_without_its_tex
 
 
 @pytest.mark.usefixtures("loopback_only")
-@pytest.mark.parametrize("challenge", ["challenge", "challenge "])
-def test_a_challenge_hides_nothing_on_the_protected_wildcard_whatever_trails_it(
-    home, tmp_path, monkeypatch, capsys, challenge
+@pytest.mark.parametrize(
+    "mitigation",
+    [[("cf-mitigated", "challenge")], [("cf-mitigated", "challenge")] * 2],
+    ids=["once", "repeated"],
+)
+def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
+    home, tmp_path, monkeypatch, capsys, mitigation
 ):
     """PB1, PB4: a valid Access redirect with a challenge header is answer-wrong, exit 1."""
     checkout_declaring(tmp_path, monkeypatch, PROTECTED_WILDCARD_CATALOG)
@@ -1569,7 +1573,7 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_whatever_trails_it(
     record = cloudflare_read.Record("*.example.test", "CNAME", TUNNEL_TARGET, True)
     snapshot = cloudflare_read.Snapshot("t-1", (record,), (operator,), (operator_app,))
     login = "https://team.cloudflareaccess.com/cdn-cgi/access/login/x"
-    answering = Behaviour(302, [RAY, ("Location", login), ("cf-mitigated", challenge)])
+    answering = Behaviour(302, [RAY, ("Location", login), *mitigation])
     with serving(answering) as origin:
         exit_code = external_cli.check_command(
             home,

@@ -98,13 +98,11 @@ def _exchange(connection: http.client.HTTPConnection, name: str) -> Answer | Unr
     try:
         connection.request("GET", "/", headers={"Host": name, "User-Agent": USER_AGENT})
         response = connection.getresponse()
-        mitigation = (response.getheader("cf-mitigated") or "").strip(" \t")
-        challenge = mitigation.lower() == "challenge"
         return Answer(
             response.status,
             response.getheader("Location"),
             response.getheader("cf-ray") is not None,
-            challenge,
+            response.getheader("cf-mitigated") is not None,
         )
     except (http.client.HTTPException, OSError) as failure:
         return Unreachable(_failure_kind(failure))
