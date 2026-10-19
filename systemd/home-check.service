@@ -1,0 +1,8 @@
+[Unit]
+Description=home check: berichtet, was von ~/README.md und dem Geheimnis-Manifest abweicht; meldet nur, wenn sich die Funde ändern
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/home check
+# Exit 1 means "findings exist": news, not a failure. Exit 2 (invalid config) and 3 (unexpected error) still fail the unit.
+SuccessExitStatus=1
