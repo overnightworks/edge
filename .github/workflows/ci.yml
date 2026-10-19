@@ -37,11 +37,18 @@ jobs:
           uv run --no-sync --no-build ruff check
           uv run --no-sync --no-build ruff format --check
 
+      - name: The repository root holds only what a tool must find there
+        run: uv run --no-sync --no-build python scripts/check_root_layout.py
+
       - name: edge-check tests
-        env:
-          PYTHONPATH: src
-        # pytest and pytest-cov come from the lock file, installed by the sync step above.
-        run: uv run --no-sync --no-build pytest --cov=src --cov-report=xml:coverage.xml
+        # pytest and pytest-cov come from the lock file, installed by the sync step above;
+        # pyproject.toml's pythonpath makes src and scripts importable.
+        run: uv run --no-sync --no-build pytest --cov=src --cov=scripts --cov-report=xml:coverage.xml
+
+      # home's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
+      # If a home path moves, this include moves with it.
+      - name: home's code stays at 100 % line and branch coverage
+        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,scripts/check_root_layout.py' --fail-under=100 --show-missing
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -52,11 +59,21 @@ jobs:
           path: coverage.xml
 
       # The wheel must ship both packages, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check and edge-backup
+      - name: The wheel installs edge-check, edge-backup and home
         run: |
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
+          scratch=$(mktemp -d)
+          mkdir "$scratch/home" "$scratch/work"
+          UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl
+          cd "$scratch/work"
+          export HOME="$scratch/home" PATH="$scratch/bin:$PATH"
+          home --help
+          home tidy --help
+          home check --help
+          home secrets --help
+          home secrets --by-service | grep -F "deklarierte Abhängigkeiten"
 
       - name: Compose renders (default, keycloak, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
         run: |

@@ -76,7 +76,7 @@ all_exist() {
 }
 
 install_home() {
-    su - tester -c "uv tool install /proof/home_tools-*.whl" >"$EVIDENCE/install.log" 2>&1
+    su - tester -c "uv tool install /proof/*.whl" >"$EVIDENCE/install.log" 2>&1
     return
 }
 
