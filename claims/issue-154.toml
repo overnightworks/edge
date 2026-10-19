@@ -1,8 +1,0 @@
-claim_id = "1256ed2d45564dad998f1ad06bfa6ea9"
-agent = "claude"
-role = "builder"
-base = "05950d4704a025e738b3782fd72ab96872819862"
-branch = "claude/issue-154-x5c2-host-probe"
-scope = ["README.md", "docs/architecture.md", "src/edge/catalog.py", "src/edge/external/cli.py", "src/edge/external/host_check.py", "src/edge/external/host_probe.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_external.py", "tests/test_edge_host_check.py", "tests/test_edge_host_probe.py"]
-opened_commit = "493f8a8678e7d0f10ec063ad89ea2737f5531a07"
-whole_reason = "The host probe is one slice: the adapter, the two judgments, the reserved name and the fakes every existing check cell needs land together or the check asks the real network."
