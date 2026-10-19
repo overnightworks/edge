@@ -70,7 +70,8 @@ def test_a_matching_file_is_left_untouched_without_a_line(tree, content):
     before = (tree / ".env").stat()
 
     assert ensure(tree) is None
-    assert (tree / ".env").stat() == before
+    after = (tree / ".env").stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
     assert (tree / ".env").read_text() == content
 
 

@@ -43,8 +43,9 @@ def expect(condition: bool, message: str) -> None:
 
 def repository_copy(repository: Path, home: Path, scratch: Path) -> Path:
     """The files of `repository` that git tracks or would track, as the live checkout of `home`: a
-    `main` pushed to the bare remote `<scratch>/origin.git`, with an empty ignored `.env` and its
-    own venv from `uv sync`. Copying again over an existing copy publishes what differs."""
+    `main` pushed to the bare remote `<scratch>/origin.git`, with its ignored `.env` written by the
+    first `edge apply --closed` and its own venv from `uv sync`.
+    Copying again over an existing copy publishes what differs."""
     copy = checkout.live_checkout(home)
     listing = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],

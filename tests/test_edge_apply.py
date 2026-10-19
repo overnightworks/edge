@@ -1244,12 +1244,15 @@ def test_a_matching_environment_file_is_untouched_and_silent(switch, repository)
     """#136 E2, E3: the right two keys, with a hand-added key besides, stay as they are."""
     (repository / ".env").write_text("HAND_ADDED=1\n" + ENVIRONMENT_FILE_LINES)
     before = (repository / ".env").stat()
+    content = (repository / ".env").read_text()
 
     exit_code, _, err = switch(ensure_environment=writing_environment())
 
     assert exit_code == 0
     assert ".env" not in err
-    assert (repository / ".env").stat() == before
+    after = (repository / ".env").stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert (repository / ".env").read_text() == content
 
 
 def test_a_differing_environment_file_is_named_and_left_alone(
