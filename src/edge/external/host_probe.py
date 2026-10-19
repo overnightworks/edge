@@ -131,18 +131,19 @@ def is_access_redirect(answer: Answer, probed_host: str) -> bool:
     if answer.status not in ACCESS_REDIRECT_STATUSES or answer.location is None or answer.challenge:
         return False
     try:
+        raw_path = urlsplit(answer.location).path
         target = urlsplit(urljoin(f"https://{probed_host}/", answer.location))
         port, hostname = target.port, target.hostname
     except ValueError:
         return False
     if target.scheme != "https" or port not in (None, HTTPS_PORT) or hostname is None:
         return False
-    if _hides_a_path_separator(target.path):
+    path = normalized_path(target.path)
+    if any(_hides_a_path_separator(each) for each in (raw_path, target.path, path)):
         return False
     host = hostname.removesuffix(".")
     if host.endswith(ACCESS_TEAM_SUFFIX):
         return True
-    path = normalized_path(target.path)
     on_access_path = path == ACCESS_PATH or path.startswith(f"{ACCESS_PATH}/")
     return host == probed_host.lower().removesuffix(".") and on_access_path
 
