@@ -293,6 +293,13 @@ def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
     ]
 
 
+def test_an_own_app_may_carry_a_path_destination_beside_the_whole_host():
+    """C6: the same policy covers the whole host, so the extra path changes nothing."""
+    own = app(fqdn("www"), fqdn("www") + "/admin", policies=(BYPASS_POLICY,))
+    check = host_check.compare(ZONE, [bypass("www")], snapshot(tunnel_record("www"), apps=(own,)))
+    assert not check.findings
+
+
 def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
     """C6."""
     only = app(fqdn("www") + "/admin", policies=(BYPASS_POLICY,))

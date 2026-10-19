@@ -254,11 +254,12 @@ class CloudflareClient:
         )
         request.add_unredirected_header("Authorization", f"Bearer {self._token}")
         try:
-            with self._opener.open(request, timeout=self._timeout_seconds) as response:
-                status, body = response.status, response.read(MAXIMUM_BODY_BYTES + 1)
-        except urllib.error.HTTPError as refused:
-            with refused:
-                status, body = refused.code, refused.read(MAXIMUM_BODY_BYTES + 1)
+            try:
+                with self._opener.open(request, timeout=self._timeout_seconds) as response:
+                    status, body = response.status, response.read(MAXIMUM_BODY_BYTES + 1)
+            except urllib.error.HTTPError as refused:
+                with refused:
+                    status, body = refused.code, refused.read(MAXIMUM_BODY_BYTES + 1)
         except (OSError, ValueError, http.client.HTTPException) as failure:
             # Only the type: the text of a transport error can quote the request.
             raise CloudflareReadError(f"{path}: {type(failure).__name__}") from None
@@ -275,8 +276,12 @@ def _require_cloudflare_or_loopback(base_url: str) -> None:
 
 def _consistent_page_counts(total_count: int) -> set[int]:
     """The `total_pages` an honest answer gives; the schema is silent on an empty list (0 or 1)."""
-    pages = -(-total_count // PAGE_SIZE)
+    pages = _pages_for(total_count)
     return {pages, 1} if total_count == 0 else {pages}
+
+
+def _pages_for(total_count: int) -> int:
+    return -(-total_count // PAGE_SIZE)
 
 
 def _checked_page(
@@ -295,7 +300,7 @@ def _checked_page(
     if announces_total_pages:
         total_pages = _count(info, "total_pages", path)
     else:
-        total_pages = max(1, -(-total_count // PAGE_SIZE))
+        total_pages = max(1, _pages_for(total_count))
     if total_pages not in _consistent_page_counts(total_count):
         raise CloudflareReadError(f"{path}: total_pages contradicts total_count")
     if total_pages > MAXIMUM_PAGES:

@@ -6,8 +6,10 @@ import os
 import pty
 import select
 import signal
+import socketserver
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterator
@@ -1281,6 +1283,59 @@ def test_a_reader_failure_names_a_cause_without_the_token_and_leaves_stdout_empt
     assert printed.err.startswith("edge external check: cannot check, ")
     assert printed.err.count("\n") == 1
     assert SENTINEL not in printed.err
+
+
+class BrokenChunkedServer:
+    """A loopback server whose every answer is a chunked body that breaks off."""
+
+    def __init__(self, status: int, chunks: bytes) -> None:
+        answer = (
+            f"HTTP/1.1 {status} X\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        ).encode() + chunks
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                self.request.recv(65536)
+                self.request.sendall(answer)
+
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.mark.usefixtures("loopback_only")
+@pytest.mark.parametrize("status", [200, 500])
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        pytest.param(SENTINEL.encode() + b"\r\n", id="a malformed chunk size"),
+        pytest.param(b"5\r\nab", id="a truncated chunk"),
+    ],
+)
+def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
+    home, hosts_catalog, capfd, status, chunks
+):
+    """K5 (rule 13): both response-reading branches end as a read error, with no chained cause."""
+    (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
+    broken = BrokenChunkedServer(status, chunks)
+    try:
+        code = external_cli.check_command(
+            home,
+            cloudflare=lambda token: cloudflare_read.CloudflareClient(token, base_url=broken.url),
+        )
+    finally:
+        broken.close()
+    printed = capfd.readouterr()
+    assert code == 2
+    assert printed.out == ""
+    assert printed.err.startswith("edge external check: cannot check, /zones: ")
+    assert SENTINEL not in printed.out + printed.err
 
 
 def test_check_starts_no_tofu_and_keeps_a_leftover_plan(home, fake_tofu, hosts_catalog):

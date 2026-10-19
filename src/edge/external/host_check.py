@@ -198,8 +198,9 @@ def _app_findings(
     if own_app.type != SELF_HOSTED:
         detail = "the app at this host is not a self-hosted app"
         return [Finding(Problem.POLICY_WRONG, host.fqdn, detail)]
-    if scoped := [d for d in _destinations_at(own_app, host.fqdn) if "/" in d]:
-        detail = f"the app is scoped to the path {scoped[0].removeprefix(host.fqdn)}"
+    destinations_here = _destinations_at(own_app, host.fqdn)
+    if host.fqdn not in destinations_here:
+        detail = f"the app is scoped to the path {destinations_here[0].removeprefix(host.fqdn)}"
         return [Finding(Problem.POLICY_WRONG, host.fqdn, detail)]
     faults = [
         f"a path rule makes {override.path_pattern} public, bypassing Access"

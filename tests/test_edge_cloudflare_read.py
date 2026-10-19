@@ -3,6 +3,7 @@
 import contextlib
 import json
 import socket
+import socketserver
 import threading
 import urllib.parse
 from collections.abc import Callable, Iterator
@@ -302,60 +303,121 @@ def test_the_environment_proxy_is_not_used(cloudflare, monkeypatch):
     assert cloudflare.requests
 
 
+def test_the_https_environment_proxy_is_not_used_for_the_production_url(monkeypatch):
+    """R4: the fake proxy sees nothing; the direct connection ends at the loopback backstop."""
+    seen_by_proxy: list[bytes] = []
+
+    class Proxy(socketserver.BaseRequestHandler):
+        def handle(self) -> None:
+            seen_by_proxy.append(self.request.recv(1024))
+
+    proxy = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Proxy)
+    threading.Thread(
+        target=proxy.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    ).start()
+    address = f"http://127.0.0.1:{proxy.server_address[1]}"
+    for variable in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(variable, address)
+    monkeypatch.setenv("NO_PROXY", "")
+    real_getaddrinfo = socket.getaddrinfo
+    unroutable = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443))
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda host, *rest, **keywords: (
+            [unroutable]
+            if host == "api.cloudflare.com"
+            else real_getaddrinfo(host, *rest, **keywords)
+        ),
+    )
+    try:
+        with pytest.raises(AssertionError, match=r"leaves loopback: 192\.0\.2\.1"):
+            CloudflareClient(TOKEN).read(ZONE)
+    finally:
+        proxy.shutdown()
+        proxy.server_close()
+    assert seen_by_proxy == []
+
+
 @pytest.mark.parametrize(
-    "answer",
+    ("answer", "expected"),
     [
         pytest.param(
-            lambda page: {"success": True, "errors": [], "result": []}, id="no result_info"
+            lambda page: {"success": True, "errors": [], "result": []},
+            "the answer is not a paged list",
+            id="no result_info",
         ),
         *[
             pytest.param(
-                lambda page, key=key: listing([VALID_APP], page, **{key: None}), id=f"no {key}"
+                lambda page, key=key: listing([VALID_APP], page, **{key: None}),
+                f"result_info.{key} is missing or not a count"
+                if key != "per_page"
+                else "the answer does not keep the page size",
+                id=f"no {key}",
             )
             for key in ("total_pages", "total_count", "count", "per_page")
         ],
         pytest.param(
-            lambda page: listing([VALID_APP], page, total_count=3), id="fewer than counted"
+            lambda page: listing(
+                [VALID_APP] * 2 if page == 1 else [], page, total_pages=2, total_count=3
+            ),
+            "2 results of 3 announced",
+            id="fewer than counted",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP] * 2, 1, total_pages=2, total_count=4), id="same page"
+            lambda page: listing([VALID_APP] * 2, 1, total_pages=2, total_count=4),
+            "the answer is not page 2",
+            id="same page",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP] * 2, page, count=1), id="count is not the results"
+            lambda page: listing([VALID_APP] * 2, page, count=1),
+            "holds other than the counted results",
+            id="count is not the results",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP], page, per_page=PAGE + 1), id="another page size"
+            lambda page: listing([VALID_APP], page, per_page=PAGE + 1),
+            "does not keep the page size",
+            id="another page size",
         ),
         pytest.param(
             lambda page: listing([VALID_APP], page, total_pages=2, total_count=3),
+            "is not full but is not the last",
             id="a short page that is not the last",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP] * 2, page, total_pages=3 - page, total_count=4),
+            lambda page: listing(
+                [VALID_APP] * 2, page, total_pages=1 + page, total_count=2 + 2 * page
+            ),
+            "the pages announce different totals",
             id="a page count that changes between pages",
         ),
         pytest.param(
-            lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=3 + page),
+            lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=2 + page),
+            "the pages announce different totals",
             id="an object count that changes between pages",
         ),
         pytest.param(
             lambda page: listing([VALID_APP], page, total_pages=0, total_count=1),
+            "total_pages contradicts total_count",
             id="no pages for a counted object",
         ),
         pytest.param(
             lambda page: listing([VALID_APP] * 2, page, total_pages=2, total_count=2),
+            "total_pages contradicts total_count",
             id="more pages than the count fills",
         ),
         pytest.param(
             lambda page: listing([], page, total_pages=2, total_count=0),
+            "total_pages contradicts total_count",
             id="two pages for no object",
         ),
     ],
 )
-def test_pagination_fails_closed(cloudflare, answer):
-    """R5."""
+def test_pagination_fails_closed(cloudflare, answer, expected):
+    """R5: each case ends at its own check."""
     cloudflare.routes[APPS_PATH] = lambda query: (200, answer(int(query["page"])))
-    assert read_error(cloudflare).startswith(APPS_PATH)
+    message = read_error(cloudflare)
+    assert message.startswith(f"{APPS_PATH}: ") and expected in message
 
 
 @pytest.mark.parametrize("total_pages", [0, 1])
