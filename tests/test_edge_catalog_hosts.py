@@ -274,8 +274,9 @@ def test_a_label_that_tofu_reads_as_a_number_is_refused(written, tmp_path):
         f"cloudflare:\n  zone: {ZONE}\nservices:\n  app:\n    hosts:\n"
         f"      - {{name: {written}, exposure: bypass, reason: own login}}\n"
     )
+    catalog_document = catalog.read(tmp_path / catalog.FLEET_FILE)
     with pytest.raises(catalog.CatalogError, match=r"hosts\[0\]\.name:"):
-        catalog.hosts(catalog.read(tmp_path / catalog.FLEET_FILE))
+        catalog.hosts(catalog_document)
 
 
 @pytest.mark.parametrize("name", ["hopin", "a", "a" * 63, "a-b", "9"])
