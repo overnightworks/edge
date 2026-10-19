@@ -1,5 +1,22 @@
 mock_provider "github" {}
-mock_provider "cloudflare" {}
+mock_provider "cloudflare" {
+  mock_data "cloudflare_zone" {
+    defaults = {
+      id      = "zone-id"
+      account = { id = "account-id", name = "fixture account" }
+    }
+  }
+
+  mock_data "cloudflare_zero_trust_tunnel_cloudflared" {
+    defaults = { id = "tunnel-id" }
+  }
+
+  mock_data "cloudflare_zero_trust_access_groups" {
+    defaults = {
+      result = [{ id = "group-id", name = "operator", is_default = [], include = [], exclude = [], require = [] }]
+    }
+  }
+}
 
 run "the_wildcard_catalog_yields_the_expected_hosts" {
   command = plan
