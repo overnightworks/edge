@@ -661,6 +661,7 @@ ACCESS_PATH_FORMS = [
     ("https://evil.example\\team.cloudflareaccess.com/", False),
     ("https://evil.example\\.cloudflareaccess.com/x", False),
     ("https://x@team.cloudflareaccess.com/", False),
+    ("https://evil\\.cloudflareaccess.com/x", False),
     # The query and fragment are never inspected, newlines included; the path stays strict.
     ("/cdn-cgi/access?x=\nfoo", True),
     ("/cdn-cgi/access#\nfoo", True),
