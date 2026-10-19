@@ -1,0 +1,7 @@
+claim_id = "a2339e68bed54980b5ade998ee0a615c"
+agent = "claude"
+role = "builder"
+base = "33ceb494f8a10bb24daa8981b5eb9b5fd8f52517"
+branch = "claude/issue-151-h3-cutover"
+scope = ["docs/home.md", "systemd/home-check.service"]
+opened_commit = "7ef716c34f72d9a32ad9bdaf181166506c7668b0"
