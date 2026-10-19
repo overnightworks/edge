@@ -11,7 +11,7 @@ import threading
 import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -592,7 +592,7 @@ def test_the_briefing_names_the_page_the_login_and_every_right_to_tick(
     assert "Login: dein Cloudflare-Konto." in cloudflare
     assert "  [ ] Permissions: Zone › DNS › Read" in cloudflare
     assert "  [ ] Zone Resources: Include › Specific zone › example.invalid" in cloudflare
-    assert "  [ ] TTL: End Date 16.11.2026" in cloudflare
+    assert "  [ ] TTL: leave the start date empty, set only the End Date 16.11.2026" in cloudflare
     assert f"Geöffnet: {CLOUDFLARE_TOKEN_PAGE}" in cloudflare
     assert "  - organization_secrets: read" in github
     assert "  [ ] Repository access: All repositories" in github
@@ -645,8 +645,22 @@ CLOUDFLARE_DISABLED = "Cloudflare meldet das Token als disabled, nicht active"
 CLOUDFLARE_UNREADABLE = "Cloudflare meldet das Token als unbekannt, nicht active"
 
 
-def cloudflare_answer(status: object) -> bytes:
-    return json.dumps({"success": True, "result": {"id": "0", "status": status}}).encode()
+def cloudflare_answer(status: object, not_before: object = None, *, with_start: bool = False) -> bytes:
+    result = {"id": "0", "status": status, **({"not_before": not_before} if with_start or not_before else {})}
+    return json.dumps({"success": True, "result": result}).encode()
+
+
+CLOUDFLARE_START = "2026-12-30T23:00:00Z"
+
+
+def not_yet_valid(start_in_utc: str) -> str:
+    return (
+        f"Cloudflare reports the token as active, but it is not valid before {start_in_utc} UTC; "
+        "clear the start date on the token's Edit page in Cloudflare, then paste again"
+    )
+
+
+CLOUDFLARE_NOT_YET_VALID = not_yet_valid("30.12.2026 23:00")
 
 
 @pytest.mark.parametrize(
@@ -665,6 +679,56 @@ def cloudflare_answer(status: object) -> bytes:
 def test_a_token_counts_only_once_its_provider_confirms_it(source: TokenSource, response: Response | None, expected: Verdict) -> None:
     """#36 rule 2.4 / #10 line 4: a token counts only once its provider confirms it."""
     assert verify_token(source, PASTED_VALUE, lambda _request: response) == expected
+
+
+CLOUDFLARE_UNREADABLE_START = (
+    "Cloudflare's answer has a start date that cannot be read; check the token's TTL on its Edit page, then paste again"
+)
+CLOUDFLARE_START_INSTANT = datetime(2026, 12, 30, 23, 0, tzinfo=UTC)
+REFUSED_UNTIL_START = Verdict(Outcome.REFUSED, CLOUDFLARE_NOT_YET_VALID)
+ACCEPTED = Verdict(Outcome.ACCEPTED)
+
+
+@pytest.mark.parametrize(
+    ("start", "now", "expected"),
+    [
+        (CLOUDFLARE_START, datetime(2026, 10, 19, tzinfo=UTC), REFUSED_UNTIL_START),
+        (CLOUDFLARE_START, CLOUDFLARE_START_INSTANT + timedelta(seconds=1), ACCEPTED),
+        (CLOUDFLARE_START, CLOUDFLARE_START_INSTANT, ACCEPTED),
+        ("2026-12-31T00:00:00+01:00", CLOUDFLARE_START_INSTANT, ACCEPTED),
+        ("2026-12-30T22:30:00-01:00", CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, not_yet_valid("30.12.2026 23:30"))),
+        ("2026-12-31T00:00:01+01:00", CLOUDFLARE_START_INSTANT, REFUSED_UNTIL_START),
+        ("2026-12-30T23:00:00", CLOUDFLARE_START_INSTANT - timedelta(seconds=1), REFUSED_UNTIL_START),
+        ("2026-12-30T23:00:00", CLOUDFLARE_START_INSTANT, ACCEPTED),
+        (None, CLOUDFLARE_START_INSTANT, ACCEPTED),
+        ("invalid", CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE_START)),
+        (1767222000, CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE_START)),
+    ],
+    ids=[
+        "start in the future",
+        "start in the past",
+        "start exactly now",
+        "positive offset, exactly now",
+        "negative offset, still ahead",
+        "positive offset, one second ahead",
+        "no offset is read as UTC, ahead",
+        "no offset is read as UTC, exactly now",
+        "null start",
+        "unreadable text",
+        "not text",
+    ],
+)
+def test_a_cloudflare_token_counts_only_from_its_start_date(start: object, now: datetime, expected: Verdict) -> None:
+    """#54 rule 1: an active token whose start date lies ahead or cannot be read is refused; one without or past it passes."""
+    response = Response(200, cloudflare_answer("active", start, with_start=True))
+
+    assert verify_token(CLOUDFLARE, PASTED_VALUE, lambda _request: response, lambda: now) == expected
+
+
+def test_the_default_clock_refuses_a_start_date_far_in_the_future() -> None:
+    response = Response(200, cloudflare_answer("active", "9999-01-01T00:00:00Z"))
+
+    assert verify_token(CLOUDFLARE, PASTED_VALUE, lambda _request: response).outcome is Outcome.REFUSED
 
 
 @pytest.mark.parametrize(
@@ -692,6 +756,11 @@ class _Answers(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - the name http.server calls
         self.seen.append((self.path, self.headers.get("Authorization")))
+        if self.path == "/not-yet-valid":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(cloudflare_answer("active", CLOUDFLARE_START))
+            return
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/ok")
@@ -775,6 +844,25 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
     for part in (canary, "FAKE-CANARY-HEAD", "FAKE-CANARY-TAIL"):
         assert part not in captured.out + captured.err
     assert local_server.seen == []
+    assert files_under(home) == {PASSPHRASE_FILE}
+
+
+def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
+    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys
+) -> None:
+    """#54 rule 1 / #10 line 22: a rejected value is refused with one line naming the start date and is never written."""
+    now = datetime(2026, 10, 19, tzinfo=UTC)
+    real_check = Boundaries(
+        terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/not-yet-valid"), lambda: now), os.fsync
+    )
+    terminal.pastes = [PASTED_VALUE, "", ""]
+
+    code = home_secrets_setup(home, real_check)
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert f"abgelehnt: {CLOUDFLARE_NOT_YET_VALID}; nichts gespeichert." in captured.out
+    assert PASTED_VALUE not in captured.out + captured.err
     assert files_under(home) == {PASSPHRASE_FILE}
 
 

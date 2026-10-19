@@ -240,10 +240,12 @@ Mensch, alles andere der Assistent. Je Token:
    URL-Parameter vorausgefüllt (Name, Resource owner `overnightworks`, Ablauf,
    Beschreibung, Rechte); „Repository access: All repositories“ kann kein Link
    setzen und steht als Haken in der Liste. Cloudflare füllt nichts vor; die
-   Liste nennt jede Permission, die Zone und das TTL-Enddatum.
+   Liste nennt jede Permission, die Zone und das TTL-Enddatum; das Startdatum
+   bleibt leer.
 3. Er nimmt den Wert unsichtbar entgegen. Leer lassen überspringt den Eintrag.
 4. Er fragt den Anbieter, bevor er speichert: Cloudflare
-   `GET /user/tokens/verify` muss `active` melden, GitHub muss
+   `GET /user/tokens/verify` muss `active` melden und darf kein Startdatum
+   (`not_before`) in der Zukunft haben, GitHub muss
    `GET /orgs/overnightworks/actions/secrets` beantworten (das braucht die
    Org und das Secrets-Recht und liefert nur Namen). Ein abgelehnter Wert wird
    mit einer Zeile abgewiesen und nicht geschrieben; danach darf man noch

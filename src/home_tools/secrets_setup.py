@@ -29,7 +29,7 @@ import warnings
 import webbrowser
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -86,6 +86,11 @@ GITHUB_API = "https://api.github.com"
 CLOUDFLARE_TOKEN_PAGE = "https://dash.cloudflare.com/profile/api-tokens"
 CLOUDFLARE_VERIFY_URL = "https://api.cloudflare.com/client/v4/user/tokens/verify"
 CLOUDFLARE_ACTIVE = "active"
+NOT_YET_VALID = (
+    "{label} reports the token as active, but it is not valid before {start:%d.%m.%Y %H:%M} UTC; "
+    "clear the start date on the token's Edit page in Cloudflare, then paste again"
+)
+UNREADABLE_START = "{label}'s answer has a start date that cannot be read; check the token's TTL on its Edit page, then paste again"
 
 
 # --- the provider boundary -------------------------------------------------
@@ -144,7 +149,23 @@ def _cloudflare_token_status(body: bytes) -> str:
         return ""
 
 
-def _judge(provider: Provider, response: Response) -> Verdict:
+def _cloudflare_not_before(body: bytes) -> datetime | None:
+    """The start of the token's validity: None when the answer names none, ValueError when it names one that cannot be read."""
+    result = json.loads(body).get("result") if body else None
+    raw = result.get("not_before") if isinstance(result, dict) else None
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("not_before is not text")
+    start = datetime.fromisoformat(raw)
+    return start if start.tzinfo else start.replace(tzinfo=UTC)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _judge(provider: Provider, response: Response, now: datetime) -> Verdict:
     label = PROVIDER_LABELS[provider]
     if response.status != 200:
         return Verdict(Outcome.REFUSED, f"{label} antwortet {response.status}")
@@ -152,10 +173,16 @@ def _judge(provider: Provider, response: Response) -> Verdict:
         status = _cloudflare_token_status(response.body)
         if status != CLOUDFLARE_ACTIVE:
             return Verdict(Outcome.REFUSED, f"{label} meldet das Token als {status or 'unbekannt'}, nicht {CLOUDFLARE_ACTIVE}")
+        try:
+            not_before = _cloudflare_not_before(response.body)
+        except ValueError:  # the message may quote the answer, so the refusal says nothing of it
+            return Verdict(Outcome.REFUSED, UNREADABLE_START.format(label=label))
+        if not_before is not None and not_before > now:
+            return Verdict(Outcome.REFUSED, NOT_YET_VALID.format(label=label, start=not_before.astimezone(UTC)))
     return Verdict(Outcome.ACCEPTED)
 
 
-def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch) -> Verdict:
+def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch, clock: Callable[[], datetime] = _utc_now) -> Verdict:
     """Asks the provider whether the value works before anything is stored."""
     request = _verify_request(source)
     # Unredirected: a redirect to another host never carries the token along.
@@ -166,7 +193,7 @@ def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch) -> 
         return Verdict(Outcome.REFUSED, f"der Wert lässt sich {PROVIDER_LABELS[source.provider]} nicht als Token senden")
     if response is None:
         return Verdict(Outcome.UNREACHABLE, f"{PROVIDER_LABELS[source.provider]} nicht erreichbar; später noch einmal")
-    return _judge(source.provider, response)
+    return _judge(source.provider, response, clock())
 
 
 # --- the terminal boundary -------------------------------------------------
@@ -324,7 +351,7 @@ def _cloudflare_briefing(entry: SecretEntry, source: TokenSource, now: datetime)
         *(f"  [ ] Permissions: {right}" for right in source.scope),
         "  [ ] Account Resources: Include › dein Konto",
         f"  [ ] Zone Resources: Include › Specific zone › {source.resource}",
-        f"  [ ] TTL: End Date {ends:%d.%m.%Y}",
+        f"  [ ] TTL: leave the start date empty, set only the End Date {ends:%d.%m.%Y}",
         "  [ ] Continue to summary › Create Token, dann den Wert kopieren",
     ]
 
