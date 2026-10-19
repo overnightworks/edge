@@ -189,30 +189,49 @@ def test_the_snapshot_holds_every_page_and_each_request_carries_the_token_in_the
     assert TOKEN not in json.dumps([query for _, query, _ in cloudflare.requests])
 
 
-@pytest.mark.parametrize(
-    "refused_paths",
-    [[APPS_PATH], [APPS_PATH, GROUPS_PATH]],
-    ids=["the apps only", "every access path"],
-)
-def test_access_off_at_the_apps_read_is_a_typed_answer_not_an_error(cloudflare, refused_paths):
+def test_access_off_at_the_apps_read_is_a_typed_answer_not_an_error(cloudflare):
     """R2: Access off at the apps read is a typed answer, and the groups are not asked for."""
-    for path in refused_paths:
-        cloudflare.routes[path] = lambda _query: (
-            403,
-            failure(9999, "access.api.error.not_enabled"),
-        )
-    snapshot = cloudflare.client().read(ZONE)
-    assert (snapshot.apps, snapshot.groups) == (None, ())
-    assert len(snapshot.records) == len(RECORDS)
-
-
-def test_access_off_at_the_groups_read_after_the_apps_answered_is_a_contradiction(cloudflare):
-    """R8: only the apps read may answer Access off."""
-    cloudflare.routes[GROUPS_PATH] = lambda _query: (
+    cloudflare.routes[APPS_PATH] = lambda _query: (
         403,
         failure(9999, "access.api.error.not_enabled"),
     )
-    assert read_error(cloudflare).startswith(f"{GROUPS_PATH}: HTTP 403, Cloudflare error code 9999")
+    snapshot = cloudflare.client().read(ZONE)
+    assert (snapshot.apps, snapshot.groups) == (None, ())
+    assert len(snapshot.records) == len(RECORDS)
+    assert GROUPS_PATH not in {path for path, _query, _header in cloudflare.requests}
+
+
+ACCESS_OFF = (403, failure(9999, "access.api.error.not_enabled"))
+
+
+def apps_page_one_then_access_off(query: dict[str, str]) -> Answer:
+    if query["page"] == "1":
+        return 200, listing([VALID_APP] * 2, 1, total_pages=2, total_count=4)
+    return ACCESS_OFF
+
+
+@pytest.mark.parametrize(
+    ("refused_path", "routes"),
+    [
+        (APPS_PATH, {APPS_PATH: apps_page_one_then_access_off}),
+        (
+            GROUPS_PATH,
+            {
+                APPS_PATH: lambda _query: (200, page_of([], 1, PAGE, APPS_PATH)),
+                GROUPS_PATH: lambda _query: ACCESS_OFF,
+            },
+        ),
+    ],
+    ids=["apps page 2", "groups"],
+)
+def test_access_off_after_the_apps_began_to_answer_is_a_contradiction(
+    cloudflare, refused_path, routes
+):
+    """R8: only the first page of the apps read may answer Access off."""
+    cloudflare.routes.update(routes)
+    assert read_error(cloudflare).startswith(
+        f"{refused_path}: HTTP 403, Cloudflare error code 9999"
+    )
 
 
 @pytest.mark.parametrize(

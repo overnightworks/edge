@@ -96,6 +96,7 @@ def check_command(
     """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `emit` writes
     the one output: an interrupt before it leaves stdout empty, none during it cuts the document."""
     token_values: dict[str, str] = {}
+    verdict_stands: host_check.CheckExit | None = None
     try:
         with apply.terminate_like_interrupt():
             document = _valid_catalog("check")
@@ -106,9 +107,12 @@ def check_command(
                 document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
+            verdict_stands = result.exit_code
             _emit_uninterrupted(emit, secrets.redact(rendered, token_values))
             return result.exit_code
     except KeyboardInterrupt:
+        if verdict_stands is not None:
+            return verdict_stands
         print("edge external check: interrupted", file=sys.stderr)
         return INTERRUPTED
     except (secrets.SecretFileError, cloudflare_read.CloudflareReadError) as error:

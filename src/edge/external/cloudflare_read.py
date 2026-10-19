@@ -235,7 +235,14 @@ class CloudflareClient:
         items: list[dict] = []
         page, announced = 1, None
         while True:
-            answer = self._get(path, {**(query or {}), "page": str(page), "per_page": PAGE_SIZE})
+            try:
+                answer = self._get(
+                    path, {**(query or {}), "page": str(page), "per_page": PAGE_SIZE}
+                )
+            except _Refusal as refusal:
+                # Access off answers page 1 only; on a later page the read contradicts itself.
+                refusal.access_not_enabled = refusal.access_not_enabled and page == 1
+                raise
             page_items, totals = _checked_page(path, answer, page, announces_total_pages)
             if announced not in (None, totals):
                 raise CloudflareReadError(f"{path}: the pages announce different totals")

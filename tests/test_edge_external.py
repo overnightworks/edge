@@ -22,7 +22,7 @@ import pytest
 from edge import checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
-from edge.external import cloudflare_read, host_check, secrets, tofu
+from edge.external import cloudflare_read, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1371,23 +1371,6 @@ def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
-def test_an_interrupt_while_the_result_is_rendered_exits_130_with_stdout_empty(
-    home, hosts_catalog, capsys, monkeypatch, interrupt
-):
-    """K7: the protection lasts until the writing begins."""
-
-    def interrupted_while_rendering(_result) -> str:
-        os.kill(os.getpid(), interrupt)
-        return "unreached"
-
-    monkeypatch.setattr(host_check, "as_text", interrupted_while_rendering)
-    assert run_check(home, FakeReader(CLEAN_SNAPSHOT)) == 130
-    printed = capsys.readouterr()
-    assert printed.out == ""
-    assert "interrupted" in printed.err
-
-
-@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 @pytest.mark.parametrize(
     ("snapshot", "verdict"), [(CLEAN_SNAPSHOT, 0), (STRAY_SNAPSHOT, 1)], ids=["clean", "findings"]
 )
@@ -1404,6 +1387,27 @@ def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_
 
     code = external_cli.check_command(
         home, as_json=True, cloudflare=FakeReader(snapshot), emit=interrupted_halfway
+    )
+    printed = capsys.readouterr()
+    assert code == verdict
+    assert isinstance(json.loads(printed.out), list)
+    assert "interrupted" not in printed.err
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "verdict"), [(CLEAN_SNAPSHOT, 0), (STRAY_SNAPSHOT, 1)], ids=["clean", "findings"]
+)
+def test_an_interrupt_after_the_whole_document_is_written_keeps_the_verdict(
+    home, hosts_catalog, capsys, snapshot, verdict
+):
+    """K8: a signal that lands once the handlers are restored is not an interruption."""
+
+    def written_then_interrupted(text: str) -> None:
+        sys.stdout.write(text + "\n")
+        raise KeyboardInterrupt
+
+    code = external_cli.check_command(
+        home, as_json=True, cloudflare=FakeReader(snapshot), emit=written_then_interrupted
     )
     printed = capsys.readouterr()
     assert code == verdict
