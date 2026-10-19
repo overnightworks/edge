@@ -3,6 +3,7 @@ API said. Holds no token; `http.client` follows no redirect and reads no proxy v
 answer carries is ever quoted: a finding's wording comes from the typed answer, not from its text.
 """
 
+import contextlib
 import http.client
 import re
 import socket
@@ -53,6 +54,8 @@ class Prober(Protocol):
 
 ConnectionFactory = Callable[[str, float], http.client.HTTPConnection]
 
+_ENCODED_SEPARATOR = re.compile(r"%(2[fF]|5[cC])")
+
 
 def _connection_to_origin(origin: str | None) -> ConnectionFactory:
     if origin is None:
@@ -76,23 +79,35 @@ class HttpProber:
         self._timeout = timeout
 
     def ask(self, name: str) -> Answer | Unreachable:
-        connection = None
         try:
             connection = self._connection(name, self._timeout)
-            connection.request("GET", "/", headers={"Host": name, "User-Agent": USER_AGENT})
-            response = connection.getresponse()
-            challenge = (response.getheader("cf-mitigated") or "").lower() == "challenge"
-            return Answer(
-                response.status,
-                response.getheader("Location"),
-                response.getheader("cf-ray") is not None,
-                challenge,
-            )
         except (http.client.HTTPException, OSError) as failure:
             return Unreachable(_failure_kind(failure))
+        try:
+            return _exchange(connection, name)
         finally:
-            if connection is not None:
-                connection.close()
+            _close(connection)
+
+
+def _exchange(connection: http.client.HTTPConnection, name: str) -> Answer | Unreachable:
+    try:
+        connection.request("GET", "/", headers={"Host": name, "User-Agent": USER_AGENT})
+        response = connection.getresponse()
+        challenge = (response.getheader("cf-mitigated") or "").lower() == "challenge"
+        return Answer(
+            response.status,
+            response.getheader("Location"),
+            response.getheader("cf-ray") is not None,
+            challenge,
+        )
+    except (http.client.HTTPException, OSError) as failure:
+        return Unreachable(_failure_kind(failure))
+
+
+def _close(connection: http.client.HTTPConnection) -> None:
+    # Why: the verdict is already decided; a failed cleanup must not overturn it.
+    with contextlib.suppress(OSError):
+        connection.close()
 
 
 def _failure_kind(failure: Exception) -> FailureKind:
@@ -122,12 +137,19 @@ def is_access_redirect(answer: Answer, probed_host: str) -> bool:
         return False
     if target.scheme != "https" or port not in (None, HTTPS_PORT) or hostname is None:
         return False
+    if _hides_a_path_separator(target.path):
+        return False
     host = hostname.removesuffix(".")
     if host.endswith(ACCESS_TEAM_SUFFIX):
         return True
     path = normalized_path(target.path)
     on_access_path = path == ACCESS_PATH or path.startswith(f"{ACCESS_PATH}/")
     return host == probed_host.lower().removesuffix(".") and on_access_path
+
+
+def _hides_a_path_separator(path: str) -> bool:
+    """A browser may read a backslash or an encoded slash as a separator the server did not."""
+    return "\\" in path or _ENCODED_SEPARATOR.search(path) is not None
 
 
 def normalized_path(path: str) -> str:

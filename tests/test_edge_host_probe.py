@@ -167,8 +167,8 @@ def test_a_test_origin_must_be_http_on_a_loopback_name(origin):
 class ScriptedConnection:
     """The transport boundary: raises `failure` at `stage`, otherwise answers headers only."""
 
-    def __init__(self, failure=None, stage="getresponse"):
-        self.failure, self.stage = failure, stage
+    def __init__(self, failure=None, stage="getresponse", close_failure=None):
+        self.failure, self.stage, self.close_failure = failure, stage, close_failure
         self.closed = False
 
     def request(self, *_args, **_kwargs):
@@ -189,6 +189,8 @@ class ScriptedConnection:
 
     def close(self):
         self.closed = True
+        if self.close_failure is not None:
+            raise self.close_failure
 
 
 FAILURES = [
@@ -230,6 +232,29 @@ def test_the_connection_is_closed_after_a_success_too():
     outcome = HttpProber(connection=lambda _name, _timeout: connection).ask(FQDN)
     assert outcome == Answer(200, None, True, False)
     assert connection.closed
+
+
+@pytest.mark.parametrize(
+    ("failure", "decided"),
+    [
+        pytest.param(None, Answer(200, None, True, False), id="after-an-answer"),
+        pytest.param(
+            TimeoutError(SENTINEL), Unreachable(FailureKind.TIMEOUT), id="after-a-failure"
+        ),
+    ],
+)
+def test_a_failing_close_keeps_the_verdict_already_decided(failure, decided):
+    """PB3."""
+    connection = ScriptedConnection(failure, close_failure=OSError(SENTINEL))
+    assert HttpProber(connection=lambda _name, _timeout: connection).ask(FQDN) == decided
+    assert connection.closed
+
+
+def test_an_interrupt_during_close_propagates():
+    """PB3."""
+    connection = ScriptedConnection(close_failure=KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        HttpProber(connection=lambda _name, _timeout: connection).ask(FQDN)
 
 
 def test_the_two_unreachable_network_errors_share_the_generic_phrase():

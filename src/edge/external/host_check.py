@@ -267,8 +267,8 @@ def _answer_finding(
     if host.exposure is catalog.Exposure.PROTECTED:
         if to_access:
             return None
-        verdict = "a challenge" if outcome.challenge else f"status {outcome.status}"
-        detail = f"{where}{verdict}, not an Access redirect"
+        verdict = ", a challenge" if outcome.challenge else ""
+        detail = f"{where}status {outcome.status}{verdict}, not an Access redirect"
     elif to_access:
         detail = f"{where}status {outcome.status}, redirects to Access"
     else:

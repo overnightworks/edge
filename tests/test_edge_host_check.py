@@ -571,44 +571,51 @@ ANSWERS = {
     "failed": FAILED,
 }
 # None: the probe adds nothing. Open hosts must not redirect to Access; the wildcard must.
+NOT_REACHED = (Problem.UNREACHABLE, "request failed: the request timed out")
+NO_CF_RAY = (Problem.ANSWER_WRONG, "status 200, no cf-ray")
+REDIRECT_NO_CF_RAY = (Problem.ANSWER_WRONG, "status 302, no cf-ray")
 OPEN_VERDICTS = {
-    "access-redirect": Problem.ANSWER_WRONG,
+    "access-redirect": (Problem.ANSWER_WRONG, "status 302, redirects to Access"),
     "200": None,
     "404": None,
     "502": None,
     "challenge": None,
-    "no-cf-ray": Problem.ANSWER_WRONG,
-    "redirect-without-cf-ray": Problem.ANSWER_WRONG,
+    "no-cf-ray": NO_CF_RAY,
+    "redirect-without-cf-ray": REDIRECT_NO_CF_RAY,
     "redirect-with-challenge": None,
-    "failed": Problem.UNREACHABLE,
+    "failed": NOT_REACHED,
 }
 PROTECTED_VERDICTS = {
     "access-redirect": None,
-    "200": Problem.ANSWER_WRONG,
-    "404": Problem.ANSWER_WRONG,
-    "502": Problem.ANSWER_WRONG,
-    "challenge": Problem.ANSWER_WRONG,
-    "no-cf-ray": Problem.ANSWER_WRONG,
-    "redirect-without-cf-ray": Problem.ANSWER_WRONG,
-    "redirect-with-challenge": Problem.ANSWER_WRONG,
-    "failed": Problem.UNREACHABLE,
+    "200": (Problem.ANSWER_WRONG, "status 200, not an Access redirect"),
+    "404": (Problem.ANSWER_WRONG, "status 404, not an Access redirect"),
+    "502": (Problem.ANSWER_WRONG, "status 502, not an Access redirect"),
+    "challenge": (Problem.ANSWER_WRONG, "status 403, a challenge, not an Access redirect"),
+    "no-cf-ray": NO_CF_RAY,
+    "redirect-without-cf-ray": REDIRECT_NO_CF_RAY,
+    "redirect-with-challenge": (
+        Problem.ANSWER_WRONG,
+        "status 302, a challenge, not an Access redirect",
+    ),
+    "failed": NOT_REACHED,
 }
+ASKED_AT_PROBE_NAME = f"asked at edge-host-check.{ZONE}: "
 
 
 @pytest.mark.parametrize("answer", ANSWERS)
 @pytest.mark.parametrize(
-    ("host", "verdicts"),
+    ("host", "verdicts", "where"),
     [
-        pytest.param(public("www"), OPEN_VERDICTS, id="public"),
-        pytest.param(bypass("www"), OPEN_VERDICTS, id="bypass"),
-        pytest.param(protected_wildcard(), PROTECTED_VERDICTS, id="protected"),
+        pytest.param(public("www"), OPEN_VERDICTS, "", id="public"),
+        pytest.param(bypass("www"), OPEN_VERDICTS, "", id="bypass"),
+        pytest.param(protected_wildcard(), PROTECTED_VERDICTS, ASKED_AT_PROBE_NAME, id="protected"),
     ],
 )
-def test_the_answer_is_judged_against_the_declared_exposure(host, verdicts, answer):
-    """PB4: one finding per failed probe, subject the declared FQDN, nothing else on a pass."""
+def test_the_answer_is_judged_against_the_declared_exposure(host, verdicts, where, answer):
+    """PB4: one finding per failed probe, the declared FQDN as subject, its detail in full."""
     expected = verdicts[answer]
-    problems = [(problem, subject) for problem, subject, _ in probe_findings(host, ANSWERS[answer])]
-    assert problems == ([] if expected is None else [(expected.value, host.fqdn)])
+    wanted = [] if expected is None else [(expected[0].value, host.fqdn, where + expected[1])]
+    assert probe_findings(host, ANSWERS[answer]) == wanted
 
 
 ACCESS_PATH_FORMS = [
@@ -619,6 +626,10 @@ ACCESS_PATH_FORMS = [
     ("https://{host}./cdn-cgi/access/login", True),
     ("https://{HOST}:443/cdn-cgi/access/login", True),
     ("https://team.cloudflareaccess.com./x", True),
+    ("https://team.cloudflareaccess.com/cdn-cgi/access/login/x", True),
+    ("/cdn-cgi/access/..\\..\\public", False),
+    ("/cdn-cgi/access/..%2fpublic", False),
+    ("/cdn-cgi/access/x%5Cy", False),
     ("/cdn-cgi/access/../../public", False),
     ("https://{host}/cdn-cgi/access/../../public", False),
     ("//{host}/cdn-cgi/access/../../public", False),

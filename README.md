@@ -227,7 +227,8 @@ nur solange Access an ist; der Name ist im Katalog reserviert). `answer-wrong`:
 die Antwort hat kein `cf-ray`, ein oeffentlicher oder `bypass`-Host leitet auf
 Access um, oder die geschuetzte Wildcard leitet nicht auf Access um (oder ist
 eine Challenge). `unreachable`: die Anfrage scheiterte (DNS, TLS, Verbindung,
-Zeitueberschreitung). Ein 5xx mit `cf-ray` besteht: ob der Dienst lebt, sagt
+Zeitueberschreitung, fehlerhafte Antwort). Eine Challenge auf einem
+oeffentlichen oder `bypass`-Host besteht. Ein 5xx mit `cf-ray` besteht: ob der Dienst lebt, sagt
 `ready`, nicht dieser Check. Kein Befund zitiert Header, Ziel oder Fehlertext.
 
 ```bash
