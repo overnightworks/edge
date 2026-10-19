@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+# Runs one command as `tester` at a pseudo-terminal, answers every become prompt with PROOF_PASSWORD,
+# prints how many prompts there were, and exits with the command's exit code.
+set timeout 1200
+set prompts 0
+spawn -noecho su - tester -c [join $argv " "]
+expect {
+    -re {BECOME password: ?} { incr prompts; send -- "$env(PROOF_PASSWORD)\r"; exp_continue }
+    timeout { puts "TIMEOUT"; exit 124 }
+    eof
+}
+lassign [wait] pid spawn_id os_error status
+puts "PROMPTS=$prompts"
+exit $status

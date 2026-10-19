@@ -1,0 +1,29 @@
+#!/bin/sh
+# Template for the global pre-commit and pre-merge-commit hooks; `home setup`
+# renders it with the two absolute paths below. Edit the template, not a copy.
+quality=@QUALITY@
+engines=@ENGINES@
+hook=${0##*/}
+
+scan_staged() {
+    "$quality" scan-staged --engines "$engines"
+}
+
+if [ ! -x "$quality" ]; then
+    echo "$hook: quality fehlt ($quality), Commit gesperrt. Einrichten: home setup --apply" >&2
+    exit 2
+fi
+
+scan_staged || exit $?
+
+# A repository hook may stage files and only the final index is committed, so it is
+# followed by a second scan. The guard stops a repository hook that is a copy of this one.
+if [ -z "$HOME_GIT_HOOK_CHAINED" ]; then
+    repository_hook="$(git rev-parse --git-common-dir)/hooks/$hook"
+    if [ -x "$repository_hook" ]; then
+        HOME_GIT_HOOK_CHAINED=1 "$repository_hook" "$@" || exit $?
+        scan_staged
+        exit $?
+    fi
+fi
+exit 0

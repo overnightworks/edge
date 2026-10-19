@@ -1,0 +1,115 @@
+# The system step of `home setup`: edge's cloudflared unit, its two drop-ins and the stop-only polkit rule.
+#
+# home_tools.system_step runs it with `--ask-become-pass`, so sudo asks once, and passes `home`,
+# `operator_user` and `edge_tunnel_dir` as extra vars from home's Layout and the running user; nothing
+# here is taken from facts gathered under become. It never starts, stops or restarts cloudflared: a
+# change ends in one daemon-reload. What it replaces is copied to `backup_dir` first, outside
+# /etc/systemd/system, so systemd never loads a backup as a unit or a drop-in.
+- name: Install edge's cloudflared files and the stop-only polkit rule
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    tunnel_config: /etc/cloudflared/config.yml
+    unit_dir: /etc/systemd/system
+    drop_in_dir: "{{ unit_dir }}/cloudflared.service.d"
+    retired_drop_in: "{{ drop_in_dir }}/10-root-binary.conf"
+    backup_dir: /var/backups/home-setup
+    # The base unit comes first, so the retired drop-in is only deleted once the unit that replaces it is in place.
+    system_files:
+      - { src: cloudflared.service, dest: "{{ unit_dir }}/cloudflared.service" }
+      - { src: cloudflared.service.d/20-nonroot.conf, dest: "{{ drop_in_dir }}/20-nonroot.conf" }
+      - { src: cloudflared.service.d/30-edge-global-stop.conf, dest: "{{ drop_in_dir }}/30-edge-global-stop.conf" }
+      - { src: polkit/10-edge-cloudflared-stop.rules, dest: /etc/polkit-1/rules.d/10-edge-cloudflared-stop.rules }
+
+  tasks:
+    - name: Read cloudflared's config for the tunnel id
+      ansible.builtin.slurp:
+        src: "{{ tunnel_config }}"
+      register: tunnel_config_file
+
+    # `default('', true)` also replaces an empty `tunnel:`, which YAML reads as null and `string` would make "None".
+    - name: Take the tunnel id and this run's backup name
+      ansible.builtin.set_fact:
+        tunnel_id: "{{ ((tunnel_config_file.content | b64decode | from_yaml) or {}).tunnel | default('', true) | string }}"
+        run_stamp: "{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+
+    - name: Refuse before writing anything when the config names no tunnel
+      ansible.builtin.assert:
+        that: tunnel_id | length > 0
+        fail_msg: "{{ tunnel_config }} names no `tunnel:`; nothing was written"
+        quiet: true
+
+    - name: Fill edge's files with this PC's values
+      ansible.builtin.set_fact:
+        rendered_files: >-
+          {{ rendered_files | default([]) + [item | combine({'content': lookup('ansible.builtin.file', edge_tunnel_dir ~ '/' ~ item.src, rstrip=false)
+             | replace('@HOME@', home) | replace('@OPERATOR_USER@', operator_user) | replace('@TUNNEL_ID@', tunnel_id)})] }}
+      loop: "{{ system_files }}"
+      loop_control:
+        label: "{{ item.src }}"
+
+    - name: Look at what is in place
+      ansible.builtin.stat:
+        path: "{{ item.dest }}"
+      loop: "{{ rendered_files + [{'dest': retired_drop_in}] }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: in_place
+
+    - name: Note what is about to be replaced or deleted
+      ansible.builtin.set_fact:
+        to_back_up: "{{ to_back_up | default([]) + [item.stat.path] }}"
+      loop: "{{ in_place.results }}"
+      loop_control:
+        label: "{{ item.item.dest }}"
+      when: item.stat.exists and (item.item.content is not defined or item.stat.checksum != (item.item.content | hash('sha1')))
+
+    - name: Back up what is about to be replaced or deleted
+      when: to_back_up is defined
+      block:
+        - name: Make this run's backup directory
+          ansible.builtin.file:
+            path: "{{ backup_dir }}/{{ run_stamp }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Copy each file with its path below the backup directory
+          ansible.builtin.command:
+            argv: [cp, --archive, --parents, "{{ item }}", "{{ backup_dir }}/{{ run_stamp }}"]
+          loop: "{{ to_back_up }}"
+          changed_when: true
+
+    - name: Make the drop-in directory
+      ansible.builtin.file:
+        path: "{{ drop_in_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"  # NOSONAR ansible:S2612 systemd and polkitd read these as their own users; the ruled mode is root-owned 755/644
+
+    - name: Write edge's files, root-owned, mode 644
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"  # NOSONAR ansible:S2612 systemd and polkitd read these as their own users; the ruled mode is root-owned 755/644
+      loop: "{{ rendered_files }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      notify: Reload systemd
+
+    - name: Delete the retired root drop-in, now that the new base unit is in place
+      ansible.builtin.file:
+        path: "{{ retired_drop_in }}"
+        state: absent
+      notify: Reload systemd
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
