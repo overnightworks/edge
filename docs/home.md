@@ -549,15 +549,21 @@ enabled = true
 ## Installation
 
 ```
-uv tool install --force --python 3.12 --editable ~/git/home-tools
-systemctl --user link --force ~/git/home-tools/systemd/home-check.service ~/git/home-tools/systemd/home-check.timer
+cd ~/git/edge
+uv sync --locked
+ln -s ~/git/edge/bin/home ~/.local/bin/home
+systemctl --user link --force ~/git/edge/systemd/home-check.service ~/git/edge/systemd/home-check.timer
 systemctl --user enable --now home-check.timer
 ```
 
-`uv tool install` legt den Befehl nach `~/.local/bin/home`, wo die
-systemd-Unit ihn aufruft. `--python 3.12` ist dieselbe Version, die CI prüft.
-`--editable` lässt den Befehl aus dem Checkout laufen: eine Änderung unter
-`src/` wirkt ohne Neuinstallation.
+`uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf
+den Starter `bin/edge`, der `.venv/bin/home` des Checkouts ausführt; der Link
+unter `~/.local/bin` muss deshalb `home` heißen. Die systemd-Unit ruft
+`~/git/edge/.venv/bin/home` direkt auf und hängt so an keinem Link. `home`
+läuft mit dem Python der `.venv` (heute 3.14; `requires-python >= 3.12`). Das
+Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
+Neuinstallation; nach einem Pull, der Abhängigkeiten ändert, frischt
+`uv sync --locked` die `.venv` auf, bevor der Timer sie sieht.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
 nach) und fährt nur `home check`. `home tidy --apply` bleibt ein bewusster
