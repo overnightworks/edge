@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import catalog, checkout
-from edge.external import apply, cloudflare_read, host_check, secrets, tofu
+from edge.external import apply, cloudflare_read, host_check, host_probe, secrets, tofu
 
 INTERRUPTED = 130
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
@@ -92,10 +92,12 @@ def check_command(
     *,
     as_json: bool = False,
     cloudflare: Callable[[str], cloudflare_read.CloudflareRead] = cloudflare_read.CloudflareClient,
+    prober: Callable[[], host_probe.Prober] = host_probe.HttpProber,
     emit: Callable[[str], None] = lambda text: sys.stdout.write(f"{text}\n"),
 ) -> int:
-    """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `emit` writes
-    the one output: an interrupt before it leaves stdout empty, none during it cuts the document."""
+    """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `prober` the
+    unauthenticated host probe, `emit` writes the one output: an interrupt before it leaves stdout
+    empty, none during it cuts the document."""
     token_values: dict[str, str] = {}
     verdict_stands: host_check.CheckExit | None = None
     try:
@@ -105,7 +107,7 @@ def check_command(
                 return host_check.CheckExit.CANNOT_CHECK
             token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
             result = host_check.check_hosts(
-                document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
+                document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"]), prober()
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
             text = secrets.redact(rendered, token_values)

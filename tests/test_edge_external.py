@@ -1,5 +1,6 @@
 """`edge external`: tokens only in the child, an allowlisted environment, the pinned tofu."""
 
+import errno
 import fcntl
 import json
 import os
@@ -18,11 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from test_edge_host_probe import RAY, Behaviour, serving
 
 from edge import checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
-from edge.external import cloudflare_read, secrets, tofu
+from edge.external import cloudflare_read, host_probe, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1186,18 +1188,56 @@ class FakeReader:
         return self.outcome
 
 
-@pytest.fixture
-def hosts_catalog(tmp_path, monkeypatch) -> Path:
-    """A checkout that is not the live main, declaring one public apex."""
+CLEAN_ANSWER = host_probe.Answer(200, None, True, False)
+
+
+class FakeProber:
+    """The injected second port: answers every name the same way, or runs a callable first."""
+
+    def __init__(self, outcome=CLEAN_ANSWER) -> None:
+        self.outcome = outcome
+        self.asked: list[str] = []
+
+    def __call__(self) -> "FakeProber":
+        return self
+
+    def ask(self, name: str):
+        self.asked.append(name)
+        if callable(self.outcome):
+            self.outcome()
+            return CLEAN_ANSWER
+        return self.outcome
+
+
+PROTECTED_WILDCARD_CATALOG = """\
+cloudflare: {zone: example.test}
+services:
+  site:
+    hosts:
+      - {name: "*", exposure: protected, reason: the operator's wildcard}
+"""
+
+
+def checkout_declaring(tmp_path, monkeypatch, fleet: str) -> Path:
     tree = tmp_path / "elsewhere"
     tree.mkdir()
-    (tree / "fleet.yaml").write_text(HOSTS_CATALOG)
+    (tree / "fleet.yaml").write_text(fleet)
     monkeypatch.setattr(tofu, "PROJECT_ROOT", tree)
     return tree
 
 
-def run_check(home, reader: FakeReader, *, as_json: bool = False) -> int:
-    return external_cli.check_command(home, as_json=as_json, cloudflare=reader)
+@pytest.fixture
+def hosts_catalog(tmp_path, monkeypatch) -> Path:
+    """A checkout that is not the live main, declaring one public apex."""
+    return checkout_declaring(tmp_path, monkeypatch, HOSTS_CATALOG)
+
+
+def run_check(
+    home, reader: FakeReader, *, as_json: bool = False, prober: FakeProber | None = None
+) -> int:
+    return external_cli.check_command(
+        home, as_json=as_json, cloudflare=reader, prober=prober or FakeProber()
+    )
 
 
 def test_a_clean_check_exits_0_and_says_how_many_hosts(home, hosts_catalog, capsys):
@@ -1328,6 +1368,7 @@ def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
         code = external_cli.check_command(
             home,
             cloudflare=lambda token: cloudflare_read.CloudflareClient(token, base_url=broken.url),
+            prober=FakeProber(),
         )
     finally:
         broken.close()
@@ -1365,7 +1406,9 @@ def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
     def build_and_get_terminated(_token: str):
         os.kill(os.getpid(), signal.SIGTERM)
 
-    code = external_cli.check_command(home, cloudflare=build_and_get_terminated)
+    code = external_cli.check_command(
+        home, cloudflare=build_and_get_terminated, prober=FakeProber()
+    )
     assert code == 130
     assert capsys.readouterr().out == ""
 
@@ -1390,7 +1433,11 @@ def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_
         sys.stdout.write(text[middle:] + "\n")
 
     code = external_cli.check_command(
-        home, as_json=True, cloudflare=FakeReader(snapshot), emit=interrupted_halfway
+        home,
+        as_json=True,
+        cloudflare=FakeReader(snapshot),
+        prober=FakeProber(),
+        emit=interrupted_halfway,
     )
     printed = capsys.readouterr()
     assert code == verdict
@@ -1411,7 +1458,11 @@ def test_an_interrupt_after_the_whole_document_is_written_keeps_the_verdict(
         raise KeyboardInterrupt
 
     code = external_cli.check_command(
-        home, as_json=True, cloudflare=FakeReader(snapshot), emit=written_then_interrupted
+        home,
+        as_json=True,
+        cloudflare=FakeReader(snapshot),
+        prober=FakeProber(),
+        emit=written_then_interrupted,
     )
     printed = capsys.readouterr()
     assert code == verdict
@@ -1427,3 +1478,108 @@ def test_check_through_main_stops_at_a_missing_token_before_any_network(
     (home / ".secrets/cloudflare/fleet-read").unlink()
     assert cli.main(["external", "check", "--hosts", "--json"]) == 2
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("outcome", "problem"),
+    [
+        pytest.param(
+            host_probe.Unreachable(host_probe.FailureKind.TIMEOUT), "unreachable", id="down"
+        ),
+        pytest.param(host_probe.Answer(200, None, False, False), "answer-wrong", id="no-cf-ray"),
+    ],
+)
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_a_wrong_or_missing_answer_exits_1_never_2(
+    home, hosts_catalog, capsys, outcome, problem, as_json
+):
+    """PB8: the probe's findings are findings; the new values are strings in the JSON list."""
+    assert (
+        run_check(home, FakeReader(CLEAN_SNAPSHOT), as_json=as_json, prober=FakeProber(outcome))
+        == 1
+    )
+    printed = capsys.readouterr().out
+    if as_json:
+        (finding,) = json.loads(printed)
+        assert finding["problem"] == problem
+        assert all(isinstance(value, str) for value in finding.values())
+    else:
+        assert printed.startswith(f"{problem} example.test: ")
+
+
+def test_a_host_without_a_record_is_never_asked(home, hosts_catalog):
+    """PB8."""
+    prober = FakeProber()
+    no_record = cloudflare_read.Snapshot("t-1", (), (), ())
+    assert run_check(home, FakeReader(no_record), prober=prober) == 1
+    assert prober.asked == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_an_interrupt_while_the_prober_asks_exits_130_with_stdout_empty(
+    home, hosts_catalog, capsys, interrupt
+):
+    """PB9."""
+    prober = FakeProber(lambda: os.kill(os.getpid(), interrupt))
+    assert run_check(home, FakeReader(CLEAN_SNAPSHOT), as_json=True, prober=prober) == 130
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.count("interrupted") == 1
+
+
+@pytest.mark.parametrize("code", [errno.ENETUNREACH, errno.EHOSTUNREACH])
+def test_an_os_error_in_the_transport_is_one_unreachable_finding_without_its_text(
+    home, hosts_catalog, capsys, code
+):
+    """PB3, PB10: through the command; the exception's text reaches neither stream."""
+
+    def unreachable_connection(_name, _timeout):
+        raise OSError(code, SENTINEL)
+
+    def probing_over_the_failing_transport():
+        return host_probe.HttpProber(connection=unreachable_connection)
+
+    exit_code = external_cli.check_command(
+        home,
+        cloudflare=FakeReader(CLEAN_SNAPSHOT),
+        prober=probing_over_the_failing_transport,
+        as_json=True,
+    )
+    assert exit_code == 1
+    printed = capsys.readouterr()
+    (finding,) = json.loads(printed.out)
+    assert finding["problem"] == "unreachable"
+    assert SENTINEL not in printed.out + printed.err
+
+
+@pytest.mark.usefixtures("loopback_only")
+@pytest.mark.parametrize(
+    "mitigation",
+    [[("cf-mitigated", "challenge")], [("cf-mitigated", "challenge")] * 2],
+    ids=["once", "repeated"],
+)
+def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
+    home, tmp_path, monkeypatch, capsys, mitigation
+):
+    """PB1, PB4: a valid Access redirect with a challenge header is answer-wrong, exit 1."""
+    checkout_declaring(tmp_path, monkeypatch, PROTECTED_WILDCARD_CATALOG)
+    operator = cloudflare_read.AccessGroup("g-operator", "operator")
+    include = cloudflare_read.Include("group", operator.id)
+    operator_app = cloudflare_read.App(
+        cloudflare_read.SELF_HOSTED,
+        ("*.example.test",),
+        (cloudflare_read.Policy("allow", (include,)),),
+    )
+    record = cloudflare_read.Record("*.example.test", "CNAME", TUNNEL_TARGET, True)
+    snapshot = cloudflare_read.Snapshot("t-1", (record,), (operator,), (operator_app,))
+    login = "https://team.cloudflareaccess.com/cdn-cgi/access/login/x"
+    answering = Behaviour(302, [RAY, ("Location", login), *mitigation])
+    with serving(answering) as origin:
+        exit_code = external_cli.check_command(
+            home,
+            as_json=True,
+            cloudflare=FakeReader(snapshot),
+            prober=lambda: host_probe.HttpProber(origin),
+        )
+    (finding,) = json.loads(capsys.readouterr().out)
+    assert (exit_code, finding["problem"]) == (1, "answer-wrong")

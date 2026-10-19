@@ -5,12 +5,13 @@ Pure over a `Snapshot`; `check_hosts` is the entry for callers (the command, lat
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Any
 
 from edge import catalog
+from edge.external import host_probe
 from edge.external.cloudflare_read import (
     SELF_HOSTED,
     App,
@@ -46,6 +47,8 @@ class Problem(StrEnum):
     APP_UNEXPECTED = "app-unexpected"
     UNDECLARED_RECORD = "undeclared-record"
     UNDECLARED_APP = "undeclared-app"
+    ANSWER_WRONG = "answer-wrong"
+    UNREACHABLE = "unreachable"
 
 
 _APPLY = "edge external apply"
@@ -66,6 +69,8 @@ _NEXT = {
         "(`apply` never deletes it, #30 rule 7)"
     ),
     Problem.UNDECLARED_APP: "declare it, or delete the app in the dashboard",
+    Problem.ANSWER_WRONG: "`edge external plan`",
+    Problem.UNREACHABLE: "check that the tunnel and cloudflared run",
 }
 _ORDER = {problem: position for position, problem in enumerate(Problem)}
 
@@ -100,13 +105,42 @@ class HostCheck:
         return CheckExit.FINDINGS if self.findings else CheckExit.CLEAN
 
 
-def check_hosts(document: Any, cloudflare: CloudflareRead) -> HostCheck:
-    """Read the account once and compare it with the catalog's declared hosts."""
+Answers = Mapping[str, host_probe.Answer | host_probe.Unreachable]
+
+
+def check_hosts(document: Any, cloudflare: CloudflareRead, prober: host_probe.Prober) -> HostCheck:
+    """Read the account once, ask the declared hosts once each, and compare with the catalog."""
     zone = catalog.zone(document)
-    return compare(zone, catalog.hosts(document), cloudflare.read(zone))
+    hosts = catalog.hosts(document)
+    snapshot = cloudflare.read(zone)
+    answers = {name: prober.ask(name) for name in names_to_probe(hosts, snapshot)}
+    return compare(zone, hosts, snapshot, answers)
 
 
-def compare(zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot) -> HostCheck:
+def names_to_probe(hosts: Sequence[catalog.Host], snapshot: Snapshot) -> dict[str, catalog.Host]:
+    """The name to ask for each declared host that has an address record. The protected wildcard
+    is asked at the reserved probe name, and not at all while Access is off."""
+    with_record = {record.name for record in _address_records(snapshot.records)}
+    return {
+        _probe_name(host): host
+        for host in hosts
+        if host.fqdn in with_record and not (snapshot.apps is None and _is_wildcard(host))
+    }
+
+
+def _is_wildcard(host: catalog.Host) -> bool:
+    return host.name == catalog.WILDCARD
+
+
+def _probe_name(host: catalog.Host) -> str:
+    return (
+        f"{catalog.PROBE_NAME}.{host.fqdn.removeprefix('*.')}" if _is_wildcard(host) else host.fqdn
+    )
+
+
+def compare(
+    zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot, answers: Answers
+) -> HostCheck:
     declared = {host.fqdn: host for host in hosts}
     findings = [finding for host in hosts for finding in _record_findings(host, snapshot)]
     hosts_without_record = {f.subject for f in findings if f.problem is Problem.RECORD_MISSING}
@@ -127,6 +161,11 @@ def compare(zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot) -> Hos
             for finding in _app_findings(zone, host, snapshot.apps, snapshot)
         ]
         findings += _undeclared_apps(zone, declared, snapshot.apps)
+    findings += [
+        finding
+        for name, host in names_to_probe(hosts, snapshot).items()
+        if (finding := _answer_finding(host, name, answers[name]))
+    ]
     ordered = sorted(findings, key=lambda f: (_ORDER[f.problem], f.subject, f.detail))
     return HostCheck(tuple(ordered), len(hosts), access_unused)
 
@@ -212,6 +251,29 @@ def _app_findings(
     if policy_fault := _policy_fault(host.exposure, own_app.policies, snapshot):
         faults.append(policy_fault)
     return [Finding(Problem.POLICY_WRONG, host.fqdn, fault) for fault in faults]
+
+
+def _answer_finding(
+    host: catalog.Host, name: str, outcome: host_probe.Answer | host_probe.Unreachable
+) -> Finding | None:
+    where = "" if name == host.fqdn else f"asked at {name}: "
+    if isinstance(outcome, host_probe.Unreachable):
+        return Finding(Problem.UNREACHABLE, host.fqdn, f"{where}request failed: {outcome.kind}")
+    if not outcome.has_cf_ray:
+        return Finding(
+            Problem.ANSWER_WRONG, host.fqdn, f"{where}status {outcome.status}, no cf-ray"
+        )
+    to_access = host_probe.is_access_redirect(outcome, name)
+    if host.exposure is catalog.Exposure.PROTECTED:
+        if to_access:
+            return None
+        verdict = ", a challenge" if outcome.challenge else ""
+        detail = f"{where}status {outcome.status}{verdict}, not an Access redirect"
+    elif to_access:
+        detail = f"{where}status {outcome.status}, redirects to Access"
+    else:
+        return None
+    return Finding(Problem.ANSWER_WRONG, host.fqdn, detail)
 
 
 def _destinations_at(app: App, fqdn: str) -> list[str]:
