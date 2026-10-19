@@ -1,4 +1,4 @@
-"""The token files `plan` and `apply` read and the allowlisted environment that carries them."""
+"""The token files `plan`, `apply` and `check` read; the allowlisted environment carrying them."""
 
 import os
 import shutil
@@ -26,16 +26,25 @@ _STATE_PASSPHRASE = SecretFile(OPENTOFU_DIRECTORY / "state-passphrase", "TF_VAR_
 
 
 class Access(Enum):
-    """`plan` reads with the read tokens; only `apply` is given the write tokens."""
+    """`plan` and `check` read with the read tokens; only `apply` is given the write tokens.
+
+    `check` reads only the Cloudflare read file (#138 rule 13), never the rest of the entry.
+    """
 
     READ = "fleet-read"
     WRITE = "fleet-write"
 
     @property
+    def cloudflare_file(self) -> SecretFile:
+        return SecretFile(
+            Path(SECRETS_DIRECTORY) / "cloudflare" / self.value, "CLOUDFLARE_API_TOKEN"
+        )
+
+    @property
     def secret_files(self) -> tuple[SecretFile, ...]:
         secrets_root = Path(SECRETS_DIRECTORY)
         return (
-            SecretFile(secrets_root / "cloudflare" / self.value, "CLOUDFLARE_API_TOKEN"),
+            self.cloudflare_file,
             SecretFile(
                 secrets_root / "github" / ("fleet-admin" if self is Access.WRITE else self.value),
                 "GITHUB_TOKEN",
@@ -50,19 +59,28 @@ class SecretFileError(Exception):
 
 def read_secrets(home: Path, access: Access) -> dict[str, str]:
     """Variable name to value; a missing file stops the run so no provider falls back to `gh`."""
-    values = {}
-    for secret_file in access.secret_files:
-        path = home / secret_file.relative_path
-        try:
-            value = path.read_text().strip()
-        except OSError as error:
-            raise SecretFileError(f"cannot read {path}: {error.strerror}") from error
-        except UnicodeDecodeError as error:
-            raise SecretFileError(f"{path} is not valid UTF-8") from error
-        if not value:
-            raise SecretFileError(f"{path} is empty")
-        values[secret_file.variable] = value
-    return values
+    return {
+        secret_file.variable: _read_secret_file(home, secret_file)
+        for secret_file in access.secret_files
+    }
+
+
+def read_cloudflare_token(home: Path) -> str:
+    """The Cloudflare read token alone, for the host check's own client."""
+    return _read_secret_file(home, Access.READ.cloudflare_file)
+
+
+def _read_secret_file(home: Path, secret_file: SecretFile) -> str:
+    path = home / secret_file.relative_path
+    try:
+        value = path.read_text().strip()
+    except OSError as error:
+        raise SecretFileError(f"cannot read {path}: {error.strerror}") from error
+    except UnicodeDecodeError as error:
+        raise SecretFileError(f"{path} is not valid UTF-8") from error
+    if not value:
+        raise SecretFileError(f"{path} is empty")
+    return value
 
 
 @contextmanager

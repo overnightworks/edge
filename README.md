@@ -181,7 +181,8 @@ Der State liegt nie im Checkout, sondern verschluesselt in
 
 `edge external plan` zeigt, was von den Live-Diensten abweicht (Exit 0 keine
 Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien (erwartet
-wird je 0600, geprueft wird das hier nicht) und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine
+wird je 0600, geprueft wird das hier nicht) und gibt sie nur an das Kind `tofu` weiter
+(die eine Ausnahme steht bei `check --hosts` unten), dessen Umgebung eine
 Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
 `GH_*`, Proxy aus der Shell):
 
@@ -199,6 +200,25 @@ Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
 bin/edge external plan
 ```
 
+`edge external check --hosts` liest dagegen nur `~/.secrets/cloudflare/fleet-read`
+und sendet es im `Authorization`-Header an `api.cloudflare.com`: kein `tofu`,
+kein GitHub-Token, keine State-Passphrase, kein Schreib-Token, kein Terminal
+und keine Abfrage (das Token steht in keiner URL, in keiner Ausgabe und in
+keinem Fehlertext; Weiterleitungen und Proxy aus der Shell werden nicht
+befolgt). Es liest Zone, DNS-Records, Access-Apps, Access-Gruppen und den
+Tunnel und vergleicht sie mit den Hosts aus `fleet.yaml` (aus dem Checkout,
+in dem es laeuft): fehlende oder falsche Records und Apps, falsche Policies,
+unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand
+deklariert hat (`apply` loescht sie nie). Exit 0 keine Befunde, 1 Befunde,
+2 nicht pruefbar, 130 unterbrochen; ohne Access auf dem Konto ist das nur
+dann ein Befund, wenn ein Host `bypass` oder `protected` ist. Mit `--json`
+ist stdout genau eine Liste von `{problem, subject, detail, next}` (bei Exit 2
+leer, die Ursache auf stderr).
+
+```bash
+bin/edge external check --hosts [--json]
+```
+
 `edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
 Schreib-Tokens `~/.secrets/cloudflare/fleet-write` und
 `~/.secrets/github/fleet-admin` (dieselbe Allowlist-Umgebung, dieselbe
@@ -214,7 +234,7 @@ pty oeffnen und `yes` tippen; erst D14 (eigener Nutzer fuer Agenten) macht
 daraus "nur der Betreiber". Die Plan-Datei liegt verschluesselt (X1a) in
 `~/.secrets/opentofu/plans/` (0700) und wird nach Erfolg, Abbruch, Fehler und
 SIGINT/SIGTERM geloescht; eine nach SIGKILL uebrig gebliebene Datei loescht und
-nennt der naechste `edge external`-Aufruf. Strg-C oder SIGTERM waehrend
+nennt der naechste `edge external plan`- oder `apply`-Aufruf (`check` raeumt nicht auf). Strg-C oder SIGTERM waehrend
 `apply` geht genau einmal als SIGINT an `tofu`; der Wrapper wartet, bis `tofu`
 sauber beendet ist, weitere Strg-C werden ignoriert, und die Meldung verweist
 auf `edge external plan`, um den Live-Zustand zu pruefen. Exit 0 angewendet, 1 verweigert,

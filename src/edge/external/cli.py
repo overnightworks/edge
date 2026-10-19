@@ -1,4 +1,4 @@
-"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable) and `apply`."""
+"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` and `check`."""
 
 import argparse
 import sys
@@ -7,7 +7,9 @@ from enum import IntEnum
 from pathlib import Path
 
 from edge import catalog, checkout
-from edge.external import apply, secrets, tofu
+from edge.external import apply, cloudflare_read, host_check, secrets, tofu
+
+INTERRUPTED = 130
 
 
 class ExitCode(IntEnum):
@@ -34,6 +36,17 @@ def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
         "apply", help="apply the shown plan to the live services, at a terminal, after `yes`"
     )
     apply_parser.set_defaults(run=lambda _arguments: apply_command(Path.home()))
+    check = actions.add_parser(
+        "check", help="compare what Cloudflare holds with the hosts fleet.yaml declares (read-only)"
+    )
+    check.add_argument(
+        "--hosts",
+        action="store_true",
+        required=True,
+        help="the host check: records and Access apps",
+    )
+    check.add_argument("--json", action="store_true", help="print the findings as a JSON list")
+    check.set_defaults(run=lambda arguments: check_command(Path.home(), as_json=arguments.json))
 
 
 def plan_command(home: Path) -> int:
@@ -68,6 +81,47 @@ def apply_command(
         apply.ApplyExit.CANNOT_PLAN,
         refusal=refusal,
     )
+
+
+def check_command(
+    home: Path,
+    *,
+    as_json: bool = False,
+    cloudflare: Callable[[str], cloudflare_read.CloudflareRead] = cloudflare_read.CloudflareClient,
+) -> int:
+    """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader."""
+    token_values: dict[str, str] = {}
+    try:
+        refused = _refusal_invalid_catalog("check")
+        if refused is not None:
+            return refused
+        token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
+        document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
+        reader = cloudflare(token_values["CLOUDFLARE_API_TOKEN"])
+        with apply.terminate_like_interrupt():
+            result = host_check.check_hosts(document, reader)
+    except KeyboardInterrupt:
+        print("edge external check: interrupted", file=sys.stderr)
+        return INTERRUPTED
+    except (secrets.SecretFileError, cloudflare_read.CloudflareReadError) as error:
+        _report(f"edge external check: cannot check, {error}", error, token_values, "check")
+    except OSError as error:
+        _report(
+            f"edge external check: cannot check, {_describe(error)}", error, token_values, "check"
+        )
+    except ValueError as error:
+        # Only the type: a decode error's message can quote bytes of a token file.
+        _report(
+            f"edge external check: cannot check, {type(error).__name__}",
+            error,
+            token_values,
+            "check",
+        )
+    else:
+        rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
+        print(secrets.redact(rendered, token_values))
+        return result.exit_code
+    return host_check.CheckExit.CANNOT_CHECK
 
 
 def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:
