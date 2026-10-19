@@ -3,6 +3,6 @@ agent = "claude"
 role = "builder"
 base = "651f94106165034336cb205a165112aa806c0146"
 branch = "claude/issue-136-env-writes-dotenv"
-scope = [".env.example", ".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "probe/edge_copy.py", "src/edge/apply.py", "src/edge/catalog.py", "src/edge/checkout.py", "src/edge/environment.py", "src/edge/external/tofu_test.py", "tests/test_edge_apply.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_checkout.py", "tests/test_edge_environment.py"]
+scope = [".env.example", ".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "probe/edge_copy.py", "src/edge/apply.py", "src/edge/catalog.py", "src/edge/checkout.py", "src/edge/environment.py", "src/edge/external/tofu_test.py", "tests/test_edge_apply.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_checkout.py", "tests/test_edge_environment.py", "tests/test_edge_tofu_test.py"]
 opened_commit = "3705b4215ec0b7026db6f28f38401cfcac3635fc"
 whole_reason = "One owner of the two settings: the writer, its guard position, the removal of the example and its CI pin, and the probe copy; a part alone leaves a refusing or double-sourced .env."
