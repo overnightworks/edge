@@ -3,6 +3,7 @@
 import errno
 import fcntl
 import functools
+import inspect
 import io
 import json
 import os
@@ -2038,6 +2039,36 @@ def interrupt_myself(interrupt):
     os.kill(os.getpid(), interrupt)
 
 
+@contextmanager
+def signalling_on_the_line(function, statement: str, interrupt: int):
+    """Sends `interrupt` once, as `function` is about to run its line that starts with
+    `statement`: a boundary inside one function, which no injected port reaches."""
+    lines, first_line = inspect.getsourcelines(function)
+    statement_line = next(
+        first_line + offset
+        for offset, text in enumerate(lines)
+        if text.strip().startswith(statement)
+    )
+    pending = True
+
+    def trace_line(frame, event, _argument):
+        nonlocal pending
+        if event == "line" and pending and frame.f_lineno == statement_line:
+            pending = False
+            interrupt_myself(interrupt)
+        return trace_line
+
+    def trace_call(frame, _event, _argument):
+        return trace_line if frame.f_code is function.__code__ else None
+
+    previous = sys.gettrace()
+    sys.settrace(trace_call)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
+
+
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 @pytest.mark.parametrize("configuration,line", INTERRUPTED_LINES)
 @pytest.mark.parametrize(
@@ -2156,6 +2187,39 @@ def test_a_signal_while_the_interrupt_line_is_published_shows_it_exactly_once(
     line = "interrupted during tofu apply, live services may be partly changed"
     assert stderr.getvalue().count(line) == 1
     assert reader.tokens == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_as_the_interrupt_is_recorded_as_reported_shows_the_line_exactly_once(
+    home, fake_tofu, apply_in_process, capsys, monkeypatch, interrupt
+):
+    """AC9 (a), rule 22 (B4-1): a trace hook, because no injected port reaches the statement
+    that records the line as printed; there a signal must be dropped by the mask, not handled.
+    """
+    fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
+    monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    with signalling_on_the_line(
+        external_apply.report_interrupt, "progress.reported = True", interrupt
+    ):
+        assert apply_in_process(reader) == 1
+    line = "interrupted during tofu apply, live services may be partly changed"
+    assert capsys.readouterr().err.count(line) == 1
+    assert reader.tokens == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_while_the_apply_run_is_set_up_exits_1_saying_nothing_was_applied(
+    home, fake_tofu, apply_in_process, capsys, interrupt
+):
+    """AC9 (a), row 6, rule 22 (B4-2): a trace hook, because no injected port reaches the setup
+    statement inside `apply_command`; SIGTERM must already be an interrupt there.
+    """
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    with signalling_on_the_line(external_cli.apply_command, "run = _ApplyRun()", interrupt):
+        assert apply_in_process(reader) == 1
+    assert apply_line("interrupted, nothing was applied") in capsys.readouterr().err
+    assert (fake_tofu.calls(), reader.tokens) == ([], [])
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
