@@ -22,48 +22,36 @@ locals {
     for group in flatten(data.cloudflare_zero_trust_access_groups.operator[*].result) : group.id
     if group.name == local.operator_group_name
   ]
-  operator_group_id = one(local.operator_group_ids)
+  operator_group_id = length(local.operator_group_ids) == 1 ? local.operator_group_ids[0] : null
 
-  # Among A, AAAA and CNAME at a host's name only a single CNAME may exist (D12: no conversion).
+  # Among these types at a host's name only a single CNAME may exist (D12: no conversion).
+  address_record_types = ["A", "AAAA", "CNAME"]
   address_records = {
     for fqdn in keys(local.hosts) : fqdn => [
       for record in data.cloudflare_dns_records.host[fqdn].result : record
-      if contains(["A", "AAAA", "CNAME"], record.type)
+      if contains(local.address_record_types, record.type)
     ]
   }
   record_ids_to_import = {
-    for fqdn, records in local.address_records : fqdn => records[0].id if length(records) == 1
+    for fqdn, records in local.address_records : fqdn => "${local.zone_id}/${records[0].id}" if length(records) == 1
   }
   app_ids_to_import = {
     for fqdn in keys(local.access_app_hosts) :
-    fqdn => data.cloudflare_zero_trust_access_applications.host[fqdn].result[0].id
+    fqdn => "accounts/${local.account_id}/${data.cloudflare_zero_trust_access_applications.host[fqdn].result[0].id}"
     if length(data.cloudflare_zero_trust_access_applications.host[fqdn].result) == 1
   }
 }
 
+# The provider itself fails on no or several matching zones and tunnels (C13).
 data "cloudflare_zone" "this" {
   count  = local.hosts_declared ? 1 : 0
   filter = { name = local.fleet.cloudflare.zone }
-
-  lifecycle {
-    postcondition {
-      condition     = self.id != null && self.id != ""
-      error_message = "No Cloudflare zone ${local.fleet.cloudflare.zone} was found."
-    }
-  }
 }
 
 data "cloudflare_zero_trust_tunnel_cloudflared" "this" {
   count      = local.hosts_declared ? 1 : 0
   account_id = local.account_id
   filter     = { is_deleted = false }
-
-  lifecycle {
-    postcondition {
-      condition     = self.id != null && self.id != ""
-      error_message = "Exactly one live tunnel must exist; none was found."
-    }
-  }
 }
 
 data "cloudflare_dns_records" "host" {
@@ -74,11 +62,11 @@ data "cloudflare_dns_records" "host" {
   lifecycle {
     postcondition {
       condition = (
-        length([for record in self.result : record if contains(["A", "AAAA"], record.type)]) == 0
+        length([for record in self.result : record if record.type != "CNAME" && contains(local.address_record_types, record.type)]) == 0
         && length([for record in self.result : record if record.type == "CNAME"]) <= 1
       )
       error_message = join(" ", [
-        "${each.key} already has ${join(", ", [for record in self.result : record.type if contains(["A", "AAAA", "CNAME"], record.type)])} records.",
+        "${each.key} already has ${join(", ", [for record in self.result : record.type if contains(local.address_record_types, record.type)])} records.",
         "Only a single CNAME can be adopted; converting a record is not supported (D12)."
       ])
     }
@@ -124,6 +112,10 @@ resource "cloudflare_zero_trust_access_policy" "allow_operator" {
 
   lifecycle {
     precondition {
+      condition     = length(local.operator_group_ids) <= 1
+      error_message = "${length(local.operator_group_ids)} Access groups are named ${local.operator_group_name}; exactly one is needed."
+    }
+    precondition {
       condition     = local.operator_group_id != null
       error_message = "A protected host needs the Access group ${local.operator_group_name}; it was not found."
     }
@@ -157,13 +149,13 @@ resource "cloudflare_dns_record" "host" {
 import {
   for_each = local.record_ids_to_import
   to       = cloudflare_dns_record.host[each.key]
-  id       = "${local.zone_id}/${each.value}"
+  id       = each.value
 }
 
 import {
   for_each = local.app_ids_to_import
   to       = cloudflare_zero_trust_access_application.host[each.key]
-  id       = "accounts/${local.account_id}/${each.value}"
+  id       = each.value
 }
 
 # U2: the inventory of every existing Access app, answered by each plan. Reads even without hosts
@@ -175,7 +167,7 @@ check "access_apps_inventory" {
 
   assert {
     condition     = length(data.cloudflare_zero_trust_access_applications.inventory.result) == 0
-    error_message = "Existing Access apps: ${join(", ", [for app in data.cloudflare_zero_trust_access_applications.inventory.result : app.domain])}"
+    error_message = "Existing Access apps: ${join(", ", [for app in data.cloudflare_zero_trust_access_applications.inventory.result : "${coalesce(app.name, app.id)} (${coalesce(app.domain, "no domain")})"])}"
   }
 }
 
