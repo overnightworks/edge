@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from edge import catalog
 from edge.external import secrets, tofu, tofu_binary
 from edge.external.tofu import EXTERNAL_ROOT, PROJECT_ROOT, TofuError
 
@@ -34,7 +35,7 @@ INIT_ARGUMENTS = ["init", "-backend=false", "-lockfile=readonly", "-input=false"
 
 def live_names(fleet_file: Path = FLEET_FILE) -> tuple[str, str]:
     fleet = yaml.safe_load(fleet_file.read_text())
-    return fleet["github"]["org"].lower(), fleet["cloudflare"]["zone"].lower()
+    return fleet["github"]["org"].lower(), catalog.zone(fleet)
 
 
 def _mocks(provider: str, content: str) -> bool:

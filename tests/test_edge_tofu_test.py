@@ -122,7 +122,7 @@ def test_the_real_tests_pass_their_own_guards():
 def test_live_names_come_from_the_fleet_file(tmp_path):
     """#123 S4: the guarded zone and org are the ones fleet.yaml names."""
     fleet = tmp_path / "fleet.yaml"
-    fleet.write_text("cloudflare:\n  zone: Example.Test\ngithub:\n  org: Acme\n")
+    fleet.write_text("cloudflare:\n  zone: example.test\ngithub:\n  org: Acme\n")
 
     assert tofu_test.live_names(fleet) == ("acme", "example.test")
 

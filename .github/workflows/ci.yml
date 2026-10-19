@@ -15,8 +15,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      # Placeholder values the compose file interpolates; the real ones live in the uncommitted .env.
-      EDGE_DOMAIN: hallucinai.de
+      # Placeholder the compose file interpolates; the real one lives in the uncommitted .env.
       DOCKER_GID: "127"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -27,6 +26,11 @@ jobs:
 
       - name: edge-check installs from the lock file
         run: uv sync --locked --no-build --no-install-project
+
+      # The compose file interpolates the domain: the zone fleet.yaml names, as `edge apply` writes it to .env.
+      - name: EDGE_DOMAIN is fleet.yaml's cloudflare.zone
+        run: |
+          PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from edge import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"
 
       - name: edge-check lint
         run: |
@@ -357,16 +361,8 @@ jobs:
           echo OVERRIDE-BLOCKED
 
       # The one tofu test entry point: the pinned tofu installed above, an exact environment, mocked providers.
-      - name: "#123 X1d: the OpenTofu tests run through edge's entry point, and the zone stands once"
-        run: |
-          set -euo pipefail
-          zone=$(PYTHONPATH=src uv run --no-sync python -c 'import yaml; print(yaml.safe_load(open("fleet.yaml"))["cloudflare"]["zone"])')
-          example_domain=$(sed -n 's/^EDGE_DOMAIN=//p' .env.example)
-          if [ "$zone" != "$example_domain" ] || [ "$zone" != "$EDGE_DOMAIN" ]; then
-            echo "the zone differs: fleet.yaml cloudflare.zone=$zone, .env.example EDGE_DOMAIN=$example_domain, ci.yml EDGE_DOMAIN=$EDGE_DOMAIN" >&2
-            exit 1
-          fi
-          PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_test "$RUNNER_TEMP/opentofu"
+      - name: "#123 X1d: the OpenTofu tests run through edge's entry point"
+        run: PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_test "$RUNNER_TEMP/opentofu"
 
       # The quality gate scans the history for literal-looking secrets; the structural rule (a
       # literal in keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.

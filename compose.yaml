@@ -16,7 +16,7 @@ services:
   socket-proxy:
     image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
     restart: unless-stopped
-    user: "65534:${DOCKER_GID:?set DOCKER_GID to the host docker group id, see .env.example}"
+    user: "65534:${DOCKER_GID:?set DOCKER_GID to the host docker group id; `edge apply --closed` writes .env with it}"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

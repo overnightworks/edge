@@ -161,7 +161,7 @@ def hosts(document: Any) -> tuple[Host, ...]:
     """The hosts of the enabled entries; the hosts of disabled entries are checked, not returned."""
     if not isinstance(document, dict):
         raise CatalogError(f"{FLEET_FILE}: must be a map")
-    zone = _zone(document)
+    zone_name = zone(document)
     entries = document.get("services", {})
     if not isinstance(entries, dict):
         raise CatalogError("services: must be a map of entries")
@@ -169,19 +169,20 @@ def hosts(document: Any) -> tuple[Host, ...]:
     for key, entry in entries.items():
         if not isinstance(entry, dict) or "hosts" not in entry:
             continue
-        entered = _entry_hosts(key, entry["hosts"], zone)
+        entered = _entry_hosts(key, entry["hosts"], zone_name)
         if _entry_enabled(key, entry):
             enabled_hosts += entered
     _check_together(enabled_hosts)
     return tuple(host for _, host in enabled_hosts)
 
 
-def _zone(document: dict) -> str:
-    cloudflare = document.get("cloudflare")
-    zone = cloudflare.get("zone") if isinstance(cloudflare, dict) else None
-    if not isinstance(zone, str) or not _is_dotted_labels(zone):
+def zone(document: Any) -> str:
+    """The catalog's `cloudflare.zone`, validated the way every reader of it needs."""
+    cloudflare = document.get("cloudflare") if isinstance(document, dict) else None
+    name = cloudflare.get("zone") if isinstance(cloudflare, dict) else None
+    if not isinstance(name, str) or not _is_dotted_labels(name):
         raise CatalogError("cloudflare.zone: must be a lowercase name without a trailing dot")
-    return zone
+    return name
 
 
 def _is_dotted_labels(zone: str) -> bool:

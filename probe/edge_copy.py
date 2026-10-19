@@ -5,11 +5,12 @@ A probe works in the copy so that it flips `fleet.yaml` and lets `edge` write `d
 state under its throwaway HOME without ever touching the checkout it runs from. The copy is the
 live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `edge apply`
 runs there and never against the operator's HOME (#79 rule 3). It is a clean `main` with a bare
-remote `<scratch>/origin.git` and an empty, ignored `.env`, as `edge apply --closed` requires; a
-probe publishes every edit it makes there (commit and push) before it applies (#95 rule 10). To
-put the copy behind origin, as a pull request merged elsewhere does, a probe advances origin from
-a work clone `<scratch>/work` (#98 P1). A probe adds this directory and the repository's `src` to
-`sys.path` before importing it, which also works when the probe is loaded by path.
+remote `<scratch>/origin.git`, as `edge apply --closed` requires (its ignored `.env` is written by
+that apply, #136); a probe publishes every edit it makes there (commit and push) before it
+applies (#95 rule 10). To put the copy behind origin, as a pull request merged elsewhere does, a
+probe advances origin from a work clone `<scratch>/work` (#98 P1). A probe adds this directory and
+the repository's `src` to `sys.path` before importing it, which also works when the probe is
+loaded by path.
 """
 
 from __future__ import annotations
@@ -60,7 +61,6 @@ def repository_copy(repository: Path, home: Path, scratch: Path) -> Path:
         git(copy, "remote", "add", "origin", str(remote))
         for key, value in PROBE_IDENTITY.items():
             git(copy, "config", key, value)
-    (copy / checkout.ENVIRONMENT_FILE).touch()
     synced = subprocess.run(
         ["uv", "sync", "--quiet"], capture_output=True, cwd=copy, check=False,
         timeout=APPLY_SECONDS,

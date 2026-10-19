@@ -34,8 +34,6 @@ from edge import compose
 
 LIVE_CHECKOUT = "~/git/edge"
 MAIN = "main"
-ENVIRONMENT_FILE = ".env"
-ENVIRONMENT_FILE_HINT = "cp .env.example .env"
 _BRANCH_PREFIX = "refs/heads/"
 _ISOLATION = (
     "-c", "core.hooksPath=/dev/null",
@@ -341,11 +339,6 @@ def not_live_checkout_line(tree: Path, home: Path) -> str | None:
     if reason := not_live_checkout(tree, home):
         return f"runs only from the live checkout {LIVE_CHECKOUT} ({reason})"
     return None
-
-
-def has_environment_file(tree: Path) -> bool:
-    """Whether `.env` is a file, followed through a symlink; it is never opened (#95 rule 3)."""
-    return (tree / ENVIRONMENT_FILE).is_file()
 
 
 def not_on_main(git: Git) -> str | None:
