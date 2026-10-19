@@ -328,6 +328,28 @@ def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy
     ]
 
 
+@pytest.mark.parametrize(
+    ("host", "label", "decision", "include"),
+    [
+        pytest.param(bypass("www"), "www", "bypass", Include("everyone"), id="a bypass host"),
+        pytest.param(
+            protected_wildcard(), "*", "allow", Include("group", OPERATOR.id), id="a protected host"
+        ),
+    ],
+)
+def test_a_policy_with_extra_conditions_does_not_match_the_declared_one(
+    host, label, decision, include
+):
+    """C: exclude, require, approval, isolation, a justification or connection rules only narrow
+    access, but the check compares with the declaration."""
+    restricted = Policy(decision, (include,), extra_conditions=True)
+    current = snapshot(tunnel_record(label), apps=(app(host.fqdn, policies=(restricted,)),))
+    check = host_check.compare(ZONE, [host], current)
+    assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
+        (Problem.POLICY_WRONG, host.fqdn, "the policy has extra conditions")
+    ]
+
+
 def test_an_override_on_a_destination_of_another_host_does_not_taint_this_host():
     own = app(
         fqdn("www"),

@@ -19,6 +19,7 @@ from edge.external.cloudflare_read import (
     Policy,
     Record,
     Snapshot,
+    destination_host,
 )
 
 OPERATOR_GROUP_NAME = "operator"
@@ -203,7 +204,7 @@ def _app_findings(
     faults = [
         f"a path rule makes {override.path_pattern} public, bypassing Access"
         for override in own_app.overrides
-        if _destination_host(override.destination) == host.fqdn
+        if destination_host(override.destination) == host.fqdn
     ]
     if own_app.options_preflight_bypass:
         faults.append("OPTIONS requests bypass Access")
@@ -213,7 +214,7 @@ def _app_findings(
 
 
 def _destinations_at(app: App, fqdn: str) -> list[str]:
-    return [d for d in app.destinations if _destination_host(d) == fqdn]
+    return [d for d in app.destinations if destination_host(d) == fqdn]
 
 
 def _covering_destinations(zone: str, fqdn: str, apps: Sequence[App]) -> list[str]:
@@ -221,19 +222,15 @@ def _covering_destinations(zone: str, fqdn: str, apps: Sequence[App]) -> list[st
         destination
         for app in apps
         for destination in app.destinations
-        if _covers(zone, _destination_host(destination), fqdn)
+        if _covers(zone, destination_host(destination), fqdn)
     ]
 
 
-def _destination_host(destination: str) -> str:
-    return destination.split("/", 1)[0]
-
-
-def _covers(zone: str, destination_host: str, fqdn: str) -> bool:
-    if destination_host == fqdn:
+def _covers(zone: str, covering_host: str, fqdn: str) -> bool:
+    if covering_host == fqdn:
         return True
     one_label_under_zone = fqdn.endswith(f".{zone}") and "." not in fqdn.removesuffix(f".{zone}")
-    return destination_host == f"*.{zone}" and one_label_under_zone
+    return covering_host == f"*.{zone}" and one_label_under_zone
 
 
 def _policy_fault(
@@ -244,15 +241,13 @@ def _policy_fault(
     (policy,) = policies
     if exposure is catalog.Exposure.BYPASS:
         holds = policy.decision == "bypass" and policy.include == (Include("everyone"),)
-        return None if holds else _describe_policy("one bypass policy including everyone", policy)
-    holds = policy.decision == "allow" and _includes_only_the_operator_group(policy, snapshot)
-    return (
-        None
-        if holds
-        else _describe_policy(
-            f"one allow policy including only the group {OPERATOR_GROUP_NAME}", policy
-        )
-    )
+        expected = "one bypass policy including everyone"
+    else:
+        holds = policy.decision == "allow" and _includes_only_the_operator_group(policy, snapshot)
+        expected = f"one allow policy including only the group {OPERATOR_GROUP_NAME}"
+    if not holds:
+        return _describe_policy(expected, policy)
+    return "the policy has extra conditions" if policy.extra_conditions else None
 
 
 def _includes_only_the_operator_group(policy: Policy, snapshot: Snapshot) -> bool:
@@ -283,14 +278,14 @@ def _undeclared_apps(
         Finding(Problem.UNDECLARED_APP, destination, "an Access app nobody declared")
         for app in apps
         for destination in app.destinations
-        if _in_zone(zone, _destination_host(destination))
-        and _destination_host(destination) not in access_hosts
-        and not any(_covers(zone, _destination_host(destination), fqdn) for fqdn in public_hosts)
+        if _in_zone(zone, destination_host(destination))
+        and destination_host(destination) not in access_hosts
+        and not any(_covers(zone, destination_host(destination), fqdn) for fqdn in public_hosts)
     ]
 
 
-def _in_zone(zone: str, destination_host: str) -> bool:
-    return destination_host == zone or destination_host.endswith(f".{zone}")
+def _in_zone(zone: str, host: str) -> bool:
+    return host == zone or host.endswith(f".{zone}")
 
 
 def as_json(check: HostCheck) -> str:

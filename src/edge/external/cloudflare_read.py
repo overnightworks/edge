@@ -5,10 +5,11 @@ The one documented wire shape, from Cloudflare's published OpenAPI schema
 
 - Every answer is `{"success": bool, "errors": [{"code": int, "message": str}], "result": ...}`.
   The lists are paged with `page` and `per_page` and answer `result_info` with `page`,
-  `per_page`, `count`, `total_count` and `total_pages`.
+  `per_page`, `count`, `total_count` and, but for the tunnel list, `total_pages`.
 - `GET /zones?name=`: `result[].id`, `result[].account.id`.
 - `GET /zones/{id}/dns_records`: `result[].name`, `type`, `content`, `proxied`.
-- `GET /accounts/{id}/cfd_tunnel?is_deleted=false`: `result[].id`.
+- `GET /accounts/{id}/cfd_tunnel?is_deleted=false`: `result[].id`; its `result_info` documents no
+  `total_pages`, which is derived from `total_count` and the page size.
 - `GET /accounts/{id}/access/groups`: `result[].id`, `result[].name` (an include rule names a
   group by id only).
 - `GET /accounts/{id}/access/apps`: `result[].type`, `options_preflight_bypass` and the embedded
@@ -16,15 +17,19 @@ The one documented wire shape, from Cloudflare's published OpenAPI schema
   map with the one key `everyone` or `group` (`{"id": ...}`). Of every app `destinations[]`: a
   `public` destination is `{type, uri, overrides[]}` and an override is
   `{behavior: "public", path_pattern}`, "each rule can make a matching path public, bypassing
-  Access authentication" (`domain` and `self_hosted_domains` are deprecated and never read).
+  Access authentication". A `destination` is one of the types of `DESTINATION_TYPES`. `domain` is
+  the primary hostname of the apps of `HOSTNAME_APP_TYPES`; it and the deprecated
+  `self_hosted_domains` are not read as destinations but must each be one of the public
+  destinations' hosts, so no secured hostname hides outside `destinations`.
 - The schema lists `access_page` and `access_per_page` (default 1000, maximum 1000) for the apps
   and the groups; `page` and `per_page` are sent and answered. Paging fails closed: `result_info`
   must name the requested page and page size, the same `total_pages` and `total_count` on every
   page and a `count` equal to the page's results, and every page but the last must be full.
-- An app that has destinations may carry only the fields of `UNDERSTOOD_APP_FIELDS`, the union of
-  the response properties of every app variant in the published schema. A field beyond them, and
-  any key of a public destination or of an override beyond the documented ones, is refused (fail
-  closed) instead of ignored. The refusal names a field only when its name is a plain one.
+- An app that secures hostnames may carry only the fields of `UNDERSTOOD_APP_FIELDS`, the union of
+  the response properties of every app variant in the published schema; a policy only those of
+  `UNDERSTOOD_POLICY_FIELDS`. A field beyond them, and any key of a public destination or of an
+  override beyond the documented ones, is refused (fail closed) instead of ignored. The refusal
+  gives the level and the count of such fields, never a name: a response is not quoted.
 
 Schema revision: cloudflare/api-schemas commit 8e378c74caeffd3cf8b458dc215b1c2e9bd48b9f
 (19.10.2026), `openapi.json` (git blob b3375cb4e6e8caa4c318b3ae0d305159ddd20b46), the 200 answer
@@ -53,6 +58,10 @@ MAXIMUM_BODY_BYTES = 16 * 1024 * 1024
 LOOPBACK_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 SELF_HOSTED = "self_hosted"
 PUBLIC_DESTINATION = "public"
+DESTINATION_TYPES = frozenset(
+    {PUBLIC_DESTINATION, "private", "worker", "all_workers", "via_mcp_server_portal"}
+)
+HOSTNAME_APP_TYPES = frozenset({SELF_HOSTED, "ssh", "vnc", "rdp", "mcp_portal", "end_user"})
 # Every property of the app variants in the response schema of the revision named above.
 UNDERSTOOD_APP_FIELDS = frozenset(
     {
@@ -69,9 +78,21 @@ UNDERSTOOD_APP_FIELDS = frozenset(
         "updated_at", "use_clientless_isolation_app_launcher_url", "user_populations",
     }
 )  # fmt: skip
+UNDERSTOOD_POLICY_FIELDS = frozenset(
+    {
+        "account_id", "approval_groups", "approval_required", "connection_rules", "created_at",
+        "decision", "exclude", "id", "include", "isolation_required", "mfa_config", "name",
+        "precedence", "purpose_justification_prompt", "purpose_justification_required", "require",
+        "session_duration", "updated_at",
+    }
+)  # fmt: skip
+CONDITION_FLAGS = ("approval_required", "isolation_required", "purpose_justification_required")
 PUBLIC_DESTINATION_FIELDS = frozenset({"type", "uri", "overrides"})
 OVERRIDE_FIELDS = frozenset({"behavior", "path_pattern"})
-PLAIN_FIELD_NAME = re.compile(r"[a-z][a-z_]{0,39}")
+PLAIN_HOSTNAME = re.compile(
+    r"(\*\.)?[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*"
+)
+IDENTIFIER = re.compile(r"[0-9a-f]{32}")
 ACCESS_NOT_ENABLED = (403, 9999, "access.api.error.not_enabled")
 
 
@@ -97,8 +118,12 @@ class Include:
 
 @dataclass(frozen=True)
 class Policy:
+    """`extra_conditions`: it also restricts by exclude, require, approval, isolation, a purpose
+    justification or connection rules."""
+
     decision: str
     include: tuple[Include, ...]
+    extra_conditions: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,12 +186,14 @@ class CloudflareClient:
 
     def read(self, zone: str) -> Snapshot:
         zone_answer = self._one("/zones", {"name": zone}, "zone")
-        account_id = _text(zone_answer.get("account"), "id", "/zones")
-        zone_id = _text(zone_answer, "id", "/zones")
-        tunnel_path = f"/accounts/{_segment(account_id)}/cfd_tunnel"
-        tunnel = self._one(tunnel_path, {"is_deleted": "false"}, "tunnel")
-        records_path = f"/zones/{_segment(zone_id)}/dns_records"
-        access = self._access(f"/accounts/{_segment(account_id)}/access")
+        account_id = _identifier(zone_answer.get("account"), "/zones")
+        zone_id = _identifier(zone_answer, "/zones")
+        tunnel_path = f"/accounts/{account_id}/cfd_tunnel"
+        tunnel = self._one(
+            tunnel_path, {"is_deleted": "false"}, "tunnel", announces_total_pages=False
+        )
+        records_path = f"/zones/{zone_id}/dns_records"
+        access = self._access(f"/accounts/{account_id}/access")
         apps, groups = access if access is not None else (None, ())
         return Snapshot(
             tunnel_id=_text(tunnel, "id", tunnel_path),
@@ -186,18 +213,26 @@ class CloudflareClient:
             raise
         return apps, groups
 
-    def _one(self, path: str, query: Mapping[str, str], what: str) -> dict:
-        items = self._pages(path, query)
+    def _one(
+        self, path: str, query: Mapping[str, str], what: str, *, announces_total_pages: bool = True
+    ) -> dict:
+        items = self._pages(path, query, announces_total_pages=announces_total_pages)
         if len(items) != 1:
             raise CloudflareReadError(f"{path}: expected exactly one {what}, found {len(items)}")
         return items[0]
 
-    def _pages(self, path: str, query: Mapping[str, str] | None = None) -> list[dict]:
+    def _pages(
+        self,
+        path: str,
+        query: Mapping[str, str] | None = None,
+        *,
+        announces_total_pages: bool = True,
+    ) -> list[dict]:
         items: list[dict] = []
         page, announced = 1, None
         while True:
             answer = self._get(path, {**(query or {}), "page": str(page), "per_page": PAGE_SIZE})
-            page_items, totals = _checked_page(path, answer, page)
+            page_items, totals = _checked_page(path, answer, page, announces_total_pages)
             if announced not in (None, totals):
                 raise CloudflareReadError(f"{path}: the pages announce different totals")
             announced = totals
@@ -235,8 +270,10 @@ def _require_cloudflare_or_loopback(base_url: str) -> None:
         raise ValueError(f"the Cloudflare base URL must be {BASE_URL} (or http on loopback)")
 
 
-def _checked_page(path: str, answer: dict, page: int) -> tuple[list[dict], tuple[int, int]]:
-    """The results of one page and the (total_pages, total_count) it announces."""
+def _checked_page(
+    path: str, answer: dict, page: int, announces_total_pages: bool
+) -> tuple[list[dict], tuple[int, int]]:
+    """The results of one page and the (total_pages, total_count) it announces or implies."""
     page_items = answer.get("result")
     info = answer.get("result_info")
     if not isinstance(page_items, list) or not isinstance(info, dict):
@@ -245,8 +282,11 @@ def _checked_page(path: str, answer: dict, page: int) -> tuple[list[dict], tuple
         raise CloudflareReadError(f"{path}: the answer is not page {page}")
     if info.get("per_page") != PAGE_SIZE:
         raise CloudflareReadError(f"{path}: the answer does not keep the page size {PAGE_SIZE}")
-    total_pages = _count(info, "total_pages", path)
     total_count = _count(info, "total_count", path)
+    if announces_total_pages:
+        total_pages = _count(info, "total_pages", path)
+    else:
+        total_pages = max(1, -(-total_count // PAGE_SIZE))
     if total_pages > MAXIMUM_PAGES:
         raise CloudflareReadError(f"{path}: more than {MAXIMUM_PAGES} pages")
     if _count(info, "count", path) != len(page_items) or len(page_items) > PAGE_SIZE:
@@ -279,8 +319,12 @@ def _answer(path: str, status: int, body: bytes) -> dict:
     )
 
 
-def _segment(identifier: str) -> str:
-    return urllib.parse.quote(identifier, safe="")
+def _identifier(item: Any, path: str) -> str:
+    """An id that goes into a request path: Cloudflare's 32 lower-case hex characters."""
+    value = _text(item, "id", path)
+    if not IDENTIFIER.fullmatch(value):
+        raise CloudflareReadError(f"{path}: an id is not 32 lower-case hex characters")
+    return value
 
 
 def _count(info: dict, key: str, path: str) -> int:
@@ -319,31 +363,61 @@ def _group(item: dict, path: str) -> AccessGroup:
 
 def _app(item: dict, path: str) -> App:
     app_type = _text(item, "type", path)
-    required = app_type == SELF_HOSTED
-    public = [
-        destination
-        for destination in _optional_list(item, "destinations", path, required)
-        if isinstance(destination, dict)
-        and destination.get("type", PUBLIC_DESTINATION) == PUBLIC_DESTINATION
-    ]
-    if required or public:
+    secures_hostnames = app_type in HOSTNAME_APP_TYPES
+    destinations = _optional_list(item, "destinations", path, app_type == SELF_HOSTED)
+    public = _public_destinations(destinations, path)
+    if secures_hostnames or public:
         _require_only_fields(item, UNDERSTOOD_APP_FIELDS, "an Access app", path)
     for destination in public:
         _require_only_fields(destination, PUBLIC_DESTINATION_FIELDS, "a public destination", path)
     uris = [_text(destination, "uri", path).lower() for destination in public]
+    if not all(PLAIN_HOSTNAME.fullmatch(destination_host(uri)) for uri in uris):
+        raise CloudflareReadError(f"{path}: a destination host is not a plain lower-case hostname")
+    if secures_hostnames:
+        _require_secured_hosts_among(item, {destination_host(uri) for uri in uris}, path)
     return App(
         type=app_type,
         destinations=tuple(uris),
         policies=tuple(
-            _policy(policy, path) for policy in _optional_list(item, "policies", path, required)
+            _policy(policy, path)
+            for policy in _optional_list(item, "policies", path, app_type == SELF_HOSTED)
         ),
         overrides=tuple(
             _override(uri, override, path)
             for uri, destination in zip(uris, public, strict=True)
             for override in _optional_list(destination, "overrides", path, False)
         ),
-        options_preflight_bypass=item.get("options_preflight_bypass") is True,
+        options_preflight_bypass=_flag(item, "options_preflight_bypass", path),
     )
+
+
+def destination_host(destination: str) -> str:
+    """The host of a destination uri, its path removed."""
+    return destination.split("/", 1)[0]
+
+
+def _public_destinations(destinations: list, path: str) -> list[dict]:
+    for destination in destinations:
+        kind = destination.get("type") if isinstance(destination, dict) else None
+        if not isinstance(kind, str) or kind not in DESTINATION_TYPES:
+            raise CloudflareReadError(f"{path}: a destination is not of a published type")
+    return [d for d in destinations if d["type"] == PUBLIC_DESTINATION]
+
+
+def _require_secured_hosts_among(item: dict, public_hosts: set[str], path: str) -> None:
+    """`domain` and `self_hosted_domains` secure hostnames too; none may be hidden from us."""
+    secured = [item["domain"]] if "domain" in item else []
+    secured += _optional_list(item, "self_hosted_domains", path, False)
+    for domain in secured:
+        if not isinstance(domain, str) or destination_host(domain.lower()) not in public_hosts:
+            raise CloudflareReadError(f"{path}: a secured domain is not among the destinations")
+
+
+def _flag(item: dict, key: str, path: str) -> bool:
+    value = item.get(key, False)
+    if not isinstance(value, bool):
+        raise CloudflareReadError(f"{path}: {key} is not a boolean")
+    return value
 
 
 def _optional_list(item: dict, key: str, path: str, required: bool) -> list:
@@ -358,24 +432,27 @@ def _override(destination: str, override: Any, path: str) -> Override:
 
 
 def _require_only_fields(item: dict, understood: frozenset[str], what: str, path: str) -> None:
-    """Refuse a field beyond `understood`, naming only plain names: a response is never quoted."""
-    unknown = sorted(set(item) - understood)
+    """Refuse a field beyond `understood`, by count only: a response is never quoted."""
+    unknown = set(item) - understood
     if unknown:
-        named = [name for name in unknown if PLAIN_FIELD_NAME.fullmatch(name)]
-        if len(named) < len(unknown):
-            named.append("a field with an unusual name")
         raise CloudflareReadError(
-            f"{path}: {what} carries {len(unknown)} fields this check does not understand: "
-            + ", ".join(named)
+            f"{path}: {what} carries {len(unknown)} fields this check does not understand"
         )
 
 
 def _policy(policy: Any, path: str) -> Policy:
     if not isinstance(policy, dict):
         raise CloudflareReadError(f"{path}: a policy is not embedded in its app")
+    _require_only_fields(policy, UNDERSTOOD_POLICY_FIELDS, "a policy", path)
+    restricting_lists = [_optional_list(policy, key, path, False) for key in ("exclude", "require")]
+    required_flags = [_flag(policy, key, path) for key in CONDITION_FLAGS]
+    connection_rules = policy.get("connection_rules", {})
+    if not isinstance(connection_rules, dict):
+        raise CloudflareReadError(f"{path}: connection_rules is not a map")
     return Policy(
         decision=_text(policy, "decision", path),
         include=tuple(_include(rule, path) for rule in _list(policy, "include", path)),
+        extra_conditions=any([*restricting_lists, connection_rules, *required_flags]),
     )
 
 
