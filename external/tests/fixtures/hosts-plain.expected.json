@@ -1,0 +1,16 @@
+{
+  "edge-fixture.invalid": {
+    "service": "songmaker",
+    "exposure": "public",
+    "reason": "own login",
+    "ready": null,
+    "target": "http://localhost:8080"
+  },
+  "www.edge-fixture.invalid": {
+    "service": "songmaker",
+    "exposure": "public",
+    "reason": "the apex's alias",
+    "ready": null,
+    "target": "http://localhost:8080"
+  }
+}

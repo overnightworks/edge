@@ -184,7 +184,21 @@ services:
       - name: hopin              # hopin.hallucinai.de → container labelled edge.name=hopin
         exposure: bypass         # public, own login; the * Access app would otherwise cover it
         reason: "video calls; starting a call needs a login (hopin#25)"
+        ready: /health           # optional: the path X8a asks before it publishes the host
+        # target: http://127.0.0.1:8081   # optional; this is the default (Traefik)
 ```
+
+`src/edge/catalog.py` (`hosts()`) owns the host shape. `edge external plan` and `apply` refuse an invalid catalog before any token is read; `external/hosts.tf` reads the valid shape.
+
+| Field | Type | Default | Rule |
+|---|---|---|---|
+| `name` | string, required | none | `@` (the zone's apex), `*` (the wildcard) or one lowercase DNS label, no dot |
+| `exposure` | `public` \| `bypass` \| `protected`, required | none | `protected` only on `*`, and `*` only `protected`; `public` on a label is refused while `*` exists (it needs its own `bypass`); one FQDN once |
+| `reason` | string | none | required and non-blank for `public` and `bypass` |
+| `ready` | path | none | starts with one `/`; the publish guard of X8a |
+| `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker `@` and `www`) |
+
+`run.enabled` decides both the units and the hosts: only `true` and `false` count: OpenTofu's `yamldecode` also reads YAML 1.1 words (`yes`, `no`, `on`, `off`, `y`, `n`, `True`) as booleans and PyYAML disagrees on some of them, so every other spelling, `no` and `"false"` included, is refused. A disabled entry's hosts are validated but not published.
 
 ### What the catalog drives, and what it must not duplicate
 
@@ -521,7 +535,7 @@ They survive a dead PC because they live at the provider.
 | 32 | songmaker has no single-login cutover | its own password login; no songmaker client in `realm.yaml` | **new songmaker item** (section 3), after edge#19 |
 | 33 | No `home-tools/bootstrap` | the file does not exist | home-tools#9 |
 | 34 | No way to stop every agent at once | aco runs sessions on its own tmux socket but has no "stop all" command | **new item in agent-coordination** (aco owns agent sessions) |
-| 35 | Apex, `www` and presentator bypass Traefik | tunnel ingress sends them to `:8080` and `:8100`; no ingress barrier can hold them (section 8) | the catalog and `edge apply` item (gap 14) routes every hostname through Traefik on 8081; for apex and `www` it lands with the songmaker cutover item (section 3), for presentator with presentator#197 |
+| 35 | Apex, `www` and presentator bypass Traefik | tunnel ingress sends them to `:8080` and `:8100`; no ingress barrier can hold them (section 8) | the catalog and `edge apply` item (gap 14) routes every hostname through Traefik on 8081 (until then the host's `target` in `fleet.yaml` carries it, `http://localhost:8080` for apex and `www`); for apex and `www` it lands with the songmaker cutover item (section 3), for presentator with presentator#197 |
 
 ---
 

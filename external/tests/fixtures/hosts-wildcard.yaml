@@ -1,0 +1,23 @@
+cloudflare:
+  zone: edge-fixture.invalid
+
+github:
+  org: edge-fixture.invalid
+
+services:
+  edge:
+    hosts:
+      - {name: "*", exposure: protected}
+  songmaker:
+    hosts:
+      - {name: "@", exposure: public, reason: "the apex is not covered by the wildcard", target: "http://localhost:8080"}
+  hopin:
+    run:
+      enabled: true
+    hosts:
+      - {name: hopin, exposure: bypass, reason: "own login", ready: /health}
+  retired:
+    run:
+      enabled: false
+    hosts:
+      - {name: retired, exposure: bypass, reason: "switched off"}
