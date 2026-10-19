@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from test_edge_host_probe import RAY, Behaviour, serving
 
 from edge import checkout, cli
 from edge.external import apply as external_apply
@@ -1208,14 +1209,27 @@ class FakeProber:
         return self.outcome
 
 
+PROTECTED_WILDCARD_CATALOG = """\
+cloudflare: {zone: example.test}
+services:
+  site:
+    hosts:
+      - {name: "*", exposure: protected, reason: the operator's wildcard}
+"""
+
+
+def checkout_declaring(tmp_path, monkeypatch, fleet: str) -> Path:
+    tree = tmp_path / "elsewhere"
+    tree.mkdir()
+    (tree / "fleet.yaml").write_text(fleet)
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", tree)
+    return tree
+
+
 @pytest.fixture
 def hosts_catalog(tmp_path, monkeypatch) -> Path:
     """A checkout that is not the live main, declaring one public apex."""
-    tree = tmp_path / "elsewhere"
-    tree.mkdir()
-    (tree / "fleet.yaml").write_text(HOSTS_CATALOG)
-    monkeypatch.setattr(tofu, "PROJECT_ROOT", tree)
-    return tree
+    return checkout_declaring(tmp_path, monkeypatch, HOSTS_CATALOG)
 
 
 def run_check(
@@ -1536,3 +1550,32 @@ def test_an_os_error_in_the_transport_is_one_unreachable_finding_without_its_tex
     (finding,) = json.loads(printed.out)
     assert finding["problem"] == "unreachable"
     assert SENTINEL not in printed.out + printed.err
+
+
+@pytest.mark.usefixtures("loopback_only")
+@pytest.mark.parametrize("challenge", ["challenge", "challenge "])
+def test_a_challenge_hides_nothing_on_the_protected_wildcard_whatever_trails_it(
+    home, tmp_path, monkeypatch, capsys, challenge
+):
+    """PB1, PB4: a valid Access redirect with a challenge header is answer-wrong, exit 1."""
+    checkout_declaring(tmp_path, monkeypatch, PROTECTED_WILDCARD_CATALOG)
+    operator = cloudflare_read.AccessGroup("g-operator", "operator")
+    include = cloudflare_read.Include("group", operator.id)
+    operator_app = cloudflare_read.App(
+        cloudflare_read.SELF_HOSTED,
+        ("*.example.test",),
+        (cloudflare_read.Policy("allow", (include,)),),
+    )
+    record = cloudflare_read.Record("*.example.test", "CNAME", TUNNEL_TARGET, True)
+    snapshot = cloudflare_read.Snapshot("t-1", (record,), (operator,), (operator_app,))
+    login = "https://team.cloudflareaccess.com/cdn-cgi/access/login/x"
+    answering = Behaviour(302, [RAY, ("Location", login), ("cf-mitigated", challenge)])
+    with serving(answering) as origin:
+        exit_code = external_cli.check_command(
+            home,
+            as_json=True,
+            cloudflare=FakeReader(snapshot),
+            prober=lambda: host_probe.HttpProber(origin),
+        )
+    (finding,) = json.loads(capsys.readouterr().out)
+    assert (exit_code, finding["problem"]) == (1, "answer-wrong")

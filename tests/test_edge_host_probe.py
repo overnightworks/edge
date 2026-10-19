@@ -106,6 +106,21 @@ RAY = ("CF-RAY", "8a1b2c3d-FRA")
             Answer(403, None, True, True),
             id="challenge-upper-case",
         ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "challenge ")]),
+            Answer(403, None, True, True),
+            id="challenge-trailing-space",
+        ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "\tChallenge")]),
+            Answer(403, None, True, True),
+            id="challenge-leading-tab-capital",
+        ),
+        pytest.param(
+            Behaviour(403, [RAY, ("cf-mitigated", "challenged")]),
+            Answer(403, None, True, False),
+            id="challenged-is-not-a-challenge",
+        ),
     ],
 )
 def test_the_answer_comes_back_typed(behaviour, expected):
@@ -209,7 +224,7 @@ FAILURES = [
 ]
 
 
-@pytest.mark.parametrize("stage", ["request", "getresponse"])
+@pytest.mark.parametrize("stage", ["factory", "request", "getresponse"])
 @pytest.mark.parametrize(
     ("failure", "kind"),
     FAILURES,
@@ -220,10 +235,16 @@ def test_every_transport_failure_becomes_one_fixed_phrase_and_closes_the_connect
 ):
     """PB3, PB10."""
     connection = ScriptedConnection(failure, stage)
-    outcome = HttpProber(connection=lambda _name, _timeout: connection).ask(FQDN)
+
+    def factory(_name, _timeout):
+        if stage == "factory":
+            raise failure
+        return connection
+
+    outcome = HttpProber(connection=factory).ask(FQDN)
     assert outcome == Unreachable(kind)
     assert SENTINEL not in str(outcome.kind)
-    assert connection.closed
+    assert connection.closed == (stage != "factory")
 
 
 def test_the_connection_is_closed_after_a_success_too():
