@@ -168,3 +168,30 @@ def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_settin
     properties = REPOSITORY / "keycloak" / "themes" / theme / area / "theme.properties"
 
     assert (mounted_on, properties.read_text().strip()) == (["keycloak"], f"parent={parent}")
+
+
+def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_opens():
+    """#204: one router on the public entrypoint for exactly `/`; the other auth rules stay."""
+    labels = compose_document()["services"]["keycloak"]["labels"]
+    redirect = "traefik.http.middlewares.auth-root-to-account.redirectregex"
+
+    assert {
+        "auth-root rule": labels["traefik.http.routers.auth-root.rule"],
+        "auth-root entrypoint": labels["traefik.http.routers.auth-root.entrypoints"],
+        "auth-root middleware": labels["traefik.http.routers.auth-root.middlewares"],
+        "redirect target": labels[f"{redirect}.replacement"],
+        "redirect is temporary": labels[f"{redirect}.permanent"],
+        "auth rule": labels["traefik.http.routers.auth.rule"].replace("\n", " "),
+        "auth-admin rule": labels["traefik.http.routers.auth-admin.rule"],
+    } == {
+        "auth-root rule": "Host(`auth.${EDGE_DOMAIN}`) && Path(`/`)",
+        "auth-root entrypoint": "edge",
+        "auth-root middleware": "auth-root-to-account",
+        "redirect target": "https://auth.${EDGE_DOMAIN}/realms/hallucinai/account",
+        "redirect is temporary": "false",
+        "auth rule": (
+            "Host(`auth.${EDGE_DOMAIN}`) && (PathPrefix(`/realms/hallucinai/`) "
+            "|| PathPrefix(`/resources/hallucinai/`) || PathRegexp(`^/resources/[a-z0-9]{5}/`))"
+        ),
+        "auth-admin rule": "Host(`localhost`)",
+    }

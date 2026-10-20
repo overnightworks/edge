@@ -45,7 +45,8 @@ Access protects every edge name except `auth`, which is public by design:
 there Traefik admits only `/realms/hallucinai/`, `/resources/hallucinai/` and
 Keycloak's versioned static `/resources/<5 characters>/`, so the master realm (its
 `/resources/master/` texts included), the admin console, metrics and health never
-reach the tunnel. On the machine any process reaches any tool, the Keycloak admin
+reach the tunnel. The bare `https://auth.<domain>/` answers 302 to the hallucinai
+realm's account page. On the machine any process reaches any tool, the Keycloak admin
 entrypoint included.
 
 The allowed container inspection is privileged read access and can expose
