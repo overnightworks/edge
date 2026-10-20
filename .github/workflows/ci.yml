@@ -267,7 +267,7 @@ jobs:
           cat > "$fake_home/.tofurc" <<RC
           provider_installation {
             dev_overrides {
-              "integrations/github" = "$fake_home/override"
+              "cloudflare/cloudflare" ="$fake_home/override"
             }
             direct {}
           }

@@ -205,13 +205,13 @@ leaves hello absent.
 
 ## Externe Dienste als Code
 
-Cloudflare und GitHub werden mit OpenTofu als Code verwaltet (`external/`);
+Cloudflare wird mit OpenTofu als Code verwaltet (`external/`; GitHub folgt mit edge#30 X2/X3);
 wo diese Schicht liegt, steht in [`docs/architecture.md`](docs/architecture.md).
 Der State liegt nie im Checkout, sondern verschluesselt in
 `~/.secrets/opentofu/fleet.tfstate`.
 
 `edge external plan` zeigt, was von den Live-Diensten abweicht (Exit 0 keine
-Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien (erwartet
+Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest zwei Dateien (erwartet
 wird je 0600, geprueft wird das hier nicht) und gibt sie nur an das Kind `tofu` weiter
 (die eine Ausnahme steht bei `check --hosts` unten), dessen Umgebung eine
 Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
@@ -220,10 +220,12 @@ Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
 | Datei | Variable im Kind |
 |---|---|
 | `~/.secrets/cloudflare/fleet-read` | `CLOUDFLARE_API_TOKEN` |
-| `~/.secrets/github/fleet-read` | `GITHUB_TOKEN` |
 | `~/.secrets/opentofu/state-passphrase` | `TF_VAR_state_passphrase` |
 
-Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
+Die GitHub-Tokens (`~/.secrets/github/fleet-read`, `fleet-admin`) bleiben
+bekannt, werden aber nicht gelesen und nicht weitergegeben, bis edge#30 X2/X3
+die GitHub-Einstellungen als Code bauen. Die weiteren Token-Dateien der Schicht
+folgen mit X5b (home-tools#10).
 `plan` verweigert ein `tofu`, dessen Version nicht der Pin in
 `external/main.tf` entspricht.
 
@@ -268,9 +270,8 @@ bin/edge external check --hosts [--json]
 ```
 
 `edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
-Schreib-Tokens `~/.secrets/cloudflare/fleet-write` und
-`~/.secrets/github/fleet-admin` (dieselbe Allowlist-Umgebung, dieselbe
-State-Passphrase). Es laeuft nur aus `~/git/edge` als Haupt-Worktree auf
+Schreib-Token `~/.secrets/cloudflare/fleet-write` (dieselbe
+Allowlist-Umgebung, dieselbe State-Passphrase). Es laeuft nur aus `~/git/edge` als Haupt-Worktree auf
 einem sauberen `main`, sonst Exit 2 mit dem Grund (`plan` laeuft aus jedem
 Checkout), und nur an einem Terminal (stdin und stdout; sonst
 Exit 1, bevor `tofu` aufgerufen wird), plant in eine Datei, zeigt den Plan

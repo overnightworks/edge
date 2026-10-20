@@ -1,4 +1,3 @@
-mock_provider "github" {}
 mock_provider "cloudflare" {
   mock_data "cloudflare_zone" {
     defaults = {

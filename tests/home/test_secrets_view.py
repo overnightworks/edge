@@ -522,6 +522,10 @@ def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_wi
         ("github/fleet-admin", "github"),
     ]
     assert all(entry.source.scope and entry.purpose for entry in tokens)
+    assert {entry.name: entry.read_by for entry in tokens if entry.source.provider.value == "github"} == {
+        "github/fleet-read": (),
+        "github/fleet-admin": (),
+    }
     assert {entry.name: entry.kind for entry in first if entry.source is None} == {"opentofu/state-passphrase": SecretKind.SERVICE_PASSWORD}
 
 
