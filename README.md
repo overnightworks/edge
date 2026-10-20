@@ -1456,9 +1456,9 @@ The file is a regular file of at most 16 KiB with one line, the token: no JSON, 
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC
-(`id -u`), so his own `claude setup-token` writes a file the container can read. On a machine
-where it is not, `sudo chown -R 1000:1000 ~/.secrets/agent-service/claude` makes it so. This is a
-deployment choice, not the reader's requirement.
+(`id -u`), so his own `claude setup-token` writes a file the container can read, and the renewal
+below works as written. This runbook assumes the operator is uid 1000; another uid needs its own
+renewal procedure, not covered here. It is a deployment choice, not the reader's requirement.
 
 **Renewal.** Write the new line beside the old one and swap the name; the next run opens the file
 anew, without a restart:

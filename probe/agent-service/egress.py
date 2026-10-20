@@ -14,8 +14,8 @@ control; a window that dropped a frame, held a frame it could not decode, or in 
 did not show, is NOT DRIVEN and fails the run. The service target runs the image of the pull
 request's compose.yaml with a dummy login in the scratch HOME (never a real token) and adds E11 and
 E14. The probe always removes its containers and networks, and never touches the live stack: the
-project name is its own and is set on every command. Needs an empty or new --scratch directory.
-Exit 0: every cell held, 1: a cell failed or was not driven.
+project name is its own and is set on every command. Needs an existing, empty, writable --scratch
+directory. Exit 0: every cell held, 1: a cell failed or was not driven.
 
 The subject runs the `Client` class below: the driver sends its source to `python -I -` inside
 the container, so the client needs nothing but the standard library of the pinned image.
@@ -67,7 +67,7 @@ SERVICE_PORT = 8080  # the service's own default; service.toml sets only its hos
 LOGIN_DIRECTORY = Path(".secrets/agent-service/claude")  # below the HOME of the service's bind
 CLI_BINARY = "/opt/claude/claude"
 CLI_SECONDS = 120
-LOGIN_FAILURE = re.compile(r"authenticat|invalid|unauthori|401|credential|login", re.IGNORECASE)
+UPSTREAM_REJECTION = re.compile(r"API Error: 401\b")  # the API's answer, not a local startup error
 UPSTREAM_PORT = 443  # the allowed hosts' port, which allowed.yml passes the connection to
 SUBNET_CANDIDATES = [f"172.31.{third}.0/24" for third in range(251, 239, -1)]
 GATEWAY_HOST_NUMBER = 10
@@ -80,8 +80,8 @@ OUTSIDE_NAME = "example.com"
 NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
 UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
 EMBEDDED_RESOLVER = "127.0.0.11"
-PUBLIC_RESOLVER = "1.1.1.1"
-PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"
+PUBLIC_RESOLVER = "1.1.1.1"  # NOSONAR(S1313) a deliberate unreachable target for E6
+PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"  # NOSONAR(S1313) a deliberate unreachable target for E8
 CLIENT_IMPORTS = "import errno, json, selectors, socket, ssl, struct, sys, time\n"
 
 
@@ -111,16 +111,30 @@ def issuer_host() -> str:
     return host
 
 
+def write_dummy_token(path: Path) -> None:
+    """A new file at `path` (mode 0600) with a line of the shape `claude setup-token` prints; it
+    is no credential and reaches no one."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")
+
+
 def write_login_directory(home: Path) -> None:
-    """The service's login directory under a probe HOME, with a line of the shape `claude
-    setup-token` prints; it is no credential and reaches no one."""
+    """The service's login directory under a probe HOME, holding a dummy token."""
     directory = home / LOGIN_DIRECTORY
     directory.mkdir(parents=True)
     for folder in (directory, directory.parent, directory.parent.parent):
         folder.chmod(0o700)
-    descriptor = os.open(directory / "token", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")
+    write_dummy_token(directory / "token")
+
+
+def scratch_directory(text: str) -> Path:
+    """The `--scratch` argument as an absolute path of an existing directory the operator can
+    write to; anything else is refused where the command line is read."""
+    path = Path(text).resolve()
+    if not path.is_dir() or not os.access(path, os.W_OK):
+        raise argparse.ArgumentTypeError(f"{text} is not a writable directory")
+    return path
 
 
 def classify_syns(
@@ -161,7 +175,7 @@ class Client:
                     "handshake": True,
                     "certificate": bool(secured.getpeercert(binary_form=True)),
                 }
-        except (OSError, ssl.SSLError) as error:
+        except OSError as error:  # ssl.SSLError is one
             return {"handshake": False, "error": f"{type(error).__name__}: {error}"}
 
     @staticmethod
@@ -317,7 +331,6 @@ def lan_address() -> str:
 class Probe:
     def __init__(self, scratch: Path, target: Target = Target.STAND_IN) -> None:
         expect(PROJECT != "edge", "the probe must never run in the live project")
-        scratch.mkdir(parents=True, exist_ok=True)
         expect(not any(scratch.iterdir()), f"{scratch} is not empty")
         self.target = target
         home = scratch / "home"
@@ -767,7 +780,10 @@ class Probe:
         )  # fmt: skip
         said = (started.stdout + started.stderr).strip()
         expect(started.returncode != 0, f"E11: the CLI exited 0 with a dummy token: {said[:200]!r}")
-        expect(bool(LOGIN_FAILURE.search(said)), f"E11: the CLI said {said[:300]!r}")
+        expect(
+            bool(UPSTREAM_REJECTION.search(said)),
+            f"E11: the CLI did not print the API's 401: {said[:300]!r}",
+        )
         self.hold(
             "E11",
             f"{PROVIDER} and {issuer_host()} resolve to {self.address}; the CLI started under "
@@ -809,7 +825,7 @@ def interrupt(*_: object) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
     parser.add_argument("--target", type=Target, choices=list(Target), default=Target.STAND_IN)
     arguments = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)

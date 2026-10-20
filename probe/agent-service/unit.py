@@ -9,8 +9,8 @@ holds a dummy login (never a real token).
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. The image
 `edge-agent-service:0.4.0-2.1.302` must exist (README "The agent service image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
-its own (egress.py) and is set on every command. Needs an empty or new --scratch directory. Exit
-0: every cell held, 1: a cell failed.
+its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
+directory. Exit 0: every cell held, 1: a cell failed.
 
 The container is asked through the `Inside` class below: the driver sends its source to
 `python -I -` inside the container, which has the interpreter of the image and nothing else.
@@ -25,7 +25,6 @@ import inspect
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import subprocess
@@ -45,13 +44,17 @@ from egress import (
     Target,
     expect,
     interrupt,
+    scratch_directory,
     service_configuration,
+    write_dummy_token,
 )
 
 SERVICE = Target.SERVICE.compose_service
 LISTEN_SECONDS = 90
 REFUSAL_SECONDS = 60
 UID = 1000
+LISTENING = f"Uvicorn running on http://0.0.0.0:{SERVICE_PORT}"
+CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path
 SERVICE_COMMAND = "agent-service"
 INIT_COMMAND = "docker-init"
 OWNER_ONLY = 0o700
@@ -83,9 +86,13 @@ class Inside:
     @staticmethod
     def process(pid: str) -> dict:
         with open(f"/proc/{pid}/status", encoding="utf-8") as status:
-            fields = dict(
-                line.split(":\t", 1) for line in status.read().splitlines() if ":\t" in line
-            )
+            fields = {
+                key: value
+                for key, separator, value in (
+                    line.partition(":\t") for line in status.read().splitlines()
+                )
+                if separator
+            }
         with open(f"/proc/{pid}/limits", encoding="utf-8") as limits:
             core = re.search(r"Max core file size\s+(\S+)\s+(\S+)", limits.read())
         try:
@@ -218,13 +225,27 @@ class UnitProbe(Probe):
         container = self.container(SERVICE)
         return self.client_with(["exec", "-i", container], arguments, INSIDE_PROGRAM)
 
-    def service_logs(self) -> str:
-        containers = self.run(
+    def service_containers(self) -> list[str]:
+        """The service's containers, stopped ones included."""
+        return self.run(
             ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={PROJECT}",
              "--filter", f"label=com.docker.compose.service={SERVICE}"], check=False,
         ).stdout.split()  # fmt: skip
+
+    def service_logs(self) -> str:
+        containers = self.service_containers()
         logs = self.run(["docker", "logs", *containers[:1]], check=False) if containers else None
         return (logs.stdout + logs.stderr) if logs else ""
+
+    def service_is_down(self) -> bool:
+        """The service is not running: its container exited, or waits between restarts."""
+        containers = self.service_containers()
+        if not containers:
+            return True
+        state = json.loads(
+            self.run(["docker", "inspect", "--format", "{{json .State}}", containers[0]]).stdout
+        )
+        return not state["Running"] or state["Restarting"]
 
     # --- the cells of a started service -------------------------------------------------------
 
@@ -246,7 +267,7 @@ class UnitProbe(Probe):
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + LISTEN_SECONDS
         while time.monotonic() < deadline:
-            if f"Uvicorn running on http://0.0.0.0:{SERVICE_PORT}" in self.service_logs():
+            if LISTENING in self.service_logs():
                 return
             time.sleep(0.5)
         raise ProbeFailed("U1: the service did not listen in time")
@@ -340,7 +361,7 @@ class UnitProbe(Probe):
     def cell_u4(self) -> None:
         mounts = self.inside("mounts")["mounts"]
         over_proc = [
-            m for m in mounts if m["point"] == "/proc" or re.fullmatch(r"/proc/\d+.*", m["point"])
+            m for m in mounts if m["point"] == "/proc" or re.match(r"/proc/\d", m["point"])
         ]
         expect(
             [m["type"] for m in over_proc] == ["proc"],
@@ -365,7 +386,7 @@ class UnitProbe(Probe):
 
     def cell_u6(self) -> None:
         mounts = {m["point"]: m for m in self.inside("mounts")["mounts"]}
-        for directory in ("/tmp", working_root()):
+        for directory in (CONTAINER_TMP, working_root()):
             mount = mounts[directory]
             owned = self.inside("stat", directory)
             expect(mount["type"] == "tmpfs", f"U6: {directory} is {mount['type']}")
@@ -377,7 +398,7 @@ class UnitProbe(Probe):
 
     def cell_u7(self) -> None:
         options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
-        for directory in ("/tmp", working_root()):
+        for directory in (CONTAINER_TMP, working_root()):
             expect(
                 {"nosuid", "nodev", "noexec"} <= set(options[directory]),
                 f"U7: {directory} mounts with {options[directory]}",
@@ -415,9 +436,7 @@ class UnitProbe(Probe):
         before = self.inside("sha256", token_path())["sha256"]
         started = self.started_at()
         renewed = self.token.with_name("token.new")
-        descriptor = os.open(renewed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, TOKEN_MODE)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")  # the shape, no credential
+        write_dummy_token(renewed)
         self.run(["mv", "-T", str(renewed), str(self.token)])
         after = self.inside("sha256", token_path())["sha256"]
         expected = hashlib.sha256(self.token.read_bytes()).hexdigest()
@@ -432,17 +451,19 @@ class UnitProbe(Probe):
     # --- the cells that stop a start ----------------------------------------------------------
 
     def refused_start(self, cell: str, fields: list[str]) -> str:
-        """Starts the service as the current files and overlays have it and waits for its log to
-        name every field; returns the log."""
+        """Starts the service as the current files and overlays have it and waits until its log
+        names every field and it is down: exited, or between restarts, and never listening;
+        returns the log."""
         self.compose("up", "--detach", SERVICE, check=False, timeout=300)
         deadline = time.monotonic() + REFUSAL_SECONDS
         logs = ""
         while time.monotonic() < deadline:
             logs = self.service_logs()
-            if all(field in logs for field in fields):
+            if all(field in logs for field in fields) and self.service_is_down():
+                expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
                 return logs
             time.sleep(1)
-        raise ProbeFailed(f"{cell}: the log never named {fields}: {logs[-300:]!r}")
+        raise ProbeFailed(f"{cell}: no refused start naming {fields}: {logs[-300:]!r}")
 
     def cell_u6_refusal(self) -> None:
         overlay = self.compose_file.with_name("working-root-0750.yaml")
@@ -509,7 +530,7 @@ class UnitProbe(Probe):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
     arguments = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)
     try:

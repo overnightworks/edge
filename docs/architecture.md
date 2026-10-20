@@ -295,11 +295,12 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 | volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | planned (Block 9) |
 | volume `traefik-mcp-acme`: `acme.json` (the issued certificates and their keys) | uid 65534 | `traefik-mcp` | no: they are issued again |
 
-**The agent service's mounts (A1d).** Its container mounts three things and nothing else from the host; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
+**The agent service's mounts (A1d).** Its container binds two things from the host and nothing else (the login directory and its `service.toml`), plus two tmpfs; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
 
 | Mount | Holds | Mode | In the backup |
 |---|---|---|---|
 | one read-only directory bind per profile, `~/.secrets/agent-service/<profile>/` (the file inside is replaced, the directory never) | that profile's subscription login, one file | the container user only (0700 directory, 0600 file); no other profile and not the operator's `~/.claude` | no: the login is restored from its `~/.secrets` source ([agent-providers#18](https://github.com/overnightworks/agent-providers/issues/18)) |
+| `./agent-service/service.toml` → `/etc/agent-service/service.toml`, read-only | the service's configuration | the checkout's | no: it is in the repository |
 | `cli_working_directory_root`, a tmpfs | the private credential homes, `TMPDIR`, the Codex sandbox directories | exactly 0700, owned by the container user (the service refuses to start otherwise); the library owns the layout below it | no: rebuilt on start |
 | `/tmp`, a tmpfs, also its `HOME` | nothing the service keeps | 0700, owned by the container user | no |
 
