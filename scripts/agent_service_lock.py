@@ -33,7 +33,7 @@ GIT_CLONE_TAG: Final = (
     *("git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"),
     "--branch",
 )
-RELEASE_TAG: Final = re.compile(r"v\d+\.\d+\.\d+")
+RELEASE_TAG: Final = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
 RELEASE_WHEEL_STEMS: Final = (
     "overnightworks_agent_client",
     "overnightworks_agent_providers",
@@ -45,9 +45,11 @@ DOWNLOAD_SECONDS: Final = 120
 
 def release_tag(text: str) -> str:
     """The only shape of tag that reaches `git clone` and the release URLs."""
-    if not RELEASE_TAG.fullmatch(text):
+    matched = RELEASE_TAG.fullmatch(text)
+    if not matched:
         raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.4.0")
-    return text
+    major, minor, patch = (int(number) for number in matched.groups())
+    return f"v{major}.{minor}.{patch}"
 
 
 def release_wheel_requirements(tag: str) -> list[str]:
