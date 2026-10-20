@@ -40,8 +40,8 @@ flowchart TB
 
     subgraph ext["L3 External services: OpenTofu from fleet.yaml"]
         DNS["Cloudflare DNS<br/>hallucinai.de and *.hallucinai.de"]
-        ACC["Cloudflare Access<br/>* = operator only, Google + MFA<br/>auth, www, hopin = bypass"]
-        TUN["Cloudflare Tunnel<br/>ingress per D6"]
+        ACC["Cloudflare Access<br/>planned (X8b): * = operator only, Google + MFA<br/>today: no Zero Trust, auth goes live as public"]
+        TUN["Cloudflare Tunnel<br/>ingress per D6 (planned, X6a #168)"]
         GH["GitHub overnightworks<br/>repos, rulesets, Actions, org secrets"]
         SC["SonarCloud<br/>projects by hand"]
     end
@@ -108,8 +108,8 @@ flowchart TB
 ```
 
 **What the picture says, in six sentences:**
-1. **The way in.** Every name ends in one tunnel. Cloudflare Access blocks every name that is not explicitly opened (`*` = operator only). Traefik on loopback hands each name to the container with that `edge.name` label.
-2. **The login.** Keycloak at `auth.hallucinai.de` is the one login page. Every app checks the ID itself through webauth and its group `/apps/<name>`. songmaker joins only through its own cutover (section 3); until then it keeps its own login. Tools without their own login stay behind Access.
+1. **The way in.** Every name ends in one tunnel. Cloudflare Access is planned to block every name that is not explicitly opened (`*` = operator only, X8b on #30); the operator ruled on 20.10.2026 that Zero Trust is not needed for now and can be added at any time, so today `auth` goes live as `public` and the `*` protection waits for X8b. Traefik on loopback hands each name to the container with that `edge.name` label.
+2. **The login.** Keycloak at `auth.hallucinai.de` is the one login page. Every app checks the ID itself through webauth and its group `/apps/<name>`. songmaker joins only through its own cutover (section 3); until then it keeps its own login. Tools without their own login will sit behind Access (X8b); no login-less tool is published before it.
 3. **PEOPLE.** People and their groups exist only in the Keycloak admin, `http://localhost:8090/admin/`, on this PC (later via Tailscale).
 4. **CHANGE.** Every change is a pull request. A release (`edge release` sets a `v*` tag) is deployed by the service's watcher; whether the service is then reachable depends on its state (section 8 state table). The platform (edge) and the external services change when the operator runs `edge apply`.
 5. **LOOK.** One traffic-light page answers "is it OK now?" for every service, the backup, the drift checks and the secrets. Grafana answers "why, and since when?" for every service. Both send alerts through one push channel to the phone.
@@ -161,13 +161,13 @@ The agent service is an L4 service: the one place that holds the subscription lo
 
 ### One file, one entry per repository
 
-The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for OpenTofu. A second catalog would duplicate the repo list and the host names. E3 is not built yet (X1 has not started), so this costs nothing now.
+The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for OpenTofu. A second catalog would duplicate the repo list and the host names. E3 is being built slice by slice (state: #30); `fleet.yaml` is already this catalog, so there is no second one.
 
 **Four changes to the E3 plan** (made once, when E3 is opened):
 - **Location.** `fleet.yaml` moves from `external/` to the edge root, because L2 (deploy, LOOK) reads it too. OpenTofu reads `../fleet.yaml`.
 - **A `run` block** on the entries that run on this PC. A library such as webauth has no `run` block, only `repo`.
 - **Entries, not repositories, are the unit** (P1, P2, P14, ruled in [edge#50](https://github.com/overnightworks/edge/issues/50)). Platform units are entries keyed by their compose profile (`step-ca`, `keycloak`; socket-proxy and traefik are the always-on core), and repositories are entries with `repo`. One repository can carry several switchable units. `src/edge/catalog.py` owns the typed `run` schema (`enabled`, `setup`); `run.setup` names the key command behind its `--check` contract (edge#52 rule 8). Images, volumes and ports are never repeated in the catalog. `docs/naming.md` records that catalog keys equal compose profile names (P5).
-- **The tunnel mode is decided once, by D6 here**. It replaces E3's D5. E3 recommends remote management; this concept had assumed the local JSON credential. D6 now names both the mode and the credential form, so X6 builds one.
+- **The tunnel mode is decided once, by D6 here**. It replaces E3's D5. D6 is ruled („Cloudflare steuert“, 18.10.2026): Cloudflare manages the configuration, the JSON credential stays, and OpenTofu writes the ingress lines from the catalog. That is planned, not live, until X6a's live apply (#168, L2); the catalog owns the whole tunnel configuration (D6).
 - **X8: go-live does not publish**. E3's X8 makes `keycloak/go-live` step 8 call `edge external apply`. That would publish inside the go-live, before the re-setup's later publish step (section 6, step 11). Changed: go-live ends unpublished; the publish phase of `edge apply` is the only publisher. X8's "apply refuses while `auth` does not answer" stays, now inside `edge apply`. Until `edge apply` exists, the operator runs `edge external apply` by hand after go-live, as one named step.
 
 ```yaml
@@ -236,7 +236,7 @@ services:
 - deletions need a **separate** confirmation;
 - a restorable database dump is taken before any deletion.
 
-**Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator.
+**Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator. Planned with X6a (#168): the ingress comes from the catalog, so a line is no longer removed by hand; README A8 stays until X8b.
 
 **Emergency switches are separate:** `edge stop hopin` takes it offline at once without a code change. Guards: section 8 state table.
 
@@ -473,8 +473,9 @@ Today `edge-backup` cannot restore on a clean machine: its settings fix the repo
 - D3 counts as done only after the first drill passes. The drill repeats after every change to the backup layout, and at least every 6 months. The LOOK page shows the last drill date.
 
 **One-time pieces that never repeat on a re-setup:**
-- the Cloudflare account, zone and Access identity provider (Google);
-- the Access group's one member (the operator);
+- the Cloudflare account and zone;
+- planned (X8b; there is no Zero Trust today): the Access identity provider (Google);
+- planned (X8b): the Access group's one member (the operator);
 - the tunnel object (D6);
 - the GitHub org, its App installs and the SonarCloud org.
 
@@ -496,8 +497,8 @@ They survive a dead PC because they live at the provider.
 | # | What is double | Where | Owner item |
 |---|---|---|---|
 | 1 | The secrets list | `~/README.md` table (stale: names atelier2, tidy-home, `cloudflared/config`) and `secrets_manifest.toml` | home-tools#10, slice S2 |
-| 2 | Tunnel credentials | `~/.secrets/cloudflared/<id>.json` and `/etc/cloudflared/<id>.json` | home-tools#21, but D6 decides the one credential and its form. #21 plans to delete the `~/.secrets` copy, which a re-setup from backup needs |
-| 3 | Tunnel ingress | `/etc/cloudflared/config.yml`, `cloudflared-config.example.yml`, the CI heredoc, README A8 | E3 slices X6 and X8, in the mode D6 picks (the E3 issue is not opened yet; edge#1 row E3) |
+| 2 | Tunnel credentials | `~/.secrets/cloudflared/<id>.json` and `/etc/cloudflared/<id>.json` | home-tools#21, but D6 keeps the JSON credential; which copy is the one stays with home-tools#21. #21 plans to delete the `~/.secrets` copy, which a re-setup from backup needs |
+| 3 | Tunnel ingress | `/etc/cloudflared/config.yml`, `cloudflared-config.example.yml`, the CI heredoc, README A8 | E3 slices X6 and X8, in the mode D6 ruled. Planned: X6a (#168) writes the ingress from the catalog; the `config.yml` cleanup is #144 (B7); README A8 remains until X8b |
 | 4 | App groups | `keycloak/realm.yaml` (`/apps/songmaker`, `presentator`, `hopin`) and the catalog's `login_group` | **new slice in E3**: the catalog's CI checks against `realm.yaml` and `apps.toml` (section 3) |
 | 5 | Org secret reach | home-tools#10 line 19 (repo-list drift) and E3 X5 (`fleet.yaml` org secrets) | home-tools#10 (drop its drift view) and E3 X5 (keep it) |
 | 6 | Alert channels: three today | songmaker's e-mail (`songmaker-alert@`), Alertmanager inside songmaker, `home check`'s desktop notification | edge#4: **one push channel to the phone** (ntfy planned). Gatus ("is it OK now?") and Alertmanager ("why, since when?") both send into it; `home check` findings reach it through Gatus; songmaker's own e-mail alert goes |
@@ -636,7 +637,7 @@ Each command exists in exactly one tool. What it does in each state is the state
 
 - **The traffic-light page (Gatus) answers "is it OK now?"** It is tiny and independent: it must still work when Grafana, Prometheus or Keycloak are down. It pushes alerts.
 - **Grafana answers "why, and since when?"** It serves every service, not only songmaker. Prometheus scrapes every enabled service from the catalog. Alertmanager sends its alerts into the same push channel. One channel, not three (section 7 row 6).
-- **Both are operator-only and stay behind Access** (D4).
+- **Both are operator-only and will sit behind Access (X8b, D4)**; no login-less tool is published before it.
 - **The LOOK page has no buttons.** A page that can stop services or lock people is an attack surface on the network.
 - **If buttons come later** (agent-coordination#24 "PC-Zentrale"), they are local-only: on the admin entrypoint `127.0.0.1:8090`, behind the Keycloak admin login with TOTP, never through the tunnel. Each button calls the same `edge` command, so there is no second implementation.
 - Until then, each light carries its runbook link (ruling 11). The runbook names the one command to run.
@@ -662,7 +663,7 @@ Each recovery below is a walk through the state table (its states in brackets). 
 | A token or password leaked | revoke it at the provider, then create a new one | `home secrets --emergency`, then `home secrets --rotate <name>` | operator |
 | The operator's GitHub account is in doubt | sign out every session, review SSH keys and tokens | part of `home secrets --emergency` (github.com/settings/sessions, /keys, /tokens) | operator |
 | A Cloudflare session or token is in doubt | revoke Access sessions; roll the API tokens | part of `home secrets --emergency` (Zero Trust → Users → revoke session; API Tokens → roll) | operator |
-| The tunnel's credential leaked | stop, delete the tunnel, create a new one | `edge stop --all` (A → C); a guided step: the operator deletes and creates the tunnel and stores the new credential (D6); then `edge apply` (C): its plan finds the one new tunnel and repoints each record; `edge start --all` (C → A) | operator |
+| The tunnel's credential leaked | stop, delete the tunnel, create a new one | `edge stop --all` (A → C); a guided step: the operator deletes the tunnel, creates a new one (remotely managed, D6) and stores the new credential; then `edge apply` (C): its plan finds the one new tunnel, repoints each record and, once X6a (#168) lands, writes its ingress lines; `edge start --all` (C → A) | operator |
 | The phone or laptop is lost | sign out the device everywhere | `home secrets --emergency` (Google, GitHub, Tailscale device removal, Cloudflare Access) and the travel checklist section D | operator |
 | An agent misbehaves on the PC | stop every agent session, then treat every secret it could read as leaked | **gap:** aco has no "stop all" command (section 7 row 34). Until D14, a misbehaving agent could read every secret, so the "token leaked" row applies to all of them | operator |
 | Who did what? | read the login and admin events, and the journal | the LOOK page's login-anomaly light, linking to Keycloak's Events page (logins kept 30 days, admin events 1 year), plus Grafana and `journalctl` | operator; an agent may read |
@@ -680,7 +681,7 @@ These lines become true only after D14: agents under their own user, without Doc
 
 ## 9. The operator's decisions
 
-**What is ruled and what is open.** Ruled by the operator: D14 (securing the agents is not a go-live gate; it is its own block), the deploy by version tag (section 5), OpenTofu for the external services, Cloudflare and GitHub (L3 in section 3), Grafana for the whole platform (section 8), and, inside D4, Keycloak for every app user. Everything else in D1 to D13, including the rest of D4, the tunnel (D6) and the remote kill switch (D13), is open: the Recommendation column is a proposal, not a ruling.
+**What is ruled and what is open.** Ruled by the operator: D6 (the tunnel, „Cloudflare steuert“, 18.10.2026), D14 (securing the agents is not a go-live gate; it is its own block), the deploy by version tag (section 5), OpenTofu for the external services, Cloudflare and GitHub (L3 in section 3), Grafana for the whole platform (section 8), and, inside D4, Keycloak for every app user. Everything else in D1 to D13, including the rest of D4 and the remote kill switch (D13), is open: the Recommendation column is a proposal, not a ruling.
 
 "Spoken yes" marks a line about secrets, rights, deletion or anything irreversible: it waits for his words. The others take the recommendation if he does not answer.
 
@@ -691,7 +692,7 @@ These lines become true only after D14: agents under their own user, without Doc
 | D3 | **Re-setup without new passwords** | Back up `~/.secrets` into the encrypted restic repository too, and add a second target off this disk (a USB disk first; later the rclone `gdrive` remote). Build the recovery form: `--repo` on the command line, the password typed at a hidden prompt, the snapshot run picked from the repository itself, one run for secrets and data. Done only when the clean-machine drill passes (section 6). The restic password and the OpenTofu passphrase live in the password manager. This changes the 14.10.2026 ruling "a wizard instead of a backup": the wizard still serves rotation and first-ever. | (a) as recommended; (b) secrets via the wizard only, but the Keycloak DB and app data off-disk (every token re-created, people keep their passkeys); (c) as today: same disk only (a dead disk = first-ever path, people re-enrol, songmaker data lost) | **yes** (secrets, irreversible loss) |
 | D4 | **Where people live** | Keycloak for every app user (ruled). songmaker joins through its own cutover item (section 3: client, OIDC login, confirmed account mapping, then the old login goes); deploying alone does not move anyone. The Cloudflare Access group holds one member, the operator, set once with Google + MFA (R4). Operator-only tools (LOOK, Grafana) stay behind Access, **not** behind Keycloak: the LOOK page must still open when Keycloak or the PC's login is broken. Forward-auth at Traefik comes only when a login-less tool must be shared with other people (no such tool today). | (a) as recommended; (b) Keycloak becomes Access's identity provider, so even the operator's tool access lives in Keycloak (one people place, but LOOK goes dark with Keycloak); (c) forward-auth (oauth2-proxy) for Grafana and LOOK now | **yes** (rights; the hash deletion in the cutover too) |
 | D5 | **Release rhythm and tool** | One release per service per working session (about 1–2 a day for songmaker), plus one right after a production fix. One implementation, `edge release <service>`: it tags the green tip of the catalog's default branch (hopin: `master`) and writes the `schema:` line. `vYYYY.MM.DD.N` for services, SemVer for libraries. The head runs it as a mechanical step. | (a) as recommended; (b) one tag per landing (about 7 a day for songmaker, nearly main-deploy); (c) only when the operator says "release" | no (default a) |
-| D6 | **The tunnel: mode and credential, decided once** (replaces E3 D5) | **Remote management.** The ingress lives once, at Cloudflare, written by OpenTofu from the catalog. cloudflared runs with one tunnel token, stored at `~/.secrets/cloudflared/` and backed up under D3; the unit reads it with `LoadCredential=`. No `config.yml`, no JSON credential, no sudo install path. Both `/etc/cloudflared` files go after the switch. Cost: Cloudflare documents the switch as one-way (back = a new local tunnel plus a DNS cutover), and the write token gains Cloudflare Tunnel › Edit. | (a) remote, as recommended; (b) local: the JSON credential stays in `~/.secrets` (one copy, backed up), `edge apply` renders `config.yml` and installs it to `/etc` with sudo; (c) local, `/etc` only, and a re-setup creates a new tunnel | **yes** (irreversible, deletion) |
+| D6 | **The tunnel: mode and credential, decided once** (replaces E3 D5) | **Ruled (operator, 18.10.2026: „Cloudflare steuert“): Cloudflare manages the tunnel's configuration.** The ingress lives once, at Cloudflare, and OpenTofu writes its lines from the catalog (planned: X6a, #168; the `config.yml` cleanup is #144, B7). The tunnel's JSON credential stays: the unit reads it with `LoadCredential=` (`tunnel/cloudflared.service.d/20-nonroot.conf`). There is no tunnel token. Operator ruling of 20.10.2026: the catalog owns the whole tunnel configuration, and a line outside it is removed after the plan and `yes` („a“). Cost: the switch is one-way (back = a new local tunnel plus a DNS cutover) per a cloudflared maintainer's statement (cloudflared#1029, 11.09.2023), not per Cloudflare's documentation; and the write token gains Cloudflare Tunnel › Edit. | Ruled; the options considered were (a) remote management, (b) local with `edge apply` rendering `config.yml` into `/etc`, (c) local, `/etc` only | ruled (irreversible) |
 | D7 | **The engine under `home setup`** | Ansible, run locally (`--check --diff` is the dry run), as home-tools#9 recommends; `home setup` wraps it, so the operator sees one command. | (a) Ansible; (b) plain Python in home-tools (no new tool, but idempotence by hand); (c) NixOS (a reinstall, not now) | no (default a) |
 | D8 | **Read-only credentials for the checks** | Yes to: E3's `fleet-read` tokens; a SonarCloud read token; a Keycloak service account with only `view-clients` and `view-realm`; `github/deploy-read`. No to Cloudflare "API Tokens Read" and to a GitHub App for now: each token checks itself, and the full token lists stay a yearly glance. | each line yes/no | **yes** (secrets) |
 | D9 | **Groups stay in `realm.yaml`** | The catalog references groups and CI checks both directions; it never generates them, because a generated group list would delete memberships when a service is switched off. | (a) as recommended; (b) the catalog generates the groups | no (default a) |
@@ -789,7 +790,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 |---|---|---|
 | Keycloak | OIDC through webauth and agent-service | **A migration, not a configuration change.** Accounts are keyed to the issuer's `sub`, and passkeys live in the IdP, so every person re-enrols and every app remaps its accounts. edge rewrites realm-as-code, go-live, `edge lock` and the probes. The group path shape lives in webauth (`oidc_login.py`, `_require_group_path`) and in agent-service (`routing.py`, `APP_GROUP_PREFIX`). A flat-name mode waits until an IdP swap is pulled |
 | Tailscale | nothing; no app references it | home-tools (L0); also D13 |
-| Cloudflare DNS, tunnel and Access | HTTP behind a proxy, plus webauth's `trusted_proxies`; no `cf-*` header in any app | edge and OpenTofu (L3). Access also gates D4. The aco board's `access_jwt.py` is being retired (webauth#49 AC1) |
+| Cloudflare DNS, tunnel and Access | HTTP behind a proxy, plus webauth's `trusted_proxies`; no `cf-*` header in any app | edge and OpenTofu (L3). Access is planned (X8b) and will gate D4; no login-less tool is published before it. The aco board's `access_jwt.py` is being retired (webauth#49 AC1) |
 | Traefik | the neutral `edge.name` label | edge only. A second machine needs routing that label discovery on this host cannot give; that is decided in that item (§10 rule 4) |
 | Postgres | DSN | configuration plus a dump and restore. presentator's SQLite sits behind ports (agent-presentator ADR 0006), so moving it is an adapter swap |
 | Redis | URL; songmaker runs its own | Valkey drops in. arq ties songmaker's queue to Redis, which is accepted |
