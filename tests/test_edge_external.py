@@ -10,6 +10,7 @@ import os
 import pty
 import select
 import signal
+import socket
 import socketserver
 import subprocess
 import sys
@@ -22,9 +23,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from live_stack import LIVE_STACK_PORTS
 from test_edge_host_probe import RAY, Behaviour, serving
 
-from edge import checkout, cli
+from edge import catalog, checkout, cli
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
 from edge.external import cloudflare_read, host_probe, secrets, tofu
@@ -73,7 +75,7 @@ plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
 if command == config["lock_plans_in"]:
-    Path(sys.argv[-1]).parent.chmod(0o500)
+    Path(plan_file or sys.argv[-1]).parent.chmod(0o500)
 if command == config["hang_in"]:
     def stop_gracefully(*_):
         with (here / "sigints").open("a") as received:
@@ -520,6 +522,17 @@ class Terminal:
         log = self.scratch / "checks.jsonl"
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
+    def ready_asked(self) -> list[dict]:
+        """What the child's fake ready prober was asked, in order."""
+        log = self.scratch / "ready-asked.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def wait_until_probing(self, timeout: float = 20) -> None:
+        deadline = time.monotonic() + timeout
+        while not (self.scratch / "probing").exists():
+            assert time.monotonic() < deadline, "the ready probe never started"
+            time.sleep(0.05)
+
     @property
     def guard_marker(self) -> Path:
         return self.scratch / "left-loopback"
@@ -551,23 +564,41 @@ class Terminal:
 
 
 CHILD_PROGRAM = """
-import json, socket, sys
+import functools, json, socket, sys, time
 from pathlib import Path
 from edge import cli
 from edge.external import cli as external_cli
-from edge.external import tofu
+from edge.external import host_probe, tofu
 
 config = json.loads(Path(sys.argv.pop(1)).read_text())
 scratch = Path(config["scratch"])
 tofu.PROJECT_ROOT = Path(config["tree"])
 
 real_connect = socket.socket.connect
+if config["connect_attempt"]:
+    def real_connect(self, address):
+        (scratch / "reached-the-network").write_text(f"{address[0]}:{address[1]}")
+        raise ConnectionRefusedError("the stubbed connect")
 def refuse_beyond_loopback(self, address):
-    if self.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in ("127.0.0.1", "::1"):
-        (scratch / "left-loopback").write_text(address[0])
-        raise ConnectionRefusedError("beyond loopback: " + address[0])
+    if self.family in (socket.AF_INET, socket.AF_INET6):
+        if address[0] not in ("127.0.0.1", "::1"):
+            (scratch / "left-loopback").write_text(address[0])
+            raise ConnectionRefusedError("beyond loopback: " + address[0])
+        if address[1] in config["live_stack_ports"]:
+            (scratch / "left-loopback").write_text(f"{address[0]}:{address[1]}")
+            raise ConnectionRefusedError("the live stack: " + address[0])
     return real_connect(self, address)
 socket.socket.connect = refuse_beyond_loopback
+
+if config["connect_attempt"]:
+    address, port = config["connect_attempt"]
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    with socket.socket(family) as attempt:
+        try:
+            attempt.connect((address, port))
+        except ConnectionRefusedError:
+            pass
+    sys.exit(0)
 
 if config["resolver_stub"]:
     def resolve_to_a_public_address(host, port, *_, **__):
@@ -589,6 +620,23 @@ if config["fake_check_exit"] is not None:
         return config["fake_check_exit"]
     external_cli.check_command = fake_check
 
+if not config["real_ready_prober"]:
+    class RecordingReadyProber:
+        def __init__(self, target):
+            self.target = target
+
+        def ask(self, name, path="/"):
+            record = {"fqdn": name, "path": path, "target": self.target}
+            with (scratch / "ready-asked.jsonl").open("a") as log:
+                log.write(json.dumps(record) + "\\n")
+            if config["ready_hangs"]:
+                (scratch / "probing").write_text("probing")
+                time.sleep(60)
+            return host_probe.Answer(200, None, True, False)
+    external_cli.apply_command = functools.partial(
+        external_cli.apply_command, prober_for=RecordingReadyProber
+    )
+
 sys.exit(cli.main(sys.argv[1:]))
 """
 
@@ -598,8 +646,12 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
     """Start `command` on a pty with a minimal environment and no session bus.
 
     The child never reaches a live service: its host check is a recording fake that returns
-    `check_exit` (or the real one, `real_check`), and a loopback guard refuses any other address.
-    A cell that expects the guard to refuse says so with `guard_refusal_expected`.
+    `check_exit` (or the real one, `real_check`), its ready prober is a recording fake that
+    answers 200 (or hangs, `ready_hangs`; or the real one, `real_ready_prober`), and a loopback
+    guard refuses any other address and the live stack's ports. A cell that expects the guard to
+    refuse says so with `guard_refusal_expected`. A cell that tests the guard itself gives the
+    `connect_attempt` (address, port): the child connects there and exits, with the connect under
+    the guard replaced by a recorder, so a broken guard cannot reach a real listener.
     """
     started = []
 
@@ -611,6 +663,9 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
         tree=None,
         check_exit=0,
         real_check=False,
+        real_ready_prober=False,
+        ready_hangs=False,
+        connect_attempt=None,
         resolver_stub=False,
         guard_refusal_expected=False,
         environment=None,
@@ -627,6 +682,10 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
                     "scratch": str(scratch),
                     "fake_check_exit": None if real_check else check_exit,
                     "resolver_stub": resolver_stub,
+                    "live_stack_ports": list(LIVE_STACK_PORTS),
+                    "real_ready_prober": real_ready_prober,
+                    "ready_hangs": ready_hangs,
+                    "connect_attempt": connect_attempt,
                 }
             )
         )
@@ -789,7 +848,7 @@ def test_apply_command_refuses_off_a_clean_live_main_in_process(
     monkeypatch.setattr(
         external_apply,
         "apply_plan",
-        lambda _home, _tokens, progress: external_apply.ApplyOutcome(
+        lambda _home, _tokens, **_ports: external_apply.ApplyOutcome(
             42, external_apply.ClosingCheck.NO_CHECK_REFUSED
         ),
     )
@@ -1349,12 +1408,14 @@ class FakeProber:
     def __init__(self, outcome=CLEAN_ANSWER) -> None:
         self.outcome = outcome
         self.asked: list[str] = []
+        self.paths: list[str] = []
 
     def __call__(self) -> "FakeProber":
         return self
 
-    def ask(self, name: str):
+    def ask(self, name: str, path: str = "/"):
         self.asked.append(name)
+        self.paths.append(path)
         if callable(self.outcome):
             self.outcome()
             return CLEAN_ANSWER
@@ -1950,26 +2011,74 @@ def test_the_real_check_in_the_child_is_stopped_by_the_loopback_guard(home, fake
     assert "Traceback" not in apply.output
 
 
+class RecordingReadyProber:
+    """The injected `prober_for`: records what each target was asked and answers by name."""
+
+    def __init__(self, answers: dict[str, object] | None = None, *, otherwise=CLEAN_ANSWER) -> None:
+        self.answers = answers or {}
+        self.otherwise = otherwise
+        self.asked: list[tuple[str, str, str]] = []  # (name, path, target)
+
+    def __call__(self, target: str) -> "_AskingTarget":
+        return _AskingTarget(self, target)
+
+    @property
+    def names(self) -> list[str]:
+        return [name for name, _, _ in self.asked]
+
+
+@dataclass
+class _AskingTarget:
+    prober: RecordingReadyProber
+    target: str
+
+    def ask(self, name: str, path: str = "/"):
+        self.prober.asked.append((name, path, self.target))
+        answer = self.prober.answers.get(name, self.prober.otherwise)
+        if callable(answer):
+            return answer()
+        return answer
+
+
 @pytest.fixture
-def apply_in_process(home, fake_tofu, live_checkout, monkeypatch):
+def confirmations(monkeypatch) -> list[str]:
+    """The operator at the pretend terminal: every prompt it is shown is recorded and answered
+    `yes`, so a cell that refuses before the confirmation can say none was ever asked."""
+    asked: list[str] = []
+
+    def answer_yes(prompt: str) -> str:
+        asked.append(prompt)
+        return "yes"
+
+    monkeypatch.setattr("builtins.input", answer_yes)
+    return asked
+
+
+@pytest.fixture
+def apply_in_process(home, fake_tofu, live_checkout, monkeypatch, loopback_only, confirmations):
     """`apply_command` in this process at a pretend terminal, ending on the real `check_command`.
 
-    The catalog declares one public apex; the check gets the reader and prober a cell passes and,
-    through `around`, can be wrapped (the module global `external.cli.check_command` is the seam).
+    The catalog declares one public apex unless a cell commits its own `fleet`; the check gets the
+    reader and prober a cell passes and, through `around`, can be wrapped (the module global
+    `external.cli.check_command` is the seam). The ready hosts are asked through `ready_prober`, a
+    recording fake that answers 200 by default; nothing here leaves the guarded loopback.
     """
     commit_catalog(live_checkout, HOSTS_CATALOG)
     monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
     monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
-    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
 
-    def run(reader, *, emit=None, around=lambda check: check) -> int:
+    def run(reader, *, emit=None, around=lambda check: check, fleet=None, ready_prober=None) -> int:
+        if fleet:
+            commit_catalog(live_checkout, fleet)
         ports = {"cloudflare": reader, "prober": FakeProber()}
         if emit:
             ports["emit"] = emit
         monkeypatch.setattr(
             external_cli, "check_command", around(functools.partial(REAL_CHECK_COMMAND, **ports))
         )
-        return external_cli.apply_command(home, live_checkout)
+        return external_cli.apply_command(
+            home, live_checkout, prober_for=ready_prober or RecordingReadyProber()
+        )
 
     return run
 
@@ -2382,3 +2491,363 @@ def test_a_signal_right_after_the_mask_is_lifted_keeps_the_committed_verdict(
     code = apply_in_process(FakeReader(snapshot), around=noting_the_return)
     assert code == expected_exit
     assert "interrupted" not in capsys.readouterr().err
+
+
+READY_PATH = "/realms/example/.well-known/openid-configuration"
+AUTH = "auth.example.test"
+DOCS = "docs.example.test"
+READY_CATALOG = f"""\
+cloudflare: {{zone: example.test}}
+services:
+  site:
+    hosts:
+      - {{name: "@", exposure: public, reason: the site}}
+  auth:
+    hosts:
+      - {{name: auth, exposure: public, reason: sign in, ready: {READY_PATH}}}
+"""
+TWO_READY_CATALOG = (
+    READY_CATALOG
+    + """\
+  docs:
+    hosts:
+      - {name: docs, exposure: public, reason: the docs, ready: /ready}
+"""
+)
+DISABLED_READY_CATALOG = """\
+cloudflare: {zone: example.test}
+services:
+  site:
+    hosts:
+      - {name: "@", exposure: public, reason: the site}
+  old:
+    run: {enabled: false}
+    hosts:
+      - {name: old, exposure: public, reason: switched off, ready: /ready}
+"""
+NOT_OK = host_probe.Answer(503, None, False, False)
+REFUSED = host_probe.Unreachable(host_probe.FailureKind.REFUSED)
+
+
+@pytest.mark.parametrize(
+    ("fleet", "configuration", "applied"),
+    [
+        pytest.param(None, CHANGING_PLAN, True, id="R1-no-host-declares-ready"),
+        pytest.param(READY_CATALOG, EMPTY_PLAN, False, id="R2-the-plan-has-no-changes"),
+        pytest.param(DISABLED_READY_CATALOG, CHANGING_PLAN, True, id="R11-a-disabled-entry"),
+    ],
+)
+def test_no_host_is_asked_unless_an_enabled_ready_host_meets_a_plan_with_changes(
+    home, fake_tofu, apply_in_process, fleet, configuration, applied
+):
+    """R1, R2, R11: even a 503 for every name (as here) blocks nothing nobody is asked about."""
+    fake_tofu.configure(**configuration)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    prober = RecordingReadyProber(otherwise=NOT_OK)
+    apply_in_process(reader, fleet=fleet, ready_prober=prober)
+    assert prober.asked == []
+    assert reader.reads == 1
+    assert ("apply" in [call["argv"][0] for call in fake_tofu.calls()]) is applied
+
+
+def test_a_ready_host_that_answers_is_followed_by_the_prompt_and_the_same_plan_file(
+    home, fake_tofu, terminal, live_checkout
+):
+    """R3: through the real CLI with the hosts read from the committed fleet.yaml."""
+    commit_catalog(live_checkout, READY_CATALOG)
+    fake_tofu.configure(**CHANGING_PLAN)
+    apply = terminal()
+    apply.read_until(PROMPT)
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    assert apply.ready_asked() == [
+        {"fqdn": AUTH, "path": READY_PATH, "target": "http://127.0.0.1:8081"}
+    ]
+    out_argument = next(a for a in fake_tofu.call("plan")["argv"] if a.startswith("-out="))
+    assert fake_tofu.call("apply")["argv"] == ["apply", out_argument.removeprefix("-out=")]
+
+
+def assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error: str) -> None:
+    assert code == 1
+    assert confirmations == [], "the operator was asked to confirm a refused plan"
+    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
+    assert reader.reads == 0
+    assert plan_files(home) == []
+    assert "nothing applied" in error
+    assert "deleted" not in error
+
+
+@pytest.mark.parametrize(
+    ("outcome", "said_as"),
+    [
+        pytest.param(NOT_OK, "status 503", id="R4-503"),
+        pytest.param(host_probe.Answer(404, None, False, False), "status 404", id="R5-404"),
+        pytest.param(REFUSED, "the connection was refused", id="R6-connection-refused"),
+        pytest.param(
+            host_probe.Unreachable(host_probe.FailureKind.TIMEOUT),
+            "the request timed out",
+            id="R7-timeout",
+        ),
+        pytest.param(
+            host_probe.Unreachable(host_probe.FailureKind.MALFORMED),
+            "the answer was malformed",
+            id="R8-malformed",
+        ),
+        pytest.param(
+            host_probe.Answer(302, "https://elsewhere.test/", False, False),
+            "status 302",
+            id="R9-redirect",
+        ),
+    ],
+)
+def test_a_plan_is_refused_before_yes_while_a_ready_host_does_not_answer(
+    home, fake_tofu, apply_in_process, confirmations, capsys, outcome, said_as
+):
+    """R4-R9 and R14: the unrelated apex change is refused too; the plan's content is not read."""
+    fake_tofu.configure(**CHANGING_PLAN)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    prober = RecordingReadyProber({AUTH: outcome})
+    code = apply_in_process(reader, fleet=READY_CATALOG, ready_prober=prober)
+    error = capsys.readouterr().err
+    assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
+    assert f"{AUTH} did not answer {READY_PATH} on http://127.0.0.1:8081: {said_as}" in error
+    assert prober.asked == [(AUTH, READY_PATH, "http://127.0.0.1:8081")]
+
+
+def test_only_the_host_that_does_not_answer_is_named_and_the_whole_plan_is_refused(
+    home, fake_tofu, apply_in_process, confirmations, capsys
+):
+    """R10."""
+    fake_tofu.configure(**CHANGING_PLAN)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    code = apply_in_process(
+        reader, fleet=TWO_READY_CATALOG, ready_prober=RecordingReadyProber({DOCS: NOT_OK})
+    )
+    error = capsys.readouterr().err
+    assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
+    assert f"{DOCS} did not answer /ready" in error
+    assert AUTH not in error
+
+
+def test_every_ready_host_is_asked_and_every_one_that_fails_is_named_once_in_one_refusal(
+    home, fake_tofu, apply_in_process, confirmations, capsys
+):
+    """R17."""
+    fake_tofu.configure(**CHANGING_PLAN)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    prober = RecordingReadyProber({AUTH: NOT_OK, DOCS: REFUSED})
+    code = apply_in_process(reader, fleet=TWO_READY_CATALOG, ready_prober=prober)
+    error = capsys.readouterr().err
+    assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
+    assert prober.names == [AUTH, DOCS]
+    assert f"{AUTH} did not answer {READY_PATH} on http://127.0.0.1:8081: status 503" in error
+    assert (
+        f"{DOCS} did not answer /ready on http://127.0.0.1:8081: the connection was refused"
+        in error
+    )
+    assert error.count("refused, a ready host") == 1
+
+
+@pytest.mark.parametrize("reverted", [True, False], ids=["edit-and-revert", "lasting-edit"])
+def test_the_plan_reads_the_catalog_the_ready_hosts_were_taken_from_however_the_file_changes(
+    home,
+    fake_tofu,
+    apply_in_process,
+    confirmations,
+    live_checkout,
+    monkeypatch,
+    reverted,
+):
+    """Tofu is handed the validated bytes, so an edit while it plans (kept or reverted) cannot
+    publish a host nobody asked: every host of what it read was probed."""
+    fake_tofu.configure(**CHANGING_PLAN)
+    catalog_file = live_checkout / catalog.FLEET_FILE
+    read_by_tofu: list[bytes] = []
+    real_run = tofu.run
+
+    def editing_the_catalog_while_tofu_plans(binary, arguments, environment):
+        if arguments[0] != "plan":
+            return real_run(binary, arguments, environment)
+        snapshot_flag = next((a for a in arguments if a.startswith("-var=catalog_file=")), None)
+        original = catalog_file.read_text()
+        catalog_file.write_text(TWO_READY_CATALOG)
+        read_by_tofu.append(
+            Path(snapshot_flag.split("=", 2)[2]).read_bytes()
+            if snapshot_flag
+            else catalog_file.read_bytes()
+        )
+        if reverted:
+            catalog_file.write_text(original)
+        return real_run(binary, arguments, environment)
+
+    monkeypatch.setattr(tofu, "run", editing_the_catalog_while_tofu_plans)
+    prober = RecordingReadyProber()
+    apply_in_process(FakeReader(CLEAN_SNAPSHOT), fleet=READY_CATALOG, ready_prober=prober)
+    assert confirmations, "the plan was refused"
+    (planned,) = read_by_tofu
+    assert planned.decode() == READY_CATALOG
+    planned_ready = {
+        host.fqdn for host in catalog.hosts(catalog.parse(planned, "fleet.yaml")) if host.ready
+    }
+    assert set(prober.names) == planned_ready
+
+
+def test_the_snapshot_handed_to_tofu_is_private_and_removed_with_the_session(
+    home, fake_tofu, apply_in_process, monkeypatch
+):
+    fake_tofu.configure(**CHANGING_PLAN)
+    modes: list[int] = []
+    real_run = tofu.run
+
+    def noting_the_snapshot_mode(binary, arguments, environment):
+        if arguments[0] == "plan":
+            flag = next(a for a in arguments if a.startswith("-var=catalog_file="))
+            snapshot = Path(flag.split("=", 2)[2])
+            modes.append(snapshot.stat().st_mode & 0o777)
+            assert snapshot.parent == Path(environment["TMPDIR"])
+            modes.append(snapshot.parent.stat().st_mode & 0o777)
+            noted.append(snapshot)
+        return real_run(binary, arguments, environment)
+
+    noted: list[Path] = []
+    monkeypatch.setattr(tofu, "run", noting_the_snapshot_mode)
+    apply_in_process(FakeReader(CLEAN_SNAPSHOT))
+    assert modes == [0o600, 0o700]
+    assert not noted[0].exists()
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_during_the_ready_probe_leaves_nothing_applied_and_no_plan_file(
+    home, fake_tofu, terminal, live_checkout, interrupt
+):
+    """R13: the child's fake prober hangs until the signal arrives."""
+    commit_catalog(live_checkout, READY_CATALOG)
+    fake_tofu.configure(**CHANGING_PLAN)
+    apply = terminal(ready_hangs=True)
+    apply.wait_until_probing()
+    apply.signal(interrupt)
+    assert apply.finish() == 1
+    assert (
+        "interrupted during the readiness check, nothing was applied; the plan file is deleted"
+        in said(apply.output)
+    )
+    assert plan_files(home) == []
+    assert PROMPT not in said(apply.output)
+    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
+    assert apply.checks() == []
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_the_host_check_still_asks_the_root_path(home, hosts_catalog):
+    """R15."""
+    prober = FakeProber()
+    run_check(home, FakeReader(CLEAN_SNAPSHOT), prober=prober)
+    assert prober.asked and set(prober.paths) == {"/"}
+
+
+@pytest.fixture
+def reached_connections(monkeypatch) -> list[tuple]:
+    """The connect `loopback_only` would hand on to, as a recorder: this machine has listeners on
+    127.0.0.1:8080 and :8081, so a guard that let one through must not reach them. A test lists it
+    before `loopback_only`, which captures whatever `connect` is then in place."""
+    reached: list[tuple] = []
+    monkeypatch.setattr(socket.socket, "connect", lambda _self, address: reached.append(address))
+    return reached
+
+
+LOOPBACK_FAMILIES = {"127.0.0.1": socket.AF_INET, "::1": socket.AF_INET6}
+
+
+@pytest.mark.parametrize("address", LOOPBACK_FAMILIES)
+@pytest.mark.parametrize("port", LIVE_STACK_PORTS)
+def test_the_guard_refuses_the_live_stack_ports_before_connecting(
+    reached_connections, loopback_only, address, port
+):
+    """R18, in process: the fixture's error names the address and port, and nothing is handed to
+    the real connect."""
+    with (
+        socket.socket(LOOPBACK_FAMILIES[address]) as candidate,
+        pytest.raises(AssertionError) as refusal,
+    ):
+        candidate.connect((address, port))
+    assert f"{address}:{port}" in str(refusal.value)
+    assert reached_connections == []
+
+
+@pytest.mark.parametrize("address", LOOPBACK_FAMILIES)
+@pytest.mark.parametrize("port", LIVE_STACK_PORTS)
+def test_the_childs_guard_refuses_the_live_stack_ports_before_connecting(terminal, address, port):
+    """R18, in the child, whose real connect is a recorder: the marker names the pair."""
+    attempt = terminal(connect_attempt=[address, port], guard_refusal_expected=True)
+    assert attempt.finish() == 0
+    assert attempt.guard_marker.read_text() == f"{address}:{port}"
+    assert not (attempt.scratch / "reached-the-network").exists()
+
+
+def test_the_childs_guard_hands_another_loopback_port_on(terminal):
+    """The control of the cells above: the recorder does see a connect the guard lets through."""
+    attempt = terminal(connect_attempt=["127.0.0.1", 9])
+    assert attempt.finish() == 0
+    assert (attempt.scratch / "reached-the-network").read_text() == "127.0.0.1:9"
+
+
+def test_the_real_ready_prober_in_the_child_is_stopped_by_the_guard_at_the_default_target(
+    home, fake_tofu, terminal, live_checkout
+):
+    """R18 (child) and R19: the backstop; the ready host keeps the default target 127.0.0.1:8081."""
+    commit_catalog(live_checkout, READY_CATALOG)
+    fake_tofu.configure(**CHANGING_PLAN)
+    apply = terminal(real_ready_prober=True, guard_refusal_expected=True)
+    assert apply.finish() == 1
+    assert apply.guard_marker.read_text() == "127.0.0.1:8081"
+    printed = said(apply.output)
+    assert (
+        f"{AUTH} did not answer {READY_PATH} on http://127.0.0.1:8081: the connection was refused"
+        in printed
+    )
+    assert PROMPT not in printed
+    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
+
+
+@pytest.mark.usefixtures("cleanup_that_fails")
+@pytest.mark.parametrize(
+    ("answer", "said_of_the_end"),
+    [
+        pytest.param(
+            lambda: NOT_OK,
+            "refused, a ready host does not answer, nothing applied",
+            id="R20-refusal",
+        ),
+        pytest.param(
+            lambda: interrupt_myself(signal.SIGINT),
+            "interrupted during the readiness check, nothing was applied",
+            id="R21-sigint",
+        ),
+        pytest.param(
+            lambda: interrupt_myself(signal.SIGTERM),
+            "interrupted during the readiness check, nothing was applied",
+            id="R21-sigterm",
+        ),
+    ],
+)  # fmt: skip
+def test_a_plan_file_that_cannot_be_deleted_after_the_readiness_step_is_named_not_claimed_deleted(
+    home, fake_tofu, apply_in_process, confirmations, capsys, answer, said_of_the_end
+):
+    """R20, R21: the plans directory turns read-only after the plan, so the real deletion of the
+    selected plan file fails; the run exits 1 through `apply_command`, names the cleanup, runs no
+    check and claims no deletion."""
+    fake_tofu.configure(lock_plans_in="plan", **CHANGING_PLAN)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    code = apply_in_process(
+        reader, fleet=READY_CATALOG, ready_prober=RecordingReadyProber({AUTH: answer})
+    )
+    error = said(capsys.readouterr().err)
+    out_argument = next(a for a in fake_tofu.call("plan")["argv"] if a.startswith("-out="))
+    assert code == 1
+    assert said_of_the_end in error
+    assert apply_line("the cleanup failed,") in error
+    assert "deleted" not in error
+    assert reader.reads == 0
+    assert confirmations == []
+    assert Path(out_argument.removeprefix("-out=")).exists()
+    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]

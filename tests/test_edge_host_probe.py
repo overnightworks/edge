@@ -178,6 +178,16 @@ def test_the_request_is_one_bare_get_for_the_host():
     assert not {"authorization", "cookie", "proxy-authorization"} & set(request["headers"])
 
 
+def test_the_request_asks_the_path_it_is_given_for_the_host():
+    """R12: the apply's ready path, the Host header still the FQDN."""
+    behaviour = Behaviour(200)
+    with serving(behaviour) as origin:
+        HttpProber(origin).ask(FQDN, "/realms/example/.well-known/openid-configuration")
+    (request,) = behaviour.requests
+    assert request["line"] == "GET /realms/example/.well-known/openid-configuration HTTP/1.1"
+    assert request["headers"]["host"] == FQDN
+
+
 def test_no_proxy_variable_changes_the_request(monkeypatch):
     """PB2: the proxy variables point at a dead port and the answer still arrives."""
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy"):

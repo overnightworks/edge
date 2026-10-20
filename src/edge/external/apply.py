@@ -10,15 +10,16 @@ import os
 import signal
 import sys
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import Enum, IntEnum, StrEnum, auto
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, TextIO
 
-from edge import terminal
-from edge.external import secrets, tofu
+from edge import catalog, terminal
+from edge.external import host_probe, secrets, tofu
 
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
@@ -36,6 +37,7 @@ class ApplyExit(IntEnum):
 
 class Step(StrEnum):
     PLAN = "preparing the plan"
+    READINESS = "the readiness check"
     CONFIRMATION = "the confirmation"
     APPLY = "tofu apply"
     CLEANUP = "the cleanup"
@@ -222,9 +224,15 @@ def apply_plan(
     token_values: dict[str, str],
     plan_file_scope: Callable[[Path], AbstractContextManager[Path]] = private_plan_file,
     progress: Progress | None = None,
+    hosts: Sequence[catalog.Host] = (),
+    prober_for: Callable[[str], host_probe.Prober] = host_probe.HttpProber,
+    catalog_bytes: bytes | None = None,
 ) -> ApplyOutcome:
     """`progress` is the caller's record of this run: an interrupt that arrives after this function
-    returned is decided from it, since the outcome is lost with the raise."""
+    returned is decided from it, since the outcome is lost with the raise. `hosts` are the enabled
+    hosts of the catalog tofu was started on, those that declare `ready` are asked; `prober_for`
+    makes the prober that asks one target; `catalog_bytes` are the bytes `hosts` came from, which
+    tofu is handed to plan on, so what is probed and what is published rest on the same read."""
     progress = progress or Progress()
     try:
         with (
@@ -232,7 +240,9 @@ def apply_plan(
             tofu.session(home, token_values) as session,
             plan_file_scope(home) as plan_file,
         ):
-            result = _recording_interrupts(session, plan_file, token_values, progress)
+            result = _recording_interrupts(
+                session, plan_file, token_values, progress, hosts, prober_for, catalog_bytes
+            )
             progress.step = Step.CLEANUP
     except (tofu.Interrupted, KeyboardInterrupt):
         return _interrupted(progress)
@@ -258,12 +268,20 @@ def _failed_during_cleanup_or_step(progress: Progress, error: Exception) -> Step
 
 
 def _recording_interrupts(
-    session: tofu.Session, plan_file: Path, token_values: dict[str, str], progress: Progress
+    session: tofu.Session,
+    plan_file: Path,
+    token_values: dict[str, str],
+    progress: Progress,
+    hosts: Sequence[catalog.Host],
+    prober_for: Callable[[str], host_probe.Prober],
+    catalog_bytes: bytes | None,
 ) -> ApplyExit:
     """The interrupt is recorded here, before the cleanup runs, so the cleanup's own failure
     cannot be mistaken for it."""
     try:
-        return _show_confirm_apply(session, plan_file, token_values, progress)
+        return _show_confirm_apply(
+            session, plan_file, token_values, progress, hosts, prober_for, catalog_bytes
+        )
     except tofu.Interrupted as interrupted:
         progress.interrupted = True
         print_interrupted_output(interrupted, token_values)
@@ -291,12 +309,39 @@ def report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> N
         progress.reported = True
 
 
+def _unanswered(
+    hosts: Sequence[catalog.Host], prober_for: Callable[[str], host_probe.Prober]
+) -> list[str]:
+    """One line for each host with a `ready` path whose target does not answer it with a 2xx; every
+    host is asked, and no answer body is quoted."""
+    lines = []
+    for host in hosts:
+        if host.ready is None:
+            continue
+        answer = prober_for(host.target).ask(host.fqdn, host.ready)
+        if isinstance(answer, host_probe.Unreachable):
+            reason = answer.kind.value
+        elif HTTPStatus.OK <= answer.status < HTTPStatus.MULTIPLE_CHOICES:
+            continue
+        else:
+            reason = f"status {answer.status}"
+        lines.append(f"{host.fqdn} did not answer {host.ready} on {host.target}: {reason}")
+    return lines
+
+
 def _show_confirm_apply(
-    session: tofu.Session, plan_file: Path, token_values: dict[str, str], progress: Progress
+    session: tofu.Session,
+    plan_file: Path,
+    token_values: dict[str, str],
+    progress: Progress,
+    hosts: Sequence[catalog.Host],
+    prober_for: Callable[[str], host_probe.Prober],
+    catalog_bytes: bytes | None,
 ) -> ApplyExit:
-    planned = tofu.run(
-        session.tofu, [*tofu.PLAN_ARGUMENTS, f"-out={plan_file}"], session.environment
+    plan_arguments = (
+        tofu.PLAN_ARGUMENTS if catalog_bytes is None else session.plan_arguments_on(catalog_bytes)
     )
+    planned = tofu.run(session.tofu, [*plan_arguments, f"-out={plan_file}"], session.environment)
     shown = secrets.redact(planned.output, token_values)
     if planned.exit_code == tofu.PlanExit.NO_CHANGES:
         progress.plan_was_empty = True
@@ -307,6 +352,15 @@ def _show_confirm_apply(
         print(f"edge external apply: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     show_tofu_output(shown.rstrip("\n"), sys.stdout)
+    progress.step = Step.READINESS
+    if unanswered := _unanswered(hosts, prober_for):
+        for line in unanswered:
+            print(f"edge external apply: {line}", file=sys.stderr)
+        print(
+            "edge external apply: refused, a ready host does not answer, nothing applied",
+            file=sys.stderr,
+        )
+        return ApplyExit.REFUSED
     progress.step = Step.CONFIRMATION
     if not terminal.confirmed("apply exactly this plan"):
         print("edge external apply: aborted, nothing applied", file=sys.stderr)

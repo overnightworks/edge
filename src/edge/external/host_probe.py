@@ -1,6 +1,8 @@
-"""The host probe (#154): one unauthenticated `GET /` per probed host, to confirm what Cloudflare's
-API said. Holds no token; `http.client` follows no redirect and reads no proxy variable. Nothing an
-answer carries is ever quoted: a finding's wording comes from the typed answer, not from its text.
+"""The host probe (#154): one unauthenticated `GET` per probed host (`/` for the host check, a
+host's `ready` path for the apply, #173), to confirm what Cloudflare's API said or that the
+target answers. Holds no token; `http.client` follows no redirect and reads no proxy variable.
+Nothing an answer carries is ever quoted: a finding's wording comes from the typed answer, not from
+its text.
 """
 
 import contextlib
@@ -56,7 +58,7 @@ class Unreachable:
 
 
 class Prober(Protocol):
-    def ask(self, name: str) -> Answer | Unreachable: ...
+    def ask(self, name: str, path: str = "/") -> Answer | Unreachable: ...
 
 
 ConnectionFactory = Callable[[str, float], http.client.HTTPConnection]
@@ -67,7 +69,7 @@ def _connection_to_origin(origin: str | None) -> ConnectionFactory:
         return lambda name, timeout: http.client.HTTPSConnection(name, timeout=timeout)
     parts = urlsplit(origin)
     if parts.scheme != "http" or parts.hostname not in LOOPBACK_HOSTNAMES:
-        raise ValueError("the probe origin is for loopback tests: an http URL on a loopback name")
+        raise ValueError("the probe origin must be an http URL on a loopback name")
     return lambda _name, timeout: http.client.HTTPConnection(
         parts.hostname, parts.port, timeout=timeout
     )
@@ -83,20 +85,20 @@ class HttpProber:
         self._connection = connection or _connection_to_origin(origin)
         self._timeout = timeout
 
-    def ask(self, name: str) -> Answer | Unreachable:
+    def ask(self, name: str, path: str = "/") -> Answer | Unreachable:
         try:
             connection = self._connection(name, self._timeout)
         except (http.client.HTTPException, OSError) as failure:
             return Unreachable(_failure_kind(failure))
         try:
-            return _exchange(connection, name)
+            return _exchange(connection, name, path)
         finally:
             _close(connection)
 
 
-def _exchange(connection: http.client.HTTPConnection, name: str) -> Answer | Unreachable:
+def _exchange(connection: http.client.HTTPConnection, name: str, path: str) -> Answer | Unreachable:
     try:
-        connection.request("GET", "/", headers={"Host": name, "User-Agent": USER_AGENT})
+        connection.request("GET", path, headers={"Host": name, "User-Agent": USER_AGENT})
         response = connection.getresponse()
         return Answer(
             response.status,

@@ -12,6 +12,7 @@ from edge_backup_support import (
     Machine,
     Outcome,
 )
+from live_stack import LIVE_STACK_PORTS
 
 from edge_backup import cli, host
 
@@ -20,15 +21,18 @@ LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 
 @pytest.fixture
 def loopback_only(monkeypatch):
-    """The backstop: whatever a test builds, a connection beyond loopback fails loudly."""
+    """The backstop: whatever a test builds, a connection beyond loopback or to the live stack's
+    ports fails loudly, before the real connect runs."""
     real_connect = socket.socket.connect
 
     def connect(self, address):
-        if (
-            self.family in (socket.AF_INET, socket.AF_INET6)
-            and address[0] not in LOOPBACK_ADDRESSES
-        ):
-            raise AssertionError(f"a test connection leaves loopback: {address[0]}")
+        if self.family in (socket.AF_INET, socket.AF_INET6):
+            if address[0] not in LOOPBACK_ADDRESSES:
+                raise AssertionError(f"a test connection leaves loopback: {address[0]}")
+            if address[1] in LIVE_STACK_PORTS:
+                raise AssertionError(
+                    f"a test connection reaches the live stack: {address[0]}:{address[1]}"
+                )
         return real_connect(self, address)
 
     monkeypatch.setattr(socket.socket, "connect", connect)

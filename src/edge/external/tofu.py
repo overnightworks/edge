@@ -1,5 +1,6 @@
 """The pinned `tofu`: version check, `init` and `plan` with their exit codes."""
 
+import os
 import re
 import shutil
 import signal
@@ -130,6 +131,16 @@ def require_pinned_version(tofu: Path, environment: dict[str, str]) -> None:
 class Session:
     tofu: Path
     environment: dict[str, str]
+    temporary_directory: Path
+
+    def plan_arguments_on(self, catalog_bytes: bytes) -> list[str]:
+        """The plan arguments that make tofu read exactly these catalog bytes, held in a private
+        file that lives and dies with this session."""
+        snapshot = self.temporary_directory / "fleet.yaml"
+        descriptor = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(catalog_bytes)
+        return [*PLAN_ARGUMENTS, f"-var=catalog_file={snapshot}"]
 
 
 @contextmanager
@@ -152,4 +163,4 @@ def session(home: Path, token_values: dict[str, str]) -> Iterator[Session]:
         if init.exit_code != 0:
             print(secrets.redact(init.output, token_values), file=sys.stderr)
             raise TofuError("tofu init failed")
-        yield Session(tofu_path, environment)
+        yield Session(tofu_path, environment, temporary_directory)

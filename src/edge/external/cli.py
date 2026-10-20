@@ -64,10 +64,16 @@ def plan_command(home: Path) -> int:
 
 
 def apply_command(
-    home: Path, tree: Path | None = None, git: checkout.Runner = checkout.run_git
+    home: Path,
+    tree: Path | None = None,
+    git: checkout.Runner = checkout.run_git,
+    *,
+    prober_for: Callable[[str], host_probe.Prober] = host_probe.HttpProber,
 ) -> int:
     """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
-    live one, on a clean main. An apply that may have changed the services, or found nothing to
+    live one, on a clean main. A plan with changes is refused before `yes` while an enabled host's
+    `ready` path does not answer on its target (`prober_for` makes the prober of one target;
+    #30 rule 8). An apply that may have changed the services, or found nothing to
     do, ends on the host check (#30 rule 8): its verdict decides the exit.
 
     The `try` is the first statement and SIGTERM becomes an interrupt as its first step, so every
@@ -82,19 +88,31 @@ def apply_command(
         with apply.terminate_like_interrupt():
             run = _ApplyRun()
             closing = apply.ClosingCheck.NO_CHECK_REFUSED
+            planned_catalog: _ValidCatalog | None = None
 
             def refusal() -> int | None:
-                return (
-                    apply.refusal_without_terminal()
-                    or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
-                    or _refusal_invalid_catalog("apply")
-                    or _refusal_unreadable_cloudflare_read_file(home)
-                )
+                nonlocal planned_catalog
+                if refused := apply.refusal_without_terminal() or _refusal_off_clean_live_main(
+                    tree or tofu.PROJECT_ROOT, home, git
+                ):
+                    return refused
+                planned_catalog = _valid_catalog("apply")
+                if planned_catalog is None:
+                    return ExitCode.CANNOT_PLAN
+                return _refusal_unreadable_cloudflare_read_file(home)
 
             def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
                 nonlocal closing
+                assert planned_catalog is not None  # the refusal, which always runs first, set it
                 try:
-                    outcome = apply.apply_plan(home, token_values, progress=run.progress)
+                    outcome = apply.apply_plan(
+                        home,
+                        token_values,
+                        progress=run.progress,
+                        hosts=planned_catalog.hosts,
+                        prober_for=prober_for,
+                        catalog_bytes=planned_catalog.raw,
+                    )
                 except apply.StepFailed as failure:
                     closing = failure.closing
                     raise
@@ -214,12 +232,12 @@ def check_command(
     verdict_stands: host_check.CheckExit | None = None
     try:
         with apply.terminate_like_interrupt():
-            document = _valid_catalog("check")
-            if document is None:
+            valid = _valid_catalog("check")
+            if valid is None:
                 return host_check.CheckExit.CANNOT_CHECK
             token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
             result = host_check.check_hosts(
-                document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"]), prober()
+                valid.document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"]), prober()
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
             text = secrets.redact(rendered, token_values)
@@ -266,15 +284,25 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     return ExitCode.CANNOT_PLAN if refusals else None
 
 
-def _valid_catalog(command: str) -> Any | None:
+@dataclass(frozen=True)
+class _ValidCatalog:
+    """One validated read of the catalog: its bytes, document and enabled hosts stand together."""
+
+    raw: bytes
+    document: Any
+    hosts: tuple[catalog.Host, ...]
+
+
+def _valid_catalog(command: str) -> _ValidCatalog | None:
     """The catalog tofu reads, or None after naming the key when it is not valid (#131 rule 5)."""
+    file = tofu.PROJECT_ROOT / catalog.FLEET_FILE
     try:
-        document = catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)
-        catalog.hosts(document)
+        raw = catalog.read_bytes(file)
+        document = catalog.parse(raw, file.name)
+        return _ValidCatalog(raw, document, catalog.hosts(document))
     except catalog.CatalogError as error:
         print(f"edge external {command}: {error}", file=sys.stderr)
         return None
-    return document
 
 
 def _refusal_invalid_catalog(command: str) -> int | None:

@@ -275,7 +275,15 @@ einem sauberen `main`, sonst Exit 2 mit dem Grund (`plan` laeuft aus jedem
 Checkout), und nur an einem Terminal (stdin und stdout; sonst
 Exit 1, bevor `tofu` aufgerufen wird), plant in eine Datei, zeigt den Plan
 und wendet genau diese Datei erst nach der Eingabe `yes` an (`y`, `Yes`,
-leer: Abbruch, Exit 1). Ein Plan ohne Aenderungen endet mit Exit 0 ohne
+leer: Abbruch, Exit 1). Hat der Plan Aenderungen, fragt `apply` vor dem
+`yes` jeden aktivierten Host mit `ready` (`fleet.yaml`) nach diesem Pfad auf
+seinem `target` (`GET`, `Host` = FQDN, kein Redirect, 10 s, kein Retry); nur
+2xx zaehlt. Antwortet einer nicht, Exit 1 vor dem `yes`: jeder
+nicht antwortende Host steht mit Pfad, Ziel und Status oder Fehlerart auf stderr,
+`tofu apply` laeuft nie, die Plan-Datei wird geloescht, kein Host-Check folgt.
+Das gilt auch fuer eine ganz andere Aenderung, solange so ein Host nicht antwortet
+(gestoppt mit `edge stop`, abgestuerzt, startet noch); `enabled: false` nimmt
+den Host aus der Pruefung. Ein Plan ohne Aenderungen endet mit Exit 0 ohne
 Frage. Das ist ein Schutz gegen versehentliche und nicht-interaktive Laeufe
 (CI, Skript, `-auto-approve`), keine Identitaetspruefung: ein Agent kann ein
 pty oeffnen und `yes` tippen; erst D14 (eigener Nutzer fuer Agenten) macht
