@@ -31,6 +31,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
 | `src/edge/`, `external/` | the `edge` command (`edge apply`, which is `edge apply --closed` and then the publish, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/home_tools/`, `docs/home.md`, `bin/home` | the `home` workstation tool (German, see [docs/home.md](docs/home.md)); `bin/home` is a symlink to the one launcher `bin/edge` |
+| `src/hal/`, `bin/hal` | the `hal` door of the workstation (see [Running hal](#running-hal)); `bin/hal` is a symlink to the launcher `bin/edge` |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live`, `step-ca/init`, `edge apply` (`tests/test_edge_apply.py`), the external edge tests (`tests/test_edge_external.py`) and the OpenTofu tests under `external/tests/`, run only through `python -m edge.external.tofu_test`, with their locked dependencies |
@@ -77,6 +78,35 @@ never rewriting `uv.lock`) and then becomes `.venv/bin/edge`, from the same
 environment the systemd units call. A failed sync ends with exit 2 and names the
 checkout.
 Slice S2b of overnightworks/edge#100 puts it on PATH as `edge`.
+
+## Running hal
+
+`hal` is the daily door of the workstation. `hal` alone, `hal -h` and `hal --help` list its
+commands; `hal <command> --help` shows one. The commands:
+
+- `hal version` names the code that runs: the commit and branch of the checkout the code lives in,
+  whether its tree is clean (the rule `edge apply` uses), and how it stands to the `origin/main`
+  the last fetch left. It never fetches and changes nothing. `-v` prints each git call on stderr.
+  Installed from a wheel there is no checkout, and it says so.
+
+Every command ends with one of these exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | the command ran and found something that needs attention |
+| 2 | the command line is wrong |
+| 3 | the command could not do its job, or failed unexpectedly (only the error's type is shown) |
+| 4 | a guard of the command refused |
+| 130 | interrupted with Ctrl-C |
+
+An error is `error: <what>` on stderr and, where there is a way on, one `next: <command>` line;
+never a traceback. There is no `-y`, and `--json` exists only on a command whose result a program
+reads. The fleet rules for command lines are overnightworks/quality#80; hal's exit codes and error
+form are implemented in `src/hal/grammar.py`.
+
+Until H5 (the rename), `hal` sits beside `edge` and `home`: link `bin/hal` onto PATH the way `edge`
+is.
 
 ## Configure
 

@@ -48,6 +48,7 @@ _URL_CREDENTIALS = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/\s]+@", re.IGNORECASE
 _REDACTED = r"\1<redacted>@"
 _STATUS_LETTERS = frozenset("ADMT")
 _ORIGIN = "origin"
+ORIGIN_MAIN = f"refs/remotes/{_ORIGIN}/{MAIN}"  # origin's `main` as the last fetch left it
 
 
 class Profile(Enum):
@@ -141,11 +142,16 @@ class Origin:
 
     @property
     def standing(self) -> Standing:
-        if self.ahead and self.behind:
-            return Standing.DIVERGED
-        if self.ahead:
-            return Standing.AHEAD
-        return Standing.BEHIND if self.behind else Standing.CURRENT
+        return standing_of(self.ahead, self.behind)
+
+
+def standing_of(ahead: int, behind: int) -> Standing:
+    """How HEAD stands to a `main` it has `ahead` commits on and `behind` commits short of."""
+    if ahead and behind:
+        return Standing.DIVERGED
+    if ahead:
+        return Standing.AHEAD
+    return Standing.BEHIND if behind else Standing.CURRENT
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,11 @@ class Git:
     def has_commit(self) -> bool:
         """Whether HEAD names a commit; a branch without one is unborn."""
         verified = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]
+        return self._call(verified, accepted=(0, 1)).returncode == 0
+
+    def has_fetched_main(self) -> bool:
+        """Whether origin's `main` was ever fetched, so `ORIGIN_MAIN` names a commit."""
+        verified = ["rev-parse", "--verify", "--quiet", f"{ORIGIN_MAIN}^{{commit}}"]
         return self._call(verified, accepted=(0, 1)).returncode == 0
 
     def changed_paths(self) -> list[str]:

@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from test_edge_checkout import (
+from git_support import (
     advance,
     checkout_state,
     committed_main,

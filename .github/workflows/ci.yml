@@ -45,10 +45,11 @@ jobs:
         # pyproject.toml's pythonpath makes src and scripts importable.
         run: uv run --no-sync --no-build pytest --cov=src --cov=scripts --cov-report=xml:coverage.xml
 
-      # home's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
-      # If a home path moves, this include moves with it.
-      - name: home's code stays at 100 % line and branch coverage
-        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,scripts/check_root_layout.py' --fail-under=100 --show-missing
+      # home's and hal's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
+      # If a home or hal path moves, this include moves with it. hal's console script runs in child
+      # processes, which [tool.coverage.run] patch = ["subprocess"] measures.
+      - name: home's and hal's code stay at 100 % line and branch coverage
+        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*,scripts/check_root_layout.py' --fail-under=100 --show-missing
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -58,8 +59,8 @@ jobs:
           name: coverage
           path: coverage.xml
 
-      # The wheel must ship both packages, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check, edge-backup and home
+      # The wheel must ship every package, not only the one the editable install happens to find.
+      - name: The wheel installs edge-check, edge-backup, home and hal
         run: |
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
@@ -74,6 +75,16 @@ jobs:
           home check --help
           home secrets --help
           home secrets --by-service | grep -F "deklarierte Abhängigkeiten"
+          hal --help
+          version=$(hal version)
+          [ "$version" = "no checkout (installed from a wheel)" ]
+          rc=0; hal frobnicate >"$scratch/out" 2>"$scratch/err" || rc=$?
+          [ "$rc" -eq 2 ]
+          [ ! -s "$scratch/out" ]
+          head -n 1 "$scratch/err" | grep -q '^error:'
+          # docs/naming.md: `hal` must import from the tool's own environment, not from a stray package.
+          hal_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal; print(hal.__file__)')
+          case $hal_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal imported from $hal_file"; exit 1 ;; esac
 
       - name: Compose renders (default, keycloak, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
         run: |
