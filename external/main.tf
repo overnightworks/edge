@@ -6,10 +6,6 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "= 5.28.0"
     }
-    github = {
-      source  = "integrations/github"
-      version = "= 6.13.0"
-    }
   }
 
   # The wrapper supplies the state path with -backend-config=path=...; the state never sits in the checkout.
@@ -50,9 +46,4 @@ variable "catalog_file" {
 
 locals {
   fleet = yamldecode(file(coalesce(var.catalog_file, "${path.module}/../fleet.yaml")))
-}
-
-# The token comes from GITHUB_TOKEN in the child environment; cloudflare reads CLOUDFLARE_API_TOKEN the same way.
-provider "github" {
-  owner = local.fleet.github.org
 }

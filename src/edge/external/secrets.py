@@ -42,15 +42,7 @@ class Access(Enum):
 
     @property
     def secret_files(self) -> tuple[SecretFile, ...]:
-        secrets_root = Path(SECRETS_DIRECTORY)
-        return (
-            self.cloudflare_file,
-            SecretFile(
-                secrets_root / "github" / ("fleet-admin" if self is Access.WRITE else self.value),
-                "GITHUB_TOKEN",
-            ),
-            _STATE_PASSPHRASE,
-        )
+        return (self.cloudflare_file, _STATE_PASSPHRASE)
 
 
 class SecretFileError(Exception):

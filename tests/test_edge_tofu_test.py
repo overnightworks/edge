@@ -9,7 +9,7 @@ import pytest
 from edge.external import tofu_test
 from edge.external.tofu import TofuError
 
-MOCKS = 'mock_provider "github" {}\nmock_provider "cloudflare" {}\n'
+MOCKS = 'mock_provider "cloudflare" {}\n'
 INHERITED_FROM_THE_CALLER = {
     "GITHUB_TOKEN": "caller-github-token",
     "GH_TOKEN": "caller-gh-token",
@@ -27,12 +27,9 @@ def write_tree(tmp_path: Path, files: dict[str, str]) -> Path:
     return tmp_path
 
 
-COMMENTED_MOCK = '# mock_provider "github" {}\nmock_provider "cloudflare" {}\n'
-ALIASED_MOCK = 'mock_provider "github" {\n  alias = "fake"\n}\nmock_provider "cloudflare" {}\n'
-LATE_ALIAS = (
-    'mock_provider "github" {\n  mock_data "github_user" {}\n  alias = "fake"\n}\n'
-    'mock_provider "cloudflare" {}\n'
-)
+COMMENTED_MOCK = '# mock_provider "cloudflare" {}\n'
+ALIASED_MOCK = 'mock_provider "cloudflare" {\n  alias = "fake"\n}\n'
+LATE_ALIAS = 'mock_provider "cloudflare" {\n  mock_data "cloudflare_zone" {}\n  alias = "fake"\n}\n'
 ALIASED_REAL_PROVIDER = (
     MOCKS + 'provider "github" {\n  alias = "real"\n}\n'
     'run "r" {\n  providers = {\n    github = github.real\n  }\n}\n'
@@ -48,9 +45,8 @@ OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
 @pytest.mark.parametrize(
     ("files", "named_file", "named_reason"),
     [
-        ({"tests/a.tftest.hcl": 'mock_provider "cloudflare" {}\n'}, "a.tftest.hcl", "github"),
         ({"tests/a.tftest.hcl": 'mock_provider "github" {}\n'}, "a.tftest.hcl", "cloudflare"),
-        ({"tests/a.tftest.hcl": COMMENTED_MOCK}, "a.tftest.hcl", "github"),
+        ({"tests/a.tftest.hcl": COMMENTED_MOCK}, "a.tftest.hcl", "cloudflare"),
         ({"tests/a.tftest.hcl": ALIASED_MOCK}, "a.tftest.hcl", "alias"),
         ({"tests/a.tftest.hcl": LATE_ALIAS}, "a.tftest.hcl", "alias"),
         ({"tests/a.tftest.hcl": ALIASED_REAL_PROVIDER}, "a.tftest.hcl", "real provider"),
@@ -77,7 +73,7 @@ OUTSIDE_MODULE = MOCKS + 'run "r" {\n  module {\n    source = "../.."\n  }\n}\n'
         ({"tests/j.tftest.json": "{}"}, "j.tftest.json", "does not read"),
     ],
     ids=[
-        "no github mock", "no cloudflare mock", "commented mock", "aliased mock",
+        "no cloudflare mock", "commented mock", "aliased mock",
         "alias after a nested block",
         "aliased real provider", "real provider beside the mocks", "module outside tests",
         "unquoted real provider", "provider in a helper module",
@@ -135,9 +131,8 @@ def test_environment_is_exactly_the_allowlist(tmp_path):
 
     assert set(environment) == {
         "PATH", "HOME", "LANG", "TMPDIR", "TF_INPUT", "TF_CLI_CONFIG_FILE",
-        "TF_VAR_state_passphrase", "GH_PATH",
+        "TF_VAR_state_passphrase",
     }  # fmt: skip
-    assert environment["GH_PATH"] == "/nonexistent"
     assert environment["TF_INPUT"] == "0"
     assert environment["PATH"].startswith(f"{tmp_path / 'bin'}:")
 
@@ -166,7 +161,6 @@ def test_tofu_gets_a_fresh_home_and_nothing_inherited(tmp_path, monkeypatch):
     seen = dict(line.split("=", 1) for line in dump.read_text().splitlines() if "=" in line)
     assert exit_code == 3
     assert not set(INHERITED_FROM_THE_CALLER) & set(seen)
-    assert seen["GH_PATH"] == "/nonexistent"
     assert seen["HOME"] != str(tmp_path / "real-home")
     assert not os.path.exists(seen["HOME"])
 
