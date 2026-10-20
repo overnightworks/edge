@@ -554,6 +554,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "disabled_user_refused_on_refresh",
         "backchannel_logout_reaches_rp",
         "app_client",
+        "agent_service_stays_audience_only",
         "the_observer_door",
         "no_secret_leaked",
     ):
@@ -667,48 +668,85 @@ class ImportedClients:
         return self.client
 
 
-def imported_presentator(probe: ModuleType, **changes: object) -> dict[str, object]:
-    client = probe.PRESENTATOR
+LOGIN_SCOPES = ["basic", "profile", "groups"]
+WORKLOAD_SCOPES = [
+    *LOGIN_SCOPES,
+    "email",
+    "roles",
+    "web-origins",
+    "acr",
+    "service_account",
+    "agent-service-audience",
+]
+
+
+def imported_client(client: object, **changes: object) -> dict[str, object]:
     return {
         "publicClient": False,
         "standardFlowEnabled": True,
         "implicitFlowEnabled": False,
         "directAccessGrantsEnabled": False,
-        "serviceAccountsEnabled": False,
+        "serviceAccountsEnabled": client.agent_workload,
         "frontchannelLogout": False,
         "redirectUris": list(client.callbacks),
         "baseUrl": f"{client.origin}/",
         "alwaysDisplayInConsole": True,
         "optionalClientScopes": [],
-        "defaultClientScopes": ["basic", "profile", "groups"],
+        "defaultClientScopes": WORKLOAD_SCOPES if client.agent_workload else LOGIN_SCOPES,
         "attributes": {},
     } | changes
 
 
 @pytest.mark.parametrize(
-    ("scopes", "callbacks_reversed", "accepted"),
+    ("client_name", "changes", "accepted"),
     [
-        pytest.param(["basic", "profile", "groups"], False, True, id="the right scopes"),
-        pytest.param(["basic", "groups"], False, False, id="profile missing"),
-        pytest.param(["basic", "profile", "groups", "email"], False, False, id="email added"),
-        pytest.param(["groups", "basic", "profile"], True, True, id="another order of both"),
+        pytest.param("PRESENTATOR", {}, True, id="a workload client as decided"),
+        pytest.param("HOPIN", {}, True, id="a login-only client as decided"),
+        pytest.param(
+            "PRESENTATOR",
+            {"defaultClientScopes": WORKLOAD_SCOPES[::-1]},
+            True,
+            id="another order of the scopes",
+        ),
+        pytest.param(
+            "PRESENTATOR",
+            {"defaultClientScopes": LOGIN_SCOPES},
+            False,
+            id="the workload scopes missing",
+        ),
+        pytest.param(
+            "PRESENTATOR",
+            {"defaultClientScopes": WORKLOAD_SCOPES[1:]},
+            False,
+            id="basic missing",
+        ),
+        pytest.param(
+            "PRESENTATOR", {"serviceAccountsEnabled": False}, False, id="no service account"
+        ),
+        pytest.param(
+            "HOPIN", {"serviceAccountsEnabled": True}, False, id="a service account on hopin"
+        ),
+        pytest.param(
+            "HOPIN", {"defaultClientScopes": WORKLOAD_SCOPES}, False, id="workload scopes on hopin"
+        ),
     ],
 )
-def test_an_app_client_is_accepted_only_with_exactly_its_default_scopes_and_callbacks(
-    probe: ModuleType, scopes: list[str], callbacks_reversed: bool, accepted: bool
+def test_an_app_client_is_accepted_only_with_exactly_its_decided_scopes_and_service_account(
+    probe: ModuleType, client_name: str, changes: dict[str, object], accepted: bool
 ) -> None:
-    callbacks = list(probe.PRESENTATOR.callbacks)
-    imported = ImportedClients(
-        imported_presentator(
-            probe,
-            defaultClientScopes=scopes,
-            redirectUris=callbacks[::-1] if callbacks_reversed else callbacks,
-        )
-    )
+    client = getattr(probe, client_name)
+    imported = ImportedClients(imported_client(client, **changes))
     check = probe.Probe.app_client_representation
 
     if accepted:
-        check(imported, probe.PRESENTATOR)
+        check(imported, client)
     else:
         with pytest.raises(probe.ProbeFailure):
-            check(imported, probe.PRESENTATOR)
+            check(imported, client)
+
+
+def test_an_app_client_is_accepted_with_its_callbacks_in_another_order(probe: ModuleType) -> None:
+    client = probe.PRESENTATOR
+    imported = ImportedClients(imported_client(client, redirectUris=list(client.callbacks)[::-1]))
+
+    probe.Probe.app_client_representation(imported, client)

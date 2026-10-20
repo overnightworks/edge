@@ -32,7 +32,10 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the master's untouched theme and language. Proof 10 signs a member of the app's group
   (`/apps/songmaker/admin`, `/apps/hopin`, `/apps/presentator/admin`) in to each of the
   songmaker, hopin and presentator clients through 8081 with PKCE, its secret a scratch file the
-  overlay mounts. Proof 11 (#129) loads
+  overlay mounts. For songmaker and presentator it also drives the agent workload cells of #183
+  (W1 to W3: the `client_credentials` token has `agent-workload`, the `agent-service` audience, `azp`
+  and the realm's token lifespan, with no client override; a person's token has no `agent-workload`), hopin's refusal of
+  `client_credentials` (W5) and `agent-service` with every flow off (W4). Proof 11 (#129) loads
   `keycloak/go-live` and runs only its step 6 (never `run()`, whose compose calls would reach the
   operator's project): the admin it creates holds `admin` with `CONFIGURE_TOTP` and
   `webauthn-register` pending (both enabled in master), is refused a password grant without TOTP,
