@@ -94,6 +94,7 @@ def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Comple
             text=True,
             errors="replace",  # a finished `tofu apply` never raises over undecodable output
             start_new_session=True,
+            umask=0o077,
             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, outside_mask),
         ) as process:
             try:

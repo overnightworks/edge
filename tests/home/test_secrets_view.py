@@ -48,6 +48,10 @@ INVENTORY = {
     "restic/password",
     "cloudflared/tunnel",
     "claude-measure-token",
+    "opentofu/state",
+    "opentofu/state-backup",
+    "opentofu/plans",
+    "opentofu/tmp",
 }
 RESTIC_RECREATE = (
     "Aus deinem Passwortmanager zurückholen. "
@@ -483,6 +487,10 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
     assert retired == dict.fromkeys(("github/token", "github/overnightworks-read-token"), date(2026, 10, 15))
     assert {name: entry.kind for name, entry in manifest.items() if entry.kind in (SecretKind.CONFIGURATION, SecretKind.DOCUMENTATION)} == {
         "claudebot-runtime.env": SecretKind.CONFIGURATION,
+        "opentofu/state": SecretKind.CONFIGURATION,
+        "opentofu/state-backup": SecretKind.CONFIGURATION,
+        "opentofu/plans": SecretKind.CONFIGURATION,
+        "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
@@ -492,6 +500,10 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "claudebot-runtime.env",
         "secrets/README",
         "claude-measure-token",
+        "opentofu/state",
+        "opentofu/state-backup",
+        "opentofu/plans",
+        "opentofu/tmp",
     }
 
 
@@ -511,6 +523,51 @@ def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_wi
     ]
     assert all(entry.source.scope and entry.purpose for entry in tokens)
     assert {entry.name: entry.kind for entry in first if entry.source is None} == {"opentofu/state-passphrase": SecretKind.SERVICE_PASSWORD}
+
+
+@pytest.mark.parametrize(
+    ("state_mode", "loose_findings"),
+    [
+        (0o600, {}),
+        (0o664, {"~/.secrets/opentofu/fleet.tfstate": ["hat Rechte 664, höchstens 600", "`chmod 600 ~/.secrets/opentofu/fleet.tfstate`"]}),
+    ],
+    ids=["owner-only state", "loose state is still reported"],
+)
+def test_the_files_edge_external_leaves_under_opentofu_are_known_and_only_a_loose_mode_is_a_finding(
+    tmp_path: Path, probe: FakeProbe, capsys, state_mode: int, loose_findings: dict[str, list[str]]
+) -> None:
+    """#159 T2/T3: state, its backup, plans and tmp are declared; the loose-mode check still fires."""
+    home = tmp_path / "home"
+    plant_secrets(home)
+    opentofu = home / ".secrets" / "opentofu"
+    for directory in ("plans", "tmp"):
+        (opentofu / directory).unlink()
+        (opentofu / directory).mkdir(mode=0o700)
+    for name, mode in (("fleet.tfstate", state_mode), ("fleet.tfstate.backup", 0o600)):
+        (opentofu / name).write_text("encrypted state")
+        (opentofu / name).chmod(mode)
+    (opentofu / "plans" / "fleet.tfplan").write_text("encrypted plan")
+    (opentofu / "plans" / "fleet.tfplan").chmod(0o600)
+
+    code = home_secrets(home, probe)
+
+    output = capsys.readouterr().out
+    assert findings_of(output, "unknown-file") == {}
+    assert findings_of(output, "loose-mode") == loose_findings
+    assert code == (1 if loose_findings else 0)
+
+
+def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#159 T4: the state's files are named exactly, so a plaintext `tofu state pull` copy does not hide."""
+    home = tmp_path / "home"
+    plant_secrets(home)
+    stray = home / ".secrets" / "opentofu" / "fleet.tfstate.json"
+    stray.write_text("plaintext state")
+    stray.chmod(0o600)
+
+    home_secrets(home, probe)
+
+    assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
 
 @pytest.mark.parametrize(
