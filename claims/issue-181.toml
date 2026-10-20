@@ -1,8 +1,0 @@
-claim_id = "9657558ef88e4f3f9731ee8a4b7bd801"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b1897a948f3d8ec68b6f82f46013f56c9da2191c"
-branch = "claude/issue-181-keycloak-events-90-days"
-scope = ["README.md", "docs/architecture.md", "keycloak/realm.yaml", "probe/keycloak/README.md", "probe/keycloak/probe.py", "tests/realm_fake.py", "tests/test_keycloak_probe.py"]
-opened_commit = "460d538de314a368ee402aca63f4956beb657042"
-whole_reason = "The realm's event settings and every file that pins them say one retention."
