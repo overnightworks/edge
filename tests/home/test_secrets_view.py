@@ -49,6 +49,7 @@ INVENTORY = {
     "cloudflared/tunnel",
     "claude-measure-token",
     "opentofu/state",
+    "opentofu/state-backup",
     "opentofu/plans",
     "opentofu/tmp",
 }
@@ -487,6 +488,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
     assert {name: entry.kind for name, entry in manifest.items() if entry.kind in (SecretKind.CONFIGURATION, SecretKind.DOCUMENTATION)} == {
         "claudebot-runtime.env": SecretKind.CONFIGURATION,
         "opentofu/state": SecretKind.CONFIGURATION,
+        "opentofu/state-backup": SecretKind.CONFIGURATION,
         "opentofu/plans": SecretKind.CONFIGURATION,
         "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
@@ -499,6 +501,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "secrets/README",
         "claude-measure-token",
         "opentofu/state",
+        "opentofu/state-backup",
         "opentofu/plans",
         "opentofu/tmp",
     }
@@ -552,6 +555,19 @@ def test_the_files_edge_external_leaves_under_opentofu_are_known_and_only_a_loos
     assert findings_of(output, "unknown-file") == {}
     assert findings_of(output, "loose-mode") == loose_findings
     assert code == (1 if loose_findings else 0)
+
+
+def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#159 T4: the state's files are named exactly, so a plaintext `tofu state pull` copy does not hide."""
+    home = tmp_path / "home"
+    plant_secrets(home)
+    stray = home / ".secrets" / "opentofu" / "fleet.tfstate.json"
+    stray.write_text("plaintext state")
+    stray.chmod(0o600)
+
+    home_secrets(home, probe)
+
+    assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
 
 @pytest.mark.parametrize(
