@@ -1845,9 +1845,6 @@ class Probe:
             "auth": "true",
             "user": "probe",
         }
-        client_secret = self.secret_values["config-cli-secret"]
-        # Master's access tokens live 60 s; the observer runs longer, so each use gets a fresh one.
-        admin = self.admin_with_client(client_secret)
         admin.must("PUT", f"/{REALM}", {"smtpServer": smtp | {"password": password}})
         digest_key = self.keep_secret("the observer's second digest key", new_digest_key())
         kept = f"{PROJECT}-observe-{secrets.token_hex(4)}"
@@ -1856,11 +1853,9 @@ class Probe:
         before = json.loads(result.stdout)
         door = self.observer_container(kept)
 
-        admin = self.admin_with_client(client_secret)
         original = self.change_config_in_console(admin)
         group_id = admin.create(f"/{REALM}/groups", {"name": ESCAPING_GROUP})
         lines = change_lines(before, self.observe(digest_key))
-        admin = self.admin_with_client(client_secret)
         admin.must("PUT", f"/master/authentication/config/{original['id']}", original)
         admin.must("DELETE", f"/{REALM}/groups/{group_id}")
         expected = [

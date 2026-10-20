@@ -39,8 +39,10 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   meets the TOTP enrolment and then the passkey page at the browser sign-in, and a second run asks
   nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
   are off. Passkey registration itself is not driven. Proof EV2 (#181) signs in, sends a wrong
-  password and logs out through 8081, and holds when the user's stored events are exactly one
-  LOGIN and one LOGIN_ERROR, both with the same parseable IP address (the logout stores none).
+  password and logs out through 8081, sending `X-Forwarded-For` the way cloudflared does, and
+  holds when the user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with
+  exactly that address (the logout stores none). The probe simulates cloudflared; it does not
+  prove what Cloudflare passes on, and a client-forged leftmost value is stored (#190).
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker`, `hopin` and `presentator` clients, which callers must not create
   themselves; they create their other clients and users through the admin API.
