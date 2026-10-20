@@ -220,9 +220,11 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 ### Einrichten: `home secrets --setup`
 
 `--setup` geht die fehlenden Einträge des Manifests der Reihe nach durch,
-zuerst die fünf, die `edge external` liest: `cloudflare/fleet-read`,
-`github/fleet-read` und `opentofu/state-passphrase` für `plan`, danach
-`cloudflare/fleet-write` und `github/fleet-admin` für `apply`. Es läuft nur am
+zuerst die fünf von `edge external`. Gelesen werden davon drei:
+`cloudflare/fleet-read` und `opentofu/state-passphrase` für `plan`, danach
+`cloudflare/fleet-write` für `apply`. `github/fleet-read` und
+`github/fleet-admin` bleiben im Assistenten, aber nichts liest sie, bis
+edge#30 X2/X3 die GitHub-Einstellungen als Code bauen. Es läuft nur am
 eigenen Terminal (stdin und stdout); ohne Terminal endet es mit Exit-Code `2`,
 bevor es etwas anfasst. Agenten fahren es nie.
 
