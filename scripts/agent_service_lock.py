@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ REPOSITORY_URL: Final = "https://github.com/overnightworks/agent-providers"
 UV_EXPORT: Final = (
     "uv",
     "export",
+    "--no-header",
     "--frozen",
     "--no-dev",
     "--no-emit-workspace",
@@ -31,7 +33,7 @@ GIT_CLONE_TAG: Final = (
     *("git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"),
     "--branch",
 )
-UV_HEADER_LINES: Final = 2
+RELEASE_TAG: Final = re.compile(r"v\d+\.\d+\.\d+")
 RELEASE_WHEEL_STEMS: Final = (
     "overnightworks_agent_client",
     "overnightworks_agent_providers",
@@ -39,6 +41,13 @@ RELEASE_WHEEL_STEMS: Final = (
 )
 LOCK_PATH: Final = Path(__file__).resolve().parent.parent / "agent-service/image/requirements.txt"
 DOWNLOAD_SECONDS: Final = 120
+
+
+def release_tag(text: str) -> str:
+    """The only shape of tag that reaches `git clone` and the release URLs."""
+    if not RELEASE_TAG.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.4.0")
+    return text
 
 
 def release_wheel_requirements(tag: str) -> list[str]:
@@ -55,18 +64,17 @@ def release_wheel_requirements(tag: str) -> list[str]:
 
 
 def exported_closure(checkout: Path) -> str:
-    """The service's runtime closure with hashes, without uv's own header comment."""
-    exported = subprocess.run(
+    """The service's runtime closure with hashes."""
+    return subprocess.run(
         UV_EXPORT, cwd=checkout, check=True, capture_output=True, text=True
     ).stdout
-    return "".join(exported.splitlines(keepends=True)[UV_HEADER_LINES:])
 
 
 def lock_text(tag: str) -> str:
     with tempfile.TemporaryDirectory() as scratch:
         checkout = Path(scratch)
         subprocess.run(
-            [*GIT_CLONE_TAG, tag, REPOSITORY_URL, scratch],
+            [*GIT_CLONE_TAG, tag, "--", REPOSITORY_URL, scratch],
             check=True,
         )
         commit = subprocess.run(
@@ -86,7 +94,7 @@ def lock_text(tag: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent_service_lock", description=__doc__)
-    parser.add_argument("tag", help="agent-providers release tag, such as v0.4.0")
+    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.4.0")
     arguments = parser.parse_args(argv)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOCK_PATH.write_text(lock_text(arguments.tag), encoding="utf-8")

@@ -2,9 +2,11 @@
 hold what the recipe says; the build and the start of the image are the probe's
 (`probe/agent-service/image.py`)."""
 
+import argparse
 import re
 from pathlib import Path
 
+import agent_service_lock
 import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -64,6 +66,29 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
     assert "pip install --no-cache-dir --no-deps --require-hashes --only-binary :all:" in DOCKERFILE
     assert "-r /tmp/requirements.txt" in DOCKERFILE
     assert "&& pip check" in DOCKERFILE
+
+
+def test_the_recipe_runs_only_the_download_and_the_hashed_install():
+    steps = re.findall(r"^RUN (\S+ \S+)", DOCKERFILE, re.MULTILINE)
+    assert steps == ["curl --fail", "pip install"]
+
+
+@pytest.mark.parametrize("package_manager", ["apt", "apt-get", "apk"])
+def test_the_recipe_installs_no_system_package(package_manager):
+    assert not re.search(rf"\b{package_manager}\b", DOCKERFILE)
+
+
+@pytest.mark.parametrize("tag", ["v0.4.0", "v10.20.30"])
+def test_the_lock_script_accepts_a_release_tag(tag):
+    assert agent_service_lock.release_tag(tag) == tag
+
+
+@pytest.mark.parametrize(
+    "tag", ["--upload-pack=x", "v0.4", "0.4.0", "v0.4.0 ", "v0.4.0\n", "v0.4.0/../x", "main", ""]
+)
+def test_the_lock_script_refuses_anything_but_a_release_tag(tag):
+    with pytest.raises(argparse.ArgumentTypeError):
+        agent_service_lock.release_tag(tag)
 
 
 def test_the_image_runs_the_service_as_uid_1000_without_a_login():

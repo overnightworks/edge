@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -38,7 +39,16 @@ SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
 RUN_SECONDS = 120
-BASE_PACKAGE_TOOLS = frozenset({"pip", "setuptools", "wheel"})
+TOKEN_PATTERN = "sk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_-]{20,}"
+# grep exits 0 on a match and 1 on none; anything above is an error that must not pass.
+TOKEN_SEARCH = (
+    "for path in /*; do "
+    'case "$path" in /proc|/sys) continue;; esac; '
+    f'grep -rIlE "{TOKEN_PATTERN}" "$path"; status=$?; '
+    '[ "$status" -le 1 ] || exit "$status"; '
+    "done"
+)
+BASE_IMAGE = re.compile(r"^FROM (docker\.io/library/python:\S+@sha256:[0-9a-f]{64})$", re.MULTILINE)
 LOGIN_PATHS = (
     "managed-settings.json",
     "managed-mcp.json",
@@ -123,7 +133,10 @@ def cell_i2(output: Path, scratch: Path) -> None:
         cache=True,
     )
     expect(altered_cli.returncode != 0, "I2: a build with an altered CLI hash succeeded")
-    expect("FAILED" in altered_cli.stdout + altered_cli.stderr, "I2: sha256sum did not fail")
+    expect(
+        "/tmp/claude: FAILED" in altered_cli.stdout + altered_cli.stderr,
+        "I2: sha256sum did not fail on the CLI",
+    )
     context = scratch / "altered-wheel"
     shutil.copytree(IMAGE_DIRECTORY, context)
     lock = context / "requirements.txt"
@@ -154,15 +167,15 @@ def cell_i3(output: Path) -> None:
 
 
 def run_in_image(
-    arguments: Sequence[str], *, entrypoint: str, root_read_only: bool = True
+    arguments: Sequence[str], *, entrypoint: str, user: str = "1000:1000"
 ) -> subprocess.CompletedProcess[str]:
     return docker(
         [
             "run",
             "--rm",
             "--network=none",
-            "--user=1000:1000",
-            *(["--read-only"] if root_read_only else []),
+            f"--user={user}",
+            "--read-only",
             f"--entrypoint={entrypoint}",
             IMAGE,
             *arguments,
@@ -270,7 +283,6 @@ def cell_i5(output: Path, scratch: Path) -> None:
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
-            "--user=1000:1000",
             "--tmpfs",
             "/run/work:mode=0700,uid=1000,gid=1000",
             "--mount",
@@ -293,16 +305,14 @@ def cell_i5(output: Path, scratch: Path) -> None:
 
 
 def cell_i6() -> None:
+    """Both searches run as root over the whole file system, so no directory hides from them,
+    and any error of a search fails the cell."""
     names = " -o ".join(f"-name '{name}'" for name in LOGIN_PATHS)
-    found = run_in_image(
-        ["-c", f"find / -xdev \\( {names} \\) -not -path '/proc/*' 2>/dev/null; true"],
-        entrypoint="sh",
-    )
+    found = run_in_image(["-c", f"find / -xdev \\( {names} \\)"], entrypoint="sh", user="0:0")
+    expect(found.returncode == 0, f"I6: the login search failed: {found.stderr[-300:]!r}")
     expect(found.stdout.strip() == "", f"I6: the image holds login files: {found.stdout!r}")
-    tokens = run_in_image(
-        ["-c", "grep -rIl 'sk-ant-' /etc /root /home /var /tmp 2>/dev/null; true"],
-        entrypoint="sh",
-    )
+    tokens = run_in_image(["-c", TOKEN_SEARCH], entrypoint="sh", user="0:0")
+    expect(tokens.returncode == 0, f"I6: the token search failed: {tokens.stderr[-300:]!r}")
     expect(tokens.stdout.strip() == "", f"I6: a token-shaped text is in {tokens.stdout!r}")
     environment = json.loads(
         docker(["image", "inspect", IMAGE, "--format", "{{json .Config.Env}}"]).stdout
@@ -313,13 +323,31 @@ def cell_i6() -> None:
     )
 
 
+def package_versions(frozen: str) -> dict[str, str]:
+    pairs = (line.split("==") for line in frozen.split())
+    return {name.lower().replace("_", "-"): version for name, version in pairs}
+
+
+def base_package_versions() -> dict[str, str]:
+    """What the pinned base image itself ships, read from the same digest the Dockerfile names."""
+    dockerfile = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
+    base = BASE_IMAGE.search(dockerfile)
+    expect(base is not None, "I7: the Dockerfile names no digest-pinned python base image")
+    frozen = docker(
+        [
+            "run", "--rm", "--network=none", "--pull=never", "--entrypoint=python",
+            base.group(1), "-m", "pip", "list", "--format=freeze",
+        ],
+        check=True,
+    )  # fmt: skip
+    return package_versions(frozen.stdout)
+
+
 def cell_i7() -> None:
     frozen = run_in_image(["-m", "pip", "list", "--format=freeze"], entrypoint="python")
-    installed = dict(line.split("==") for line in frozen.stdout.split())
-    for tool in BASE_PACKAGE_TOOLS:
-        installed.pop(tool, None)
-    installed = {name.lower().replace("_", "-"): version for name, version in installed.items()}
-    expect(installed == lock_versions(), f"I7: pip freeze differs from the lock: {installed}")
+    expected = {**base_package_versions(), **lock_versions()}
+    installed = package_versions(frozen.stdout)
+    expect(installed == expected, f"I7: pip freeze differs from the lock and the base: {installed}")
 
 
 def remove_probe_artifacts() -> None:
@@ -329,10 +357,16 @@ def remove_probe_artifacts() -> None:
         docker(["rmi", "--force", *images])
 
 
+def interrupt(*_: object) -> None:
+    """`timeout`'s SIGTERM unwinds the probe, so its teardown removes the container."""
+    raise KeyboardInterrupt
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, help="where the docker transcripts go")
     arguments = parser.parse_args(argv)
+    signal.signal(signal.SIGTERM, interrupt)
     output = arguments.output or Path(tempfile.mkdtemp(prefix="agent-image-probe-"))
     output.mkdir(parents=True, exist_ok=True)
     print(f"transcripts: {output}")
@@ -353,8 +387,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("I6 held: no managed settings, no ~/.claude, no token")
             cell_i7()
             print("I7 held: pip freeze is exactly the lock's names and versions")
-        except ProbeFailed as failure:
-            print(f"FAILED {failure}", file=sys.stderr)
+        except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
+            print(f"FAILED {type(failure).__name__}: {failure}", file=sys.stderr)
             return 1
         finally:
             remove_probe_artifacts()

@@ -1,5 +1,5 @@
 # agent-providers v0.4.0, commit 6cf415bd87bf9f9ca740b3d432774cfebf558452
-# uv export --frozen --no-dev --no-emit-workspace --package overnightworks-agent-service, then the release's wheels.
+# uv export --no-header --frozen --no-dev --no-emit-workspace --package overnightworks-agent-service, then the release's wheels.
 # Written only by scripts/agent_service_lock.py; do not edit.
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
