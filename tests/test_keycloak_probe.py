@@ -553,6 +553,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "member_token_carries_groups_and_audience",
         "disabled_user_refused_on_refresh",
         "backchannel_logout_reaches_rp",
+        "only_logins_and_failed_logins_are_stored",
         "app_client",
         "agent_service_stays_audience_only",
         "the_observer_door",
@@ -777,3 +778,32 @@ def test_a_token_is_the_workload_identity_only_with_role_audience_client_and_no_
     claims = {key: value for key, value in claims.items() if value is not None}
 
     assert probe.is_workload_identity_of(claims, "songmaker") is accepted
+
+
+@pytest.mark.parametrize(
+    ("login_address", "error_address", "accepted"),
+    [
+        ("198.51.100.23", "198.51.100.23", True),
+        (None, "198.51.100.23", False),
+        ("198.51.100.23", None, False),
+        (None, None, False),
+        ("", "", False),
+        ("198.51.100.23", "192.0.2.123", False),
+        ("192.0.2.123", "192.0.2.123", False),
+        ("127.0.0.1", "127.0.0.1", False),
+        ("0.0.0.0", "0.0.0.0", False),
+    ],
+)
+def test_the_stored_login_events_must_both_carry_the_forwarded_client_address(
+    probe: ModuleType, login_address: str | None, error_address: str | None, accepted: bool
+) -> None:
+    client_address = "198.51.100.23"
+    events = [
+        {"type": "LOGIN_ERROR", "ipAddress": error_address},
+        {"type": "LOGIN", "ipAddress": login_address},
+    ]
+    if accepted:
+        assert probe.stored_event_types(events, client_address) == ["LOGIN", "LOGIN_ERROR"]
+    else:
+        with pytest.raises(probe.ProbeFailure):
+            probe.stored_event_types(events, client_address)

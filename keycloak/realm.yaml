@@ -24,7 +24,8 @@ webAuthnPolicyRpId: hallucinai.de
 webAuthnPolicyPasswordlessRpId: hallucinai.de
 webAuthnPolicyPasswordlessPasskeysEnabled: true
 eventsEnabled: true
-eventsExpiration: 2592000         # login events: 30 days
+eventsExpiration: 7776000         # login events: 90 days
+enabledEventTypes: [LOGIN, LOGIN_ERROR]   # no other user event type is stored
 adminEventsEnabled: true
 attributes:
   adminEventsExpiration: "31536000"   # admin events: 1 year
