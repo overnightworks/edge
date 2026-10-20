@@ -163,8 +163,7 @@ clients:
       - profile
       - groups
     optionalClientScopes: []
-  # One client for presentator's two hosts (agent-presentator#242); its logout address is a proposal
-  # until presentator sends the exact path.
+  # One client for presentator's two hosts (agent-presentator#242).
   - clientId: presentator
     name: presentator
     enabled: true
@@ -181,7 +180,7 @@ clients:
       - "https://presentator.hallucinai.de/auth/callback"
       - "https://presentator-talk.hallucinai.de/auth/callback"
     attributes:
-      post.logout.redirect.uris: "https://presentator.hallucinai.de/"
+      post.logout.redirect.uris: "https://presentator.hallucinai.de/login"
       pkce.code.challenge.method: "S256"
     defaultClientScopes: *agent_workload_scopes
     optionalClientScopes: []
