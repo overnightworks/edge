@@ -609,7 +609,8 @@ def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
 
 
 def _refuse_switched_off_units_still_running(missing: Sequence[MissingSetup]) -> None:
-    """A switched-off unit never gets a setup or a start, but its containers still run."""
+    """A unit stopped by `edge stop` never gets a setup or a start,
+    but its containers still run."""
     for item in missing:
         print(
             f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
