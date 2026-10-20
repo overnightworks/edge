@@ -63,14 +63,6 @@ NOTHING_PUBLISHED = "edge apply: nothing published"
 INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `edge external check --hosts`"
 
 
-def main_or_fail(arguments: list[str]) -> int:
-    """`cli.main`, where a Ctrl-C that escapes fails the test instead of stopping pytest."""
-    try:
-        return cli.main(arguments)
-    except KeyboardInterrupt:
-        pytest.fail("a Ctrl-C escaped the composer")
-
-
 @dataclass
 class Result:
     exit_code: int
@@ -159,7 +151,7 @@ def world(
 
     def run(*answers: str, arguments=("apply",), while_prompt_waits=None) -> Result:
         at_terminal("\n".join(answers), while_prompt_waits)
-        exit_code = main_or_fail(list(arguments))
+        exit_code = cli.main(list(arguments))
         return Result(exit_code, sys.stdout.getvalue(), capsys.readouterr().err)
 
     def settle_local() -> None:
@@ -384,6 +376,7 @@ def test_ctrl_c_in_the_gap_after_the_local_part_publishes_nothing(world, monkeyp
 
     assert result.exit_code == 1
     assert "edge apply: interrupted, nothing published" in result.err
+    assert "step-ca is on" in result.out
     assert world.publish_never_began()
 
 
@@ -404,6 +397,8 @@ def test_ctrl_c_with_the_publish_started_names_the_check_to_run(world, monkeypat
 
     assert result.exit_code == 1
     assert INTERRUPTED_IN_PUBLISH in result.err
+    if after_running:
+        assert "no findings" in result.out
 
 
 class InterruptedOnSummary(io.StringIO):
@@ -424,7 +419,7 @@ def test_ctrl_c_after_the_publish_exit_is_recorded_leaves_that_exit(
     publish_returns(monkeypatch, publish_exit)
     monkeypatch.setattr(sys, "stderr", InterruptedOnSummary())
 
-    assert main_or_fail(["apply"]) == expected
+    assert cli.main(["apply"]) == expected
 
 
 def test_the_composer_installs_no_sigterm_handler(world, monkeypatch):
