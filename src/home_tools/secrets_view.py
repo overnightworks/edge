@@ -27,6 +27,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
+from functools import reduce
+from operator import and_
 from pathlib import Path, PurePosixPath
 
 from home_tools.report import findings_count, markdown_table, write_state_file
@@ -153,7 +155,7 @@ class SecretEntry:
 
     @property
     def written_by_setup(self) -> bool:
-        """`--setup` writes a token it guides through and a service password it generates; every other entry is by hand."""
+        """`--setup` writes a token it guides through and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
         return self.source is not None or self.kind is SecretKind.SERVICE_PASSWORD
 
     @property
@@ -687,18 +689,20 @@ def _closed(relative: PurePosixPath, mode: int) -> _Flaw | None:
     return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, der Besitzer braucht {needed:o}", mode_fix(relative, needed))
 
 
-def _loose(relative: PurePosixPath, mode: int, declaring: SecretEntry | None = None) -> _Flaw | None:
-    allowed = too_loose(mode, declaring.loosest_mode if declaring else LOOSEST_FILE_MODE)
+def _loose(relative: PurePosixPath, mode: int, declaring: tuple[SecretEntry, ...] = ()) -> _Flaw | None:
+    """Judged against the permission bits every declaring entry allows, so no entry's limit is loosened by another."""
+    loosest = reduce(and_, (entry.loosest_mode for entry in declaring)) if declaring else LOOSEST_FILE_MODE
+    allowed = too_loose(mode, loosest)
     if allowed is None:
         return None
-    reason = f" ({declaring.loosest_mode_reason})" if declaring and declaring.loosest_mode_reason else ""
+    reasons = [entry.loosest_mode_reason for entry in declaring if entry.loosest_mode == allowed and entry.loosest_mode_reason]
+    reason = f" ({reasons[0]})" if reasons else ""
     return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}{reason}", mode_fix(relative, allowed))
 
 
-def _declaring_entry(relative: PurePosixPath, manifest: tuple[SecretEntry, ...]) -> SecretEntry | None:
-    """The live entry whose place this file is; when several name it, the strictest, so a wildcard never loosens a specific secret."""
-    named = [entry for entry in manifest if not entry.retired and any(_matches_pattern(relative, pattern) for pattern in entry.paths)]
-    return min(named, key=lambda entry: entry.loosest_mode, default=None)
+def _declaring_entries(relative: PurePosixPath, manifest: tuple[SecretEntry, ...]) -> tuple[SecretEntry, ...]:
+    """The live entries whose place this file is."""
+    return tuple(entry for entry in manifest if not entry.retired and any(_matches_pattern(relative, pattern) for pattern in entry.paths))
 
 
 # What can be wrong with a folder on the way to a secret, in the order `unfit_folder` names the first one found.
@@ -733,7 +737,7 @@ def _tree_findings(
         if stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns):
             finding = unfit_folder(fact.relative, fact.mode)
         else:
-            loose = _loose(fact.relative, fact.mode, _declaring_entry(fact.relative, manifest))
+            loose = _loose(fact.relative, fact.mode, _declaring_entries(fact.relative, manifest))
             finding = _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, loose)
         if finding:
             yield finding

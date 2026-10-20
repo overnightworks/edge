@@ -55,7 +55,8 @@ INVENTORY = {
     "step-ca/root_ca_key",
     "step-ca/password",
     "step-ca/root_ca.crt",
-    "step-ca/pending-root",
+    "step-ca/pending-root/root_ca_key",
+    "step-ca/pending-root/root_ca.crt",
     "keycloak/db-password",
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
@@ -336,6 +337,11 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
             0o644,
             {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
         ),
+        (
+            DECLARED_MODE_ENTRY.replace("0o644", "0o640") + WILDCARD_ENTRY.replace("0o644", "0o604"),
+            0o644,
+            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+        ),
     ],
     ids=[
         "M1 declared mode is no finding",
@@ -343,6 +349,7 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
         "M3 no declaration means 0600",
         "two declarations of the same mode agree",
         "the strictest declaration wins over a looser wildcard",
+        "two declarations allow only the bits both allow",
     ],
 )
 def test_a_file_is_judged_against_the_mode_its_entry_declares(
@@ -353,6 +360,30 @@ def test_a_file_is_judged_against_the_mode_its_entry_declares(
     use_manifest(manifest)
     plant_secrets(home)
     (home / ".secrets" / "step-ca" / "password").chmod(file_mode)
+
+    home_secrets(home, probe)
+
+    assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
+
+
+@pytest.mark.parametrize(
+    ("file_name", "loose_findings"),
+    [
+        ("root_ca_key", {"~/.secrets/step-ca/.pending-root/root_ca_key": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/.pending-root/root_ca_key`"]}),
+        ("root_ca.crt", {}),
+    ],
+    ids=["a pending root key at 0644 is loose", "a pending root certificate at 0644 is fine"],
+)
+def test_only_the_pending_root_certificate_may_be_0644(
+    tmp_path: Path, probe: FakeProbe, capsys, file_name: str, loose_findings: dict[str, list[str]]
+) -> None:
+    home = tmp_path / "home"
+    pending = home / ".secrets" / "step-ca" / ".pending-root"
+    pending.mkdir(parents=True, mode=0o700)
+    (pending / file_name).write_text("x")
+    (pending / file_name).chmod(0o644)
+    for folder in (pending, pending.parent, home / ".secrets"):
+        folder.chmod(0o700)
 
     home_secrets(home, probe)
 
@@ -594,7 +625,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
         "step-ca/root_ca.crt": SecretKind.CONFIGURATION,
-        "step-ca/pending-root": SecretKind.CONFIGURATION,
+        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION,
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
     assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
@@ -610,7 +641,8 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "step-ca/root_ca_key",
         "step-ca/password",
         "step-ca/root_ca.crt",
-        "step-ca/pending-root",
+        "step-ca/pending-root/root_ca_key",
+        "step-ca/pending-root/root_ca.crt",
         "keycloak/db-password",
         "keycloak/config-cli-secret",
         "keycloak/bootstrap-admin-password",

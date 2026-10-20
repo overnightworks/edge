@@ -341,7 +341,8 @@ das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
 `expires_in_days` (1 bis 366), alle vier zusammen; ein `service-password`
-hat genau einen Pfad ohne Platzhalter und wird erzeugt. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
+hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
+dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
