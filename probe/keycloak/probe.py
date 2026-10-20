@@ -841,6 +841,7 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
+        self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.the_observer_door(admin)
@@ -1019,7 +1020,7 @@ class Probe:
             "ssoSessionIdleTimeout": 604800,
             "bruteForceProtected": True,
             "eventsEnabled": True,
-            "eventsExpiration": 2592000,
+            "eventsExpiration": 7776000,
             "adminEventsEnabled": True,
             "loginTheme": THEME,
             "accountTheme": THEME,
@@ -1032,6 +1033,8 @@ class Probe:
         admin_expiry = realm.get("attributes", {}).get("adminEventsExpiration")
         if admin_expiry != "31536000":
             wrong["attributes.adminEventsExpiration"] = admin_expiry
+        if sorted(realm.get("enabledEventTypes", [])) != ["LOGIN", "LOGIN_ERROR"]:
+            wrong["enabledEventTypes"] = realm.get("enabledEventTypes")
         if realm.get("adminEventsDetailsEnabled"):
             wrong["adminEventsDetailsEnabled"] = True
         providers = inventory[REALM].get("identity provider", {}).values()
@@ -1053,7 +1056,8 @@ class Probe:
         self.held(
             "8",
             "rpId hallucinai.de, access token 300 s, SSO max 30 d / idle 7 d, login events "
-            "30 d, admin events 1 y without details (no client representation in them), "
+            "90 d (LOGIN and LOGIN_ERROR only), admin events 1 y without details (no client "
+            "representation in them), "
             "brute force on in both realms, "
             f"{len(providers)} identity providers (so no trustEmail=true), master browser flow "
             "browser-mfa, direct grant direct-grant-mfa, rpId localhost, "
@@ -1544,6 +1548,42 @@ class Probe:
                         return
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
+
+    def only_logins_and_failed_logins_are_stored(self, admin: Admin, rp_secret: str) -> None:
+        password = self.keep_secret("probe-events password", secrets.token_urlsafe(16))
+        user_id = admin.create_user(REALM, "probe-events", password)
+        tokens = self.password_grant("probe-events", password, rp_secret)
+        refused = through_tunnel(
+            "POST",
+            PUBLIC_TOKEN_PATH,
+            form={
+                "grant_type": "password",
+                "client_id": "probe-rp",
+                "client_secret": rp_secret,
+                "username": "probe-events",
+                "password": "not-the-password",
+            },
+        )
+        expect(refused.status == 400, f"a wrong password answered {refused.status}")
+        logout = through_tunnel(
+            "POST",
+            PUBLIC_LOGOUT_PATH,
+            form={
+                "client_id": "probe-rp",
+                "client_secret": rp_secret,
+                "refresh_token": tokens["refresh_token"],
+            },
+        )
+        expect(logout.status == 204, f"the logout answered {logout.status}")
+        stored = sorted(event["type"] for event in admin.get(f"/{REALM}/events?user={user_id}"))
+        expect(
+            stored == ["LOGIN", "LOGIN_ERROR"],
+            f"probe-events has the stored events {stored}, not one LOGIN and one LOGIN_ERROR",
+        )
+        self.held(
+            "EV2",
+            "a sign-in stored one LOGIN, a wrong password one LOGIN_ERROR, a logout none",
+        )
 
     def app_client(self, admin: Admin, client: AppClient) -> None:
         """Proof 10 (#108, #161): an app's client does what #11 lists, through the public tunnel."""
