@@ -117,6 +117,7 @@ PRESENTATOR = AppClient(
     f"https://presentator.{DOMAIN}/",
 )
 APP_CLIENTS = (SONGMAKER, HOPIN, PRESENTATOR)
+APP_DEFAULT_CLIENT_SCOPES = {"basic", "profile", "groups"}
 SECRET_FILES = (
     "db-password",
     "config-cli-secret",
@@ -1731,12 +1732,18 @@ class Probe:
                 "directAccessGrantsEnabled": False,
                 "serviceAccountsEnabled": False,
                 "frontchannelLogout": False,
-                "redirectUris": list(client.callbacks),
                 "baseUrl": f"{client.origin}/",
                 "alwaysDisplayInConsole": True,
                 "optionalClientScopes": [],
             }.items()
             if found.get(key) != value
+        } | {
+            key: found.get(key)
+            for key, value in {
+                "redirectUris": set(client.callbacks),
+                "defaultClientScopes": APP_DEFAULT_CLIENT_SCOPES,
+            }.items()
+            if set(found.get(key) or ()) != value
         }
         expect(
             not wrong and not backchannel_url,
