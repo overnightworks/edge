@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
 def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
     apply_parser = subcommands.add_parser(
         "apply",
-        help="switch the units of fleet.yaml on or off, then publish to Cloudflare and GitHub",
+        help="switch the units of fleet.yaml on or off, then publish to Cloudflare",
         description="The local part (`--closed`: the units of this repository, at a terminal, "
         "after `yes`), then, only if it ended clean, the publish (`edge external apply`, "
         "after its own `yes`). Each part asks only when it has changes.",

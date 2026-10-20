@@ -1,0 +1,704 @@
+#!/usr/bin/env python3
+"""Probe of the agent service's egress (#189 cells E1, E3-E10, E12, E13): the gateway `agent-egress`
+and the stand-in `agent-probe` of compose.yaml, in a throwaway compose project of their own.
+
+    flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 \\
+        python3 probe/agent-service/egress.py --scratch DIR
+
+The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
+network moved to a free /24 of its own (the gateway's address and the stand-in's `extra_hosts`
+follow through the anchors), so it never collides with the live stack's `edge_egress`
+(172.31.252.0/24). E3-E5 and E10 are observed through the packet windows of capture.py, each with a
+control; a window that dropped a frame, held a frame it could not decode, or in which the control
+did not show, is NOT DRIVEN and fails the run. E2 (the issuer's name) is driven with the real
+service, as the issuer has no public DNS record before the go-live. The probe always removes its
+containers and networks, and never touches the live stack: the project name is its own and is set
+on every command. Needs an empty or new --scratch directory. Exit 0: every cell held, 1: a cell
+failed or was not driven.
+
+The stand-in runs the `Client` class below: the driver sends its source to `python -I -` inside
+the container, so the client needs nothing but the standard library of the pinned image.
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import inspect
+import ipaddress
+import json
+import os
+import secrets
+import select
+import selectors
+import signal
+import socket
+import ssl
+import struct
+import subprocess
+import sys
+import time
+from collections.abc import Callable
+from functools import cached_property
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
+
+from edge_copy import ProbeFailed, expect  # noqa: E402
+
+PROJECT = "edge-agentegress-probe"
+LABEL = f"edge.probe={PROJECT}"
+COMPOSE_FILE = REPO / "compose.yaml"
+OVERLAY = REPO / "probe" / "agent-service" / "compose.probe.yaml"
+GATEWAY_STATIC = REPO / "agent-service" / "egress" / "traefik.yml"
+# The egress network of compose.yaml and the address the gateway's static file names.
+LIVE_EGRESS_PREFIX = "172.31.252."
+PROVIDER = "api.anthropic.com"
+GATEWAY_PORT = 443
+UPSTREAM_PORT = 443  # the allowed hosts' port, which allowed.yml passes the connection to
+SUBNET_CANDIDATES = [f"172.31.{third}.0/24" for third in range(251, 239, -1)]
+GATEWAY_HOST_NUMBER = 10
+READY_SECONDS = 90
+WINDOW_READY_SECONDS = 180  # the first run pulls the capture image
+WINDOW_END_SECONDS = 60
+HOST_WINDOW_TRIES = 3  # the host's window also sees the operator's traffic and may drop
+CONTROL_DELAY_SECONDS = 2
+OUTSIDE_NAME = "example.com"
+NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
+UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
+EMBEDDED_RESOLVER = "127.0.0.11"
+PUBLIC_RESOLVER = "1.1.1.1"
+PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"
+CLIENT_IMPORTS = "import errno, json, selectors, socket, ssl, struct, sys, time\n"
+
+
+class NotDriven(ProbeFailed):
+    """A cell could not be driven to a verdict: a window dropped a frame or missed its control."""
+
+
+def classify_syns(
+    syns: list[dict], control_started: float, control_addresses: set[str]
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]], bool]:
+    """The SYNs of a window by the kernel's time of their frame: those from before the control
+    started, those after it that do not go to the control's destination (its addresses on
+    :443), and whether the control's own SYN is there."""
+    early = [(syn["destination"], syn["port"]) for syn in syns if syn["at"] < control_started]
+    later = [syn for syn in syns if syn["at"] >= control_started]
+    controls = [
+        syn
+        for syn in later
+        if syn["destination"] in control_addresses and syn["port"] == UPSTREAM_PORT
+    ]
+    stray = [(syn["destination"], syn["port"]) for syn in later if syn not in controls]
+    return early, stray, bool(controls)
+
+
+class Client:
+    """What the stand-in does inside its own namespaces; every command prints one JSON line."""
+
+    BATCH = 500  # connects in flight at once, below any file-descriptor limit
+    SETTLE_SECONDS = 3.0  # a connect on a quiet network answers or is refused at once
+
+    @staticmethod
+    def tls(address: str, server_name: str, port: str, verify: str) -> dict:
+        context = ssl.create_default_context()
+        if verify != "verify":
+            context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+        name = None if server_name == "-" else server_name
+        try:
+            with (
+                socket.create_connection((address, int(port)), timeout=8) as raw,
+                context.wrap_socket(raw, server_hostname=name) as secured,
+            ):
+                return {
+                    "handshake": True,
+                    "certificate": bool(secured.getpeercert(binary_form=True)),
+                }
+        except (OSError, ssl.SSLError) as error:
+            return {"handshake": False, "error": f"{type(error).__name__}: {error}"}
+
+    @staticmethod
+    def plain(address: str, port: str) -> dict:
+        try:
+            with socket.create_connection((address, int(port)), timeout=5) as raw:
+                raw.sendall(b"GET / HTTP/1.1\r\nHost: probe\r\n\r\n")
+                first = raw.recv(64)
+        except OSError as error:
+            return {"connected": False, "error": f"{type(error).__name__}: {error}"}
+        if first.startswith(b"HTTP/"):
+            return {"connected": True, "reply": first.split(b"\r\n")[0].decode("ascii", "replace")}
+        return {"connected": True, "reply": "closed" if not first else "not http"}
+
+    @staticmethod
+    def connect(address: str, port: str) -> dict:
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as attempt:
+            attempt.settimeout(4)
+            code = attempt.connect_ex((address, int(port)))
+        return {"result": "connected" if code == 0 else errno.errorcode.get(code, str(code))}
+
+    @staticmethod
+    def udp(address: str, port: str) -> dict:
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        with socket.socket(family, socket.SOCK_DGRAM) as attempt:
+            try:
+                attempt.connect((address, int(port)))
+            except OSError as error:
+                return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
+        return {"result": "routable"}
+
+    @staticmethod
+    def routes() -> dict:
+        with open("/proc/net/route") as table:
+            rows = [line.split() for line in table.read().splitlines()[1:]]
+        return {"default_routes": [row[0] for row in rows if row[1] == "00000000"]}
+
+    @staticmethod
+    def ipv6() -> dict:
+        try:
+            with open("/proc/net/if_inet6") as table:
+                return {"interfaces": sorted({line.split()[-1] for line in table if line.strip()})}
+        except FileNotFoundError:
+            return {"interfaces": []}
+
+    @staticmethod
+    def resolve(name: str) -> dict:
+        try:
+            found = socket.getaddrinfo(name, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror as error:
+            return {"addresses": [], "error": errno.errorcode.get(error.errno or 0, str(error))}
+        return {"addresses": sorted({entry[4][0] for entry in found})}
+
+    @staticmethod
+    def rawdns(name: str) -> dict:
+        labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
+        query = struct.pack("!HHHHHH", 0x5EED, 0x0100, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as asking:
+            asking.settimeout(4)
+            asking.sendto(query, ("127.0.0.11", 53))
+            try:
+                reply = asking.recv(512)
+            except OSError as error:
+                return {"answered": False, "error": type(error).__name__}
+        return {"answered": True, "response_code": reply[3] & 0x0F}
+
+    @staticmethod
+    def scan(addresses: str) -> dict:
+        return {address: Client._open_ports(address) for address in addresses.split(",")}
+
+    @staticmethod
+    def _open_ports(address: str) -> list[int]:
+        # A port is open only when three connects in a row complete: a connect to the address
+        # we own can meet itself on an ephemeral port.
+        candidates = Client._completing_ports(address, range(1, 65536))
+        for _ in range(2):
+            candidates = Client._completing_ports(address, candidates)
+        return sorted(candidates)
+
+    @staticmethod
+    def _completing_ports(address: str, ports) -> list[int]:
+        ports, completed = list(ports), []
+        for start in range(0, len(ports), Client.BATCH):
+            waiting, selector = {}, selectors.DefaultSelector()
+            for port in ports[start : start + Client.BATCH]:
+                attempt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                attempt.setblocking(False)
+                attempt.connect_ex((address, port))
+                selector.register(attempt, selectors.EVENT_WRITE)
+                waiting[attempt] = port
+            deadline = time.monotonic() + Client.SETTLE_SECONDS
+            while waiting and time.monotonic() < deadline:
+                for key, _ in selector.select(timeout=0.2):
+                    attempt = key.fileobj
+                    if attempt.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0:
+                        completed.append(waiting[attempt])
+                    selector.unregister(attempt)
+                    del waiting[attempt]
+                    attempt.close()
+            if waiting:
+                raise SystemExit(f"scan of {address}: {len(waiting)} connects did not finish")
+            selector.close()
+        return completed
+
+    @staticmethod
+    def listeners() -> dict:
+        found = {"tcp": [], "udp": []}
+        for protocol in ("tcp", "udp"):
+            for table, version in ((protocol, 4), (protocol + "6", 6)):
+                with open(f"/proc/net/{table}") as sockets:
+                    rows = [line.split() for line in sockets.read().splitlines()[1:]]
+                for row in rows:
+                    if protocol == "udp" or row[3] == "0A":
+                        found[protocol].append(Client._socket_name(row[1], version))
+        return found
+
+    @staticmethod
+    def _socket_name(hexadecimal: str, version: int) -> str:
+        address, port = hexadecimal.split(":")
+        if version == 4:
+            return f"{socket.inet_ntoa(bytes.fromhex(address)[::-1])}:{int(port, 16)}"
+        words = [bytes.fromhex(address[at : at + 8])[::-1] for at in range(0, 32, 8)]
+        return f"[{socket.inet_ntop(socket.AF_INET6, b''.join(words))}]:{int(port, 16)}"
+
+    @staticmethod
+    def main(arguments: list[str]) -> int:
+        print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)
+        return 0
+
+
+CLIENT_PROGRAM = (
+    CLIENT_IMPORTS + inspect.getsource(Client) + "\nsys.exit(Client.main(sys.argv[1:]))\n"
+)
+
+
+def free_subnet(taken: list[str]) -> ipaddress.IPv4Network:
+    """The first candidate /24 that overlaps no network the daemon already has."""
+    used = [ipaddress.ip_network(subnet) for subnet in taken]
+    for candidate in map(ipaddress.IPv4Network, SUBNET_CANDIDATES):
+        if not any(candidate.overlaps(other) for other in used if other.version == 4):
+            return candidate
+    raise ProbeFailed(f"no free /24 among {SUBNET_CANDIDATES[0]} ... {SUBNET_CANDIDATES[-1]}")
+
+
+def lan_address() -> str:
+    """The address the host would use to reach the internet; a UDP connect sends nothing."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+        route.connect((PUBLIC_RESOLVER, 53))
+        return route.getsockname()[0]
+
+
+class Probe:
+    def __init__(self, scratch: Path) -> None:
+        expect(PROJECT != "edge", "the probe must never run in the live project")
+        scratch.mkdir(parents=True, exist_ok=True)
+        expect(not any(scratch.iterdir()), f"{scratch} is not empty")
+        home = scratch / "home"
+        home.mkdir()
+        subnet = free_subnet(self.daemon_subnets())
+        self.prefix = str(subnet.network_address).removesuffix("0")
+        self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
+        self.compose_file = scratch / "compose.yaml"
+        self.static_file = scratch / "traefik.yml"
+        self.environment = {
+            **os.environ,
+            "HOME": str(home),
+            "COMPOSE_PROJECT_NAME": PROJECT,
+            "EDGE_DOMAIN": "probe.invalid",
+            "DOCKER_GID": "0",
+            "PROBE_EGRESS_STATIC": str(self.static_file),
+        }
+        self.windows: list[subprocess.Popen] = []
+        self.throwaways = 0
+        self.held: list[str] = []
+        self.listener: socket.socket | None = None
+
+    # --- plumbing -----------------------------------------------------------------------------
+
+    def run(
+        self, command: list[str], *, stdin: str | None = None, check: bool = True,
+        timeout: int = 300,
+    ) -> subprocess.CompletedProcess:  # fmt: skip
+        result = subprocess.run(
+            command, input=stdin, capture_output=True, text=True, env=self.environment, cwd=REPO,
+            check=False, timeout=timeout, close_fds=True,
+        )  # fmt: skip
+        if check and result.returncode != 0:
+            tail = (result.stderr or result.stdout).strip().splitlines()
+            raise ProbeFailed(f"{' '.join(command[:5])} exited {result.returncode}: {tail[-1:]}")
+        return result
+
+    def daemon_subnets(self) -> list[str]:
+        listing = subprocess.run(
+            ["docker", "network", "ls", "-q"], capture_output=True, text=True, check=True
+        ).stdout.split()
+        if not listing:
+            return []
+        inspected = subprocess.run(
+            ["docker", "network", "inspect", *listing], capture_output=True, text=True, check=True
+        ).stdout
+        return [
+            config["Subnet"]
+            for network in json.loads(inspected)
+            for config in (network.get("IPAM") or {}).get("Config") or []
+            if config.get("Subnet")
+        ]
+
+    def compose_command(self, *arguments: str) -> list[str]:
+        return [
+            "docker", "compose", "-p", PROJECT, "--project-directory", str(REPO),
+            "--file", str(self.compose_file), "--file", str(OVERLAY),
+            "--profile", "agent-service", "--profile", "agent-probe", *arguments,
+        ]  # fmt: skip
+
+    def compose(self, *arguments: str, check: bool = True, timeout: int = 300):
+        return self.run(self.compose_command(*arguments), check=check, timeout=timeout)
+
+    def container(self, service: str) -> str:
+        found = self.compose("ps", "-q", service).stdout.strip()
+        expect(bool(found), f"{service} has no container")
+        return found
+
+    def client(self, *arguments: str) -> dict:
+        """One Client command inside the stand-in."""
+        return self.client_with(["exec", "-i", self.container("agent-probe")], arguments)
+
+    def client_in_namespace_of(self, container: str, *arguments: str) -> dict:
+        return self.throwaway([f"--network=container:{container}"], arguments)
+
+    def client_on_network(self, network: str, *arguments: str) -> dict:
+        return self.throwaway([f"--network={network}"], arguments)
+
+    def throwaway(self, network: list[str], arguments) -> dict:
+        self.throwaways += 1
+        name = f"{PROJECT}-throwaway-{self.throwaways}"
+        return self.client_with(
+            ["run", "--rm", "-i", "--name", name, "--label", LABEL, *network, "--read-only",
+             "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt",
+             "no-new-privileges:true", self.image],
+            arguments,
+        )  # fmt: skip
+
+    def client_with(self, docker_arguments: list[str], arguments) -> dict:
+        command = ["docker", *docker_arguments, "python", "-I", "-", *arguments]
+        result = self.run(command, stdin=CLIENT_PROGRAM, timeout=240)
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    @cached_property
+    def image(self) -> str:
+        return json.loads(self.compose("config", "--format", "json").stdout)["services"][
+            "agent-probe"
+        ]["image"]
+
+    def inspect_network(self, name: str) -> dict:
+        return json.loads(self.run(["docker", "network", "inspect", f"{PROJECT}_{name}"]).stdout)[0]
+
+    # --- life cycle ---------------------------------------------------------------------------
+
+    def __enter__(self) -> Probe:
+        try:
+            self.write_on_probe_subnet(COMPOSE_FILE, self.compose_file)
+            self.write_on_probe_subnet(GATEWAY_STATIC, self.static_file)
+            self.remove_stack()  # a crashed earlier run of this project, never anything else
+            self.compose("up", "--detach", "--wait", "agent-egress", "agent-probe", timeout=600)
+        except BaseException:
+            self.__exit__()
+            raise
+        return self
+
+    def write_on_probe_subnet(self, source: Path, copy: Path) -> None:
+        """A copy of the file with the live egress subnet replaced by the probe's: the live
+        stack's edge_egress will own 172.31.252.0/24, and Docker refuses a second network on it."""
+        text = source.read_text()
+        expect(LIVE_EGRESS_PREFIX in text, f"{source.name} does not name {LIVE_EGRESS_PREFIX}")
+        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))
+        copy.chmod(0o644)
+
+    def __exit__(self, *_: object) -> None:
+        if self.listener:
+            self.listener.close()
+        for window in self.windows:
+            if window.poll() is None:
+                window.kill()
+            window.wait()
+        self.remove_stack()
+        left = self.run(
+            ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={PROJECT}"],
+            check=False,
+        ).stdout.split()
+        networks = self.run(
+            ["docker", "network", "ls", "-q", "--filter", f"name={PROJECT}_"], check=False
+        ).stdout.split()
+        if left or networks:
+            raise ProbeFailed(f"the teardown left containers {left} and networks {networks}")
+
+    def remove_stack(self) -> None:
+        stray = self.run(
+            ["docker", "ps", "-aq", "--filter", f"label={LABEL}"], check=False
+        ).stdout.split()
+        if stray:
+            self.run(["docker", "rm", "-f", *stray], check=False)
+        self.compose("down", "--volumes", "--remove-orphans", "--timeout", "10", check=False)
+
+    # --- the packet windows -------------------------------------------------------------------
+
+    def window(self, service: str, arguments: list[str], during: Callable[[], None]) -> dict:
+        """One bounded window of capture.py in the service's namespace; `during` runs inside it."""
+        command = self.compose_command(
+            "run", "--rm", "--no-deps", "-T", "--label", LABEL, service, *arguments
+        )
+        watcher = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=self.environment, cwd=REPO, close_fds=True,
+        )  # fmt: skip
+        self.windows.append(watcher)
+        ready, _, _ = select.select([watcher.stdout], [], [], WINDOW_READY_SECONDS)
+        first_line = watcher.stdout.readline().strip() if ready else ""
+        if first_line != "ready":
+            watcher.kill()
+            reason = watcher.communicate()[1][-300:]
+            raise ProbeFailed(f"{service}: the window did not open: {reason}")
+        during()
+        out, err = watcher.communicate(timeout=WINDOW_END_SECONDS)
+        exited = f"{service}: capture exited {watcher.returncode}: {err[-200:]}"
+        expect(watcher.returncode == 0, exited)
+        return json.loads(out.strip().splitlines()[-1])
+
+    @staticmethod
+    def complete(result: dict, cell: str, control_ended: float) -> None:
+        """Complete: nothing dropped, nothing undecoded, still open when the control ended."""
+        if result["drops"] or result["undecoded"] or result["ended_at"] < control_ended:
+            raise NotDriven(
+                f"{cell}: not driven: the window dropped {result['drops']} frames, could not "
+                f"decode {result['undecoded']} and ended by "
+                f"{result['ended_by']} after {result['frames']} frames in "
+                f"{result['ended_at'] - result['started_at']:.1f} s"
+                f"{', before the control ended' if result['ended_at'] < control_ended else ''}"
+            )
+
+    # --- the cells ----------------------------------------------------------------------------
+
+    def drive(self) -> None:
+        self.wait_until_the_gateway_answers()
+        self.cell_e1()
+        self.cells_e3_to_e5()
+        self.cell_e6()
+        self.cell_e7()
+        self.cell_e8()
+        self.cell_e9()
+        self.cell_e10()
+        self.cell_e12()
+        self.cell_e13()
+
+    def hold(self, cell: str, how: str) -> None:
+        print(f"{cell} held: {how}", flush=True)
+        self.held.append(cell)
+
+    def wait_until_the_gateway_answers(self) -> None:
+        deadline = time.monotonic() + READY_SECONDS
+        while self.client("connect", self.address, str(GATEWAY_PORT))["result"] != "connected":
+            expect(time.monotonic() < deadline, "the gateway does not answer on its address")
+            time.sleep(1)
+
+    def handshake(self, name: str) -> dict:
+        return self.client("tls", name, name, str(GATEWAY_PORT), "verify")
+
+    def cell_e1(self) -> None:
+        result = self.handshake(PROVIDER)
+        expect(result["handshake"] and result["certificate"], f"E1: {result}")
+        self.hold("E1", f"TLS to {PROVIDER} by name completed, certificate verified for it")
+
+    def refused_without_a_dial(self, cell: str, attempt: Callable[[], str]) -> None:
+        """E3-E5: the attempt ends in the gateway, and no SYN leaves it before the control's."""
+        control_started, control_ended, outcome = [], [], []
+        destinations = self.gateway_addresses(PROVIDER)
+
+        def during() -> None:
+            outcome.append(attempt())
+            time.sleep(CONTROL_DELAY_SECONDS)
+            control_started.append(time.time())
+            control = self.handshake(PROVIDER)
+            control_ended.append(time.time())
+            expect(control["handshake"], f"{cell}: the control handshake failed: {control}")
+
+        result = self.window("capture-egress", ["syn"], during)
+        self.complete(result, cell, control_ended[0])
+        destinations |= self.gateway_addresses(PROVIDER)
+        early, stray, control_seen = classify_syns(result["syns"], control_started[0], destinations)
+        expect(not early, f"{cell}: SYN out of the gateway before the control: {early}")
+        expect(not stray, f"{cell}: SYN after the control started, not to the control's: {stray}")
+        if not control_seen:
+            raise NotDriven(f"{cell}: not driven: the control's SYN to :443 is not in the window")
+        self.hold(cell, f"{outcome[0]}; no SYN left the gateway before the control's")
+
+    def gateway_addresses(self, name: str) -> set[str]:
+        """What the name resolves to in the gateway's own namespace, where Traefik resolves it."""
+        gateway = self.container("agent-egress")
+        return set(self.client_in_namespace_of(gateway, "resolve", name)["addresses"])
+
+    def cells_e3_to_e5(self) -> None:
+        def alerted(result: dict, what: str) -> None:
+            # An SSLError is the gateway's own alert; a reset or a timeout would say less.
+            expect(
+                not result["handshake"]
+                and "certificate" not in result
+                and result["error"].startswith("SSLError"),
+                f"{what}: {result}",
+            )
+
+        def sni(name: str) -> Callable[[], str]:
+            def attempt() -> str:
+                result = self.client("tls", self.address, name, str(GATEWAY_PORT), "noverify")
+                alerted(result, name)
+                return f"SNI {name!r} refused ({result['error']})"
+
+            return attempt
+
+        def without_sni() -> str:
+            result = self.client("tls", self.address, "-", str(GATEWAY_PORT), "noverify")
+            alerted(result, "no SNI")
+            return f"no SNI refused ({result['error']})"
+
+        def plain_bytes() -> str:
+            result = self.client("plain", self.address, str(GATEWAY_PORT))
+            refused = not result["connected"] or result["reply"] in ("closed", NOT_FOUND)
+            expect(refused, f"plain bytes: {result}")
+            return f"plain bytes refused ({result})"
+
+        self.refused_without_a_dial("E3", sni(OUTSIDE_NAME))
+        self.refused_without_a_dial("E4 no SNI", without_sni)
+        self.refused_without_a_dial("E4 plain bytes", plain_bytes)
+        self.refused_without_a_dial("E5 suffix", sni(f"{PROVIDER}.{OUTSIDE_NAME}"))
+        self.refused_without_a_dial("E5 prefix", sni(f"x{PROVIDER}"))
+
+    def cell_e6(self) -> None:
+        real = socket.getaddrinfo(PROVIDER, GATEWAY_PORT, socket.AF_INET)[0][4][0]
+        for target in (PUBLIC_RESOLVER, real):
+            result = self.client("connect", target, str(GATEWAY_PORT))
+            expect(result["result"] in UNREACHABLE, f"E6: {target}: {result}")
+        self.hold("E6", f"TCP to {PUBLIC_RESOLVER}:443 and {real}:443 has no route")
+
+    def cell_e7(self) -> None:
+        self.listener = socket.socket()
+        self.listener.bind(("0.0.0.0", 0))  # reachable on every host address: that is the point
+        self.listener.listen(8)
+        port = str(self.listener.getsockname()[1])
+        internet = self.network_gateway(f"{PROJECT}_internet")
+        # A host firewall may drop container-to-host traffic on every ordinary bridge; then the
+        # control cannot reach the listener either, and the unreachable result says less.
+        control = self.client_on_network(f"{PROJECT}_internet", "connect", internet, port)
+        targets = {
+            "docker0": self.network_gateway("bridge"),
+            "the internet bridge": internet,
+            "the LAN address": lan_address(),
+        }
+        errnos = []
+        for name, target in targets.items():
+            result = self.client("connect", target, port)
+            expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
+            errnos.append(f"{name} {result['result']}")
+        for network in ("agent", "egress"):
+            gateways = self.network_gateways(f"{PROJECT}_{network}")
+            expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
+        defaults = self.client("routes")["default_routes"]
+        expect(not defaults, f"E7: the stand-in has a default route on {defaults}")
+        self.hold(
+            "E7",
+            f"a host listener is unreachable via {'; '.join(errnos)}; no bridge address, no "
+            f"default route (control from the internet bridge: {control['result']})",
+        )
+
+    def network_gateways(self, name: str) -> list[str]:
+        inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]
+        configs = (inspected.get("IPAM") or {}).get("Config") or []
+        return [config["Gateway"] for config in configs if config.get("Gateway")]
+
+    def network_gateway(self, name: str) -> str:
+        gateways = self.network_gateways(name)
+        expect(len(gateways) == 1, f"{name} has gateways {gateways}")
+        return gateways[0]
+
+    def cell_e8(self) -> None:
+        interfaces = self.client("ipv6")["interfaces"]
+        expect(interfaces == ["lo"], f"E8: IPv6 interfaces are {interfaces}")
+        result = self.client("connect", PUBLIC_RESOLVER_V6, str(GATEWAY_PORT))
+        expect(result["result"] in UNREACHABLE, f"E8: {result}")
+        self.hold(
+            "E8", f"if_inet6 lists lo only; TCP to [{PUBLIC_RESOLVER_V6}]:443: {result['result']}"
+        )
+
+    def cell_e9(self) -> None:
+        for port in ("443", "53"):
+            result = self.client("udp", PUBLIC_RESOLVER, port)
+            expect(result["result"] in UNREACHABLE, f"E9: :{port}: {result}")
+        self.hold("E9", f"UDP to {PUBLIC_RESOLVER}:443 and :53 has no route")
+
+    def cell_e10(self) -> None:
+        for attempt in range(1, HOST_WINDOW_TRIES + 1):
+            try:
+                self.drive_dns_window()
+                return
+            except NotDriven as problem:
+                print(f"E10 try {attempt}: {problem}", flush=True)
+        raise NotDriven(f"E10: not driven in {HOST_WINDOW_TRIES} windows")
+
+    def drive_dns_window(self) -> None:
+        asked, control = secrets.token_hex(8), secrets.token_hex(8)
+        outcome = {}
+
+        def during() -> None:
+            outcome["getaddrinfo"] = self.client("resolve", f"{asked}.example.com")
+            outcome["raw"] = self.client("rawdns", f"{asked}.example.com")
+            outcome["plain"] = self.client("resolve", "example.com")
+            self.client_on_network(f"{PROJECT}_internet", "resolve", f"{control}.example.com")
+            outcome["control_ended"] = time.time()
+
+        result = self.window("capture-host", ["dns", asked, control], during)
+        self.complete(result, "E10", outcome["control_ended"])
+        seen = result["labels"]
+        if not seen.get(control):
+            raise NotDriven("E10: not driven: the control's question is not in the host window")
+        expect(not seen.get(asked), f"E10: the client's question left the container: {seen}")
+        for asking in ("getaddrinfo", "plain"):
+            expect(outcome[asking]["addresses"] == [], f"E10: {asking} resolved: {outcome[asking]}")
+        raw = outcome["raw"]
+        expect(not raw.get("answered") or raw["response_code"] != 0, f"E10: the raw query: {raw}")
+        peer = self.client("resolve", "agent-egress")["addresses"]
+        expect(peer == [self.address], f"E10: agent-egress resolves to {peer}")
+        self.hold(
+            "E10",
+            f"the host window holds the control's label ({seen[control]} frames) and not the "
+            f"client's; both queries got no address; agent-egress -> {peer[0]}",
+        )
+
+    def cell_e12(self) -> None:
+        found = self.client_in_namespace_of(self.container("agent-egress"), "listeners")
+        # Docker's embedded resolver listens on this loopback address in every container's own
+        # namespace; no other container can reach it.
+        found = {
+            protocol: [name for name in names if not name.startswith(EMBEDDED_RESOLVER + ":")]
+            for protocol, names in found.items()
+        }
+        listening = [f"{self.address}:{GATEWAY_PORT}"]
+        expect(found["tcp"] == listening, f"E12: TCP listeners {found['tcp']}")
+        expect(found["udp"] == [], f"E12: UDP sockets {found['udp']}")
+        self.hold("E12", f"the gateway listens on {self.address}:443/tcp and holds no UDP socket")
+
+    def cell_e13(self) -> None:
+        members = {
+            member["IPv4Address"].split("/")[0]: member["Name"]
+            for member in self.inspect_network("egress")["Containers"].values()
+        }
+        expect(self.address in members, f"E13: the gateway is not a member: {members}")
+        scanned = self.client("scan", ",".join(members))
+        wanted = {
+            address: ([GATEWAY_PORT] if address == self.address else []) for address in members
+        }
+        expect(scanned == wanted, f"E13: open ports {scanned}")
+        names = ", ".join(sorted(members.values()))
+        self.hold("E13", f"every port of {names} scanned: only {self.address}:443 is open")
+
+
+def interrupt(*_: object) -> None:
+    """`timeout`'s SIGTERM unwinds the probe, so its teardown runs."""
+    raise KeyboardInterrupt
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--scratch", type=Path, required=True)
+    arguments = parser.parse_args()
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        with Probe(arguments.scratch) as probe:
+            probe.drive()
+    except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
+        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
+        return 1
+    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

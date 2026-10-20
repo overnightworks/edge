@@ -2,8 +2,8 @@
 
 `python -m edge.external.tofu_test ROOT` installs or reuses the pinned tofu under ROOT and runs
 `tofu test` in `external/`. It is a build helper, not an `edge` subcommand. The tests may never act
-on the live accounts, so it refuses a test that does not mock both providers or names a live
-object, and it gives tofu no token: with none, the github provider would ask the operator's `gh`.
+on the live accounts, so it refuses a test that does not mock the provider or names a live
+object, and it gives tofu no token.
 """
 
 import itertools
@@ -25,11 +25,9 @@ TESTS_FOLDER = "tests"
 ACCEPTED_TEST_FILE = "*.tftest.hcl"
 # Every form `tofu test` runs: in the root folder and in `tests/`.
 TOFU_TEST_FILE_PATTERNS = ("*.tftest.hcl", "*.tofutest.hcl", "*.tftest.json", "*.tofutest.json")
-MOCKED_PROVIDERS = ("github", "cloudflare")
+MOCKED_PROVIDERS = ("cloudflare",)
 # Encrypts nothing real: the tests keep no state.
 THROWAWAY_STATE_PASSPHRASE = "edge-tofu-test-throwaway-passphrase"
-# Makes the github provider's `gh auth token` fallback fail instead of finding the operator's login.
-UNREACHABLE_GH = "/nonexistent"
 INIT_ARGUMENTS = ["init", "-backend=false", "-lockfile=readonly", "-input=false"]
 
 
@@ -95,10 +93,7 @@ def test_environment(tofu_path: Path, home: Path, temporary_directory: Path) -> 
         home=home,
         temporary_directory=temporary_directory,
         tofurc=tofu.TOFURC,
-        secrets={
-            "TF_VAR_state_passphrase": THROWAWAY_STATE_PASSPHRASE,
-            "GH_PATH": UNREACHABLE_GH,
-        },
+        secrets={"TF_VAR_state_passphrase": THROWAWAY_STATE_PASSPHRASE},
     )
 
 

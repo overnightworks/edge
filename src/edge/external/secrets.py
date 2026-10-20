@@ -42,15 +42,7 @@ class Access(Enum):
 
     @property
     def secret_files(self) -> tuple[SecretFile, ...]:
-        secrets_root = Path(SECRETS_DIRECTORY)
-        return (
-            self.cloudflare_file,
-            SecretFile(
-                secrets_root / "github" / ("fleet-admin" if self is Access.WRITE else self.value),
-                "GITHUB_TOKEN",
-            ),
-            _STATE_PASSPHRASE,
-        )
+        return (self.cloudflare_file, _STATE_PASSPHRASE)
 
 
 class SecretFileError(Exception):
@@ -58,7 +50,7 @@ class SecretFileError(Exception):
 
 
 def read_secrets(home: Path, access: Access) -> dict[str, str]:
-    """Variable name to value; a missing file stops the run so no provider falls back to `gh`."""
+    """Variable name to value; a missing file stops the run before tofu starts."""
     return {
         secret_file.variable: _read_secret_file(home, secret_file)
         for secret_file in access.secret_files

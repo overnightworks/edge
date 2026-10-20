@@ -32,13 +32,20 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the master's untouched theme and language. Proof 10 signs a member of the app's group
   (`/apps/songmaker/admin`, `/apps/hopin`, `/apps/presentator/admin`) in to each of the
   songmaker, hopin and presentator clients through 8081 with PKCE, its secret a scratch file the
-  overlay mounts. Proof 11 (#129) loads
+  overlay mounts. For songmaker and presentator it also drives the agent workload cells of #183
+  (W1 to W3: the `client_credentials` token has `agent-workload`, the `agent-service` audience, `azp`
+  and the realm's token lifespan, with no client override; a person's token has no `agent-workload`), hopin's refusal of
+  `client_credentials` (W5) and `agent-service` with every flow off (W4). Proof 11 (#129) loads
   `keycloak/go-live` and runs only its step 6 (never `run()`, whose compose calls would reach the
   operator's project): the admin it creates holds `admin` with `CONFIGURE_TOTP` and
   `webauthn-register` pending (both enabled in master), is refused a password grant without TOTP,
   meets the TOTP enrolment and then the passkey page at the browser sign-in, and a second run asks
   nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
-  are off. Passkey registration itself is not driven.
+  are off. Passkey registration itself is not driven. Proof EV2 (#181) signs in, sends a wrong
+  password and logs out through 8081, sending `X-Forwarded-For` the way cloudflared does, and
+  holds when the user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with
+  exactly that address (the logout stores none). The probe simulates cloudflared; it does not
+  prove what Cloudflare passes on, and a client-forged leftmost value is stored (#190).
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker`, `hopin` and `presentator` clients, which callers must not create
   themselves; they create their other clients and users through the admin API.

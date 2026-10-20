@@ -24,10 +24,15 @@ webAuthnPolicyRpId: hallucinai.de
 webAuthnPolicyPasswordlessRpId: hallucinai.de
 webAuthnPolicyPasswordlessPasskeysEnabled: true
 eventsEnabled: true
-eventsExpiration: 2592000         # login events: 30 days
+eventsExpiration: 7776000         # login events: 90 days
+enabledEventTypes: [LOGIN, LOGIN_ERROR]   # no other user event type is stored
 adminEventsEnabled: true
 attributes:
   adminEventsExpiration: "31536000"   # admin events: 1 year
+roles:
+  realm:
+    - name: agent-workload
+      description: Service-account-only marker of an app workload calling the agent service.
 groups:
   - name: apps
     subGroups:
@@ -76,6 +81,19 @@ clientScopes:
           # Stated, because Keycloak would otherwise default it on create and the next apply flip it.
           userinfo.token.claim: "false"
           introspection.token.claim: "true"
+# Only the service accounts of the clients that call the agent service (A1d, #183) are users here, and
+# only to hold agent-workload; no person is ever listed, and no group.
+users:
+  - username: service-account-songmaker
+    enabled: true
+    serviceAccountClientId: songmaker
+    realmRoles:
+      - agent-workload
+  - username: service-account-presentator
+    enabled: true
+    serviceAccountClientId: presentator
+    realmRoles:
+      - agent-workload
 clients:
   # Audience only: the agent service accepts tokens issued for it and never signs anyone in.
   - clientId: agent-service
@@ -90,7 +108,9 @@ clients:
     frontchannelLogout: false
   # songmaker signs people in with the authorization code and PKCE. Back-channel logout is left out
   # until its address is decided (songmaker#1620, K3c #50), so a block or sign-out in Keycloak ends
-  # an open songmaker session only when that session expires.
+  # an open songmaker session only when that session expires. Its service account is the workload
+  # identity for the agent service (the token's azp must equal the people's); the same holds for
+  # presentator. hopin names no agent use, so it has none.
   - clientId: songmaker
     name: songmaker
     enabled: true
@@ -99,7 +119,7 @@ clients:
     standardFlowEnabled: true
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
-    serviceAccountsEnabled: false
+    serviceAccountsEnabled: true
     frontchannelLogout: false
     baseUrl: "https://songmaker.hallucinai.de/"
     alwaysDisplayInConsole: true
@@ -108,10 +128,16 @@ clients:
     attributes:
       post.logout.redirect.uris: "https://songmaker.hallucinai.de/login"
       pkce.code.challenge.method: "S256"
-    defaultClientScopes:
+    defaultClientScopes: &agent_workload_scopes
       - basic
       - profile
+      - email
+      - roles
+      - web-origins
+      - acr
+      - service_account
       - groups
+      - agent-service-audience
     optionalClientScopes: []
   # hopin signs people in the same way as songmaker, back-channel logout left out for the same reason
   # (hopin#25, K3c #50). Its URLs are hopin's proposal; hopin mounts none of them yet.
@@ -147,7 +173,7 @@ clients:
     standardFlowEnabled: true
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
-    serviceAccountsEnabled: false
+    serviceAccountsEnabled: true
     frontchannelLogout: false
     baseUrl: "https://presentator.hallucinai.de/"
     alwaysDisplayInConsole: true
@@ -157,8 +183,5 @@ clients:
     attributes:
       post.logout.redirect.uris: "https://presentator.hallucinai.de/"
       pkce.code.challenge.method: "S256"
-    defaultClientScopes:
-      - basic
-      - profile
-      - groups
+    defaultClientScopes: *agent_workload_scopes
     optionalClientScopes: []

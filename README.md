@@ -26,6 +26,8 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
+| `agent-service/egress/` | the third Traefik, `agent-egress`: the agent service's SNI-allowlisting gateway, its static file and the one file of allowed names (see [agent-egress](#agent-egress)) |
+| `probe/agent-service/` | the probe of the egress gateway and its packet windows, re-run for every Traefik or Docker upgrade |
 | `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
 | `src/edge/`, `external/` | the `edge` command (`edge apply`, which is `edge apply --closed` and then the publish, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
@@ -205,13 +207,13 @@ leaves hello absent.
 
 ## Externe Dienste als Code
 
-Cloudflare und GitHub werden mit OpenTofu als Code verwaltet (`external/`);
+Cloudflare wird mit OpenTofu als Code verwaltet (`external/`; GitHub folgt mit edge#30 X2/X3);
 wo diese Schicht liegt, steht in [`docs/architecture.md`](docs/architecture.md).
 Der State liegt nie im Checkout, sondern verschluesselt in
 `~/.secrets/opentofu/fleet.tfstate`.
 
 `edge external plan` zeigt, was von den Live-Diensten abweicht (Exit 0 keine
-Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest drei Dateien (erwartet
+Aenderung, 1 Aenderungen offen, 2 nicht moeglich). Es liest zwei Dateien (erwartet
 wird je 0600, geprueft wird das hier nicht) und gibt sie nur an das Kind `tofu` weiter
 (die eine Ausnahme steht bei `check --hosts` unten), dessen Umgebung eine
 Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
@@ -220,10 +222,12 @@ Allowlist ist (kein `TF_LOG*`, `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`,
 | Datei | Variable im Kind |
 |---|---|
 | `~/.secrets/cloudflare/fleet-read` | `CLOUDFLARE_API_TOKEN` |
-| `~/.secrets/github/fleet-read` | `GITHUB_TOKEN` |
 | `~/.secrets/opentofu/state-passphrase` | `TF_VAR_state_passphrase` |
 
-Die weiteren Token-Dateien der Schicht folgen mit X5b (home-tools#10).
+Die GitHub-Tokens (`~/.secrets/github/fleet-read`, `fleet-admin`) bleiben
+bekannt, werden aber nicht gelesen und nicht weitergegeben, bis edge#30 X2/X3
+die GitHub-Einstellungen als Code bauen. Die weiteren Token-Dateien der Schicht
+folgen mit X5b (home-tools#10).
 `plan` verweigert ein `tofu`, dessen Version nicht der Pin in
 `external/main.tf` entspricht.
 
@@ -268,9 +272,8 @@ bin/edge external check --hosts [--json]
 ```
 
 `edge external apply` schreibt die Aenderungen auf die Live-Dienste, mit den
-Schreib-Tokens `~/.secrets/cloudflare/fleet-write` und
-`~/.secrets/github/fleet-admin` (dieselbe Allowlist-Umgebung, dieselbe
-State-Passphrase). Es laeuft nur aus `~/git/edge` als Haupt-Worktree auf
+Schreib-Token `~/.secrets/cloudflare/fleet-write` (dieselbe
+Allowlist-Umgebung, dieselbe State-Passphrase). Es laeuft nur aus `~/git/edge` als Haupt-Worktree auf
 einem sauberen `main`, sonst Exit 2 mit dem Grund (`plan` laeuft aus jedem
 Checkout), und nur an einem Terminal (stdin und stdout; sonst
 Exit 1, bevor `tofu` aufgerufen wird), plant in eine Datei, zeigt den Plan
@@ -988,6 +991,12 @@ clients are in `realm.yaml` before the go-live, each secret the file
 `presentator` and `presentator-talk`); the other app clients
 arrive at K13/K14, after K3c.
 
+songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
+service accounts are the only users `realm.yaml` lists, each holding the realm role
+`agent-workload` and no group, and their default scopes add the `agent-service` audience. Whoever
+holds such an app's client secret can therefore get a workload token for that app, which is the
+design; the secret stays the app's own file. hopin has no service account.
+
 #### Theme and language
 
 Keycloak's login and account pages use the realm theme `hallucinai`
@@ -1275,12 +1284,21 @@ verifiers, authorization codes and session cookies) in the `Config.Env` of any
 container it ran (the bootstrap Keycloak and every keycloak-config-cli run
 included), in any compose, apply or service log output, or in its own output
 (7), the realm settings as decided, with admin events that carry no client
-representation (8), and the songmaker, hopin and presentator clients: a PKCE sign-in with the
+representation (8), a sign-in and a wrong password that store exactly one LOGIN and one
+LOGIN_ERROR event, both with exactly the address the simulated cloudflared forwards in
+`X-Forwarded-For`, and a logout that stores none (EV2; the probe does not prove what
+Cloudflare passes on, and a client-forged leftmost value is stored, #190), and the
+songmaker, hopin and presentator clients: a PKCE sign-in with the
 scratch secret that ends in an ID token with the member's group (`/apps/songmaker/admin`,
 `/apps/hopin`, `/apps/presentator/admin`), an exact callback, the password grant,
-`client_credentials` and the `offline_access` scope refused (a client has no optional scope), and
-an end-session page for its registered logout address only (10). Proof 7 also looks for each client
-secret and its tokens.
+`client_credentials` (hopin only) and the `offline_access` scope refused (a client has no optional
+scope), and an end-session page for its registered logout address only (10). Proof 10 also holds
+the agent workload shape (#183): songmaker's and presentator's `client_credentials` token carries
+the realm role `agent-workload`, the `agent-service` audience, `client_id` and `azp` equal to the
+client, no group, and the realm's access token lifespan (300 s, with no client override); a
+person's token from the same login has the audience and groups and never the role;
+`agent-service` keeps every flow off. Proof 7 also looks for each client secret and its
+tokens.
 
 ## Interne CA
 
@@ -1359,6 +1377,32 @@ The switch is one for the CA and the gateway together (`enabled: false` through 
 `git -C ~/git/edge pull --ff-only`, then `edge apply --closed`). `docker volume rm <project>_step-ca` and deleting `~/.secrets/step-ca/`
 throw the CA away; they stay manual commands, and the gateway must be off first: it holds
 certificates from this CA.
+
+### agent-egress
+
+`agent-egress` is a third Traefik, the one way out of the agent service: a TLS passthrough that
+reads the SNI of the ClientHello and dials only `api.anthropic.com:443` (the provider CLI) and
+`auth.hallucinai.de:443` (the JWKS fetch). It holds no key and has no API, ping or metrics. Any
+other name, or none, matches no router and `sniStrict` ends the handshake in the gateway;
+`agent-service/egress/dynamic/allowed.yml` is the one owner of the two names. The service finds the
+gateway through `extra_hosts` (compose.yaml's `x-agent-attachments`), not through DNS: the networks
+`agent`, `egress` and `mcp` are internal and isolated (`gateway_mode_ipv4: isolated`), so a member
+has no route out, no host address and no DNS forwarding. Only `agent-egress` sits on `internet`, a
+plain NAT bridge, and listens on `172.31.252.10:443` of `egress` alone. Like `traefik-mcp` it is
+a follower: its static file is bound at Traefik's static-config path, so `edge apply --closed`
+would recreate it alone once a unit in `fleet.yaml` names its profile `agent-service`; none does
+yet, and no plain `docker compose up -d` starts it.
+
+Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 python3
+probe/agent-service/egress.py --scratch DIR` starts a throwaway project on a free /24 (never the
+live `edge_egress` subnet) with a hardened stand-in for the service, drives the cells E1, E3 to E10,
+E12 and E13 from it, and removes everything. E3 to E5 (a refused name dials nothing) and E10 (a
+query from the stand-in leaves no trace on the host) are observed through the packet windows of
+`probe/agent-service/capture.py`, each with a positive control; a window that dropped a frame,
+held a frame it could not decode, or ended before its control, is not driven and fails the run.
+E2 (the issuer's name, which has no public DNS record before the go-live) is driven with the real
+service. CI holds the static facts (E16) in
+`tests/test_agent_egress.py`.
 
 ## Rollback
 

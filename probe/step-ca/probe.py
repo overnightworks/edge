@@ -101,6 +101,7 @@ STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|fal
 KEYCLOAK_SWITCH = re.compile(r"( {2}keycloak:\n {4}run:\n {6}enabled: )(?:true|false)")
 OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 FOLLOWER = "traefik-mcp"
+STEP_CA_PROFILE = "step-ca"
 FOLLOWER_FILE = "traefik-mcp.yml"
 HARMLESS_EDIT = "# probe 13: a harmless edit\n"
 PROBE_LABEL = '    labels: {edge.probe: "13"}\n'  # a definition change that changes nothing else
@@ -821,7 +822,12 @@ class Probe:
 
     def proof_13a_followers(self, copy: Path) -> None:
         config = json.loads(self.copy_compose(copy, "config", "--format", "json"))
-        followers = core.followers(config)
+        # Every profile is rendered, so the agent service's gateway is a follower here too.
+        followers = tuple(
+            name
+            for name in core.followers(config)
+            if STEP_CA_PROFILE in config["services"][name]["profiles"]
+        )
         binds = core.file_binds(config["services"][FOLLOWER], copy)
         expect(followers == (FOLLOWER,), f"P13a: the followers are {followers}")
         expect(binds == (copy / FOLLOWER_FILE,), f"P13a: traefik-mcp's file binds are {binds}")
