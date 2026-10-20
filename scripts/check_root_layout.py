@@ -31,7 +31,6 @@ ROOT_FILES = CONTAINER_FILES | frozenset(
         "HEART.md",
         "LICENSE",
         "README.md",
-        "cloudflared-config.example.yml",
         "edge-check.toml",
         "fleet.yaml",
         "pyproject.toml",

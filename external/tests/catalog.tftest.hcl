@@ -5,7 +5,7 @@ variables {
   catalog_file = "tests/fixtures/empty.yaml"
 }
 
-run "an_empty_catalog_plans_no_resources" {
+run "an_empty_catalog_has_no_services" {
   command = plan
 
   assert {

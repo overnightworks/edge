@@ -21,6 +21,11 @@ mock_provider "cloudflare" {
 run "the_wildcard_catalog_yields_the_expected_hosts" {
   command = plan
 
+  # Refresh-only reads the locals without planning the tunnel configuration, which refuses a wildcard until X8b.
+  plan_options {
+    mode = refresh-only
+  }
+
   variables {
     catalog_file = "tests/fixtures/hosts-wildcard.yaml"
   }
