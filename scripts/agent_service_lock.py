@@ -84,7 +84,9 @@ def wheel_digest(url: str) -> str:
 
 def cloned_commit(repository_url: str, tag: str, destination: Path) -> str:
     """Clones the tag shallowly into `destination` and returns the commit it points at."""
-    subprocess.run([*GIT_CLONE_TAG, tag, "--", repository_url, str(destination)], check=True)
+    subprocess.run(
+        [*GIT_CLONE_TAG, release_tag(tag), "--", repository_url, str(destination)], check=True
+    )
     return subprocess.run(
         ["git", "-C", str(destination), "rev-parse", "HEAD^{commit}"],
         check=True,

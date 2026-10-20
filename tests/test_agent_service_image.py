@@ -123,7 +123,14 @@ def test_the_composed_lock_holds_the_closure_then_each_wheel_by_url_and_hash():
 
 
 def test_the_composed_lock_is_the_same_text_each_time():
-    assert composed_lock() == composed_lock()
+    first, second = composed_lock(), composed_lock()
+    assert second == first
+
+
+def test_nothing_is_cloned_for_a_tag_that_is_not_a_release_tag(tmp_path):
+    with pytest.raises(argparse.ArgumentTypeError):
+        agent_service_lock.cloned_commit("unused", "--upload-pack=x", tmp_path / "clone")
+    assert not (tmp_path / "clone").exists()
 
 
 def test_the_wheel_digest_is_the_sha256_of_the_served_bytes(tmp_path):
