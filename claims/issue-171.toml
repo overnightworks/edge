@@ -1,8 +1,0 @@
-claim_id = "769272cb65fc456e8ab23bf02ba7fc4d"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "63a3af5c82e22ca33861d3db65a2e5b444c9d699"
-branch = "claude/issue-171-edge-apply-publishes"
-scope = ["README.md", "docs/architecture.md", "keycloak/go-live", "src/edge/cli.py", "src/home_tools/secrets_manifest.toml", "tests/test_edge_apply.py", "tests/test_edge_apply_publish.py", "tests/test_keycloak_go_live.py"]
-opened_commit = "0dd2d3e584091769bf96c204dda5c64ed6e76e74"
-whole_reason = "Bundle of PB-1 (lead: the composer) and PB-2 (go-live loses its Cloudflare text); PB-2's text is false without PB-1."
