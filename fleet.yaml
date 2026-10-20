@@ -15,5 +15,7 @@ services:
       setup: step-ca/init
   keycloak:
     run:
-      enabled: false
+      enabled: true
       setup: keycloak/go-live
+    hosts:
+      - {name: auth, exposure: public, reason: "Keycloak's pages are public; its login protects them", ready: /realms/hallucinai/.well-known/openid-configuration}

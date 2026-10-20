@@ -7,7 +7,7 @@ from edge_backup_support import (
     DUMP,
     Machine,
     app_history,
-    declare_shipped_apps_with_keycloak,
+    declare_shipped_apps,
     declare_two_apps,
     schema_one_status,
 )
@@ -78,7 +78,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
 def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
     edge_backup, machine, home, command, image
 ):
-    shipped = declare_shipped_apps_with_keycloak(home)
+    shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
     machine.missing_images = {image}
 
