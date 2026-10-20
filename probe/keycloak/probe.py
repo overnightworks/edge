@@ -1612,8 +1612,9 @@ class Probe:
             "optional scope, a base URL and shows in the console"
             + (
                 f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
-                f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, azp {name} "
-                "and the realm's access token lifespan to live (W1 to W3)"
+                f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
+                f"client_id and azp {name}, no group and the realm's access token lifespan to "
+                "live (W1 to W3)"
                 if client.agent_workload
                 else "; it has no service account (W5)"
             ),
