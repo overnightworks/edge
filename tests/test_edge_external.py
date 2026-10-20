@@ -41,18 +41,16 @@ ALLOWED_NAMES = {
     "TF_INPUT",
     "TF_CLI_CONFIG_FILE",
     "CLOUDFLARE_API_TOKEN",
-    "GITHUB_TOKEN",
     "TF_VAR_state_passphrase",
 }
 TOKEN_FILES = {
     ".secrets/cloudflare/fleet-read": "cloudflare-token",
-    ".secrets/github/fleet-read": "github-token",
     ".secrets/opentofu/state-passphrase": "file-passphrase",
 }
 WRITE_TOKEN_FILES = {
     ".secrets/cloudflare/fleet-write": "cloudflare-write-token",
-    ".secrets/github/fleet-admin": "github-admin-token",
 }
+GITHUB_TOKEN_FILES = (".secrets/github/fleet-read", ".secrets/github/fleet-admin")
 PLANS_DIRECTORY = ".secrets/opentofu/plans"
 PROMPT = "to apply exactly this plan"
 
@@ -259,7 +257,7 @@ def test_a_missing_token_file_exits_2_naming_it_without_running_tofu(
 
 def test_the_tokens_never_reach_the_wrapper_output(home, fake_tofu, capsys):
     """#40 rule 1: tokens reach only the tofu child, never the wrapper output."""
-    (home / ".secrets/github/fleet-read").write_text(SENTINEL)
+    (home / ".secrets/opentofu/state-passphrase").write_text(SENTINEL)
     fake_tofu.configure(echo_environment=True)
     edge_external_plan()
     printed = capsys.readouterr()
@@ -312,9 +310,19 @@ def test_tofu_gets_exactly_the_allowlisted_variables(
     environment = fake_tofu.call("version")["env"]
     assert set(environment) == ALLOWED_NAMES
     assert environment["TF_VAR_state_passphrase"] == "file-passphrase"
-    assert environment["GITHUB_TOKEN"] == "github-token"
     assert environment["CLOUDFLARE_API_TOKEN"] == "cloudflare-token"
     assert not (tmp_path / "trace").exists()
+
+
+def test_plan_never_reads_a_github_token_file(home, fake_tofu):
+    """#182 G1/G2: unreadable GitHub token files change nothing; no GITHUB_TOKEN reaches tofu."""
+    for relative in GITHUB_TOKEN_FILES:
+        token_file = home / relative
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text("github-token\n")
+        token_file.chmod(0o000)
+    assert edge_external_plan() == 0
+    assert "GITHUB_TOKEN" not in fake_tofu.call("plan")["env"]
 
 
 def test_the_child_environment_values(home, fake_tofu):
@@ -404,7 +412,6 @@ def test_the_only_new_script_is_edge():
     "token_file,variable",
     [
         (".secrets/cloudflare/fleet-read", "CLOUDFLARE_API_TOKEN"),
-        (".secrets/github/fleet-read", "GITHUB_TOKEN"),
         (".secrets/opentofu/state-passphrase", "TF_VAR_state_passphrase"),
     ],
 )
@@ -437,7 +444,7 @@ def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
 
 def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tofu, capsys):
     """#40 rule 4: an unreadable token file is exit 2, not a traceback with exit 1."""
-    (home / ".secrets/github/fleet-read").write_bytes(b"\xff\xfe")
+    (home / ".secrets/cloudflare/fleet-read").write_bytes(b"\xff\xfe")
     assert edge_external_plan() == 2
     assert "not valid UTF-8" in capsys.readouterr().err
     assert fake_tofu.calls() == []
@@ -456,10 +463,10 @@ def test_a_temporary_parent_that_is_a_file_exits_2_naming_error_and_path(home, f
 
 def test_a_version_report_carrying_a_token_never_prints_it(home, fake_tofu, capsys):
     """#40 rule 1: child-derived diagnostics are redacted before they are printed."""
-    fake_tofu.configure(version=TOKEN_FILES[".secrets/github/fleet-read"])
+    fake_tofu.configure(version=TOKEN_FILES[".secrets/cloudflare/fleet-read"])
     assert edge_external_plan() == 2
     printed = capsys.readouterr()
-    assert "github-token" not in printed.out + printed.err
+    assert "cloudflare-token" not in printed.out + printed.err
 
 
 def test_a_temporary_directory_that_cannot_be_removed_exits_2(home, fake_tofu, capsys):
@@ -475,14 +482,14 @@ def test_a_temporary_directory_that_cannot_be_removed_exits_2(home, fake_tofu, c
 
 def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(home, fake_tofu, capsys):
     """#40 rule 1: a child-controlled name in a cleanup failure is redacted."""
-    fake_tofu.configure(leave_undeletable=True, locked_name="github-token")
+    fake_tofu.configure(leave_undeletable=True, locked_name="cloudflare-token")
     try:
         assert edge_external_plan() == 2
         printed = capsys.readouterr()
         assert "PermissionError" in printed.err
-        assert "github-token" not in printed.out + printed.err
+        assert "cloudflare-token" not in printed.out + printed.err
     finally:
-        for locked in (home / ".secrets/opentofu/tmp").glob("*/github-token"):
+        for locked in (home / ".secrets/opentofu/tmp").glob("*/cloudflare-token"):
             locked.chmod(0o700)
 
 
@@ -956,7 +963,7 @@ def test_apply_with_only_one_of_stdin_and_stdout_a_terminal_exits_1_before_tofu(
 
 
 def test_apply_reads_the_write_tokens_through_the_allowlist(home, fake_tofu, terminal):
-    """#45 rule 1: apply uses fleet-write and fleet-admin, same environment as plan."""
+    """#45 rule 1: apply uses fleet-write, same environment as plan."""
     fake_tofu.configure(plan=2, echo_environment=True)
     apply = terminal()
     apply.read_until(PROMPT)
@@ -965,9 +972,7 @@ def test_apply_reads_the_write_tokens_through_the_allowlist(home, fake_tofu, ter
     environment = fake_tofu.call("apply")["env"]
     assert set(environment) == ALLOWED_NAMES
     assert environment["CLOUDFLARE_API_TOKEN"] == "cloudflare-write-token"
-    assert environment["GITHUB_TOKEN"] == "github-admin-token"
     assert "write-token" not in apply.output
-    assert "admin-token" not in apply.output
 
 
 @pytest.mark.parametrize("write_file", WRITE_TOKEN_FILES)
@@ -1501,7 +1506,6 @@ def test_an_invalid_catalog_exits_2_with_the_pre_flight_line_before_any_token(
 
 def test_check_reads_only_the_cloudflare_read_file(home, hosts_catalog):
     """K4."""
-    (home / ".secrets/github/fleet-read").unlink()
     (home / ".secrets/opentofu/state-passphrase").unlink()
     reader = FakeReader(CLEAN_SNAPSHOT)
     assert run_check(home, reader) == 0

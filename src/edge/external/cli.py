@@ -29,7 +29,7 @@ _PLAN_TO_EXIT = {
 
 
 def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
-    external = subcommands.add_parser("external", help="Cloudflare and GitHub as code (OpenTofu)")
+    external = subcommands.add_parser("external", help="Cloudflare as code (OpenTofu)")
     actions = external.add_subparsers(dest="action", required=True)
     plan = actions.add_parser(
         "plan", help="show what differs between external/ and the live services"

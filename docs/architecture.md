@@ -151,6 +151,7 @@ The agent service is an L4 service: the one place that holds the subscription lo
 6. **The library defines its contract, hosts adapt to it** ([agent-providers#49](https://github.com/overnightworks/agent-providers/issues/49)).
 
 **What this means for the platform (A1d):**
+- The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker and presentator clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
 - The container mounts only its profile volumes and its `cli_working_directory_root` (section 4).
 - Its AppArmor/Bubblewrap policy permits writes only below that root.
 - Its egress covers the registered MCP origins, LiteLLM and the provider endpoints the Claude CLI calls directly.

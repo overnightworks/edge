@@ -81,6 +81,11 @@ class AppClient:
     group: str  # the group of the user who signs in; its full path is in the ID token
     callbacks: tuple[str, ...]
     logout_redirect: str
+    agent_workload: bool = False  # its service account is a workload of the agent service (#183)
+
+    @property
+    def default_scopes(self) -> set[str]:
+        return AGENT_WORKLOAD_CLIENT_SCOPES if self.agent_workload else APP_DEFAULT_CLIENT_SCOPES
 
     @property
     def secret_file(self) -> str:
@@ -100,6 +105,7 @@ SONGMAKER = AppClient(
     "/apps/songmaker/admin",
     (f"https://songmaker.{DOMAIN}/auth/callback",),
     f"https://songmaker.{DOMAIN}/login",
+    agent_workload=True,
 )
 HOPIN = AppClient(
     "hopin",
@@ -115,9 +121,20 @@ PRESENTATOR = AppClient(
         f"https://presentator-talk.{DOMAIN}/auth/callback",
     ),
     f"https://presentator.{DOMAIN}/",
+    agent_workload=True,
 )
 APP_CLIENTS = (SONGMAKER, HOPIN, PRESENTATOR)
 APP_DEFAULT_CLIENT_SCOPES = {"basic", "profile", "groups"}
+AGENT_WORKLOAD_CLIENT_SCOPES = APP_DEFAULT_CLIENT_SCOPES | {
+    "email",
+    "roles",
+    "web-origins",
+    "acr",
+    "service_account",
+    "agent-service-audience",
+}
+AGENT_SERVICE = "agent-service"
+AGENT_WORKLOAD_ROLE = "agent-workload"
 SECRET_FILES = (
     "db-password",
     "config-cli-secret",
@@ -302,6 +319,24 @@ def stored_event_types(events: list[dict[str, Any]], request_address: str) -> li
 def claims(jwt: str) -> dict[str, Any]:
     payload = jwt.split(".")[1]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+def audience_of(access: dict[str, Any]) -> list[str]:
+    audience = access.get("aud", [])
+    return [audience] if isinstance(audience, str) else audience
+
+
+def is_workload_identity_of(access: dict[str, Any], client_id: str) -> bool:
+    """The shape agent-service accepts: the workload role and audience, `client_id` and `azp`
+    both naming the app, and no group."""
+    roles = access.get("realm_access", {}).get("roles", [])
+    return (
+        AGENT_WORKLOAD_ROLE in roles
+        and AGENT_SERVICE in audience_of(access)
+        and access.get("client_id") == client_id
+        and access.get("azp") == client_id
+        and not access.get("groups")
+    )
 
 
 # --- The throwaway stack --------------------------------------------------------------------
@@ -862,6 +897,7 @@ class Probe:
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
+        self.agent_service_stays_audience_only(admin)
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -1523,8 +1559,7 @@ class Probe:
     def member_token_carries_groups_and_audience(self, rp_secret: str) -> None:
         tokens = self.password_grant("probe-member", self.member_password, rp_secret)
         access = claims(tokens["access_token"])
-        audience = access.get("aud", [])
-        audience = [audience] if isinstance(audience, str) else audience
+        audience = audience_of(access)
         expect(access.get("iss") == PUBLIC_ISSUER, f"access token issuer is {access.get('iss')}")
         expect(MEMBER_GROUP in access.get("groups", []), f"groups claim is {access.get('groups')}")
         expect("agent-service" in audience, f"audience is {audience}")
@@ -1640,18 +1675,31 @@ class Probe:
         tokens = self.app_client_sign_in(client, browser, username, password, client_secret)
         groups = claims(tokens["id_token"]).get("groups", [])
         expect(client.group in groups, f"{name}'s ID token groups are {groups}")
+        if client.agent_workload:
+            self.person_token_is_no_workload(client, tokens["access_token"])
         self.app_client_refuses_what_it_does_not_use(client, client_secret)
         self.app_client_logout_pages(client, browser)
         self.app_client_representation(admin, client)
+        if client.agent_workload:
+            self.workload_token_carries_the_role(admin, client_secret, client)
         self.held(
             "10",
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
             f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
             f"with groups {groups}; no code challenge, a callback with a suffix, plain http, the "
-            "password grant, client_credentials and the offline_access scope are refused; the "
+            f"password grant, {'' if client.agent_workload else 'client_credentials, '}and the "
+            "offline_access scope are refused; the "
             f"end-session page asks before logging out for {client.logout_redirect} and refuses "
             "an unregistered address; the client has no front- or back-channel logout or "
-            "optional scope, a base URL and shows in the console",
+            "optional scope, a base URL and shows in the console"
+            + (
+                f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
+                f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
+                f"client_id and azp {name}, no group and the realm's access token lifespan to "
+                "live (W1 to W3)"
+                if client.agent_workload
+                else "; it has no service account (W5)"
+            ),
         )
 
     @staticmethod
@@ -1741,7 +1789,10 @@ class Probe:
                 f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
             )
         self.app_client_refuses_offline_access(client)
-        for grant in ({"grant_type": "client_credentials"}, self.password_grant_of_the_member()):
+        refused_grants = [self.password_grant_of_the_member()]
+        if not client.agent_workload:
+            refused_grants.insert(0, {"grant_type": "client_credentials"})
+        for grant in refused_grants:
             refused = through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
@@ -1752,6 +1803,66 @@ class Probe:
                 error == "unauthorized_client",
                 f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
             )
+
+    @staticmethod
+    def person_token_is_no_workload(client: AppClient, access_token: str) -> None:
+        """Cell W3: a person's token from the app's login has the audience and groups, never the
+        workload role."""
+        access = claims(access_token)
+        roles = access.get("realm_access", {}).get("roles", [])
+        expect(
+            AGENT_SERVICE in audience_of(access)
+            and client.group in access.get("groups", [])
+            and AGENT_WORKLOAD_ROLE not in roles,
+            f"a person's access token from {client.client_id} has aud {audience_of(access)}, "
+            f"groups {access.get('groups')}, realm roles {roles}",
+        )
+
+    def workload_token_carries_the_role(
+        self, admin: Admin, client_secret: str, client: AppClient
+    ) -> None:
+        """Cells W1, W2: the client-credentials token is the app's workload identity and lives as
+        long as the realm says (300 s, which proof 8 pins; the client has no override)."""
+        name = client.client_id
+        override = admin.find(f"/{REALM}/clients", "clientId", name)["attributes"].get(
+            "access.token.lifespan"
+        )
+        realm_lifespan = admin.get(f"/{REALM}")["accessTokenLifespan"]
+        tokens = self.tokens_from(
+            f"{name} workload",
+            through_tunnel(
+                "POST",
+                PUBLIC_TOKEN_PATH,
+                form={
+                    "grant_type": "client_credentials",
+                    "client_id": name,
+                    "client_secret": client_secret,
+                },
+            ),
+        )
+        access = claims(tokens["access_token"])
+        roles = access.get("realm_access", {}).get("roles", [])
+        lifespan = access["exp"] - access["iat"]
+        expect(
+            is_workload_identity_of(access, name) and not override and lifespan == realm_lifespan,
+            f"{name}'s workload token has realm roles {roles}, aud {audience_of(access)}, "
+            f"client_id {access.get('client_id')}, azp {access.get('azp')}, groups "
+            f"{access.get('groups')}, lifespan {lifespan}s (realm {realm_lifespan}s, client "
+            f"override {override})",
+        )
+
+    def agent_service_stays_audience_only(self, admin: Admin) -> None:
+        """Cell W4: agent-service has every flow off."""
+        found = admin.find(f"/{REALM}/clients", "clientId", AGENT_SERVICE)
+        flows = (
+            "standardFlowEnabled",
+            "implicitFlowEnabled",
+            "directAccessGrantsEnabled",
+            "serviceAccountsEnabled",
+        )
+        on = [flow for flow in flows if found.get(flow)]
+        expect(not on, f"{AGENT_SERVICE} has flows on: {on}")
+        self.held("10", f"{AGENT_SERVICE} still has every flow off (W4)")
 
     def app_client_refuses_offline_access(self, client: AppClient) -> None:
         """Cell T13: no optional scope is attached, so no offline token can be asked for."""
@@ -1813,7 +1924,7 @@ class Probe:
                 "standardFlowEnabled": True,
                 "implicitFlowEnabled": False,
                 "directAccessGrantsEnabled": False,
-                "serviceAccountsEnabled": False,
+                "serviceAccountsEnabled": client.agent_workload,
                 "frontchannelLogout": False,
                 "baseUrl": f"{client.origin}/",
                 "alwaysDisplayInConsole": True,
@@ -1824,7 +1935,7 @@ class Probe:
             key: found.get(key)
             for key, value in {
                 "redirectUris": set(client.callbacks),
-                "defaultClientScopes": APP_DEFAULT_CLIENT_SCOPES,
+                "defaultClientScopes": client.default_scopes,
             }.items()
             if set(found.get(key) or ()) != value
         }
