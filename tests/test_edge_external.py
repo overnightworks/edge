@@ -68,6 +68,7 @@ with (here / "calls.jsonl").open("a") as calls:
         "plan_file_existed": Path(sys.argv[-1]).exists(),
         "tmpdir_mode": os.stat(os.environ["TMPDIR"]).st_mode & 0o777,
     }}) + "\\n")
+(here / "made-by-tofu").write_text("a file tofu creates")
 plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
@@ -324,6 +325,18 @@ def test_the_child_environment_values(home, fake_tofu):
     assert environment["TF_INPUT"] == "0"
     assert environment["TF_CLI_CONFIG_FILE"] == str(PROJECT_ROOT / "external/tofurc")
     assert Path(environment["TMPDIR"]).parent == home / ".secrets/opentofu/tmp"
+
+
+def test_every_file_tofu_creates_is_for_the_owner_only_whatever_the_umask_of_the_wrapper(
+    home, fake_tofu
+):
+    """#159 T1: the state tofu writes was 664 under the PC's umask 002."""
+    previous = os.umask(0o002)
+    try:
+        edge_external_plan()
+    finally:
+        os.umask(previous)
+    assert (fake_tofu.directory / "made-by-tofu").stat().st_mode & 0o777 == 0o600
 
 
 def test_the_temporary_directory_is_private_and_removed_afterwards(home, fake_tofu):
