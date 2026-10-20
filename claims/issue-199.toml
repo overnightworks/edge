@@ -1,7 +1,0 @@
-claim_id = "e3bb34ba41d841eabd2655ab9afb20aa"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "39eab8d493b307c12da6ee5a56256e03ef31d2a8"
-branch = "claude/issue-199-presentator-logout"
-scope = ["keycloak/realm.yaml", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py"]
-opened_commit = "40f28d38ba155df66cd56b82a577e0758fae50db"
