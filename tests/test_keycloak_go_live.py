@@ -1700,9 +1700,10 @@ def real_compose_go_live(golive, secrets_dir, marks, monkeypatch):
     return golive.GoLive(golive.Tools(), secrets_dir, marks)
 
 
-def test_the_real_compose_file_names_songmakers_client_secret(real_compose_go_live):
-    """T9, and #108 T12: the repository's compose.yaml declares songmaker's client secret."""
-    assert real_compose_go_live.client_ids() == ["songmaker"]
+def test_the_real_compose_file_names_every_app_clients_secret(real_compose_go_live):
+    """T9, #108 T12 and #161 SA3-3: the repository's compose.yaml declares one client secret file
+    per app client, so the go-live creates and checks each."""
+    assert sorted(real_compose_go_live.client_ids()) == ["hopin", "presentator", "songmaker"]
 
 
 def test_the_real_compose_discovers_a_client_secret_it_declares(

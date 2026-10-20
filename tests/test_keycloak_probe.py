@@ -553,7 +553,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "member_token_carries_groups_and_audience",
         "disabled_user_refused_on_refresh",
         "backchannel_logout_reaches_rp",
-        "songmaker_client",
+        "app_client",
         "the_observer_door",
         "no_secret_leaked",
     ):

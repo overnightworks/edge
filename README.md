@@ -910,9 +910,10 @@ setup (an SSH or Tailscale forward to 8090), never through the tunnel.
 
 Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`,
 applied by keycloak-config-cli. People and their group memberships are managed
-only in the admin console; no file lists a person. songmaker's client is in
-`realm.yaml` before the go-live, its secret the file
-`~/.secrets/keycloak/clients/songmaker` (the go-live makes it); the other app clients
+only in the admin console; no file lists a person. The songmaker, hopin and presentator
+clients are in `realm.yaml` before the go-live, each secret the file
+`~/.secrets/keycloak/clients/<clientId>` (the go-live makes it; presentator's one client serves
+`presentator` and `presentator-talk`); the other app clients
 arrive at K13/K14, after K3c.
 
 #### Theme and language
@@ -1209,12 +1210,12 @@ verifiers, authorization codes and session cookies) in the `Config.Env` of any
 container it ran (the bootstrap Keycloak and every keycloak-config-cli run
 included), in any compose, apply or service log output, or in its own output
 (7), the realm settings as decided, with admin events that carry no client
-representation (8), and songmaker's client: a PKCE sign-in with the scratch secret
-that ends in an ID token with the group `/apps/songmaker/admin`, an exact
-callback, the password grant, `client_credentials` and the `offline_access` scope refused (the client has
-no optional scope), and an end-session
-page for `/login` only (10). Proof 7 also looks for the songmaker secret and its
-tokens.
+representation (8), and the songmaker, hopin and presentator clients: a PKCE sign-in with the
+scratch secret that ends in an ID token with the member's group (`/apps/songmaker/admin`,
+`/apps/hopin`, `/apps/presentator/admin`), an exact callback, the password grant,
+`client_credentials` and the `offline_access` scope refused (a client has no optional scope), and
+an end-session page for its registered logout address only (10). Proof 7 also looks for each client
+secret and its tokens.
 
 ## Interne CA
 

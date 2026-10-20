@@ -4,8 +4,8 @@
 # membership in it, on the next apply, and so does the apply to any subgroup under /apps or /ki-abo
 # that this file lacks, even one made in the admin console. Renaming in the console first is safe
 # only if no apply runs before the matching change here lands.
-# songmaker's client is here before the go-live; the other app clients arrive with each app's cutover,
-# together with its live redirect and logout URLs.
+# The songmaker, hopin and presentator clients are here before the go-live; the other app clients
+# arrive with each app's cutover, together with its live redirect and logout URLs.
 realm: hallucinai
 enabled: true
 # The pages' look lives in the theme files (keycloak/themes/hallucinai), so changing it is no realm change.
@@ -35,6 +35,8 @@ groups:
         subGroups:
           - name: admin
       - name: presentator
+        subGroups:
+          - name: admin
       - name: hopin
       - name: aco-board
   - name: ki-abo
@@ -106,6 +108,55 @@ clients:
       - "https://songmaker.hallucinai.de/auth/callback"
     attributes:
       post.logout.redirect.uris: "https://songmaker.hallucinai.de/login"
+      pkce.code.challenge.method: "S256"
+    defaultClientScopes:
+      - basic
+      - profile
+      - groups
+    optionalClientScopes: []
+  # hopin signs people in the same way as songmaker, back-channel logout left out for the same reason
+  # (hopin#25, K3c #50). Its URLs are hopin's proposal; hopin mounts none of them yet.
+  - clientId: hopin
+    name: hopin
+    enabled: true
+    publicClient: false
+    secret: $(env:HOPIN_CLIENT_SECRET)
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false
+    baseUrl: "https://hopin.hallucinai.de/"
+    alwaysDisplayInConsole: true
+    redirectUris:
+      - "https://hopin.hallucinai.de/auth/callback"
+    attributes:
+      post.logout.redirect.uris: "https://hopin.hallucinai.de/login"
+      pkce.code.challenge.method: "S256"
+    defaultClientScopes:
+      - basic
+      - profile
+      - groups
+    optionalClientScopes: []
+  # One client for presentator's two hosts (agent-presentator#242); its logout address is a proposal
+  # until presentator sends the exact path.
+  - clientId: presentator
+    name: presentator
+    enabled: true
+    publicClient: false
+    secret: $(env:PRESENTATOR_CLIENT_SECRET)
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    frontchannelLogout: false
+    baseUrl: "https://presentator.hallucinai.de/"
+    alwaysDisplayInConsole: true
+    redirectUris:
+      - "https://presentator.hallucinai.de/auth/callback"
+      - "https://presentator-talk.hallucinai.de/auth/callback"
+    attributes:
+      post.logout.redirect.uris: "https://presentator.hallucinai.de/"
       pkce.code.challenge.method: "S256"
     defaultClientScopes:
       - basic
