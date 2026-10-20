@@ -27,7 +27,8 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
 | `agent-service/egress/` | the third Traefik, `agent-egress`: the agent service's SNI-allowlisting gateway, its static file and the one file of allowed names (see [agent-egress](#agent-egress)) |
-| `probe/agent-service/` | the probe of the egress gateway and its packet windows, re-run for every Traefik or Docker upgrade |
+| `agent-service/service.toml` | the agent service's configuration, a read-only bind of the `agent-service` service (see [The agent service](#the-agent-service)) |
+| `probe/agent-service/` | the probes of the image, of the egress gateway and its packet windows, and of the service unit, re-run for every Traefik, Docker or agent-providers upgrade |
 | `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
 | `src/edge/`, `external/` | the `edge` command (`edge apply`, which is `edge apply --closed` and then the publish, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
@@ -1391,16 +1392,18 @@ a follower: its static file is bound at Traefik's static-config path, so `edge a
 would recreate it alone once a unit in `fleet.yaml` names its profile `agent-service`; none does
 yet, and no plain `docker compose up -d` starts it.
 
-Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 python3
-probe/agent-service/egress.py --scratch DIR` starts a throwaway project on a free /24 (never the
-live `edge_egress` subnet) with a hardened stand-in for the service, drives the cells E1, E3 to E10,
-E12 and E13 from it, and removes everything. E3 to E5 (a refused name dials nothing) and E10 (a
-query from the stand-in leaves no trace on the host) are observed through the packet windows of
-`probe/agent-service/capture.py`, each with a positive control; a window that dropped a frame,
-held a frame it could not decode, or ended before its control, is not driven and fails the run.
-E2 (the issuer's name, which has no public DNS record before the go-live) is driven with the real
-service. CI holds the static facts (E16) in
-`tests/test_agent_egress.py`.
+Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
+probe/agent-service/egress.py --scratch DIR [--target service]` starts a throwaway project on a
+free /24 (never the live `edge_egress` subnet) with a hardened stand-in for the service, or with
+the real `agent-service` and a dummy login in the scratch HOME, drives the cells E1 to E10, E12 and
+E13 from it (E11 and E14 with the service), and removes everything. E3 to E5 (a refused name dials
+nothing) and E10 (a query from the member leaves no trace on the host) are observed through the
+packet windows of `probe/agent-service/capture.py`, each with a positive control; a window that
+dropped a frame, held a frame it could not decode, or ended before its control, is not driven and
+fails the run. E7 also tries an address in each network's subnet that no member owns
+(`EHOSTUNREACH`). E11 starts the Claude CLI inside the service with a dummy token: it reaches the
+real API through the gateway and ends with an authentication failure. CI holds the static facts
+(E16) in `tests/test_agent_egress.py`.
 
 ## The agent service image
 
@@ -1418,6 +1421,77 @@ A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git
 only writer of `agent-service/image/requirements.txt`, and changes the CLI pin in the Dockerfile
 and the name above together. `probe/agent-service/image.py` builds without cache and starts the
 entrypoint from the clean image.
+
+## The agent service
+
+`agent-service` (profile `agent-service`) is that image with `agent-service/service.toml`: one
+container, one worker, the networks of `x-agent-attachments`, no published port. It runs as
+`1000:1000` with `init`, a read-only root, no capability, `no-new-privileges`, no core dump and
+`restart: unless-stopped`; `/tmp` (its `HOME`) and the working root `/run/agent-service/cli` are
+size-bounded tmpfs mounts owned by 1000 with mode 0700 (the service refuses to start on a working
+root that is not owned by its user with exactly that mode), all `nosuid,nodev,noexec`. No unit in
+`fleet.yaml` starts it yet, so nothing runs live: the switch-on is a later item.
+
+**The login.** The service runs the Claude CLI under the operator's subscription, with the one
+token that `claude setup-token` prints, in one file inside a read-only directory bind:
+
+```
+~/.secrets/agent-service/              0700
+~/.secrets/agent-service/claude/       0700, uid 1000   (bound at /run/agent-service/login/claude)
+~/.secrets/agent-service/claude/token  0600, uid 1000, one line
+```
+
+Make it by hand, once. The token is pasted only here, never on a command line or in an issue:
+
+```sh
+install -d -m 0700 ~/.secrets/agent-service ~/.secrets/agent-service/claude
+claude setup-token    # prints the token once
+( umask 077; cat > ~/.secrets/agent-service/claude/token )    # paste the line, Enter, Ctrl-D
+```
+
+The file is a regular file of at most 16 KiB with one line, the token: no JSON, no API key
+(`sk-ant-api…`), nothing group or others can touch. The service refuses to start otherwise, naming
+`profiles.claude.token_file` and the path, never the content. `home secrets` lists the entry
+`agent-service-claude`.
+
+**Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
+container user must own the directory and the file. 1000 is the operator's uid on this PC
+(`id -u`), so his own `claude setup-token` writes a file the container can read. On a machine
+where it is not, `sudo chown -R 1000:1000 ~/.secrets/agent-service/claude` makes it so. This is a
+deployment choice, not the reader's requirement.
+
+**Renewal.** Write the new line beside the old one and swap the name; the next run opens the file
+anew, without a restart:
+
+```sh
+( umask 077; cat > ~/.secrets/agent-service/claude/token.new )    # paste the line, Enter, Ctrl-D
+mv -T ~/.secrets/agent-service/claude/token.new ~/.secrets/agent-service/claude/token
+```
+
+The bind is the directory, never the file: a file bind (or a compose `secrets:` file) would keep
+the old inode, and the rename would never reach the running container. A missing directory fails
+the start (`create_host_path: false`) instead of becoming a root-owned one; the directory itself
+stays for ever, so never replace or re-create it.
+
+**A change reaches the running service** only by recreating it. After `service.toml`, `compose.yaml`
+or the image changed in the live checkout (`git -C ~/git/edge pull --ff-only`; the image built as
+above),
+
+```sh
+docker compose --profile agent-service up -d --force-recreate agent-service
+```
+
+recreates it, which ends every run in flight.
+
+Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
+probe/agent-service/unit.py --scratch DIR` starts the real service in a throwaway project with a
+dummy login and drives the cells U1 to U11: it listens and answers 401 without tokens; one worker
+under docker-init; uid, capabilities, `no-new-privileges`, core limit, non-dumpable, `/proc` and
+the AppArmor profile; a process group killed with its descendants; the tmpfs ownership, modes and
+`noexec`; a read-only login directory; a renewal seen at once with the start time unchanged; and
+the three refusals (a working root of mode 0750, a missing login directory, a token at mode 0644).
+U12 is `egress.py --target service`; CI holds the static facts (U13) in
+`tests/test_agent_service_unit.py`.
 
 ## Rollback
 

@@ -13,9 +13,11 @@ import re
 import socket
 import struct
 import sys
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -23,6 +25,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "probe" / "agent-service"
 GATEWAY = "agent-egress"
+SERVICE = "agent-service"
 STAND_IN = "agent-probe"
 OBSERVER = "realm-observer"
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
@@ -68,13 +71,28 @@ def test_every_network_of_the_agent_attachments_is_internal_and_isolated(compose
         assert network["driver_opts"] == ISOLATED_MODE
 
 
-def test_the_stand_in_carries_the_attachments_and_nothing_else_of_the_network(compose, attachments):
-    """E16: the stand-in merges the one anchor; it adds no port, no network mode, no network."""
-    stand_in = compose["services"][STAND_IN]
+@pytest.mark.parametrize("member", [STAND_IN, SERVICE])
+def test_a_member_carries_the_attachments_and_nothing_else_of_the_network(
+    compose, attachments, member
+):
+    """E16: the stand-in and the service merge the one anchor; neither adds a port, a network
+    mode or a network."""
+    service = compose["services"][member]
 
-    assert stand_in["networks"] == attachments["networks"]
-    assert stand_in["extra_hosts"] == attachments["extra_hosts"]
-    assert not {"ports", "network_mode", "expose"} & stand_in.keys()
+    assert service["networks"] == attachments["networks"]
+    assert service["extra_hosts"] == attachments["extra_hosts"]
+    assert not {"ports", "network_mode", "expose"} & service.keys()
+
+
+def test_the_issuer_hosts_the_service_fetches_from_are_names_the_gateway_passes(passed_names):
+    """E16: the jwks_url's host is a HostSNI name of the gateway, and the https the verifier
+    requires reaches the issuer through it."""
+    identity = tomllib.loads((ROOT / "agent-service/service.toml").read_text())["identity"]
+    jwks = urlsplit(identity["jwks_url"])
+
+    assert jwks.scheme == "https"
+    assert jwks.hostname in passed_names
+    assert urlsplit(identity["issuer"]).hostname in passed_names
 
 
 def test_the_gateway_is_the_only_service_on_internet(compose):
@@ -141,6 +159,7 @@ def test_the_gateway_shares_the_public_traefiks_image_and_hardening(compose):
 def test_the_gateway_starts_only_with_the_agent_service_profile(compose):
     """No plain `docker compose up -d` starts the gateway or the stand-in."""
     assert compose["services"][GATEWAY]["profiles"] == ["agent-service"]
+    assert compose["services"][SERVICE]["profiles"] == ["agent-service"]
     assert compose["services"][STAND_IN]["profiles"] == ["agent-probe"]
 
 
@@ -382,6 +401,36 @@ def test_a_frame_the_kernel_truncated_on_port_53_is_undecoded(capture):
     )
 
     assert segment.undecoded
+
+
+class OneFrameSocket:
+    """A packet socket that hands over one outgoing frame with the given message flags."""
+
+    def __init__(self, capture, frame: bytes, flags: int) -> None:
+        self.capture, self.frame, self.flags = capture, frame, flags
+
+    def recvmsg(self, size: int, _ancillary_size: int):
+        timestamp = struct.pack("@ll", 5, 0)
+        ancillary = [(socket.SOL_SOCKET, self.capture.SO_TIMESTAMPNS, timestamp)]
+        address = ("eth0", 0, self.capture.PACKET_OUTGOING, self.capture.ARPHRD_ETHER, b"")
+        return self.frame[:size], ancillary, self.flags, address
+
+
+@pytest.mark.parametrize(
+    ("flags", "undecoded"),
+    [(0, 0), (socket.MSG_TRUNC, 1)],
+    ids=["a whole frame", "a frame the kernel cut"],
+)
+def test_the_watch_loop_counts_a_dns_frame_the_kernel_cut_as_undecoded(
+    capture, monkeypatch, flags, undecoded
+):
+    """E10: the MSG_TRUNC flag of the socket's message reaches the parser through `watch`."""
+    monkeypatch.setattr(capture, "FRAME_CAP", 1)
+    frame = ethernet(0x0800, ipv4_header(17, udp(40000, 53, dns_message("a.b.c"))))
+
+    window, ended_by = capture.watch(OneFrameSocket(capture, frame, flags), ["label"])
+
+    assert (window.frames, window.undecoded, ended_by) == (1, undecoded, "frames")
 
 
 @pytest.mark.parametrize(
