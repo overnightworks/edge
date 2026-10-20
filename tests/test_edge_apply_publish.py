@@ -24,6 +24,7 @@ from test_edge_apply import (
     setup_check,  # noqa: F401 the fixture, requested by name below
     setup_run,  # noqa: F401 the fixture, requested by name below
     state,  # noqa: F401 the fixture, requested by name below
+    switch_off,
     trusted_environment,
 )
 from test_edge_external import (
@@ -290,6 +291,25 @@ def test_an_interrupted_setup_whose_containers_run_is_asked_again_and_publishes_
     assert finished.exit_code == 0
     assert finished.out.index(SETUP_QUESTION) < finished.out.index(PLAN_QUESTION)
     assert world.fake_tofu.call("apply")
+
+
+def test_an_interrupted_stop_after_an_interrupted_setup_is_refused_and_publishes_nothing(world):
+    """Go-live aborted, then `edge stop` aborted after its marker: the unit still runs."""
+    world.settle_local()
+    world.make_setup_missing()
+    switch_off(world.state)
+    world.fake_tofu.configure(**CHANGING_PLAN)
+    changes_before = world.scripted.changing_verbs()
+
+    result = world.run()
+
+    assert result.exit_code == 1
+    assert "step-ca is switched off but still runs and is not set up" in result.err
+    assert "edge stop step-ca" in result.err
+    assert SETUP_QUESTION not in result.out
+    assert world.setup_run.commands == []
+    assert world.scripted.changing_verbs() == changes_before
+    assert world.publish_never_began()
 
 
 def publish_is_declined(world: World) -> tuple[list[str], dict]:

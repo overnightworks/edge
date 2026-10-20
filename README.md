@@ -8,10 +8,10 @@ PC and is never a tunnel target. Traefik never sees the Docker socket: a
 GET-only socket proxy hands it the container list and events.
 
 Nothing here is reachable from outside until the operator applies the steps A8
-below. Cloudflare Access enforcement (and JWT checks) arrives with that step
-for every name except `auth`: the login service must be public, so it gets its
-own Access app whose one policy is Bypass, and its tunnel line has no JWT check
-(see [Keycloak](#keycloak-auth)). Until A8 the edge is a local service only.
+below. A8 publishes the catalog's hosts; `auth` is public (see
+[Keycloak](#keycloak-auth)). There is no Zero Trust for now (operator,
+20.10.2026); X8b on #30 adds the wildcard protection. Until A8 the edge is a
+local service only.
 
 The platform picture (layers, services, secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs/architecture.md).
 
@@ -444,8 +444,10 @@ Einheiten (`keycloak/`, `step-ca/ca.json`). Der Plan danach wendet HEAD an, nie 
 Commits; sie bringst du bis S2.4c mit der gezeigten `merge --ff-only`-Zeile selbst herein und
 rufst `edge apply --closed` noch einmal auf.
 
-Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
-Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Eine laufende Einheit
+wird bei jedem Apply geprueft: ohne Setup bekommt sie die Setup-Frage und sperrt das Publizieren;
+eine ausgeschaltete, die noch laeuft und kein Setup hat, wird abgewiesen (`edge stop` noch einmal).
+Fehlt das Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
 nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder
 `keycloak/go-live`, ohne Argumente, ohne Zeitlimit, Ausgabe ungefiltert); die Schluessel macht
