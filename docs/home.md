@@ -267,7 +267,7 @@ Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
 == github/fleet-read (Token, fehlt)
-Wofür: edge external plan und check lesen damit Repo-Einstellungen, …
+Wofür: Nichts liest es heute; edge external verlangt es erst wieder, wenn edge#30 X2/X3 die GitHub-Einstellungen als Code baut (Repo-Einstellungen, Rulesets, Actions-Regeln, Namen der Org-Secrets, nie ihre Werte). Die Datei bleibt, widerrufen wird nichts.
 Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org overnightworks.
 Der Link füllt vor: Name github/fleet-read, Resource owner overnightworks, Ablauf 366 Tage, die Beschreibung und diese Rechte:
   - metadata: read

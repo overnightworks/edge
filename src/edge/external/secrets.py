@@ -50,7 +50,7 @@ class SecretFileError(Exception):
 
 
 def read_secrets(home: Path, access: Access) -> dict[str, str]:
-    """Variable name to value; a missing file stops the run so no provider falls back to `gh`."""
+    """Variable name to value; a missing file stops the run before tofu starts."""
     return {
         secret_file.variable: _read_secret_file(home, secret_file)
         for secret_file in access.secret_files
