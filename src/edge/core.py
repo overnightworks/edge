@@ -139,9 +139,9 @@ class CheckoutBinds:
 
 
 def checkout_binds(
-    config: Mapping[str, Any], checkout: Path, units: Collection[str]
+    config: Mapping[str, Any], checkout: Path, catalog_units: Collection[str]
 ) -> CheckoutBinds:
-    applied = {*core_services(config), *follower_units(config, units)}
+    applied = {*core_services(config), *follower_units(config, catalog_units)}
     live, recreated, units = set(), set(), set()
     for name, service in config["services"].items():
         for source in _checkout_sources(service, checkout):
