@@ -4,14 +4,17 @@ hold what the recipe says; the build and the start of the image are the probe's
 
 import argparse
 import hashlib
+import importlib.util
 import re
 import subprocess
 from pathlib import Path
+from types import ModuleType
 
 import agent_service_lock
 import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+PROBE = REPOSITORY / "probe" / "agent-service" / "image.py"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 DOCKERFILE = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
 LOCK = (IMAGE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8")
@@ -205,3 +208,37 @@ def test_the_readme_builds_the_name_made_of_the_release_and_the_cli_version():
     name = f"edge-agent-service:{version}-{dockerfile_argument('CLAUDE_VERSION')}"
     command = f"docker build -f agent-service/image/Dockerfile -t {name} agent-service/image"
     assert command in README
+
+
+@pytest.fixture(scope="module")
+def probe() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("agent_service_image_probe", PROBE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+PLANTED = "/usr/local/planted.bin"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (2, f"{PLANTED}\n"),
+        (1, ""),
+        (0, ""),
+        (0, f"{PLANTED}\n/usr/other\n"),
+    ],
+)
+def test_the_token_search_bite_check_fails_without_exit_zero_and_exactly_the_planted_path(
+    probe, returncode, stdout
+):
+    bitten = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
+    assert probe.bite_check_failure(bitten, PLANTED) is not None
+
+
+def test_the_token_search_bite_check_passes_on_exit_zero_with_exactly_the_planted_path(probe):
+    bitten = subprocess.CompletedProcess([], 0, stdout=f"{PLANTED}\n", stderr="")
+    assert probe.bite_check_failure(bitten, PLANTED) is None

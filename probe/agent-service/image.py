@@ -305,6 +305,19 @@ def cell_i5(output: Path, scratch: Path) -> None:
     expect(status == 401, f"I5: POST /runs without tokens answered {status}, not 401")
 
 
+def bite_check_failure(bitten: subprocess.CompletedProcess[str], planted: str) -> str | None:
+    """Why the planted-file run does not prove the token search bites, or None when it does.
+    Planting and searching are chained, so exit status 0 means both succeeded."""
+    if bitten.returncode != 0:
+        return (
+            f"planting or searching exited with status {bitten.returncode}: "
+            f"{bitten.stderr[-300:]!r}, found {bitten.stdout!r}"
+        )
+    if bitten.stdout.split() != [planted]:
+        return f"the token search missed a token inside a binary file: {bitten.stdout!r}"
+    return None
+
+
 def cell_i6() -> None:
     """Both searches run as root over the whole file system, so no directory hides from them,
     and any error of a search fails the cell."""
@@ -318,15 +331,13 @@ def cell_i6() -> None:
     planted = "/usr/local/planted.bin"
     fake_token = "sk-ant-" + "api03-" + "a" * 30
     bitten = run_in_image(
-        ["-c", f"printf '\\000{fake_token}\\000' > {planted}; {TOKEN_SEARCH}"],
+        ["-c", f"printf '\\000{fake_token}\\000' > {planted} && {TOKEN_SEARCH}"],
         entrypoint="sh",
         user="0:0",
         read_only=False,
     )
-    expect(
-        bitten.stdout.split() == [planted],
-        f"I6: the token search missed a token inside a binary file: {bitten.stdout!r}",
-    )
+    failure = bite_check_failure(bitten, planted)
+    expect(failure is None, f"I6: {failure}")
     environment = json.loads(
         docker(["image", "inspect", IMAGE, "--format", "{{json .Config.Env}}"]).stdout
     )
