@@ -1,0 +1,7 @@
+claim_id = "3bc79bf745d542d8884f044ff6b2119e"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "39eab8d493b307c12da6ee5a56256e03ef31d2a8"
+branch = "fix/sonar-composite-assertion"
+scope = ["tests/test_edge_external.py"]
+opened_commit = "e37a6a46737abe6d4cc0fd11ae05ce5b2bf1d384"
