@@ -460,7 +460,10 @@ class Probe:
         stack's edge_egress will own 172.31.252.0/24, and Docker refuses a second network on it."""
         text = source.read_text()
         expect(LIVE_EGRESS_PREFIX in text, f"{source.name} does not name {LIVE_EGRESS_PREFIX}")
-        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))
+        # The copy lies in the scratch directory that scratch_directory() resolved and required at
+        # the command line, and the text comes from the repository's own files; the route tried
+        # was resolving the path once at that boundary, which Sonar does not follow across calls.
+        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))  # NOSONAR(S2083)
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
