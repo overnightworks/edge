@@ -86,7 +86,9 @@ def released_commit_and_closure(tag: str) -> tuple[str, str]:
     """Clones the release tag shallowly; returns the commit it points at and the service's
     runtime closure with hashes, exported from that checkout."""
     with tempfile.TemporaryDirectory() as scratch:
-        subprocess.run(
+        # release_tag checks the tag against its canonical pattern before any process call, no
+        # shell is used, and -- precedes the URL and directory; two code routes stayed flagged.
+        subprocess.run(  # NOSONAR(S8701)
             [*GIT_CLONE_TAG, release_tag(tag), "--", REPOSITORY_URL, scratch], check=True
         )
         commit = subprocess.run(
