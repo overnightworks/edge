@@ -1,8 +1,0 @@
-claim_id = "f20d59f407eb4c91984a64fef0d8e37c"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "3ba64774521559990b8a73c4673037c82d484414"
-branch = "claude/issue-159-tofu-files-owner-only"
-scope = ["src/edge/external/tofu.py", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_view.py", "tests/home/test_next.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_view.py", "tests/test_edge_external.py"]
-opened_commit = "6c84b2c0bd97cd81600b5aae10e47a33426b2d2b"
-whole_reason = "The umask and the manifest entries clear the same four findings; either alone leaves the daily check red."
