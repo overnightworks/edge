@@ -1,0 +1,32 @@
+# The one owner of the names the agent service may reach: the provider endpoint for the CLI and the
+# issuer host for the JWKS fetch. TLS passes through; the gateway holds no key and dials only the
+# upstream of a matching SNI. Any other SNI, or none, matches no router, and sniStrict ends the
+# handshake in the gateway itself.
+tcp:
+  routers:
+    provider:
+      rule: HostSNI(`api.anthropic.com`)
+      entryPoints: [egress]
+      service: provider
+      tls:
+        passthrough: true
+    issuer:
+      rule: HostSNI(`auth.hallucinai.de`)
+      entryPoints: [egress]
+      service: issuer
+      tls:
+        passthrough: true
+  services:
+    provider:
+      loadBalancer:
+        servers:
+          - address: api.anthropic.com:443
+    issuer:
+      loadBalancer:
+        servers:
+          - address: auth.hallucinai.de:443
+
+tls:
+  options:
+    default:
+      sniStrict: true

@@ -86,12 +86,16 @@ jobs:
           hal_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal; print(hal.__file__)')
           case $hal_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal imported from $hal_file"; exit 1 ;; esac
 
-      - name: Compose renders (default, keycloak, step-ca and probe profiles, Keycloak bootstrap and probe overlays)
+      - name: Compose renders (default, keycloak, step-ca, probe, agent-service and agent-probe profiles, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
           docker compose --profile keycloak config -q
           docker compose --profile step-ca config -q
           docker compose --profile probe config -q
+          docker compose --profile agent-service config -q
+          docker compose --profile agent-probe config -q
+          docker compose --profile agent-service config --services | grep -x agent-egress
+          docker compose --profile agent-probe config --services | grep -x agent-probe
           docker compose --profile step-ca config --services | grep -x step-ca
           docker compose --profile step-ca config --services | grep -x traefik-mcp
           docker compose --profile step-ca config --services | grep -x traefik-mcp-acme-owner
@@ -106,13 +110,16 @@ jobs:
             --file probe/keycloak/compose.probe.yaml --profile keycloak --profile apply config -q
           PROBE_CA_JSON=/nonexistent docker compose --file compose.yaml \
             --file probe/step-ca/compose.probe.yaml --profile probe --profile step-ca config -q
+          PROBE_EGRESS_STATIC=/nonexistent docker compose --file compose.yaml \
+            --file probe/agent-service/compose.probe.yaml \
+            --profile agent-service --profile agent-probe config -q
 
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
             traefik.yml keycloak/master.yaml keycloak/realm.yaml \
             keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml probe/step-ca/compose.probe.yaml step-ca/ca.json \
-            traefik-mcp.yml mcp/dynamic/*
+            traefik-mcp.yml mcp/dynamic/* agent-service/egress/traefik.yml agent-service/egress/dynamic/*
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
       # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,

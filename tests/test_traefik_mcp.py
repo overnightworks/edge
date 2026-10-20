@@ -60,6 +60,14 @@ def test_the_three_mcp_networks_are_internal(compose):
     }
 
 
+def test_the_mcp_network_gets_no_address_on_the_host(compose):
+    """#189: the network the agent service joins is isolated, so no host listener is reachable."""
+
+    assert compose["networks"]["mcp"]["driver_opts"] == {
+        "com.docker.network.bridge.gateway_mode_ipv4": "isolated"
+    }
+
+
 def test_traefik_mcp_is_the_only_service_on_all_three_networks(compose):
     """#48 rule 1: only traefik-mcp bridges the three networks."""
 
