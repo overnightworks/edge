@@ -11,7 +11,7 @@ services:
       - {name: www, exposure: public, reason: "the apex's alias", target: "http://localhost:8080"}
   step-ca:
     run:
-      enabled: false
+      enabled: true
       setup: step-ca/init
   keycloak:
     run:

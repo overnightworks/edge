@@ -336,7 +336,7 @@ dieses Repositorys; sein Schluessel ist der Name des Compose-Profils (`docs/nami
 services:
   step-ca:
     run:
-      enabled: false        # true schaltet das Profil `step-ca` an
+      enabled: true         # false schaltet das Profil `step-ca` ab
       setup: step-ca/init   # optional: der Befehl, der den Schluessel macht
 ```
 
@@ -1308,11 +1308,11 @@ tokens.
 `*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
 configuration. `traefik-mcp` fetches its certificates from it (below).
 
-Go live, once, as the operator (uid 1000): run `step-ca/init`, set `services.step-ca.run.enabled:
-true` in `fleet.yaml` (a pull request), then run `edge apply --closed`
+The catalog line is set (`services.step-ca.run.enabled: true` in `fleet.yaml`). Go live, once, as
+the operator (uid 1000): pull `~/git/edge` and run `edge apply`
 ([Dienste an und aus](#dienste-an-und-aus)). `edge apply` makes no key material itself: while
 `step-ca/init --check` fails it asks separately and, on `yes`, runs `step-ca/init` in your terminal,
-re-checks, and then shows the plan.
+re-checks, and then shows a fresh plan.
 
 `step-ca/init` makes the key material in one-off containers without a network and prints no
 secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
@@ -1343,9 +1343,7 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: set `enabled: true` in `fleet.yaml` through a pull request, pull it with
-`git -C ~/git/edge pull --ff-only`, then run `edge apply --closed`, which asks
-for `step-ca/init` first when it is missing. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
+The first go-live is described under [Interne CA](#interne-ca). `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
 the one switch, the compose profile `step-ca`, so a plain `docker compose up -d` starts none of
 them. `traefik-mcp` waits for the CA to listen before it starts Traefik, so the order of the two
 does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false`
