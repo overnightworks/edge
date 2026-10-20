@@ -171,7 +171,7 @@ def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_settin
 
 
 def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_opens():
-    """#204: one router on the public entrypoint for exactly `/`; the other auth rules stay."""
+    """One backend-less router for exactly `/` on the public entrypoint; other auth rules stay."""
     labels = compose_document()["services"]["keycloak"]["labels"]
     redirect = "traefik.http.middlewares.auth-root-to-account.redirectregex"
 
@@ -179,6 +179,8 @@ def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_op
         "auth-root rule": labels["traefik.http.routers.auth-root.rule"],
         "auth-root entrypoint": labels["traefik.http.routers.auth-root.entrypoints"],
         "auth-root middleware": labels["traefik.http.routers.auth-root.middlewares"],
+        "auth-root service": labels["traefik.http.routers.auth-root.service"],
+        "redirect regex": labels[f"{redirect}.regex"],
         "redirect target": labels[f"{redirect}.replacement"],
         "redirect is temporary": labels[f"{redirect}.permanent"],
         "auth rule": labels["traefik.http.routers.auth.rule"].replace("\n", " "),
@@ -187,6 +189,8 @@ def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_op
         "auth-root rule": "Host(`auth.${EDGE_DOMAIN}`) && Path(`/`)",
         "auth-root entrypoint": "edge",
         "auth-root middleware": "auth-root-to-account",
+        "auth-root service": "noop@internal",
+        "redirect regex": "^.*$$",
         "redirect target": "https://auth.${EDGE_DOMAIN}/realms/hallucinai/account",
         "redirect is temporary": "false",
         "auth rule": (
