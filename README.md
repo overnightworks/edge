@@ -281,9 +281,9 @@ Zeile von anderswo zeigt `plan` als entfernt, und sie verschwindet nach `yes`
 Tunnel verwaltet (`config_src = cloudflare`)**. Solange er `local` ist, bedient
 cloudflared `/etc/cloudflared/config.yml`, und die Zeilen, die `apply` schreibt,
 bedienen nichts. Der Wechsel von `local` auf `cloudflare` ist einseitig (laut
-einer Aussage der cloudflared-Maintainer) und ein Schritt des Betreibers
-(overnightworks/edge#168); ob das PUT von `apply` den Modus umschaltet, ist
-offen, deshalb verspricht dieser Absatz es nicht.
+einer Aussage der cloudflared-Maintainer). Den Wechsel macht der Betreiber
+(overnightworks/edge#168); dieser Absatz verspricht nicht, dass `apply` ihn
+ausloest.
 
 ## Dienste an und aus
 
