@@ -64,10 +64,16 @@ def plan_command(home: Path) -> int:
 
 
 def apply_command(
-    home: Path, tree: Path | None = None, git: checkout.Runner = checkout.run_git
+    home: Path,
+    tree: Path | None = None,
+    git: checkout.Runner = checkout.run_git,
+    *,
+    prober_for: Callable[[str], host_probe.Prober] = host_probe.HttpProber,
 ) -> int:
     """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
-    live one, on a clean main. An apply that may have changed the services, or found nothing to
+    live one, on a clean main. A plan with changes is refused before `yes` while an enabled host's
+    `ready` path does not answer on its target (`prober_for` makes the prober of one target;
+    #30 rule 8). An apply that may have changed the services, or found nothing to
     do, ends on the host check (#30 rule 8): its verdict decides the exit.
 
     The `try` is the first statement and SIGTERM becomes an interrupt as its first step, so every
@@ -94,7 +100,13 @@ def apply_command(
             def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
                 nonlocal closing
                 try:
-                    outcome = apply.apply_plan(home, token_values, progress=run.progress)
+                    outcome = apply.apply_plan(
+                        home,
+                        token_values,
+                        progress=run.progress,
+                        hosts=catalog.hosts(catalog.read(tofu.PROJECT_ROOT / catalog.FLEET_FILE)),
+                        prober_for=prober_for,
+                    )
                 except apply.StepFailed as failure:
                     closing = failure.closing
                     raise
