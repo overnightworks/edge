@@ -120,7 +120,7 @@ PRESENTATOR = AppClient(
         f"https://presentator.{DOMAIN}/auth/callback",
         f"https://presentator-talk.{DOMAIN}/auth/callback",
     ),
-    f"https://presentator.{DOMAIN}/",
+    f"https://presentator.{DOMAIN}/login",
     agent_workload=True,
 )
 APP_CLIENTS = (SONGMAKER, HOPIN, PRESENTATOR)
@@ -1690,8 +1690,8 @@ class Probe:
             f"password grant, {'' if client.agent_workload else 'client_credentials, '}and the "
             "offline_access scope are refused; the "
             f"end-session page asks before logging out for {client.logout_redirect} and refuses "
-            "an unregistered address; the client has no front- or back-channel logout or "
-            "optional scope, a base URL and shows in the console"
+            "an unregistered address and the origin root; the client has no front- or back-channel "
+            "logout or optional scope, a base URL and shows in the console"
             + (
                 f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
                 f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
@@ -1906,11 +1906,13 @@ class Probe:
             f"end session with {client.logout_redirect} answered {registered.status} to "
             f"{registered.headers.get('Location')}: {page_message(registered)}",
         )
-        unregistered = end_session(f"{client.origin}/elsewhere")
-        expect(
-            unregistered.status == 400,
-            f"end session with an unregistered address answered {unregistered.status}",
-        )
+        for unregistered_address in (f"{client.origin}/elsewhere", f"{client.origin}/"):
+            unregistered = end_session(unregistered_address)
+            expect(
+                unregistered.status == 400,
+                f"end session with unregistered {unregistered_address} answered "
+                f"{unregistered.status}",
+            )
 
     @staticmethod
     def app_client_representation(admin: Admin, client: AppClient) -> None:
