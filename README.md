@@ -26,7 +26,6 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
-| `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
 | `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
@@ -34,7 +33,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live`, `step-ca/init`, `edge apply` (`tests/test_edge_apply.py`), the external edge tests (`tests/test_edge_external.py`) and the OpenTofu tests under `external/tests/`, run only through `python -m edge.external.tofu_test`, with their locked dependencies |
-| `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
+| `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, no secret in any file); CI never starts containers |
 | [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
 ## Threat model
@@ -274,6 +273,17 @@ fehlgeschlagen oder die Pruefung der Hosts meldet etwas oder laeuft nicht,
 ```bash
 bin/edge external apply
 ```
+
+`apply` schreibt auch die Zeilen des Tunnels aus dem Katalog: eine je Host, die
+404-Regel zuletzt. Die Konfiguration des Tunnels gehoert ganz dem Katalog: eine
+Zeile von anderswo zeigt `plan` als entfernt, und sie verschwindet nach `yes`
+(anders als undeklarierte Records und Apps). Das gilt, **solange Cloudflare den
+Tunnel verwaltet (`config_src = cloudflare`)**. Solange er `local` ist, bedient
+cloudflared `/etc/cloudflared/config.yml`, und die Zeilen, die `apply` schreibt,
+bedienen nichts. Der Wechsel von `local` auf `cloudflare` ist einseitig (laut
+einer Aussage der cloudflared-Maintainer) und ein Schritt des Betreibers
+(overnightworks/edge#168); ob das PUT von `apply` den Modus umschaltet, ist
+offen, deshalb verspricht dieser Absatz es nicht.
 
 ## Dienste an und aus
 
@@ -1329,13 +1339,7 @@ what makes the edge reachable.
    specific app the wildcard app covers `auth` too, and browsers and the apps'
    token calls meet the Access login. That a per-host app beats the wildcard
    app is proven live by E4 in overnightworks/edge#1.
-4. **Ingress line.** Apply `cloudflared-config.example.yml` to
-   `/etc/cloudflared/config.yml` with the real tunnel ID, team name and AUD tag
-   (the wildcard rule always carries `access.required`, `teamName` and
-   `audTag` together), then restart cloudflared. The apex, `www` and
-   presentator rules stay ahead of the wildcard.
-   The `auth.hallucinai.de` line goes along only together with step 3: it
-   sits ahead of the wildcard, carries **no** `access` block (no JWT check:
-   the bypass app issues no token), and points to `http://127.0.0.1:8081`.
+4. **Ingress line.** The tunnel lines come from the catalog through
+   `edge external apply` (see [Externe Dienste als Code](#externe-dienste-als-code)).
 5. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
    `<name>.hallucinai.de` requests reach the edge, `auth` included.

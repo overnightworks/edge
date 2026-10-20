@@ -99,7 +99,7 @@ jobs:
       - name: YAML files parse
         run: |
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
-            traefik.yml cloudflared-config.example.yml keycloak/master.yaml keycloak/realm.yaml \
+            traefik.yml keycloak/master.yaml keycloak/realm.yaml \
             keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml probe/step-ca/compose.probe.yaml step-ca/ca.json \
             traefik-mcp.yml mcp/dynamic/*
 
@@ -232,35 +232,6 @@ jobs:
           hardening.pop("tls")
           if hardening != public["entryPoints"]["edge"]["http"]:
               sys.exit("traefik-mcp.yml's hardening block differs from traefik.yml's")
-          PY
-
-      # Unmatched hosts must end at 404, and the wildcard must demand an Access token. The login
-      # line alone is public: ahead of the wildcard, without Access, to the edge entrypoint. No
-      # line targets the local admin entrypoint 8090.
-      - name: Tunnel template denies by default
-        run: |
-          python3 - <<'PY'
-          import re, sys, yaml
-          ingress = yaml.safe_load(open("cloudflared-config.example.yml"))["ingress"]
-          if ingress[-1].get("service") != "http_status:404":
-              sys.exit("last ingress rule is not http_status:404")
-          hostnames = [str(r.get("hostname", "")) for r in ingress]
-          wildcard = ingress[next(i for i, h in enumerate(hostnames) if h.startswith("*."))]
-          access = wildcard.get("originRequest", {}).get("access", {})
-          missing = [k for k in ("required", "teamName", "audTag") if not access.get(k)]
-          if missing:
-              sys.exit(f"wildcard access rule lacks {missing}")
-          if hostnames.count("auth.hallucinai.de") != 1:
-              sys.exit("there is not exactly one auth.hallucinai.de line")
-          auth_index = hostnames.index("auth.hallucinai.de")
-          auth = ingress[auth_index]
-          if auth_index > hostnames.index(wildcard["hostname"]):
-              sys.exit("the auth line comes after the wildcard")
-          if auth != {"hostname": "auth.hallucinai.de", "service": "http://127.0.0.1:8081"}:
-              sys.exit(f"the auth line is not the bare edge route: {auth}")
-          admin_targets = [r for r in ingress if re.search(r":8090\b", str(r.get("service", "")))]
-          if admin_targets:
-              sys.exit(f"an ingress line targets the admin entrypoint 8090: {admin_targets}")
           PY
 
       # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same pinned tofu

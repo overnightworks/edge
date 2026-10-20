@@ -112,6 +112,9 @@ run "c5_a_protected_wildcard_gets_an_allow_group_app" {
     catalog_file = "tests/fixtures/cloudflare-protected.yaml"
   }
 
+  # The tunnel line for the wildcard waits for X8b (T10); X8b deletes this entry with the tripwire.
+  expect_failures = [cloudflare_zero_trust_tunnel_cloudflared_config.this]
+
   assert {
     condition     = cloudflare_zero_trust_access_policy.allow_operator[0].decision == "allow" && [for entry in cloudflare_zero_trust_access_policy.allow_operator[0].include : entry.group.id] == ["group-id"]
     error_message = "the protected host's policy does not allow the operator group"
@@ -326,7 +329,7 @@ run "c11_no_app_for_a_bypass_host_is_imported_so_one_is_created" {
   }
 }
 
-run "c12_without_hosts_nothing_is_looked_up" {
+run "t7_without_hosts_only_the_zone_and_the_tunnel_are_looked_up" {
   command = plan
 
   variables {
@@ -335,13 +338,21 @@ run "c12_without_hosts_nothing_is_looked_up" {
 
   assert {
     condition = alltrue([
-      length(data.cloudflare_zone.this) == 0,
-      length(data.cloudflare_zero_trust_tunnel_cloudflared.this) == 0,
       length(data.cloudflare_dns_records.host) == 0,
       length(data.cloudflare_zero_trust_access_applications.host) == 0,
       length(data.cloudflare_zero_trust_access_groups.operator) == 0,
     ])
-    error_message = "a lookup was read although no host is declared"
+    error_message = "a per-host lookup was read although no host is declared"
+  }
+
+  assert {
+    condition     = data.cloudflare_zone.this.id == "zone-id" && data.cloudflare_zero_trust_tunnel_cloudflared.this.id == "tunnel-id"
+    error_message = "the zone and the tunnel are not looked up without a host"
+  }
+
+  assert {
+    condition     = [for rule in cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress : rule.service] == ["http_status:404"]
+    error_message = "the tunnel configuration is not planned with the 404 rule alone"
   }
 
   assert {
@@ -362,7 +373,7 @@ run "r7_a_changed_tunnel_updates_every_record_content" {
   command = plan
 
   override_data {
-    target = data.cloudflare_zero_trust_tunnel_cloudflared.this[0]
+    target = data.cloudflare_zero_trust_tunnel_cloudflared.this
     values = { id = "new-tunnel-id" }
   }
 
