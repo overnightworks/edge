@@ -4,15 +4,14 @@
 locals {
   operator_group_name = "operator"
 
-  hosts_declared  = length(local.hosts) > 0
   protected_hosts = { for fqdn, host in local.hosts : fqdn => host if host.exposure == "protected" }
   access_app_hosts = {
     for fqdn, host in local.hosts : fqdn => host if contains(["bypass", "protected"], host.exposure)
   }
 
-  zone_id    = one(data.cloudflare_zone.this[*].id)
-  account_id = one(data.cloudflare_zone.this[*].account.id)
-  tunnel_id  = one(data.cloudflare_zero_trust_tunnel_cloudflared.this[*].id)
+  zone_id    = data.cloudflare_zone.this.id
+  account_id = data.cloudflare_zone.this.account.id
+  tunnel_id  = data.cloudflare_zero_trust_tunnel_cloudflared.this.id
 
   operator_group_ids = [
     for group in flatten(data.cloudflare_zero_trust_access_groups.operator[*].result) : group.id
@@ -38,14 +37,13 @@ locals {
   }
 }
 
-# The provider itself fails on no or several matching zones and tunnels (C13).
+# The provider itself fails on no or several matching zones and tunnels (C13). Both are looked up
+# with no host too: the tunnel's configuration outlives the last host.
 data "cloudflare_zone" "this" {
-  count  = local.hosts_declared ? 1 : 0
   filter = { name = local.fleet.cloudflare.zone }
 }
 
 data "cloudflare_zero_trust_tunnel_cloudflared" "this" {
-  count      = local.hosts_declared ? 1 : 0
   account_id = local.account_id
   filter     = { is_deleted = false }
 }

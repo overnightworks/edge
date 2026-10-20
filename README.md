@@ -26,15 +26,15 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `step-ca/` | the internal CA: its `ca.json` and `step-ca/init`, the operator's tool for its keys (see [Interne CA](#interne-ca)) |
 | `traefik-mcp.yml`, `mcp/dynamic/` | the second Traefik for the MCP origins: its static configuration and one router file per app (see [traefik-mcp](#traefik-mcp)) |
 | `probe/step-ca/` | the probe of the internal CA and of `traefik-mcp`, re-run for every step-ca or Traefik upgrade |
-| `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
-| `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
+| `src/edge/`, `external/` | the `edge` command (`edge apply`, which is `edge apply --closed` and then the publish, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/home_tools/`, `docs/home.md`, `bin/home` | the `home` workstation tool (German, see [docs/home.md](docs/home.md)); `bin/home` is a symlink to the one launcher `bin/edge` |
+| `src/hal/`, `bin/hal` | the `hal` door of the workstation (see [Running hal](#running-hal)); `bin/hal` is a symlink to the launcher `bin/edge` |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
 | `tests/`, `pyproject.toml`, `uv.lock` | the tests of `edge-check`, `edge-backup`, the probe, the secret check, `keycloak/go-live`, `step-ca/init`, `edge apply` (`tests/test_edge_apply.py`), the external edge tests (`tests/test_edge_external.py`) and the OpenTofu tests under `external/tests/`, run only through `python -m edge.external.tofu_test`, with their locked dependencies |
-| `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, tunnel template, no secret in any file); CI never starts containers |
+| `.github/workflows/ci.yml` | the static checks (lint, tests, compose renders, no published ports, no secret in any file); CI never starts containers |
 | [`docs/naming.md`](docs/naming.md) | the naming rule: how every overnightworks repo, tool, package and unit is named |
 
 ## Threat model
@@ -78,6 +78,35 @@ environment the systemd units call. A failed sync ends with exit 2 and names the
 checkout.
 Slice S2b of overnightworks/edge#100 puts it on PATH as `edge`.
 
+## Running hal
+
+`hal` is the daily door of the workstation. `hal` alone, `hal -h` and `hal --help` list its
+commands; `hal <command> --help` shows one. The commands:
+
+- `hal version` names the code that runs: the commit and branch of the checkout the code lives in,
+  whether its tree is clean (the rule `edge apply` uses), and how it stands to the `origin/main`
+  the last fetch left. It never fetches and changes nothing. `-v` prints each git call on stderr.
+  Installed from a wheel there is no checkout, and it says so.
+
+Every command ends with one of these exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | the command ran and found something that needs attention |
+| 2 | the command line is wrong |
+| 3 | the command could not do its job, or failed unexpectedly (only the error's type is shown) |
+| 4 | a guard of the command refused |
+| 130 | interrupted with Ctrl-C |
+
+An error is `error: <what>` on stderr and, where there is a way on, one `next: <command>` line;
+never a traceback. There is no `-y`, and `--json` exists only on a command whose result a program
+reads. The fleet rules for command lines are overnightworks/quality#80; hal's exit codes and error
+form are implemented in `src/hal/grammar.py`.
+
+Until H5 (the rename), `hal` sits beside `edge` and `home`: link `bin/hal` onto PATH the way `edge`
+is.
+
 ## Configure
 
 The first `edge apply --closed` writes `.env` itself: `EDGE_DOMAIN` is `fleet.yaml`'s
@@ -93,15 +122,16 @@ again.
 # `--no-recreate` leaves a running core service as it is, for the apply below to follow.
 docker compose up -d --no-recreate socket-proxy traefik
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
-# `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
-# fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
+# `edge apply` (its local part, `--closed`) switches them on or off by
+# `services.keycloak.run.enabled` in fleet.yaml; when it switches them on and
+# `keycloak/go-live` is not done, it asks and runs it in your terminal.
 # fleet.yaml is edited through a pull request and reaches the live checkout by the pull below
 # (until S2.4c); a local edit leaves the tree dirty, and the apply refuses it, naming the path.
 git -C ~/git/edge pull --ff-only
-edge apply --closed
+edge apply
 # Traefik reads traefik.yml (its entrypoints) only when it starts. When traefik.yml changed
 # since it was last applied, or the compose definition of socket-proxy or traefik changed
-# (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply --closed` recreates
+# (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply` recreates
 # the running core services concerned, socket-proxy first and traefik after it, proves every
 # barrier again and only then says so, ending in "the core is current"; a stopped one is named
 # and not started, so start it with the `up` above first. A core container edge's failed
@@ -113,7 +143,7 @@ edge apply --closed
 ```
 
 Switching Keycloak off (`enabled: false` through a pull request, `git -C ~/git/edge pull
---ff-only`, then `edge apply --closed`) stops and removes
+--ff-only`, then `edge apply`) stops and removes
 `keycloak-db` and `keycloak` and keeps the volume `keycloak-db`, `~/.secrets/keycloak` and
 the `keycloak` network; switching it on again uses the same database. Removing the entry
 from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
@@ -283,6 +313,17 @@ fehlgeschlagen oder die Pruefung der Hosts meldet etwas oder laeuft nicht,
 bin/edge external apply
 ```
 
+`apply` schreibt auch die Zeilen des Tunnels aus dem Katalog: eine je Host, die
+404-Regel zuletzt. Die Konfiguration des Tunnels gehoert ganz dem Katalog: eine
+Zeile von anderswo zeigt `plan` als entfernt, und sie verschwindet nach `yes`
+(anders als undeklarierte Records und Apps). Das gilt, **solange Cloudflare den
+Tunnel verwaltet (`config_src = cloudflare`)**. Solange er `local` ist, bedient
+cloudflared `/etc/cloudflared/config.yml`, und die Zeilen, die `apply` schreibt,
+bedienen nichts. Der Wechsel von `local` auf `cloudflare` ist einseitig (laut
+einer Aussage der cloudflared-Maintainer). Den Wechsel macht der Betreiber
+(overnightworks/edge#168); dieser Absatz verspricht nicht, dass `apply` ihn
+ausloest.
+
 ## Dienste an und aus
 
 `fleet.yaml` ist der Katalog. Ein Eintrag mit `run` und ohne `repo` ist eine Einheit
@@ -295,6 +336,21 @@ services:
       enabled: false        # true schaltet das Profil `step-ca` an
       setup: step-ca/init   # optional: der Befehl, der den Schluessel macht
 ```
+
+Das blosse `edge apply` fuehrt zwei Teile nacheinander aus: zuerst den lokalen Teil
+(`edge apply --closed`, alles bis zum Ende dieses Abschnitts), dann, nur wenn der mit Exit 0 endete,
+die Publish-Phase (`edge external apply`, [Externe Dienste als Code](#externe-dienste-als-code)).
+Jeder Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt es nirgends etwas
+zu aendern, fragt `edge apply` gar nichts. Endet der lokale Teil nicht mit 0 (verweigert,
+abgelehnt, nicht planbar, teilweise), steht eine Zeile "nothing published", es laeuft kein tofu,
+und der Exit ist der des lokalen Teils. `edge apply --closed` bleibt der lokale Teil allein.
+Ein Ctrl-C vor der Publish-Phase endet mit Exit 1 und "interrupted, nothing published". Waehrend
+der Publish-Phase gelten deren eigene Unterbrechungsregeln
+([Externe Dienste als Code](#externe-dienste-als-code)) und ihr Exit bleibt, auch 0, sobald sie
+ihr Urteil festgehalten hat; nur eine Unterbrechung, die ohne festgehaltenen Exit aus der
+Publish-Phase herauskommt, endet mit Exit 1 und der Zeile "run `edge external check --hosts`". Ein
+SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess wie bei `--closed`: nichts wird
+veroeffentlicht.
 
 `edge apply --closed` bringt jede Einheit in den Zustand, den `enabled` sagt. An:
 `docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann
@@ -408,8 +464,13 @@ Live-Checkout `~/git/edge` gestartet, nicht auf `main`, Baum nicht sauber, `.env
 `cloudflare.zone` ungueltig, git nicht befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
-kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
-Publish-Phase gibt es noch nicht.
+kann, ein Setup, das nicht starten kann). Das blosse `edge apply` (siehe unten) gibt den
+Exit des lokalen Teils unveraendert zurueck, solange der nicht 0 ist; danach den der Publish-Phase,
+deren Exit 2 zu 1 wird. Ein Exit 2 von `edge apply` heisst darum: der lokale Teil konnte nicht
+fertig planen, es wurde nichts veroeffentlicht, und ein Setup, das schon lief, kann Aenderungen
+hinterlassen haben (ein Setup laeuft vor dem erneuten Pruefen und Planen, beide koennen noch mit
+Exit 2 enden). Ueber `bin/edge` kann Exit 2 auch vom `uv sync` des Starters kommen, bevor `edge`
+beginnt; seine Zeile nennt das Sync.
 
 Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt nichts an und
 braucht keinen laufenden Dienst. Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was
@@ -557,7 +618,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 
 ## edge-backup
 
-A weekly encrypted backup of the declared apps (Songmaker and Keycloak) into a
+A weekly encrypted backup of the declared apps (Songmaker; Keycloak joins with its go-live) into a
 local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
@@ -644,9 +705,10 @@ client secrets. In the repository it exists only encrypted (restic). In plain
 text it exists in exactly three places, each mode 0700: the staging directory
 during a backup and the restore test's directory during a restore test (both
 removed when the run ends), and the target of `edge-backup restore keycloak
---target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
-waits 10 minutes for it, reports keycloak as failed and still backs up
-Songmaker.
+--target`, which you delete yourself. While Keycloak is off, `backup/apps.toml` does not declare
+it, so the weekly run and the restore test cover Songmaker only. Once Keycloak is declared and its
+database is down, the weekly run waits 10 minutes for it, reports keycloak as failed and still
+backs up Songmaker.
 
 ### The restore test
 
@@ -665,7 +727,7 @@ It restores the last successful backup's snapshot into a private directory under
   PostgreSQL quotes row values in them: a failure shows the step and the exit
   code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for
-  Keycloak (`require_rows = true` in `backup/apps.toml`) it is above zero;
+  Keycloak (its record, which the go-live change (#118) adds back to `backup/apps.toml`, sets `require_rows = true`) it is above zero;
 - for an app with audio: the restored audio file count equals the manifest's,
   and every audio file the restored database references
   (`generations.mp3_path`) exists in the copy with a size above zero.
@@ -890,10 +952,10 @@ are YAML files in `keycloak/`, applied by a tool, not clicked together in the
 console. Only the people and their group memberships are managed in the
 console. Change the YAML and apply it again, and the running Keycloak follows.
 
-Going live needs you in two places only: in the browser, to create your own
-admin with a second factor (a machine must not hold that), and in Cloudflare, to
-open the public door. Everything else is `keycloak/go-live` (see
-[Keycloak go-live](#keycloak-go-live)). The sections below are the reference.
+Going live needs you in one place only: in the browser, to create your own
+admin with a second factor (a machine must not hold that). Everything else is
+`keycloak/go-live` (see [Keycloak go-live](#keycloak-go-live)), and `bin/edge apply`
+publishes the public door afterwards. The sections below are the reference.
 
 ### Doors, issuers and configuration
 
@@ -1004,7 +1066,7 @@ environment entry in any compose file Compose may load (`compose*.yaml`,
 ### Start and apply
 
 Start the stack as in [Start, readiness, stop](#start-readiness-stop) (Keycloak with
-`edge apply --closed`), Traefik included, and wait until the readiness check prints `ready`. Then apply
+`edge apply`), Traefik included, and wait until the readiness check prints `ready`. Then apply
 `keycloak/*.yaml`:
 
 ```sh
@@ -1035,12 +1097,13 @@ keycloak`), go-live refuses at the start of its run, asks nothing and starts not
 ``go-live: refused, keycloak is switched off (since …); `edge start keycloak` ends the switch``
 (exit 1). It reads the marker again, under the switch lock, right before each start (step 3,
 step 4b, step 5), so a stop made during the run wins. `--check` starts nothing and ignores the
-marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply --closed` asks and runs it in your terminal on yes (`--check` first).
+marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply` (its local part) asks and runs it in your terminal on yes (`--check` first).
 
 - **1. Backup.** It asks whether to continue without the Keycloak backup only while
    [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
    initialised repository). There is no default; the answer is yours. Nothing is asked once
-   edge-backup is set up (its next weekly run covers Keycloak; the check does not prove a
+   edge-backup is set up (the change that switches Keycloak on (#118) adds its record to `backup/apps.toml`, so its next
+   weekly run covers Keycloak; the check does not prove a
    snapshot exists) or Keycloak's database volume exists (the first start creates it), so a
    "no" is asked again and a finished install is never asked, even with Keycloak stopped.
 - **2. Secrets.** It creates the three files with random values, in a 0700
@@ -1078,17 +1141,9 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
    has both a TOTP and a passkey credential. Only then it deletes `temp-admin` and the
    `bootstrap-admin-password` file; otherwise it refuses and says what is missing.
 
-Last, **your part, in Cloudflare** (unnumbered). The script ends by printing the steps (A8, steps
-3 to 5, for `auth.hallucinai.de`) and the check:
-
-```sh
-curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
-  | grep -o '"issuer":"[^"]*"'
-# "issuer":"https://auth.hallucinai.de/realms/hallucinai"
-```
-
-The operator's own browser is no proof: it holds an Access session and
-passes the wildcard app either way.
+Last, **`bin/edge apply`** (unnumbered). The script ends unpublished: its last line names
+`edge apply`, which publishes `auth.hallucinai.de` once the catalog declares it. There is no
+Cloudflare step of yours any more.
 
 #### Is go-live finished? `--check`
 
@@ -1154,7 +1209,7 @@ switched-off Keycloak):
 - **7. Retire the bootstrap.** Sign in as that user, enrol TOTP and add a passkey, then delete
   `temp-admin` in the admin console and run `rm ~/.secrets/keycloak/bootstrap-admin-password`.
 
-Last, **public login in Cloudflare** (unnumbered), as in the Cloudflare part above.
+Last, **`bin/edge apply`** (unnumbered), as above.
 
 ### Patch upgrade
 
@@ -1337,13 +1392,7 @@ what makes the edge reachable.
    specific app the wildcard app covers `auth` too, and browsers and the apps'
    token calls meet the Access login. That a per-host app beats the wildcard
    app is proven live by E4 in overnightworks/edge#1.
-4. **Ingress line.** Apply `cloudflared-config.example.yml` to
-   `/etc/cloudflared/config.yml` with the real tunnel ID, team name and AUD tag
-   (the wildcard rule always carries `access.required`, `teamName` and
-   `audTag` together), then restart cloudflared. The apex, `www` and
-   presentator rules stay ahead of the wildcard.
-   The `auth.hallucinai.de` line goes along only together with step 3: it
-   sits ahead of the wildcard, carries **no** `access` block (no JWT check:
-   the bypass app issues no token), and points to `http://127.0.0.1:8081`.
+4. **Ingress line.** The tunnel lines come from the catalog through
+   `edge external apply` (see [Externe Dienste als Code](#externe-dienste-als-code)).
 5. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
    `<name>.hallucinai.de` requests reach the edge, `auth` included.

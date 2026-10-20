@@ -48,6 +48,21 @@ count_table = "songs"
 audio_reference_table = "generations"
 audio_reference_column = "mp3_path"
 """
+KEYCLOAK_TOML = """
+# A DB-only app: no volume, so its snapshot holds the dump and the manifest only.
+[app.keycloak]
+compose_project = "edge"
+db_service = "keycloak-db"
+dump = "pg_dump_custom"
+db_user = "keycloak"
+db_name = "keycloak"
+postgres_major = 17       # compose.yaml's keycloak-db
+
+[app.keycloak.restore_test]
+count_table = "realm"
+require_rows = true   # a Keycloak without a realm is no backup
+"""
+SHIPPED_APPS_WITH_KEYCLOAK = DEFAULT_APPS.read_text() + KEYCLOAK_TOML
 RADIO_TOML = """
 [app.radio]
 compose_project = "radio"
@@ -360,6 +375,11 @@ def declare_apps(home: Path, toml: str) -> tuple[str, str]:
 def declare_shipped_apps() -> tuple[str, str]:
     """The `--apps` arguments that declare what `backup/apps.toml` ships."""
     return "--apps", str(DEFAULT_APPS)
+
+
+def declare_shipped_apps_with_keycloak(home: Path) -> tuple[str, str]:
+    """The `--apps` arguments for the shipped apps plus the Keycloak record the go-live adds."""
+    return declare_apps(home, SHIPPED_APPS_WITH_KEYCLOAK)
 
 
 def declare_two_apps(home: Path) -> tuple[str, str]:

@@ -9,14 +9,23 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from git_support import (
+    advance,
+    checkout_state,
+    committed_main,
+    head_of,
+    local_commit,
+    plain_git,
+    subjects,
+    with_origin,
+)
 
 from edge import checkout
 
-IGNORED = ".env\n/dynamic/switch-*\n.venv/\n__pycache__/\n"
 # githooks(5): every hook git may run, so a sentinel catches whichever one would.
 HOOK_NAMES = (
     "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
@@ -36,30 +45,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("LC_ALL", "C")  # git's own lines in English, whatever the machine speaks
     return home
-
-
-def plain_git(tree: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Git as the operator's shell runs it, global config, hooks and all (the positive control),
-    but with no `GIT_*` of the shell that runs the tests."""
-    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
-    return subprocess.run(
-        ["git", "-C", str(tree), *arguments],
-        capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL, env=environment,
-    )  # fmt: skip
-
-
-def committed_main(tree: Path) -> Path:
-    """`tree`'s files committed as the one commit of a fresh `main`, with this repository's
-    ignores, an ignored `.env` and a repository identity; the fixture's own commit runs no hook."""
-    tree.mkdir(parents=True, exist_ok=True)
-    (tree / ".gitignore").write_text(IGNORED)
-    (tree / ".env").touch()
-    plain_git(tree, "init", "--quiet", "--initial-branch", checkout.MAIN)
-    for key, value in (("user.name", "edge test"), ("user.email", "test@edge.invalid")):
-        plain_git(tree, "config", key, value)
-    plain_git(tree, "add", "--all")
-    plain_git(tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--message", "init")
-    return tree
 
 
 @pytest.fixture
@@ -455,69 +440,6 @@ def test_a_missing_git_is_one_line(main_tree, tmp_path, monkeypatch):
 
 
 # S2.4b (#98): the fetch of origin's main, pinned by its sha, and what waits on it.
-
-
-def with_origin(tree: Path, bare: Path) -> Path:
-    """`tree`'s `main` pushed to a fresh bare repository at `bare`, its `file://` remote."""
-    plain_git(tree, "init", "--quiet", "--bare", "--initial-branch", checkout.MAIN, str(bare))
-    plain_git(tree, "remote", "add", "origin", bare.as_uri())
-    plain_git(tree, "push", "--quiet", "origin", checkout.MAIN)
-    return bare
-
-
-def advance(bare: Path, *commits: tuple[bytes, Mapping[bytes, bytes]]) -> str:
-    """`commits` (each a raw message and the files it writes) appended to `bare`'s `main` by
-    `git fast-import`, as a merged pull request would bring them; the new tip's sha. Raw bytes,
-    so a message or a path may hold what no editor would type."""
-    tip = plain_git(bare, "rev-parse", checkout.MAIN).stdout.strip()
-    stream = bytearray()
-    for number, (message, files) in enumerate(commits):
-        stream += b"commit refs/heads/main\ncommitter edge test <test@edge.invalid> 0 +0000\n"
-        stream += b"data %d\n%s\n" % (len(message), message)
-        if number == 0:
-            stream += b"from %s\n" % tip.encode()
-        for path, content in files.items():
-            stream += b"M 100644 inline %s\ndata %d\n%s\n" % (quoted(path), len(content), content)
-    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
-    subprocess.run(
-        ["git", "-C", str(bare), "fast-import", "--quiet"],
-        input=bytes(stream), capture_output=True, check=True, env=environment,
-    )  # fmt: skip
-    return plain_git(bare, "rev-parse", checkout.MAIN).stdout.strip()
-
-
-def quoted(path: bytes) -> bytes:
-    """`path` C-quoted as fast-import reads it, so a newline in it stays part of the path."""
-    escaped = path.replace(b"\\", b"\\\\").replace(b'"', b'\\"').replace(b"\n", b"\\n")
-    return b'"%s"' % escaped
-
-
-def subjects(*names: str) -> list[tuple[bytes, Mapping[bytes, bytes]]]:
-    return [(name.encode(), {}) for name in names]
-
-
-def head_of(tree: Path) -> str:
-    return plain_git(tree, "rev-parse", "HEAD").stdout.strip()
-
-
-def local_commit(tree: Path, message: str = "local only") -> str:
-    plain_git(tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty",
-              "--message", message)  # fmt: skip
-    return head_of(tree)
-
-
-def checkout_state(tree: Path) -> dict[str, bytes]:
-    """Every file of the checkout, `.git` included but its objects and the three entries a fetch
-    may write (rule 5), by path: what must stay byte-identical."""
-    fetched = {"FETCH_HEAD", "refs/remotes/origin/main", "logs/refs/remotes/origin/main"}
-    state = {}
-    for path in sorted(tree.rglob("*")):
-        relative = path.relative_to(tree).as_posix()
-        inside_git = relative.removeprefix(".git/")
-        if path.is_file() and not inside_git.startswith("objects/") and inside_git not in fetched:
-            state[relative] = path.read_bytes()
-    state[".git/index mtime"] = str((tree / ".git" / "index").stat().st_mtime_ns).encode()
-    return state
 
 
 @pytest.fixture
