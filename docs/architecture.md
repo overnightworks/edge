@@ -109,7 +109,7 @@ flowchart TB
 
 **What the picture says, in six sentences:**
 1. **The way in.** Every name ends in one tunnel. Cloudflare Access is planned to block every name that is not explicitly opened (`*` = operator only, X8b on #30); the operator ruled on 20.10.2026 that Zero Trust is not needed for now and can be added at any time, so today `auth` goes live as `public` and the `*` protection waits for X8b. Traefik on loopback hands each name to the container with that `edge.name` label.
-2. **The login.** Keycloak at `auth.hallucinai.de` is the one login page. Every app checks the ID itself through webauth and its group `/apps/<name>`. songmaker joins only through its own cutover (section 3); until then it keeps its own login. Tools without their own login will sit behind Access (X8b); none is published before it.
+2. **The login.** Keycloak at `auth.hallucinai.de` is the one login page. Every app checks the ID itself through webauth and its group `/apps/<name>`. songmaker joins only through its own cutover (section 3); until then it keeps its own login. Tools without their own login will sit behind Access (X8b); no login-less tool is published before it.
 3. **PEOPLE.** People and their groups exist only in the Keycloak admin, `http://localhost:8090/admin/`, on this PC (later via Tailscale).
 4. **CHANGE.** Every change is a pull request. A release (`edge release` sets a `v*` tag) is deployed by the service's watcher; whether the service is then reachable depends on its state (section 8 state table). The platform (edge) and the external services change when the operator runs `edge apply`.
 5. **LOOK.** One traffic-light page answers "is it OK now?" for every service, the backup, the drift checks and the secrets. Grafana answers "why, and since when?" for every service. Both send alerts through one push channel to the phone.
@@ -161,13 +161,13 @@ The agent service is an L4 service: the one place that holds the subscription lo
 
 ### One file, one entry per repository
 
-The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for OpenTofu. A second catalog would duplicate the repo list and the host names. E3 is not built yet (X1a to X1e and X4 to X8a-1 have landed; the rest follows), so this costs nothing now.
+The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for OpenTofu. A second catalog would duplicate the repo list and the host names. E3 is being built slice by slice (state: #30); `fleet.yaml` is already this catalog, so there is no second one.
 
 **Four changes to the E3 plan** (made once, when E3 is opened):
 - **Location.** `fleet.yaml` moves from `external/` to the edge root, because L2 (deploy, LOOK) reads it too. OpenTofu reads `../fleet.yaml`.
 - **A `run` block** on the entries that run on this PC. A library such as webauth has no `run` block, only `repo`.
 - **Entries, not repositories, are the unit** (P1, P2, P14, ruled in [edge#50](https://github.com/overnightworks/edge/issues/50)). Platform units are entries keyed by their compose profile (`step-ca`, `keycloak`; socket-proxy and traefik are the always-on core), and repositories are entries with `repo`. One repository can carry several switchable units. `src/edge/catalog.py` owns the typed `run` schema (`enabled`, `setup`); `run.setup` names the key command behind its `--check` contract (edge#52 rule 8). Images, volumes and ports are never repeated in the catalog. `docs/naming.md` records that catalog keys equal compose profile names (P5).
-- **The tunnel mode is decided once, by D6 here**. It replaces E3's D5. D6 is ruled („Cloudflare steuert“, 18.10.2026): Cloudflare manages the configuration, the JSON credential stays, and OpenTofu writes the ingress lines from the catalog. That is planned, not live, until X6a's live apply (#168, L2). The operator ruled on 20.10.2026 that the catalog owns the whole tunnel configuration: a line outside it is removed after the plan and `yes` („a“).
+- **The tunnel mode is decided once, by D6 here**. It replaces E3's D5. D6 is ruled („Cloudflare steuert“, 18.10.2026): Cloudflare manages the configuration, the JSON credential stays, and OpenTofu writes the ingress lines from the catalog. That is planned, not live, until X6a's live apply (#168, L2). (the whole config is the catalog's; see D6)
 - **X8: go-live does not publish**. E3's X8 makes `keycloak/go-live` step 8 call `edge external apply`. That would publish inside the go-live, before the re-setup's later publish step (section 6, step 11). Changed: go-live ends unpublished; the publish phase of `edge apply` is the only publisher. X8's "apply refuses while `auth` does not answer" stays, now inside `edge apply`. Until `edge apply` exists, the operator runs `edge external apply` by hand after go-live, as one named step.
 
 ```yaml
@@ -637,7 +637,7 @@ Each command exists in exactly one tool. What it does in each state is the state
 
 - **The traffic-light page (Gatus) answers "is it OK now?"** It is tiny and independent: it must still work when Grafana, Prometheus or Keycloak are down. It pushes alerts.
 - **Grafana answers "why, and since when?"** It serves every service, not only songmaker. Prometheus scrapes every enabled service from the catalog. Alertmanager sends its alerts into the same push channel. One channel, not three (section 7 row 6).
-- **Both are operator-only and will sit behind Access (X8b, D4)**; none is published before it.
+- **Both are operator-only and will sit behind Access (X8b, D4)**; no login-less tool is published before it.
 - **The LOOK page has no buttons.** A page that can stop services or lock people is an attack surface on the network.
 - **If buttons come later** (agent-coordination#24 "PC-Zentrale"), they are local-only: on the admin entrypoint `127.0.0.1:8090`, behind the Keycloak admin login with TOTP, never through the tunnel. Each button calls the same `edge` command, so there is no second implementation.
 - Until then, each light carries its runbook link (ruling 11). The runbook names the one command to run.
@@ -790,7 +790,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 |---|---|---|
 | Keycloak | OIDC through webauth and agent-service | **A migration, not a configuration change.** Accounts are keyed to the issuer's `sub`, and passkeys live in the IdP, so every person re-enrols and every app remaps its accounts. edge rewrites realm-as-code, go-live, `edge lock` and the probes. The group path shape lives in webauth (`oidc_login.py`, `_require_group_path`) and in agent-service (`routing.py`, `APP_GROUP_PREFIX`). A flat-name mode waits until an IdP swap is pulled |
 | Tailscale | nothing; no app references it | home-tools (L0); also D13 |
-| Cloudflare DNS, tunnel and Access | HTTP behind a proxy, plus webauth's `trusted_proxies`; no `cf-*` header in any app | edge and OpenTofu (L3). Access is planned (X8b) and will gate D4; none is published before it. The aco board's `access_jwt.py` is being retired (webauth#49 AC1) |
+| Cloudflare DNS, tunnel and Access | HTTP behind a proxy, plus webauth's `trusted_proxies`; no `cf-*` header in any app | edge and OpenTofu (L3). Access is planned (X8b) and will gate D4; no login-less tool is published before it. The aco board's `access_jwt.py` is being retired (webauth#49 AC1) |
 | Traefik | the neutral `edge.name` label | edge only. A second machine needs routing that label discovery on this host cannot give; that is decided in that item (§10 rule 4) |
 | Postgres | DSN | configuration plus a dump and restore. presentator's SQLite sits behind ports (agent-presentator ADR 0006), so moving it is an adapter swap |
 | Redis | URL; songmaker runs its own | Valkey drops in. arq ties songmaker's queue to Redis, which is accepted |
