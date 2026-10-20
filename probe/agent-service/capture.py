@@ -10,12 +10,18 @@ WINDOW_SECONDS or FRAME_CAP frames, whichever comes first, and prints one JSON l
 the addresses and ports named below, and the kernel's own PACKET_STATISTICS for the socket. Every
 frame is parsed in memory and dropped. No packet file, and no payload in any output or diagnostic:
 the host's window also sees the operator's own traffic. The caller decides whether the window was
-complete (no drop, still open when its control ended).
+complete (no drop, nothing undecoded, still open when its control ended).
+
+Every SYN carries the kernel's receive timestamp of its frame (SO_TIMESTAMPNS), not the time this
+script got round to reading it.
 
 The `dns` window attaches a kernel filter that passes only frames with port 53 (and every frame of
 an interface without an Ethernet header), so a busy host does not fill the frame cap with traffic
-the window does not look at. The filter reads IPv4 and IPv6 headers without extensions, first
-fragments only; a DNS question behind IPv6 extension headers is not seen.
+the window does not look at. IPv6 frames that carry an extension header pass too: the ports lie
+behind the chain, which `parse` walks. A frame the window cannot fully decode is counted in
+`undecoded` and makes the window incomplete: an IPv6 chain that is cut, a non-first IPv6 fragment,
+and a TCP port-53 segment that does not hold exactly one whole DNS message (a message split across
+segments). IPv4 non-first fragments carry no port and are not passed.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ ETH_P_ALL = 3
 SOL_PACKET = 263
 PACKET_STATISTICS = 6
 PACKET_OUTGOING = 4
+SO_TIMESTAMPNS = 35  # the kernel's receive time of each frame, as a control message
 ARPHRD_ETHER = 1
 ARPHRD_LOOPBACK = 772  # carries an Ethernet header too
 ETHERNET_HEADER_BYTES = 14
@@ -50,6 +57,15 @@ IPV6_HEADER_BYTES = 40
 UDP_HEADER_BYTES = 8
 TCP_SYN, TCP_ACK = 0x02, 0x10
 PROTOCOL_TCP, PROTOCOL_UDP = 6, 17
+IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_FRAGMENT = 0, 43, 44
+IPV6_AUTHENTICATION, IPV6_DESTINATION_OPTIONS, IPV6_MOBILITY = 51, 60, 135
+IPV6_EXTENSION_HEADERS = (
+    IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_FRAGMENT,
+    IPV6_AUTHENTICATION, IPV6_DESTINATION_OPTIONS, IPV6_MOBILITY,
+)  # fmt: skip
+IPV6_FRAGMENT_HEADER_BYTES = 8
+IPV6_FRAGMENT_OFFSET_BITS = 0xFFF8
+IPV6_CHAIN_LIMIT = 8
 DNS_PORT = 53
 DNS_HEADER_BYTES = 12
 LABEL = re.compile(r"[a-z0-9]{1,63}")
@@ -78,6 +94,38 @@ class Segment:
     destination_port: int
     flags: int
     question: str
+    at: float  # the kernel's receive time
+    undecoded: bool = False  # the frame's ports could not be reached
+    partial_dns: bool = False  # TCP port 53 with a payload that is not one whole DNS message
+
+
+def kernel_time(ancillary: list[tuple[int, int, bytes]]) -> float:
+    for level, kind, data in ancillary:
+        if level == socket.SOL_SOCKET and kind == SO_TIMESTAMPNS:
+            seconds, nanoseconds = struct.unpack_from("@ll", data)
+            return seconds + nanoseconds / 1e9
+    raise RuntimeError("a frame came without the kernel's timestamp")
+
+
+def ipv6_transport(frame: bytes, start: int) -> tuple[int, bytes] | None:
+    """The transport protocol of an IPv6 packet behind its extension headers, and what follows
+    them; None when the chain is cut, too long or only a later fragment (no ports to read)."""
+    protocol, at = frame[start + 6], start + IPV6_HEADER_BYTES
+    for _ in range(IPV6_CHAIN_LIMIT):
+        if protocol not in IPV6_EXTENSION_HEADERS:
+            return protocol, frame[at:]
+        if at + IPV6_FRAGMENT_HEADER_BYTES > len(frame):
+            return None
+        if protocol == IPV6_FRAGMENT:
+            if struct.unpack_from("!H", frame, at + 2)[0] & IPV6_FRAGMENT_OFFSET_BITS:
+                return None
+            length = IPV6_FRAGMENT_HEADER_BYTES
+        elif protocol == IPV6_AUTHENTICATION:
+            length = (frame[at + 1] + 2) * 4
+        else:
+            length = (frame[at + 1] + 1) * 8
+        protocol, at = frame[at], at + length
+    return None
 
 
 def link_header_bytes(frame: bytes, hardware_type: int) -> tuple[int, int | None]:
@@ -90,35 +138,42 @@ def link_header_bytes(frame: bytes, hardware_type: int) -> tuple[int, int | None
     return length, {ETHERTYPE_IPV4: 4, ETHERTYPE_IPV6: 6}.get(ethertype)
 
 
-def parse(frame: bytes, interface: str, packet_type: int, hardware_type: int) -> Segment | None:
+def parse(
+    frame: bytes, interface: str, packet_type: int, hardware_type: int, at: float
+) -> Segment | None:
+    outgoing = packet_type == PACKET_OUTGOING
     offset, version = link_header_bytes(frame, hardware_type)
     if len(frame) <= offset:
         return None
     version = version or frame[offset] >> 4
     if version == 4:
-        header_bytes = (frame[offset] & 0x0F) * 4
         protocol = frame[offset + 9]
         destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16 : offset + 20])
+        transport = frame[offset + (frame[offset] & 0x0F) * 4 :]
     elif version == 6:
-        header_bytes = IPV6_HEADER_BYTES
-        protocol = frame[offset + 6]
         destination = socket.inet_ntop(socket.AF_INET6, frame[offset + 24 : offset + 40])
+        if (reached := ipv6_transport(frame, offset)) is None:
+            return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
+        protocol, transport = reached
     else:
         return None
-    transport = frame[offset + header_bytes :]
     if protocol not in (PROTOCOL_TCP, PROTOCOL_UDP) or len(transport) < UDP_HEADER_BYTES:
         return None
     source_port, destination_port = struct.unpack_from("!HH", transport)
-    flags, payload = 0, transport[UDP_HEADER_BYTES:]
+    flags, payload, partial = 0, transport[UDP_HEADER_BYTES:], False
     if protocol == PROTOCOL_TCP:
         if len(transport) < 20:
             return None
         flags, payload = transport[13], transport[(transport[12] >> 4) * 4 :]
-        payload = payload[2:]  # DNS over TCP: the two-byte length comes first
+        if DNS_PORT in (source_port, destination_port) and payload:
+            # DNS over TCP: a two-byte length comes first, and one whole message follows it.
+            declared = int.from_bytes(payload[:2])
+            partial = len(payload) != 2 + declared
+            payload = payload[2:]
     question = dns_question(payload) if DNS_PORT in (source_port, destination_port) else ""
     return Segment(
-        packet_type == PACKET_OUTGOING, interface, protocol, destination,
-        source_port, destination_port, flags, question,
+        outgoing, interface, protocol, destination, source_port, destination_port, flags,
+        question, at, partial_dns=partial,
     )  # fmt: skip
 
 
@@ -154,7 +209,10 @@ DNS_FILTER: list[Step] = [
     (None, JUMP_EQUAL, DNS_PORT, "pass", "drop"),
     ("ipv6", LOAD_BYTE, IPV6_PROTOCOL_OFFSET, None, None),
     (None, JUMP_EQUAL, PROTOCOL_TCP, "ipv6 ports", None),
-    (None, JUMP_EQUAL, PROTOCOL_UDP, "ipv6 ports", "drop"),
+    (None, JUMP_EQUAL, PROTOCOL_UDP, "ipv6 ports", None),
+    # The ports lie behind an extension header chain, which the filter cannot walk.
+    *[(None, JUMP_EQUAL, header, "pass", None) for header in IPV6_EXTENSION_HEADERS],
+    (None, RETURN, DROP_FRAME, None, None),
     ("ipv6 ports", LOAD_HALF, IPV6_SOURCE_PORT_OFFSET, None, None),
     (None, JUMP_EQUAL, DNS_PORT, "pass", None),
     (None, LOAD_HALF, IPV6_SOURCE_PORT_OFFSET + 2, None, None),
@@ -164,10 +222,10 @@ DNS_FILTER: list[Step] = [
 ]
 
 
-def attach_filter(watcher: socket.socket, steps: list[Step]) -> None:
-    """The kernel's classic-BPF filter for the socket, from steps whose jumps name labels."""
+def assemble(steps: list[Step]) -> bytes:
+    """The classic-BPF program (one struct sock_filter per step) of steps with labelled jumps."""
     at = {label: index for index, (label, *_) in enumerate(steps) if label}
-    program = b"".join(
+    return b"".join(
         struct.pack(
             "HBBI",
             opcode,
@@ -177,6 +235,11 @@ def attach_filter(watcher: socket.socket, steps: list[Step]) -> None:
         )
         for index, (_, opcode, operand, yes, no) in enumerate(steps)
     )
+
+
+def attach_filter(watcher: socket.socket, steps: list[Step]) -> None:
+    """The kernel's classic-BPF filter for the socket."""
+    program = assemble(steps)
     instructions = ctypes.create_string_buffer(program, len(program))
     descriptor = struct.pack("@HL", len(steps), ctypes.addressof(instructions))
     watcher.setsockopt(socket.SOL_SOCKET, SO_ATTACH_FILTER, descriptor)
@@ -187,15 +250,19 @@ class Window:
         self.frames = 0
         self.syns: list[dict] = []
         self.label_frames: dict[str, int] = {}
+        self.undecoded = 0
 
     def see(self, segment: Segment, labels: list[str]) -> None:
+        # Only a DNS window (it has labels) reads TCP port 53 for its question.
+        if segment.undecoded or (labels and segment.partial_dns):
+            self.undecoded += 1
         opens_a_connection = segment.protocol == PROTOCOL_TCP and (
             segment.flags & (TCP_SYN | TCP_ACK) == TCP_SYN
         )
         if segment.outgoing and opens_a_connection:
             self.syns.append(
                 {
-                    "at": time.time(),
+                    "at": segment.at,
                     "interface": segment.interface,
                     "destination": segment.destination,
                     "port": segment.destination_port,
@@ -209,6 +276,7 @@ class Window:
 def open_socket(steps: list[Step] | None) -> socket.socket:
     watcher = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
     watcher.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER_BYTES)
+    watcher.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMPNS, 1)
     if steps:
         attach_filter(watcher, steps)
         # What queued before the filter was attached is not the window's.
@@ -232,11 +300,12 @@ def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
         if time.monotonic() >= deadline:
             return window, "seconds"
         try:
-            frame, (interface, _, packet_type, hardware_type, _) = watcher.recvfrom(READ_BYTES)
+            frame, ancillary, _, address = watcher.recvmsg(READ_BYTES, socket.CMSG_SPACE(16))
         except TimeoutError:
             continue
         window.frames += 1
-        if segment := parse(frame, interface, packet_type, hardware_type):
+        interface, _, packet_type, hardware_type, _ = address
+        if segment := parse(frame, interface, packet_type, hardware_type, kernel_time(ancillary)):
             window.see(segment, labels)
     return window, "frames"
 
@@ -254,6 +323,7 @@ def run(mode: str, labels: list[str]) -> dict:
         "frames": window.frames,
         "packets": packets,
         "drops": drops,
+        "undecoded": window.undecoded,
     }
     return result | ({"syns": window.syns} if mode == "syn" else {"labels": window.label_frames})
 

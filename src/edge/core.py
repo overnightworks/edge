@@ -23,18 +23,17 @@ recreate that took it in is empty; socket-proxy keeps none, so traefik's, emptie
 for it (#87 rule 4). An entry for a service that binds no file from the checkout is ignored and
 dropped at the next write (#87 rule 6).
 
-A follower is a profile service that binds a file at Traefik's static-config path: today
-traefik-mcp with `traefik-mcp.yml` (#89). It is changed as a core service is, by its file binds
-against the record or its definition hash against its container's label, and what is done with a
-changed one depends on its unit, which apply decides and passes in as a gate: while the unit is on,
-a follower with a container is recreated on its own and one without starts with its unit; while
-the unit is off or switched off it is only named and nothing starts. A follower whose profile is
-no catalog unit is not planned at all.
+A follower is a profile service that binds a file at Traefik's static-config path (#89). It is
+changed as a core service is, by its file binds against the record or its definition hash against
+its container's label, and what is done with a changed one depends on its unit, which apply decides
+and passes in as a gate: while the unit is on, a follower with a container is recreated on its own
+and one without starts with its unit; while the unit is off or switched off it is only named and
+nothing starts. A follower whose profile is no catalog unit is not planned at all.
 
 What a change to a checkout path does once the checkout is updated is read from the same binds
-(#98 rule 4): a directory the core or a follower binds is live through Traefik's watch, a file
-they bind is recreated by edge apply, and any bind of another service is a unit's, which edge
-apply does not apply yet (block 6).
+(#98 rule 4): a directory the core or a planned follower binds is live through Traefik's watch, a
+file they bind is recreated by edge apply, and any bind of another service, a follower whose
+profile is no catalog unit included, is not applied by edge apply (block 6).
 """
 
 import hashlib
@@ -134,13 +133,15 @@ class CheckoutBinds:
     """The checkout paths the resolved configuration binds, relative to the checkout, by what
     edge apply does once one of them changes (#98 rule 4)."""
 
-    live: frozenset[str]  # the core's and the followers' directory binds: Traefik watches them
-    recreated: frozenset[str]  # the core's and the followers' file binds
-    units: frozenset[str]  # every bind of any other service: block 6 applies them
+    live: frozenset[str]  # the core's and the planned followers' directory binds: Traefik watches
+    recreated: frozenset[str]  # the core's and the planned followers' file binds
+    units: frozenset[str]  # every bind of any other service, a follower with no unit included
 
 
-def checkout_binds(config: Mapping[str, Any], checkout: Path) -> CheckoutBinds:
-    applied = {*core_services(config), *followers(config)}
+def checkout_binds(
+    config: Mapping[str, Any], checkout: Path, units: Collection[str]
+) -> CheckoutBinds:
+    applied = {*core_services(config), *follower_units(config, units)}
     live, recreated, units = set(), set(), set()
     for name, service in config["services"].items():
         for source in _checkout_sources(service, checkout):

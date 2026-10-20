@@ -1377,12 +1377,13 @@ yet, and no plain `docker compose up -d` starts it.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 python3
 probe/agent-service/egress.py --scratch DIR` starts a throwaway project on a free /24 (never the
-live `edge_egress` subnet) with a hardened stand-in for the service, drives the cells E1 to E10,
+live `edge_egress` subnet) with a hardened stand-in for the service, drives the cells E1, E3 to E10,
 E12 and E13 from it, and removes everything. E3 to E5 (a refused name dials nothing) and E10 (a
 query from the stand-in leaves no trace on the host) are observed through the packet windows of
-`probe/agent-service/capture.py`, each with a positive control; a window that dropped a frame, or
-that ended before its control, is not driven and fails the run. E2 is not driven while
-`auth.hallucinai.de` has no public DNS record. CI holds the static facts (E16) in
+`probe/agent-service/capture.py`, each with a positive control; a window that dropped a frame,
+held a frame it could not decode, or ended before its control, is not driven and fails the run.
+E2 (the issuer's name, which has no public DNS record before the go-live) is driven with the real
+service. CI holds the static facts (E16) in
 `tests/test_agent_egress.py`.
 
 ## Rollback

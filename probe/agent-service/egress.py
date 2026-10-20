@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe of the agent service's egress (#189 cells E1-E10, E12, E13): the gateway `agent-egress`
+"""Probe of the agent service's egress (#189 cells E1, E3-E10, E12, E13): the gateway `agent-egress`
 and the stand-in `agent-probe` of compose.yaml, in a throwaway compose project of their own.
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 \\
@@ -9,11 +9,12 @@ The stack runs from a copy of compose.yaml and of the gateway's static file with
 network moved to a free /24 of its own (the gateway's address and the stand-in's `extra_hosts`
 follow through the anchors), so it never collides with the live stack's `edge_egress`
 (172.31.252.0/24). E3-E5 and E10 are observed through the packet windows of capture.py, each with a
-control; a window that dropped a frame, or in which the control did not show, is NOT DRIVEN and
-fails the run. E2 alone may end "not driven: no DNS record yet" while the issuer's name has no
-public record. The probe always removes its containers and networks, and never touches the live
-stack: the project name is its own and is set on every command. Needs an empty or new --scratch
-directory. Exit 0: every cell held (or E2 not driven), 1: a cell failed or was not driven.
+control; a window that dropped a frame, held a frame it could not decode, or in which the control
+did not show, is NOT DRIVEN and fails the run. E2 (the issuer's name) is driven with the real
+service, as the issuer has no public DNS record before the go-live. The probe always removes its
+containers and networks, and never touches the live stack: the project name is its own and is set
+on every command. Needs an empty or new --scratch directory. Exit 0: every cell held, 1: a cell
+failed or was not driven.
 
 The stand-in runs the `Client` class below: the driver sends its source to `python -I -` inside
 the container, so the client needs nothing but the standard library of the pinned image.
@@ -55,8 +56,8 @@ GATEWAY_STATIC = REPO / "agent-service" / "egress" / "traefik.yml"
 # The egress network of compose.yaml and the address the gateway's static file names.
 LIVE_EGRESS_PREFIX = "172.31.252."
 PROVIDER = "api.anthropic.com"
-ISSUER = "auth.hallucinai.de"
 GATEWAY_PORT = 443
+UPSTREAM_PORT = 443  # the allowed hosts' port, which allowed.yml passes the connection to
 SUBNET_CANDIDATES = [f"172.31.{third}.0/24" for third in range(251, 239, -1)]
 GATEWAY_HOST_NUMBER = 10
 READY_SECONDS = 90
@@ -75,6 +76,23 @@ CLIENT_IMPORTS = "import errno, json, selectors, socket, ssl, struct, sys, time\
 
 class NotDriven(ProbeFailed):
     """A cell could not be driven to a verdict: a window dropped a frame or missed its control."""
+
+
+def classify_syns(
+    syns: list[dict], control_started: float, control_addresses: set[str]
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]], bool]:
+    """The SYNs of a window by the kernel's time of their frame: those from before the control
+    started, those after it that do not go to the control's destination (its addresses on
+    :443), and whether the control's own SYN is there."""
+    early = [(syn["destination"], syn["port"]) for syn in syns if syn["at"] < control_started]
+    later = [syn for syn in syns if syn["at"] >= control_started]
+    controls = [
+        syn
+        for syn in later
+        if syn["destination"] in control_addresses and syn["port"] == UPSTREAM_PORT
+    ]
+    stray = [(syn["destination"], syn["port"]) for syn in later if syn not in controls]
+    return early, stray, bool(controls)
 
 
 class Client:
@@ -429,10 +447,11 @@ class Probe:
 
     @staticmethod
     def complete(result: dict, cell: str, control_ended: float) -> None:
-        """Complete: nothing dropped, and still open when the control ended."""
-        if result["drops"] or result["ended_at"] < control_ended:
+        """Complete: nothing dropped, nothing undecoded, still open when the control ended."""
+        if result["drops"] or result["undecoded"] or result["ended_at"] < control_ended:
             raise NotDriven(
-                f"{cell}: not driven: the window dropped {result['drops']} frames and ended by "
+                f"{cell}: not driven: the window dropped {result['drops']} frames, could not "
+                f"decode {result['undecoded']} and ended by "
                 f"{result['ended_by']} after {result['frames']} frames in "
                 f"{result['ended_at'] - result['started_at']:.1f} s"
                 f"{', before the control ended' if result['ended_at'] < control_ended else ''}"
@@ -443,7 +462,6 @@ class Probe:
     def drive(self) -> None:
         self.wait_until_the_gateway_answers()
         self.cell_e1()
-        self.cell_e2()
         self.cells_e3_to_e5()
         self.cell_e6()
         self.cell_e7()
@@ -471,19 +489,10 @@ class Probe:
         expect(result["handshake"] and result["certificate"], f"E1: {result}")
         self.hold("E1", f"TLS to {PROVIDER} by name completed, certificate verified for it")
 
-    def cell_e2(self) -> None:
-        try:
-            socket.getaddrinfo(ISSUER, GATEWAY_PORT)
-        except socket.gaierror:
-            print(f"E2 not driven: no DNS record yet for {ISSUER}", flush=True)
-            return
-        result = self.handshake(ISSUER)
-        expect(result["handshake"] and result["certificate"], f"E2: {result}")
-        self.hold("E2", f"TLS to {ISSUER} by name completed, certificate verified for it")
-
     def refused_without_a_dial(self, cell: str, attempt: Callable[[], str]) -> None:
         """E3-E5: the attempt ends in the gateway, and no SYN leaves it before the control's."""
         control_started, control_ended, outcome = [], [], []
+        destinations = self.gateway_addresses(PROVIDER)
 
         def during() -> None:
             outcome.append(attempt())
@@ -495,25 +504,40 @@ class Probe:
 
         result = self.window("capture-egress", ["syn"], during)
         self.complete(result, cell, control_ended[0])
-        after = [syn for syn in result["syns"] if syn["at"] >= control_started[0]]
-        if not any(syn["port"] == GATEWAY_PORT for syn in after):
+        destinations |= self.gateway_addresses(PROVIDER)
+        early, stray, control_seen = classify_syns(result["syns"], control_started[0], destinations)
+        expect(not early, f"{cell}: SYN out of the gateway before the control: {early}")
+        expect(not stray, f"{cell}: SYN after the control started, not to the control's: {stray}")
+        if not control_seen:
             raise NotDriven(f"{cell}: not driven: the control's SYN to :443 is not in the window")
-        before = [(syn["destination"], syn["port"]) for syn in result["syns"] if syn not in after]
-        expect(not before, f"{cell}: SYN out of the gateway before the control: {before}")
         self.hold(cell, f"{outcome[0]}; no SYN left the gateway before the control's")
 
+    def gateway_addresses(self, name: str) -> set[str]:
+        """What the name resolves to in the gateway's own namespace, where Traefik resolves it."""
+        gateway = self.container("agent-egress")
+        return set(self.client_in_namespace_of(gateway, "resolve", name)["addresses"])
+
     def cells_e3_to_e5(self) -> None:
+        def alerted(result: dict, what: str) -> None:
+            # An SSLError is the gateway's own alert; a reset or a timeout would say less.
+            expect(
+                not result["handshake"]
+                and "certificate" not in result
+                and result["error"].startswith("SSLError"),
+                f"{what}: {result}",
+            )
+
         def sni(name: str) -> Callable[[], str]:
             def attempt() -> str:
                 result = self.client("tls", self.address, name, str(GATEWAY_PORT), "noverify")
-                expect(not result["handshake"] and "certificate" not in result, f"{name}: {result}")
+                alerted(result, name)
                 return f"SNI {name!r} refused ({result['error']})"
 
             return attempt
 
         def without_sni() -> str:
             result = self.client("tls", self.address, "-", str(GATEWAY_PORT), "noverify")
-            expect(not result["handshake"] and "certificate" not in result, f"no SNI: {result}")
+            alerted(result, "no SNI")
             return f"no SNI refused ({result['error']})"
 
         def plain_bytes() -> str:
@@ -549,9 +573,18 @@ class Probe:
             "the internet bridge": internet,
             "the LAN address": lan_address(),
         }
+        # The address a bridge would have taken, were the network not isolated: the first of the
+        # subnet. It answers with a refusal even for a port nobody listens on, so a
+        # refusal is as good as no route here; only a completed connect would be a leak.
+        for network in ("agent", "egress"):
+            subnet = ipaddress.ip_network(self.network_subnet(f"{PROJECT}_{network}"))
+            targets[f"the would-be bridge of {network}"] = str(subnet.network_address + 1)
+        errnos = []
         for name, target in targets.items():
             result = self.client("connect", target, port)
-            expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
+            blocked = (*UNREACHABLE, "ECONNREFUSED") if "would-be" in name else UNREACHABLE
+            expect(result["result"] in blocked, f"E7: {name} {target}:{port}: {result}")
+            errnos.append(f"{name} {result['result']}")
         for network in ("agent", "egress"):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
             expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
@@ -559,9 +592,14 @@ class Probe:
         expect(not defaults, f"E7: the stand-in has a default route on {defaults}")
         self.hold(
             "E7",
-            f"a host listener is unreachable via {', '.join(targets)}; no bridge address, no "
+            f"a host listener is unreachable via {'; '.join(errnos)}; no bridge address, no "
             f"default route (control from the internet bridge: {control['result']})",
         )
+
+    def network_subnet(self, name: str) -> str:
+        inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]
+        (config,) = (inspected.get("IPAM") or {}).get("Config") or []
+        return config["Subnet"]
 
     def network_gateways(self, name: str) -> list[str]:
         inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]
