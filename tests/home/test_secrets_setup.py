@@ -38,6 +38,7 @@ from home_tools.secrets_setup import (
     http_fetch,
     verify_token,
 )
+from home_tools.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
 from home_tools.secrets_view import Provider, SecretEntry, TokenSource, load_manifest
 
 NOW = datetime(2026, 10, 17, 9, 0)
@@ -452,6 +453,27 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     assert existing.read_text() == "FAKE-OLD-VALUE"
     assert (existing.stat().st_mtime_ns, existing.stat().st_mode) == (before.st_mtime_ns, before.st_mode)
     assert [urlsplit(page).netloc for page in terminal.opened] == ["github.com"]
+
+
+@pytest.mark.parametrize("present", [False, True], ids=["absent", "present at 0644"])
+def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_generate(
+    tmp_path: Path, use_manifest, boundaries: Boundaries, present: bool
+) -> None:
+    """#195: those units own their four generated passwords; the packaged entries are optional, so `--setup` leaves them as they are."""
+    generated = ("step-ca/password", "keycloak/db-password", "keycloak/config-cli-secret", "keycloak/bootstrap-admin-password")
+    blocks = PACKAGED_MANIFEST.read_text().split("[[secret]]")[1:]
+    use_manifest("".join(f"[[secret]]{block}" for block in blocks if any(f'name = "{name}"' in block for name in generated)))
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in generated if present else ():
+        file = private_directory(home, f".secrets/{Path(name).parent}") / Path(name).name
+        file.write_text("FAKE-OLD-VALUE")
+        file.chmod(0o644)
+
+    code = home_secrets_setup(home, boundaries)
+
+    assert code == 0
+    assert {path: (home / path).read_text() for path in files_under(home)} == {f".secrets/{name}": "FAKE-OLD-VALUE" for name in generated if present}
 
 
 def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
