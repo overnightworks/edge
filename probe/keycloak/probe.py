@@ -21,7 +21,6 @@ import hashlib
 import hmac
 import importlib.machinery
 import importlib.util
-import ipaddress
 import json
 import os
 import re
@@ -282,21 +281,19 @@ def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
     return through_tunnel(method, urlunsplit(("", "", target.path, target.query, "")), **kwargs)
 
 
-def stored_event_types(events: list[dict[str, Any]]) -> list[str]:
-    """The sorted types of stored user events, each proven to carry the request's IP address.
+def stored_event_types(events: list[dict[str, Any]], request_address: str) -> list[str]:
+    """The sorted types of stored user events, each proven to carry `request_address`.
 
-    The address Keycloak sees is the edge container's on the probe network, which the probe does
-    not know, so the proof is a parseable address that is the same on every event.
+    Traefik runs on the host and trusts forwarded headers from loopback, so the address it
+    forwards and Keycloak stores is the one the probe's request comes from: the host of EDGE_URL.
     """
-    addresses = set()
     for event in events:
         address = event.get("ipAddress")
-        try:
-            ipaddress.ip_address(address)
-        except ValueError:
-            raise ProbeFailure(f"the stored {event['type']} event carries no IP address") from None
-        addresses.add(address)
-    expect(len(addresses) <= 1, f"the stored events carry different IP addresses {addresses}")
+        expect(
+            address == request_address,
+            f"the stored {event['type']} event carries the IP address {address}, "
+            f"not the request's {request_address}",
+        )
     return sorted(event["type"] for event in events)
 
 
@@ -1594,7 +1591,9 @@ class Probe:
             },
         )
         expect(logout.status == 204, f"the logout answered {logout.status}")
-        stored = stored_event_types(admin.get(f"/{REALM}/events?user={user_id}"))
+        stored = stored_event_types(
+            admin.get(f"/{REALM}/events?user={user_id}"), str(urlsplit(EDGE_URL).hostname)
+        )
         expect(
             stored == ["LOGIN", "LOGIN_ERROR"],
             f"probe-events has the stored events {stored}, not one LOGIN and one LOGIN_ERROR",
@@ -1823,6 +1822,9 @@ class Probe:
             "auth": "true",
             "user": "probe",
         }
+        client_secret = self.secret_values["config-cli-secret"]
+        # Master's access tokens live 60 s; the observer runs longer, so each use gets a fresh one.
+        admin = self.admin_with_client(client_secret)
         admin.must("PUT", f"/{REALM}", {"smtpServer": smtp | {"password": password}})
         digest_key = self.keep_secret("the observer's second digest key", new_digest_key())
         kept = f"{PROJECT}-observe-{secrets.token_hex(4)}"
@@ -1831,9 +1833,11 @@ class Probe:
         before = json.loads(result.stdout)
         door = self.observer_container(kept)
 
+        admin = self.admin_with_client(client_secret)
         original = self.change_config_in_console(admin)
         group_id = admin.create(f"/{REALM}/groups", {"name": ESCAPING_GROUP})
         lines = change_lines(before, self.observe(digest_key))
+        admin = self.admin_with_client(client_secret)
         admin.must("PUT", f"/master/authentication/config/{original['id']}", original)
         admin.must("DELETE", f"/{REALM}/groups/{group_id}")
         expected = [
