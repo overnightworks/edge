@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import LIVE_STACK_PORTS
+from live_stack import LIVE_STACK_PORTS
 from test_edge_host_probe import RAY, Behaviour, serving
 
 from edge import catalog, checkout, cli
@@ -2648,46 +2648,72 @@ def test_every_ready_host_is_asked_and_every_one_that_fails_is_named_once_in_one
     assert error.count("refused, a ready host") == 1
 
 
-@pytest.mark.parametrize(
-    "catalog_after_the_plan",
-    [
-        pytest.param(TWO_READY_CATALOG, id="a-ready-host-is-added"),
-        pytest.param("cloudflare: [unclosed\n", id="it-no-longer-parses"),
-        pytest.param(None, id="it-is-gone"),
-    ],
-)
-def test_a_catalog_that_changes_while_planning_refuses_the_plan_before_any_probe_or_yes(
+@pytest.mark.parametrize("reverted", [True, False], ids=["edit-and-revert", "lasting-edit"])
+def test_the_plan_reads_the_catalog_the_ready_hosts_were_taken_from_however_the_file_changes(
     home,
     fake_tofu,
     apply_in_process,
     confirmations,
     live_checkout,
     monkeypatch,
-    capsys,
-    catalog_after_the_plan,
+    reverted,
 ):
-    """The hosts asked are those of the catalog the plan was made on: tofu reads the file itself,
-    so a file that changed meanwhile can plan a host nobody asked."""
+    """Tofu is handed the validated bytes, so an edit while it plans (kept or reverted) cannot
+    publish a host nobody asked: every host of what it read was probed."""
     fake_tofu.configure(**CHANGING_PLAN)
     catalog_file = live_checkout / catalog.FLEET_FILE
+    read_by_tofu: list[bytes] = []
     real_run = tofu.run
 
-    def changing_the_catalog_after_the_plan(binary, arguments, environment):
-        completed = real_run(binary, arguments, environment)
-        if arguments[0] == "plan" and catalog_after_the_plan is None:
-            catalog_file.unlink()
-        elif arguments[0] == "plan":
-            catalog_file.write_text(catalog_after_the_plan)
-        return completed
+    def editing_the_catalog_while_tofu_plans(binary, arguments, environment):
+        if arguments[0] != "plan":
+            return real_run(binary, arguments, environment)
+        snapshot_flag = next((a for a in arguments if a.startswith("-var=catalog_file=")), None)
+        original = catalog_file.read_text()
+        catalog_file.write_text(TWO_READY_CATALOG)
+        read_by_tofu.append(
+            Path(snapshot_flag.split("=", 2)[2]).read_bytes()
+            if snapshot_flag
+            else catalog_file.read_bytes()
+        )
+        if reverted:
+            catalog_file.write_text(original)
+        return real_run(binary, arguments, environment)
 
-    monkeypatch.setattr(tofu, "run", changing_the_catalog_after_the_plan)
-    reader = FakeReader(CLEAN_SNAPSHOT)
+    monkeypatch.setattr(tofu, "run", editing_the_catalog_while_tofu_plans)
     prober = RecordingReadyProber()
-    code = apply_in_process(reader, fleet=READY_CATALOG, ready_prober=prober)
-    error = capsys.readouterr().err
-    assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
-    assert "the catalog changed while planning; run `edge external apply` again" in error
-    assert prober.asked == []
+    apply_in_process(FakeReader(CLEAN_SNAPSHOT), fleet=READY_CATALOG, ready_prober=prober)
+    assert confirmations, "the plan was refused"
+    (planned,) = read_by_tofu
+    assert planned.decode() == READY_CATALOG
+    planned_ready = {
+        host.fqdn for host in catalog.hosts(catalog.parse(planned, "fleet.yaml")) if host.ready
+    }
+    assert set(prober.names) == planned_ready
+
+
+def test_the_snapshot_handed_to_tofu_is_private_and_removed_with_the_session(
+    home, fake_tofu, apply_in_process, monkeypatch
+):
+    fake_tofu.configure(**CHANGING_PLAN)
+    modes: list[int] = []
+    real_run = tofu.run
+
+    def noting_the_snapshot_mode(binary, arguments, environment):
+        if arguments[0] == "plan":
+            flag = next(a for a in arguments if a.startswith("-var=catalog_file="))
+            snapshot = Path(flag.split("=", 2)[2])
+            modes.append(snapshot.stat().st_mode & 0o777)
+            assert snapshot.parent == Path(environment["TMPDIR"])
+            modes.append(snapshot.parent.stat().st_mode & 0o777)
+            noted.append(snapshot)
+        return real_run(binary, arguments, environment)
+
+    noted: list[Path] = []
+    monkeypatch.setattr(tofu, "run", noting_the_snapshot_mode)
+    apply_in_process(FakeReader(CLEAN_SNAPSHOT))
+    assert modes == [0o600, 0o700]
+    assert not noted[0].exists()
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])

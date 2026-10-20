@@ -12,13 +12,11 @@ from edge_backup_support import (
     Machine,
     Outcome,
 )
+from live_stack import LIVE_STACK_PORTS
 
 from edge_backup import cli, host
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
-# The operator's live stack listens here (Traefik on 8081, songmaker on 8080): a test that reaches
-# it leaves no trace, so no test may connect to these ports on any loopback address.
-LIVE_STACK_PORTS = (8080, 8081)
 
 
 @pytest.fixture

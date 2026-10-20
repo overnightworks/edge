@@ -111,7 +111,7 @@ def apply_command(
                         progress=run.progress,
                         hosts=planned_catalog.hosts,
                         prober_for=prober_for,
-                        catalog_unchanged=planned_catalog.is_still_on_disk,
+                        catalog_bytes=planned_catalog.raw,
                     )
                 except apply.StepFailed as failure:
                     closing = failure.closing
@@ -288,17 +288,9 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
 class _ValidCatalog:
     """One validated read of the catalog: its bytes, document and enabled hosts stand together."""
 
-    file: Path
     raw: bytes
     document: Any
     hosts: tuple[catalog.Host, ...]
-
-    def is_still_on_disk(self) -> bool:
-        """Whether the file holds exactly these bytes; a file that cannot be read has changed."""
-        try:
-            return catalog.read_bytes(self.file) == self.raw
-        except catalog.CatalogError:
-            return False
 
 
 def _valid_catalog(command: str) -> _ValidCatalog | None:
@@ -307,7 +299,7 @@ def _valid_catalog(command: str) -> _ValidCatalog | None:
     try:
         raw = catalog.read_bytes(file)
         document = catalog.parse(raw, file.name)
-        return _ValidCatalog(file, raw, document, catalog.hosts(document))
+        return _ValidCatalog(raw, document, catalog.hosts(document))
     except catalog.CatalogError as error:
         print(f"edge external {command}: {error}", file=sys.stderr)
         return None

@@ -42,7 +42,7 @@ variable "state_passphrase" {
   sensitive = true
 }
 
-# Only the tests set this (external/tests/); the live runs leave it at the real catalog.
+# `edge external apply` and the tests set this; the other runs leave it at the real catalog.
 variable "catalog_file" {
   type    = string
   default = null
