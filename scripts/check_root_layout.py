@@ -2,7 +2,7 @@
 
 The root carries the package manifest and its lockfile, the container files,
 the scanner configuration, the licence, and the entry documents. Everything
-else lives in the directory of its owner (AGENTS.md, "Repository layout"): the
+else lives in the directory of its owner (the global contract, "Repository layout"): the
 module in the package under `src/`, a helper under `scripts/`, the systemd
 units under `systemd/`, the work-board contract `board.toml` of the aco
 coordination tool under `.aco/`. The gate reads the tree as git sees it — tracked files
