@@ -718,25 +718,27 @@ def test_an_app_client_is_accepted_only_with_exactly_its_default_scopes_and_call
 @pytest.mark.parametrize(
     ("login_address", "error_address", "accepted"),
     [
-        ("127.0.0.1", "127.0.0.1", True),
-        (None, "127.0.0.1", False),
-        ("127.0.0.1", None, False),
+        ("198.51.100.23", "198.51.100.23", True),
+        (None, "198.51.100.23", False),
+        ("198.51.100.23", None, False),
         (None, None, False),
         ("", "", False),
-        ("127.0.0.1", "192.0.2.123", False),
+        ("198.51.100.23", "192.0.2.123", False),
         ("192.0.2.123", "192.0.2.123", False),
+        ("127.0.0.1", "127.0.0.1", False),
         ("0.0.0.0", "0.0.0.0", False),
     ],
 )
-def test_the_stored_login_events_must_both_carry_the_request_ip_address(
+def test_the_stored_login_events_must_both_carry_the_forwarded_client_address(
     probe: ModuleType, login_address: str | None, error_address: str | None, accepted: bool
 ) -> None:
+    client_address = "198.51.100.23"
     events = [
         {"type": "LOGIN_ERROR", "ipAddress": error_address},
         {"type": "LOGIN", "ipAddress": login_address},
     ]
     if accepted:
-        assert probe.stored_event_types(events, "127.0.0.1") == ["LOGIN", "LOGIN_ERROR"]
+        assert probe.stored_event_types(events, client_address) == ["LOGIN", "LOGIN_ERROR"]
     else:
         with pytest.raises(probe.ProbeFailure):
-            probe.stored_event_types(events, "127.0.0.1")
+            probe.stored_event_types(events, client_address)

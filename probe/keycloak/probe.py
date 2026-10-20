@@ -131,6 +131,8 @@ CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
+CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as cloudflared forwards it
+FORGED_FORWARDED_FOR = "203.0.113.9, 192.0.2.7"  # a forged first value, then a proxy's
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
@@ -284,8 +286,8 @@ def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
 def stored_event_types(events: list[dict[str, Any]], request_address: str) -> list[str]:
     """The sorted types of stored user events, each proven to carry `request_address`.
 
-    Traefik runs on the host and trusts forwarded headers from loopback, so the address it
-    forwards and Keycloak stores is the one the probe's request comes from: the host of EDGE_URL.
+    The address is the client's, as cloudflared forwards it in X-Forwarded-For and Traefik and
+    Keycloak pass it on; a dropped link would store the loopback address instead.
     """
     for event in events:
         address = event.get("ipAddress")
@@ -1496,10 +1498,17 @@ class Probe:
         secret = admin.get(f"/{REALM}/clients/{client_id}/client-secret")["value"]
         return self.keep_secret("probe-rp client secret", secret)
 
-    def password_grant(self, username: str, password: str, rp_secret: str) -> dict[str, Any]:
+    def password_grant(
+        self,
+        username: str,
+        password: str,
+        rp_secret: str,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         response = through_tunnel(
             "POST",
             PUBLIC_TOKEN_PATH,
+            headers=headers,
             form={
                 "grant_type": "password",
                 "client_id": "probe-rp",
@@ -1568,18 +1577,24 @@ class Probe:
     def only_logins_and_failed_logins_are_stored(self, admin: Admin, rp_secret: str) -> None:
         password = self.keep_secret("probe-events password", secrets.token_urlsafe(16))
         user_id = admin.create_user(REALM, "probe-events", password)
-        tokens = self.password_grant("probe-events", password, rp_secret)
-        refused = through_tunnel(
-            "POST",
-            PUBLIC_TOKEN_PATH,
-            form={
-                "grant_type": "password",
-                "client_id": "probe-rp",
-                "client_secret": rp_secret,
-                "username": "probe-events",
-                "password": "not-the-password",
-            },
-        )
+        forwarded = {"X-Forwarded-For": CLIENT_ADDRESS}
+
+        def wrong_password(headers: dict[str, str]) -> Response:
+            return through_tunnel(
+                "POST",
+                PUBLIC_TOKEN_PATH,
+                headers=headers,
+                form={
+                    "grant_type": "password",
+                    "client_id": "probe-rp",
+                    "client_secret": rp_secret,
+                    "username": "probe-events",
+                    "password": "not-the-password",
+                },
+            )
+
+        tokens = self.password_grant("probe-events", password, rp_secret, forwarded)
+        refused = wrong_password(forwarded)
         expect(refused.status == 400, f"a wrong password answered {refused.status}")
         logout = through_tunnel(
             "POST",
@@ -1591,9 +1606,8 @@ class Probe:
             },
         )
         expect(logout.status == 204, f"the logout answered {logout.status}")
-        stored = stored_event_types(
-            admin.get(f"/{REALM}/events?user={user_id}"), str(urlsplit(EDGE_URL).hostname)
-        )
+        events_path = f"/{REALM}/events?user={user_id}"
+        stored = stored_event_types(admin.get(events_path), CLIENT_ADDRESS)
         expect(
             stored == ["LOGIN", "LOGIN_ERROR"],
             f"probe-events has the stored events {stored}, not one LOGIN and one LOGIN_ERROR",
@@ -1601,7 +1615,16 @@ class Probe:
         self.held(
             "EV2",
             "a sign-in stored one LOGIN, a wrong password one LOGIN_ERROR, both with the "
-            "same request IP address, a logout none",
+            f"forwarded client address {CLIENT_ADDRESS}, a logout none",
+        )
+        forged = wrong_password({"X-Forwarded-For": FORGED_FORWARDED_FOR})
+        expect(
+            forged.status == 400, f"a wrong password with a forged header answered {forged.status}"
+        )
+        newest = max(admin.get(events_path), key=lambda event: event["time"])
+        self.say(
+            f"INFO EV2: X-Forwarded-For {FORGED_FORWARDED_FOR!r} is stored as the "
+            f"{newest['type']} IP address {newest.get('ipAddress')}"
         )
 
     def app_client(self, admin: Admin, client: AppClient) -> None:
