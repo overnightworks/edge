@@ -1402,6 +1402,23 @@ E2 (the issuer's name, which has no public DNS record before the go-live) is dri
 service. CI holds the static facts (E16) in
 `tests/test_agent_egress.py`.
 
+## The agent service image
+
+`agent-service/image/` is the recipe of the agent service's image (agent-providers
+`v0.4.0`, Claude Code `2.1.302`). Every byte that enters it is pinned: both base images by digest,
+the Python packages by the hashes of `requirements.txt`, the Claude CLI by its sha256. A changed
+or vanished artifact fails the build. The image is never pulled from a registry, because its name
+could be anyone's on a public one (`pull_policy: never`). Build it on the PC, from the repository root:
+
+```sh
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.302 agent-service/image
+```
+
+A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
+only writer of `agent-service/image/requirements.txt`, and changes the CLI pin in the Dockerfile
+and the name above together. `probe/agent-service/image.py` builds without cache and starts the
+entrypoint from the clean image.
+
 ## Rollback
 
 ```sh
