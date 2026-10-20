@@ -1,0 +1,8 @@
+claim_id = "26a45644cc5443ccb5c4b3cef434f793"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "63a3af5c82e22ca33861d3db65a2e5b444c9d699"
+branch = "claude/issue-173-ready-check-before-publish"
+scope = ["README.md", "docs/architecture.md", "src/edge/external/apply.py", "src/edge/external/cli.py", "src/edge/external/host_probe.py", "tests/conftest.py", "tests/test_edge_external.py", "tests/test_edge_host_probe.py"]
+opened_commit = "ec87a3dbf0fdb043da63a9bb7a9ec7487ac6d857"
+whole_reason = "The probe, its place in apply before yes, its wiring in the command, its tests behind a guard that refuses the live ports, and the two documents that state the refusal."
