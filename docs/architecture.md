@@ -250,7 +250,7 @@ services:
 
 ### songmaker: from its own login to the one login
 
-**Today songmaker signs people in itself.** It uses webauth's password login (`src/songmaker_cli/auth_api.py`: setup, login, password change). Its users and password hashes live in songmaker's own database. `realm.yaml` holds songmaker's client before the go-live, beside `agent-service`. So deploying songmaker behind the platform changes nothing for its users. D4 ("Keycloak for every app user") needs a cutover of its own.
+**Today songmaker signs people in itself.** It uses webauth's password login (`src/songmaker_cli/auth_api.py`: setup, login, password change). Its users and password hashes live in songmaker's own database. `realm.yaml` holds songmaker's client before the go-live, beside `agent-service` and the hopin and presentator clients (#161). So deploying songmaker behind the platform changes nothing for its users. D4 ("Keycloak for every app user") needs a cutover of its own.
 
 **The cutover item** (songmaker; neighbours edge#19 and webauth; after go-live):
 1. **Client.** edge's `realm.yaml` holds the `songmaker` client (#108), with its redirect URI on `songmaker.hallucinai.de`. Its secret is the file `~/.secrets/keycloak/clients/songmaker`.
@@ -498,7 +498,7 @@ They survive a dead PC because they live at the provider.
 | 1 | The secrets list | `~/README.md` table (stale: names atelier2, tidy-home, `cloudflared/config`) and `secrets_manifest.toml` | home-tools#10, slice S2 |
 | 2 | Tunnel credentials | `~/.secrets/cloudflared/<id>.json` and `/etc/cloudflared/<id>.json` | home-tools#21, but D6 decides the one credential and its form. #21 plans to delete the `~/.secrets` copy, which a re-setup from backup needs |
 | 3 | Tunnel ingress | `/etc/cloudflared/config.yml`, `cloudflared-config.example.yml`, the CI heredoc, README A8 | E3 slices X6 and X8, in the mode D6 picks (the E3 issue is not opened yet; edge#1 row E3) |
-| 4 | App groups | `keycloak/realm.yaml` (`/apps/songmaker`, `presentator`, `hopin`, `aco-board`) and the catalog's `login_group` | **new slice in E3**: the catalog's CI checks against `realm.yaml` and `apps.toml` (section 3) |
+| 4 | App groups | `keycloak/realm.yaml` (`/apps/songmaker`, `presentator`, `hopin`) and the catalog's `login_group` | **new slice in E3**: the catalog's CI checks against `realm.yaml` and `apps.toml` (section 3) |
 | 5 | Org secret reach | home-tools#10 line 19 (repo-list drift) and E3 X5 (`fleet.yaml` org secrets) | home-tools#10 (drop its drift view) and E3 X5 (keep it) |
 | 6 | Alert channels: three today | songmaker's e-mail (`songmaker-alert@`), Alertmanager inside songmaker, `home check`'s desktop notification | edge#4: **one push channel to the phone** (ntfy planned). Gatus ("is it OK now?") and Alertmanager ("why, since when?") both send into it; `home check` findings reach it through Gatus; songmaker's own e-mail alert goes |
 | 7 | Deploy | songmaker's watcher only; presentator by hand, with locally tagged images; hopin none | **new item in edge**: "one deploy model: tag watcher and `edge release`". Its first slice is in songmaker (section 5) |
@@ -532,7 +532,7 @@ They survive a dead PC because they live at the provider.
 | 29 | No emergency commands | `edge status/stop/start/lock`, the markers, their boot guard and its drift finding do not exist | **new item in edge**: "edge as one operator CLI with emergency switches" (section 8). It also folds `edge-check` and `edge-backup` into subcommands. The section 8 state table becomes this item's test table: one parametrised test per cell |
 | 30 | No polkit rule for cloudflared | stopping the tunnel needs `sudo` today | home-tools#9 (`home setup` installs the stop-only rule `tunnel/polkit/10-edge-cloudflared-stop.rules` from edge, section 8) |
 | 31 | **Agents run as the operator's user** | he is in the `docker` group (root on the PC) and `sudo`; `~/.secrets` is his; after go-live, `~/.secrets/keycloak/config-cli-secret` signs in as Keycloak master `admin` (`master.yaml`: `service-account-config-cli`, realm role `admin`), without TOTP | **new home-tools item** "secure the agents" (D14), aco as neighbour for starting sessions as the agent user |
-| 32 | songmaker has no single-login cutover | its own password login; no songmaker client in `realm.yaml` | **new songmaker item** (section 3), after edge#19 |
+| 32 | songmaker has no single-login cutover | its own password login; the app clients are in `realm.yaml` (#108, #161), only the songmaker cutover is still open | **new songmaker item** (section 3), after edge#19 |
 | 33 | No `home-tools/bootstrap` | the file does not exist | home-tools#9 |
 | 34 | No way to stop every agent at once | aco runs sessions on its own tmux socket but has no "stop all" command | **new item in agent-coordination** (aco owns agent sessions) |
 | 35 | Apex, `www` and presentator bypass Traefik | tunnel ingress sends them to `:8080` and `:8100`; no ingress barrier can hold them (section 8) | the catalog and `edge apply` item (gap 14) routes every hostname through Traefik on 8081 (until then the host's `target` in `fleet.yaml` carries it, `http://localhost:8080` for apex and `www`); for apex and `www` it lands with the songmaker cutover item (section 3), for presentator with presentator#197 |

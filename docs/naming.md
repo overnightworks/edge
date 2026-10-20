@@ -59,7 +59,7 @@ always the stem.
 
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
-| `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco board serve` | none | `overnightworks_aco` | group `/apps/aco-board` |
+| `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco board serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |
 | `home` (home-tools) | `overnightworks-home` | `home` | `home` ✓ | `home-check` ✓ | `overnightworks_home` | none |
 | `quality` ✓ | `overnightworks-quality` | `quality` | `quality` | check `quality / verdict` ✓ | ✓ | none |
 | `edge` ✓ | `overnightworks-edge` | `edge` (`edge.check`, `edge.backup`) | `edge check`, `edge backup ...` | `edge-backup`, `edge-backup-restore-test` ✓; compose `edge` ✓ | none yet | `auth.hallucinai.de` |

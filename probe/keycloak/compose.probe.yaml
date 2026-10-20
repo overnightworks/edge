@@ -25,3 +25,7 @@ secrets:
     file: ${PROBE_SECRETS_DIR}/bootstrap-admin-password
   keycloak_client_songmaker:
     file: ${PROBE_SECRETS_DIR}/clients/songmaker
+  keycloak_client_hopin:
+    file: ${PROBE_SECRETS_DIR}/clients/hopin
+  keycloak_client_presentator:
+    file: ${PROBE_SECRETS_DIR}/clients/presentator

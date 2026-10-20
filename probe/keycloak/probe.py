@@ -71,22 +71,64 @@ PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
 EDGE_URL = "http://127.0.0.1:8081"
 ADMIN_URL = "http://localhost:8090"
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
-SONGMAKER_SECRET_FILE = "clients/songmaker"
+
+
+@dataclass(frozen=True)
+class AppClient:
+    """An app's relying party in realm.yaml as #11 lists it (#108, #161)."""
+
+    client_id: str
+    group: str  # the group of the user who signs in; its full path is in the ID token
+    callbacks: tuple[str, ...]
+    logout_redirect: str
+
+    @property
+    def secret_file(self) -> str:
+        return f"clients/{self.client_id}"
+
+    @property
+    def callback(self) -> str:
+        return self.callbacks[0]
+
+    @property
+    def origin(self) -> str:
+        return f"https://{self.client_id}.{DOMAIN}"
+
+
+SONGMAKER = AppClient(
+    "songmaker",
+    "/apps/songmaker/admin",
+    (f"https://songmaker.{DOMAIN}/auth/callback",),
+    f"https://songmaker.{DOMAIN}/login",
+)
+HOPIN = AppClient(
+    "hopin",
+    "/apps/hopin",
+    (f"https://hopin.{DOMAIN}/auth/callback",),
+    f"https://hopin.{DOMAIN}/login",
+)
+PRESENTATOR = AppClient(
+    "presentator",
+    "/apps/presentator/admin",
+    (
+        f"https://presentator.{DOMAIN}/auth/callback",
+        f"https://presentator-talk.{DOMAIN}/auth/callback",
+    ),
+    f"https://presentator.{DOMAIN}/",
+)
+APP_CLIENTS = (SONGMAKER, HOPIN, PRESENTATOR)
+APP_DEFAULT_CLIENT_SCOPES = {"basic", "profile", "groups"}
 SECRET_FILES = (
     "db-password",
     "config-cli-secret",
     "bootstrap-admin-password",
-    SONGMAKER_SECRET_FILE,
+    *(client.secret_file for client in APP_CLIENTS),
 )
 READY_TIMEOUT_SECONDS = 240
 LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
-SONGMAKER_ADMIN_GROUP = f"{MEMBER_GROUP}/admin"
-SONGMAKER_ORIGIN = "https://songmaker.hallucinai.de"
-SONGMAKER_CALLBACK = f"{SONGMAKER_ORIGIN}/auth/callback"
-SONGMAKER_LOGIN = f"{SONGMAKER_ORIGIN}/login"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CONSOLE_PARENT = "/apps"
@@ -799,7 +841,8 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
-        self.songmaker_client(admin)
+        for client in APP_CLIENTS:
+            self.app_client(admin, client)
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -1502,36 +1545,38 @@ class Probe:
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
 
-    def songmaker_client(self, admin: Admin) -> None:
-        """Proof 10 (#108): songmaker's client does what #11 lists, through the public tunnel."""
-        username = "probe-songmaker-admin"
+    def app_client(self, admin: Admin, client: AppClient) -> None:
+        """Proof 10 (#108, #161): an app's client does what #11 lists, through the public tunnel."""
+        name = client.client_id
+        username = f"probe-{name}-member"
         password = self.keep_secret(f"{username} password", secrets.token_urlsafe(16))
-        admin.join_group(admin.create_user(REALM, username, password), SONGMAKER_ADMIN_GROUP)
-        client_secret = self.secret_values[SONGMAKER_SECRET_FILE]
+        admin.join_group(admin.create_user(REALM, username, password), client.group)
+        client_secret = self.secret_values[client.secret_file]
         browser = new_opener(
-            ReceivedCookies(lambda name, value: self.keep_secret(f"songmaker {name}", value))
+            ReceivedCookies(lambda cookie, value: self.keep_secret(f"{name} {cookie}", value))
         )
-        tokens = self.songmaker_sign_in(browser, username, password, client_secret)
+        tokens = self.app_client_sign_in(client, browser, username, password, client_secret)
         groups = claims(tokens["id_token"]).get("groups", [])
-        expect(SONGMAKER_ADMIN_GROUP in groups, f"songmaker's ID token groups are {groups}")
-        self.songmaker_refuses_what_it_does_not_use(client_secret)
-        self.songmaker_logout_pages(browser)
-        self.songmaker_representation(admin)
+        expect(client.group in groups, f"{name}'s ID token groups are {groups}")
+        self.app_client_refuses_what_it_does_not_use(client, client_secret)
+        self.app_client_logout_pages(client, browser)
+        self.app_client_representation(admin, client)
         self.held(
             "10",
-            f"a member of {SONGMAKER_ADMIN_GROUP} signs in to songmaker with PKCE and gets a code "
-            f"at exactly {SONGMAKER_CALLBACK}, exchanged with the scratch secret for an ID token "
+            f"a member of {client.group} signs in to {name} with PKCE and gets a code "
+            f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
             f"with groups {groups}; no code challenge, a callback with a suffix, plain http, the "
             "password grant, client_credentials and the offline_access scope are refused; the "
-            f"end-session page asks before logging out for {SONGMAKER_LOGIN} and refuses an "
-            "unregistered address; the client has no front- or back-channel logout or optional "
-            "scope, a base URL and shows in the console",
+            f"end-session page asks before logging out for {client.logout_redirect} and refuses "
+            "an unregistered address; the client has no front- or back-channel logout or "
+            "optional scope, a base URL and shows in the console",
         )
 
-    def songmaker_authorization_query(self, **changes: str) -> str:
+    @staticmethod
+    def app_client_authorization_query(client: AppClient, **changes: str) -> str:
         parameters = {
-            "client_id": "songmaker",
-            "redirect_uri": SONGMAKER_CALLBACK,
+            "client_id": client.client_id,
+            "redirect_uri": client.callback,
             "response_type": "code",
             "scope": "openid",
             "state": secrets.token_urlsafe(8),
@@ -1539,17 +1584,23 @@ class Probe:
         }
         return urlencode({**parameters, **changes})
 
-    def songmaker_sign_in(
-        self, opener: OpenerDirector, username: str, password: str, client_secret: str
+    def app_client_sign_in(
+        self,
+        client: AppClient,
+        opener: OpenerDirector,
+        username: str,
+        password: str,
+        client_secret: str,
     ) -> dict[str, Any]:
         """The authorization-code flow with S256 up to the ID token (cells T1, T2)."""
-        verifier = self.keep_secret("songmaker PKCE verifier", secrets.token_urlsafe(48))
+        name = client.client_id
+        verifier = self.keep_secret(f"{name} PKCE verifier", secrets.token_urlsafe(48))
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-        query = self.songmaker_authorization_query(
-            code_challenge=challenge.rstrip(b"=").decode(), code_challenge_method="S256"
+        query = self.app_client_authorization_query(
+            client, code_challenge=challenge.rstrip(b"=").decode(), code_challenge_method="S256"
         )
         login_page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}", opener=opener)
-        expect(login_page.status == 200, f"songmaker's login page answered {login_page.status}")
+        expect(login_page.status == 200, f"{name}'s login page answered {login_page.status}")
         action, fields = form_with(login_page, "username")
         signed_in = through_tunnel_url(
             "POST",
@@ -1560,11 +1611,11 @@ class Probe:
         location = signed_in.headers.get("Location", "")
         callback = urlsplit(location)
         expect(
-            signed_in.status == 302 and location.startswith(f"{SONGMAKER_CALLBACK}?"),
+            signed_in.status == 302 and location.startswith(f"{client.callback}?"),
             f"sign-in answered {signed_in.status} with {callback._replace(query='').geturl()!r}, "
-            f"not a code at {SONGMAKER_CALLBACK}: {page_message(signed_in)}",
+            f"not a code at {client.callback}: {page_message(signed_in)}",
         )
-        code = self.keep_secret("songmaker authorization code", parse_qs(callback.query)["code"][0])
+        code = self.keep_secret(f"{name} authorization code", parse_qs(callback.query)["code"][0])
         return self.tokens_from(
             username,
             through_tunnel(
@@ -1572,19 +1623,21 @@ class Probe:
                 PUBLIC_TOKEN_PATH,
                 form={
                     "grant_type": "authorization_code",
-                    "client_id": "songmaker",
+                    "client_id": name,
                     "client_secret": client_secret,
-                    "redirect_uri": SONGMAKER_CALLBACK,
+                    "redirect_uri": client.callback,
                     "code": code,
                     "code_verifier": verifier,
                 },
             ),
         )
 
-    def songmaker_refuses_what_it_does_not_use(self, client_secret: str) -> None:
+    def app_client_refuses_what_it_does_not_use(
+        self, client: AppClient, client_secret: str
+    ) -> None:
         """Cells T3 to T5: PKCE is required, the callback is exact, no other grant works."""
         without_challenge = through_tunnel(
-            "GET", f"{PUBLIC_AUTH_PATH}?{self.songmaker_authorization_query()}"
+            "GET", f"{PUBLIC_AUTH_PATH}?{self.app_client_authorization_query(client)}"
         )
         error = parse_qs(urlsplit(without_challenge.headers.get("Location", "")).query)
         expect(
@@ -1593,33 +1646,37 @@ class Probe:
             f"with {error}",
         )
         for redirect_uri in (
-            f"{SONGMAKER_CALLBACK}/x",
-            SONGMAKER_CALLBACK.replace("https", "http"),
+            f"{client.callback}/x",
+            client.callback.replace("https", "http"),
         ):
             challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
-            query = self.songmaker_authorization_query(redirect_uri=redirect_uri, **challenge)
+            query = self.app_client_authorization_query(
+                client, redirect_uri=redirect_uri, **challenge
+            )
             page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
             expect(
                 page.status == 400 and "Invalid parameter: redirect_uri" in page.text,
                 f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
             )
-        self.songmaker_refuses_offline_access()
-        for grant in ({"grant_type": "client_credentials"}, self.songmaker_password_grant()):
+        self.app_client_refuses_offline_access(client)
+        for grant in ({"grant_type": "client_credentials"}, self.password_grant_of_the_member()):
             refused = through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
-                form={"client_id": "songmaker", "client_secret": client_secret, **grant},
+                form={"client_id": client.client_id, "client_secret": client_secret, **grant},
             )
             error = refused.json().get("error") if refused.status in (400, 401) else None
             expect(
                 error == "unauthorized_client",
-                f"{grant['grant_type']} on songmaker answered {refused.status}",
+                f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
             )
 
-    def songmaker_refuses_offline_access(self) -> None:
+    def app_client_refuses_offline_access(self, client: AppClient) -> None:
         """Cell T13: no optional scope is attached, so no offline token can be asked for."""
         challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
-        query = self.songmaker_authorization_query(scope="openid offline_access", **challenge)
+        query = self.app_client_authorization_query(
+            client, scope="openid offline_access", **challenge
+        )
         refused = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
         location = refused.headers.get("Location", "")
         error = parse_qs(urlsplit(location).query)
@@ -1630,52 +1687,69 @@ class Probe:
             f"scope offline_access answered {refused.status} with {error}: {page_message(refused)}",
         )
 
-    def songmaker_password_grant(self) -> dict[str, str]:
+    def password_grant_of_the_member(self) -> dict[str, str]:
         return {
             "grant_type": "password",
             "username": "probe-member",
             "password": self.member_password,
         }
 
-    def songmaker_logout_pages(self, browser: OpenerDirector) -> None:
+    def app_client_logout_pages(self, client: AppClient, browser: OpenerDirector) -> None:
         """Cells T6, T7: with a session, the registered logout address asks before logging out and
         others fail."""
 
         def end_session(post_logout_redirect_uri: str) -> Response:
             query = urlencode(
-                {"client_id": "songmaker", "post_logout_redirect_uri": post_logout_redirect_uri}
+                {
+                    "client_id": client.client_id,
+                    "post_logout_redirect_uri": post_logout_redirect_uri,
+                }
             )
             return through_tunnel("GET", f"{PUBLIC_LOGOUT_PATH}?{query}", opener=browser)
 
-        registered = end_session(SONGMAKER_LOGIN)
+        registered = end_session(client.logout_redirect)
         expect(
             registered.status == 200 and "Do you want to log out?" in registered.text,
-            f"end session with {SONGMAKER_LOGIN} answered {registered.status} to "
+            f"end session with {client.logout_redirect} answered {registered.status} to "
             f"{registered.headers.get('Location')}: {page_message(registered)}",
         )
-        unregistered = end_session(f"{SONGMAKER_ORIGIN}/elsewhere")
+        unregistered = end_session(f"{client.origin}/elsewhere")
         expect(
             unregistered.status == 400,
             f"end session with an unregistered address answered {unregistered.status}",
         )
 
-    def songmaker_representation(self, admin: Admin) -> None:
-        """Cell T8: logout, base URL and console listing as decided."""
-        client = admin.find(f"/{REALM}/clients", "clientId", "songmaker")
-        backchannel_url = client["attributes"].get("backchannel.logout.url")
+    @staticmethod
+    def app_client_representation(admin: Admin, client: AppClient) -> None:
+        """Cell T8, #161 SA3-1: flags, callbacks, logout, base URL and console listing."""
+        found = admin.find(f"/{REALM}/clients", "clientId", client.client_id)
+        backchannel_url = found["attributes"].get("backchannel.logout.url")
         wrong = {
-            key: client.get(key)
+            key: found.get(key)
             for key, value in {
+                "publicClient": False,
+                "standardFlowEnabled": True,
+                "implicitFlowEnabled": False,
+                "directAccessGrantsEnabled": False,
+                "serviceAccountsEnabled": False,
                 "frontchannelLogout": False,
-                "baseUrl": f"{SONGMAKER_ORIGIN}/",
+                "baseUrl": f"{client.origin}/",
                 "alwaysDisplayInConsole": True,
                 "optionalClientScopes": [],
             }.items()
-            if client.get(key) != value
+            if found.get(key) != value
+        } | {
+            key: found.get(key)
+            for key, value in {
+                "redirectUris": set(client.callbacks),
+                "defaultClientScopes": APP_DEFAULT_CLIENT_SCOPES,
+            }.items()
+            if set(found.get(key) or ()) != value
         }
         expect(
             not wrong and not backchannel_url,
-            f"songmaker's representation differs: {wrong}, back-channel url {backchannel_url}",
+            f"{client.client_id}'s representation differs: {wrong}, "
+            f"back-channel url {backchannel_url}",
         )
 
     def the_observer_door(self, admin: Admin) -> None:

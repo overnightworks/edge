@@ -553,7 +553,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "member_token_carries_groups_and_audience",
         "disabled_user_refused_on_refresh",
         "backchannel_logout_reaches_rp",
-        "songmaker_client",
+        "app_client",
         "the_observer_door",
         "no_secret_leaked",
     ):
@@ -657,3 +657,58 @@ def test_hold_signalled_as_the_teardown_is_entered_without_a_prior_signal_still_
     assert lines[-1] == last_line
     assert "teardown: stack edge-kc-probe removed" in lines
     assert hold_host.containers == set()
+
+
+class ImportedClients:
+    def __init__(self, client: dict[str, object]) -> None:
+        self.client = client
+
+    def find(self, path: str, key: str, value: str) -> dict[str, object]:
+        return self.client
+
+
+def imported_presentator(probe: ModuleType, **changes: object) -> dict[str, object]:
+    client = probe.PRESENTATOR
+    return {
+        "publicClient": False,
+        "standardFlowEnabled": True,
+        "implicitFlowEnabled": False,
+        "directAccessGrantsEnabled": False,
+        "serviceAccountsEnabled": False,
+        "frontchannelLogout": False,
+        "redirectUris": list(client.callbacks),
+        "baseUrl": f"{client.origin}/",
+        "alwaysDisplayInConsole": True,
+        "optionalClientScopes": [],
+        "defaultClientScopes": ["basic", "profile", "groups"],
+        "attributes": {},
+    } | changes
+
+
+@pytest.mark.parametrize(
+    ("scopes", "callbacks_reversed", "accepted"),
+    [
+        pytest.param(["basic", "profile", "groups"], False, True, id="the right scopes"),
+        pytest.param(["basic", "groups"], False, False, id="profile missing"),
+        pytest.param(["basic", "profile", "groups", "email"], False, False, id="email added"),
+        pytest.param(["groups", "basic", "profile"], True, True, id="another order of both"),
+    ],
+)
+def test_an_app_client_is_accepted_only_with_exactly_its_default_scopes_and_callbacks(
+    probe: ModuleType, scopes: list[str], callbacks_reversed: bool, accepted: bool
+) -> None:
+    callbacks = list(probe.PRESENTATOR.callbacks)
+    imported = ImportedClients(
+        imported_presentator(
+            probe,
+            defaultClientScopes=scopes,
+            redirectUris=callbacks[::-1] if callbacks_reversed else callbacks,
+        )
+    )
+    check = probe.Probe.app_client_representation
+
+    if accepted:
+        check(imported, probe.PRESENTATOR)
+    else:
+        with pytest.raises(probe.ProbeFailure):
+            check(imported, probe.PRESENTATOR)
