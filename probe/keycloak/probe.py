@@ -1690,8 +1690,8 @@ class Probe:
             f"password grant, {'' if client.agent_workload else 'client_credentials, '}and the "
             "offline_access scope are refused; the "
             f"end-session page asks before logging out for {client.logout_redirect} and refuses "
-            "an unregistered address and the origin root; the client has no front- or back-channel logout or "
-            "optional scope, a base URL and shows in the console"
+            "an unregistered address and the origin root; the client has no front- or back-channel "
+            "logout or optional scope, a base URL and shows in the console"
             + (
                 f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
                 f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
