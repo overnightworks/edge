@@ -285,7 +285,7 @@ Each app also gets one list of **plain keys**: the `.env` and `environment:` key
 
 Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`, `verify`, `retired_on`.
 
-**The internal CA's files (edge#38).** `step-ca/init` creates them once; `src/home_tools/secrets_manifest.toml` names them, with `loosest_mode = 0o644` for the two files a container user reads, so the daily `home check` judges them against that mode and never recommends `chmod 600`.
+**The internal CA's files (edge#38).** `step-ca/init` creates them once; `src/home_tools/secrets_manifest.toml` names them, with `loosest_mode = 0o644` for the files a container user reads, so the daily `home check` judges them against that mode and never recommends `chmod 600`. Presence stays with each unit's own `--check`: every one of these entries is `optional`.
 
 | File | Mode | Who reads it | In the backup |
 |---|---|---|---|
@@ -329,7 +329,7 @@ Every finding names the subject and a page to fix it, never a value.
 
 | Source | What can be read, read-only | Credential needed | Findings |
 |---|---|---|---|
-| **`~/.secrets` on disk** | names, modes (`stat` only; today) | none | missing, extra (today: `unknown-file`), loose mode (0600; 0644 only where `bound_as` names a container file, inside a 0700 directory) |
+| **`~/.secrets` on disk** | names, modes (`stat` only; today) | none | missing, extra (today: `unknown-file`), loose mode (0600; 0644 only where the file's manifest entry declares it as its `loosest_mode`, inside a 0700 directory; `bound_as` is the planned decider for compose files) |
 | **App secrets in compose** | the safe extraction above, for every enabled service: `secrets:` file paths, `environment:` keys, `.env` keys in the deploy checkout, mount sources | none | `bound_as`, `unverified`, `undeclared`, `missing`, `inline-literal` (key name only). **Today every key in songmaker's and presentator's `.env` is `undeclared`,** because the manifest declares none. Among them are 8 secrets: songmaker's `SESSION_SECRET`, `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`, `GRAFANA_PASSWORD`, `HF_TOKEN`, `SMTP_PASSWORD`, `SONGMAKER_INTERNAL_TOKEN`, and presentator's `PRESENTATOR_SECRET_KEY`. A name rule (`*PASSWORD`, `*SECRET`, `*TOKEN`) would have missed the last one |
 | **GitHub org Actions and Dependabot secrets** | `GET /orgs/{org}/actions/secrets` and `/dependabot/secrets`: names, `visibility`, `updated_at`; `…/{name}/repositories`. Repo secrets: `GET /repos/{o}/{r}/actions/secrets`. **Never values** | fine-grained read token: org Secrets read, Dependabot secrets read, repo Secrets read, Metadata (E3's `github/fleet-read`) | extra (presentator's repo `SONAR_TOKEN` beside the org secret, ext G5); over-privileged (visibility wider than declared); stale (`updated_at` is a dated rotation with provenance); equality always `unverified` |
 | **GitHub tokens themselves** | a fine-grained PAT's expiry: the response header `github-authentication-token-expiration` of any call made with it. A classic token's scopes: the `X-OAuth-Scopes` header | the token itself | stale (expiry); over-privileged against `scope`. The `gh` login keeps `admin:org` until E3's D6 (removing `admin:org`) removes it after X3c (kept on purpose for edge#29); its live scopes are read from the `X-OAuth-Scopes` header of `gh api -i user`. Listing *all* tokens with org access needs a GitHub App (`GET /orgs/{org}/personal-access-tokens`); a PAT cannot, so "extra tokens" stays a yearly glance at the settings page, unless D8 adds the App |

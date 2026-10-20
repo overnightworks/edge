@@ -637,7 +637,7 @@ def _loosest_allowed(mode: int, loosest_file_mode: int) -> int | None:
     return loosest_file_mode if stat.S_ISREG(mode) else None
 
 
-def too_loose(mode: int, loosest_file_mode: int = LOOSEST_FILE_MODE) -> int | None:
+def too_loose(mode: int, loosest_file_mode: int) -> int | None:
     """The loosest mode allowed for this kind of path when `mode` grants more; None when it stays within it."""
     allowed = _loosest_allowed(mode, loosest_file_mode)
     return allowed if allowed is not None and stat.S_IMODE(mode) & ~allowed else None
@@ -696,9 +696,9 @@ def _loose(relative: PurePosixPath, mode: int, declaring: SecretEntry | None = N
 
 
 def _declaring_entry(relative: PurePosixPath, manifest: tuple[SecretEntry, ...]) -> SecretEntry | None:
-    """The live entry whose place this file is and that allows it the loosest mode; None when no entry names it."""
+    """The live entry whose place this file is; when several name it, the strictest, so a wildcard never loosens a specific secret."""
     named = [entry for entry in manifest if not entry.retired and any(_matches_pattern(relative, pattern) for pattern in entry.paths)]
-    return max(named, key=lambda entry: entry.loosest_mode, default=None)
+    return min(named, key=lambda entry: entry.loosest_mode, default=None)
 
 
 # What can be wrong with a folder on the way to a secret, in the order `unfit_folder` names the first one found.
@@ -725,9 +725,10 @@ def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
     return None
 
 
-def _tree_findings(tree: tuple[PathFact, ...], manifest: tuple[SecretEntry, ...]) -> Iterator[SecretFinding]:
+def _tree_findings(
+    tree: tuple[PathFact, ...], manifest: tuple[SecretEntry, ...], patterns: tuple[PurePosixPath, ...]
+) -> Iterator[SecretFinding]:
     """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode and the loosest one its entry declares."""
-    patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     for fact in tree:
         if stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns):
             finding = unfit_folder(fact.relative, fact.mode)
@@ -772,7 +773,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
     findings = (
         *(f for status in statuses for f in _entry_findings(status)),
         *unknown,
-        *_tree_findings(observation.tree, manifest),
+        *_tree_findings(observation.tree, manifest, patterns),
     )
     return SecretsView(statuses, findings)
 
