@@ -8,10 +8,10 @@ PC and is never a tunnel target. Traefik never sees the Docker socket: a
 GET-only socket proxy hands it the container list and events.
 
 Nothing here is reachable from outside until the operator applies the steps A8
-below. Cloudflare Access enforcement (and JWT checks) arrives with that step
-for every name except `auth`: the login service must be public, so it gets its
-own Access app whose one policy is Bypass, and its tunnel line has no JWT check
-(see [Keycloak](#keycloak-auth)). Until A8 the edge is a local service only.
+below. A8 publishes the catalog's hosts; `auth` is public (see
+[Keycloak](#keycloak-auth)). There is no Zero Trust for now (operator,
+20.10.2026); X8b on #30 adds the wildcard protection. Until A8 the edge is a
+local service only.
 
 The platform picture (layers, services, secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs/architecture.md).
 
@@ -447,8 +447,11 @@ Einheiten (`keycloak/`, `step-ca/ca.json`). Der Plan danach wendet HEAD an, nie 
 Commits; sie bringst du bis S2.4c mit der gezeigten `merge --ff-only`-Zeile selbst herein und
 rufst `edge apply --closed` noch einmal auf.
 
-Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Fehlt das
-Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Eine im Katalog
+eingeschaltete Einheit mit `setup`, die laeuft, wird bei jedem Apply geprueft: ist sie nicht eingerichtet,
+bekommt sie die Setup-Frage und sperrt das Publizieren;
+eine per `edge stop` ausgeschaltete, die noch laeuft und kein Setup hat, wird abgewiesen (`edge stop` noch einmal).
+Fehlt das Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
 nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal (`step-ca/init` oder
 `keycloak/go-live`, ohne Argumente, ohne Zeitlimit, Ausgabe ungefiltert); die Schluessel macht
@@ -621,7 +624,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 
 ## edge-backup
 
-A weekly encrypted backup of the declared apps (Songmaker; Keycloak joins with its go-live) into a
+A weekly encrypted backup of the declared apps (Songmaker and Keycloak) into a
 local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
@@ -708,10 +711,9 @@ client secrets. In the repository it exists only encrypted (restic). In plain
 text it exists in exactly three places, each mode 0700: the staging directory
 during a backup and the restore test's directory during a restore test (both
 removed when the run ends), and the target of `edge-backup restore keycloak
---target`, which you delete yourself. While Keycloak is off, `backup/apps.toml` does not declare
-it, so the weekly run and the restore test cover Songmaker only. Once Keycloak is declared and its
-database is down, the weekly run waits 10 minutes for it, reports keycloak as failed and still
-backs up Songmaker.
+--target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
+waits 10 minutes for it, reports keycloak as failed and still backs up
+Songmaker. A failed run also skips retention and the repository check for every app.
 
 ### The restore test
 
@@ -730,7 +732,7 @@ It restores the last successful backup's snapshot into a private directory under
   PostgreSQL quotes row values in them: a failure shows the step and the exit
   code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for
-  Keycloak (its record, which the go-live change (#118) adds back to `backup/apps.toml`, sets `require_rows = true`) it is above zero;
+  Keycloak (`require_rows = true` in `backup/apps.toml`) it is above zero;
 - for an app with audio: the restored audio file count equals the manifest's,
   and every audio file the restored database references
   (`generations.mp3_path`) exists in the copy with a size above zero.
@@ -1111,8 +1113,7 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
 - **1. Backup.** It asks whether to continue without the Keycloak backup only while
    [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
    initialised repository). There is no default; the answer is yours. Nothing is asked once
-   edge-backup is set up (the change that switches Keycloak on (#118) adds its record to `backup/apps.toml`, so its next
-   weekly run covers Keycloak; the check does not prove a
+   edge-backup is set up (its next weekly run covers Keycloak; the check does not prove a
    snapshot exists) or Keycloak's database volume exists (the first start creates it), so a
    "no" is asked again and a finished install is never asked, even with Keycloak stopped.
 - **2. Secrets.** It creates the three files with random values, in a 0700
@@ -1150,9 +1151,10 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
    has both a TOTP and a passkey credential. Only then it deletes `temp-admin` and the
    `bootstrap-admin-password` file; otherwise it refuses and says what is missing.
 
-Last, **`bin/edge apply`** (unnumbered). The script ends unpublished: its last line names
-`edge apply`, which publishes `auth.hallucinai.de` once the catalog declares it. There is no
-Cloudflare step of yours any more.
+Last, the publish (unnumbered). Started by `bin/edge apply`, the script ends and the apply
+goes on to publish `auth.hallucinai.de`; started by hand, it ends unpublished and its last line
+names `edge apply`, which publishes once the catalog declares it. There is no Cloudflare step
+of yours any more.
 
 #### Is go-live finished? `--check`
 
@@ -1436,24 +1438,14 @@ the commit.
 ## Operator steps A8 (going live)
 
 The operator does these himself, in this order; an agent never applies them.
-Each step must hold before the next one starts, because the DNS wildcard is
-what makes the edge reachable.
+Each step must hold before the next one starts.
 
 1. **Presentator's Access app.** Check that `presentator.hallucinai.de` keeps
    its own Access app (its people, plus the `/sources/*` bypass) and still
    answers 401 to a request without a session.
-2. **Wildcard Access app.** Create the Access app for `*.hallucinai.de`,
-   operator only. Note its AUD tag and the team name.
-3. **Login bypass app.** Only after the operator has approved it and the
-   Keycloak go-live above holds through its step 7 (until then skip this step
-   and the `auth` line in step 4; the go-live's Cloudflare step returns here): create a second
-   Access app for `auth.hallucinai.de` alone, with exactly one policy, action
-   **Bypass**, include **Everyone**. Cloudflare enforces Access at its own
-   edge, per hostname, before a request reaches the tunnel; without this more
-   specific app the wildcard app covers `auth` too, and browsers and the apps'
-   token calls meet the Access login. That a per-host app beats the wildcard
-   app is proven live by E4 in overnightworks/edge#1.
-4. **Ingress line.** The tunnel lines come from the catalog through
-   `edge external apply` (see [Externe Dienste als Code](#externe-dienste-als-code)).
-5. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
-   `<name>.hallucinai.de` requests reach the edge, `auth` included.
+2. **DNS and tunnel lines.** They come from the catalog through the publish
+   of `bin/edge apply` (`edge external apply`, see
+   [Externe Dienste als Code](#externe-dienste-als-code)); `auth` goes live as
+   `public`. There is no Zero Trust for now (operator, 20.10.2026), so no
+   wildcard Access app and no bypass app exist; the wildcard `*` protection is
+   X8b on #30, which turns `auth` into a bypass then.

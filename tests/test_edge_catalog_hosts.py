@@ -72,11 +72,17 @@ def test_a_host_carries_its_service_fqdn_and_all_five_fields():
     )
 
 
-def test_the_repositorys_catalog_declares_songmakers_two_hosts_on_8080():
+def test_the_repositorys_catalog_declares_songmakers_two_hosts_on_8080_and_keycloaks_auth():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
         ("hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
         ("www.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
+        (
+            "auth.hallucinai.de",
+            catalog.Exposure.PUBLIC,
+            "http://127.0.0.1:8081",
+            "/realms/hallucinai/.well-known/openid-configuration",
+        ),
     ]
 
 

@@ -14,11 +14,13 @@ and nothing starts, and one that starts with its unit is recorded once the unit 
 A unit is a compose profile: on starts its services, off removes their containers. Volumes are never
 touched. A live service of a unit not planned off whose container runs another image than
 compose.yaml now names is named after the unit lines and keeps running: its image is never swapped
-here, and the line alone asks nothing (#91). A unit that would be switched on and is not set up is
-asked about separately; on `yes` its own setup command runs in the operator's terminal (key material
-is made there, never here) and `--check` must then pass before a fresh plan is shown. A unit with an
-emergency switch (`edge stop`) or a barrier a stop left is never started and its switch is never
-cleared here: only `edge start` ends it.
+here, and the line alone asks nothing (#91). A unit that would be switched on, or is enabled and
+already runs, and is not set up is asked about separately; on `yes` its own setup command runs in
+the operator's terminal (key material is made there, never here) and `--check` must then pass
+before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
+left is never started and its switch is never cleared here: only `edge start` ends it. If it is
+enabled in the catalog, declares a setup, and its containers still run while it is not set up,
+the run is refused: nothing is asked or published.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -100,6 +102,7 @@ class UnitPlan:
     services: tuple[str, ...]
     volumes: tuple[str, ...]
     switched_off_since: str | None = None
+    running: bool = False
 
     def describe(self) -> str:
         touched = f"services {', '.join(self.services)}"
@@ -160,7 +163,8 @@ def plan_switches(
         volumes = sorted(
             {v for name in services for v in compose.named_volumes(config["services"][name])}
         )
-        plans.append(UnitPlan(unit, action, services, tuple(volumes), since))
+        running = compose.has_running_container(states, services)
+        plans.append(UnitPlan(unit, action, services, tuple(volumes), since, running))
     return plans
 
 
@@ -321,6 +325,7 @@ class Plan:
 class MissingSetup:
     unit: catalog.Unit
     check_line: str
+    kept_stopped: bool = False
 
 
 def _plan(
@@ -552,15 +557,18 @@ def _plan_and_apply(
             for line in waiting.describe(binds):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
-        missing = _missing_setups(planned.plans, repository, check)
+        missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
+        if kept := [m for m in missing if m.kept_stopped]:
+            _refuse_switched_off_units_still_running(kept)
+            return ApplyExit.REFUSED
         if missing:
             exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
             if exit_code is not None:
                 return exit_code
             completed = [m.unit.key for m in missing]
             planned = _plan(engine, marks, record, repository)
-            if unready := _missing_setups(planned.plans, repository, check):
+            if unready := _missing_setups(planned, repository, check):
                 _refuse_units_still_not_set_up(unready)
                 return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
@@ -576,26 +584,40 @@ def _plan_and_apply(
     )
 
 
-def _missing_setups(
-    plans: Sequence[UnitPlan], repository: Path, check: setup.SetupCheck
-) -> list[MissingSetup]:
-    """The units that would be switched on and whose `--check` says not set up, in catalog order."""
+def _missing_setups(planned: Plan, repository: Path, check: setup.SetupCheck) -> list[MissingSetup]:
+    """The enabled units whose `--check` says not set up, in catalog order.
+
+    A unit whose containers already run is checked too: an interrupted setup leaves them up, and
+    the publish must not follow before the setup is done. A unit kept stopped is checked only
+    while its containers still run."""
+    stopped = {p.unit.key: p.running for p in planned.plans if p.action is Action.STAYS_STOPPED}
     missing = []
-    for plan in plans:
-        if plan.action is Action.ON and (
-            line := setup.not_set_up_line(plan.unit, repository, check)
-        ):
-            missing.append(MissingSetup(plan.unit, line))
+    for unit in planned.fleet.units:
+        if not unit.enabled or not stopped.get(unit.key, True):
+            continue
+        if line := setup.not_set_up_line(unit, repository, check):
+            missing.append(MissingSetup(unit, line, kept_stopped=unit.key in stopped))
     return missing
 
 
 def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
-    """A unit the fresh plan switches on is still not set up: no question, no switch."""
+    """A unit that is switched on or already runs is still not set up: no question, no switch."""
     for item in missing:
         print(
             f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
             f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
             f"{item.check_line}",
+            file=sys.stderr,
+        )
+
+
+def _refuse_switched_off_units_still_running(missing: Sequence[MissingSetup]) -> None:
+    """A unit stopped by `edge stop` never gets a setup or a start,
+    but its containers still run."""
+    for item in missing:
+        print(
+            f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
+            f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}",
             file=sys.stderr,
         )
 

@@ -90,7 +90,7 @@ CONTAINER_REALM_ATTRIBUTES = (
     "--realm master --client config-cli --fields attributes"
 )
 
-NEXT_STEP = f"Last: run `bin/edge apply`; it publishes {PUBLIC_HOST} once the catalog declares it."
+NEXT_STEP = f"Last: `edge apply` publishes {PUBLIC_HOST} once the catalog declares it."
 
 
 class StepFailure(Exception):
