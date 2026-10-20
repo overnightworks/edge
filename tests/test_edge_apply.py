@@ -1739,14 +1739,14 @@ def test_only_the_exact_yes_applies(switch, scripted, answer):
     assert scripted.changing_verbs() == []
 
 
-def test_plain_apply_says_the_publish_phase_is_not_built_and_names_closed(capsys):
-    """#52 rule 7: plain `edge apply` exits 2 and names `--closed`."""
+def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_nothing(capsys):
+    """#171 D2: the local part's refusal is the exit of plain `edge apply`."""
     exit_code = cli.main(["apply"])
 
-    assert exit_code == 2
+    assert exit_code == 1
     err = capsys.readouterr().err
-    assert "publish phase is not built yet" in err
-    assert "edge apply --closed" in err
+    assert "edge apply --closed: refused, stdin and stdout must be a terminal" in err
+    assert "edge apply: nothing published" in err
 
 
 @pytest.mark.parametrize(

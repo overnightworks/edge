@@ -3,15 +3,14 @@
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from edge import apply, emergency, switches, tunnel
 from edge.external import cli as external_cli
 
-PUBLISH_PHASE_MISSING = (
-    "edge apply: the publish phase is not built yet; switch this repository's units "
-    f"with `{apply.COMMAND}`"
-)
+COMMAND = "edge apply"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,12 +25,16 @@ def main(argv: list[str] | None = None) -> int:
 
 def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
     apply_parser = subcommands.add_parser(
-        "apply", help="switch the units of fleet.yaml on or off (needs --closed)"
+        "apply",
+        help="switch the units of fleet.yaml on or off, then publish to Cloudflare and GitHub",
+        description="The local part (`--closed`: the units of this repository, at a terminal, "
+        "after `yes`), then, only if it ended clean, the publish (`edge external apply`, "
+        "after its own `yes`). Each part asks only when it has changes.",
     )
     apply_parser.add_argument(
         "--closed",
         action="store_true",
-        help="the closed phase: units of this repository, at a terminal, after `yes`",
+        help="the local part alone: units of this repository, at a terminal, after `yes`",
     )
     apply_parser.set_defaults(run=apply_command)
 
@@ -98,8 +101,60 @@ def start_command(arguments: argparse.Namespace) -> int:
     )
 
 
+@dataclass
+class _Run:
+    """What the interrupt handler of the composer knows, recorded where each fact is true."""
+
+    publish_started: bool = False
+    publish_exit: int | None = None
+
+
 def apply_command(arguments: argparse.Namespace) -> int:
     if arguments.closed:
         return apply.apply_closed(switches.default_state_directory())
-    print(PUBLISH_PHASE_MISSING, file=sys.stderr)
-    return apply.ApplyExit.CANNOT_PLAN
+    return _apply_then_publish()
+
+
+def _apply_then_publish() -> int:
+    """The local part, then the publish only if the local part ended clean. The exit is the local
+    one unless it is 0, then the publish's with its 2 ("cannot plan") made 1: a 2 from here means
+    the local part could not finish planning, and nothing was published. No signal handler is
+    installed here; the one `except KeyboardInterrupt` (SIGINT) decides by what is recorded."""
+    run = _Run()
+    try:
+        local_exit = apply.apply_closed(switches.default_state_directory())
+        if local_exit != apply.ApplyExit.APPLIED_OR_NOTHING:
+            print(f"{COMMAND}: nothing published", file=sys.stderr)
+            return local_exit
+        run.publish_started = True
+        run.publish_exit = _published_exit(external_cli.apply_command(Path.home()))
+        _say_summary(run.publish_exit)
+        return run.publish_exit
+    except KeyboardInterrupt:
+        return _exit_after_interrupt(run)
+
+
+def _published_exit(publish_exit: int) -> int:
+    if publish_exit == apply.ApplyExit.CANNOT_PLAN:
+        return apply.ApplyExit.REFUSED
+    return publish_exit
+
+
+def _say_summary(publish_exit: int) -> None:
+    if publish_exit == apply.ApplyExit.APPLIED_OR_NOTHING:
+        print(f"{COMMAND}: done", file=sys.stderr)
+    else:
+        print(f"{COMMAND}: the publish ended with exit {publish_exit}", file=sys.stderr)
+
+
+def _exit_after_interrupt(run: _Run) -> int:
+    if run.publish_exit is not None:
+        return run.publish_exit
+    if run.publish_started:
+        print(
+            f"{COMMAND}: interrupted during the publish; run `edge external check --hosts`",
+            file=sys.stderr,
+        )
+    else:
+        print(f"{COMMAND}: interrupted, nothing published", file=sys.stderr)
+    return apply.ApplyExit.REFUSED

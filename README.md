@@ -29,7 +29,7 @@ The platform picture (layers, services, secrets, deploy, re-setup, operations, d
 | `cloudflared-config.example.yml` | the tunnel ingress template the operator applies in A8 |
 | `tunnel/` | the cloudflared unit, its drop-ins (`20-nonroot.conf`, the boot skip `30-edge-global-stop.conf`) and the stop-only polkit rule, with `@HOME@`, `@OPERATOR_USER@` and `@TUNNEL_ID@`; edge ships them, overnightworks/home-tools#9 installs them (see [Notschalter](#notschalter-edge-stop-und-edge-start)) |
 | `fleet.yaml` | the service catalog: which units of this repository run (`services.<unit>.run.enabled`), and the OpenTofu inputs (see [Dienste an und aus](#dienste-an-und-aus)) |
-| `src/edge/`, `external/` | the `edge` command (`edge apply --closed`, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
+| `src/edge/`, `external/` | the `edge` command (`edge apply`, which is `edge apply --closed` and then the publish, `edge stop` and `edge start`, `edge external plan` and `apply`) and the pinned OpenTofu root it plans (see [Dienste an und aus](#dienste-an-und-aus), [Externe Dienste als Code](#externe-dienste-als-code)) |
 | `src/home_tools/`, `docs/home.md`, `bin/home` | the `home` workstation tool (German, see [docs/home.md](docs/home.md)); `bin/home` is a symlink to the one launcher `bin/edge` |
 | `src/edge_check/`, `edge-check.toml` | the `edge-check` alarm and its allow-list (see below) |
 | `src/edge_backup/`, `backup/apps.toml`, `systemd/` | the `edge-backup` runner, the declared apps, its user timers (see below) |
@@ -93,15 +93,16 @@ again.
 # `--no-recreate` leaves a running core service as it is, for the apply below to follow.
 docker compose up -d --no-recreate socket-proxy traefik
 # Keycloak and its database sit behind the profile `keycloak`: a plain `up -d` starts neither.
-# `edge apply --closed` switches them on or off by `services.keycloak.run.enabled` in
-# fleet.yaml; while `keycloak/go-live` is not done it asks and runs it in your terminal.
+# `edge apply` (its local part, `--closed`) switches them on or off by
+# `services.keycloak.run.enabled` in fleet.yaml; when it switches them on and
+# `keycloak/go-live` is not done, it asks and runs it in your terminal.
 # fleet.yaml is edited through a pull request and reaches the live checkout by the pull below
 # (until S2.4c); a local edit leaves the tree dirty, and the apply refuses it, naming the path.
 git -C ~/git/edge pull --ff-only
-edge apply --closed
+edge apply
 # Traefik reads traefik.yml (its entrypoints) only when it starts. When traefik.yml changed
 # since it was last applied, or the compose definition of socket-proxy or traefik changed
-# (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply --closed` recreates
+# (compose.yaml, an image pin, EDGE_DOMAIN in .env), the same `edge apply` recreates
 # the running core services concerned, socket-proxy first and traefik after it, proves every
 # barrier again and only then says so, ending in "the core is current"; a stopped one is named
 # and not started, so start it with the `up` above first. A core container edge's failed
@@ -113,7 +114,7 @@ edge apply --closed
 ```
 
 Switching Keycloak off (`enabled: false` through a pull request, `git -C ~/git/edge pull
---ff-only`, then `edge apply --closed`) stops and removes
+--ff-only`, then `edge apply`) stops and removes
 `keycloak-db` and `keycloak` and keeps the volume `keycloak-db`, `~/.secrets/keycloak` and
 the `keycloak` network; switching it on again uses the same database. Removing the entry
 from `fleet.yaml` is not "off": apply then leaves Keycloak as it is. Whether `auth` and
@@ -288,6 +289,18 @@ services:
       setup: step-ca/init   # optional: der Befehl, der den Schluessel macht
 ```
 
+Das blosse `edge apply` fuehrt zwei Teile nacheinander aus: zuerst den lokalen Teil
+(`edge apply --closed`, alles bis zum Ende dieses Abschnitts), dann, nur wenn der mit Exit 0 endete,
+die Publish-Phase (`edge external apply`, [Externe Dienste als Code](#externe-dienste-als-code)).
+Jeder Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt es nirgends etwas
+zu aendern, fragt `edge apply` gar nichts. Endet der lokale Teil nicht mit 0 (verweigert,
+abgelehnt, nicht planbar, teilweise), steht eine Zeile "nothing published", es laeuft kein tofu,
+und der Exit ist der des lokalen Teils. `edge apply --closed` bleibt der lokale Teil allein.
+Ein Ctrl-C vor der Publish-Phase endet mit Exit 1 und "interrupted, nothing published", eines
+waehrend der Publish-Phase mit Exit 1 und der Zeile "run `edge external check --hosts`". Ein
+SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess wie bei `--closed`: nichts wird
+veroeffentlicht.
+
 `edge apply --closed` bringt jede Einheit in den Zustand, den `enabled` sagt. An:
 `docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann
 `rm -f` derselben Dienste. Es nimmt nie `down`, nie `-v`, nie ein Volume weg (R1). Den Kern
@@ -400,8 +413,13 @@ Live-Checkout `~/git/edge` gestartet, nicht auf `main`, Baum nicht sauber, `.env
 `cloudflare.zone` ungueltig, git nicht befragbar, `main` nicht von `origin` abrufbar, Checkout vor oder neben `origin/main`, Katalog ungueltig, Compose unlesbar, `traefik.yml` oder `traefik-mcp.yml` fehlt oder
 ist unlesbar, dieses auch, wenn `step-ca` aus oder abgeschaltet ist, ein laufender Container einer
 Einheit, dessen `docker compose ps`-Zeile kein Image nennt, ein Setup-Check, der es nicht sagen
-kann, ein Setup, das nicht starten kann). Ein blosses `edge apply` endet mit Exit 2: die
-Publish-Phase gibt es noch nicht.
+kann, ein Setup, das nicht starten kann). Das blosse `edge apply` (siehe unten) gibt den
+Exit des lokalen Teils unveraendert zurueck, solange der nicht 0 ist; danach den der Publish-Phase,
+deren Exit 2 zu 1 wird. Ein Exit 2 von `edge apply` heisst darum: der lokale Teil konnte nicht
+fertig planen, es wurde nichts veroeffentlicht, und ein Setup, das schon lief, kann Aenderungen
+hinterlassen haben (ein Setup laeuft vor dem erneuten Pruefen und Planen, beide koennen noch mit
+Exit 2 enden). Ueber `bin/edge` kann Exit 2 auch vom `uv sync` des Starters kommen, bevor `edge`
+beginnt; seine Zeile nennt das Sync.
 
 Der Setup-Vertrag: `<setup> --check` fragt nichts, druckt kein Geheimnis, legt nichts an und
 braucht keinen laufenden Dienst. Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was
@@ -882,10 +900,10 @@ are YAML files in `keycloak/`, applied by a tool, not clicked together in the
 console. Only the people and their group memberships are managed in the
 console. Change the YAML and apply it again, and the running Keycloak follows.
 
-Going live needs you in two places only: in the browser, to create your own
-admin with a second factor (a machine must not hold that), and in Cloudflare, to
-open the public door. Everything else is `keycloak/go-live` (see
-[Keycloak go-live](#keycloak-go-live)). The sections below are the reference.
+Going live needs you in one place only: in the browser, to create your own
+admin with a second factor (a machine must not hold that). Everything else is
+`keycloak/go-live` (see [Keycloak go-live](#keycloak-go-live)), and `bin/edge apply`
+publishes the public door afterwards. The sections below are the reference.
 
 ### Doors, issuers and configuration
 
@@ -996,7 +1014,7 @@ environment entry in any compose file Compose may load (`compose*.yaml`,
 ### Start and apply
 
 Start the stack as in [Start, readiness, stop](#start-readiness-stop) (Keycloak with
-`edge apply --closed`), Traefik included, and wait until the readiness check prints `ready`. Then apply
+`edge apply`), Traefik included, and wait until the readiness check prints `ready`. Then apply
 `keycloak/*.yaml`:
 
 ```sh
@@ -1027,7 +1045,7 @@ keycloak`), go-live refuses at the start of its run, asks nothing and starts not
 ``go-live: refused, keycloak is switched off (since …); `edge start keycloak` ends the switch``
 (exit 1). It reads the marker again, under the switch lock, right before each start (step 3,
 step 4b, step 5), so a stop made during the run wins. `--check` starts nothing and ignores the
-marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply --closed` asks and runs it in your terminal on yes (`--check` first).
+marker. Once the catalog switches Keycloak on and while go-live is not done, `edge apply` (its local part) asks and runs it in your terminal on yes (`--check` first).
 
 - **1. Backup.** It asks whether to continue without the Keycloak backup only while
    [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
@@ -1070,17 +1088,9 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
    has both a TOTP and a passkey credential. Only then it deletes `temp-admin` and the
    `bootstrap-admin-password` file; otherwise it refuses and says what is missing.
 
-Last, **your part, in Cloudflare** (unnumbered). The script ends by printing the steps (A8, steps
-3 to 5, for `auth.hallucinai.de`) and the check:
-
-```sh
-curl -s https://auth.hallucinai.de/realms/hallucinai/.well-known/openid-configuration \
-  | grep -o '"issuer":"[^"]*"'
-# "issuer":"https://auth.hallucinai.de/realms/hallucinai"
-```
-
-The operator's own browser is no proof: it holds an Access session and
-passes the wildcard app either way.
+Last, **`bin/edge apply`** (unnumbered). The script ends unpublished: its last line names
+`edge apply`, which publishes `auth.hallucinai.de` once the catalog declares it. There is no
+Cloudflare step of yours any more.
 
 #### Is go-live finished? `--check`
 
@@ -1146,7 +1156,7 @@ switched-off Keycloak):
 - **7. Retire the bootstrap.** Sign in as that user, enrol TOTP and add a passkey, then delete
   `temp-admin` in the admin console and run `rm ~/.secrets/keycloak/bootstrap-admin-password`.
 
-Last, **public login in Cloudflare** (unnumbered), as in the Cloudflare part above.
+Last, **`bin/edge apply`** (unnumbered), as above.
 
 ### Patch upgrade
 

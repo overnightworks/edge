@@ -2,10 +2,10 @@
 """Keycloak go-live as one command (README "Keycloak go-live"): the operator's tool.
 
 Runs the runbook's steps 2-6 and the end of step 7, asks for the operator's admin name and first
-password (step 6), and stops for the two human parts, the browser (TOTP and passkey, step 7) and
-Cloudflare (unnumbered). Every step checks its own done-state first, so a run after an interruption
-continues at the first unfinished step. No secret is printed: command output is captured and a
-failure shows one scrubbed line.
+password (step 6), and stops for the human part, the browser (TOTP and passkey, step 7). It ends
+unpublished: its last line names `edge apply`. Every step checks its own done-state first, so a run
+after an interruption continues at the first unfinished step. No secret is printed: command output
+is captured and a failure shows one scrubbed line.
 
     keycloak/go-live
     keycloak/go-live --check
@@ -90,17 +90,7 @@ CONTAINER_REALM_ATTRIBUTES = (
     "--realm master --client config-cli --fields attributes"
 )
 
-CLOUDFLARE_STEPS = f"""\
-Last, in Cloudflare (README, "Operator steps A8", steps 3 to 5), for {PUBLIC_HOST}:
-  3. Access app for {PUBLIC_HOST} alone, one policy: action Bypass, include Everyone.
-  4. Ingress line for {PUBLIC_HOST} ahead of the wildcard rule: no access block, service
-     {EDGE_URL}; then restart cloudflared.
-  5. DNS: the proxied * CNAME to the tunnel, if it is not there yet.
-Ready when a request without any Cloudflare cookie gets the discovery document:
-  curl -s https://{PUBLIC_HOST}/realms/{PUBLIC_REALM}/.well-known/openid-configuration \\
-    | grep -o '"issuer":"[^"]*"'
-  # "issuer":"https://{PUBLIC_HOST}/realms/{PUBLIC_REALM}"
-"""
+NEXT_STEP = f"Last: run `bin/edge apply`; it publishes {PUBLIC_HOST} once the catalog declares it."
 
 
 class StepFailure(Exception):
@@ -915,7 +905,7 @@ class GoLive:
             self.tools.say(f"go-live FAILED at {current}: interrupted")
             return 1
         self.tools.say("go-live: Keycloak is live on this PC.")
-        self.tools.say(CLOUDFLARE_STEPS)
+        self.tools.say(NEXT_STEP)
         return 0
 
 
@@ -933,7 +923,7 @@ def main() -> int:
         description=__doc__.splitlines()[0],
         epilog=(
             f"Steps (numbers as in the README), each skipped when already done:\n{steps}\n\n"
-            f"{CLOUDFLARE_STEPS}"
+            f"{NEXT_STEP}"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
