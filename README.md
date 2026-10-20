@@ -658,7 +658,7 @@ It restores the last successful backup's snapshot into a private directory under
   PostgreSQL quotes row values in them: a failure shows the step and the exit
   code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for
-  Keycloak (`require_rows = true` in `backup/apps.toml`) it is above zero;
+  Keycloak (its record, which the go-live change (#118) adds back to `backup/apps.toml`, sets `require_rows = true`) it is above zero;
 - for an app with audio: the restored audio file count equals the manifest's,
   and every audio file the restored database references
   (`generations.mp3_path`) exists in the copy with a size above zero.
@@ -1033,7 +1033,7 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
 - **1. Backup.** It asks whether to continue without the Keycloak backup only while
    [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
    initialised repository). There is no default; the answer is yours. Nothing is asked once
-   edge-backup is set up (the go-live adds Keycloak's record to `backup/apps.toml`, so its next
+   edge-backup is set up (the change that switches Keycloak on (#118) adds its record to `backup/apps.toml`, so its next
    weekly run covers Keycloak; the check does not prove a
    snapshot exists) or Keycloak's database volume exists (the first start creates it), so a
    "no" is asked again and a finished install is never asked, even with Keycloak stopped.
