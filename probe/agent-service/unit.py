@@ -25,6 +25,7 @@ import inspect
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -57,7 +58,6 @@ OWNER_ONLY = 0o700
 TOKEN_MODE = 0o600
 LOOSE_TOKEN_MODE = 0o644
 LOOSE_WORKING_ROOT_MODE = "0750"
-REPLACEMENT_TOKEN = "sk-ant-oat01-replacement"  # a line of the shape, no credential
 INSIDE_IMPORTS = "import errno, hashlib, json, os, re, shutil, signal, subprocess, sys, time\n"
 
 
@@ -417,7 +417,7 @@ class UnitProbe(Probe):
         renewed = self.token.with_name("token.new")
         descriptor = os.open(renewed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, TOKEN_MODE)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(f"{REPLACEMENT_TOKEN}\n")
+            handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")  # the shape, no credential
         self.run(["mv", "-T", str(renewed), str(self.token)])
         after = self.inside("sha256", token_path())["sha256"]
         expected = hashlib.sha256(self.token.read_bytes()).hexdigest()
