@@ -1,8 +1,0 @@
-claim_id = "a234cc6ac45449bc82514a631f60d65b"
-agent = "claude"
-role = "builder"
-base = "9a1c3bba857b499674d83f262cc403c1427b1acb"
-branch = "claude/issue-156-x5c3-apply-closes-on-check"
-scope = ["README.md", "docs/architecture.md", "src/edge/external/apply.py", "src/edge/external/cli.py", "src/edge/external/tofu.py", "src/home_tools/secrets_manifest.toml", "tests/test_edge_external.py"]
-opened_commit = "b77713660bfdbb4af585c9c0e2b6c5696da0e6ac"
-whole_reason = "apply's outcome, the closing check, the tofu runner's decoding and their pty cells share one disposition contract; a part alone would leave apply exiting on a verdict it never asked for"
