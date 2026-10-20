@@ -19,9 +19,11 @@ The `dns` window attaches a kernel filter that passes only frames with port 53 (
 an interface without an Ethernet header), so a busy host does not fill the frame cap with traffic
 the window does not look at. IPv6 frames that carry an extension header pass too: the ports lie
 behind the chain, which `parse` walks. A frame the window cannot fully decode is counted in
-`undecoded` and makes the window incomplete: an IPv6 chain that is cut, a non-first IPv6 fragment,
-and a TCP port-53 segment that does not hold exactly one whole DNS message (a message split across
-segments). IPv4 non-first fragments carry no port and are not passed.
+`undecoded` and makes the window incomplete: an IPv4 first fragment, an IPv6 chain or extension
+header that is cut, a non-first IPv6 fragment, a TCP or UDP header that is short, a port-53
+frame the capture truncated (MSG_TRUNC, or a UDP length or TCP header longer than what was
+captured), and a TCP port-53 segment that does not hold exactly one whole DNS message (a message
+split across segments). IPv4 non-first fragments carry no port and are not passed.
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ class Segment:
     flags: int
     question: str
     at: float  # the kernel's receive time
-    undecoded: bool = False  # the frame's ports could not be reached
+    undecoded: bool = False  # the frame could not be fully decoded
     partial_dns: bool = False  # TCP port 53 with a payload that is not one whole DNS message
 
 
@@ -143,7 +145,12 @@ def link_header_bytes(frame: bytes, hardware_type: int) -> tuple[int, int | None
 
 
 def parse(
-    frame: bytes, interface: str, packet_type: int, hardware_type: int, at: float
+    frame: bytes,
+    interface: str,
+    packet_type: int,
+    hardware_type: int,
+    at: float,
+    truncated: bool = False,
 ) -> Segment | None:
     outgoing = packet_type == PACKET_OUTGOING
     offset, version = link_header_bytes(frame, hardware_type)
@@ -171,9 +178,18 @@ def parse(
     if len(transport) < (TCP_HEADER_BYTES if protocol == PROTOCOL_TCP else UDP_HEADER_BYTES):
         return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
     source_port, destination_port = struct.unpack_from("!HH", transport)
+    header_bytes = (transport[12] >> 4) * 4 if protocol == PROTOCOL_TCP else UDP_HEADER_BYTES
+    declared_bytes = (
+        header_bytes if protocol == PROTOCOL_TCP else struct.unpack_from("!H", transport, 4)[0]
+    )
+    if DNS_PORT in (source_port, destination_port) and (
+        truncated or declared_bytes > len(transport)
+    ):
+        # The capture cut the DNS message (or its TCP options): the question is not all here.
+        return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
     flags, payload, partial = 0, transport[UDP_HEADER_BYTES:], False
     if protocol == PROTOCOL_TCP:
-        flags, payload = transport[13], transport[(transport[12] >> 4) * 4 :]
+        flags, payload = transport[13], transport[header_bytes:]
         if DNS_PORT in (source_port, destination_port) and payload:
             # DNS over TCP: a two-byte length comes first, and one whole message follows it.
             declared = int.from_bytes(payload[:2])
@@ -309,12 +325,15 @@ def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
         if time.monotonic() >= deadline:
             return window, "seconds"
         try:
-            frame, ancillary, _, address = watcher.recvmsg(READ_BYTES, socket.CMSG_SPACE(16))
+            frame, ancillary, flags, address = watcher.recvmsg(READ_BYTES, socket.CMSG_SPACE(16))
         except TimeoutError:
             continue
         window.frames += 1
         interface, _, packet_type, hardware_type, _ = address
-        if segment := parse(frame, interface, packet_type, hardware_type, kernel_time(ancillary)):
+        truncated = bool(flags & socket.MSG_TRUNC)
+        if segment := parse(
+            frame, interface, packet_type, hardware_type, kernel_time(ancillary), truncated
+        ):
             window.see(segment, labels)
     return window, "frames"
 

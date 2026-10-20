@@ -288,6 +288,21 @@ def extension_header(next_header: int, kind: str) -> bytes:
     return struct.pack("!BB", next_header, 0) + bytes(6)  # hop-by-hop options
 
 
+def long_options(next_header: int, length: int) -> bytes:
+    """One destination-options header of `length` bytes (a multiple of 8), then `next_header`."""
+    return struct.pack("!BB", next_header, length // 8 - 1) + bytes(length - 2)
+
+
+def udp(source_port: int, destination_port: int, payload: bytes) -> bytes:
+    return struct.pack("!HHHH", source_port, destination_port, 8 + len(payload), 0) + payload
+
+
+def tcp_with_options(payload: bytes) -> bytes:
+    """A DNS-over-TCP segment whose header declares 60 bytes (data offset 15)."""
+    header = struct.pack("!HHIIBBHHH", 40000, 53, 0, 0, 15 << 4, 0x18, 0, 0, 0) + bytes(40)
+    return header + struct.pack("!H", len(payload)) + payload
+
+
 def dns_message(name: str) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
     return struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
@@ -333,17 +348,40 @@ CUT_EXTENSION = struct.pack("!BB", 58, 3) + bytes(6)  # declares 32 bytes, 8 cap
         ),
         pytest.param(ethernet(0x0800, ipv4_header(17, bytes(4))), id="a short UDP header"),
         pytest.param(ethernet(0x0800, ipv4_header(6, bytes(12))), id="a short TCP header"),
+        pytest.param(
+            ipv6(60, long_options(17, 1528) + udp(40000, 53, dns_message("a.b.c"))),
+            id="a UDP DNS message cut by the capture behind a long extension chain",
+        ),
+        pytest.param(
+            ipv6(60, long_options(6, 1520) + tcp_with_options(dns_message("a.b.c"))),
+            id="a TCP header whose options run past the captured bytes",
+        ),
     ],
 )
-def test_a_frame_whose_ports_cannot_be_reached_makes_the_dns_window_incomplete(capture, frame):
+def test_a_frame_whose_ports_cannot_be_reached_makes_the_dns_window_incomplete(
+    capture, egress, frame
+):
     """E10: DNS the window cannot decode is counted, so the control cannot cover for it."""
-    segment = parse(capture, frame)
+    segment = parse(capture, frame[: capture.READ_BYTES])
     window = capture.Window()
 
     window.see(segment, ["label"])
 
     assert segment.undecoded
     assert window.undecoded == 1
+    result = {"drops": 0, "undecoded": window.undecoded, "ended_at": 9.0, "started_at": 0.0}
+    with pytest.raises(egress.NotDriven):
+        egress.Probe.complete({**result, "ended_by": "seconds", "frames": 1}, "E10", 5.0)
+
+
+def test_a_frame_the_kernel_truncated_on_port_53_is_undecoded(capture):
+    frame = ethernet(0x0800, ipv4_header(17, udp(40000, 53, dns_message("a.b.c"))))
+
+    segment = capture.parse(
+        frame, "eth0", capture.PACKET_OUTGOING, capture.ARPHRD_ETHER, 5.0, truncated=True
+    )
+
+    assert segment.undecoded
 
 
 @pytest.mark.parametrize(
