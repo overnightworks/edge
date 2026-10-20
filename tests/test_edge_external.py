@@ -2,6 +2,9 @@
 
 import errno
 import fcntl
+import functools
+import inspect
+import io
 import json
 import os
 import pty
@@ -68,6 +71,8 @@ with (here / "calls.jsonl").open("a") as calls:
 plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
+if command == config["lock_plans_in"]:
+    Path(sys.argv[-1]).parent.chmod(0o500)
 if command == config["hang_in"]:
     def stop_gracefully(*_):
         with (here / "sigints").open("a") as received:
@@ -90,6 +95,9 @@ if command == "version":
     print("OpenTofu v" + config["version"])
 if config["echo_environment"]:
     print(json.dumps(dict(os.environ)))
+if command == "apply":
+    sys.stdout.buffer.write(bytes.fromhex(config["apply_output_hex"]))
+    sys.stdout.buffer.flush()
 sys.exit(config["exit_codes"].get(command, 0))
 """
 
@@ -107,9 +115,13 @@ class FakeTofu:
         locked_name="locked",
         hang_in=None,
         drain_until_released=False,
+        lock_plans_in=None,
+        apply_output=b"",
         **exit_codes,
     ) -> None:
         config = {
+            "lock_plans_in": lock_plans_in,
+            "apply_output_hex": apply_output.hex(),
             "version": version or tofu.pinned_version(),
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
@@ -487,7 +499,17 @@ class Terminal:
 
     process: subprocess.Popen
     master: int
+    scratch: Path
     output: str = ""
+
+    def checks(self) -> list[dict]:
+        """What the child's fake host check saw each time it was called, in order."""
+        log = self.scratch / "checks.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    @property
+    def guard_marker(self) -> Path:
+        return self.scratch / "left-loopback"
 
     def read_until(self, text: str, timeout: float = 20) -> None:
         deadline = time.monotonic() + timeout
@@ -515,24 +537,88 @@ class Terminal:
         return code
 
 
+CHILD_PROGRAM = """
+import json, socket, sys
+from pathlib import Path
+from edge import cli
+from edge.external import cli as external_cli
+from edge.external import tofu
+
+config = json.loads(Path(sys.argv.pop(1)).read_text())
+scratch = Path(config["scratch"])
+tofu.PROJECT_ROOT = Path(config["tree"])
+
+real_connect = socket.socket.connect
+def refuse_beyond_loopback(self, address):
+    if self.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in ("127.0.0.1", "::1"):
+        (scratch / "left-loopback").write_text(address[0])
+        raise ConnectionRefusedError("beyond loopback: " + address[0])
+    return real_connect(self, address)
+socket.socket.connect = refuse_beyond_loopback
+
+if config["resolver_stub"]:
+    def resolve_to_a_public_address(host, port, *_, **__):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.7", port))]
+    socket.getaddrinfo = resolve_to_a_public_address
+
+if config["fake_check_exit"] is not None:
+    def fake_check(home, **_):
+        calls = (Path(config["bin"]) / "calls.jsonl").read_text().splitlines()
+        left_in = lambda name: sorted(p.name for p in (home / ".secrets/opentofu" / name).glob("*"))
+        record = {
+            "tofu_commands": [json.loads(line)["argv"][0] for line in calls],
+            "plans_left": left_in("plans"),
+            "tmp_left": left_in("tmp"),
+        }
+        with (scratch / "checks.jsonl").open("a") as log:
+            log.write(json.dumps(record) + "\\n")
+        print("fake host check: exit", config["fake_check_exit"])
+        return config["fake_check_exit"]
+    external_cli.check_command = fake_check
+
+sys.exit(cli.main(sys.argv[1:]))
+"""
+
+
 @pytest.fixture
-def terminal(home, fake_tofu, live_checkout):
-    """Start `command` on a pty with a minimal environment and no session bus."""
+def terminal(home, fake_tofu, live_checkout, tmp_path):
+    """Start `command` on a pty with a minimal environment and no session bus.
+
+    The child never reaches a live service: its host check is a recording fake that returns
+    `check_exit` (or the real one, `real_check`), and a loopback guard refuses any other address.
+    A cell that expects the guard to refuse says so with `guard_refusal_expected`.
+    """
     started = []
 
     def start(
-        *, command="apply", stdin_is_terminal=True, stdout_is_terminal=True, tree=None
+        *,
+        command="apply",
+        stdin_is_terminal=True,
+        stdout_is_terminal=True,
+        tree=None,
+        check_exit=0,
+        real_check=False,
+        resolver_stub=False,
+        guard_refusal_expected=False,
+        environment=None,
     ) -> Terminal:
         """`tree` is the checkout whose code runs; the live checkout unless a test says another."""
         master, slave = pty.openpty()
-        program = (
-            "import sys; from pathlib import Path; from edge import cli; "
-            "from edge.external import tofu; "
-            f"tofu.PROJECT_ROOT = Path({str(tree or live_checkout)!r}); "
-            "sys.exit(cli.main(sys.argv[1:]))"
+        scratch = tmp_path / f"child-{len(started)}"
+        scratch.mkdir()
+        (scratch / "child.json").write_text(
+            json.dumps(
+                {
+                    "tree": str(tree or live_checkout),
+                    "bin": str(fake_tofu.directory),
+                    "scratch": str(scratch),
+                    "fake_check_exit": None if real_check else check_exit,
+                    "resolver_stub": resolver_stub,
+                }
+            )
         )
         process = subprocess.Popen(
-            [sys.executable, "-c", program, "external", command],
+            [sys.executable, "-c", CHILD_PROGRAM, str(scratch / "child.json"), "external", command],
             stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
             stdout=slave if stdout_is_terminal else subprocess.DEVNULL,
             stderr=slave,
@@ -540,17 +626,22 @@ def terminal(home, fake_tofu, live_checkout):
                 "HOME": str(home),
                 "PATH": f"{fake_tofu.directory}:/usr/bin:/bin",
                 "PYTHONPATH": os.pathsep.join(path for path in sys.path if path),
+                **(environment or {}),
             },
             start_new_session=True,
         )
         os.close(slave)
-        started.append(process)
-        return Terminal(process, master)
+        child = Terminal(process, master, scratch)
+        started.append((process, child, guard_refusal_expected))
+        return child
 
     yield start
-    for process in started:
+    for process, child, guard_refusal_expected in started:
         process.kill()
         process.wait()
+        assert child.guard_marker.exists() is guard_refusal_expected, (
+            "the child's loopback guard disagrees with the cell"
+        )
 
 
 def plan_files(home) -> list[Path]:
@@ -682,7 +773,13 @@ def test_apply_command_refuses_off_a_clean_live_main_in_process(
 ):
     """#124 rule 2 in process: the terminal refusal is lifted, the tree decides, `git=` is used."""
     monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
-    monkeypatch.setattr(external_apply, "apply_plan", lambda _home, _tokens: 42)
+    monkeypatch.setattr(
+        external_apply,
+        "apply_plan",
+        lambda _home, _tokens, progress: external_apply.ApplyOutcome(
+            42, external_apply.ClosingCheck.NO_CHECK_REFUSED
+        ),
+    )
     tree = arrange(live_checkout, tmp_path)
     assert external_cli.apply_command(home, tree, git) == exit_code
     error = " ".join(capsys.readouterr().err.split())
@@ -915,7 +1012,11 @@ def test_an_interrupt_during_plan_exits_2_names_the_step_and_shows_tofus_output(
 def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     home, fake_tofu, terminal, interrupt
 ):
-    """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed."""
+    """#45 rule 4/5: SIGINT or SIGTERM reaches tofu as one SIGINT and is awaited, not killed.
+
+    #156 AC6 (row 7, ruled option A): nothing unchecked is claimed, so the check does not run
+    and the line names the manual one.
+    """
     fake_tofu.configure(plan=2, hang_in="apply")
     apply = terminal()
     with fake_tofu.watch_hang() as wait_until_hanging:
@@ -927,6 +1028,8 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     assert fake_tofu.stopped_gracefully
     assert "tofu stopped gracefully" in apply.output
     assert "interrupted during tofu apply, live services may be partly changed" in apply.output
+    assert "run edge external check --hosts" in " ".join(apply.output.split())
+    assert apply.checks() == []
 
 
 def test_further_interrupts_while_tofu_drains_are_not_forwarded_to_it(home, fake_tofu, terminal):
@@ -966,7 +1069,10 @@ def test_a_second_plan_command_keeps_the_plan_file_of_an_apply_awaiting_confirma
 def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_exit_1(
     home, fake_tofu, terminal
 ):
-    """#45 rule 5: a failure after a good plan is exit 1 naming the step, not 'cannot plan'."""
+    """#45 rule 5: a failure after a good plan is exit 1 naming the step, not 'cannot plan'.
+
+    #156 AC7 (row 8): a failed APPLY step is a `CHECK_APPLY_FAILED`, so the check runs.
+    """
     fake_tofu.configure(plan=2)
     apply = terminal()
     apply.read_until(PROMPT)
@@ -976,6 +1082,8 @@ def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_e
     assert "tofu apply failed" in apply.output
     assert "cannot plan" not in apply.output
     assert plan_files(home) == []
+    assert len(apply.checks()) == 1
+    assert "the apply failed; the host check ran" in " ".join(apply.output.split())
 
 
 def leave_a_killed_run_behind(home) -> Path:
@@ -1100,7 +1208,10 @@ def test_a_failed_cleanup_after_no_changes_or_an_abort_exits_1_naming_the_cleanu
 def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_apply(
     home, fake_tofu, capsys, monkeypatch, plan_exit, typed, live_services_may_have_changed
 ):
-    """#45 rule 5: the interrupt consequence follows whether apply was reached, not the step."""
+    """#45 rule 5: the interrupt consequence follows whether apply was reached, not the step.
+
+    #156 AC7: an interrupt skips the check exactly when live services may be partly changed.
+    """
     fake_tofu.configure(plan=plan_exit)
 
     @contextmanager
@@ -1110,10 +1221,17 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
         raise KeyboardInterrupt
 
     monkeypatch.setattr("builtins.input", lambda _prompt: typed)
-    assert external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving) == 1
+    outcome = external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving)
+    assert outcome.exit == 1
     error = capsys.readouterr().err
     assert "interrupted during the cleanup" in error
     assert ("live services may be partly changed" in error) is live_services_may_have_changed
+    assert ("edge external check --hosts" in error) is live_services_may_have_changed
+    assert outcome.closing is (
+        external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
+        if live_services_may_have_changed
+        else external_apply.ClosingCheck.NO_CHECK_REFUSED
+    )
 
 
 def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_block(home):
@@ -1135,6 +1253,27 @@ def test_a_failed_cleanup_after_a_clean_body_is_raised_even_inside_an_except_blo
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
             locked.chmod(0o700)
+
+
+def test_a_failed_cleanup_after_a_good_apply_is_not_an_interrupt_because_one_was_handled_earlier(
+    home, fake_tofu, monkeypatch
+):
+    """AC7: that this run was interrupted is recorded when it happens, not read off the context."""
+    fake_tofu.configure(**CHANGING_PLAN)
+
+    @contextmanager
+    def failing_when_leaving(home_directory):
+        with external_apply.private_plan_file(home_directory) as plan_file:
+            yield plan_file
+        raise PermissionError("the plan file cannot be deleted")
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    try:
+        raise KeyboardInterrupt
+    except KeyboardInterrupt:
+        with pytest.raises(external_apply.StepFailed) as failure:
+            external_apply.apply_plan(home, {}, plan_file_scope=failing_when_leaving)
+    assert failure.value.closing is external_apply.ClosingCheck.CHECK_APPLIED
 
 
 def test_the_changes_pending_line_follows_the_plan_without_a_blank_line(home, fake_tofu, capsys):
@@ -1583,3 +1722,650 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
         )
     (finding,) = json.loads(capsys.readouterr().out)
     assert (exit_code, finding["problem"]) == (1, "answer-wrong")
+
+
+# #156: `edge external apply` ends on the host check.
+REAL_CHECK_COMMAND = external_cli.check_command
+INTERRUPTED_CHECK = 130
+RUN_MANUALLY = "run edge external check --hosts"
+EMPTY_PLAN = {"plan": 0}
+CHANGING_PLAN = {"plan": 2}
+FAILING_APPLY = {"plan": 2, "apply": 1}
+
+
+def said(output: str) -> str:
+    return " ".join(output.split())
+
+
+def apply_line(text: str) -> str:
+    return f"edge external apply: {text}"
+
+
+@pytest.mark.parametrize(
+    ("configuration", "check_exit", "expected_exit", "line"),
+    [
+        pytest.param(EMPTY_PLAN, 0, 0, None, id="AC1a-empty-plan-clean"),
+        pytest.param(CHANGING_PLAN, 0, 0, None, id="AC1b-applied-clean"),
+        pytest.param(
+            CHANGING_PLAN, 1, 1, "applied; the host check has findings, see above",
+            id="AC2-a-planned-repair-excuses-nothing",
+        ),
+        pytest.param(EMPTY_PLAN, 1, 1, None, id="AC3-undeclared-record-after-an-empty-plan"),
+        pytest.param(
+            FAILING_APPLY, 0, 1, "the apply failed; the host check ran", id="AC5-failed-clean"
+        ),
+        pytest.param(
+            FAILING_APPLY, 1, 1, "the apply failed; the host check ran", id="AC5-failed-findings"
+        ),
+        pytest.param(
+            EMPTY_PLAN, 2, 1, "the host check could not run", id="AC8-empty-plan-cannot-check"
+        ),
+        pytest.param(
+            CHANGING_PLAN, 2, 1, "applied, but the host check could not run",
+            id="AC8-applied-cannot-check",
+        ),
+        pytest.param(
+            FAILING_APPLY, 2, 1, "the apply failed; the host check could not run",
+            id="AC8-failed-cannot-check",
+        ),
+        pytest.param(
+            EMPTY_PLAN, INTERRUPTED_CHECK, 1, f"the host check was interrupted; {RUN_MANUALLY}",
+            id="AC9-empty-plan-interrupted",
+        ),
+        pytest.param(
+            CHANGING_PLAN, INTERRUPTED_CHECK, 1,
+            f"applied; the host check was interrupted; {RUN_MANUALLY}",
+            id="AC9-applied-interrupted",
+        ),
+        pytest.param(
+            FAILING_APPLY, INTERRUPTED_CHECK, 1,
+            f"the apply failed; the host check was interrupted; {RUN_MANUALLY}",
+            id="AC9-failed-interrupted",
+        ),
+    ],
+)  # fmt: skip
+def test_apply_ends_on_the_host_check_and_maps_its_verdict_to_the_exit(
+    home, fake_tofu, terminal, configuration, check_exit, expected_exit, line
+):
+    """AC1a, AC1b, AC2, AC3, AC5, AC8, AC9: the check runs after the session, the exit follows."""
+    fake_tofu.configure(**configuration)
+    apply = terminal(check_exit=check_exit)
+    if configuration is not EMPTY_PLAN:
+        apply.read_until(PROMPT)
+        apply.type("yes\n")
+    assert apply.finish() == expected_exit
+    (check,) = apply.checks()
+    commands = [call["argv"][0] for call in fake_tofu.calls()]
+    assert check["tofu_commands"] == commands
+    assert (check["plans_left"], check["tmp_left"]) == ([], [])
+    assert ("apply" in commands) is (configuration is not EMPTY_PLAN)
+    printed = said(apply.output)
+    if line is None:
+        assert "edge external apply:" not in printed
+    else:
+        assert apply_line(line) in printed
+    if configuration is EMPTY_PLAN:
+        assert "applied" not in printed
+    assert "Traceback" not in printed
+
+
+@pytest.mark.parametrize(
+    ("configuration", "reaction", "expected_exit"),
+    [
+        pytest.param(CHANGING_PLAN, "no\n", 1, id="declined"),
+        pytest.param({"plan": 1}, None, 2, id="plan-fails"),
+        pytest.param({"hang_in": "plan"}, signal.SIGINT, 1, id="sigint-in-the-plan"),
+        pytest.param({"hang_in": "plan"}, signal.SIGTERM, 1, id="sigterm-in-the-plan"),
+    ],
+)
+def test_an_apply_that_applied_nothing_and_found_a_plan_never_calls_the_check(
+    home, fake_tofu, terminal, configuration, reaction, expected_exit
+):
+    """AC4 (rows 4, 5, 6): declined, a failed plan and an interrupted plan skip the check."""
+    fake_tofu.configure(**configuration)
+    apply = terminal()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        if configuration.get("hang_in"):
+            wait_until_hanging()
+            apply.signal(reaction)
+        else:
+            if reaction:
+                apply.read_until(PROMPT)
+                apply.type(reaction)
+        assert apply.finish() == expected_exit
+    assert apply.checks() == []
+
+
+@pytest.fixture
+def cleanup_that_fails(home):
+    """The plans directory is made read-only by tofu; it is restored for the test's end."""
+    yield
+    plans = home / PLANS_DIRECTORY
+    if plans.exists():
+        plans.chmod(0o700)
+    for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
+        locked.chmod(0o700)
+
+
+@pytest.mark.usefixtures("cleanup_that_fails")
+@pytest.mark.parametrize(
+    ("configuration", "reaction", "checks_run"),
+    [
+        pytest.param(CHANGING_PLAN, "no\n", 0, id="declined-plan"),
+        pytest.param(EMPTY_PLAN, None, 1, id="empty-plan"),
+        pytest.param(CHANGING_PLAN, "yes\n", 1, id="successful-apply"),
+        pytest.param(FAILING_APPLY, "yes\n", 1, id="failed-apply"),
+        pytest.param(
+            {"plan": 2, "hang_in": "apply", "lock_plans_in": "apply"}, signal.SIGINT, 0,
+            id="sigint-in-the-apply-then-the-plan-file-cannot-be-deleted",
+        ),
+        pytest.param(
+            {"plan": 2, "hang_in": "apply", "lock_plans_in": "apply"}, signal.SIGTERM, 0,
+            id="sigterm-in-the-apply-then-the-plan-file-cannot-be-deleted",
+        ),
+    ],
+)  # fmt: skip
+def test_a_failing_cleanup_keeps_the_disposition_decided_before_it(
+    home, fake_tofu, terminal, configuration, reaction, checks_run
+):
+    """AC7: the cleanup fails after each disposition; the check runs or not as before it, exit 1."""
+    fake_tofu.configure(leave_undeletable=True, **configuration)
+    apply = terminal()
+    with fake_tofu.watch_hang() as wait_until_hanging:
+        if reaction is not None:
+            apply.read_until(PROMPT)
+            if configuration.get("hang_in") == "apply":
+                apply.type("yes\n")
+                wait_until_hanging()
+                apply.signal(reaction)
+            else:
+                apply.type(reaction)
+        assert apply.finish() == 1
+    assert len(apply.checks()) == checks_run
+    assert apply_line("the cleanup failed,") in said(apply.output)
+    assert (RUN_MANUALLY in said(apply.output)) is (configuration.get("hang_in") == "apply")
+
+
+@pytest.mark.parametrize("damage", ["missing", "empty"])
+def test_a_missing_cloudflare_read_file_stops_the_apply_before_tofu_runs(
+    home, fake_tofu, terminal, damage
+):
+    """AC13 (rule 20): the check's token is verified first, so no apply can end unchecked."""
+    read_file = home / ".secrets/cloudflare/fleet-read"
+    if damage == "missing":
+        read_file.unlink()
+    else:
+        read_file.write_text("\n")
+    apply = terminal()
+    assert apply.finish() == 2
+    assert str(read_file) in said(apply.output)
+    assert fake_tofu.calls() == []
+    assert apply.checks() == []
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [
+        pytest.param({}, id="AC14a-utf8-terminal"),
+        pytest.param({"PYTHONIOENCODING": "ascii"}, id="AC14b-terminal-that-cannot-encode-it"),
+    ],
+)
+def test_output_of_tofu_that_is_not_utf8_does_not_stop_the_apply_before_its_check(
+    home, fake_tofu, terminal, environment
+):
+    """AC14 (rule 23): bytes tofu printed after a live apply never become a traceback."""
+    fake_tofu.configure(plan=2, apply_output=b"applied \xff\xfe and done\n")
+    apply = terminal(environment=environment)
+    apply.read_until(PROMPT)
+    apply.type("yes\n")
+    assert apply.finish() == 0
+    assert len(apply.checks()) == 1
+    assert "Traceback" not in apply.output
+    assert "applied" in apply.output
+    assert "and done" in apply.output
+
+
+def test_the_real_check_in_the_child_is_stopped_by_the_loopback_guard(home, fake_tofu, terminal):
+    """AC11: the backstop. The real check meets a resolver that names a public address."""
+    fake_tofu.configure(plan=2)
+    apply = terminal(real_check=True, resolver_stub=True, guard_refusal_expected=True)
+    apply.read_until(PROMPT)
+    apply.type("yes\n")
+    assert apply.finish() == 1
+    assert apply.guard_marker.read_text() == "203.0.113.7"
+    assert apply_line("applied, but the host check could not run") in said(apply.output)
+    assert "Traceback" not in apply.output
+
+
+@pytest.fixture
+def apply_in_process(home, fake_tofu, live_checkout, monkeypatch):
+    """`apply_command` in this process at a pretend terminal, ending on the real `check_command`.
+
+    The catalog declares one public apex; the check gets the reader and prober a cell passes and,
+    through `around`, can be wrapped (the module global `external.cli.check_command` is the seam).
+    """
+    commit_catalog(live_checkout, HOSTS_CATALOG)
+    monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
+    monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+
+    def run(reader, *, emit=None, around=lambda check: check) -> int:
+        ports = {"cloudflare": reader, "prober": FakeProber()}
+        if emit:
+            ports["emit"] = emit
+        monkeypatch.setattr(
+            external_cli, "check_command", around(functools.partial(REAL_CHECK_COMMAND, **ports))
+        )
+        return external_cli.apply_command(home, live_checkout)
+
+    return run
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_an_unreadable_cloudflare_answer_after_an_apply_exits_1_never_2(
+    home, fake_tofu, apply_in_process, capsys
+):
+    """AC8: the real check meets a broken answer from a loopback server after a good apply."""
+    fake_tofu.configure(**CHANGING_PLAN)
+    broken = BrokenChunkedServer(200, b"5\r\nab")
+    try:
+        code = apply_in_process(
+            lambda token: cloudflare_read.CloudflareClient(token, base_url=broken.url)
+        )
+    finally:
+        broken.close()
+    printed = capsys.readouterr()
+    assert code == 1
+    assert apply_line("applied, but the host check could not run") in printed.err
+    assert "cloudflare-token" not in printed.out + printed.err
+
+
+class StdoutFailingOn(io.StringIO):
+    """A stdout whose write fails, the way a broken terminal does, for one marked text."""
+
+    def write(self, text: str) -> int:
+        if "published-after-the-apply" in text:
+            raise RuntimeError(SENTINEL)
+        return super().write(text)
+
+
+def test_an_error_while_publishing_tofus_output_after_the_apply_still_runs_the_check(
+    home, fake_tofu, apply_in_process, capsys, monkeypatch
+):
+    """AC7 (row 8): any error after `apply_reached` runs the check: exit 1, the type only."""
+    fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
+    monkeypatch.setattr(sys, "stdout", StdoutFailingOn())
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert apply_in_process(reader) == 1
+    error = capsys.readouterr().err
+    assert apply_line("tofu apply failed, RuntimeError") in error
+    assert apply_line("the apply failed; the host check ran") in error
+    assert SENTINEL not in error
+    assert reader.tokens == ["cloudflare-token"]
+
+
+def test_the_check_reads_with_the_read_token_and_tofu_never_sees_it(
+    home, fake_tofu, apply_in_process, capsys
+):
+    """AC10: the write tokens stay with tofu, the read token with the check alone."""
+    fake_tofu.configure(echo_environment=True, **CHANGING_PLAN)
+    environment_before = dict(os.environ)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert apply_in_process(reader) == 0
+    assert reader.tokens == ["cloudflare-token"]
+    for call in fake_tofu.calls():
+        assert "cloudflare-token" not in call["env"].values()
+    assert fake_tofu.call("apply")["env"]["CLOUDFLARE_API_TOKEN"] == "cloudflare-write-token"
+    assert dict(os.environ) == environment_before
+    printed = capsys.readouterr()
+    for write_token in WRITE_TOKEN_FILES.values():
+        assert write_token not in printed.out + printed.err
+
+
+INTERRUPTED_LINES = [
+    pytest.param(EMPTY_PLAN, f"the host check was interrupted; {RUN_MANUALLY}", id="empty-plan"),
+    pytest.param(
+        CHANGING_PLAN, f"applied; the host check was interrupted; {RUN_MANUALLY}", id="applied"
+    ),
+    pytest.param(
+        FAILING_APPLY,
+        f"the apply failed; the host check was interrupted; {RUN_MANUALLY}",
+        id="failed-apply",
+    ),
+]
+
+
+def interrupt_myself(interrupt):
+    os.kill(os.getpid(), interrupt)
+
+
+@contextmanager
+def signalling_on_the_line(function, statement: str, interrupt: int):
+    """Sends `interrupt` once, as `function` is about to run its line that starts with
+    `statement`: a boundary inside one function, which no injected port reaches."""
+    lines, first_line = inspect.getsourcelines(function)
+    statement_line = next(
+        first_line + offset
+        for offset, text in enumerate(lines)
+        if text.strip().startswith(statement)
+    )
+    pending = True
+
+    def trace_line(frame, event, _argument):
+        nonlocal pending
+        if event == "line" and pending and frame.f_lineno == statement_line:
+            pending = False
+            interrupt_myself(interrupt)
+        return trace_line
+
+    def trace_call(frame, _event, _argument):
+        return trace_line if frame.f_code is function.__code__ else None
+
+    previous = sys.gettrace()
+    sys.settrace(trace_call)
+    try:
+        yield
+    finally:
+        sys.settrace(previous)
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize("configuration,line", INTERRUPTED_LINES)
+@pytest.mark.parametrize(
+    "where", ["while-reading", "before-the-check-starts", "as-the-session-returns"]
+)
+def test_a_signal_before_the_check_commits_exits_1_and_says_it_was_interrupted(
+    home, fake_tofu, apply_in_process, capsys, monkeypatch, configuration, line, where, interrupt
+):
+    """AC9 (a): including the gap after the tofu session; never 130, no traceback, plan gone.
+
+    The last `where` wraps `external.apply.apply_plan` (the body's "Signal-timing seams").
+    """
+    fake_tofu.configure(**configuration)
+    reader = FakeReader(CLEAN_SNAPSHOT)
+
+    def interrupted_first(check):
+        return lambda home_directory: (interrupt_myself(interrupt), check(home_directory))[1]
+
+    if where == "while-reading":
+        code = apply_in_process(FakeReader(lambda: interrupt_myself(interrupt)))
+    elif where == "before-the-check-starts":
+        code = apply_in_process(reader, around=interrupted_first)
+    else:
+        monkeypatch.setattr(
+            external_apply,
+            "apply_plan",
+            signalling_as_it_returns(external_apply.apply_plan, interrupt),
+        )
+        code = apply_in_process(reader)
+        assert reader.tokens == []
+    assert code == 1
+    assert apply_line(line) in capsys.readouterr().err
+    assert plan_files(home) == []
+
+
+def signalling_as_it_returns(real_apply_plan, interrupt):
+    """The signal lands right after the tofu session, where the outcome is lost with the raise."""
+
+    def apply_plan(*arguments, **keywords):
+        outcome = real_apply_plan(*arguments, **keywords)
+        interrupt_myself(interrupt)
+        return outcome
+
+    return apply_plan
+
+
+class SignallingOnce(io.StringIO):
+    """A stream that sends a signal instead of taking the first write that contains `marker`,
+    or, with `after_the_write`, right after taking it."""
+
+    def __init__(self, marker: str, interrupt: int, *, after_the_write: bool = False) -> None:
+        super().__init__()
+        self.marker = marker
+        self.interrupt = interrupt
+        self.after_the_write = after_the_write
+        self.pending = True
+
+    def write(self, text: str) -> int:
+        if not (self.pending and self.marker in text):
+            return super().write(text)
+        self.pending = False
+        if self.after_the_write:
+            written = super().write(text)
+            interrupt_myself(self.interrupt)
+            return written
+        interrupt_myself(self.interrupt)
+        return super().write(text)
+
+
+@contextmanager
+def plan_file_failing_to_leave(home_directory):
+    """A cleanup that fails with an error that is not an `OSError`, even while unwinding."""
+    with external_apply.private_plan_file(home_directory) as plan_file:
+        try:
+            yield plan_file
+        except BaseException:
+            raise RuntimeError("the plan file cannot be deleted") from None
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_cleanup_failure_of_any_kind_after_an_interrupted_apply_still_reports_the_interrupt(
+    home, fake_tofu, capsys, monkeypatch, interrupt
+):
+    """AC7 (row 7) with AC9 (a): the cleanup replaced the interrupt; the step failed in the
+    cleanup, no check follows, and the interrupt is still reported.
+
+    Calls `apply_plan` directly with its own cleanup port, which fails with a non-OSError.
+    """
+    fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
+    monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    with pytest.raises(external_apply.StepFailed) as failure:
+        external_apply.apply_plan(home, {}, plan_file_scope=plan_file_failing_to_leave)
+    assert failure.value.step is external_apply.Step.CLEANUP
+    assert failure.value.closing is external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
+    error = capsys.readouterr().err
+    assert "interrupted during tofu apply, live services may be partly changed" in error
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize("after_the_write", [False, True], ids=["before-it", "right-after-it"])
+def test_a_signal_while_the_interrupt_line_is_published_shows_it_exactly_once(
+    home, fake_tofu, apply_in_process, monkeypatch, interrupt, after_the_write
+):
+    """AC9 (a), rule 22 (B3-2): the line and its `reported` record are one step under the mask.
+
+    Real signals on replaced streams; no module attribute is wrapped. A signal after the write
+    would, unmasked, abort the step and have the handler print the line a second time.
+    """
+    fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
+    stderr = SignallingOnce("interrupted during", interrupt, after_the_write=after_the_write)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert apply_in_process(reader) == 1
+    line = "interrupted during tofu apply, live services may be partly changed"
+    assert stderr.getvalue().count(line) == 1
+    assert reader.tokens == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_as_the_interrupt_is_recorded_as_reported_shows_the_line_exactly_once(
+    home, fake_tofu, apply_in_process, capsys, monkeypatch, interrupt
+):
+    """AC9 (a), rule 22 (B4-1): a trace hook, because no injected port reaches the statement
+    that records the line as printed; there a signal must be dropped by the mask, not handled.
+    """
+    fake_tofu.configure(apply_output=b"published-after-the-apply\n", **CHANGING_PLAN)
+    monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    with signalling_on_the_line(
+        external_apply.report_interrupt, "progress.reported = True", interrupt
+    ):
+        assert apply_in_process(reader) == 1
+    line = "interrupted during tofu apply, live services may be partly changed"
+    assert capsys.readouterr().err.count(line) == 1
+    assert reader.tokens == []
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_while_the_apply_run_is_set_up_exits_1_saying_nothing_was_applied(
+    home, fake_tofu, apply_in_process, capsys, interrupt
+):
+    """AC9 (a), row 6, rule 22 (B4-2): a trace hook, because no injected port reaches the setup
+    statement inside `apply_command`; SIGTERM must already be an interrupt there.
+    """
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    with signalling_on_the_line(external_cli.apply_command, "run = _ApplyRun()", interrupt):
+        assert apply_in_process(reader) == 1
+    assert apply_line("interrupted, nothing was applied") in capsys.readouterr().err
+    assert (fake_tofu.calls(), reader.tokens) == ([], [])
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_before_the_tofu_session_exits_1_saying_nothing_was_applied(
+    home, fake_tofu, apply_in_process, capsys, monkeypatch, interrupt
+):
+    """AC9 (a), row 6: the sweep and the refusals come first; no traceback, tofu never started."""
+    monkeypatch.setattr(
+        external_apply, "refusal_without_terminal", lambda: interrupt_myself(interrupt)
+    )
+    reader = FakeReader(CLEAN_SNAPSHOT)
+    assert apply_in_process(reader) == 1
+    assert apply_line("interrupted, nothing was applied") in capsys.readouterr().err
+    assert (fake_tofu.calls(), reader.tokens) == ([], [])
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    ("configuration", "snapshot", "expected_exit"),
+    [
+        pytest.param(EMPTY_PLAN, CLEAN_SNAPSHOT, 0, id="empty-plan-clean"),
+        pytest.param(EMPTY_PLAN, STRAY_SNAPSHOT, 1, id="empty-plan-findings"),
+        pytest.param(CHANGING_PLAN, CLEAN_SNAPSHOT, 0, id="applied-clean"),
+        pytest.param(CHANGING_PLAN, STRAY_SNAPSHOT, 1, id="applied-findings"),
+        pytest.param(FAILING_APPLY, CLEAN_SNAPSHOT, 1, id="failed-apply-stays-1"),
+    ],
+)
+def test_a_signal_during_the_publication_keeps_the_committed_verdict(
+    home, fake_tofu, apply_in_process, capsys, configuration, snapshot, expected_exit, interrupt
+):
+    """AC9 (b): the check's write is its commit point; the mapped exit stands."""
+    fake_tofu.configure(**configuration)
+
+    def interrupted_halfway(text: str) -> None:
+        middle = len(text) // 2
+        sys.stdout.write(text[:middle])
+        interrupt_myself(interrupt)
+        sys.stdout.write(text[middle:] + "\n")
+
+    code = apply_in_process(FakeReader(snapshot), emit=interrupted_halfway)
+    printed = capsys.readouterr()
+    assert code == expected_exit
+    assert "interrupted" not in printed.err
+
+
+class SignalsAfterArming(io.StringIO):
+    """A stderr that sends a signal on every write once armed."""
+
+    armed = False
+
+    def __init__(self, interrupt: int) -> None:
+        super().__init__()
+        self.interrupt = interrupt
+
+    def write(self, text: str) -> int:
+        if self.armed:
+            interrupt_myself(self.interrupt)
+        return super().write(text)
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    ("configuration", "snapshot", "line"),
+    [
+        pytest.param(
+            EMPTY_PLAN, cloudflare_read.CloudflareReadError("unreadable"),
+            "the host check could not run", id="empty-plan-cannot-check",
+        ),
+        pytest.param(
+            CHANGING_PLAN, STRAY_SNAPSHOT, "applied; the host check has findings, see above",
+            id="applied-findings",
+        ),
+        pytest.param(
+            FAILING_APPLY, CLEAN_SNAPSHOT, "the apply failed; the host check ran",
+            id="failed-apply-clean",
+        ),
+    ],
+)  # fmt: skip
+def test_a_signal_after_the_check_returned_does_not_turn_its_verdict_into_an_interruption(
+    home, fake_tofu, apply_in_process, monkeypatch, configuration, snapshot, line, interrupt
+):
+    """AC9 (c): the mapping and its line run with the signals ignored."""
+    fake_tofu.configure(**configuration)
+    stderr = SignalsAfterArming(interrupt)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    def armed_once_returned(check):
+        def run(home_directory):
+            verdict = check(home_directory)
+            stderr.armed = True
+            return verdict
+
+        return run
+
+    code = apply_in_process(FakeReader(snapshot), around=armed_once_returned)
+    assert code == 1
+    assert apply_line(line) in stderr.getvalue()
+    assert "interrupted" not in stderr.getvalue()
+
+
+@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
+@pytest.mark.parametrize(
+    ("configuration", "snapshot", "expected_exit"),
+    [
+        pytest.param(EMPTY_PLAN, CLEAN_SNAPSHOT, 0, id="empty-plan-clean"),
+        pytest.param(CHANGING_PLAN, CLEAN_SNAPSHOT, 0, id="applied-clean"),
+        pytest.param(CHANGING_PLAN, STRAY_SNAPSHOT, 1, id="applied-findings"),
+        pytest.param(FAILING_APPLY, CLEAN_SNAPSHOT, 1, id="failed-apply-clean"),
+    ],
+)
+def test_a_signal_right_after_the_mask_is_lifted_keeps_the_committed_verdict(
+    home,
+    fake_tofu,
+    apply_in_process,
+    capsys,
+    monkeypatch,
+    configuration,
+    snapshot,
+    expected_exit,
+    interrupt,
+):
+    """AC9 (c): the handlers are back, the verdict is committed; its exit stands, no traceback.
+
+    Wraps `external.cli._signals_ignored` (the body's "Signal-timing seams"): the real mask runs,
+    the signal is raised as it lifts.
+    """
+    fake_tofu.configure(**configuration)
+    check_returned = []
+    real_mask = external_cli._signals_ignored
+
+    @contextmanager
+    def signalling_once_lifted():
+        with real_mask():
+            yield
+        if check_returned:
+            interrupt_myself(interrupt)
+
+    def noting_the_return(check):
+        def run(home_directory):
+            verdict = check(home_directory)
+            check_returned.append(verdict)
+            return verdict
+
+        return run
+
+    monkeypatch.setattr(external_cli, "_signals_ignored", signalling_once_lifted)
+    code = apply_in_process(FakeReader(snapshot), around=noting_the_return)
+    assert code == expected_exit
+    assert "interrupted" not in capsys.readouterr().err

@@ -210,7 +210,7 @@ befolgt). Es liest Zone, DNS-Records, Access-Apps, Access-Gruppen und den
 Tunnel und vergleicht sie mit den Hosts aus `fleet.yaml` (aus dem Checkout,
 in dem es laeuft): fehlende oder falsche Records und Apps, falsche Policies,
 unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand
-deklariert hat (`apply` loescht sie nie). Exit 0 keine Befunde, 1 Befunde,
+deklariert hat (`apply` loescht sie nie; er endet auf demselben Check). Exit 0 keine Befunde, 1 Befunde,
 2 nicht pruefbar, 130 unterbrochen (nur vor der Ausgabe: sobald sie beginnt,
 gilt der Exit-Code des Befunds); ohne Access auf dem Konto ist das nur
 dann ein Befund, wenn ein Host `bypass` oder `protected` ist (meldet die erste
@@ -255,8 +255,21 @@ SIGINT/SIGTERM geloescht; eine nach SIGKILL uebrig gebliebene Datei loescht und
 nennt der naechste `edge external plan`- oder `apply`-Aufruf (`check` raeumt nicht auf). Strg-C oder SIGTERM waehrend
 `apply` geht genau einmal als SIGINT an `tofu`; der Wrapper wartet, bis `tofu`
 sauber beendet ist, weitere Strg-C werden ignoriert, und die Meldung verweist
-auf `edge external plan`, um den Live-Zustand zu pruefen. Exit 0 angewendet, 1 verweigert,
-abgebrochen oder fehlgeschlagen, 2 nicht planbar.
+auf `edge external check --hosts`, um den Live-Zustand zu pruefen (dann laeuft
+die Pruefung nicht von selbst: nichts Ungeprueftes wird behauptet).
+
+Jeder `apply`, der etwas geaendert haben kann oder nichts zu tun fand, endet
+auf demselben Host-Check wie `edge external check --hosts` (Ausgabe wie dort,
+ohne `--json`; er liest `~/.secrets/cloudflare/fleet-read`, das `apply` vor dem
+Plan prueft: fehlt es oder ist es leer, Exit 2 ohne `tofu`; das Schreib-Token
+erreicht den Check nie). Der Check vergleicht den tatsaechlichen Zustand mit
+der Deklaration, nicht mit dem Plan: ein geplanter Fix entschuldigt nichts, und
+ein undeklarierter Record laesst auch einen sonst fertigen `apply` mit Exit 1
+enden (`apply` loescht ihn nie). Eine stderr-Zeile sagt, was geschah, z. B.
+`applied; the host check has findings, see above`. Exit 0 angewendet (oder
+nichts zu tun) und der Check meldet nichts, 1 verweigert, abgebrochen,
+fehlgeschlagen oder die Pruefung der Hosts meldet etwas oder laeuft nicht,
+2 nicht planbar (nie nach einem Apply).
 
 ```bash
 bin/edge external apply

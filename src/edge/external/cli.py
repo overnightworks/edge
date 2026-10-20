@@ -1,10 +1,10 @@
-"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` and `check`."""
+"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` (which ends on
+the host check) and `check`."""
 
 import argparse
-import signal
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,6 @@ from edge import catalog, checkout
 from edge.external import apply, cloudflare_read, host_check, host_probe, secrets, tofu
 
 INTERRUPTED = 130
-_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
 
 class ExitCode(IntEnum):
@@ -68,23 +67,136 @@ def apply_command(
     home: Path, tree: Path | None = None, git: checkout.Runner = checkout.run_git
 ) -> int:
     """`tree` is the checkout whose `external/` is applied (this code's own by default): only the
-    live one, on a clean main."""
+    live one, on a clean main. An apply that may have changed the services, or found nothing to
+    do, ends on the host check (#30 rule 8): its verdict decides the exit.
 
-    def refusal() -> int | None:
-        return (
-            apply.refusal_without_terminal()
-            or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
-            or _refusal_invalid_catalog("apply")
+    The `try` is the first statement and SIGTERM becomes an interrupt as its first step, so every
+    setup step is inside both; the one `except KeyboardInterrupt` decides every interrupt that
+    reaches it: before the tofu session "nothing was applied"; after it the line of the
+    disposition known so far; once the check committed its verdict, that verdict's exit.
+    Always exit 1 but the last. Accepted windows, named and not covered: from process start until
+    this first statement, while the interrupt handler writes its own line, between
+    `check_command`'s return and the mask, between the two handler swaps of `_signals_ignored`,
+    and after the mask until the process exits."""
+    try:
+        with apply.terminate_like_interrupt():
+            run = _ApplyRun()
+            closing = apply.ClosingCheck.NO_CHECK_REFUSED
+
+            def refusal() -> int | None:
+                return (
+                    apply.refusal_without_terminal()
+                    or _refusal_off_clean_live_main(tree or tofu.PROJECT_ROOT, home, git)
+                    or _refusal_invalid_catalog("apply")
+                    or _refusal_unreadable_cloudflare_read_file(home)
+                )
+
+            def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
+                nonlocal closing
+                try:
+                    outcome = apply.apply_plan(home, token_values, progress=run.progress)
+                except apply.StepFailed as failure:
+                    closing = failure.closing
+                    raise
+                closing = outcome.closing
+                return outcome.exit
+
+            exit_code = _guarded(
+                "apply",
+                home,
+                secrets.Access.WRITE,
+                plan_and_apply,
+                apply.ApplyExit.CANNOT_PLAN,
+                refusal=refusal,
+            )
+            if not closing.runs_the_check:
+                return exit_code
+            return _close_on_host_check(home, closing, exit_code, run)
+    except KeyboardInterrupt:
+        # an interrupt before the record exists left nothing behind: the fresh record says so
+        return _exit_after_interrupt(locals().get("run") or _ApplyRun())
+
+
+@dataclass
+class _ApplyRun:
+    """What the interrupt handler of `apply_command` knows, recorded where each fact is true."""
+
+    progress: apply.Progress = field(default_factory=apply.Progress)
+    committed_exit: int | None = None
+
+
+def _exit_after_interrupt(run: _ApplyRun) -> int:
+    if run.committed_exit is not None:
+        return run.committed_exit
+    progress = run.progress
+    if progress.interrupted:
+        if not progress.reported:  # the signal landed before `apply_plan` printed its line
+            apply.report_interrupt(progress, plan_file_deleted=False)
+        return apply.ApplyExit.REFUSED
+    closing = apply.closing_after(progress)
+    if closing.runs_the_check:
+        line = _CLOSING_LINES[(closing, INTERRUPTED)]
+    else:
+        line = "interrupted, nothing was applied"
+    print(f"edge external apply: {line}", file=sys.stderr)
+    return apply.ApplyExit.REFUSED
+
+
+_CLOSING_LINES = {
+    (apply.ClosingCheck.CHECK_NO_CHANGES, host_check.CheckExit.CANNOT_CHECK): (
+        "the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_NO_CHANGES, INTERRUPTED): (
+        "the host check was interrupted; run edge external check --hosts"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.FINDINGS): (
+        "applied; the host check has findings, see above"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.CANNOT_CHECK): (
+        "applied, but the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_APPLIED, INTERRUPTED): (
+        "applied; the host check was interrupted; run edge external check --hosts"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CLEAN): (
+        "the apply failed; the host check ran"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.FINDINGS): (
+        "the apply failed; the host check ran"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CANNOT_CHECK): (
+        "the apply failed; the host check could not run"
+    ),
+    (apply.ClosingCheck.CHECK_APPLY_FAILED, INTERRUPTED): (
+        "the apply failed; the host check was interrupted; run edge external check --hosts"
+    ),
+}
+
+
+def _close_on_host_check(
+    home: Path, closing: apply.ClosingCheck, apply_exit: int, run: _ApplyRun
+) -> int:
+    """The check after the tofu session, under the apply's own signal handling. Once
+    `check_command` returned its verdict, the mapping and the lines run with the signals ignored
+    and the exit is recorded: a clean verdict is never turned into "interrupted"."""
+    check_exit = check_command(home)
+    with _signals_ignored():
+        run.committed_exit = (
+            apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
         )
+        if line := _CLOSING_LINES.get((closing, check_exit)):
+            print(f"edge external apply: {line}", file=sys.stderr)
+        return run.committed_exit
 
-    return _guarded(
-        "apply",
-        home,
-        secrets.Access.WRITE,
-        apply.apply_plan,
-        apply.ApplyExit.CANNOT_PLAN,
-        refusal=refusal,
-    )
+
+def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
+    """Exit 2 naming the file when the host check could not read its token after the apply."""
+    try:
+        secrets.read_cloudflare_token(home)
+    except secrets.SecretFileError as error:
+        print(f"edge external apply: {error}", file=sys.stderr)
+        return ExitCode.CANNOT_PLAN
+    return None
 
 
 def check_command(
@@ -138,17 +250,9 @@ def check_command(
     return host_check.CheckExit.CANNOT_CHECK
 
 
-@contextmanager
-def _signals_ignored() -> Iterator[None]:
-    """The protected region of the result's write: inside it, the verdict's exit code stands."""
-    previous: dict[int, Any] = {}
-    try:
-        for number in _STOP_SIGNALS:
-            previous[number] = signal.signal(number, signal.SIG_IGN)
-        yield
-    finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
+# The protected region of the result's write: inside it, the verdict's exit code stands. A name of
+# this module, so the timing cells wrap the closing's mask and not the interrupt line's.
+_signals_ignored = apply.signals_ignored
 
 
 def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -> int | None:
@@ -225,7 +329,9 @@ def _guarded(
     return cannot_plan
 
 
-def _describe(error: OSError) -> str:
+def _describe(error: Exception) -> str:
+    if not isinstance(error, OSError):
+        return type(error).__name__  # another error's message may quote what tofu printed
     # The filename can be child-controlled (a failed cleanup names what the child left).
     where = f" ({error.filename})" if error.filename else ""
     return f"{type(error).__name__}: {error.strerror}{where}"
@@ -251,10 +357,10 @@ def _plan(home: Path, token_values: dict[str, str]) -> int:
     exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
     redacted_output = secrets.redact(planned.output, token_values)
     if exit_code is ExitCode.CANNOT_PLAN:
-        print(redacted_output, file=sys.stderr)
+        apply.show_tofu_output(redacted_output, sys.stderr)
         print(f"edge external plan: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
         return exit_code
-    print(redacted_output.rstrip("\n"))
+    apply.show_tofu_output(redacted_output.rstrip("\n"), sys.stdout)
     if exit_code is ExitCode.CHANGES:
         print("edge external plan: changes pending, the live services differ from external/")
     return exit_code
