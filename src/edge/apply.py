@@ -18,8 +18,9 @@ here, and the line alone asks nothing (#91). A unit that would be switched on, o
 already runs, and is not set up is asked about separately; on `yes` its own setup command runs in
 the operator's terminal (key material is made there, never here) and `--check` must then pass
 before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
-left is never started and its switch is never cleared here: only `edge start` ends it. If its
-containers still run and it is not set up, the run is refused: nothing is asked or published.
+left is never started and its switch is never cleared here: only `edge start` ends it. If it is
+enabled in the catalog, declares a setup, and its containers still run while it is not set up,
+the run is refused: nothing is asked or published.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -608,7 +609,7 @@ def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
 
 
 def _refuse_switched_off_units_still_running(missing: Sequence[MissingSetup]) -> None:
-    """A switched-off unit never gets a setup or a start, but its unfinished setup still runs."""
+    """A switched-off unit never gets a setup or a start, but its containers still run."""
     for item in missing:
         print(
             f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "

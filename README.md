@@ -444,8 +444,9 @@ Einheiten (`keycloak/`, `step-ca/ca.json`). Der Plan danach wendet HEAD an, nie 
 Commits; sie bringst du bis S2.4c mit der gezeigten `merge --ff-only`-Zeile selbst herein und
 rufst `edge apply --closed` noch einmal auf.
 
-Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Eine laufende Einheit
-wird bei jedem Apply geprueft: ohne Setup bekommt sie die Setup-Frage und sperrt das Publizieren;
+Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Eine im Katalog
+eingeschaltete Einheit mit `setup`, die laeuft, wird bei jedem Apply geprueft: ist sie nicht eingerichtet,
+bekommt sie die Setup-Frage und sperrt das Publizieren;
 eine ausgeschaltete, die noch laeuft und kein Setup hat, wird abgewiesen (`edge stop` noch einmal).
 Fehlt das Setup, fragt `edge apply --closed` vor dem Plan eigens ("`<Einheit>` is not set up: ... Type 'yes'
 to run `<setup>` now"; nur das genaue `yes` zaehlt, ein `no` bricht den ganzen Lauf ab, Exit 1,
