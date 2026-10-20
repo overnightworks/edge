@@ -1,8 +1,0 @@
-claim_id = "92805327e45841e8bc040a218f8a5be9"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "4fd380486d420cf5e7b0bfdf8b63b7022a25537e"
-branch = "claude/issue-192-agent-service-image"
-scope = ["README.md", "agent-service/image/Dockerfile", "agent-service/image/requirements.txt", "probe/agent-service/image.py", "scripts/agent_service_lock.py", "sonar-project.properties", "tests/test_agent_service_image.py"]
-opened_commit = "8fc1d9f4200df94685adcb5cac059b78811b35f4"
-whole_reason = "One image recipe: its Dockerfile, its hashed lock and the generator that writes it, and the tests and probe that prove it."
