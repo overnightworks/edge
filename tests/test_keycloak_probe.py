@@ -708,7 +708,7 @@ def test_an_app_client_is_accepted_only_with_exactly_its_default_scopes_and_call
     check = probe.Probe.app_client_representation
 
     if accepted:
-        check(None, imported, probe.PRESENTATOR)
+        check(imported, probe.PRESENTATOR)
     else:
         with pytest.raises(probe.ProbeFailure):
-            check(None, imported, probe.PRESENTATOR)
+            check(imported, probe.PRESENTATOR)

@@ -1719,7 +1719,8 @@ class Probe:
             f"end session with an unregistered address answered {unregistered.status}",
         )
 
-    def app_client_representation(self, admin: Admin, client: AppClient) -> None:
+    @staticmethod
+    def app_client_representation(admin: Admin, client: AppClient) -> None:
         """Cell T8, #161 SA3-1: flags, callbacks, logout, base URL and console listing."""
         found = admin.find(f"/{REALM}/clients", "clientId", client.client_id)
         backchannel_url = found["attributes"].get("backchannel.logout.url")
