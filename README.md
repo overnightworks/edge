@@ -336,7 +336,7 @@ dieses Repositorys; sein Schluessel ist der Name des Compose-Profils (`docs/nami
 services:
   step-ca:
     run:
-      enabled: false        # true schaltet das Profil `step-ca` an
+      enabled: true         # false schaltet das Profil `step-ca` ab
       setup: step-ca/init   # optional: der Befehl, der den Schluessel macht
 ```
 
@@ -1302,11 +1302,11 @@ tokens.
 `*.mcp.internal` through TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one
 configuration. `traefik-mcp` fetches its certificates from it (below).
 
-Go live, once, as the operator (uid 1000): run `step-ca/init`, set `services.step-ca.run.enabled:
-true` in `fleet.yaml` (a pull request), then run `edge apply --closed`
+The catalog line is set (`services.step-ca.run.enabled: true` in `fleet.yaml`). Go live, once, as
+the operator (uid 1000): pull `~/git/edge` and run `edge apply`
 ([Dienste an und aus](#dienste-an-und-aus)). `edge apply` makes no key material itself: while
 `step-ca/init --check` fails it asks separately and, on `yes`, runs `step-ca/init` in your terminal,
-re-checks, and then shows the plan.
+re-checks, and then shows a fresh plan.
 
 `step-ca/init` makes the key material in one-off containers without a network and prints no
 secret. It writes `~/.secrets/step-ca/` (directory 0700): `root_ca_key` (0600, never mounted into a
