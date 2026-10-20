@@ -52,7 +52,24 @@ INVENTORY = {
     "opentofu/state-backup",
     "opentofu/plans",
     "opentofu/tmp",
+    "step-ca/root_ca_key",
+    "step-ca/password",
+    "step-ca/root_ca.crt",
+    "step-ca/pending-root/root_ca_key",
+    "step-ca/pending-root/root_ca.crt",
+    "keycloak/db-password",
+    "keycloak/config-cli-secret",
+    "keycloak/bootstrap-admin-password",
+    "keycloak/clients/*",
 }
+DECLARED_MODE_ENTRY = (
+    '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
+    'loosest_mode = 0o644\nloosest_mode_reason = "uid 1000 reads it"\n'
+)
+WILDCARD_ENTRY = (
+    '\n[[secret]]\nname = "step-ca/any"\nkind = "token"\npaths = ["~/.secrets/step-ca/*"]\nread_by = []\nrecreate = "r"\n'
+    'loosest_mode = 0o644\nloosest_mode_reason = "a container reads the folder"\n'
+)
 RESTIC_RECREATE = (
     "Aus deinem Passwortmanager zurückholen. "
     "Nie neu erzeugen, solange unter ~/backups/restic Backups liegen: ein neues Passwort macht sie unlesbar."
@@ -87,6 +104,12 @@ def findings_of(output: str, rule: str) -> dict[str, list[str]]:
     """The findings of one rule, keyed by subject: [detail, recommendation]."""
     table = output.split("## Funde\n\n", 1)[1].split("\n\n")[0] if "## Funde" in output else ""
     return {cells[1]: cells[2:] for cells in cells_of(table) if cells[0] == rule}
+
+
+def finding_subjects(output: str) -> set[str]:
+    """The subject of every finding, whatever its rule."""
+    table = output.split("## Funde\n\n", 1)[1].split("\n\n")[0] if "## Funde" in output else ""
+    return {cells[1] for cells in cells_of(table)}
 
 
 def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home: Path, probe: FakeProbe, capsys) -> None:
@@ -295,6 +318,115 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
 
 
 @pytest.mark.parametrize(
+    ("manifest", "file_mode", "loose_findings"),
+    [
+        (DECLARED_MODE_ENTRY, 0o644, {}),
+        (
+            DECLARED_MODE_ENTRY,
+            0o666,
+            {"~/.secrets/step-ca/password": ["hat Rechte 666, höchstens 644 (uid 1000 reads it)", "`chmod 644 ~/.secrets/step-ca/password`"]},
+        ),
+        (
+            DECLARED_MODE_ENTRY.split("loosest_mode")[0],
+            0o644,
+            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+        ),
+        (DECLARED_MODE_ENTRY + WILDCARD_ENTRY, 0o644, {}),
+        (
+            DECLARED_MODE_ENTRY.split("loosest_mode")[0] + WILDCARD_ENTRY,
+            0o644,
+            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+        ),
+        (
+            DECLARED_MODE_ENTRY.replace("0o644", "0o640") + WILDCARD_ENTRY.replace("0o644", "0o604"),
+            0o644,
+            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+        ),
+    ],
+    ids=[
+        "M1 declared mode is no finding",
+        "M2 looser than declared is fixed to the declared mode",
+        "M3 no declaration means 0600",
+        "two declarations of the same mode agree",
+        "the strictest declaration wins over a looser wildcard",
+        "two declarations allow only the bits both allow",
+    ],
+)
+def test_a_file_is_judged_against_the_mode_its_entry_declares(
+    tmp_path: Path, use_manifest, probe: FakeProbe, capsys, manifest: str, file_mode: int, loose_findings: dict[str, list[str]]
+) -> None:
+    """#195 M1-M3: the declared mode replaces 0600 for that entry's files only, and the fix names it."""
+    home = tmp_path / "home"
+    use_manifest(manifest)
+    plant_secrets(home)
+    (home / ".secrets" / "step-ca" / "password").chmod(file_mode)
+
+    home_secrets(home, probe)
+
+    assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
+
+
+@pytest.mark.parametrize(
+    ("file_name", "loose_findings"),
+    [
+        ("root_ca_key", {"~/.secrets/step-ca/.pending-root/root_ca_key": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/.pending-root/root_ca_key`"]}),
+        ("root_ca.crt", {}),
+    ],
+    ids=["a pending root key at 0644 is loose", "a pending root certificate at 0644 is fine"],
+)
+def test_only_the_pending_root_certificate_may_be_0644(
+    tmp_path: Path, probe: FakeProbe, capsys, file_name: str, loose_findings: dict[str, list[str]]
+) -> None:
+    home = tmp_path / "home"
+    pending = home / ".secrets" / "step-ca" / ".pending-root"
+    pending.mkdir(parents=True, mode=0o700)
+    (pending / file_name).write_text("x")
+    (pending / file_name).chmod(0o644)
+    for folder in (pending, pending.parent, home / ".secrets"):
+        folder.chmod(0o700)
+
+    home_secrets(home, probe)
+
+    assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
+
+
+def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#195 M5: laid out as keycloak/go-live and step-ca/init write them, `home check` reports nothing for them."""
+    home = tmp_path / "home"
+    files = {
+        "step-ca": {"password": 0o644, "root_ca_key": 0o600, "root_ca.crt": 0o644},
+        "step-ca/.pending-root": {"root_ca_key": 0o600, "root_ca.crt": 0o644},
+        "keycloak": {"db-password": 0o644, "config-cli-secret": 0o644, "bootstrap-admin-password": 0o644},
+        "keycloak/clients": {"edge": 0o644, "presentator": 0o644},
+    }
+    for folder, modes in files.items():
+        (home / ".secrets" / folder).mkdir(parents=True, mode=0o700)
+        for name, mode in modes.items():
+            (home / ".secrets" / folder / name).write_text("x")
+            (home / ".secrets" / folder / name).chmod(mode)
+    for folder in ("keycloak/clients", "keycloak", "step-ca/.pending-root", "step-ca", ""):
+        (home / ".secrets" / folder).chmod(0o700)
+
+    home_secrets(home, probe)
+
+    output = capsys.readouterr().out
+    for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder"):
+        assert findings_of(output, rule) == {}
+    assert not [name for name in findings_of(output, "missing") if name.startswith(("step-ca/", "keycloak/"))]
+
+
+def test_a_home_where_neither_unit_is_set_up_has_no_finding_about_their_files(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#195 H1: each unit's own --check owns presence; the daily check never calls its files missing."""
+    home = tmp_path / "home"
+    (home / ".secrets").mkdir(parents=True, mode=0o700)
+
+    home_secrets(home, probe)
+
+    subjects = finding_subjects(capsys.readouterr().out)
+    assert not {subject for subject in subjects if subject.startswith(("step-ca/", "keycloak/", "~/.secrets/step-ca", "~/.secrets/keycloak"))}
+
+
+@pytest.mark.parametrize(
     ("recorded", "shown", "findings"),
     [("", "Widerruf unbestätigt", ["github/token"]), ("revocation_confirmed = 2026-10-15\n", "Widerruf bestätigt 15.10.2026", [])],
     ids=["revocation unconfirmed", "revocation confirmed"],
@@ -492,6 +624,8 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "opentofu/plans": SecretKind.CONFIGURATION,
         "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
+        "step-ca/root_ca.crt": SecretKind.CONFIGURATION,
+        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION,
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
     assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
@@ -504,6 +638,15 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "opentofu/state-backup",
         "opentofu/plans",
         "opentofu/tmp",
+        "step-ca/root_ca_key",
+        "step-ca/password",
+        "step-ca/root_ca.crt",
+        "step-ca/pending-root/root_ca_key",
+        "step-ca/pending-root/root_ca.crt",
+        "keycloak/db-password",
+        "keycloak/config-cli-secret",
+        "keycloak/bootstrap-admin-password",
+        "keycloak/clients/*",
     }
 
 
@@ -719,6 +862,14 @@ SOURCE = 'provider = "github"\nresource = "o"\nscope = ["metadata:read"]\nexpire
         (ENTRY + 'retired_on = 2026-10-14\nrevoke_url = "https://x"\nrevocation_confirmed = "today"\n', "revocation_confirmed"),
         (ENTRY + 'optional = "yes"\n', "optional"),
         (ENTRY + 'elsewhere = " "\n', "elsewhere"),
+        # #195 M4: a declared mode comes with its reason and is never looser than 0644.
+        (ENTRY + 'loosest_mode = 0o666\nloosest_mode_reason = "r"\n', "loosest_mode"),
+        (ENTRY + 'loosest_mode = 0o755\nloosest_mode_reason = "r"\n', "loosest_mode"),
+        (ENTRY + 'loosest_mode = "0644"\nloosest_mode_reason = "r"\n', "loosest_mode"),
+        (ENTRY + 'loosest_mode = true\nloosest_mode_reason = "r"\n', "loosest_mode"),
+        (ENTRY + 'loosest_mode = 0\nloosest_mode_reason = "r"\n', "loosest_mode"),
+        (ENTRY + "loosest_mode = 0o644\n", "belong together"),
+        (ENTRY + 'loosest_mode_reason = "r"\n', "belong together"),
         (ENTRY + ENTRY, "e"),
         (ENTRY.replace('"token"', '"derived-mirror"') + 'mirror_of = "gone"\n', "gone"),
         # #36 rule 1 / rule 2.2: a token the wizard guides names its provider, resource, rights and expiry, and one place.

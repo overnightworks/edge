@@ -331,12 +331,18 @@ recreate = "wird beim Einrichten erzeugt"
 `mirror_of`. `optional = true` heißt: Fehlen ist kein Fund, `--setup`
 überspringt den Eintrag; so stehen auch die bekannten Dateien ohne Geheimnis
 (`~/.secrets/README`, `claudebot-runtime.env`) im Manifest. `elsewhere` nennt Kopien außerhalb des Homes für die
-Spalte „Ort“. `purpose` sagt in einem Satz, wofür es da ist. Ein Token, durch
+Spalte „Ort“. `purpose` sagt in einem Satz, wofür es da ist. `loosest_mode`
+(ein TOML-Oktalwert wie `0o644`) erlaubt den Dateien eines Eintrags ein lockereres
+Höchstmaß als 0600, weil ein Container-Nutzer sie lesen muss; `loosest_mode_reason`
+sagt in einer Zeile, wer sie liest, und gehört dazu. Mehr als 0644 lehnt das
+Laden des Manifests ab. Die Prüfung misst die Datei dann an diesem Maß und
+empfiehlt nie ein engeres. Ein Token, durch
 das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
 `expires_in_days` (1 bis 366), alle vier zusammen; ein `service-password`
-hat genau einen Pfad ohne Platzhalter und wird erzeugt. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
+hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
+dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
