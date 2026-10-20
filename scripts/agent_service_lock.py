@@ -82,31 +82,27 @@ def wheel_digest(url: str) -> str:
         return hashlib.sha256(response.read()).hexdigest()
 
 
-def cloned_commit(repository_url: str, tag: str, destination: Path) -> str:
-    """Clones the tag shallowly into `destination` and returns the commit it points at."""
-    subprocess.run(
-        [*GIT_CLONE_TAG, release_tag(tag), "--", repository_url, str(destination)], check=True
-    )
-    return subprocess.run(
-        ["git", "-C", str(destination), "rev-parse", "HEAD^{commit}"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
-def exported_closure(checkout: Path) -> str:
-    """The service's runtime closure with hashes."""
-    return subprocess.run(
-        UV_EXPORT, cwd=checkout, check=True, capture_output=True, text=True
-    ).stdout
+def released_commit_and_closure(tag: str) -> tuple[str, str]:
+    """Clones the release tag shallowly; returns the commit it points at and the service's
+    runtime closure with hashes, exported from that checkout."""
+    with tempfile.TemporaryDirectory() as scratch:
+        subprocess.run(
+            [*GIT_CLONE_TAG, release_tag(tag), "--", REPOSITORY_URL, scratch], check=True
+        )
+        commit = subprocess.run(
+            ["git", "-C", scratch, "rev-parse", "HEAD^{commit}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        closure = subprocess.run(
+            UV_EXPORT, cwd=scratch, check=True, capture_output=True, text=True
+        ).stdout
+    return commit, closure
 
 
 def built_lock(tag: str) -> str:
-    with tempfile.TemporaryDirectory() as scratch:
-        checkout = Path(scratch)
-        commit = cloned_commit(REPOSITORY_URL, tag, checkout)
-        closure = exported_closure(checkout)
+    commit, closure = released_commit_and_closure(tag)
     digests = {name: wheel_digest(url) for name, url in release_wheel_urls(tag).items()}
     return lock_text(tag, commit, closure, digests)
 

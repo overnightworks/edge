@@ -127,10 +127,9 @@ def test_the_composed_lock_is_the_same_text_each_time():
     assert second == first
 
 
-def test_nothing_is_cloned_for_a_tag_that_is_not_a_release_tag(tmp_path):
+def test_nothing_is_cloned_for_a_tag_that_is_not_a_release_tag():
     with pytest.raises(argparse.ArgumentTypeError):
-        agent_service_lock.cloned_commit("unused", "--upload-pack=x", tmp_path / "clone")
-    assert not (tmp_path / "clone").exists()
+        agent_service_lock.released_commit_and_closure("--upload-pack=x")
 
 
 def test_the_wheel_digest_is_the_sha256_of_the_served_bytes(tmp_path):
@@ -142,8 +141,10 @@ def test_the_wheel_digest_is_the_sha256_of_the_served_bytes(tmp_path):
     )
 
 
-def test_the_cloned_commit_is_the_one_the_tag_points_at(tmp_path):
-    origin, clone = tmp_path / "origin", tmp_path / "clone"
+def test_the_release_is_the_commit_the_tag_points_at_with_its_exported_closure(
+    tmp_path, monkeypatch
+):
+    origin = tmp_path / "origin"
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(origin)]
     subprocess.run(["git", "init", "--quiet", str(origin)], check=True)
     subprocess.run([*git, "commit", "--quiet", "--allow-empty", "-m", "release"], check=True)
@@ -151,7 +152,9 @@ def test_the_cloned_commit_is_the_one_the_tag_points_at(tmp_path):
     tagged = subprocess.run(
         [*git, "rev-parse", "v1.2.3^{commit}"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    assert agent_service_lock.cloned_commit(origin.as_uri(), "v1.2.3", clone) == tagged
+    monkeypatch.setattr(agent_service_lock, "REPOSITORY_URL", origin.as_uri())
+    monkeypatch.setattr(agent_service_lock, "UV_EXPORT", ("printf", "closure"))
+    assert agent_service_lock.released_commit_and_closure("v1.2.3") == (tagged, "closure")
 
 
 def test_the_lock_script_writes_the_built_lock(tmp_path, monkeypatch):
