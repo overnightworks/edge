@@ -72,12 +72,25 @@ class Unit:
 
 def read(catalog_file: Path) -> Any:
     """The catalog's document, read the way tofu reads it."""
+    return parse(read_bytes(catalog_file), catalog_file.name)
+
+
+def read_bytes(catalog_file: Path) -> bytes:
+    """The catalog file as it is now: a caller that must compare two reads keeps the bytes."""
     try:
-        return yaml.load(catalog_file.read_text(), Loader=_CatalogLoader)
-    except (OSError, yaml.YAMLError) as error:
+        return catalog_file.read_bytes()
+    except OSError as error:
         raise CatalogError(
             f"{catalog_file.name}: cannot read it ({type(error).__name__})"
         ) from error
+
+
+def parse(raw: bytes, name: str = FLEET_FILE) -> Any:
+    """The document of catalog bytes already read; `name` is the file the message names."""
+    try:
+        return yaml.load(raw.decode(), Loader=_CatalogLoader)
+    except yaml.YAMLError as error:
+        raise CatalogError(f"{name}: cannot read it ({type(error).__name__})") from error
 
 
 def load(repository: Path, profile_services: Mapping[str, tuple[str, ...]]) -> tuple[Unit, ...]:
@@ -263,9 +276,22 @@ def _ready(path: str, item: dict) -> str | None:
     if "ready" not in item:
         return None
     ready = item["ready"]
-    if not isinstance(ready, str) or not ready.startswith("/") or ready.startswith("//"):
-        raise CatalogError(f"{path}.ready: must be a path that starts with one '/'")
+    if not isinstance(ready, str) or not _is_request_path(ready):
+        raise CatalogError(
+            f"{path}.ready: must be a path of printable ASCII, no space, that starts with one '/'"
+        )
     return ready
+
+
+def _is_request_path(ready: str) -> bool:
+    """What the probe can send as a request target: its request line has room for no more."""
+    return (
+        ready.startswith("/")
+        and not ready.startswith("//")
+        and ready.isascii()
+        and ready.isprintable()
+        and " " not in ready
+    )
 
 
 def _loopback_port(target: Any) -> int | None:

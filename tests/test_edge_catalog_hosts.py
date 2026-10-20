@@ -138,8 +138,10 @@ def test_ready_is_a_path_or_absent(ready, expected):
     assert found.ready == expected
 
 
-@pytest.mark.parametrize("ready", ["health", "", "//x", 7])
-def test_ready_that_is_no_path_is_refused(ready):
+@pytest.mark.parametrize(
+    "ready", ["health", "", "//x", 7, "/é", "/a b", "/a\tb", "/a\nb", "/a\x7fb"]
+)
+def test_ready_that_is_no_request_path_is_refused_naming_the_key(ready):
     assert refusal(document(hosted(host(ready=ready)))).startswith("services.app.hosts[0].ready:")
 
 

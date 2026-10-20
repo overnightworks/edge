@@ -226,11 +226,13 @@ def apply_plan(
     progress: Progress | None = None,
     hosts: Sequence[catalog.Host] = (),
     prober_for: Callable[[str], host_probe.Prober] = host_probe.HttpProber,
+    catalog_unchanged: Callable[[], bool] = lambda: True,
 ) -> ApplyOutcome:
     """`progress` is the caller's record of this run: an interrupt that arrives after this function
     returned is decided from it, since the outcome is lost with the raise. `hosts` are the enabled
-    hosts of the catalog, those that declare `ready` are asked; `prober_for` makes the prober that
-    asks one target."""
+    hosts of the catalog tofu was started on, those that declare `ready` are asked; `prober_for`
+    makes the prober that asks one target; `catalog_unchanged` says whether the catalog is still
+    that one, since a plan made on another would publish hosts nobody asked."""
     progress = progress or Progress()
     try:
         with (
@@ -239,7 +241,7 @@ def apply_plan(
             plan_file_scope(home) as plan_file,
         ):
             result = _recording_interrupts(
-                session, plan_file, token_values, progress, hosts, prober_for
+                session, plan_file, token_values, progress, hosts, prober_for, catalog_unchanged
             )
             progress.step = Step.CLEANUP
     except (tofu.Interrupted, KeyboardInterrupt):
@@ -272,11 +274,14 @@ def _recording_interrupts(
     progress: Progress,
     hosts: Sequence[catalog.Host],
     prober_for: Callable[[str], host_probe.Prober],
+    catalog_unchanged: Callable[[], bool],
 ) -> ApplyExit:
     """The interrupt is recorded here, before the cleanup runs, so the cleanup's own failure
     cannot be mistaken for it."""
     try:
-        return _show_confirm_apply(session, plan_file, token_values, progress, hosts, prober_for)
+        return _show_confirm_apply(
+            session, plan_file, token_values, progress, hosts, prober_for, catalog_unchanged
+        )
     except tofu.Interrupted as interrupted:
         progress.interrupted = True
         print_interrupted_output(interrupted, token_values)
@@ -331,6 +336,7 @@ def _show_confirm_apply(
     progress: Progress,
     hosts: Sequence[catalog.Host],
     prober_for: Callable[[str], host_probe.Prober],
+    catalog_unchanged: Callable[[], bool],
 ) -> ApplyExit:
     planned = tofu.run(
         session.tofu, [*tofu.PLAN_ARGUMENTS, f"-out={plan_file}"], session.environment
@@ -346,6 +352,13 @@ def _show_confirm_apply(
         return ApplyExit.CANNOT_PLAN
     show_tofu_output(shown.rstrip("\n"), sys.stdout)
     progress.step = Step.READINESS
+    if not catalog_unchanged():
+        print(
+            "edge external apply: the catalog changed while planning; "
+            "run `edge external apply` again, nothing applied",
+            file=sys.stderr,
+        )
+        return ApplyExit.REFUSED
     if unanswered := _unanswered(hosts, prober_for):
         for line in unanswered:
             print(f"edge external apply: {line}", file=sys.stderr)
