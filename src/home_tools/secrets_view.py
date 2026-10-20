@@ -42,6 +42,7 @@ PROBE_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 HOME_PREFIX = "~/"
 WILDCARD_CHARACTERS = frozenset("*?[")
 LOOSEST_FILE_MODE = 0o600
+LOOSEST_DECLARABLE_FILE_MODE = 0o644  # a container user reads the file; the 0700 folder keeps everyone else out
 LOOSEST_DIRECTORY_MODE = 0o700
 EXPIRY_UNKNOWN = "Ablauf unbekannt"
 REVOCATION_UNCONFIRMED = "Widerruf unbestätigt"
@@ -138,6 +139,8 @@ class SecretEntry:
     source: TokenSource | None = None
     optional: bool = False
     elsewhere: str = ""
+    loosest_mode: int = LOOSEST_FILE_MODE
+    loosest_mode_reason: str = ""
 
     @property
     def retired(self) -> bool:
@@ -169,7 +172,8 @@ class ManifestError(ValueError):
 REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by", "recreate"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
 RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
-OPTIONAL_KEYS = frozenset({"verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS
+MODE_KEYS = frozenset({"loosest_mode", "loosest_mode_reason"})
+OPTIONAL_KEYS = frozenset({"verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
@@ -256,6 +260,18 @@ def _flag(path: Path, where: str, raw: Mapping[str, object], key: str) -> bool:
     return value
 
 
+def _declared_mode(path: Path, where: str, raw: Mapping[str, object]) -> tuple[int, str]:
+    """The loosest mode a file of the entry may have and why; both keys together, never looser than a container user needs."""
+    if set(raw) & MODE_KEYS and not set(raw) >= MODE_KEYS:
+        raise _fail(path, where, "loosest_mode and loosest_mode_reason belong together")
+    if "loosest_mode" not in raw:
+        return LOOSEST_FILE_MODE, ""
+    mode = raw["loosest_mode"]
+    if not isinstance(mode, int) or isinstance(mode, bool) or mode <= 0 or mode & ~LOOSEST_DECLARABLE_FILE_MODE:
+        raise _fail(path, where, f"loosest_mode must be a file mode within {LOOSEST_DECLARABLE_FILE_MODE:04o}, e.g. 0o644")
+    return mode, _string(path, where, raw, "loosest_mode_reason")
+
+
 def _is_github_right(right: str) -> bool:
     permission, _, level = right.partition(":")
     return bool(permission) and level in GITHUB_ACCESS_LEVELS
@@ -298,6 +314,7 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         raise _fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
+    loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
     entry = SecretEntry(
         name=_string(path, where, raw, "name"),
         kind=kind,
@@ -313,6 +330,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         source=source,
         optional=_flag(path, where, raw, "optional"),
         elsewhere=_string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
+        loosest_mode=loosest_mode,
+        loosest_mode_reason=loosest_mode_reason,
     )
     if entry.written_by_setup:
         _require_one_plain_place(path, where, entry.paths)
@@ -612,15 +631,15 @@ def _is_named(relative: PurePosixPath, patterns: tuple[PurePosixPath, ...]) -> b
     return any(relative in pattern.parents or any(_matches_pattern(c, pattern) for c in candidates) for pattern in patterns)
 
 
-def _loosest_allowed(mode: int) -> int | None:
+def _loosest_allowed(mode: int, loosest_file_mode: int) -> int | None:
     if stat.S_ISDIR(mode):
         return LOOSEST_DIRECTORY_MODE
-    return LOOSEST_FILE_MODE if stat.S_ISREG(mode) else None
+    return loosest_file_mode if stat.S_ISREG(mode) else None
 
 
-def too_loose(mode: int) -> int | None:
+def too_loose(mode: int, loosest_file_mode: int = LOOSEST_FILE_MODE) -> int | None:
     """The loosest mode allowed for this kind of path when `mode` grants more; None when it stays within it."""
-    allowed = _loosest_allowed(mode)
+    allowed = _loosest_allowed(mode, loosest_file_mode)
     return allowed if allowed is not None and stat.S_IMODE(mode) & ~allowed else None
 
 
@@ -668,9 +687,18 @@ def _closed(relative: PurePosixPath, mode: int) -> _Flaw | None:
     return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, der Besitzer braucht {needed:o}", mode_fix(relative, needed))
 
 
-def _loose(relative: PurePosixPath, mode: int) -> _Flaw | None:
-    allowed = too_loose(mode)
-    return None if allowed is None else _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}", mode_fix(relative, allowed))
+def _loose(relative: PurePosixPath, mode: int, declaring: SecretEntry | None = None) -> _Flaw | None:
+    allowed = too_loose(mode, declaring.loosest_mode if declaring else LOOSEST_FILE_MODE)
+    if allowed is None:
+        return None
+    reason = f" ({declaring.loosest_mode_reason})" if declaring and declaring.loosest_mode_reason else ""
+    return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}{reason}", mode_fix(relative, allowed))
+
+
+def _declaring_entry(relative: PurePosixPath, manifest: tuple[SecretEntry, ...]) -> SecretEntry | None:
+    """The live entry whose place this file is and that allows it the loosest mode; None when no entry names it."""
+    named = [entry for entry in manifest if not entry.retired and any(_matches_pattern(relative, pattern) for pattern in entry.paths)]
+    return max(named, key=lambda entry: entry.loosest_mode, default=None)
 
 
 # What can be wrong with a folder on the way to a secret, in the order `unfit_folder` names the first one found.
@@ -697,13 +725,15 @@ def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
     return None
 
 
-def _tree_findings(tree: tuple[PathFact, ...], patterns: tuple[PurePosixPath, ...]) -> Iterator[SecretFinding]:
-    """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode alone."""
+def _tree_findings(tree: tuple[PathFact, ...], manifest: tuple[SecretEntry, ...]) -> Iterator[SecretFinding]:
+    """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode and the loosest one its entry declares."""
+    patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     for fact in tree:
         if stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns):
             finding = unfit_folder(fact.relative, fact.mode)
         else:
-            finding = _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, _loose(fact.relative, fact.mode))
+            loose = _loose(fact.relative, fact.mode, _declaring_entry(fact.relative, manifest))
+            finding = _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, loose)
         if finding:
             yield finding
 
@@ -742,7 +772,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
     findings = (
         *(f for status in statuses for f in _entry_findings(status)),
         *unknown,
-        *_tree_findings(observation.tree, patterns),
+        *_tree_findings(observation.tree, manifest),
     )
     return SecretsView(statuses, findings)
 

@@ -285,7 +285,7 @@ Each app also gets one list of **plain keys**: the `.env` and `environment:` key
 
 Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`, `verify`, `retired_on`.
 
-**The internal CA's files (edge#38).** `step-ca/init` creates them once; the manifest entry belongs to home-tools#21.
+**The internal CA's files (edge#38).** `step-ca/init` creates them once; `src/home_tools/secrets_manifest.toml` names them, with `loosest_mode = 0o644` for the two files a container user reads, so the daily `home check` judges them against that mode and never recommends `chmod 600`.
 
 | File | Mode | Who reads it | In the backup |
 |---|---|---|---|
