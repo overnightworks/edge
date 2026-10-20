@@ -1,8 +1,0 @@
-claim_id = "cc8c6a3e5b62464db08c6db924095d60"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "c5dff2b1c1cc9ac2b3f86efe1b18a090d2a17672"
-branch = "claude/issue-165-docs-agents-and-d6"
-scope = ["AGENTS.md", "docs/architecture.md", "docs/home.md", "scripts/check_root_layout.py"]
-opened_commit = "4ad6b9f1ed2ff0d289368212230744b28804b19e"
-whole_reason = "Bundle of two docs-only cards (#165 lead, #169 X6b): AGENTS.md, the root checker docstring and its docs/home.md mention, and docs/architecture.md"
