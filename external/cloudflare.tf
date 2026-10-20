@@ -14,10 +14,6 @@ locals {
   account_id = one(data.cloudflare_zone.this[*].account.id)
   tunnel_id  = one(data.cloudflare_zero_trust_tunnel_cloudflared.this[*].id)
 
-  # A check's data source must name an account even when no host asks for one; its failing read is
-  # then a warning, whereas a missing account_id would be a configuration error.
-  account_id_for_checks = coalesce(local.account_id, "no-account-without-hosts")
-
   operator_group_ids = [
     for group in flatten(data.cloudflare_zero_trust_access_groups.operator[*].result) : group.id
     if group.name == local.operator_group_name
@@ -112,22 +108,19 @@ resource "cloudflare_zero_trust_access_policy" "allow_operator" {
 
   lifecycle {
     precondition {
-      condition     = length(local.operator_group_ids) <= 1
-      error_message = "${length(local.operator_group_ids)} Access groups are named ${local.operator_group_name}; exactly one is needed."
-    }
-    precondition {
-      condition     = local.operator_group_id != null
-      error_message = "A protected host needs the Access group ${local.operator_group_name}; it was not found."
+      condition     = length(local.operator_group_ids) == 1
+      error_message = "A protected host needs exactly one Access group named ${local.operator_group_name}; found ${length(local.operator_group_ids)}."
     }
   }
 }
 
 resource "cloudflare_zero_trust_access_application" "host" {
-  for_each   = local.access_app_hosts
-  account_id = local.account_id
-  name       = each.key
-  domain     = each.key
-  type       = "self_hosted"
+  for_each     = local.access_app_hosts
+  account_id   = local.account_id
+  name         = each.key
+  domain       = each.key
+  type         = "self_hosted"
+  destinations = [{ type = "public", uri = each.key }]
   policies = [{
     id         = each.value.exposure == "bypass" ? one(cloudflare_zero_trust_access_policy.bypass[*].id) : one(cloudflare_zero_trust_access_policy.allow_operator[*].id)
     precedence = 1
@@ -156,30 +149,4 @@ import {
   for_each = local.app_ids_to_import
   to       = cloudflare_zero_trust_access_application.host[each.key]
   id       = each.value
-}
-
-# U2: the inventory of every existing Access app, answered by each plan. Reads even without hosts
-# (a check's data source takes no count); then the account is a placeholder and the check only warns.
-check "access_apps_inventory" {
-  data "cloudflare_zero_trust_access_applications" "inventory" {
-    account_id = local.account_id_for_checks
-  }
-
-  assert {
-    condition     = length(data.cloudflare_zero_trust_access_applications.inventory.result) == 0
-    error_message = "Existing Access apps: ${join(", ", [for app in data.cloudflare_zero_trust_access_applications.inventory.result : "${coalesce(app.name, app.id)} (${coalesce(app.domain, "no domain")})"])}"
-  }
-}
-
-# U4: a missing group is only a warning until a protected host needs it.
-check "operator_group_exists" {
-  data "cloudflare_zero_trust_access_groups" "inventory" {
-    account_id = local.account_id_for_checks
-    name       = local.operator_group_name
-  }
-
-  assert {
-    condition     = anytrue([for group in data.cloudflare_zero_trust_access_groups.inventory.result : group.name == local.operator_group_name])
-    error_message = "The Access group ${local.operator_group_name} does not exist yet."
-  }
 }

@@ -78,6 +78,11 @@ run "c3_a_bypass_host_gets_a_record_an_app_and_the_bypass_policy" {
   }
 
   assert {
+    condition     = [for destination in cloudflare_zero_trust_access_application.host["hopin.edge-fixture.invalid"].destinations : "${destination.type} ${destination.uri}"] == ["public hopin.edge-fixture.invalid"]
+    error_message = "the app does not name the host's FQDN as its public destination"
+  }
+
+  assert {
     condition = (
       [for policy in cloudflare_zero_trust_access_application.host["hopin.edge-fixture.invalid"].policies : policy.id] == ["bypass-policy-id"]
       && [for entry in cloudflare_zero_trust_access_policy.bypass[0].include : entry.everyone != null] == [true]
@@ -121,6 +126,11 @@ run "c5_a_protected_wildcard_gets_an_allow_group_app" {
     condition     = [for policy in cloudflare_zero_trust_access_application.host["*.edge-fixture.invalid"].policies : policy.id] == ["allow-policy-id"]
     error_message = "the wildcard app does not attach the allow-group policy"
   }
+
+  assert {
+    condition     = [for destination in cloudflare_zero_trust_access_application.host["*.edge-fixture.invalid"].destinations : "${destination.type} ${destination.uri}"] == ["public *.edge-fixture.invalid"]
+    error_message = "the wildcard app does not name the wildcard FQDN as its public destination"
+  }
 }
 
 run "c5_a_protected_host_without_the_operator_group_fails" {
@@ -136,43 +146,6 @@ run "c5_a_protected_host_without_the_operator_group_fails" {
   }
 
   expect_failures = [cloudflare_zero_trust_access_policy.allow_operator]
-}
-
-run "c15_a_missing_operator_group_only_warns_while_no_host_is_protected" {
-  command = plan
-
-  override_data {
-    target = data.cloudflare_zero_trust_access_groups.inventory
-    values = { result = [] }
-  }
-
-  expect_failures = [check.operator_group_exists]
-}
-
-run "c16_existing_access_apps_make_the_inventory_warn" {
-  command = plan
-
-  override_data {
-    target = data.cloudflare_zero_trust_access_applications.inventory
-    values = {
-      result = [{ id = "other-app", domain = "other.edge-fixture.invalid", allow_authenticate_via_warp = null, allow_iframe = null, allowed_idps = null, app_launcher_logo_url = null, app_launcher_visible = null, aud = null, auto_redirect_to_identity = null, bg_color = null, cors_headers = null, custom_deny_message = null, custom_deny_url = null, custom_non_identity_deny_url = null, custom_pages = null, destinations = null, enable_binding_cookie = null, footer_links = null, header_bg_color = null, http_only_cookie_attribute = null, landing_page_design = null, logo_url = null, mfa_config = null, name = null, options_preflight_bypass = null, path_cookie_attribute = null, policies = null, read_service_tokens_from_header = null, saas_app = null, same_site_cookie_attribute = null, scim_config = null, self_hosted_domains = null, service_auth_401_redirect = null, session_duration = null, skip_app_launcher_login_page = null, skip_interstitial = null, tags = null, target_criteria = null, type = null }]
-    }
-  }
-
-  expect_failures = [check.access_apps_inventory]
-}
-
-run "c16_an_app_without_a_domain_still_makes_the_inventory_warn" {
-  command = plan
-
-  override_data {
-    target = data.cloudflare_zero_trust_access_applications.inventory
-    values = {
-      result = [{ id = "infra-app", allow_authenticate_via_warp = null, allow_iframe = null, allowed_idps = null, app_launcher_logo_url = null, app_launcher_visible = null, aud = null, auto_redirect_to_identity = null, bg_color = null, cors_headers = null, custom_deny_message = null, custom_deny_url = null, custom_non_identity_deny_url = null, custom_pages = null, destinations = null, domain = null, enable_binding_cookie = null, footer_links = null, header_bg_color = null, http_only_cookie_attribute = null, landing_page_design = null, logo_url = null, mfa_config = null, name = null, options_preflight_bypass = null, path_cookie_attribute = null, policies = null, read_service_tokens_from_header = null, saas_app = null, same_site_cookie_attribute = null, scim_config = null, self_hosted_domains = null, service_auth_401_redirect = null, session_duration = null, skip_app_launcher_login_page = null, skip_interstitial = null, tags = null, target_criteria = null, type = null }]
-    }
-  }
-
-  expect_failures = [check.access_apps_inventory]
 }
 
 run "c5_two_operator_groups_fail_a_protected_host" {
@@ -369,6 +342,15 @@ run "c12_without_hosts_nothing_is_looked_up" {
       length(data.cloudflare_zero_trust_access_groups.operator) == 0,
     ])
     error_message = "a lookup was read although no host is declared"
+  }
+
+  assert {
+    condition = alltrue([
+      length(cloudflare_zero_trust_access_application.host) == 0,
+      length(cloudflare_zero_trust_access_policy.bypass) == 0,
+      length(cloudflare_zero_trust_access_policy.allow_operator) == 0,
+    ])
+    error_message = "an Access resource is planned although no host is declared"
   }
 }
 
