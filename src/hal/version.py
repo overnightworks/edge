@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from edge import checkout, compose
-from hal.grammar import Command, ExitCode, write_error
+from hal.grammar import Asks, Command, ExitCode, write_error
 
 # The tree this code lives in, looked up when the command runs: an installed wheel has none.
 CODE_TREE = Path(__file__).resolve().parents[2]
@@ -83,4 +83,4 @@ def _echoing(runner: checkout.Runner) -> checkout.Runner:
     return echo
 
 
-COMMAND = Command("version", "name the code that runs", run, configure)
+COMMAND = Command("version", "name the code that runs", run, configure, json=False, asks=Asks.NEVER)

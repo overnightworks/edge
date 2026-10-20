@@ -89,15 +89,17 @@ def test_an_unknown_command_is_a_usage_error_that_names_the_help(tmp_path):
     assert error_lines(result)[1:] == ["next: hal --help"]
 
 
-@pytest.mark.parametrize("option", ["--bogus", "-y"])
+@pytest.mark.parametrize("option", ["--bogus", "-y", "x\nnext: y\x1b[31m"])
 def test_an_unknown_option_names_the_help_of_its_command(tmp_path, option):
-    """G-5: there is no `-y` (#132 decision 4)."""
+    """G-5: there is no `-y` (#132 decision 4); text from the command line cannot add a line or a
+    control character to the error form."""
     result = run_hal(tmp_path, hal_program(), "version", option)
 
     assert result.returncode == ExitCode.USAGE
     assert result.stdout == ""
     assert error_lines(result)[0].startswith("error: ")
     assert error_lines(result)[1:] == ["next: hal version --help"]
+    assert "\x1b" not in result.stderr
 
 
 @pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
@@ -120,8 +122,9 @@ def test_a_command_without_json_refuses_the_flag(tmp_path, command):
 
 def test_a_command_that_declares_json_offers_the_flag():
     report = Command(
-        "report", "print a report", lambda arguments: ExitCode.OK, lambda p: None, json=True
-    )
+        "report", "print a report", lambda arguments: ExitCode.OK, lambda p: None,
+        json=True, asks=Asks.NEVER,
+    )  # fmt: skip
 
     parsed = cli.build_parser([report]).parse_args(["report", "--json"])
 

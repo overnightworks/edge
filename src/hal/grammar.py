@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
+from edge import compose
+
 
 class ExitCode(IntEnum):
     OK = 0
@@ -29,12 +31,12 @@ class Command:
     summary: str
     run: Callable[[argparse.Namespace], ExitCode]
     configure: Callable[[argparse.ArgumentParser], None]
-    json: bool = False  # only a command whose result a program reads offers `--json`
-    asks: Asks = Asks.NEVER
+    json: bool  # only a command whose result a program reads offers `--json`
+    asks: Asks
 
 
 def write_error(message: str, next_step: str | None = None) -> None:
     """`error: <message>` and, when there is a way on, `next: <command>` on stderr."""
-    print(f"error: {message}", file=sys.stderr)
+    print(f"error: {compose.printable(message)}", file=sys.stderr)
     if next_step:
         print(f"next: {next_step}", file=sys.stderr)

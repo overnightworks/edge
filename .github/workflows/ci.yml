@@ -76,7 +76,8 @@ jobs:
           home secrets --help
           home secrets --by-service | grep -F "deklarierte Abhängigkeiten"
           hal --help
-          hal version | grep -Fx "no checkout (installed from a wheel)"
+          version=$(hal version)
+          [ "$version" = "no checkout (installed from a wheel)" ]
           rc=0; hal frobnicate >"$scratch/out" 2>"$scratch/err" || rc=$?
           [ "$rc" -eq 2 ]
           [ ! -s "$scratch/out" ]
