@@ -33,7 +33,7 @@ GIT_CLONE_TAG: Final = (
     *("git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"),
     "--branch",
 )
-RELEASE_TAG: Final = re.compile(r"v(\d+)\.(\d+)\.(\d+)", re.ASCII)
+RELEASE_TAG: Final = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)
 RELEASE_WHEEL_STEMS: Final = (
     "overnightworks_agent_client",
     "overnightworks_agent_providers",
@@ -45,24 +45,52 @@ DOWNLOAD_SECONDS: Final = 120
 
 def release_tag(text: str) -> str:
     """The only shape of tag that reaches `git clone` and the release URLs."""
-    matched = RELEASE_TAG.fullmatch(text)
-    if not matched:
+    if not RELEASE_TAG.fullmatch(text):
         raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.4.0")
-    major, minor, patch = (int(number) for number in matched.groups())
-    return f"v{major}.{minor}.{patch}"
+    return text
 
 
-def release_wheel_requirements(tag: str) -> list[str]:
-    """One pinned requirement per release wheel, hashed from the bytes the release serves."""
+def release_wheel_urls(tag: str) -> dict[str, str]:
+    """The release's wheel URL by requirement name, in lock order."""
     version = tag.removeprefix("v")
-    requirements = []
-    for stem in RELEASE_WHEEL_STEMS:
-        wheel = f"{stem}-{version}-py3-none-any.whl"
-        url = f"{REPOSITORY_URL}/releases/download/{tag}/{wheel}"
-        with urllib.request.urlopen(url, timeout=DOWNLOAD_SECONDS) as response:
-            digest = hashlib.sha256(response.read()).hexdigest()
-        requirements.append(f"{stem.replace('_', '-')} @ {url} \\\n    --hash=sha256:{digest}\n")
-    return requirements
+    return {
+        stem.replace("_", "-"): (
+            f"{REPOSITORY_URL}/releases/download/{tag}/{stem}-{version}-py3-none-any.whl"
+        )
+        for stem in RELEASE_WHEEL_STEMS
+    }
+
+
+def lock_text(tag: str, commit: str, closure: str, wheel_digests: dict[str, str]) -> str:
+    """The whole lock: a header naming tag and commit, the closure, then the wheels by URL and
+    sha256. `wheel_digests` holds one sha256 per requirement name of `release_wheel_urls`."""
+    header = (
+        f"# agent-providers {tag}, commit {commit}\n"
+        f"# {' '.join(UV_EXPORT)}, then the release's wheels.\n"
+        "# Written only by scripts/agent_service_lock.py; do not edit.\n"
+    )
+    wheels = "".join(
+        f"{name} @ {url} \\\n    --hash=sha256:{wheel_digests[name]}\n"
+        for name, url in release_wheel_urls(tag).items()
+    )
+    return header + closure + wheels
+
+
+def wheel_digest(url: str) -> str:
+    """The sha256 of the bytes the URL serves."""
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_SECONDS) as response:
+        return hashlib.sha256(response.read()).hexdigest()
+
+
+def cloned_commit(repository_url: str, tag: str, destination: Path) -> str:
+    """Clones the tag shallowly into `destination` and returns the commit it points at."""
+    subprocess.run([*GIT_CLONE_TAG, tag, "--", repository_url, str(destination)], check=True)
+    return subprocess.run(
+        ["git", "-C", str(destination), "rev-parse", "HEAD^{commit}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def exported_closure(checkout: Path) -> str:
@@ -72,39 +100,21 @@ def exported_closure(checkout: Path) -> str:
     ).stdout
 
 
-def lock_text(requested_tag: str) -> str:
-    tag = release_tag(requested_tag)
+def built_lock(tag: str) -> str:
     with tempfile.TemporaryDirectory() as scratch:
         checkout = Path(scratch)
-        subprocess.run(
-            [*GIT_CLONE_TAG, tag, "--", REPOSITORY_URL, scratch],
-            check=True,
-        )
-        commit = subprocess.run(
-            ["git", "-C", scratch, "rev-parse", "HEAD^{commit}"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        commit = cloned_commit(REPOSITORY_URL, tag, checkout)
         closure = exported_closure(checkout)
-    header = (
-        f"# agent-providers {tag}, commit {commit}\n"
-        f"# {' '.join(UV_EXPORT)}, then the release's wheels.\n"
-        "# Written only by scripts/agent_service_lock.py; do not edit.\n"
-    )
-    return header + closure + "".join(release_wheel_requirements(tag))
+    digests = {name: wheel_digest(url) for name, url in release_wheel_urls(tag).items()}
+    return lock_text(tag, commit, closure, digests)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent_service_lock", description=__doc__)
-    parser.add_argument("tag", help="agent-providers release tag, such as v0.4.0")
+    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.4.0")
     arguments = parser.parse_args(argv)
-    try:
-        text = lock_text(arguments.tag)
-    except argparse.ArgumentTypeError as refusal:
-        parser.error(str(refusal))
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOCK_PATH.write_text(text, encoding="utf-8")
+    LOCK_PATH.write_text(built_lock(arguments.tag), encoding="utf-8")
     return 0
 
 

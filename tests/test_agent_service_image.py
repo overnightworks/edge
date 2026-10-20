@@ -3,7 +3,9 @@ hold what the recipe says; the build and the start of the image are the probe's
 (`probe/agent-service/image.py`)."""
 
 import argparse
+import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 import agent_service_lock
@@ -78,17 +80,79 @@ def test_the_recipe_installs_no_system_package(package_manager):
     assert not re.search(rf"\b{package_manager}\b", DOCKERFILE)
 
 
-@pytest.mark.parametrize("tag", ["v0.4.0", "v10.20.30"])
+@pytest.mark.parametrize("tag", ["v0.4.0", "v10.0.1", "v10.20.30"])
 def test_the_lock_script_accepts_a_release_tag(tag):
     assert agent_service_lock.release_tag(tag) == tag
 
 
 @pytest.mark.parametrize(
-    "tag", ["--upload-pack=x", "v0.4", "0.4.0", "v0.4.0 ", "v0.4.0\n", "v0.4.0/../x", "main", ""]
-)
+    "tag",
+    [
+        "--upload-pack=x", "v0.4", "0.4.0", "v0.4.0 ", "v0.4.0\n", "v0.4.0/../x", "main", "",
+        "v00.4.0", "v0.04.0", "v0.4.00",
+    ],
+)  # fmt: skip
 def test_the_lock_script_refuses_anything_but_a_release_tag(tag):
     with pytest.raises(argparse.ArgumentTypeError):
         agent_service_lock.release_tag(tag)
+
+
+def composed_lock() -> str:
+    names = agent_service_lock.release_wheel_urls("v1.2.3")
+    digests = {name: f"{index:064x}" for index, name in enumerate(names)}
+    return agent_service_lock.lock_text(
+        "v1.2.3", "c0ffee", "pkg==1.0 \\\n    --hash=sha256:ab\n", digests
+    )
+
+
+def test_the_composed_lock_names_the_tag_and_the_commit_in_its_header():
+    assert composed_lock().startswith("# agent-providers v1.2.3, commit c0ffee\n")
+
+
+def test_the_composed_lock_holds_the_closure_then_each_wheel_by_url_and_hash():
+    lines = composed_lock().splitlines()
+    assert "pkg==1.0 \\" in lines
+    wheels = [line for line in lines if " @ " in line]
+    assert [line.split(" @ ")[0] for line in wheels] == list(
+        agent_service_lock.release_wheel_urls("v1.2.3")
+    )
+    assert all("/releases/download/v1.2.3/" in line for line in wheels)
+    assert [line.strip() for line in lines if "--hash=sha256:0" in line] == [
+        f"--hash=sha256:{index:064x}" for index in range(3)
+    ]
+
+
+def test_the_composed_lock_is_the_same_text_each_time():
+    assert composed_lock() == composed_lock()
+
+
+def test_the_wheel_digest_is_the_sha256_of_the_served_bytes(tmp_path):
+    wheel = tmp_path / "wheel.whl"
+    wheel.write_bytes(b"served bytes")
+    assert (
+        agent_service_lock.wheel_digest(wheel.as_uri())
+        == hashlib.sha256(b"served bytes").hexdigest()
+    )
+
+
+def test_the_cloned_commit_is_the_one_the_tag_points_at(tmp_path):
+    origin, clone = tmp_path / "origin", tmp_path / "clone"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(origin)]
+    subprocess.run(["git", "init", "--quiet", str(origin)], check=True)
+    subprocess.run([*git, "commit", "--quiet", "--allow-empty", "-m", "release"], check=True)
+    subprocess.run([*git, "tag", "v1.2.3"], check=True)
+    tagged = subprocess.run(
+        [*git, "rev-parse", "v1.2.3^{commit}"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    assert agent_service_lock.cloned_commit(origin.as_uri(), "v1.2.3", clone) == tagged
+
+
+def test_the_lock_script_writes_the_built_lock(tmp_path, monkeypatch):
+    lock = tmp_path / "image" / "requirements.txt"
+    monkeypatch.setattr(agent_service_lock, "LOCK_PATH", lock)
+    monkeypatch.setattr(agent_service_lock, "built_lock", lambda tag: f"lock for {tag}\n")
+    assert agent_service_lock.main(["v1.2.3"]) == 0
+    assert lock.read_text(encoding="utf-8") == "lock for v1.2.3\n"
 
 
 def test_the_image_runs_the_service_as_uid_1000_without_a_login():

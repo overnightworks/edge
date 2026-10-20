@@ -42,9 +42,10 @@ RUN_SECONDS = 120
 TOKEN_PATTERN = "sk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_-]{20,}"
 # grep exits 0 on a match and 1 on none; anything above is an error that must not pass.
 TOKEN_SEARCH = (
-    "for path in /*; do "
+    "for path in /* /.[!.]* /..?*; do "
+    '[ -e "$path" ] || [ -L "$path" ] || continue; '
     'case "$path" in /proc|/sys) continue;; esac; '
-    f'grep -rIlE "{TOKEN_PATTERN}" "$path"; status=$?; '
+    f'grep -rlaE "{TOKEN_PATTERN}" "$path"; status=$?; '
     '[ "$status" -le 1 ] || exit "$status"; '
     "done"
 )
@@ -167,7 +168,7 @@ def cell_i3(output: Path) -> None:
 
 
 def run_in_image(
-    arguments: Sequence[str], *, entrypoint: str, user: str = "1000:1000"
+    arguments: Sequence[str], *, entrypoint: str, user: str = "1000:1000", read_only: bool = True
 ) -> subprocess.CompletedProcess[str]:
     return docker(
         [
@@ -175,7 +176,7 @@ def run_in_image(
             "--rm",
             "--network=none",
             f"--user={user}",
-            "--read-only",
+            *(["--read-only"] if read_only else []),
             f"--entrypoint={entrypoint}",
             IMAGE,
             *arguments,
@@ -314,6 +315,18 @@ def cell_i6() -> None:
     tokens = run_in_image(["-c", TOKEN_SEARCH], entrypoint="sh", user="0:0")
     expect(tokens.returncode == 0, f"I6: the token search failed: {tokens.stderr[-300:]!r}")
     expect(tokens.stdout.strip() == "", f"I6: a token-shaped text is in {tokens.stdout!r}")
+    planted = "/usr/local/planted.bin"
+    fake_token = "sk-ant-" + "api03-" + "a" * 30
+    bitten = run_in_image(
+        ["-c", f"printf '\\000{fake_token}\\000' > {planted}; {TOKEN_SEARCH}"],
+        entrypoint="sh",
+        user="0:0",
+        read_only=False,
+    )
+    expect(
+        bitten.stdout.split() == [planted],
+        f"I6: the token search missed a token inside a binary file: {bitten.stdout!r}",
+    )
     environment = json.loads(
         docker(["image", "inspect", IMAGE, "--format", "{{json .Config.Env}}"]).stdout
     )
@@ -335,7 +348,7 @@ def base_package_versions() -> dict[str, str]:
     expect(base is not None, "I7: the Dockerfile names no digest-pinned python base image")
     frozen = docker(
         [
-            "run", "--rm", "--network=none", "--pull=never", "--entrypoint=python",
+            "run", "--rm", "--network=none", "--pull=missing", "--entrypoint=python",
             base.group(1), "-m", "pip", "list", "--format=freeze",
         ],
         check=True,
