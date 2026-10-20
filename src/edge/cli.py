@@ -119,7 +119,12 @@ def _apply_then_publish() -> int:
     """The local part, then the publish only if the local part ended clean. The exit is the local
     one unless it is 0, then the publish's with its 2 ("cannot plan") made 1: a 2 from here means
     the local part could not finish planning, and nothing was published. No signal handler is
-    installed here; the one `except KeyboardInterrupt` (SIGINT) decides by what is recorded."""
+    installed here; the one `except KeyboardInterrupt` (SIGINT) decides by what is recorded.
+
+    Accepted windows, not covered: a SIGINT between the publish's return and the store of its
+    exit (exit 1 and the check line although the publish finished); a SIGTERM after the publish
+    left its own context (default action: the process ends by the signal); a second Ctrl-C while
+    `_exit_after_interrupt` prints (ends with a traceback)."""
     run = _Run()
     try:
         local_exit = apply.apply_closed(switches.default_state_directory())
@@ -144,7 +149,7 @@ def _say_summary(publish_exit: int) -> None:
     if publish_exit == apply.ApplyExit.APPLIED_OR_NOTHING:
         print(f"{COMMAND}: done", file=sys.stderr)
     else:
-        print(f"{COMMAND}: the publish ended with exit {publish_exit}", file=sys.stderr)
+        print(f"{COMMAND}: the publish did not end clean (exit {publish_exit})", file=sys.stderr)
 
 
 def _exit_after_interrupt(run: _Run) -> int:

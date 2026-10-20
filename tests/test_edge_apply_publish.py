@@ -63,6 +63,14 @@ NOTHING_PUBLISHED = "edge apply: nothing published"
 INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `edge external check --hosts`"
 
 
+def main_or_fail(arguments: list[str]) -> int:
+    """`cli.main`, where a Ctrl-C that escapes fails the test instead of stopping pytest."""
+    try:
+        return cli.main(arguments)
+    except KeyboardInterrupt:
+        pytest.fail("a Ctrl-C escaped the composer")
+
+
 @dataclass
 class Result:
     exit_code: int
@@ -151,7 +159,7 @@ def world(
 
     def run(*answers: str, arguments=("apply",), while_prompt_waits=None) -> Result:
         at_terminal("\n".join(answers), while_prompt_waits)
-        exit_code = cli.main(list(arguments))
+        exit_code = main_or_fail(list(arguments))
         return Result(exit_code, sys.stdout.getvalue(), capsys.readouterr().err)
 
     def settle_local() -> None:
@@ -302,7 +310,7 @@ def test_a_publish_that_does_not_end_clean_is_exit_1(world, arrange):
     result = world.run(*answers)
 
     assert result.exit_code == 1
-    assert "edge apply: the publish ended with exit 1" in result.err
+    assert "edge apply: the publish did not end clean (exit 1)" in result.err
 
 
 def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
@@ -313,7 +321,7 @@ def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
 
     assert result.exit_code == 1
     assert "tofu plan failed (exit 1)" in result.err
-    assert "edge apply: the publish ended with exit 1" in result.err
+    assert "edge apply: the publish did not end clean (exit 1)" in result.err
 
 
 def test_a_missing_write_token_after_the_local_part_is_exit_1_naming_the_file(world, home):  # noqa: F811
@@ -323,6 +331,7 @@ def test_a_missing_write_token_after_the_local_part_is_exit_1_naming_the_file(wo
     result = world.run("yes")
 
     assert result.exit_code == 1
+    assert "step-ca is on" in result.out
     assert "fleet-write" in result.err
     assert world.fake_tofu.calls() == []
 
@@ -341,13 +350,15 @@ def test_ctrl_c_in_the_local_part_publishes_nothing_and_shows_no_traceback(world
     assert world.publish_never_began()
 
 
-class InterruptsWhenLookedAt(int):
-    """An exit code that takes a Ctrl-C when the composer first looks at it."""
+def interrupting(phase, *, after_running: bool):
+    """The real phase, then a Ctrl-C before its return reaches the composer."""
 
-    def __eq__(self, _other: object) -> bool:
+    def interrupted(*arguments, **keywords):
+        if after_running:
+            phase(*arguments, **keywords)
         raise KeyboardInterrupt
 
-    __ne__ = __bool__ = __hash__ = __eq__  # type: ignore[assignment]
+    return interrupted
 
 
 def local_part_returns(monkeypatch, exit_code: int) -> None:
@@ -365,41 +376,34 @@ def publish_returns(monkeypatch, exit_code: int) -> list[tuple]:
     return entries
 
 
-def test_ctrl_c_in_the_gap_after_the_local_part_publishes_nothing(world, monkeypatch, capsys):
-    """C17: the local part returned 0, the publish phase is not yet recorded."""
-    local_part_returns(monkeypatch, InterruptsWhenLookedAt(0))
-    entries = publish_returns(monkeypatch, 0)
+def test_ctrl_c_in_the_gap_after_the_local_part_publishes_nothing(world, monkeypatch):
+    """C17: the local part ended clean, the publish phase is not yet recorded."""
+    monkeypatch.setattr(apply, "apply_closed", interrupting(apply.apply_closed, after_running=True))
 
-    exit_code = cli.main(["apply"])
+    result = world.run("yes")
 
-    assert exit_code == 1
-    assert "edge apply: interrupted, nothing published" in capsys.readouterr().err
-    assert entries == []
+    assert result.exit_code == 1
+    assert "edge apply: interrupted, nothing published" in result.err
+    assert world.publish_never_began()
 
 
 @pytest.mark.parametrize(
-    "outcome",
-    [KeyboardInterrupt(), InterruptsWhenLookedAt(0)],
-    ids=["out of the publish", "as the publish returns"],
+    "after_running", [False, True], ids=["out of the publish", "as the publish returns"]
 )
-def test_ctrl_c_with_the_publish_started_names_the_check_to_run(
-    world, monkeypatch, capsys, outcome
-):
+def test_ctrl_c_with_the_publish_started_names_the_check_to_run(world, monkeypatch, after_running):
     """C18: no exit recorded yet, so the publish may have changed the services."""
-    local_part_returns(monkeypatch, 0)
-    if isinstance(outcome, BaseException):
+    world.settle_local()
+    world.fake_tofu.configure(**EMPTY_PLAN)
+    monkeypatch.setattr(
+        external_cli,
+        "apply_command",
+        interrupting(external_cli.apply_command, after_running=after_running),
+    )
 
-        def publish(*_arguments):
-            raise outcome
+    result = world.run()
 
-        monkeypatch.setattr(external_cli, "apply_command", publish)
-    else:
-        publish_returns(monkeypatch, outcome)
-
-    exit_code = cli.main(["apply"])
-
-    assert exit_code == 1
-    assert INTERRUPTED_IN_PUBLISH in capsys.readouterr().err
+    assert result.exit_code == 1
+    assert INTERRUPTED_IN_PUBLISH in result.err
 
 
 class InterruptedOnSummary(io.StringIO):
@@ -420,12 +424,11 @@ def test_ctrl_c_after_the_publish_exit_is_recorded_leaves_that_exit(
     publish_returns(monkeypatch, publish_exit)
     monkeypatch.setattr(sys, "stderr", InterruptedOnSummary())
 
-    assert cli.main(["apply"]) == expected
+    assert main_or_fail(["apply"]) == expected
 
 
 def test_the_composer_installs_no_sigterm_handler(world, monkeypatch):
     """C20: SIGTERM keeps the default action in the local part and at the publish's entry."""
-    before = signal.getsignal(signal.SIGTERM)
     seen: dict[str, object] = {}
 
     def at_the_local_prompt() -> None:
@@ -438,7 +441,7 @@ def test_the_composer_installs_no_sigterm_handler(world, monkeypatch):
     monkeypatch.setattr(external_cli, "apply_command", at_the_publish_entry)
     world.run("yes", while_prompt_waits=at_the_local_prompt)
 
-    assert seen == {"local part": before, "publish entry": before}
+    assert seen == {"local part": signal.SIG_DFL, "publish entry": signal.SIG_DFL}
 
 
 def test_closed_never_publishes(world):

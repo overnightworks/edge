@@ -296,8 +296,11 @@ Jeder Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt 
 zu aendern, fragt `edge apply` gar nichts. Endet der lokale Teil nicht mit 0 (verweigert,
 abgelehnt, nicht planbar, teilweise), steht eine Zeile "nothing published", es laeuft kein tofu,
 und der Exit ist der des lokalen Teils. `edge apply --closed` bleibt der lokale Teil allein.
-Ein Ctrl-C vor der Publish-Phase endet mit Exit 1 und "interrupted, nothing published", eines
-waehrend der Publish-Phase mit Exit 1 und der Zeile "run `edge external check --hosts`". Ein
+Ein Ctrl-C vor der Publish-Phase endet mit Exit 1 und "interrupted, nothing published". Waehrend
+der Publish-Phase gelten deren eigene Unterbrechungsregeln
+([Externe Dienste als Code](#externe-dienste-als-code)) und ihr Exit bleibt, auch 0, sobald sie
+ihr Urteil festgehalten hat; nur eine Unterbrechung, die ohne festgehaltenen Exit aus der
+Publish-Phase herauskommt, endet mit Exit 1 und der Zeile "run `edge external check --hosts`". Ein
 SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess wie bei `--closed`: nichts wird
 veroeffentlicht.
 
