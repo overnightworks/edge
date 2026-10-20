@@ -545,7 +545,10 @@ def _plan_and_apply(
     record = core.Record(state_directory)
     try:
         if waiting.commits:
-            binds = core.checkout_binds(engine.resolved_configuration(), repository)
+            fleet = read_fleet(engine, repository)
+            binds = core.checkout_binds(
+                fleet.config, repository, {unit.key for unit in fleet.units}
+            )
             for line in waiting.describe(binds):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)

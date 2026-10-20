@@ -1,0 +1,20 @@
+# The static configuration of agent-egress (compose.yaml): the SNI-allowlisting TLS passthrough
+# gateway between the agent service and the two hosts it may reach. One TCP entrypoint on the
+# gateway's address on the egress network (compose.yaml's x-egress-address; tests/test_agent_egress.py
+# holds the two equal), no UDP. The global and log blocks are copies of traefik.yml's; the api,
+# ping and metrics blocks stay absent. The allowed names stand in dynamic/allowed.yml.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+entryPoints:
+  egress:
+    address: "172.31.252.10:443"
+
+providers:
+  file:
+    directory: /egress/dynamic
+    watch: true

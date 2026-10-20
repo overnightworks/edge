@@ -1,0 +1,31 @@
+# Probe overlay (probe/agent-service/egress.py), laid over a copy of compose.yaml that the probe
+# moved to a free /24, so it never collides with the live stack's edge_egress (172.31.252.0/24):
+# the gateway's static file from that copy, and the two packet windows. Never used live.
+services:
+  agent-egress:
+    volumes:
+      # The gateway's static file with its entrypoint address moved to the probe subnet; the
+      # dynamic directory is the real one.
+      - ${PROBE_EGRESS_STATIC:?run through probe/agent-service/egress.py}:/etc/traefik/traefik.yml:ro
+
+  # The gateway's own namespace: the SYNs that leave it (capture.py syn).
+  capture-egress: &capture
+    profiles: [agent-probe]
+    # The realm observer's pin (compose.yaml); tests/test_agent_egress.py holds the two equal.
+    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    # Root in the container, but NET_RAW alone: it opens a packet socket and writes nothing.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: service:agent-egress
+    restart: "no"
+    entrypoint: ["python", "-I", "-B", "/probe/capture.py"]
+    volumes:
+      - ./probe/agent-service/capture.py:/probe/capture.py:ro
+
+  # The host's namespace, every interface including loopback (capture.py dns).
+  capture-host:
+    <<: *capture
+    network_mode: host

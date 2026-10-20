@@ -45,6 +45,7 @@ ROOT_DIRECTORIES = frozenset(
     {
         ".aco",
         ".github",
+        "agent-service",
         "backup",
         "bin",
         "docs",
