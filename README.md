@@ -549,7 +549,7 @@ is an error. Allow by `owner` alone only when the service opens random ports.
 
 ## edge-backup
 
-A weekly encrypted backup of the declared apps (Songmaker and Keycloak) into a
+A weekly encrypted backup of the declared apps (Songmaker; Keycloak joins with its go-live) into a
 local restic repository, and a monthly test that restores the last successful backup's snapshot
 and proves it is good.
 
@@ -636,9 +636,10 @@ client secrets. In the repository it exists only encrypted (restic). In plain
 text it exists in exactly three places, each mode 0700: the staging directory
 during a backup and the restore test's directory during a restore test (both
 removed when the run ends), and the target of `edge-backup restore keycloak
---target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
-waits 10 minutes for it, reports keycloak as failed and still backs up
-Songmaker.
+--target`, which you delete yourself. While Keycloak is off, `backup/apps.toml` does not declare
+it, so the weekly run and the restore test cover Songmaker only. Once Keycloak is declared and its
+database is down, the weekly run waits 10 minutes for it, reports keycloak as failed and still
+backs up Songmaker.
 
 ### The restore test
 
@@ -1032,7 +1033,8 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
 - **1. Backup.** It asks whether to continue without the Keycloak backup only while
    [edge-backup](#edge-backup) is not set up on this PC (no password file with mode 600, or no
    initialised repository). There is no default; the answer is yours. Nothing is asked once
-   edge-backup is set up (its next weekly run covers Keycloak; the check does not prove a
+   edge-backup is set up (the go-live adds Keycloak's record to `backup/apps.toml`, so its next
+   weekly run covers Keycloak; the check does not prove a
    snapshot exists) or Keycloak's database volume exists (the first start creates it), so a
    "no" is asked again and a finished install is never asked, even with Keycloak stopped.
 - **2. Secrets.** It creates the three files with random values, in a 0700
