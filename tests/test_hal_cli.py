@@ -23,7 +23,7 @@ from git_support import (
     run_hal,
 )
 
-from hal import cli
+from hal import cli, stack_commands
 from hal.grammar import Asks, Command, ExitCode
 
 LOCK = SOURCE.parent / "uv.lock"
@@ -57,7 +57,8 @@ def test_hal_alone_shows_the_help_listing_version(tmp_path):
 
     assert (result.returncode, result.stderr) == (0, "")
     assert "usage: hal" in result.stdout
-    assert "version" in result.stdout
+    for name in ("apply", "stop", "start", "offline", "online", "version"):
+        assert name in result.stdout
 
 
 @pytest.mark.parametrize("flag", ["-h", "--help"])
@@ -212,11 +213,16 @@ def test_ctrl_c_while_git_runs_exits_130_without_a_traceback(tmp_path):
 
 @pytest.mark.parametrize(
     "command",
-    [command for command in cli.COMMANDS if command.asks is Asks.NEVER],
+    [
+        command
+        for command in cli.COMMANDS
+        if command.asks is Asks.NEVER and command not in stack_commands.COMMANDS
+    ],
     ids=lambda command: command.name,
 )
 def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
-    """G-11"""
+    """G-11. The stack's commands are left out: run here they would reach the real system manager;
+    their stdin cells run on fakes in test_hal_stack_commands."""
     tree = main_checkout(tmp_path)
 
     result = run_hal(tmp_path, hal_program(tree, before=FORBIDDEN_STDIN), command.name)
