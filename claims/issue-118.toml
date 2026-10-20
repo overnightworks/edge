@@ -1,8 +1,0 @@
-claim_id = "40703f95ea18401c9a5742ec83646eb0"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b1897a948f3d8ec68b6f82f46013f56c9da2191c"
-branch = "claude/issue-118-go-live"
-scope = ["README.md", "backup/apps.toml", "docs/architecture.md", "fleet.yaml", "keycloak/go-live", "src/edge/apply.py", "tests/edge_backup_support.py", "tests/test_edge_apply.py", "tests/test_edge_apply_publish.py", "tests/test_edge_backup.py", "tests/test_edge_backup_restore_safety.py", "tests/test_edge_catalog_hosts.py", "tests/test_keycloak_go_live.py", "tests/test_keycloak_unit.py"]
-opened_commit = "e43c3825da9f8a6b106ec2c4e139cc638c0f8491"
-whole_reason = "The go-live: Keycloak on with its auth host and backup record, apply checking a running unit's setup before it publishes, go-live's last line, and every pinning test and doc"
