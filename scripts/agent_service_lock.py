@@ -33,7 +33,7 @@ GIT_CLONE_TAG: Final = (
     *("git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"),
     "--branch",
 )
-RELEASE_TAG: Final = re.compile(r"v([0-9]+)\.([0-9]+)\.([0-9]+)")
+RELEASE_TAG: Final = re.compile(r"v(\d+)\.(\d+)\.(\d+)", re.ASCII)
 RELEASE_WHEEL_STEMS: Final = (
     "overnightworks_agent_client",
     "overnightworks_agent_providers",
@@ -72,7 +72,8 @@ def exported_closure(checkout: Path) -> str:
     ).stdout
 
 
-def lock_text(tag: str) -> str:
+def lock_text(requested_tag: str) -> str:
+    tag = release_tag(requested_tag)
     with tempfile.TemporaryDirectory() as scratch:
         checkout = Path(scratch)
         subprocess.run(
@@ -96,10 +97,14 @@ def lock_text(tag: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent_service_lock", description=__doc__)
-    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.4.0")
+    parser.add_argument("tag", help="agent-providers release tag, such as v0.4.0")
     arguments = parser.parse_args(argv)
+    try:
+        text = lock_text(arguments.tag)
+    except argparse.ArgumentTypeError as refusal:
+        parser.error(str(refusal))
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOCK_PATH.write_text(lock_text(arguments.tag), encoding="utf-8")
+    LOCK_PATH.write_text(text, encoding="utf-8")
     return 0
 
 
