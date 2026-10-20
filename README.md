@@ -1393,7 +1393,8 @@ would recreate it alone once a unit in `fleet.yaml` names its profile `agent-ser
 yet, and no plain `docker compose up -d` starts it.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
-probe/agent-service/egress.py --scratch DIR [--target service]` starts a throwaway project on a
+probe/agent-service/egress.py --scratch DIR [--target service]` (DIR must already exist, empty and
+writable, for example from `mktemp -d`) starts a throwaway project on a
 free /24 (never the live `edge_egress` subnet) with a hardened stand-in for the service, or with
 the real `agent-service` and a dummy login in the scratch HOME, drives the cells E1 to E10, E12 and
 E13 from it (E11 and E14 with the service), and removes everything. E3 to E5 (a refused name dials
@@ -1484,7 +1485,8 @@ docker compose --profile agent-service up -d --force-recreate agent-service
 recreates it, which ends every run in flight.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
-probe/agent-service/unit.py --scratch DIR` starts the real service in a throwaway project with a
+probe/agent-service/unit.py --scratch DIR` (DIR must already exist, empty and writable, for example
+from `mktemp -d`) starts the real service in a throwaway project with a
 dummy login and drives the cells U1 to U11: it listens and answers 401 without tokens; one worker
 under docker-init; uid, capabilities, `no-new-privileges`, core limit, non-dumpable, `/proc` and
 the AppArmor profile; a process group killed with its descendants; the tmpfs ownership, modes and

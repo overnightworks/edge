@@ -211,6 +211,18 @@ def login_directory() -> str:
     return str(Path(token_path()).parent)
 
 
+def ended_unsuccessfully(state: dict) -> bool:
+    """The container is not running, or waits between restarts, and its last exit was non-zero."""
+    return (not state["Running"] or state["Restarting"]) and state["ExitCode"] != 0
+
+
+def refusal_is_complete(cell: str, logs: str, fields: list[str]) -> bool:
+    """The logs of an attempt that ended unsuccessfully name every field; one that listened
+    fails the cell."""
+    expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
+    return all(field in logs for field in fields)
+
+
 class UnitProbe(Probe):
     """The egress probe's stack with the service alone, driven cell by cell."""
 
@@ -229,23 +241,27 @@ class UnitProbe(Probe):
         """The service's containers, stopped ones included."""
         return self.run(
             ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={PROJECT}",
-             "--filter", f"label=com.docker.compose.service={SERVICE}"], check=False,
+             "--filter", f"label=com.docker.compose.service={SERVICE}"],
         ).stdout.split()  # fmt: skip
 
     def service_logs(self) -> str:
         containers = self.service_containers()
-        logs = self.run(["docker", "logs", *containers[:1]], check=False) if containers else None
+        logs = self.run(["docker", "logs", *containers[:1]]) if containers else None
         return (logs.stdout + logs.stderr) if logs else ""
 
-    def service_is_down(self) -> bool:
-        """The service is not running: its container exited, or waits between restarts."""
+    def service_state(self) -> dict | None:
+        """The service container's State, or None while there is no container; a failed listing or
+        inspection raises."""
         containers = self.service_containers()
         if not containers:
-            return True
-        state = json.loads(
-            self.run(["docker", "inspect", "--format", "{{json .State}}", containers[0]]).stdout
-        )
-        return not state["Running"] or state["Restarting"]
+            return None
+        inspected = self.run(["docker", "inspect", "--format", "{{json .State}}", containers[0]])
+        try:
+            return json.loads(inspected.stdout)
+        except json.JSONDecodeError as problem:
+            raise ProbeFailed(
+                f"docker inspect gave no State: {inspected.stdout[:100]!r}"
+            ) from problem
 
     # --- the cells of a started service -------------------------------------------------------
 
@@ -451,17 +467,18 @@ class UnitProbe(Probe):
     # --- the cells that stop a start ----------------------------------------------------------
 
     def refused_start(self, cell: str, fields: list[str]) -> str:
-        """Starts the service as the current files and overlays have it and waits until its log
-        names every field and it is down: exited, or between restarts, and never listening;
-        returns the log."""
+        """Starts the service as the current files and overlays have it and waits until one
+        failed attempt is complete: the container is down with a non-zero exit, and its whole log,
+        read after that state, names every field and never listens; returns the log."""
         self.compose("up", "--detach", SERVICE, check=False, timeout=300)
         deadline = time.monotonic() + REFUSAL_SECONDS
         logs = ""
         while time.monotonic() < deadline:
-            logs = self.service_logs()
-            if all(field in logs for field in fields) and self.service_is_down():
-                expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
-                return logs
+            state = self.service_state()
+            if state is not None and ended_unsuccessfully(state):
+                logs = self.service_logs()
+                if refusal_is_complete(cell, logs, fields):
+                    return logs
             time.sleep(1)
         raise ProbeFailed(f"{cell}: no refused start naming {fields}: {logs[-300:]!r}")
 
