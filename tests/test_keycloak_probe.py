@@ -750,3 +750,30 @@ def test_an_app_client_is_accepted_with_its_callbacks_in_another_order(probe: Mo
     imported = ImportedClients(imported_client(client, redirectUris=list(client.callbacks)[::-1]))
 
     probe.Probe.app_client_representation(imported, client)
+
+
+@pytest.mark.parametrize(
+    ("changes", "accepted"),
+    [
+        pytest.param({}, True, id="a correct workload token"),
+        pytest.param({"client_id": None}, False, id="client_id missing"),
+        pytest.param({"client_id": "hopin"}, False, id="client_id naming the other app"),
+        pytest.param({"azp": "hopin"}, False, id="azp naming the other app"),
+        pytest.param({"groups": ["/ki-abo"]}, False, id="a group on the token"),
+        pytest.param({"groups": []}, True, id="empty groups"),
+        pytest.param({"aud": ["account"]}, False, id="the agent-service audience missing"),
+        pytest.param({"realm_access": {"roles": []}}, False, id="the workload role missing"),
+    ],
+)
+def test_a_token_is_the_workload_identity_only_with_role_audience_client_and_no_group(
+    probe: ModuleType, changes: dict[str, object], accepted: bool
+) -> None:
+    claims = {
+        "realm_access": {"roles": [probe.AGENT_WORKLOAD_ROLE]},
+        "aud": [probe.AGENT_SERVICE],
+        "client_id": "songmaker",
+        "azp": "songmaker",
+    } | changes
+    claims = {key: value for key, value in claims.items() if value is not None}
+
+    assert probe.is_workload_identity_of(claims, "songmaker") is accepted

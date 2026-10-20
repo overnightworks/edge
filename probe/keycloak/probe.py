@@ -308,6 +308,19 @@ def audience_of(access: dict[str, Any]) -> list[str]:
     return [audience] if isinstance(audience, str) else audience
 
 
+def is_workload_identity_of(access: dict[str, Any], client_id: str) -> bool:
+    """The shape agent-service accepts: the workload role and audience, `client_id` and `azp`
+    both naming the app, and no group."""
+    roles = access.get("realm_access", {}).get("roles", [])
+    return (
+        AGENT_WORKLOAD_ROLE in roles
+        and AGENT_SERVICE in audience_of(access)
+        and access.get("client_id") == client_id
+        and access.get("azp") == client_id
+        and not access.get("groups")
+    )
+
+
 # --- The throwaway stack --------------------------------------------------------------------
 
 
@@ -1748,13 +1761,10 @@ class Probe:
         roles = access.get("realm_access", {}).get("roles", [])
         lifespan = access["exp"] - access["iat"]
         expect(
-            AGENT_WORKLOAD_ROLE in roles
-            and AGENT_SERVICE in audience_of(access)
-            and access.get("azp") == name
-            and not override
-            and lifespan == realm_lifespan,
+            is_workload_identity_of(access, name) and not override and lifespan == realm_lifespan,
             f"{name}'s workload token has realm roles {roles}, aud {audience_of(access)}, "
-            f"azp {access.get('azp')}, lifespan {lifespan}s (realm {realm_lifespan}s, client "
+            f"client_id {access.get('client_id')}, azp {access.get('azp')}, groups "
+            f"{access.get('groups')}, lifespan {lifespan}s (realm {realm_lifespan}s, client "
             f"override {override})",
         )
 

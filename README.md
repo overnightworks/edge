@@ -1285,9 +1285,10 @@ scratch secret that ends in an ID token with the member's group (`/apps/songmake
 `client_credentials` (hopin only) and the `offline_access` scope refused (a client has no optional
 scope), and an end-session page for its registered logout address only (10). Proof 10 also holds
 the agent workload shape (#183): songmaker's and presentator's `client_credentials` token carries
-the realm role `agent-workload`, the `agent-service` audience, `azp` equal to the client and at
-the realm's access token lifespan (300 s, with no client override) to live; a person's token from the same login has the audience and groups and never the
-role; `agent-service` keeps every flow off. Proof 7 also looks for each client secret and its
+the realm role `agent-workload`, the `agent-service` audience, `client_id` and `azp` equal to the
+client, no group, and the realm's access token lifespan (300 s, with no client override); a
+person's token from the same login has the audience and groups and never the role;
+`agent-service` keeps every flow off. Proof 7 also looks for each client secret and its
 tokens.
 
 ## Interne CA
