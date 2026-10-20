@@ -327,6 +327,17 @@ einer Aussage der cloudflared-Maintainer). Den Wechsel macht der Betreiber
 (overnightworks/edge#168); dieser Absatz verspricht nicht, dass `apply` ihn
 ausloest.
 
+`apply` setzt auch HSTS der Zone (`cloudflare_zone_setting.hsts`, `security_header`):
+`max-age=31536000; includeSubDomains; preload`, auf dem Apex und jeder Subdomain. Die
+Einstellung allein veroeffentlicht nichts; die Preload-Liste der Browser kennt die Domain erst
+nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Schritte danach:
+
+1. `edge apply`; die Publish-Phase wendet die Einstellung an.
+2. `curl -sI` auf Apex, `www` und `auth` zeigt genau eine HSTS-Zeile mit `preload`. Sind es zwei,
+   verwerfen zuerst die Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
+3. Die API von hstspreload.org meldet keinen Fehler.
+4. Der Betreiber sendet das Formular auf hstspreload.org ab.
+
 ## Dienste an und aus
 
 `fleet.yaml` ist der Katalog. Ein Eintrag mit `run` und ohne `repo` ist eine Einheit
