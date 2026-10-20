@@ -1,8 +1,0 @@
-claim_id = "880db656b79a4d409de6b5aa2d1b199d"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b2ff32172ca67da8a40e05ef3e216f1d32973546"
-branch = "claude/issue-195-secret-modes"
-scope = ["docs/architecture.md", "docs/home.md", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_view.py", "tests/home/test_secrets_view.py"]
-opened_commit = "5ad8f6dc1e09c3eded7db0814a7ed790618db516"
-whole_reason = "One mechanism, a declared mode per manifest entry, and the entries of the two units that need it."
