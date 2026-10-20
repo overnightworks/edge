@@ -581,5 +581,5 @@ uv run python scripts/check_root_layout.py   # was im Wurzelverzeichnis liegen d
 `src/home_tools/` und `scripts/check_root_layout.py` halten 100 %
 Zeilen- und Branch-Abdeckung; `fail_under = 100` in `pyproject.toml` lässt
 jeden Coverage-Lauf rot werden, der darunter bleibt. Die Layout-Prüfung hält
-das Wurzelverzeichnis auf der Allowlist, die `AGENTS.md` beschreibt.
+das Wurzelverzeichnis auf der Allowlist, die der globale Vertrag unter „Repository layout“ beschreibt.
 `.github/workflows/ci.yml` fährt alles bei jedem Push und Pull Request.
