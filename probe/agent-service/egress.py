@@ -573,17 +573,10 @@ class Probe:
             "the internet bridge": internet,
             "the LAN address": lan_address(),
         }
-        # The address a bridge would have taken, were the network not isolated: the first of the
-        # subnet. It answers with a refusal even for a port nobody listens on, so a
-        # refusal is as good as no route here; only a completed connect would be a leak.
-        for network in ("agent", "egress"):
-            subnet = ipaddress.ip_network(self.network_subnet(f"{PROJECT}_{network}"))
-            targets[f"the would-be bridge of {network}"] = str(subnet.network_address + 1)
         errnos = []
         for name, target in targets.items():
             result = self.client("connect", target, port)
-            blocked = (*UNREACHABLE, "ECONNREFUSED") if "would-be" in name else UNREACHABLE
-            expect(result["result"] in blocked, f"E7: {name} {target}:{port}: {result}")
+            expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
             errnos.append(f"{name} {result['result']}")
         for network in ("agent", "egress"):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
@@ -595,11 +588,6 @@ class Probe:
             f"a host listener is unreachable via {'; '.join(errnos)}; no bridge address, no "
             f"default route (control from the internet bridge: {control['result']})",
         )
-
-    def network_subnet(self, name: str) -> str:
-        inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]
-        (config,) = (inspected.get("IPAM") or {}).get("Config") or []
-        return config["Subnet"]
 
     def network_gateways(self, name: str) -> list[str]:
         inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]

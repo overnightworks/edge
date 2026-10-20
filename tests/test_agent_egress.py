@@ -203,9 +203,13 @@ def probe_module(name: str) -> Iterator[ModuleType]:
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    spec.loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    path_before = list(sys.path)  # egress.py inserts its own directory
+    try:
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        sys.path[:] = path_before
+        del sys.modules[spec.name]
 
 
 @pytest.fixture(scope="module")
@@ -273,8 +277,8 @@ def ipv6(next_header: int, body: bytes) -> bytes:
     return ethernet(0x86DD, header + source + destination + body)
 
 
-def ipv4_header(protocol: int, body: bytes) -> bytes:
-    fields = (0x45, 0, 20 + len(body), 0, 0, 64, protocol, 0, bytes(4), bytes(4))
+def ipv4_header(protocol: int, body: bytes, fragment: int = 0) -> bytes:
+    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), bytes(4))
     return struct.pack("!BBHHHBBH4s4s", *fields) + body
 
 
@@ -311,18 +315,29 @@ def test_an_ipv6_frame_behind_extension_headers_without_ports_is_no_gap(capture)
     assert parse(capture, frame) is None
 
 
+MORE_FRAGMENTS = 0x2000
+CUT_EXTENSION = struct.pack("!BB", 58, 3) + bytes(6)  # declares 32 bytes, 8 captured
+
+
 @pytest.mark.parametrize(
-    ("next_header", "body"),
+    "frame",
     [
-        pytest.param(44, extension_header(6, "fragment") + bytes(20), id="a later fragment"),
-        pytest.param(0, bytes(3), id="a chain cut off by the snap length"),
+        pytest.param(
+            ipv6(44, extension_header(6, "fragment") + bytes(20)), id="an IPv6 later fragment"
+        ),
+        pytest.param(ipv6(0, bytes(3)), id="a chain cut off by the snap length"),
+        pytest.param(ipv6(0, CUT_EXTENSION), id="an extension cut short of its declared length"),
+        pytest.param(
+            ethernet(0x0800, ipv4_header(17, bytes(16), MORE_FRAGMENTS)),
+            id="an IPv4 first fragment",
+        ),
+        pytest.param(ethernet(0x0800, ipv4_header(17, bytes(4))), id="a short UDP header"),
+        pytest.param(ethernet(0x0800, ipv4_header(6, bytes(12))), id="a short TCP header"),
     ],
 )
-def test_an_ipv6_frame_whose_ports_cannot_be_reached_makes_the_dns_window_incomplete(
-    capture, next_header, body
-):
+def test_a_frame_whose_ports_cannot_be_reached_makes_the_dns_window_incomplete(capture, frame):
     """E10: DNS the window cannot decode is counted, so the control cannot cover for it."""
-    segment = parse(capture, ipv6(next_header, body))
+    segment = parse(capture, frame)
     window = capture.Window()
 
     window.see(segment, ["label"])

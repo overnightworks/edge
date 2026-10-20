@@ -55,6 +55,8 @@ ETHERTYPE_IPV4 = 0x0800
 ETHERTYPE_IPV6 = 0x86DD
 IPV6_HEADER_BYTES = 40
 UDP_HEADER_BYTES = 8
+TCP_HEADER_BYTES = 20
+IPV4_FRAGMENT_BITS = 0x3FFF  # More Fragments and the fragment offset
 TCP_SYN, TCP_ACK = 0x02, 0x10
 PROTOCOL_TCP, PROTOCOL_UDP = 6, 17
 IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_FRAGMENT = 0, 43, 44
@@ -124,6 +126,8 @@ def ipv6_transport(frame: bytes, start: int) -> tuple[int, bytes] | None:
             length = (frame[at + 1] + 2) * 4
         else:
             length = (frame[at + 1] + 1) * 8
+        if at + length > len(frame):
+            return None
         protocol, at = frame[at], at + length
     return None
 
@@ -150,6 +154,11 @@ def parse(
         protocol = frame[offset + 9]
         destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16 : offset + 20])
         transport = frame[offset + (frame[offset] & 0x0F) * 4 :]
+        if struct.unpack_from("!H", frame, offset + 6)[0] & IPV4_FRAGMENT_BITS:
+            # Not reassembled: a fragment of a TCP or UDP datagram is a gap, and fails closed.
+            if protocol in (PROTOCOL_TCP, PROTOCOL_UDP):
+                return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
+            return None
     elif version == 6:
         destination = socket.inet_ntop(socket.AF_INET6, frame[offset + 24 : offset + 40])
         if (reached := ipv6_transport(frame, offset)) is None:
@@ -157,13 +166,13 @@ def parse(
         protocol, transport = reached
     else:
         return None
-    if protocol not in (PROTOCOL_TCP, PROTOCOL_UDP) or len(transport) < UDP_HEADER_BYTES:
+    if protocol not in (PROTOCOL_TCP, PROTOCOL_UDP):
         return None
+    if len(transport) < (TCP_HEADER_BYTES if protocol == PROTOCOL_TCP else UDP_HEADER_BYTES):
+        return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
     source_port, destination_port = struct.unpack_from("!HH", transport)
     flags, payload, partial = 0, transport[UDP_HEADER_BYTES:], False
     if protocol == PROTOCOL_TCP:
-        if len(transport) < 20:
-            return None
         flags, payload = transport[13], transport[(transport[12] >> 4) * 4 :]
         if DNS_PORT in (source_port, destination_port) and payload:
             # DNS over TCP: a two-byte length comes first, and one whole message follows it.
