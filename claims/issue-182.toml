@@ -1,8 +1,0 @@
-claim_id = "1ab531b7a7eb46cc9751c0f0f995ff0f"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b1897a948f3d8ec68b6f82f46013f56c9da2191c"
-branch = "claude/issue-182-no-github-token-until-x2"
-scope = [".github/workflows/ci.yml", "README.md", "docs/home.md", "external/.terraform.lock.hcl", "external/main.tf", "external/tests", "src/edge/cli.py", "src/edge/external/cli.py", "src/edge/external/secrets.py", "src/edge/external/tofu_test.py", "src/home_tools/secrets_manifest.toml", "tests/home/test_secrets_view.py", "tests/test_edge_external.py", "tests/test_edge_tofu_test.py"]
-opened_commit = "e058d1b9c6794c6fc9d0a489a7466e2ab734a372"
-whole_reason = "The provider, the token requirement, the tofu test guard and its mocks, the CI override proof, the CLI help, the manifest, README and docs/home.md say one thing"
