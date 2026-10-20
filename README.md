@@ -1273,7 +1273,9 @@ verifiers, authorization codes and session cookies) in the `Config.Env` of any
 container it ran (the bootstrap Keycloak and every keycloak-config-cli run
 included), in any compose, apply or service log output, or in its own output
 (7), the realm settings as decided, with admin events that carry no client
-representation (8), and the songmaker, hopin and presentator clients: a PKCE sign-in with the
+representation (8), a sign-in and a wrong password that store exactly one LOGIN and one
+LOGIN_ERROR event with the same IP address and a logout that stores none (EV2), and the
+songmaker, hopin and presentator clients: a PKCE sign-in with the
 scratch secret that ends in an ID token with the member's group (`/apps/songmaker/admin`,
 `/apps/hopin`, `/apps/presentator/admin`), an exact callback, the password grant,
 `client_credentials` and the `offline_access` scope refused (a client has no optional scope), and

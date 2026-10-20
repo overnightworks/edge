@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import importlib.machinery
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -279,6 +280,24 @@ def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
         f"{url} is not https on {PUBLIC_HOST}",
     )
     return through_tunnel(method, urlunsplit(("", "", target.path, target.query, "")), **kwargs)
+
+
+def stored_event_types(events: list[dict[str, Any]]) -> list[str]:
+    """The sorted types of stored user events, each proven to carry the request's IP address.
+
+    The address Keycloak sees is the edge container's on the probe network, which the probe does
+    not know, so the proof is a parseable address that is the same on every event.
+    """
+    addresses = set()
+    for event in events:
+        address = event.get("ipAddress")
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            raise ProbeFailure(f"the stored {event['type']} event carries no IP address") from None
+        addresses.add(address)
+    expect(len(addresses) <= 1, f"the stored events carry different IP addresses {addresses}")
+    return sorted(event["type"] for event in events)
 
 
 def claims(jwt: str) -> dict[str, Any]:
@@ -1575,14 +1594,15 @@ class Probe:
             },
         )
         expect(logout.status == 204, f"the logout answered {logout.status}")
-        stored = sorted(event["type"] for event in admin.get(f"/{REALM}/events?user={user_id}"))
+        stored = stored_event_types(admin.get(f"/{REALM}/events?user={user_id}"))
         expect(
             stored == ["LOGIN", "LOGIN_ERROR"],
             f"probe-events has the stored events {stored}, not one LOGIN and one LOGIN_ERROR",
         )
         self.held(
             "EV2",
-            "a sign-in stored one LOGIN, a wrong password one LOGIN_ERROR, a logout none",
+            "a sign-in stored one LOGIN, a wrong password one LOGIN_ERROR, both with the "
+            "same request IP address, a logout none",
         )
 
     def app_client(self, admin: Admin, client: AppClient) -> None:

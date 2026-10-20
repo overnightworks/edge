@@ -713,3 +713,28 @@ def test_an_app_client_is_accepted_only_with_exactly_its_default_scopes_and_call
     else:
         with pytest.raises(probe.ProbeFailure):
             check(imported, probe.PRESENTATOR)
+
+
+@pytest.mark.parametrize(
+    ("login_address", "error_address", "accepted"),
+    [
+        ("172.20.0.5", "172.20.0.5", True),
+        (None, "172.20.0.5", False),
+        ("172.20.0.5", None, False),
+        (None, None, False),
+        ("", "", False),
+        ("172.20.0.5", "172.20.0.6", False),
+    ],
+)
+def test_the_stored_login_events_must_both_carry_the_same_request_ip_address(
+    probe: ModuleType, login_address: str | None, error_address: str | None, accepted: bool
+) -> None:
+    events = [
+        {"type": "LOGIN_ERROR", "ipAddress": error_address},
+        {"type": "LOGIN", "ipAddress": login_address},
+    ]
+    if accepted:
+        assert probe.stored_event_types(events) == ["LOGIN", "LOGIN_ERROR"]
+    else:
+        with pytest.raises(probe.ProbeFailure):
+            probe.stored_event_types(events)
