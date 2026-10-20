@@ -343,7 +343,7 @@ nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Sc
 3. `https://hstspreload.org/api/v2/preloadable?domain=hallucinai.de` meldet keinen Fehler.
 4. Der Betreiber sendet das Formular auf hstspreload.org ab.
 
-Zuruecknehmen heisst `enabled = false` setzen und anwenden, nicht den Block loeschen.
+Vor Schritt 4 (dem Absenden) setzt du `enabled = false` und wendest es an; den Block zu loeschen ist nicht belegt als Zuruecksetzen der Einstellung bei Cloudflare. Nach dem Absenden reicht `enabled = false` nicht, denn die Domain bleibt auf den Preload-Listen der Browser, bis sie entfernt ist: dazu den Header ohne `preload` ausliefern, das Formular auf https://hstspreload.org/removal/ absenden und fuer die Monate bis zur Entfernung gueltiges HTTPS auf jeder Subdomain halten; Browser, die den Header gesehen haben, behalten ihn bis zum Ablauf seines max-age.
 
 ## Dienste an und aus
 
