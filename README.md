@@ -332,11 +332,18 @@ ausloest.
 Einstellung allein veroeffentlicht nichts; die Preload-Liste der Browser kennt die Domain erst
 nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Schritte danach:
 
-1. `edge apply`; die Publish-Phase wendet die Einstellung an.
-2. `curl -sI` auf Apex, `www` und `auth` zeigt genau eine HSTS-Zeile mit `preload`. Sind es zwei,
-   verwerfen zuerst die Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
-3. Die API von hstspreload.org meldet keinen Fehler.
+0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`,
+   `fleet-write`: `Zone › Zone Settings › Edit`) das Recht dazu, vor `edge apply`. Das Aendern der
+   Rechte behaelt den Wert des Tokens, an den Dateien aendert sich nichts.
+1. `edge apply`; die Publish-Phase wendet die Einstellung an. Danach meldet `edge external plan`
+   "No changes".
+2. `curl -sI https://hallucinai.de/ | grep -ci '^strict-transport-security'` liefert 1, ebenso fuer
+   `www` und `auth` (Gross-/Kleinschreibung egal). Sind es zwei, verwerfen zuerst die
+   Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
+3. `https://hstspreload.org/api/v2/preloadable?domain=hallucinai.de` meldet keinen Fehler.
 4. Der Betreiber sendet das Formular auf hstspreload.org ab.
+
+Zuruecknehmen heisst `enabled = false` setzen und anwenden, nicht den Block loeschen.
 
 ## Dienste an und aus
 
