@@ -93,8 +93,9 @@ commands; `hal <command> --help` shows one. The commands:
   exactly what `edge apply [--closed]`, `edge stop <unit>`, `edge start <unit>`,
   `edge stop --all` and `edge start --all` do: the same guards, prompts, state files and lines.
   `hal offline` stops the tunnel (no terminal needed); `hal online` reopens it once every unit
-  barrier is proven. `stop` and `offline` never ask; `apply`, `start` and `online` need a terminal
-  and the exact `yes`. There is no `-y` and no `--json` on these five.
+  barrier is proven. `stop` and `offline` ask for no confirmation from hal (without a terminal,
+  `offline` suppresses password prompts with `--no-ask-password`); `apply`, `start` and `online`
+  need a terminal and the exact `yes`. There is no `-y` and no `--json` on these five.
   Agents run `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`.
 
 Every command ends with one of these exit codes:

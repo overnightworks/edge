@@ -381,6 +381,7 @@ def test_apply_from_a_checkout_that_is_not_a_clean_main_is_refused(hal, applying
     result = hal("apply", answers=("yes",))
 
     assert result.exit_code == ExitCode.FAILURE
+    assert "runs only on main" in result.err
     assert "nothing published" in result.err
     assert applying.scripted.changing_verbs() == []
     assert applying.publish_never_began()
@@ -646,10 +647,14 @@ def test_online_with_the_barriers_proven_reopens_the_tunnel(
     hal, fakes, stopped_tunnel, systemd, marks
 ):
     """N1"""
+    fakes.probe_switched_off_behind_a_barrier()
+
     result = hal("online", answers=("yes",))
 
     assert result.exit_code == ExitCode.OK
+    assert "the barrier of probe is proven" in result.text
     assert "the tunnel is open; unit switches and barriers stay" in result.text
+    assert marks.mark("probe") is not None
     assert systemd.active
     assert marks.global_mark() is None
 

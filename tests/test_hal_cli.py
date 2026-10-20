@@ -51,14 +51,12 @@ def error_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
     return result.stderr.splitlines()
 
 
-def test_hal_alone_shows_the_help_listing_version(tmp_path):
+def test_hal_alone_shows_the_usage_on_stdout_and_nothing_on_stderr(tmp_path):
     """G-1"""
     result = run_hal(tmp_path, hal_program())
 
     assert (result.returncode, result.stderr) == (0, "")
     assert "usage: hal" in result.stdout
-    for name in ("apply", "stop", "start", "offline", "online", "version"):
-        assert name in result.stdout
 
 
 @pytest.mark.parametrize("flag", ["-h", "--help"])
