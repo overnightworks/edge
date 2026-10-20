@@ -1,0 +1,453 @@
+"""The agent service's egress as files, no containers (#189 cell E16): compose.yaml, the gateway's
+static and dynamic files and the probe overlay.
+
+The running paths are proven by probe/agent-service/egress.py; these tests hold the static facts
+the probe does not see: every network a member of the agent attachments joins is internal and
+isolated, the gateway is the only service with a route out, and the names the service resolves are
+the names the gateway passes. The packet windows of capture.py and the SYN verdict of egress.py are
+pure logic, checked here on synthetic frames.
+"""
+
+import importlib.util
+import re
+import socket
+import struct
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+PROBE = ROOT / "probe" / "agent-service"
+GATEWAY = "agent-egress"
+STAND_IN = "agent-probe"
+OBSERVER = "realm-observer"
+ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+HOST_SNI = re.compile(r"HostSNI\(`([^`]+)`\)")
+
+
+def load(path: str):
+    return yaml.safe_load((ROOT / path).read_text())
+
+
+@pytest.fixture(scope="module")
+def compose() -> dict:
+    return load("compose.yaml")
+
+
+@pytest.fixture(scope="module")
+def overlay() -> dict:
+    return load("probe/agent-service/compose.probe.yaml")
+
+
+@pytest.fixture(scope="module")
+def routers() -> dict:
+    return load("agent-service/egress/dynamic/allowed.yml")["tcp"]["routers"]
+
+
+@pytest.fixture(scope="module")
+def attachments(compose) -> dict:
+    return compose["x-agent-attachments"]
+
+
+@pytest.fixture(scope="module")
+def passed_names(routers) -> set[str]:
+    return {HOST_SNI.fullmatch(router["rule"]).group(1) for router in routers.values()}
+
+
+def test_every_network_of_the_agent_attachments_is_internal_and_isolated(compose, attachments):
+    """E16: the service and the stand-in join only networks with no route out or host address."""
+    joined = {name: compose["networks"][name] for name in attachments["networks"]}
+
+    assert set(joined) == {"agent", "egress"}
+    for network in joined.values():
+        assert network["internal"] is True
+        assert network["driver_opts"] == ISOLATED_MODE
+
+
+def test_the_stand_in_carries_the_attachments_and_nothing_else_of_the_network(compose, attachments):
+    """E16: the stand-in merges the one anchor; it adds no port, no network mode, no network."""
+    stand_in = compose["services"][STAND_IN]
+
+    assert stand_in["networks"] == attachments["networks"]
+    assert stand_in["extra_hosts"] == attachments["extra_hosts"]
+    assert not {"ports", "network_mode", "expose"} & stand_in.keys()
+
+
+def test_the_gateway_is_the_only_service_on_internet(compose):
+    """E16: one route out, and it is the gateway's."""
+    on_internet = [
+        name
+        for name, service in compose["services"].items()
+        if "internet" in (service.get("networks") or [])
+    ]
+
+    assert on_internet == [GATEWAY]
+    assert compose["networks"]["internet"].get("internal") is not True
+    assert "ports" not in compose["services"][GATEWAY]
+    assert "network_mode" not in compose["services"][GATEWAY]
+    sharing = [
+        name
+        for name, service in compose["services"].items()
+        if GATEWAY in service.get("network_mode", "")
+    ]
+    assert sharing == []
+
+
+def test_the_gateway_cannot_reach_the_docker_api_and_adds_nothing_to_its_hardening(compose):
+    """E16: no socket, no socket-proxy, a file provider only, no capability, two networks."""
+    gateway = compose["services"][GATEWAY]
+    static_config = load("agent-service/egress/traefik.yml")
+
+    assert not any(
+        "docker.sock" in volume or "socket-proxy" in volume for volume in gateway["volumes"]
+    )
+    assert "socket-proxy" not in gateway.get("depends_on", {})
+    assert set(static_config["providers"]) == {"file"}
+    assert "cap_add" not in gateway
+    assert set(gateway["networks"]) == {"egress", "internet"}
+
+
+def test_the_names_the_service_resolves_are_the_names_the_gateway_passes(attachments, passed_names):
+    """E16: extra_hosts and the gateway's HostSNI names are one list, at the gateway's address."""
+    assert set(attachments["extra_hosts"]) == passed_names
+    assert set(attachments["extra_hosts"].values()) == {"172.31.252.10"}
+
+
+def test_the_gateways_address_stands_in_compose_and_in_its_static_file(compose):
+    """E16: x-egress-address is the gateway's address on egress and the one entrypoint's host."""
+    address = compose["x-egress-address"]
+    entrypoints = load("agent-service/egress/traefik.yml")["entryPoints"]
+
+    assert compose["services"][GATEWAY]["networks"]["egress"] == {"ipv4_address": address}
+    assert [entrypoint["address"] for entrypoint in entrypoints.values()] == [f"{address}:443"]
+    subnet = compose["networks"]["egress"]["ipam"]["config"][0]["subnet"]
+    assert subnet == "172.31.252.0/24"
+
+
+def test_the_gateway_shares_the_public_traefiks_image_and_hardening(compose):
+    """E16: one image digest and one hardening for every Traefik instance."""
+    shared = ("image", "user", "read_only", "cap_drop", "security_opt")
+    public = compose["services"]["traefik"]
+
+    assert {key: compose["services"][GATEWAY][key] for key in shared} == {
+        key: public[key] for key in shared
+    }
+
+
+def test_the_gateway_starts_only_with_the_agent_service_profile(compose):
+    """No plain `docker compose up -d` starts the gateway or the stand-in."""
+    assert compose["services"][GATEWAY]["profiles"] == ["agent-service"]
+    assert compose["services"][STAND_IN]["profiles"] == ["agent-probe"]
+
+
+def test_the_gateways_static_file_keeps_global_and_log_of_the_public_traefik_and_no_api():
+    """E16: version check and telemetry stay off, and api, ping and metrics stay absent."""
+    public, gateway = load("traefik.yml"), load("agent-service/egress/traefik.yml")
+
+    assert {key: gateway[key] for key in ("global", "log")} == {
+        key: public[key] for key in ("global", "log")
+    }
+    assert not {"api", "ping", "metrics"} & gateway.keys()
+
+
+def test_every_router_passes_its_name_through_to_that_name_on_443(routers):
+    """The gateway holds no key: each router passes TLS through to the host it matched."""
+    services = load("agent-service/egress/dynamic/allowed.yml")["tcp"]["services"]
+
+    assert routers
+    for router in routers.values():
+        (server,) = services[router["service"]]["loadBalancer"]["servers"]
+        assert router["tls"] == {"passthrough": True}
+        assert server["address"] == f"{HOST_SNI.fullmatch(router['rule']).group(1)}:443"
+
+
+def test_an_unmatched_or_missing_sni_is_refused_in_the_gateway():
+    """No catch-all router exists, and the default TLS options refuse an unknown name."""
+    allowed = load("agent-service/egress/dynamic/allowed.yml")
+
+    assert allowed["tls"]["options"]["default"]["sniStrict"] is True
+    assert all(HOST_SNI.fullmatch(router["rule"]) for router in allowed["tcp"]["routers"].values())
+
+
+@pytest.mark.parametrize("service", ["capture-egress", "capture-host"])
+def test_a_capture_service_runs_the_observers_pin_with_net_raw_alone(compose, overlay, service):
+    """The packet windows use the realm observer's image and add one capability to none."""
+    capture = overlay["services"][service]
+
+    assert capture["image"] == compose["services"][OBSERVER]["image"]
+    assert capture["cap_drop"] == ["ALL"]
+    assert capture["cap_add"] == ["NET_RAW"]
+    assert capture["read_only"] is True
+    assert capture["volumes"] == ["./probe/agent-service/capture.py:/probe/capture.py:ro"]
+    assert "ports" not in capture
+
+
+def test_the_capture_windows_watch_the_gateways_namespace_and_the_hosts(overlay):
+    """capture-egress joins the gateway's namespace; capture-host the host's."""
+    services = overlay["services"]
+
+    assert services["capture-egress"]["network_mode"] == f"service:{GATEWAY}"
+    assert services["capture-host"]["network_mode"] == "host"
+
+
+# --- the packet windows' pure logic, on synthetic frames --------------------------------------
+
+
+def probe_module(name: str) -> Iterator[ModuleType]:
+    spec = importlib.util.spec_from_file_location(f"agent_probe_{name}", PROBE / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
+    path_before = list(sys.path)  # egress.py inserts its own directory
+    try:
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        sys.path[:] = path_before
+        del sys.modules[spec.name]
+
+
+@pytest.fixture(scope="module")
+def capture() -> Iterator[ModuleType]:
+    yield from probe_module("capture")
+
+
+@pytest.fixture(scope="module")
+def egress() -> Iterator[ModuleType]:
+    yield from probe_module("egress")
+
+
+CONTROL_DESTINATION = "203.0.113.7"
+OTHER_DESTINATION = "198.51.100.9"
+CONTROL_STARTED = 100.0
+
+
+def syn(at: float, destination: str, port: int = 443) -> dict:
+    return {"at": at, "interface": "eth1", "destination": destination, "port": port}
+
+
+@pytest.mark.parametrize(
+    ("syns", "early", "stray", "control_seen"),
+    [
+        pytest.param([syn(101.0, CONTROL_DESTINATION)], [], [], True, id="the control alone"),
+        pytest.param(
+            [syn(99.9, OTHER_DESTINATION), syn(101.0, CONTROL_DESTINATION)],
+            [(OTHER_DESTINATION, 443)], [], True,
+            id="a forbidden SYN the kernel stamped before the control, read late",
+        ),
+        pytest.param(
+            [syn(101.0, CONTROL_DESTINATION), syn(102.0, OTHER_DESTINATION)],
+            [], [(OTHER_DESTINATION, 443)], True,
+            id="a SYN to another destination after the control started",
+        ),
+        pytest.param(
+            [syn(101.0, CONTROL_DESTINATION, 80)],
+            [], [(CONTROL_DESTINATION, 80)], False,
+            id="the control's address on another port",
+        ),
+        pytest.param([], [], [], False, id="no SYN at all"),
+    ],
+)  # fmt: skip
+def test_the_syn_window_is_judged_by_kernel_time_and_destination(
+    egress, syns, early, stray, control_seen
+):
+    """E3-E5: only the control's SYN, to the provider's addresses on 443, may follow its start."""
+    verdict = egress.classify_syns(syns, CONTROL_STARTED, {CONTROL_DESTINATION})
+
+    assert verdict == (early, stray, control_seen)
+
+
+def ethernet(ethertype: int, packet: bytes) -> bytes:
+    return bytes(12) + struct.pack("!H", ethertype) + packet
+
+
+def tcp(source_port: int, destination_port: int, flags: int, payload: bytes = b"") -> bytes:
+    header = struct.pack("!HHIIBBHHH", source_port, destination_port, 0, 0, 5 << 4, flags, 0, 0, 0)
+    return header + payload
+
+
+def ipv6(next_header: int, body: bytes) -> bytes:
+    source, destination = socket.inet_pton(socket.AF_INET6, "::1"), bytes(15) + b"\x02"
+    header = struct.pack("!IHBB", 6 << 28, len(body), next_header, 64)
+    return ethernet(0x86DD, header + source + destination + body)
+
+
+def ipv4_header(protocol: int, body: bytes, fragment: int = 0) -> bytes:
+    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), bytes(4))
+    return struct.pack("!BBHHHBBH4s4s", *fields) + body
+
+
+def extension_header(next_header: int, kind: str) -> bytes:
+    if kind == "fragment":  # a later fragment: the offset is 8 units
+        return struct.pack("!BBHI", next_header, 0, 8 << 3, 1)
+    return struct.pack("!BB", next_header, 0) + bytes(6)  # hop-by-hop options
+
+
+def long_options(next_header: int, length: int) -> bytes:
+    """One destination-options header of `length` bytes (a multiple of 8), then `next_header`."""
+    return struct.pack("!BB", next_header, length // 8 - 1) + bytes(length - 2)
+
+
+def udp(source_port: int, destination_port: int, payload: bytes) -> bytes:
+    return struct.pack("!HHHH", source_port, destination_port, 8 + len(payload), 0) + payload
+
+
+def tcp_with_options(payload: bytes) -> bytes:
+    """A DNS-over-TCP segment whose header declares 60 bytes (data offset 15)."""
+    header = struct.pack("!HHIIBBHHH", 40000, 53, 0, 0, 15 << 4, 0x18, 0, 0, 0) + bytes(40)
+    return header + struct.pack("!H", len(payload)) + payload
+
+
+def dns_message(name: str) -> bytes:
+    labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
+    return struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
+
+
+def parse(capture, frame: bytes):
+    return capture.parse(frame, "eth0", capture.PACKET_OUTGOING, capture.ARPHRD_ETHER, 5.0)
+
+
+def test_a_syn_behind_ipv6_extension_headers_is_decoded_with_its_kernel_time(capture):
+    """E3-E5: a hop-by-hop header in front of the TCP header hides neither the SYN nor its time."""
+    body = extension_header(6, "options") + tcp(40000, 443, capture.TCP_SYN)
+
+    segment = parse(capture, ipv6(0, body))
+
+    assert (segment.protocol, segment.destination_port, segment.at) == (6, 443, 5.0)
+    assert segment.flags & capture.TCP_SYN
+    assert not segment.undecoded
+
+
+def test_an_ipv6_frame_behind_extension_headers_without_ports_is_no_gap(capture):
+    """E10: multicast listener reports (ICMPv6 behind hop-by-hop) are walked, not counted."""
+    frame = ipv6(0, extension_header(58, "options") + bytes(8))
+
+    assert parse(capture, frame) is None
+
+
+MORE_FRAGMENTS = 0x2000
+CUT_EXTENSION = struct.pack("!BB", 58, 3) + bytes(6)  # declares 32 bytes, 8 captured
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        pytest.param(
+            ipv6(44, extension_header(6, "fragment") + bytes(20)), id="an IPv6 later fragment"
+        ),
+        pytest.param(ipv6(0, bytes(3)), id="a chain cut off by the snap length"),
+        pytest.param(ipv6(0, CUT_EXTENSION), id="an extension cut short of its declared length"),
+        pytest.param(
+            ethernet(0x0800, ipv4_header(17, bytes(16), MORE_FRAGMENTS)),
+            id="an IPv4 first fragment",
+        ),
+        pytest.param(ethernet(0x0800, ipv4_header(17, bytes(4))), id="a short UDP header"),
+        pytest.param(ethernet(0x0800, ipv4_header(6, bytes(12))), id="a short TCP header"),
+        pytest.param(
+            ipv6(60, long_options(17, 1528) + udp(40000, 53, dns_message("a.b.c"))),
+            id="a UDP DNS message cut by the capture behind a long extension chain",
+        ),
+        pytest.param(
+            ipv6(60, long_options(6, 1520) + tcp_with_options(dns_message("a.b.c"))),
+            id="a TCP header whose options run past the captured bytes",
+        ),
+    ],
+)
+def test_a_frame_whose_ports_cannot_be_reached_makes_the_dns_window_incomplete(
+    capture, egress, frame
+):
+    """E10: DNS the window cannot decode is counted, so the control cannot cover for it."""
+    segment = parse(capture, frame[: capture.READ_BYTES])
+    window = capture.Window()
+
+    window.see(segment, ["label"])
+
+    assert segment.undecoded
+    assert window.undecoded == 1
+    result = {"drops": 0, "undecoded": window.undecoded, "ended_at": 9.0, "started_at": 0.0}
+    with pytest.raises(egress.NotDriven):
+        egress.Probe.complete({**result, "ended_by": "seconds", "frames": 1}, "E10", 5.0)
+
+
+def test_a_frame_the_kernel_truncated_on_port_53_is_undecoded(capture):
+    frame = ethernet(0x0800, ipv4_header(17, udp(40000, 53, dns_message("a.b.c"))))
+
+    segment = capture.parse(
+        frame, "eth0", capture.PACKET_OUTGOING, capture.ARPHRD_ETHER, 5.0, truncated=True
+    )
+
+    assert segment.undecoded
+
+
+@pytest.mark.parametrize(
+    ("cut", "undecoded"),
+    [(None, 0), (20, 1)],
+    ids=["one whole message", "a message split across segments"],
+)
+def test_a_tcp_dns_message_split_across_segments_makes_the_dns_window_incomplete(
+    capture, cut, undecoded
+):
+    """E10: the question of a split TCP message is not in its first segment alone."""
+    message = dns_message("label.example.com")
+    payload = struct.pack("!H", len(message)) + message[:cut]
+    frame = ethernet(0x0800, ipv4_header(6, tcp(40000, 53, capture.TCP_ACK, payload)))
+    segment = parse(capture, frame)
+    dns_window, syn_window = capture.Window(), capture.Window()
+
+    dns_window.see(segment, ["label"])
+    syn_window.see(segment, [])
+
+    assert dns_window.undecoded == undecoded
+    assert syn_window.undecoded == 0
+
+
+def filter_passes(capture, frame: bytes) -> bool:
+    """The kernel's verdict, replayed: the assembled DNS filter on one Ethernet frame."""
+    program = capture.assemble(capture.DNS_FILTER)
+    steps = [struct.unpack_from("HBBI", program, at) for at in range(0, len(program), 8)]
+    accumulator, index, at = 0, 0, 0
+    while True:
+        opcode, yes, no, operand = steps[at]
+        at += 1
+        if opcode == capture.LOAD_WORD:
+            accumulator = (
+                capture.ARPHRD_ETHER
+                if operand == capture.HARDWARE_TYPE_OFFSET
+                else struct.unpack_from("!I", frame, operand)[0]
+            )
+        elif opcode == capture.LOAD_HALF:
+            accumulator = struct.unpack_from("!H", frame, operand)[0]
+        elif opcode == capture.LOAD_HALF_INDEXED:
+            accumulator = struct.unpack_from("!H", frame, index + operand)[0]
+        elif opcode == capture.LOAD_BYTE:
+            accumulator = frame[operand]
+        elif opcode == capture.LOAD_HEADER_LENGTH_INTO_X:
+            index = 4 * (frame[operand] & 0x0F)
+        elif opcode == capture.JUMP_EQUAL:
+            at += yes if accumulator == operand else no
+        elif opcode == capture.JUMP_ANY_BIT:
+            at += yes if accumulator & operand else no
+        else:
+            return operand != capture.DROP_FRAME
+
+
+@pytest.mark.parametrize(
+    ("protocol", "body", "passes"),
+    [
+        pytest.param(6, tcp(40000, 53, 0x10), True, id="TCP port 53"),
+        pytest.param(6, tcp(40000, 80, 0x10), False, id="TCP port 80"),
+        pytest.param(58, bytes(8), False, id="ICMPv6 without a header chain"),
+        pytest.param(0, extension_header(6, "o") + tcp(40000, 53, 0x10), True, id="hop-by-hop"),
+        pytest.param(60, extension_header(17, "o") + bytes(8), True, id="destination options"),
+    ],
+)  # fmt: skip
+def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
+    capture, protocol, body, passes
+):
+    """E10: the filter cannot read ports behind an extension header, so it passes the chain on."""
+    assert filter_passes(capture, ipv6(protocol, body)) is passes

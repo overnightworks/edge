@@ -624,13 +624,21 @@ def test_the_checkouts_binds_are_read_by_what_edge_apply_does_with_them(with_fol
         bind(checkout / "keycloak", "/config"),
     ]
 
-    binds = core.checkout_binds(with_follower, checkout)
+    binds = core.checkout_binds(with_follower, checkout, {"step-ca", "keycloak"})
 
     assert binds == core.CheckoutBinds(
         live=frozenset({"dynamic", "mcp/dynamic"}),
         recreated=frozenset({TRAEFIK_FILE, FOLLOWER_FILE}),
         units=frozenset({"x.yml", "ca.json", "keycloak/entrypoint.sh", "keycloak"}),
     )
+
+
+def test_a_follower_whose_profile_is_no_catalog_unit_has_no_applied_binds(with_follower, checkout):
+    """#89 rule 5 with #98 rule 4: what edge apply never plans, it does not recreate."""
+    binds = core.checkout_binds(with_follower, checkout, {"keycloak"})
+
+    assert binds.recreated == frozenset({TRAEFIK_FILE})
+    assert {FOLLOWER_FILE, "mcp/dynamic"} <= binds.units
 
 
 @pytest.mark.parametrize(

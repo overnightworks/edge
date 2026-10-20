@@ -1576,6 +1576,26 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
     assert checkout_state(real_main) == before
 
 
+def test_a_waiting_file_of_a_follower_without_a_unit_is_not_applied_by_edge_apply(
+    switch, scripted, real_main, origin, bound
+):
+    """#89 rule 5 with #98 rule 4: a follower whose profile is no catalog unit is never planned,
+    so its static file is not recreated by edge apply, whatever Traefik's path it binds at."""
+    static_file = real_main / "agent-service" / "egress" / "traefik.yml"
+    scripted.config["services"]["agent-egress"] = {
+        "profiles": ["agent-service"],
+        "volumes": [bind(static_file, "/etc/traefik/traefik.yml")],
+    }
+    advance(origin, (b"gateway", {b"agent-service/egress/traefik.yml": b"entryPoints: {}\n"}))
+
+    _, out, _ = switch("no", git=checkout.run_git)
+
+    lines = [line.removeprefix(f"{apply.COMMAND}: ") for line in out.splitlines()]
+    not_applied = lines.index("  not applied by edge apply (block 6):")
+    assert lines[not_applied + 1] == "    A agent-service/egress/traefik.yml"
+    assert "  recreated by edge apply:" not in lines
+
+
 @pytest.mark.parametrize("waiting", [0, 2], ids=["B3 ahead", "B4 diverged"])
 def test_a_checkout_ahead_of_or_beside_origin_is_refused_and_nothing_reset(
     switch, scripted, real_main, origin, waiting
