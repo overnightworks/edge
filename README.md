@@ -1341,9 +1341,7 @@ A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router 
 `mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
 (`docs/naming.md`).
 
-Switch it on: set `enabled: true` in `fleet.yaml` through a pull request, pull it with
-`git -C ~/git/edge pull --ff-only`, then run `edge apply --closed`, which asks
-for `step-ca/init` first when it is missing. `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
+The first go-live is described under [Interne CA](#interne-ca). `step-ca`, `traefik-mcp` and its helper `traefik-mcp-acme-owner` sit behind
 the one switch, the compose profile `step-ca`, so a plain `docker compose up -d` starts none of
 them. `traefik-mcp` waits for the CA to listen before it starts Traefik, so the order of the two
 does not matter, also after a restart of the Docker daemon. Switch it off: `enabled: false`
