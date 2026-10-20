@@ -987,6 +987,12 @@ clients are in `realm.yaml` before the go-live, each secret the file
 `presentator` and `presentator-talk`); the other app clients
 arrive at K13/K14, after K3c.
 
+songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
+service accounts are the only users `realm.yaml` lists, each holding the realm role
+`agent-workload` and no group, and their default scopes add the `agent-service` audience. Whoever
+holds such an app's client secret can therefore get a workload token for that app, which is the
+design; the secret stays the app's own file. hopin has no service account.
+
 #### Theme and language
 
 Keycloak's login and account pages use the realm theme `hallucinai`
@@ -1277,9 +1283,14 @@ included), in any compose, apply or service log output, or in its own output
 representation (8), and the songmaker, hopin and presentator clients: a PKCE sign-in with the
 scratch secret that ends in an ID token with the member's group (`/apps/songmaker/admin`,
 `/apps/hopin`, `/apps/presentator/admin`), an exact callback, the password grant,
-`client_credentials` and the `offline_access` scope refused (a client has no optional scope), and
-an end-session page for its registered logout address only (10). Proof 7 also looks for each client
-secret and its tokens.
+`client_credentials` (hopin only) and the `offline_access` scope refused (a client has no optional
+scope), and an end-session page for its registered logout address only (10). Proof 10 also holds
+the agent workload shape (#183): songmaker's and presentator's `client_credentials` token carries
+the realm role `agent-workload`, the `agent-service` audience, `client_id` and `azp` equal to the
+client, no group, and the realm's access token lifespan (300 s, with no client override); a
+person's token from the same login has the audience and groups and never the role;
+`agent-service` keeps every flow off. Proof 7 also looks for each client secret and its
+tokens.
 
 ## Interne CA
 
