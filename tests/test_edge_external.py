@@ -2746,7 +2746,8 @@ def test_the_host_check_still_asks_the_root_path(home, hosts_catalog):
     """R15."""
     prober = FakeProber()
     run_check(home, FakeReader(CLEAN_SNAPSHOT), prober=prober)
-    assert prober.asked and set(prober.paths) == {"/"}
+    assert prober.asked
+    assert set(prober.paths) == {"/"}
 
 
 @pytest.fixture
