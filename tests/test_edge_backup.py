@@ -84,7 +84,7 @@ def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_b
     ]  # fmt: skip
 
 
-def test_every_container_runs_a_digest_pinned_image(edge_backup, machine, home):
+def test_every_container_runs_a_digest_pinned_image(edge_backup, machine):
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
     edge_backup(*shipped, "restore-test")
@@ -950,7 +950,7 @@ def test_the_restore_image_of_major_17_is_the_pin_of_composes_keycloak_db():
     assert RESTORE_IMAGES[PostgresMajor.SEVENTEEN] == pinned
 
 
-def test_a_backup_run_saves_the_keycloak_dump_without_any_audio_volume(edge_backup, machine, home):
+def test_a_backup_run_saves_the_keycloak_dump_without_any_audio_volume(edge_backup, machine):
     """#107 T3: both dumps are in the repository and keycloak mounts no volume."""
     outcome = edge_backup(*declare_shipped_apps(), "backup")
 
@@ -972,7 +972,7 @@ def test_a_backup_run_saves_the_keycloak_dump_without_any_audio_volume(edge_back
 
 
 def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
-    edge_backup, machine, home
+    edge_backup, machine
 ):
     """#107 T4: keycloak's dump loads into a throwaway postgres 17 and `realm` rows are counted."""
     shipped = declare_shipped_apps()
@@ -988,7 +988,7 @@ def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     assert app_history(outcome.status, "keycloak")["last_successful_restore_test"] is not None
 
 
-def test_a_restored_table_without_rows_fails_the_restore_test(edge_backup, machine, home):
+def test_a_restored_table_without_rows_fails_the_restore_test(edge_backup, machine):
     """#107 T4: a keycloak `realm` table without rows fails the restore test."""
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
@@ -1052,7 +1052,7 @@ def test_an_app_never_backed_up_is_named_so_by_restore_and_restore_test(edge_bac
 
 
 def test_keycloak_reported_failed_while_songmaker_is_still_backed_up_when_keycloak_db_is_down(
-    edge_backup, machine, home
+    edge_backup, machine
 ):
     """#107 T7: keycloak is recorded failed, songmaker is still backed up."""
     machine.other_db_containers["edge"] = []
@@ -1069,7 +1069,7 @@ def test_keycloak_reported_failed_while_songmaker_is_still_backed_up_when_keyclo
     assert app_history(outcome.status)["last_snapshot_id"] == machine.snapshots[0]["id"]
 
 
-def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine, home):
+def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine):
     """#107 T8: no run stops or starts an edge service."""
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
@@ -1079,7 +1079,7 @@ def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine, home):
     assert docker_verbs.isdisjoint({"stop", "start", "restart", "kill", "pause", "compose", "up"})
 
 
-def test_no_output_or_status_holds_the_dump(edge_backup, machine, home):
+def test_no_output_or_status_holds_the_dump(edge_backup, machine):
     """#107 T10: no output or status holds dump content."""
     shipped = declare_shipped_apps()
     runs = [edge_backup(*shipped, "backup"), edge_backup(*shipped, "restore-test")]

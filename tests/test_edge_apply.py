@@ -661,9 +661,10 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 
 
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
-    switch, scripted, setup_check
+    switch, scripted, setup_check, setup_run, repository
 ):
-    """#52 rule 6 / P15: a second run changes nothing and asks no `yes`."""
+    """#52 rule 6 / P15: a second run changes nothing and asks no `yes`; the running unit's
+    setup is only checked (#118), and a set up unit is not asked."""
     switch()
     scripted.calls.clear()
 
@@ -672,7 +673,8 @@ def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
     assert exit_code == 0
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
-    assert setup_check.commands[1:] == []
+    assert setup_check.commands[1:] == [[str(repository / "step-ca/init"), "--check"]]
+    assert setup_run.commands == []
 
 
 def test_switching_off_what_is_not_there_changes_nothing(switch, scripted, repository):
@@ -932,6 +934,21 @@ def test_a_set_up_unit_is_not_asked(switch, setup_run):
     _, out, _ = switch()
 
     assert "not set up" not in out
+    assert setup_run.commands == []
+
+
+def test_a_running_unit_that_is_not_set_up_is_asked_like_one_switched_on(
+    switch, scripted, setup_check, setup_run
+):
+    """#118: a setup interrupted after its containers started is asked again, and a no ends it."""
+    scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "running")
+    setup_check.exit_code, setup_check.line = 1, NOT_SET_UP_LINE
+
+    exit_code, out, err = switch("no")
+
+    assert exit_code == 1
+    assert QUESTION in out
+    assert "aborted, nothing changed" in err
     assert setup_run.commands == []
 
 

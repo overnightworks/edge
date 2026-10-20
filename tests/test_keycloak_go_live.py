@@ -442,7 +442,7 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
         "db-password",
     ]
     assert "Cloudflare" not in session.output
-    assert "`bin/edge apply`" in session.printed[-1]
+    assert "`edge apply` publishes" in session.printed[-1]
     assert len(session.asked) == 3  # backup, the admin's name, Enter
 
 
@@ -496,7 +496,7 @@ def test_a_second_run_changes_nothing(go_live, keycloak, session, secrets_dir):
 
     assert not Keycloak.changed_something(Keycloak(commands=keycloak.commands[commands_before:]))
     assert len(session.asked) == asked_before
-    assert "`bin/edge apply`" in session.printed[-1]
+    assert "`edge apply` publishes" in session.printed[-1]
 
 
 def test_a_run_whose_apply_failed_applies_again_and_goes_on(go_live, keycloak, session):
@@ -1230,7 +1230,7 @@ def test_help_lists_the_steps_in_plain_words():
     assert "6. admin created:" in result.stdout
     assert "7. bootstrap retired:" in result.stdout
     assert "Cloudflare" not in result.stdout
-    assert "`bin/edge apply`" in result.stdout
+    assert "`edge apply` publishes" in result.stdout
 
 
 def numbers_in(lines: list[str], pattern: str) -> list[str]:

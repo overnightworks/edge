@@ -549,7 +549,7 @@ def _plan_and_apply(
             for line in waiting.describe(binds):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
-        missing = _missing_setups(planned.plans, repository, check)
+        missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
         if missing:
             exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
@@ -557,7 +557,7 @@ def _plan_and_apply(
                 return exit_code
             completed = [m.unit.key for m in missing]
             planned = _plan(engine, marks, record, repository)
-            if unready := _missing_setups(planned.plans, repository, check):
+            if unready := _missing_setups(planned, repository, check):
                 _refuse_units_still_not_set_up(unready)
                 return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
@@ -573,16 +573,20 @@ def _plan_and_apply(
     )
 
 
-def _missing_setups(
-    plans: Sequence[UnitPlan], repository: Path, check: setup.SetupCheck
-) -> list[MissingSetup]:
-    """The units that would be switched on and whose `--check` says not set up, in catalog order."""
+def _missing_setups(planned: Plan, repository: Path, check: setup.SetupCheck) -> list[MissingSetup]:
+    """The enabled, not stopped units whose `--check` says not set up, in catalog order.
+
+    A unit whose containers already run is checked too: an interrupted setup leaves them up, and
+    the publish must not follow before the setup is done (#118)."""
+    stopped = {p.unit.key for p in planned.plans if p.action is Action.STAYS_STOPPED}
     missing = []
-    for plan in plans:
-        if plan.action is Action.ON and (
-            line := setup.not_set_up_line(plan.unit, repository, check)
+    for unit in planned.fleet.units:
+        if (
+            unit.enabled
+            and unit.key not in stopped
+            and (line := setup.not_set_up_line(unit, repository, check))
         ):
-            missing.append(MissingSetup(plan.unit, line))
+            missing.append(MissingSetup(unit, line))
     return missing
 
 

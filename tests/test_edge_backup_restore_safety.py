@@ -76,7 +76,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
 )
 @pytest.mark.parametrize("command", ["backup", "restore-test"])
 def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
-    edge_backup, machine, home, command, image
+    edge_backup, machine, command, image
 ):
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")

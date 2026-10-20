@@ -707,7 +707,7 @@ during a backup and the restore test's directory during a restore test (both
 removed when the run ends), and the target of `edge-backup restore keycloak
 --target`, which you delete yourself. If Keycloak is off or its database is down, the weekly run
 waits 10 minutes for it, reports keycloak as failed and still backs up
-Songmaker.
+Songmaker. A failed run also skips retention and the repository check for every app.
 
 ### The restore test
 
@@ -1139,9 +1139,10 @@ marker. Once the catalog switches Keycloak on and while go-live is not done, `ed
    has both a TOTP and a passkey credential. Only then it deletes `temp-admin` and the
    `bootstrap-admin-password` file; otherwise it refuses and says what is missing.
 
-Last, **`bin/edge apply`** (unnumbered). The script ends unpublished: its last line names
-`edge apply`, which publishes `auth.hallucinai.de` once the catalog declares it. There is no
-Cloudflare step of yours any more.
+Last, the publish (unnumbered). Started by `bin/edge apply`, the script ends and the apply
+goes on to publish `auth.hallucinai.de`; started by hand, it ends unpublished and its last line
+names `edge apply`, which publishes once the catalog declares it. There is no Cloudflare step
+of yours any more.
 
 #### Is go-live finished? `--check`
 
@@ -1373,24 +1374,14 @@ the commit.
 ## Operator steps A8 (going live)
 
 The operator does these himself, in this order; an agent never applies them.
-Each step must hold before the next one starts, because the DNS wildcard is
-what makes the edge reachable.
+Each step must hold before the next one starts.
 
 1. **Presentator's Access app.** Check that `presentator.hallucinai.de` keeps
    its own Access app (its people, plus the `/sources/*` bypass) and still
    answers 401 to a request without a session.
-2. **Wildcard Access app.** Create the Access app for `*.hallucinai.de`,
-   operator only. Note its AUD tag and the team name.
-3. **Login bypass app.** Only after the operator has approved it and the
-   Keycloak go-live above holds through its step 7 (until then skip this step
-   and the `auth` line in step 4; the go-live's Cloudflare step returns here): create a second
-   Access app for `auth.hallucinai.de` alone, with exactly one policy, action
-   **Bypass**, include **Everyone**. Cloudflare enforces Access at its own
-   edge, per hostname, before a request reaches the tunnel; without this more
-   specific app the wildcard app covers `auth` too, and browsers and the apps'
-   token calls meet the Access login. That a per-host app beats the wildcard
-   app is proven live by E4 in overnightworks/edge#1.
-4. **Ingress line.** The tunnel lines come from the catalog through
-   `edge external apply` (see [Externe Dienste als Code](#externe-dienste-als-code)).
-5. **DNS `*`.** Add the proxied `*` CNAME to the tunnel. Only now do
-   `<name>.hallucinai.de` requests reach the edge, `auth` included.
+2. **DNS and tunnel lines.** They come from the catalog through the publish
+   of `bin/edge apply` (`edge external apply`, see
+   [Externe Dienste als Code](#externe-dienste-als-code)); `auth` goes live as
+   `public`. There is no Zero Trust for now (operator, 20.10.2026), so no
+   wildcard Access app and no bypass app exist; the wildcard `*` protection is
+   X8b on #30, which turns `auth` into a bypass then.

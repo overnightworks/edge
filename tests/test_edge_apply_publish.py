@@ -271,6 +271,27 @@ def test_a_missing_setup_is_asked_before_the_two_plans(world):
     assert result.out.index("step-ca is on") < result.out.rindex(PLAN_QUESTION)
 
 
+def test_an_interrupted_setup_whose_containers_run_is_asked_again_and_publishes_nothing_before(
+    world,
+):
+    """#118: go-live aborted after Keycloak started; the next apply asks the setup question."""
+    world.settle_local()
+    world.make_setup_missing()
+    world.fake_tofu.configure(**CHANGING_PLAN)
+
+    declined = world.run("no")
+
+    assert declined.exit_code == 1
+    assert SETUP_QUESTION in declined.out
+    assert world.publish_never_began()
+
+    finished = world.run("yes", "yes")
+
+    assert finished.exit_code == 0
+    assert finished.out.index(SETUP_QUESTION) < finished.out.index(PLAN_QUESTION)
+    assert world.fake_tofu.call("apply")
+
+
 def publish_is_declined(world: World) -> tuple[list[str], dict]:
     return ["yes", "no"], CHANGING_PLAN
 
