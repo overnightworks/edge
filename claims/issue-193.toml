@@ -1,8 +1,0 @@
-claim_id = "d20673be74df4aa1a8be314878de4e0c"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b2ff32172ca67da8a40e05ef3e216f1d32973546"
-branch = "claude/issue-193-step-ca-on"
-scope = ["README.md", "fleet.yaml", "step-ca/init", "tests/test_edge_external.py", "tests/test_step_ca_init.py"]
-opened_commit = "9977845bc7312140f0d0898022d4d315c200a9ce"
-whole_reason = "The step-ca switch line, its go-live text in the README and init's last line, and the tests that pin them."
