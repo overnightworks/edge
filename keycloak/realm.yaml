@@ -47,6 +47,15 @@ groups:
         subGroups:
           - name: admin
       - name: hopin
+        subGroups:
+          # hopin's admin role, by webauth's group rule (/apps/<app>/admin means admin).
+          - name: admin
+  # The agent service's subscription group (agent-providers 0.6.0); it accepts this and /ki-abo
+  # during the cut-over.
+  - name: ai-subscription
+  # The paid LiteLLM right; nothing reads it until A2.
+  - name: ai-api
+  # The agent service's subscription group until the cut-over to /ai-subscription.
   - name: ki-abo
 clientScopes:
   - name: groups
