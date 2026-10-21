@@ -133,7 +133,7 @@ def require_secret_and_repository(settings: Settings) -> None:
     if not (settings.repository / "config").is_file():
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            "das restic-Repository ist nicht initialisiert (README: Einrichtung)",
+            "das restic-Repository ist nicht initialisiert (docs/backup.md: Setup)",
         )
 
 
@@ -143,7 +143,7 @@ def require_password_file(settings: Settings) -> None:
         mode = settings.password_file.stat().st_mode
     except FileNotFoundError:
         raise StepFailed(
-            ExitCategory.CONFIGURATION, "die Passwortdatei fehlt (README: Einrichtung)"
+            ExitCategory.CONFIGURATION, "die Passwortdatei fehlt (docs/backup.md: Setup)"
         ) from None
     if not stat.S_ISREG(mode) or stat.S_IMODE(mode) & 0o077:
         raise StepFailed(
