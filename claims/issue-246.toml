@@ -1,0 +1,7 @@
+claim_id = "b8a6157075c24b98a1382438181a3097"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "f1e8fa019fa1d3545b5679ed8c82026438a6b7b6"
+branch = "claude/issue-246-edge-runs-quality-v0-4-0-the-ci-gate-and"
+scope = [".github/workflows/ci.yml", "src/home_tools/setup.py"]
+opened_commit = "a3684570f2bec1d22d2a62079d5ce1b1d30fd0a5"
