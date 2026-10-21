@@ -391,9 +391,9 @@ def switch_off(state: Path, since: str = SWITCHED_OFF_AT, unit: str = "step-ca")
 def edge_tree(tree: Path) -> Path:
     """A tree of this repository's shape at `tree`, a main worktree (its `.git` is a directory)."""
     (tree / ".git").mkdir(parents=True)
-    for directory in ("step-ca", "keycloak"):
+    for directory, name in (("step-ca", "init"), ("keycloak", "init"), ("agent-service", "setup")):
         (tree / directory).mkdir(exist_ok=True)
-        setup = tree / directory / "init"
+        setup = tree / directory / name
         setup.write_text("#!/bin/sh\n")
         setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
     (tree / "fleet.yaml").write_text(f"cloudflare:\n  zone: {ZONE}\n" + ENABLED)
@@ -887,13 +887,14 @@ def _resolved_mount(mount: str | dict) -> dict:
 
 @pytest.mark.usefixtures("agent_service_unit")
 def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
-    switch, scripted
+    switch, scripted, setup_check, repository
 ):
     """#214 S1: the real catalog line starts exactly the profile's two services; a second apply
-    plans nothing."""
+    plans nothing. #234: it asks `agent-service/setup --check` before it switches on."""
     exit_code, out, _ = switch()
 
     assert exit_code == 0
+    assert setup_check.commands == [[str(repository / "agent-service/setup"), "--check"]]
     assert "agent-service is on" in out
     assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
 
@@ -4373,3 +4374,19 @@ def test_a_kept_image_and_a_core_recreate_share_one_yes_core_first(
     assert out.index("  traefik: recreate") < out.index(f"  {STEP_CA_KEPT}\n")
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert {service: scripted.container_ids[service] for service in STEP_CA_SERVICES} == unit_ids
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_the_repositorys_agent_service_unit_that_is_not_set_up_runs_its_setup_with_a_yes(
+    switch, scripted, setup_check, setup_run, repository
+):
+    """#234: a missing image or token file is asked about, and the answer yes runs the setup
+    the catalog names before the unit starts."""
+    setup_check.exit_code, setup_check.line = 1, "the image is not built"
+
+    exit_code, out, _ = switch("yes\nyes")
+
+    assert exit_code == 0
+    assert "run `agent-service/setup` now" in out
+    assert setup_run.commands == [(repository / "agent-service/setup", repository)]
+    assert "agent-service is on" in out
