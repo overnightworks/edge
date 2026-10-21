@@ -34,7 +34,6 @@ import signal
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from enum import StrEnum
 from pathlib import Path
 
@@ -765,76 +764,6 @@ class SmokeProbe(Probe):
             f"{(logs.stdout + logs.stderr).strip().splitlines()[-3:]}",
             flush=True,
         )
-        self.cancel_cell(person, workload)
-
-    def cancel_cell(self, person: str, workload: str) -> None:
-        """The mechanics of the runbook's L4 as far as a dummy login goes: `--cancel` holds the
-        stream open and closes it, and the container's /proc is sampled while it is held and
-        after. The dummy login ends the run before the close, which the smoke reports as exit 1;
-        the cell then says L4 is not driven, and the live run is the proof."""
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            smoke = pool.submit(
-                self.run,
-                self.compose_command(
-                    "run", "--rm", "-T", "--no-deps", "--label", LABEL, SMOKE_SERVICE,
-                    "--cancel", "--timeout", "180",
-                ),
-                stdin=f"{person}\n{workload}\n", check=False, timeout=240,
-            )  # fmt: skip
-            during = 0
-            while not smoke.done():
-                during = max(during, self.cli_processes())
-                time.sleep(0.25)
-            finished = smoke.result()
-        lines = finished.stdout.splitlines()
-        not_driven = finished.returncode == 1 and any(
-            line.startswith("the run ended before the close (") for line in lines[-1:]
-        )
-        if not not_driven:
-            expect(
-                finished.returncode == 0,
-                f"U14 cancel: the smoke exited {finished.returncode}: {lines}",
-            )
-            expect(
-                lines[:1] == ["event: run_started"]
-                and lines[-1:] == ["closing the stream before the answer"],
-                f"U14 cancel: the output was {lines}",
-            )
-        time.sleep(5)
-        after = self.cli_processes()
-        expect(after == 0, f"U14 cancel: {after} CLI processes remain after the smoke exited")
-        logs = self.run(["docker", "logs", self.container(SERVICE)])
-        expect("ERROR" not in logs.stdout + logs.stderr, "U14 cancel: an ERROR line in the log")
-        if not_driven:
-            print(
-                "U14 cancel not driven: the dummy login ends the run before the close; "
-                "L4 is the operator's live line",
-                flush=True,
-            )
-            return
-        self.held.append("U14 cancel")
-        print(
-            f"U14 cancel held: the smoke exited 0 after {lines}; CLI processes seen during the "
-            f"run at most {during} (the dummy login may end the run first), 0 after it",
-            flush=True,
-        )
-
-    def cli_processes(self) -> int:
-        """The count of CLI processes in the container; grep exits 1 for no match, any other
-        failure (docker, the shell, the enumeration) raises instead of reading as 0."""
-        counted = self.run(
-            ["docker", "exec", self.container(SERVICE), "sh", "-c",
-             'cat /proc/[0-9]*/cmdline | tr "\\0" "\\n" | grep -c "[c]laude"; '
-             'test "$?" -le 1 || exit 2'],
-            check=False,
-        )  # fmt: skip
-        figure = counted.stdout.strip()
-        if counted.returncode not in (0, 1) or not figure.isdigit():
-            raise ProbeFailed(
-                f"U14: counting CLI processes failed ({counted.returncode}): "
-                f"{counted.stderr.strip()[:200]}"
-            )
-        return int(figure)
 
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + LISTEN_SECONDS

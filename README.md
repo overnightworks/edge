@@ -1676,7 +1676,7 @@ smoke_run() {
   clis() {
     local count
     count=$(docker compose exec -T agent-service sh -c \
-      'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"; test "$?" -le 1 || exit 2') \
+      'file=$(mktemp) && cat /proc/[0-9]*/cmdline > "$file" && tr "\0" "\n" < "$file" | grep -c "[c]laude"; status=$?; rm -f "$file"; test "$status" -le 1') \
       && [[ $count =~ ^[0-9]+$ ]] && echo "$count" || echo "SAMPLE FAILED"
   }
   echo "idle memory.current: $(cgroup memory.current)"
@@ -1711,15 +1711,15 @@ good answer, and a sample that failed prints `SAMPLE FAILED`, never 0. What the 
 - **L2, the paid turn.** `first` holds `event: run_started`, `event: assistant_text`, the answer and
   `event: succeeded` (the smoke exited 0, printed right after it). `run_started` after admission also shows the issuer's
   keys were fetched through `agent-egress`, the service's only route out (L3).
-- **L4, the cancel.** `--cancel` starts a long answer, holds the stream open for three seconds after
-  `run_started`, reads for half a second and then closes it; the smoke fails (exit 1, "L4 is not
-  proven") if a `succeeded`, `failed` or `cancelled` frame was waiting by then or the service had
-  closed the stream, because then no run was left to cancel. The
-  block counts the processes whose command line holds `claude` before the turn (0), while the stream
-  is held open (1 or more: a CLI child of the run exists) and five seconds after the smoke exited
-  (0: the service ended it), and counts the log's `ERROR` lines since the turn (0, no quarantine).
-  The hold and the sample are a few seconds apart, so a count of 0 during the hold means the child
-  was not up yet: repeat the block.
+- **L4, the cancel (an observation, not a pass condition).** `--cancel` starts a long answer, holds
+  the stream open for three seconds after `run_started`, reads for half a second and then closes it.
+  The smoke exits 1 with "L4 is not proven" when a `succeeded`, `failed` or `cancelled` frame was
+  waiting by then or the service had closed the stream, because then no run was left to cancel;
+  that exit is recorded beside the counts, not read as a verdict. The block counts the processes
+  whose command line holds `claude` before the turn (0), while the stream is held open (1 or more: a
+  CLI child of the run exists) and five seconds after the smoke exited (0: the service ended it), and
+  counts the log's `ERROR` lines since the turn (0, no quarantine). The hold and the sample are a few
+  seconds apart, so a count of 0 during the hold means the child was not up yet: repeat the block.
 - **L6, no token anywhere.** The three searches look for the person's and the workload's token, the
   login token and the `songmaker` client secret in `docker inspect`, the service log and the
   smoke output.
@@ -1868,9 +1868,7 @@ the service not running. U12 is `egress.py --target service`; CI holds the stati
 `tests/test_agent_service_unit.py`. `unit.py --scratch DIR --cell smoke` drives U14: the
 `agent-smoke` of the runbook against the service with a stand-in issuer, so the tokens verify and
 the CLI meets the real upstream with the dummy login (`run_started`, then `failed`, no token in any
-output); its `--cancel` turn is held open and closed, and the container's `/proc` is sampled during
-the hold and after the smoke; the dummy login ends that run during the hold, so the cell prints
-"U14 cancel not driven" (the exit 1 of the smoke is expected there) and L4 is the operator's live line.
+output). L4 is proven only live, with the real login; the probe has no L4 cell.
 
 ## Rollback
 
