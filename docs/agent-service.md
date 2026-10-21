@@ -23,8 +23,7 @@ docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.3
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
 only writer of `requirements.txt`, and changes the CLI pin in the Dockerfile and the image name in
 `compose.yaml` and in the build line above together. `probe/agent-service/image.py` builds without cache and starts the
-entrypoint from the clean image. No command builds the image yet: the `docker build` line is the
-operator's step.
+entrypoint from the clean image.
 
 ## The service
 
@@ -56,7 +55,9 @@ The service runs the Claude CLI under the operator's subscription, with the one 
 `agent-service/setup` makes it, in the operator's terminal and after `hal apply` has asked: it creates
 the directories with 0700, narrows a too-open token file to 0600, and when the token is missing or
 refused it asks the operator to run `claude setup-token` in another terminal and paste the line, which
-is read without echo and written to `token.new` (`umask 077`) before the rename over `token`.
+is read without echo, judged by the reader's rules as the exact bytes to write, and only then written
+to `token.new` (created 0600) before the rename over `token`. A refused paste leaves the old token
+as it was; the folders are opened without following a link and locked for the swap.
 `agent-service/setup --check` changes nothing and says the first gap. The token is pasted only
 there, never on a command line or in an issue. The file is a regular file of at most 16 KiB with one line, the token: no JSON,
 no API key (`sk-ant-api…`), nothing group or others can touch. The service refuses to start

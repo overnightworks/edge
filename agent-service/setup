@@ -15,12 +15,19 @@ first: a second run changes nothing. The token is read without echo and exists o
 
 The token rules equal the service's reader (agent_providers/secret_file.py, agent-providers
 v0.4.0): a regular file of at most 16 KiB that group and others cannot touch, holding one
-printable line without whitespace that is neither JSON nor an API key.
+printable line without whitespace that is neither JSON nor an API key. A pasted line is judged as
+the exact bytes to be written, with those rules, before anything is created; a refused paste
+leaves the old token as it was. Every write goes through a descriptor of ~/.secrets/agent-service/
+claude, reached without following a link, and holds a lock on it, so a link cannot send the paste
+elsewhere and two runs cannot swap in each other's file.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
+import fcntl
 import getpass
 import json
 import os
@@ -104,6 +111,10 @@ def read_pasted_line(prompt: str) -> str:
             return getpass.getpass(prompt)
         except getpass.GetPassWarning as error:
             raise StepFailure("the terminal cannot hide the paste; nothing was read") from error
+        except EOFError as error:
+            raise StepFailure(
+                "no token was pasted (the input ended); nothing was written"
+            ) from error
 
 
 @dataclass(frozen=True)
@@ -144,16 +155,42 @@ def line_is_json(line: str) -> bool:
     return True
 
 
+def read_within_limit(descriptor: int) -> bytes:
+    """At most one byte more than the limit, looping on short reads as the reader does
+    (secret_file.py:144-155, _read_within_limit): that many bytes mean the file is too big."""
+    chunks: list[bytes] = []
+    remaining = MAX_TOKEN_FILE_BYTES + 1
+    while remaining and (chunk := os.read(descriptor, remaining)):
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def refusal_of_token_bytes(contents: bytes) -> str | None:
+    """The reader's verdict on the file's exact bytes, for a file read and for a paste to write."""
+    if len(contents) > MAX_TOKEN_FILE_BYTES:
+        return f"is larger than {MAX_TOKEN_FILE_BYTES} bytes"
     try:
         return refusal_of_token(contents.decode("utf-8"))
     except UnicodeDecodeError:
         return "is not UTF-8 text"
 
 
+def file_contents_of_paste(pasted: str) -> bytes:
+    """The exact bytes a paste would become, or a refusal: nothing is created for a refused one."""
+    try:
+        contents = f"{pasted}\n".encode()
+    except UnicodeEncodeError as error:
+        raise StepFailure("the pasted line is not UTF-8 text; nothing was written") from error
+    if refusal := refusal_of_token_bytes(contents):
+        raise StepFailure(f"the pasted line {refusal}; nothing was written")
+    return contents
+
+
 class AgentServiceSetup:
     def __init__(self, tools: Tools, home: Path) -> None:
         self.tools = tools
+        self.home = home
         self.secrets_root = home / ".secrets"
         self.service_directory = self.secrets_root / SERVICE
         self.login_directory = self.service_directory / "claude"
@@ -166,6 +203,7 @@ class AgentServiceSetup:
         """The first thing that is not as the service needs it, in the order a fix can follow."""
         return (
             self.image_gap()
+            or self.directory_gap(self.secrets_root)
             or self.directory_gap(self.service_directory)
             or self.directory_gap(self.login_directory)
             or self.token_gap()
@@ -189,11 +227,15 @@ class AgentServiceSetup:
 
     def directory_gap(self, directory: Path) -> Gap | None:
         try:
-            status = directory.stat()
+            status = directory.lstat()
         except FileNotFoundError:
             return Gap(GapKind.DIRECTORY_MISSING, f"{directory} does not exist", directory)
-        except OSError as error:
-            return Gap(GapKind.UNFIXABLE, f"{directory} cannot be read: {error.strerror}")
+        return self.judge_directory(directory, status)
+
+    def judge_directory(self, directory: Path, status: os.stat_result) -> Gap | None:
+        """A link is never followed: a symlinked folder could send the token out of ~/.secrets."""
+        if stat.S_ISLNK(status.st_mode):
+            return Gap(GapKind.UNFIXABLE, f"{directory} is a symbolic link; it must be a folder")
         if not stat.S_ISDIR(status.st_mode):
             return Gap(GapKind.UNFIXABLE, f"{directory} is not a directory")
         if status.st_uid != self.tools.service_uid:
@@ -218,8 +260,6 @@ class AgentServiceSetup:
             descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
         except FileNotFoundError:
             return Gap(GapKind.TOKEN_MISSING, f"{path} does not exist")
-        except OSError as error:
-            return Gap(GapKind.UNFIXABLE, f"{path} cannot be read: {error.strerror}")
         try:
             return self.judge_open_token(descriptor)
         finally:
@@ -239,7 +279,7 @@ class AgentServiceSetup:
             )
         if status.st_size > MAX_TOKEN_FILE_BYTES:
             return Gap(GapKind.TOKEN_REFUSED, f"{path} is larger than {MAX_TOKEN_FILE_BYTES} bytes")
-        contents = os.read(descriptor, MAX_TOKEN_FILE_BYTES + 1)
+        contents = read_within_limit(descriptor)
         if reason := refusal_of_token_bytes(contents):
             return Gap(GapKind.TOKEN_REFUSED, f"{path} {reason}")
         return None
@@ -253,10 +293,9 @@ class AgentServiceSetup:
             case GapKind.DIRECTORY_MISSING:
                 self.make_directory(gap.path)
             case GapKind.DIRECTORY_OPEN:
-                gap.path.chmod(DIRECTORY_MODE)
+                self.narrow(gap.path, DIRECTORY_MODE)
             case GapKind.TOKEN_OPEN:
-                self.tools.say(f"narrowing {gap.path} to 0600")
-                gap.path.chmod(TOKEN_MODE)
+                self.narrow(gap.path, TOKEN_MODE)
             case GapKind.TOKEN_MISSING | GapKind.TOKEN_REFUSED:
                 self.paste_token(gap.line)
             case GapKind.UNFIXABLE:
@@ -272,33 +311,87 @@ class AgentServiceSetup:
             raise CannotTell(failure_line("docker build", result))
 
     def make_directory(self, directory: Path) -> None:
+        """The gap order makes every parent exist and be judged first, so one level is made."""
         self.tools.say(f"making {directory} with mode 0700")
-        self.secrets_root.mkdir(mode=DIRECTORY_MODE, exist_ok=True)
-        directory.mkdir(mode=DIRECTORY_MODE, exist_ok=True)
+        os.mkdir(directory, DIRECTORY_MODE)
+
+    def narrow(self, path: Path, mode: int) -> None:
+        """Change the mode through a descriptor opened without following a link."""
+        self.tools.say(f"narrowing {path} to {mode:04o}")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            os.fchmod(descriptor, mode)
+        finally:
+            os.close(descriptor)
 
     def paste_token(self, reason: str | None = None) -> None:
-        """Take the token from the operator, judge it, and swap it in by rename."""
+        """Take the token, judge the bytes to write, and swap them in by rename."""
         if reason:
             self.tools.say(reason)
         self.tools.say(
             "run `claude setup-token` in another terminal and paste its token here; "
             "nothing is shown"
         )
-        token = self.tools.read_secret("token: ").strip()
-        if refusal := refusal_of_token(token):
-            raise StepFailure(f"the pasted line {refusal}; nothing was written")
-        pending = self.login_directory / PENDING_FILE
-        pending.unlink(missing_ok=True)
-        descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, TOKEN_MODE)
-        try:
-            with os.fdopen(descriptor, "w") as pending_file:
-                os.fchmod(pending_file.fileno(), TOKEN_MODE)
-                pending_file.write(token + "\n")
-            os.replace(pending, self.token_path)
-        except OSError as error:
-            pending.unlink(missing_ok=True)
-            raise StepFailure(f"cannot write the token: {error.strerror}") from error
+        payload = file_contents_of_paste(self.tools.read_secret("token: ").strip())
+        self.swap_in(payload)
         self.pasted = True
+
+    def swap_in(self, payload: bytes) -> None:
+        """Write token.new and rename it over token inside the verified, locked login folder."""
+        directory = self.open_login_directory()
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX)  # held until the descriptor closes
+            try:
+                self.write_pending(directory, payload)
+                os.replace(PENDING_FILE, TOKEN_FILE, src_dir_fd=directory, dst_dir_fd=directory)
+                os.fsync(directory)
+            except OSError as error:
+                with contextlib.suppress(OSError):  # the failure being reported is the first one
+                    os.unlink(PENDING_FILE, dir_fd=directory)
+                raise StepFailure(
+                    f"cannot write the token ({error.filename or TOKEN_FILE}): {error.strerror};"
+                    " the old token is kept"
+                ) from error
+        finally:
+            os.close(directory)
+
+    @staticmethod
+    def write_pending(directory: int, payload: bytes) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(PENDING_FILE, dir_fd=directory)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open(PENDING_FILE, flags, TOKEN_MODE, dir_fd=directory)
+        with os.fdopen(descriptor, "wb") as pending_file:
+            os.fchmod(descriptor, TOKEN_MODE)
+            pending_file.write(payload)
+            pending_file.flush()
+            os.fsync(descriptor)
+
+    def open_login_directory(self) -> int:
+        """A descriptor of the login folder, each folder from home on opened without following a
+        link and judged by its own descriptor: what is written lands where the check looked."""
+        directory = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            for path in (self.secrets_root, self.service_directory, self.login_directory):
+                child = self.open_without_link(directory, path)
+                os.close(directory)
+                directory = child
+                if gap := self.judge_directory(path, os.fstat(directory)):
+                    raise StepFailure(f"{gap.line}; nothing was written")
+        except BaseException:
+            os.close(directory)
+            raise
+        return directory
+
+    @staticmethod
+    def open_without_link(parent: int, path: Path) -> int:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            return os.open(path.name, flags, dir_fd=parent)
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise StepFailure(f"{path} is not a plain folder; nothing was written") from error
+            raise
 
     # --- the commands -------------------------------------------------------------------------
 
@@ -335,6 +428,14 @@ class AgentServiceSetup:
             prefix = "--check: not set up" if read_only else "FAILED"
             self.tools.say(f"agent-service/setup {prefix}: {failure}")
             return Exit.REFUSED
+        except OSError as error:
+            # A host that cannot be read says nothing about the setup: only a check may say "2".
+            where = f" ({error.filename})" if error.filename else ""
+            if read_only:
+                self.tools.say(f"agent-service/setup: cannot tell: {error.strerror}{where}")
+                return Exit.CANNOT_TELL
+            self.tools.say(f"agent-service/setup FAILED: {error.strerror}{where}")
+            return Exit.REFUSED
         except KeyboardInterrupt:
             self.tools.say("agent-service/setup: interrupted")
             return Exit.REFUSED
@@ -342,8 +443,11 @@ class AgentServiceSetup:
 
 
 def failure_line(what: str, result: subprocess.CompletedProcess[str]) -> str:
-    lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
-    return f"`{what}` exited {result.returncode}: {lines[-1].strip() if lines else 'no output'}"
+    """Docker says why on stderr and may print `[]` on stdout, so stderr is read first."""
+    for stream in (result.stderr, result.stdout):
+        if lines := [line.strip() for line in stream.splitlines() if line.strip()]:
+            return f"`{what}` exited {result.returncode}: {lines[-1]}"
+    return f"`{what}` exited {result.returncode}: no output"
 
 
 def main() -> int:

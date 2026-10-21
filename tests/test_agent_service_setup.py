@@ -4,6 +4,8 @@ The token rules are the service's reader's (agent-providers v0.4.0, secret_file.
 refused cases below are the ones its docstring names.
 """
 
+import errno
+import fcntl
 import getpass
 import importlib.machinery
 import importlib.util
@@ -50,7 +52,7 @@ class DockerHost:
         self.commands.append(command)
         if not self.answers:
             return subprocess.CompletedProcess(
-                command, 1, "", "Cannot connect to the Docker daemon"
+                command, 1, "[]", "Cannot connect to the Docker daemon"
             )
         if command[:2] == ["docker", "compose"]:
             config = {"services": {"agent-service": {"image": IMAGE}}}
@@ -59,7 +61,7 @@ class DockerHost:
             if command[3] in self.images:
                 return subprocess.CompletedProcess(command, 0, "[]", "")
             return subprocess.CompletedProcess(
-                command, 1, "", f"Error: No such image: {command[3]}"
+                command, 1, "[]", f"Error: No such image: {command[3]}"
             )
         assert command[:2] == ["docker", "build"], command
         self.images.add(command[command.index("-t") + 1])
@@ -166,6 +168,7 @@ def test_the_check_cannot_tell_when_docker_does_not_answer(make_setup, docker, t
 
     assert make_setup().check() == 2
     assert "cannot tell" in terminal.said[-1]
+    assert "Cannot connect to the Docker daemon" in terminal.said[-1]
 
 
 def test_a_missing_login_directory_is_not_set_up_and_the_check_changes_nothing(
@@ -216,6 +219,7 @@ def test_a_token_file_open_to_group_or_others_is_narrowed_without_asking_for_a_t
         (b"first-line\nsecond-line\n", "more than one line"),
         (b"has a space\n", "whitespace"),
         (b"\n", "empty"),
+        (b"tok\x07en\n", "non-printing"),
         (b"\xff\xfe", "UTF-8"),
         pytest.param(b"x" * (16 * 1024 + 1), "larger", id="too-big"),
     ],
@@ -286,7 +290,7 @@ def test_the_token_never_appears_in_anything_the_script_says(make_setup, home, d
 
 @pytest.mark.parametrize(
     "pasted",
-    ['{"accessToken": "x"}', "sk-ant-api03-dummy", "two words", "", "   "],
+    ['{"accessToken": "x"}', "sk-ant-api03-dummy", "two words", "", "   ", "tok\x07en"],
 )
 def test_a_refused_paste_writes_nothing(make_setup, home, terminal, pasted):
     make_login_directory(home)
@@ -337,3 +341,179 @@ def test_a_stale_pending_file_never_blocks_the_swap(make_setup, home, terminal):
 
     assert make_setup().run(renew=False) == 0
     assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+def pending_path(home: Path) -> Path:
+    return login_directory(home) / "token.new"
+
+
+def test_a_token_file_owned_by_another_user_is_reported_not_taken(
+    setup_module, make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN)
+    monkeypatch.setattr(setup_module.AgentServiceSetup, "judge_directory", lambda *_: None)
+
+    assert make_setup(service_uid=os.getuid() + 1).check() == 1
+    assert f"{token_path(home)} is owned by uid" in terminal.said[-1]
+
+
+def test_a_directory_narrowed_to_0700_says_so(make_setup, home, terminal):
+    write_token(home, DUMMY_TOKEN)
+    login_directory(home).chmod(0o755)
+
+    make_setup().run(renew=False)
+    assert f"narrowing {login_directory(home)} to 0700" in terminal.said
+
+
+def test_the_check_reads_a_token_in_short_reads_as_the_reader_does(
+    make_setup, home, terminal, monkeypatch
+):
+    write_token(home, "first\nsecond\n")
+    read = os.read
+    monkeypatch.setattr(os, "read", lambda descriptor, count: read(descriptor, min(count, 2)))
+
+    assert make_setup().check() == 1
+    assert "more than one line" in terminal.said[-1]
+
+
+def test_an_oversized_paste_leaves_the_old_token_byte_for_byte(make_setup, home, terminal):
+    write_token(home, DUMMY_TOKEN + "\n")
+    terminal.pastes = ["x" * (16 * 1024)]  # printable, and with its newline one byte too big
+
+    assert make_setup().run(renew=True) == 1
+    assert "larger than 16384 bytes" in terminal.said[-1]
+    assert token_path(home).read_bytes() == (DUMMY_TOKEN + "\n").encode()
+    assert not pending_path(home).exists()
+
+
+@pytest.mark.parametrize("linked", ["agent-service", "claude"])
+@pytest.mark.parametrize("renew", [False, True])
+def test_a_symlinked_folder_is_refused_before_the_paste_and_nothing_is_written(
+    make_setup, home, terminal, tmp_path, linked, renew
+):
+    make_login_directory(home)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    if linked == "agent-service":
+        (outside / "claude").mkdir(mode=0o700)
+        os.replace(home / ".secrets" / "agent-service", tmp_path / "moved")
+        (home / ".secrets" / "agent-service").symlink_to(outside)
+    else:
+        login_directory(home).rmdir()
+        login_directory(home).symlink_to(outside)
+
+    assert make_setup().run(renew=renew) == 1
+    assert "symbolic link" in terminal.said[-1]
+    assert terminal.prompts == []
+    assert list(outside.rglob("*")) == ([outside / "claude"] if linked == "agent-service" else [])
+
+
+def test_a_folder_swapped_for_a_link_after_the_check_still_receives_nothing(
+    setup_module, make_setup, home, terminal, tmp_path
+):
+    make_login_directory(home)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    setup = make_setup()
+
+    def swap_then_paste(prompt: str) -> str:
+        login_directory(home).rmdir()
+        login_directory(home).symlink_to(outside)
+        return DUMMY_TOKEN
+
+    setup.tools = setup_module.Tools(
+        run=setup.tools.run, say=terminal.say, read_secret=swap_then_paste,
+        service_uid=os.getuid(),
+    )  # fmt: skip
+
+    assert setup.run(renew=False) == 1
+    assert "not a plain folder" in terminal.said[-1]
+    assert list(outside.iterdir()) == []
+
+
+def test_the_end_of_the_input_at_the_paste_is_one_line_and_keeps_the_old_token(
+    setup_module, make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+
+    def input_ends(prompt: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr(getpass, "getpass", input_ends)
+
+    assert make_setup(read_secret=setup_module.read_pasted_line).run(renew=True) == 1
+    assert "nothing was written" in terminal.said[-1]
+    assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+def test_a_stale_pending_folder_is_one_line_and_keeps_the_old_token(make_setup, home, terminal):
+    write_token(home, DUMMY_TOKEN + "\n")
+    pending_path(home).mkdir()
+    terminal.pastes = [SECOND_TOKEN]
+
+    assert make_setup().run(renew=True) == 1
+    assert "token.new" in terminal.said[-1]
+    assert "the old token is kept" in terminal.said[-1]
+    assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+def test_a_failing_write_removes_the_pending_file_and_keeps_the_old_token(
+    make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+    terminal.pastes = [SECOND_TOKEN]
+
+    def disk_fails(descriptor: int) -> None:
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+    monkeypatch.setattr(os, "fsync", disk_fails)
+
+    assert make_setup().run(renew=True) == 1
+    assert "Input/output error" in terminal.said[-1]
+    assert not pending_path(home).exists()
+    assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+@pytest.mark.parametrize("failing", ["lstat", "read"])
+def test_a_host_that_cannot_be_read_makes_the_check_cannot_tell_not_not_set_up(
+    make_setup, home, terminal, monkeypatch, failing
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+    original = getattr(os, failing)
+    refused = OSError(errno.EIO, os.strerror(errno.EIO))
+
+    def fail_on_the_login_folder(*arguments):
+        if failing == "read" or str(login_directory(home)) == str(arguments[0]):
+            raise refused
+        return original(*arguments)
+
+    monkeypatch.setattr(os, failing, fail_on_the_login_folder)
+
+    assert make_setup().check() == 2
+    assert "cannot tell" in terminal.said[-1]
+
+
+def test_a_renewal_holds_a_lock_on_the_login_folder_from_cleanup_to_rename(
+    make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+    terminal.pastes = [SECOND_TOKEN]
+    fsync = os.fsync
+    competitors_refused: list[bool] = []
+
+    def fsync_while_a_second_run_tries_the_lock(descriptor: int) -> None:
+        competitor = os.open(login_directory(home), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(competitor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            competitors_refused.append(False)
+        except BlockingIOError:
+            competitors_refused.append(True)
+        finally:
+            os.close(competitor)
+        fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fsync_while_a_second_run_tries_the_lock)
+
+    assert make_setup().run(renew=True) == 0
+    assert competitors_refused
+    assert all(competitors_refused)
