@@ -1175,7 +1175,6 @@ class Probe:
             (PUBLIC_HOST, "/admin/master/console/"),
             (PUBLIC_HOST, "/metrics"),
             (PUBLIC_HOST, "/health"),
-            (PUBLIC_HOST, "/"),
             (PUBLIC_HOST, "/realms/hallucinai/../master/.well-known/openid-configuration"),
             ("localhost", f"{REALM_PATH}/.well-known/openid-configuration"),
             ("localhost", "/admin/master/console/"),
@@ -1186,6 +1185,14 @@ class Probe:
                 answer.status == 404 and answer.body == TRAEFIK_NOT_FOUND,
                 f"8081 {host}{path} answered {answer.status}, not Traefik's 404",
             )
+        account_page = f"https://{PUBLIC_HOST}{REALM_PATH}/account"
+        for bare_address in ("/", "/?x=1"):
+            redirect = through_tunnel("GET", bare_address)
+            expect(
+                (redirect.status, redirect.headers.get("Location")) == (302, account_page),
+                f"8081 {PUBLIC_HOST}{bare_address} answered {redirect.status} "
+                f"to {redirect.headers.get('Location')}, not 302 to {account_page}",
+            )
         # Inside the admitted prefix, so only the entrypoint's encoded-character rule stops it.
         encoded = through_tunnel("GET", "/realms/hallucinai/..%2Fmaster/")
         expect(encoded.status == 400, f"an encoded slash on 8081 answered {encoded.status}")
@@ -1193,8 +1200,9 @@ class Probe:
             "2a",
             f"8081 answers /realms/hallucinai/, its localization and the versioned static "
             f"resources; Traefik refuses {len(refused)} master realm and master resources, admin, "
-            "metrics, health, root, traversal and Host: localhost requests (404) "
-            "and an encoded slash inside the admitted prefix (400)",
+            "metrics, health, traversal and Host: localhost requests (404), redirects the bare / "
+            "and /?x=1 to the account page (302) "
+            "and refuses an encoded slash inside the admitted prefix (400)",
         )
 
     @staticmethod

@@ -142,6 +142,15 @@ services:
       traefik.http.routers.auth.rule: >-
         Host(`auth.${EDGE_DOMAIN}`) && (PathPrefix(`/realms/hallucinai/`)
         || PathPrefix(`/resources/hallucinai/`) || PathRegexp(`^/resources/[a-z0-9]{5}/`))
+      # The bare address leads to the account page; every other path outside the realm stays 404.
+      traefik.http.routers.auth-root.entrypoints: edge
+      # noop@internal: a request the redirect regex does not match must never reach Keycloak.
+      traefik.http.routers.auth-root.service: noop@internal
+      traefik.http.routers.auth-root.rule: Host(`auth.${EDGE_DOMAIN}`) && Path(`/`)
+      traefik.http.routers.auth-root.middlewares: auth-root-to-account
+      traefik.http.middlewares.auth-root-to-account.redirectregex.regex: ^.*$$
+      traefik.http.middlewares.auth-root-to-account.redirectregex.replacement: https://auth.${EDGE_DOMAIN}/realms/hallucinai/account
+      traefik.http.middlewares.auth-root-to-account.redirectregex.permanent: "false"
       # The admin console and the master realm answer on the loopback-only admin entrypoint.
       traefik.http.routers.auth-admin.entrypoints: admin
       traefik.http.routers.auth-admin.service: auth
