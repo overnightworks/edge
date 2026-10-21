@@ -16,6 +16,7 @@ services:
   agent-service:
     run:
       enabled: true
+      setup: agent-service/setup
   keycloak:
     run:
       enabled: true

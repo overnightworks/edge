@@ -12,8 +12,9 @@ and the probes under `probe/agent-service/`. The egress gateway it leaves throug
 `2.1.302`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
 pinned: both base images by digest, the Python packages by hash, the Claude CLI by its sha256. A
 changed or vanished artifact fails the build. The image is never pulled from a registry, because its
-name could be anyone's on a public one (`pull_policy: never`), so it is built on the PC, from the
-repository root:
+name could be anyone's on a public one (`pull_policy: never`), so it is built on the PC.
+`agent-service/setup` builds it when it is missing, and `hal apply` asks to run that setup before it
+switches the unit on. The build line it runs, from the repository root:
 
 ```sh
 docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.302 agent-service/image
@@ -22,8 +23,7 @@ docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.3
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
 only writer of `requirements.txt`, and changes the CLI pin in the Dockerfile and the image name in
 `compose.yaml` and in the build line above together. `probe/agent-service/image.py` builds without cache and starts the
-entrypoint from the clean image. No command builds the image yet: the `docker build` line is the
-operator's step.
+entrypoint from the clean image.
 
 ## The service
 
@@ -52,9 +52,14 @@ The service runs the Claude CLI under the operator's subscription, with the one 
 ~/.secrets/agent-service/claude/token  0600, uid 1000, one line
 ```
 
-No command makes it: the operator creates the directories, runs `claude setup-token` once and writes
-the pasted line into `token` with `umask 077`. The token is pasted only there, never on a command
-line or in an issue. The file is a regular file of at most 16 KiB with one line, the token: no JSON,
+`agent-service/setup` makes it, in the operator's terminal and after `hal apply` has asked: it creates
+the directories with 0700, narrows a too-open token file to 0600, and when the token is missing or
+refused it asks the operator to run `claude setup-token` in another terminal and paste the line, which
+is read without echo, judged by the reader's rules as the exact bytes to write, and only then written
+to `token.new` (created 0600) before the rename over `token`. A refused paste leaves the old token
+as it was; the folders are opened without following a link and locked for the swap.
+`agent-service/setup --check` changes nothing and says the first gap. The token is pasted only
+there, never on a command line or in an issue. The file is a regular file of at most 16 KiB with one line, the token: no JSON,
 no API key (`sk-ant-api…`), nothing group or others can touch. The service refuses to start
 otherwise, naming `profiles.claude.token_file` and the path, never the content. `home secrets` lists
 the entry `agent-service-claude`.
@@ -64,8 +69,8 @@ container user must own the directory and the file. 1000 is the operator's uid o
 own `claude setup-token` writes a file the container can read. Another uid needs its own renewal
 procedure, which is not covered here. It is a deployment choice, not the reader's requirement.
 
-**Renewal.** Write the new line to `token.new` beside the old one (again with `umask 077`) and swap
-the name with `mv -T token.new token`; the next run opens the file anew, without a restart. The bind
+**Renewal.** `agent-service/setup --renew` takes a new pasted line, writes it to `token.new` beside the
+old one and swaps the name (an atomic rename); the next run opens the file anew, without a restart. The bind
 is the directory, never the file: a file bind (or a compose `secrets:` file) would keep the old
 inode, and the rename would never reach the running container. A missing directory fails the start
 instead of becoming a root-owned one; the directory itself stays for ever, so never replace or

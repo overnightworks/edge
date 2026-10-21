@@ -26,7 +26,7 @@ module-name = ["edge", "edge_check", "edge_backup", "home_tools", "hal"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-include = ["keycloak/go-live", "step-ca/init"]
+extend-include = ["keycloak/go-live", "step-ca/init", "agent-service/setup"]
 
 [tool.ruff.format]
 # home's tree is imported as it is: home-tools#56 / home-tools#45 move its texts.
