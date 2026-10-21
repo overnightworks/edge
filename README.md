@@ -1234,8 +1234,7 @@ Last, **`bin/edge apply`** (unnumbered), as above.
    It must end with exit 0 before you go on.
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version
    and digest), and of keycloak-config-cli if a build for the new version exists.
-3. **Re-run the probe** (below). It needs 8081 and 8090, so stop the live edge
-   first with `docker compose --profile keycloak --profile probe down` (volumes stay).
+3. **Re-run the probe** (below). It runs beside the live edge, which stays up.
 4. **Start** as in [Start, readiness, stop](#start-readiness-stop) and wait
    until the readiness check prints `ready`; Keycloak migrates its database on
    the first start of the new version.
@@ -1244,9 +1243,11 @@ Last, **`bin/edge apply`** (unnumbered), as above.
 
 `probe/keycloak/probe.py` proves the service on a throwaway compose project
 (`edge-kc-probe`) built from this checkout, with throwaway secrets in the
-scratch directory, and always removes it again, volumes included. It stands in
-for Cloudflare by sending `Host: auth.hallucinai.de` and
-`X-Forwarded-Proto: https` to `127.0.0.1:8081`. The test relying party
+scratch directory, and always removes it again, volumes included. It runs beside
+the live edge: its Traefik listens on two free loopback ports of its own (never
+8081 or 8090) and routes only its own project. It stands in for Cloudflare by
+sending `Host: auth.hallucinai.de` and `X-Forwarded-Proto: https` to its edge
+entrypoint. The test relying party
 `probe-rp` and its client exist only there.
 
 ```sh
@@ -1258,8 +1259,7 @@ It prints one `PROOF <n> held:` line per proof and ends with `PROBE PASSED`
 (exit 0) or `PROBE FAILED: <what>` (exit 1, also when SIGTERM or Ctrl-C
 stopped it: the teardown still runs and finishes; under the `timeout` wrapper above
 Ctrl-C never reaches the probe, so stop it with `kill -TERM` on the probe); exit 2 means a refused
-argument (`--scratch` must be a new or empty directory), exit 3 that 8081 or
-8090 was taken. The lock is held for at most 590 seconds: at 540 `timeout` stops the
+argument (`--scratch` must be a new or empty directory). The lock is held for at most 590 seconds: at 540 `timeout` stops the
 probe, which still tears its stack down (exit 124), and 50 seconds later it
 kills the probe and its teardown (exit 137). After an exit 137 or a
 `teardown: stack edge-kc-probe FAILED` line, remove it under the lock, from a directory
@@ -1273,7 +1273,7 @@ flock /tmp/probe-stack.lock \
 
 The proofs: the public issuer, the themed login and account pages in German
 and English and the path allow-list (1, 2a), the master issuer and the
-forced second factor on 8090, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
+forced second factor on the admin entrypoint, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
 cache-off second apply and a changed YAML that applies and deletes a
 console-made subgroup it does not list, with a seeded member untouched (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused

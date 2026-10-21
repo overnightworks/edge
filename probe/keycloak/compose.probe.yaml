@@ -10,8 +10,8 @@ services:
 
   keycloak:
     environment:
-      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL:-}
-      KC_PROXY_TRUSTED_ADDRESSES: ${PROBE_KEYCLOAK_SUBNET:-}
+      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL:?run through probe/keycloak/probe.py}
+      KC_PROXY_TRUSTED_ADDRESSES: ${PROBE_KEYCLOAK_SUBNET:?run through probe/keycloak/probe.py}
     labels:
       # The live Traefik routes only a name of lowercase letters, digits and hyphens, so it must
       # not pick this container up and route the public host to it.
@@ -19,7 +19,7 @@ services:
 
   keycloak-config-cli:
     environment:
-      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL:-}
+      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL:?run through probe/keycloak/probe.py}
     volumes:
       - ${PROBE_CONFIG_DIR:?run through probe/keycloak/probe.py}:/config:ro
 

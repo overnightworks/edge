@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 from collections.abc import Callable, Iterator
@@ -12,14 +13,18 @@ from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
-from types import FrameType, ModuleType
+from types import FrameType, ModuleType, SimpleNamespace
+from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import Request
 from urllib.response import addinfourl
 
 import pytest
+import yaml
 from fake_docker import DAEMON_GONE, LATE_APPLY, RUNNING_APPLY, SERVICE_CONTAINER
 
-PROBE = Path(__file__).resolve().parents[1] / "probe" / "keycloak" / "probe.py"
+REPOSITORY = Path(__file__).resolve().parents[1]
+PROBE = REPOSITORY / "probe" / "keycloak" / "probe.py"
 LOGIN_URL = "http://localhost:8090/realms/master/login-actions/authenticate"
 FAKE_DOCKER = Path(__file__).with_name("fake_docker.py")
 
@@ -257,6 +262,184 @@ def test_the_stack_listens_on_ports_of_its_own_beside_the_live_edge(
     assert {stack.edge_port, stack.admin_port}.isdisjoint({8081, 8090})
     assert stack.edge_url == f"http://127.0.0.1:{stack.edge_port}"
     assert stack.admin_url == f"http://localhost:{stack.admin_port}"
+
+
+def test_the_probes_traefik_constraint_takes_its_own_project_and_the_live_one_refuses_its_keycloak(
+    probe: ModuleType, tmp_path: Path, docker_host: DockerHost
+) -> None:
+    live_config = (REPOSITORY / "traefik.yml").read_text()
+    live_constraint = re.search(r'constraints: "LabelRegex\(`edge.name`, `(.+?)`\)"', live_config)
+    assert live_constraint is not None
+    overlay = yaml.safe_load((REPOSITORY / "probe/keycloak/compose.probe.yaml").read_text())
+    probe_name = overlay["services"]["keycloak"]["labels"]["edge.name"]
+    stack = probe.Stack(tmp_path)
+
+    stack.write_traefik_config()
+
+    assert re.fullmatch(live_constraint.group(1), probe_name) is None
+    probe_config = stack.traefik_config.read_text()
+    assert "Label(`com.docker.compose.project`, `edge-kc-probe`)" in probe_config
+    assert "LabelRegex" not in probe_config
+
+
+GO_LIVE_OVERRIDES = [
+    "ADMIN_URL",
+    "EDGE_URL",
+    "MASTER_ISSUER",
+    "MASTER_TOKEN_URL",
+    "ADMIN_REALMS",
+]
+
+
+class InterceptedKeycloak:
+    """What go-live's HTTP reaches instead of a network: every URL it was asked for."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def __call__(self, request: Request, timeout: float) -> addinfourl:
+        self.urls.append(request.full_url)
+        path = urlsplit(request.full_url).path
+        method = request.get_method()
+        status, body = 200, "[]"
+        if path.endswith("/token"):
+            body = '{"access_token": "token"}'
+        elif method == "POST" and path.endswith("/users"):
+            status, body = 201, ""
+        elif method == "POST":
+            status, body = 204, ""
+        elif path.endswith("/users"):
+            body = '[{"id": "user-1"}]' if "username" in request.full_url else "[]"
+        elif path.endswith("/roles/admin"):
+            body = '{"name": "admin"}'
+        reply = addinfourl(BytesIO(body.encode()), Message(), request.full_url, status)
+        return reply
+
+
+@pytest.fixture
+def go_live_probe(
+    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[object, InterceptedKeycloak, str]:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    for name in ("config-cli-secret", "bootstrap-admin-password"):
+        (secrets_dir / name).write_text("secret")
+    admin_url = "http://localhost:41002"
+    stack = SimpleNamespace(
+        scratch=tmp_path,
+        secrets_dir=secrets_dir,
+        admin_url=admin_url,
+        edge_url="http://127.0.0.1:41001",
+        master_issuer=f"{admin_url}/realms/master",
+        master_token_url=f"{admin_url}/realms/master/protocol/openid-connect/token",
+    )
+    intercepted = InterceptedKeycloak()
+    load_go_live = probe.load_go_live
+
+    def go_live_without_a_network() -> ModuleType:
+        module = load_go_live()
+        module.urlopen = intercepted
+        return module
+
+    monkeypatch.setattr(probe, "load_go_live", go_live_without_a_network)
+    return probe.Probe(stack), intercepted, admin_url
+
+
+def test_proof_11s_admin_step_sends_every_request_to_the_probes_admin_entrypoint(
+    go_live_probe: tuple[Any, InterceptedKeycloak, str],
+) -> None:
+    probe_run, intercepted, admin_url = go_live_probe
+
+    step = probe_run.go_live_admin_step("first-password", typed_answers=True)
+    assert not step.is_done()
+    step.do()
+
+    assert intercepted.urls
+    assert {urlsplit(url).netloc for url in intercepted.urls} == {urlsplit(admin_url).netloc}
+    assert not any("8090" in url or "8081" in url for url in intercepted.urls)
+
+
+@pytest.mark.parametrize("override", GO_LIVE_OVERRIDES)
+def test_proof_11_refuses_to_run_when_go_live_still_names_the_live_edge(
+    probe: ModuleType,
+    go_live_probe: tuple[Any, InterceptedKeycloak, str],
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+) -> None:
+    probe_run, _intercepted, _admin_url = go_live_probe
+    load_go_live = probe.load_go_live
+
+    class IgnoresOneAssignment(ModuleType):
+        def __setattr__(self, name: str, value: object) -> None:
+            if name != override:
+                super().__setattr__(name, value)
+
+    def go_live_keeping_its_live_address() -> ModuleType:
+        module = load_go_live()
+        module.__class__ = IgnoresOneAssignment
+        return module
+
+    monkeypatch.setattr(probe, "load_go_live", go_live_keeping_its_live_address)
+
+    with pytest.raises(probe.ProbeFailure, match=f"go-live's {override} still names the live edge"):
+        probe_run.go_live_admin_step("first-password", typed_answers=True)
+
+
+def docker_answering(
+    monkeypatch: pytest.MonkeyPatch, probe: ModuleType, *, networks: list[str], subnets: str
+) -> None:
+    def answer(*arguments: str) -> subprocess.CompletedProcess[str]:
+        if arguments[:2] == ("network", "ls"):
+            return subprocess.CompletedProcess(arguments, 0, "\n".join(networks), "")
+        return subprocess.CompletedProcess(arguments, 0, subnets, "")
+
+    monkeypatch.setattr(probe, "docker", answer)
+
+
+def test_the_probe_skips_a_candidate_subnet_that_a_network_overlaps(
+    probe: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker_answering(
+        monkeypatch, probe, networks=["live"], subnets="172.31.253.0/24 172.31.200.128/25 "
+    )
+
+    assert probe.free_subnet() == "172.31.201.0/24"
+
+
+def test_the_probe_fails_when_every_candidate_subnet_is_taken(
+    probe: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker_answering(monkeypatch, probe, networks=["wide"], subnets="172.31.0.0/16")
+
+    with pytest.raises(probe.ProbeFailure, match="no free /24"):
+        probe.free_subnet()
+
+
+@pytest.mark.parametrize("fault", ["a docker failure", "every subnet taken"])
+def test_a_failure_while_building_the_stack_ends_with_one_failure_and_no_teardown(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: str,
+) -> None:
+    if fault == "a docker failure":
+        monkeypatch.setattr(
+            probe,
+            "docker",
+            lambda *arguments: subprocess.CompletedProcess(arguments, 1, "", "daemon is gone"),
+        )
+    else:
+        docker_answering(monkeypatch, probe, networks=["wide"], subnets="172.31.0.0/16")
+    monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(tmp_path / "s")])
+
+    exit_code = probe.main()
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert output.startswith("PROBE FAILED: ")
+    assert output.count("PROBE FAILED") == 1
+    assert "teardown" not in output
 
 
 FRESH_APPLY_LINE = "fresh apply done"

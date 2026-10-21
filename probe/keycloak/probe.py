@@ -74,6 +74,8 @@ LOOPBACK_ADDRESS = "127.0.0.1"
 # The live entrypoint addresses in traefik.yml, which the probe's copy of it replaces.
 LIVE_EDGE_ADDRESS = f"{LOOPBACK_ADDRESS}:8081"
 LIVE_ADMIN_ADDRESS = f"{LOOPBACK_ADDRESS}:8090"
+# What keycloak/go-live pins for the live edge, which no step over the probe's stack may reach.
+LIVE_GO_LIVE_ADDRESSES = ("localhost:8090", LIVE_EDGE_ADDRESS)
 TRAEFIK_CONFIG = "traefik.yml"
 NETWORK_OVERLAY = "network.compose.yaml"
 # Which containers the Docker provider routes: the live one takes any `edge.name` label that
@@ -1498,6 +1500,12 @@ class Probe:
         go_live.MASTER_ISSUER = self.stack.master_issuer
         go_live.MASTER_TOKEN_URL = self.stack.master_token_url
         go_live.ADMIN_REALMS = f"{self.stack.admin_url}/admin/realms"
+        for name, value in vars(go_live).items():
+            expect(
+                not isinstance(value, str)
+                or not any(live in value for live in LIVE_GO_LIVE_ADDRESSES),
+                f"go-live's {name} still names the live edge: {value}",
+            )
 
         def no_command(*_args: object, **_kwargs: object) -> object:
             raise ProbeFailure("go-live's admin step ran a command")
@@ -2245,7 +2253,12 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
         parser.error(f"{scratch} is not an empty directory")
-    stack = make_stack(scratch)
+    try:
+        stack = make_stack(scratch)
+    except (ProbeFailure, OSError) as failure:
+        # Nothing has started yet, so there is nothing to tear down.
+        print(f"PROBE FAILED: {failure}", flush=True)
+        return 1
     # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
     # below still runs and the probe ends with its one FAILED line.
     for stopping in STOP_SIGNALS:
