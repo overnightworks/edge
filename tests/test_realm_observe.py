@@ -115,6 +115,7 @@ def longer_tokens(realms: dict[str, FakeRealm]) -> None:
 def rename_hopin(realms: dict[str, FakeRealm]) -> None:
     groups = realms["hallucinai"].groups
     groups["/apps/hop-in"] = groups.pop("/apps/hopin")
+    groups["/apps/hop-in/admin"] = groups.pop("/apps/hopin/admin")
 
 
 def swap_forms_steps(realms: dict[str, FakeRealm]) -> None:
@@ -172,7 +173,9 @@ def change_unlisted_and_secrets(realms: dict[str, FakeRealm]) -> None:
             rename_hopin,
             [
                 "hallucinai: addition group /apps/hop-in (2 members)",
+                "hallucinai: addition group /apps/hop-in/admin (0 members)",
                 "hallucinai: removal group /apps/hopin (2 members)",
+                "hallucinai: removal group /apps/hopin/admin (0 members)",
             ],
             id="U10-group-renamed-is-removal-plus-addition-with-members",
         ),

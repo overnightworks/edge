@@ -166,6 +166,7 @@ LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
+SUBSCRIPTION_GROUP = "/ai-subscription"  # the agent service's subscription group
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as Cloudflare saw it
@@ -1963,7 +1964,10 @@ class Probe:
         name = client.client_id
         username = f"probe-{name}-member"
         password = self.keep_secret(f"{username} password", secrets.token_urlsafe(16))
-        admin.join_group(admin.create_user(REALM, username, password), client.group)
+        member_id = admin.create_user(REALM, username, password)
+        admin.join_group(member_id, client.group)
+        if client.agent_workload:
+            admin.join_group(member_id, SUBSCRIPTION_GROUP)
         client_secret = self.secret_values[client.secret_file]
         browser = new_opener(
             ReceivedCookies(lambda cookie, value: self.keep_secret(f"{name} {cookie}", value))
@@ -1971,8 +1975,12 @@ class Probe:
         tokens = self.app_client_sign_in(client, browser, username, password, client_secret)
         groups = claims(tokens["id_token"]).get("groups", [])
         expect(client.group in groups, f"{name}'s ID token groups are {groups}")
+        subscription_token = ""
         if client.agent_workload:
             self.person_token_is_no_workload(client, tokens["access_token"])
+            subscription_token = (
+                f", and an access token with {SUBSCRIPTION_GROUP} and the {AGENT_SERVICE} audience"
+            )
         self.app_client_refuses_what_it_does_not_use(client, client_secret)
         self.app_client_logout_pages(client, browser)
         self.app_client_representation(admin, client)
@@ -1982,7 +1990,8 @@ class Probe:
             "10",
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
             f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
-            f"with groups {groups}; no code challenge, a callback with a suffix, plain http, the "
+            f"with groups {groups}{subscription_token}; no code challenge, a callback with a "
+            "suffix, plain http, the "
             f"password grant, {'' if client.agent_workload else 'client_credentials, '}and the "
             "offline_access scope are refused; the "
             f"end-session page asks before logging out for {client.logout_redirect} and refuses "
@@ -2102,13 +2111,13 @@ class Probe:
 
     @staticmethod
     def person_token_is_no_workload(client: AppClient, access_token: str) -> None:
-        """Cell W3: a person's token from the app's login has the audience and groups, never the
-        workload role."""
+        """Cell W3: a person's token from the app's login has the audience and groups (the app's
+        group and the subscription group in full path), never the workload role."""
         access = claims(access_token)
         roles = access.get("realm_access", {}).get("roles", [])
         expect(
             AGENT_SERVICE in audience_of(access)
-            and client.group in access.get("groups", [])
+            and {client.group, SUBSCRIPTION_GROUP} <= set(access.get("groups", []))
             and AGENT_WORKLOAD_ROLE not in roles,
             f"a person's access token from {client.client_id} has aud {audience_of(access)}, "
             f"groups {access.get('groups')}, realm roles {roles}",
