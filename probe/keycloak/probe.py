@@ -2479,7 +2479,7 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
         if stack is not None and not stack.down():
-            failures.append(f"stack {PROJECT} is left behind; docs/keycloak.md, Probe, removes it")
+            failures.append(f"stack {PROJECT} is left behind; see probe/keycloak/README.md")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1

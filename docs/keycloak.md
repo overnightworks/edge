@@ -130,8 +130,10 @@ applies the configuration, and the temporary admin's password); Postgres reads i
 the process and `exec`s Keycloak or keycloak-config-cli. Each confidential app client has one more
 file, `~/.secrets/keycloak/clients/<clientId>`; `compose.yaml` names them as top-level secrets.
 The files are 0644 inside their 0700 directories, because the container users must read them.
-`keycloak/go-live` creates every missing file, once, and never overwrites an existing one; a later
-app adds one secret to `compose.yaml`, and the next go-live creates only its file.
+`keycloak/go-live` creates the three base files only when none exists; when only some exist it
+refuses and names the missing ones, except that a `bootstrap-admin-password` that step 7 retired
+counts as done. Each missing client file is created, so a later app that adds one secret to
+`compose.yaml` gets only its file at the next go-live. It never overwrites a file.
 
 `keycloak/secret-check/secret_check.py` keeps secrets out of the repository's YAML (the file's
 header and `tests/test_secret_check.py` hold its rules); CI runs it. After changing the script's
@@ -181,8 +183,7 @@ your terminal on yes while it is not done.
 
 While `~/.local/state/edge/stopped/keycloak` exists (`edge stop keycloak`), go-live refuses and
 starts nothing; `edge start keycloak` ends the switch. `keycloak/go-live --check` asks nothing,
-changes nothing and ignores the marker: exit 0 when go-live is finished, 1 when not (one line
-names what is missing), 2 when Docker or Compose did not answer. It reads go-live's durable
+changes nothing and ignores the marker: its exit codes are in `--help`. It reads go-live's durable
 trace, not Keycloak, and it is also the setup check of `edge apply --closed` for the unit
 `keycloak`.
 
@@ -202,16 +203,4 @@ trace, not Keycloak, and it is also the setup check of `edge apply --closed` for
 
 `probe/keycloak/probe.py` proves the service on a throwaway compose project (`edge-kc-probe`)
 built from this checkout; [probe/keycloak/README.md](../probe/keycloak/README.md) holds the
-command, the modes and the proofs (issuers, themed pages, the second factor, the apply's reset
-class, the claims, logout, the events with the Cloudflare address, the app clients and the agent
-workload shape, and that no credential leaks). It prints `PROBE PASSED` (exit 0) or
-`PROBE FAILED: <what>` (exit 1); exit 2 refuses an argument. Under `timeout` the lock is held for
-at most 590 seconds; exit 124 is the `timeout` stop (the probe still tears down) and exit 137 the
-kill after it. After an exit 137 or a `teardown: stack edge-kc-probe FAILED` line, remove the
-project under the lock, from a directory without a compose file, because Compose finds its
-containers, networks and volumes by the name:
-
-```sh
-flock /tmp/probe-stack.lock \
-  timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
-```
+command, the modes, the proofs, the exit codes, how to stop it and how to remove a stack it left.

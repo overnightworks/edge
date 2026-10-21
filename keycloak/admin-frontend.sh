@@ -1,5 +1,5 @@
 #!/bin/bash
-# Go-live step 4, run once inside the bootstrap keycloak container before the first apply: moves
+# Go-live step 4a, run once inside the bootstrap keycloak container before the first apply: moves
 # the master realm's front end to the admin entrypoint (KC_HOSTNAME_ADMIN), as keycloak/master.yaml
 # declares. keycloak-config-cli cannot make this first change itself: Keycloak checks an admin
 # token's issuer against the master realm's front end, so the change would invalidate

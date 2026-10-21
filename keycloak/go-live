@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Keycloak go-live as one command (docs/keycloak.md, "Go-live"): the operator's tool.
 
-Runs the runbook's steps 2-6 and the end of step 7, asks for the operator's admin name and first
-password (step 6), and stops for the human part, the browser (TOTP and passkey, step 7). It ends
-unpublished: its last line names `edge apply`. Every step checks its own done-state first, so a run
-after an interruption continues at the first unfinished step. No secret is printed: command output
-is captured and a failure shows one scrubbed line.
+Runs steps 2-6 (as `--help` numbers them) and the end of step 7, asks for the operator's admin
+name and first password (step 6), and stops for the human part, the browser (TOTP and passkey,
+step 7). It ends unpublished: its last line names `edge apply`. Every step checks its own
+done-state first, so a run after an interruption continues at the first unfinished step. No secret
+is printed: command output is captured and a failure shows one scrubbed line.
 
     keycloak/go-live
     keycloak/go-live --check
