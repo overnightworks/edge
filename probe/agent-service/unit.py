@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""Probe of the agent service unit (#201 cells U1-U11): the real `agent-service` of compose.yaml,
+with its real `service.toml`, in a throwaway compose project of its own and a scratch HOME that
+holds a dummy login (never a real token).
+
+    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+        python3 probe/agent-service/unit.py --scratch DIR
+
+U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. The image
+`edge-agent-service:0.4.0-2.1.302` must exist (README "The agent service image"). The probe
+always removes its containers and networks, and never touches the live stack: the project name is
+its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
+directory. Exit 0: every cell held, 1: a cell failed.
+
+The container is asked through the `Inside` class below: the driver sends its source to
+`python -I -` inside the container, which has the interpreter of the image and nothing else.
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import hashlib
+import inspect
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
+
+from egress import (
+    LABEL,
+    LOGIN_DIRECTORY,
+    PROJECT,
+    SERVICE_PORT,
+    Probe,
+    ProbeFailed,
+    Target,
+    expect,
+    interrupt,
+    scratch_directory,
+    service_configuration,
+    write_dummy_token,
+)
+
+SERVICE = Target.SERVICE.compose_service
+LISTEN_SECONDS = 90
+REFUSAL_SECONDS = 60
+UID = 1000
+LISTENING = f"Uvicorn running on http://0.0.0.0:{SERVICE_PORT}"
+CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path
+SERVICE_COMMAND = "agent-service"
+INIT_COMMAND = "docker-init"
+OWNER_ONLY = 0o700
+TOKEN_MODE = 0o600
+LOOSE_TOKEN_MODE = 0o644
+LOOSE_WORKING_ROOT_MODE = "0750"
+INSIDE_IMPORTS = "import errno, hashlib, json, os, re, shutil, signal, subprocess, sys, time\n"
+
+
+class Inside:
+    """What the probe asks inside the service container; every command prints one JSON line."""
+
+    @staticmethod
+    def processes() -> dict:
+        found = []
+        for name in os.listdir("/proc"):
+            if not name.isdigit() or int(name) == os.getpid():
+                continue
+            try:
+                with open(f"/proc/{name}/stat", encoding="utf-8") as stat:
+                    parent = int(stat.read().rpartition(") ")[2].split()[1])
+                with open(f"/proc/{name}/cmdline", "rb") as command:
+                    arguments = command.read().decode("utf-8", "replace").rstrip("\0").split("\0")
+            except OSError:
+                continue  # it ended between the listing and the read
+            found.append({"pid": int(name), "parent": parent, "command": arguments})
+        return {"processes": found}
+
+    @staticmethod
+    def process(pid: str) -> dict:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as status:
+            fields = {
+                key: value
+                for key, separator, value in (
+                    line.partition(":\t") for line in status.read().splitlines()
+                )
+                if separator
+            }
+        with open(f"/proc/{pid}/limits", encoding="utf-8") as limits:
+            core = re.search(r"Max core file size\s+(\S+)\s+(\S+)", limits.read())
+        try:
+            with open(f"/proc/{pid}/attr/current", encoding="utf-8") as label:
+                confinement = label.read().strip()
+        except OSError as error:
+            confinement = f"unreadable: {errno.errorcode.get(error.errno or 0)}"
+        return {
+            "uid": fields["Uid"].split(),
+            "gid": fields["Gid"].split(),
+            "capabilities": fields["CapEff"].strip(),
+            "no_new_privileges": fields["NoNewPrivs"].strip(),
+            "core_limit": [core.group(1), core.group(2)],
+            "environ_owner": os.stat(f"/proc/{pid}/environ").st_uid,
+            "opens": {
+                name: Inside.open_result(f"/proc/{pid}/{name}") for name in ("environ", "mem")
+            },
+            "label": confinement,
+        }
+
+    @staticmethod
+    def open_result(path: str) -> str:
+        try:
+            with open(path, "rb"):
+                return "opened"
+        except OSError as error:
+            return errno.errorcode.get(error.errno or 0, str(error.errno))
+
+    @staticmethod
+    def own_label() -> dict:
+        with open("/proc/self/attr/current", encoding="utf-8") as label:
+            return {"label": label.read().strip()}
+
+    @staticmethod
+    def mounts() -> dict:
+        rows = []
+        with open("/proc/self/mountinfo", encoding="utf-8") as table:
+            for line in table:
+                left, _, right = line.partition(" - ")
+                fields, tail = left.split(), right.split()
+                options = fields[5].split(",") + tail[2].split(",")
+                rows.append({"point": fields[4], "type": tail[0], "options": options})
+        return {"mounts": rows}
+
+    @staticmethod
+    def stat(path: str) -> dict:
+        status = os.stat(path)
+        return {"mode": status.st_mode & 0o7777, "uid": status.st_uid, "gid": status.st_gid}
+
+    @staticmethod
+    def write(path: str) -> dict:
+        try:
+            with open(path, "w", encoding="utf-8"):
+                return {"result": "written"}
+        except OSError as error:
+            return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
+
+    @staticmethod
+    def sha256(path: str) -> dict:
+        with open(path, "rb") as content:
+            return {"sha256": hashlib.sha256(content.read()).hexdigest()}
+
+    @staticmethod
+    def run_copy(directory: str) -> dict:
+        """A copy of a binary, started from a directory; `noexec` refuses it."""
+        copy = os.path.join(directory, "copied-true")
+        shutil.copy("/bin/true", copy)
+        try:
+            subprocess.run([copy], check=True)
+            return {"result": "ran"}
+        except OSError as error:
+            return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
+        finally:
+            os.unlink(copy)
+
+    @staticmethod
+    def kill_group() -> dict:
+        """A same-uid child in its own process group with a descendant of its own, SIGKILLed as a
+        group: how long until both are gone from /proc (init reaps the orphan)."""
+        child = subprocess.Popen(
+            ["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )  # fmt: skip
+        descendant = int(child.stdout.readline())
+        before = [os.path.exists(f"/proc/{pid}") for pid in (child.pid, descendant)]
+        started = time.monotonic()
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+        while time.monotonic() - started < 3:
+            if not any(os.path.exists(f"/proc/{pid}") for pid in (child.pid, descendant)):
+                break
+            time.sleep(0.01)
+        gone = [not os.path.exists(f"/proc/{pid}") for pid in (child.pid, descendant)]
+        return {"before": before, "gone": gone, "seconds": time.monotonic() - started}
+
+    @staticmethod
+    def main(arguments: list[str]) -> int:
+        print(json.dumps(getattr(Inside, arguments[0])(*arguments[1:])), flush=True)
+        return 0
+
+
+INSIDE_PROGRAM = (
+    INSIDE_IMPORTS + inspect.getsource(Inside) + "\nsys.exit(Inside.main(sys.argv[1:]))\n"
+)
+
+
+def working_root() -> str:
+    return service_configuration()["cli"]["working_root"]
+
+
+def token_path() -> str:
+    return service_configuration()["profiles"]["claude"]["token_file"]
+
+
+def login_directory() -> str:
+    return str(Path(token_path()).parent)
+
+
+def ended_unsuccessfully(state: dict) -> bool:
+    """The container is not running, or waits between restarts, and its last exit was non-zero."""
+    return (not state["Running"] or state["Restarting"]) and state["ExitCode"] != 0
+
+
+def refusal_is_complete(cell: str, logs: str, fields: list[str]) -> bool:
+    """The logs of an attempt that ended unsuccessfully name every field; one that listened
+    fails the cell."""
+    expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
+    return all(field in logs for field in fields)
+
+
+class UnitProbe(Probe):
+    """The egress probe's stack with the service alone, driven cell by cell."""
+
+    def __init__(self, scratch: Path) -> None:
+        super().__init__(scratch, Target.SERVICE)
+        self.token = scratch / "home" / LOGIN_DIRECTORY / "token"
+
+    def services_to_start(self) -> tuple[str, ...]:
+        return (SERVICE,)
+
+    def inside(self, *arguments: str) -> dict:
+        container = self.container(SERVICE)
+        return self.client_with(["exec", "-i", container], arguments, INSIDE_PROGRAM)
+
+    def service_containers(self) -> list[str]:
+        """The service's containers, stopped ones included."""
+        return self.run(
+            ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={PROJECT}",
+             "--filter", f"label=com.docker.compose.service={SERVICE}"],
+        ).stdout.split()  # fmt: skip
+
+    def service_logs(self) -> str:
+        containers = self.service_containers()
+        logs = self.run(["docker", "logs", *containers[:1]]) if containers else None
+        return (logs.stdout + logs.stderr) if logs else ""
+
+    def service_state(self) -> dict | None:
+        """The service container's State, or None while there is no container; a failed listing or
+        inspection raises."""
+        containers = self.service_containers()
+        if not containers:
+            return None
+        inspected = self.run(["docker", "inspect", "--format", "{{json .State}}", containers[0]])
+        try:
+            return json.loads(inspected.stdout)
+        except json.JSONDecodeError as problem:
+            raise ProbeFailed(
+                f"docker inspect gave no State: {inspected.stdout[:100]!r}"
+            ) from problem
+
+    # --- the cells of a started service -------------------------------------------------------
+
+    def drive(self) -> None:
+        self.cell_u1()
+        self.cell_u2()
+        self.cell_u3()
+        self.cell_u4()
+        self.cell_u5()
+        self.cell_u6()
+        self.cell_u7()
+        self.cell_u8()
+        self.cell_u9()
+        self.compose("down", "--timeout", "10")
+        self.cell_u6_refusal()
+        self.cell_u10()
+        self.cell_u11()
+
+    def wait_until_listening(self) -> None:
+        deadline = time.monotonic() + LISTEN_SECONDS
+        while time.monotonic() < deadline:
+            if LISTENING in self.service_logs():
+                return
+            time.sleep(0.5)
+        raise ProbeFailed("U1: the service did not listen in time")
+
+    def unauthenticated_status(self) -> int:
+        image = json.loads(self.compose("config", "--format", "json").stdout)["services"][SERVICE][
+            "image"
+        ]
+        program = (
+            "import urllib.request, urllib.error\n"
+            f"address = 'http://{SERVICE}:{SERVICE_PORT}/runs'\n"
+            "request = urllib.request.Request(address, data=b'{}', method='POST',"
+            " headers={'Content-Type': 'application/json'})\n"
+            "try:\n"
+            "    print(urllib.request.urlopen(request, timeout=10).status)\n"
+            "except urllib.error.HTTPError as refusal:\n"
+            "    print(refusal.code)\n"
+        )
+        asked = self.run(
+            ["docker", "run", "--rm", "--label", LABEL, f"--network={PROJECT}_agent",
+             "--read-only", "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt",
+             "no-new-privileges:true", "--entrypoint", "python", image, "-I", "-c", program],
+        )  # fmt: skip
+        return int(asked.stdout.strip())
+
+    def cell_u1(self) -> None:
+        self.wait_until_listening()
+        status = self.unauthenticated_status()
+        expect(status == 401, f"U1: an unauthenticated POST /runs answered {status}")
+        self.hold(
+            "U1",
+            f"the service listens on :{SERVICE_PORT} after its version probe; "
+            "an unauthenticated POST /runs answers 401",
+        )
+
+    def service_process(self) -> dict:
+        processes = self.inside("processes")["processes"]
+        children = [found for found in processes if found["parent"] == 1]
+        expect(len(children) == 1, f"U2: the init has children {children}")
+        init = next(found for found in processes if found["pid"] == 1)
+        expect(Path(init["command"][0]).name == INIT_COMMAND, f"U2: PID 1 is {init['command']}")
+        return children[0]
+
+    def cell_u2(self) -> None:
+        listed = self.run(
+            ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}",
+             "--filter", f"label=com.docker.compose.service={SERVICE}"],
+        ).stdout.split()  # fmt: skip
+        expect(len(listed) == 1, f"U2: {len(listed)} service containers")
+        configured = json.loads(self.compose("config", "--format", "json").stdout)["services"]
+        expect("deploy" not in configured[SERVICE], "U2: the service has a deploy section")
+        service = self.service_process()
+        expect(
+            any(Path(part).name == SERVICE_COMMAND for part in service["command"]),
+            f"U2: the init's child is {service['command']}",
+        )
+        expect("--workers" not in service["command"], f"U2: {service['command']}")
+        processes = self.inside("processes")["processes"]
+        grandchildren = [found for found in processes if found["parent"] == service["pid"]]
+        expect(not grandchildren, f"U2: the service has children {grandchildren}")
+        self.hold(
+            "U2",
+            f"one container; PID 1 is docker-init and its one child {service['command'][-3:]} "
+            "runs no worker",
+        )
+
+    def cell_u3(self) -> None:
+        pid = str(self.service_process()["pid"])
+        process = self.inside("process", pid)
+        expect(
+            set(process["uid"]) == {str(UID)} and set(process["gid"]) == {str(UID)},
+            f"U3: {process['uid']} {process['gid']}",
+        )
+        expect(int(process["capabilities"], 16) == 0, f"U3: CapEff {process['capabilities']}")
+        expect(process["no_new_privileges"] == "1", "U3: NoNewPrivs is not 1")
+        expect(process["core_limit"] == ["0", "0"], f"U3: core limit {process['core_limit']}")
+        expect(process["environ_owner"] == 0, f"U3: environ is owned by {process['environ_owner']}")
+        expect(
+            set(process["opens"].values()) == {"EACCES"},
+            f"U3: a same-uid process opens {process['opens']}",
+        )
+        written = self.inside("write", "/probe-write")["result"]
+        expect(written == "EROFS", f"U3: a write to / gave {written}")
+        self.hold(
+            "U3",
+            f"uid:gid {UID}:{UID}, CapEff 0, NoNewPrivs 1, core 0:0, non-dumpable (environ owned "
+            f"by root, environ and mem refused to a same-uid process: {process['opens']}), "
+            f"a write to / gives {written}",
+        )
+
+    def cell_u4(self) -> None:
+        mounts = self.inside("mounts")["mounts"]
+        over_proc = [
+            m for m in mounts if m["point"] == "/proc" or re.match(r"/proc/\d", m["point"])
+        ]
+        expect(
+            [m["type"] for m in over_proc] == ["proc"],
+            f"U4: mounts over /proc or /proc/<pid>: {over_proc}",
+        )
+        self.hold("U4", "the only mount at /proc is procfs and none lies over /proc/<pid>")
+
+    def cell_u5(self) -> None:
+        pid = str(self.service_process()["pid"])
+        label = self.inside("process", pid)["label"]
+        own = self.inside("own_label")["label"]
+        expect(own == "docker-default (enforce)", f"U5: an exec'd process is {own}")
+        expect(label == "docker-default (enforce)", f"U5: the service is {label}")
+        killed = self.inside("kill_group")
+        expect(all(killed["before"]), f"U5: the group did not start: {killed}")
+        expect(all(killed["gone"]) and killed["seconds"] < 1, f"U5: {killed}")
+        self.hold(
+            "U5",
+            f"the service and an exec'd process run under {label}; a same-uid group with a "
+            f"descendant is gone {killed['seconds']:.2f} s after SIGKILL",
+        )
+
+    def cell_u6(self) -> None:
+        mounts = {m["point"]: m for m in self.inside("mounts")["mounts"]}
+        for directory in (CONTAINER_TMP, working_root()):
+            mount = mounts[directory]
+            owned = self.inside("stat", directory)
+            expect(mount["type"] == "tmpfs", f"U6: {directory} is {mount['type']}")
+            expect(
+                owned["uid"] == UID and owned["mode"] == OWNER_ONLY,
+                f"U6: {directory} is owned by {owned['uid']} with mode {owned['mode']:o}",
+            )
+        self.hold("U6", f"/tmp and {working_root()} are tmpfs owned by {UID} with mode 0700")
+
+    def cell_u7(self) -> None:
+        options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
+        for directory in (CONTAINER_TMP, working_root()):
+            expect(
+                {"nosuid", "nodev", "noexec"} <= set(options[directory]),
+                f"U7: {directory} mounts with {options[directory]}",
+            )
+        ran = self.inside("run_copy", working_root())["result"]
+        expect(ran == "EACCES", f"U7: a copied binary in the working root gave {ran}")
+        version = self.run(
+            ["docker", "exec", self.container(SERVICE), "/opt/claude/claude", "--version"]
+        ).stdout.strip()
+        expect(version.startswith("2.1.302"), f"U7: the CLI says {version!r}")
+        self.hold(
+            "U7",
+            "nosuid,nodev,noexec on /tmp and the working root; a copied binary there gives "
+            f"{ran}; the CLI ({version}) starts",
+        )
+
+    def cell_u8(self) -> None:
+        written = self.inside("write", f"{login_directory()}/probe-write")["result"]
+        expect(written == "EROFS", f"U8: a write into the login directory gave {written}")
+        token = self.inside("stat", token_path())
+        expect(
+            token["uid"] == UID and token["mode"] == TOKEN_MODE,
+            f"U8: the token is owned by {token['uid']} with mode {token['mode']:o}",
+        )
+        self.hold(
+            "U8", f"the login directory is read-only ({written}); the token is 0600 owned by {UID}"
+        )
+
+    def started_at(self) -> str:
+        return self.run(
+            ["docker", "inspect", "--format", "{{.State.StartedAt}}", self.container(SERVICE)]
+        ).stdout.strip()
+
+    def cell_u9(self) -> None:
+        before = self.inside("sha256", token_path())["sha256"]
+        started = self.started_at()
+        renewed = self.token.with_name("token.new")
+        write_dummy_token(renewed)
+        self.run(["mv", "-T", str(renewed), str(self.token)])
+        after = self.inside("sha256", token_path())["sha256"]
+        expected = hashlib.sha256(self.token.read_bytes()).hexdigest()
+        expect(after == expected and after != before, f"U9: the container sees {after}")
+        expect(self.started_at() == started, "U9: the service restarted")
+        self.hold(
+            "U9",
+            f"after token.new and mv -T the container reads sha256 {after[:12]} "
+            f"(was {before[:12]}) at once; StartedAt unchanged",
+        )
+
+    # --- the cells that stop a start ----------------------------------------------------------
+
+    def refused_start(self, cell: str, fields: list[str]) -> str:
+        """Starts the service as the current files and overlays have it and waits until one
+        failed attempt is complete: the container is down with a non-zero exit, and its whole log,
+        read after that state, names every field and never listens; returns the log."""
+        self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+        deadline = time.monotonic() + REFUSAL_SECONDS
+        logs = ""
+        while time.monotonic() < deadline:
+            state = self.service_state()
+            if state is not None and ended_unsuccessfully(state):
+                logs = self.service_logs()
+                if refusal_is_complete(cell, logs, fields):
+                    return logs
+            time.sleep(1)
+        raise ProbeFailed(f"{cell}: no refused start naming {fields}: {logs[-300:]!r}")
+
+    def cell_u6_refusal(self) -> None:
+        overlay = self.compose_file.with_name("working-root-0750.yaml")
+        overlay.write_text(
+            "services:\n"
+            f"  {SERVICE}:\n"
+            "    tmpfs: !override\n"
+            f"      - /tmp:uid={UID},gid={UID},mode=0700,size=16m,nosuid,nodev,noexec\n"
+            f"      - {working_root()}:uid={UID},gid={UID},mode={LOOSE_WORKING_ROOT_MODE},"
+            "size=64m,nosuid,nodev,noexec\n",
+            encoding="utf-8",
+        )
+        self.overlays.append(overlay)
+        try:
+            logs = self.refused_start("U6", ["cli.working_root"])
+        finally:
+            self.overlays.remove(overlay)
+            self.compose("down", "--timeout", "10")
+        self.hold(
+            "U6 refusal",
+            f"a working root with mode {LOOSE_WORKING_ROOT_MODE} stops the start; the log names "
+            f"cli.working_root ({logs.strip().splitlines()[-1][:160]!r})",
+        )
+
+    def cell_u10(self) -> None:
+        directory = self.token.parent
+        aside = directory.with_name("claude.aside")
+        directory.rename(aside)
+        try:
+            started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+            expect(started.returncode != 0, "U10: the service started without a login directory")
+            expect(not directory.exists(), "U10: the missing login directory was created")
+            strangers = [
+                str(path)
+                for path in (directory.parent.parent, *directory.parent.parent.rglob("*"))
+                if path.lstat().st_uid != os.getuid()
+            ]
+            expect(not strangers, f"U10: paths not owned by the operator: {strangers}")
+            reason = (started.stderr or started.stdout).strip().splitlines()[-1]
+        finally:
+            aside.rename(directory)
+            self.compose("down", "--timeout", "10")
+        self.hold(
+            "U10",
+            f"a missing login directory fails the start ({reason[:140]!r}); "
+            "nothing was created under ~/.secrets",
+        )
+
+    def cell_u11(self) -> None:
+        content = self.token.read_text(encoding="utf-8").strip()
+        self.token.chmod(LOOSE_TOKEN_MODE)
+        try:
+            logs = self.refused_start("U11", ["profiles.claude.token_file", token_path()])
+        finally:
+            self.token.chmod(TOKEN_MODE)
+            self.compose("down", "--timeout", "10")
+        expect(content not in logs, "U11: the log holds the token")
+        self.hold(
+            "U11",
+            "a token at mode 0644 stops the start; the log names profiles.claude.token_file "
+            f"and {token_path()}, never the content",
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
+    arguments = parser.parse_args()
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        with UnitProbe(arguments.scratch) as probe:
+            probe.drive()
+    except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
+        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
+        return 1
+    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

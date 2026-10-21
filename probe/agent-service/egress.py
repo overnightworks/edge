@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Probe of the agent service's egress (#189 cells E1, E3-E10, E12, E13): the gateway `agent-egress`
-and the stand-in `agent-probe` of compose.yaml, in a throwaway compose project of their own.
+"""Probe of the agent service's egress (#189 cells E1-E10, E12, E13; #201 E11, E14 and the real
+service): the gateway `agent-egress` and either the stand-in `agent-probe` or the real
+`agent-service` of compose.yaml, in a throwaway compose project of their own.
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 900 \\
-        python3 probe/agent-service/egress.py --scratch DIR
+    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+        python3 probe/agent-service/egress.py --scratch DIR [--target stand-in|service]
 
 The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
-network moved to a free /24 of its own (the gateway's address and the stand-in's `extra_hosts`
+network moved to a free /24 of its own (the gateway's address and the subject's `extra_hosts`
 follow through the anchors), so it never collides with the live stack's `edge_egress`
 (172.31.252.0/24). E3-E5 and E10 are observed through the packet windows of capture.py, each with a
 control; a window that dropped a frame, held a frame it could not decode, or in which the control
-did not show, is NOT DRIVEN and fails the run. E2 (the issuer's name) is driven with the real
-service, as the issuer has no public DNS record before the go-live. The probe always removes its
-containers and networks, and never touches the live stack: the project name is its own and is set
-on every command. Needs an empty or new --scratch directory. Exit 0: every cell held, 1: a cell
-failed or was not driven.
+did not show, is NOT DRIVEN and fails the run. The service target runs the image of the pull
+request's compose.yaml with a dummy login in the scratch HOME (never a real token) and adds E11 and
+E14. The probe always removes its containers and networks, and never touches the live stack: the
+project name is its own and is set on every command. Needs an existing, empty, writable --scratch
+directory. Exit 0: every cell held, 1: a cell failed or was not driven.
 
-The stand-in runs the `Client` class below: the driver sends its source to `python -I -` inside
+The subject runs the `Client` class below: the driver sends its source to `python -I -` inside
 the container, so the client needs nothing but the standard library of the pinned image.
 """
 
@@ -28,6 +29,7 @@ import inspect
 import ipaddress
 import json
 import os
+import re
 import secrets
 import select
 import selectors
@@ -38,9 +40,12 @@ import struct
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Callable
+from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
+from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
@@ -53,10 +58,16 @@ LABEL = f"edge.probe={PROJECT}"
 COMPOSE_FILE = REPO / "compose.yaml"
 OVERLAY = REPO / "probe" / "agent-service" / "compose.probe.yaml"
 GATEWAY_STATIC = REPO / "agent-service" / "egress" / "traefik.yml"
+SERVICE_CONFIGURATION = REPO / "agent-service" / "service.toml"
 # The egress network of compose.yaml and the address the gateway's static file names.
 LIVE_EGRESS_PREFIX = "172.31.252."
 PROVIDER = "api.anthropic.com"
 GATEWAY_PORT = 443
+SERVICE_PORT = 8080  # the service's own default; service.toml sets only its host
+LOGIN_DIRECTORY = Path(".secrets/agent-service/claude")  # below the HOME of the service's bind
+CLI_BINARY = "/opt/claude/claude"
+CLI_SECONDS = 120
+UPSTREAM_REJECTION = re.compile(r"API Error: 401\b")  # the API's answer, not a local startup error
 UPSTREAM_PORT = 443  # the allowed hosts' port, which allowed.yml passes the connection to
 SUBNET_CANDIDATES = [f"172.31.{third}.0/24" for third in range(251, 239, -1)]
 GATEWAY_HOST_NUMBER = 10
@@ -69,13 +80,61 @@ OUTSIDE_NAME = "example.com"
 NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
 UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
 EMBEDDED_RESOLVER = "127.0.0.11"
-PUBLIC_RESOLVER = "1.1.1.1"
-PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"
+PUBLIC_RESOLVER = "1.1.1.1"  # NOSONAR(S1313) a deliberate unreachable target for E6
+PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"  # NOSONAR(S1313) a deliberate unreachable target for E8
 CLIENT_IMPORTS = "import errno, json, selectors, socket, ssl, struct, sys, time\n"
 
 
 class NotDriven(ProbeFailed):
     """A cell could not be driven to a verdict: a window dropped a frame or missed its control."""
+
+
+class Target(StrEnum):
+    """What sits on the agent networks: the hardened stand-in, or the real service."""
+
+    STAND_IN = "stand-in"
+    SERVICE = "service"
+
+    @property
+    def compose_service(self) -> str:
+        return "agent-probe" if self is Target.STAND_IN else "agent-service"
+
+
+def service_configuration() -> dict:
+    return tomllib.loads(SERVICE_CONFIGURATION.read_text(encoding="utf-8"))
+
+
+def issuer_host() -> str:
+    """The host of the JWKS fetch, as the service's own configuration names it."""
+    host = urlsplit(service_configuration()["identity"]["jwks_url"]).hostname
+    expect(host is not None, "service.toml: jwks_url names no host")
+    return host
+
+
+def write_dummy_token(path: Path) -> None:
+    """A new file at `path` (mode 0600) with a line of the shape `claude setup-token` prints; it
+    is no credential and reaches no one."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")
+
+
+def write_login_directory(home: Path) -> None:
+    """The service's login directory under a probe HOME, holding a dummy token."""
+    directory = home / LOGIN_DIRECTORY
+    directory.mkdir(parents=True)
+    for folder in (directory, directory.parent, directory.parent.parent):
+        folder.chmod(0o700)
+    write_dummy_token(directory / "token")
+
+
+def scratch_directory(text: str) -> Path:
+    """The `--scratch` argument as an absolute path of an existing directory the operator can
+    write to; anything else is refused where the command line is read."""
+    path = Path(text).resolve()
+    if not path.is_dir() or not os.access(path, os.W_OK):
+        raise argparse.ArgumentTypeError(f"{text} is not a writable directory")
+    return path
 
 
 def classify_syns(
@@ -116,7 +175,7 @@ class Client:
                     "handshake": True,
                     "certificate": bool(secured.getpeercert(binary_form=True)),
                 }
-        except (OSError, ssl.SSLError) as error:
+        except OSError as error:  # ssl.SSLError is one
             return {"handshake": False, "error": f"{type(error).__name__}: {error}"}
 
     @staticmethod
@@ -135,7 +194,7 @@ class Client:
     def connect(address: str, port: str) -> dict:
         family = socket.AF_INET6 if ":" in address else socket.AF_INET
         with socket.socket(family, socket.SOCK_STREAM) as attempt:
-            attempt.settimeout(4)
+            attempt.settimeout(8)  # an address nobody owns answers after the ARP retries, ~3 s
             code = attempt.connect_ex((address, int(port)))
         return {"result": "connected" if code == 0 else errno.errorcode.get(code, str(code))}
 
@@ -270,12 +329,13 @@ def lan_address() -> str:
 
 
 class Probe:
-    def __init__(self, scratch: Path) -> None:
+    def __init__(self, scratch: Path, target: Target = Target.STAND_IN) -> None:
         expect(PROJECT != "edge", "the probe must never run in the live project")
-        scratch.mkdir(parents=True, exist_ok=True)
         expect(not any(scratch.iterdir()), f"{scratch} is not empty")
+        self.target = target
         home = scratch / "home"
         home.mkdir()
+        write_login_directory(home)
         subnet = free_subnet(self.daemon_subnets())
         self.prefix = str(subnet.network_address).removesuffix("0")
         self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
@@ -289,6 +349,7 @@ class Probe:
             "DOCKER_GID": "0",
             "PROBE_EGRESS_STATIC": str(self.static_file),
         }
+        self.overlays = [OVERLAY]
         self.windows: list[subprocess.Popen] = []
         self.throwaways = 0
         self.held: list[str] = []
@@ -328,7 +389,8 @@ class Probe:
     def compose_command(self, *arguments: str) -> list[str]:
         return [
             "docker", "compose", "-p", PROJECT, "--project-directory", str(REPO),
-            "--file", str(self.compose_file), "--file", str(OVERLAY),
+            "--file", str(self.compose_file),
+            *(argument for overlay in self.overlays for argument in ("--file", str(overlay))),
             "--profile", "agent-service", "--profile", "agent-probe", *arguments,
         ]  # fmt: skip
 
@@ -341,8 +403,9 @@ class Probe:
         return found
 
     def client(self, *arguments: str) -> dict:
-        """One Client command inside the stand-in."""
-        return self.client_with(["exec", "-i", self.container("agent-probe")], arguments)
+        """One Client command inside the target (the stand-in or the service)."""
+        container = self.container(self.target.compose_service)
+        return self.client_with(["exec", "-i", container], arguments)
 
     def client_in_namespace_of(self, container: str, *arguments: str) -> dict:
         return self.throwaway([f"--network=container:{container}"], arguments)
@@ -360,9 +423,11 @@ class Probe:
             arguments,
         )  # fmt: skip
 
-    def client_with(self, docker_arguments: list[str], arguments) -> dict:
+    def client_with(
+        self, docker_arguments: list[str], arguments, program: str = CLIENT_PROGRAM
+    ) -> dict:
         command = ["docker", *docker_arguments, "python", "-I", "-", *arguments]
-        result = self.run(command, stdin=CLIENT_PROGRAM, timeout=240)
+        result = self.run(command, stdin=program, timeout=240)
         return json.loads(result.stdout.strip().splitlines()[-1])
 
     @cached_property
@@ -376,12 +441,15 @@ class Probe:
 
     # --- life cycle ---------------------------------------------------------------------------
 
+    def services_to_start(self) -> tuple[str, ...]:
+        return ("agent-egress", self.target.compose_service)
+
     def __enter__(self) -> Probe:
         try:
             self.write_on_probe_subnet(COMPOSE_FILE, self.compose_file)
             self.write_on_probe_subnet(GATEWAY_STATIC, self.static_file)
             self.remove_stack()  # a crashed earlier run of this project, never anything else
-            self.compose("up", "--detach", "--wait", "agent-egress", "agent-probe", timeout=600)
+            self.compose("up", "--detach", "--wait", *self.services_to_start(), timeout=600)
         except BaseException:
             self.__exit__()
             raise
@@ -392,7 +460,10 @@ class Probe:
         stack's edge_egress will own 172.31.252.0/24, and Docker refuses a second network on it."""
         text = source.read_text()
         expect(LIVE_EGRESS_PREFIX in text, f"{source.name} does not name {LIVE_EGRESS_PREFIX}")
-        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))
+        # The copy lies in the scratch directory that scratch_directory() resolved and required at
+        # the command line, and the text comes from the repository's own files; the route tried
+        # was resolving the path once at that boundary, which Sonar does not follow across calls.
+        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))  # NOSONAR(S2083)
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
@@ -462,14 +533,19 @@ class Probe:
     def drive(self) -> None:
         self.wait_until_the_gateway_answers()
         self.cell_e1()
+        self.cell_e2()
         self.cells_e3_to_e5()
         self.cell_e6()
         self.cell_e7()
         self.cell_e8()
         self.cell_e9()
         self.cell_e10()
+        if self.target is Target.SERVICE:
+            self.cell_e11()
         self.cell_e12()
         self.cell_e13()
+        if self.target is Target.SERVICE:
+            self.cell_e14()
 
     def hold(self, cell: str, how: str) -> None:
         print(f"{cell} held: {how}", flush=True)
@@ -488,6 +564,12 @@ class Probe:
         result = self.handshake(PROVIDER)
         expect(result["handshake"] and result["certificate"], f"E1: {result}")
         self.hold("E1", f"TLS to {PROVIDER} by name completed, certificate verified for it")
+
+    def cell_e2(self) -> None:
+        issuer = issuer_host()
+        result = self.handshake(issuer)
+        expect(result["handshake"] and result["certificate"], f"E2: {issuer}: {result}")
+        self.hold("E2", f"TLS to {issuer} by name completed, certificate verified for it")
 
     def refused_without_a_dial(self, cell: str, attempt: Callable[[], str]) -> None:
         """E3-E5: the attempt ends in the gateway, and no SYN leaves it before the control's."""
@@ -581,6 +663,10 @@ class Probe:
         for network in ("agent", "egress"):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
             expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
+            free = self.free_address(network)
+            result = self.client("connect", free, port)
+            expect(result["result"] in UNREACHABLE, f"E7: {network} free {free}:{port}: {result}")
+            errnos.append(f"free {network} address {free} {result['result']}")
         defaults = self.client("routes")["default_routes"]
         expect(not defaults, f"E7: the stand-in has a default route on {defaults}")
         self.hold(
@@ -588,6 +674,18 @@ class Probe:
             f"a host listener is unreachable via {'; '.join(errnos)}; no bridge address, no "
             f"default route (control from the internet bridge: {control['result']})",
         )
+
+    def free_address(self, network: str) -> str:
+        """An address of the network's subnet that no member owns. In isolated mode the first
+        member gets .1, so .1 is never taken for a host address."""
+        inspected = self.inspect_network(network)
+        subnet = ipaddress.IPv4Network(inspected["IPAM"]["Config"][0]["Subnet"])
+        owned = {
+            ipaddress.IPv4Interface(member["IPv4Address"]).ip
+            for member in inspected["Containers"].values()
+        }
+        first = subnet.network_address + 1
+        return str(next(host for host in subnet.hosts() if host != first and host not in owned))
 
     def network_gateways(self, name: str) -> list[str]:
         inspected = json.loads(self.run(["docker", "network", "inspect", name]).stdout)[0]
@@ -665,19 +763,62 @@ class Probe:
         expect(found["udp"] == [], f"E12: UDP sockets {found['udp']}")
         self.hold("E12", f"the gateway listens on {self.address}:443/tcp and holds no UDP socket")
 
-    def cell_e13(self) -> None:
+    def cell_e11(self) -> None:
+        """The allowed names resolve to the gateway (glibc), and the Claude CLI (Bun) reaches the
+        real API through it: a dummy token ends in an authentication failure."""
+        for name in (PROVIDER, issuer_host()):
+            addresses = self.client("resolve", name)["addresses"]
+            expect(addresses == [self.address], f"E11: {name} resolves to {addresses}")
+        configuration = service_configuration()
+        working_root = configuration["cli"]["working_root"]
+        token_file = configuration["profiles"]["claude"]["token_file"]
+        script = (
+            'cd "$(mktemp -d -p "$1")" && CLAUDE_CODE_OAUTH_TOKEN="$(cat "$2")" exec "$3" -p hello'
+        )
+        container = self.container("agent-service")
+        started = self.run(
+            ["docker", "exec", container, "sh", "-c", script, "sh", working_root, token_file,
+             CLI_BINARY],
+            check=False, timeout=CLI_SECONDS,
+        )  # fmt: skip
+        said = (started.stdout + started.stderr).strip()
+        expect(started.returncode != 0, f"E11: the CLI exited 0 with a dummy token: {said[:200]!r}")
+        expect(
+            bool(UPSTREAM_REJECTION.search(said)),
+            f"E11: the CLI did not print the API's 401: {said[:300]!r}",
+        )
+        self.hold(
+            "E11",
+            f"{PROVIDER} and {issuer_host()} resolve to {self.address}; the CLI started under "
+            f"{working_root} and ended with: {said[:120]!r}",
+        )
+
+    def scan_network(self, cell: str, network: str) -> None:
+        """A TCP connect scan of every port of every member address of the network, from the
+        target: only the gateway's :443 and the service's own port may answer."""
         members = {
-            member["IPv4Address"].split("/")[0]: member["Name"]
-            for member in self.inspect_network("egress")["Containers"].values()
+            member_id: member["IPv4Address"].split("/")[0]
+            for member_id, member in self.inspect_network(network)["Containers"].items()
         }
-        expect(self.address in members, f"E13: the gateway is not a member: {members}")
-        scanned = self.client("scan", ",".join(members))
-        wanted = {
-            address: ([GATEWAY_PORT] if address == self.address else []) for address in members
-        }
-        expect(scanned == wanted, f"E13: open ports {scanned}")
-        names = ", ".join(sorted(members.values()))
-        self.hold("E13", f"every port of {names} scanned: only {self.address}:443 is open")
+        gateway = self.container("agent-egress")
+        expect(
+            (gateway in members) == (network == "egress"),
+            f"{cell}: the gateway is a member of {network}: {gateway in members}",
+        )
+        listening = {gateway: [GATEWAY_PORT]}
+        if self.target is Target.SERVICE:
+            listening[self.container("agent-service")] = [SERVICE_PORT]
+        scanned = self.client("scan", ",".join(members.values()))
+        wanted = {address: listening.get(member_id, []) for member_id, address in members.items()}
+        expect(scanned == wanted, f"{cell}: open ports {scanned}, expected {wanted}")
+        found = ", ".join(f"{address} {ports}" for address, ports in sorted(scanned.items()))
+        self.hold(cell, f"every port of {len(members)} members of {network} scanned: open {found}")
+
+    def cell_e13(self) -> None:
+        self.scan_network("E13", "egress")
+
+    def cell_e14(self) -> None:
+        self.scan_network("E14", "agent")
 
 
 def interrupt(*_: object) -> None:
@@ -687,11 +828,12 @@ def interrupt(*_: object) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
+    parser.add_argument("--target", type=Target, choices=list(Target), default=Target.STAND_IN)
     arguments = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)
     try:
-        with Probe(arguments.scratch) as probe:
+        with Probe(arguments.scratch, arguments.target) as probe:
             probe.drive()
     except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
         print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)

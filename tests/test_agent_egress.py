@@ -12,10 +12,13 @@ import importlib.util
 import re
 import socket
 import struct
+import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -23,6 +26,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "probe" / "agent-service"
 GATEWAY = "agent-egress"
+SERVICE = "agent-service"
 STAND_IN = "agent-probe"
 OBSERVER = "realm-observer"
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
@@ -68,13 +72,28 @@ def test_every_network_of_the_agent_attachments_is_internal_and_isolated(compose
         assert network["driver_opts"] == ISOLATED_MODE
 
 
-def test_the_stand_in_carries_the_attachments_and_nothing_else_of_the_network(compose, attachments):
-    """E16: the stand-in merges the one anchor; it adds no port, no network mode, no network."""
-    stand_in = compose["services"][STAND_IN]
+@pytest.mark.parametrize("member", [STAND_IN, SERVICE])
+def test_a_member_carries_the_attachments_and_nothing_else_of_the_network(
+    compose, attachments, member
+):
+    """E16: the stand-in and the service merge the one anchor; neither adds a port, a network
+    mode or a network."""
+    service = compose["services"][member]
 
-    assert stand_in["networks"] == attachments["networks"]
-    assert stand_in["extra_hosts"] == attachments["extra_hosts"]
-    assert not {"ports", "network_mode", "expose"} & stand_in.keys()
+    assert service["networks"] == attachments["networks"]
+    assert service["extra_hosts"] == attachments["extra_hosts"]
+    assert not {"ports", "network_mode", "expose"} & service.keys()
+
+
+def test_the_issuer_hosts_the_service_fetches_from_are_names_the_gateway_passes(passed_names):
+    """E16: the jwks_url's host is a HostSNI name of the gateway, and the https the verifier
+    requires reaches the issuer through it."""
+    identity = tomllib.loads((ROOT / "agent-service/service.toml").read_text())["identity"]
+    jwks = urlsplit(identity["jwks_url"])
+
+    assert jwks.scheme == "https"
+    assert jwks.hostname in passed_names
+    assert urlsplit(identity["issuer"]).hostname in passed_names
 
 
 def test_the_gateway_is_the_only_service_on_internet(compose):
@@ -141,6 +160,7 @@ def test_the_gateway_shares_the_public_traefiks_image_and_hardening(compose):
 def test_the_gateway_starts_only_with_the_agent_service_profile(compose):
     """No plain `docker compose up -d` starts the gateway or the stand-in."""
     assert compose["services"][GATEWAY]["profiles"] == ["agent-service"]
+    assert compose["services"][SERVICE]["profiles"] == ["agent-service"]
     assert compose["services"][STAND_IN]["profiles"] == ["agent-probe"]
 
 
@@ -384,6 +404,36 @@ def test_a_frame_the_kernel_truncated_on_port_53_is_undecoded(capture):
     assert segment.undecoded
 
 
+class OneFrameSocket:
+    """A packet socket that hands over one outgoing frame with the given message flags."""
+
+    def __init__(self, capture, frame: bytes, flags: int) -> None:
+        self.capture, self.frame, self.flags = capture, frame, flags
+
+    def recvmsg(self, size: int, _ancillary_size: int):
+        timestamp = struct.pack("@ll", 5, 0)
+        ancillary = [(socket.SOL_SOCKET, self.capture.SO_TIMESTAMPNS, timestamp)]
+        address = ("eth0", 0, self.capture.PACKET_OUTGOING, self.capture.ARPHRD_ETHER, b"")
+        return self.frame[:size], ancillary, self.flags, address
+
+
+@pytest.mark.parametrize(
+    ("flags", "undecoded"),
+    [(0, 0), (socket.MSG_TRUNC, 1)],
+    ids=["a whole frame", "a frame the kernel cut"],
+)
+def test_the_watch_loop_counts_a_dns_frame_the_kernel_cut_as_undecoded(
+    capture, monkeypatch, flags, undecoded
+):
+    """E10: the MSG_TRUNC flag of the socket's message reaches the parser through `watch`."""
+    monkeypatch.setattr(capture, "FRAME_CAP", 1)
+    frame = ethernet(0x0800, ipv4_header(17, udp(40000, 53, dns_message("a.b.c"))))
+
+    window, ended_by = capture.watch(OneFrameSocket(capture, frame, flags), ["label"])
+
+    assert (window.frames, window.undecoded, ended_by) == (1, undecoded, "frames")
+
+
 @pytest.mark.parametrize(
     ("cut", "undecoded"),
     [(None, 0), (20, 1)],
@@ -451,3 +501,60 @@ def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
 ):
     """E10: the filter cannot read ports behind an extension header, so it passes the chain on."""
     assert filter_passes(capture, ipv6(protocol, body)) is passes
+
+
+# --- the unit probe's refused-start decision, on synthetic state and logs ----------------------
+
+DIAGNOSTIC = "profiles.claude.token_file"
+LISTENING_LINE = "INFO: Uvicorn running on http://0.0.0.0:8080"
+
+
+@pytest.fixture(scope="module")
+def unit() -> Iterator[ModuleType]:
+    yield from probe_module("unit")
+
+
+def stopped(exit_code: int) -> dict:
+    return {"Running": False, "Restarting": False, "ExitCode": exit_code}
+
+
+def test_a_start_that_listened_before_it_crashed_fails_the_cell(unit):
+    """U6/U11: a non-zero exit does not excuse a log that shows the service listening."""
+    logs = f"{LISTENING_LINE}\n{DIAGNOSTIC} is too open\n"
+    assert unit.ended_unsuccessfully(stopped(1))
+    with pytest.raises(unit.ProbeFailed):
+        unit.refusal_is_complete("U11", logs, [DIAGNOSTIC])
+
+
+def test_a_clean_exit_is_no_refused_start(unit):
+    assert not unit.ended_unsuccessfully(stopped(0))
+
+
+def test_a_container_that_is_running_is_no_refused_start(unit):
+    assert not unit.ended_unsuccessfully({"Running": True, "Restarting": False, "ExitCode": 1})
+
+
+def test_a_failed_start_that_names_the_field_and_never_listened_passes(unit):
+    restarting = {"Running": True, "Restarting": True, "ExitCode": 1}
+    assert unit.ended_unsuccessfully(stopped(1))
+    assert unit.ended_unsuccessfully(restarting)
+    assert unit.refusal_is_complete("U11", f"{DIAGNOSTIC} is too open\n", [DIAGNOSTIC])
+    assert not unit.refusal_is_complete("U11", "starting\n", [DIAGNOSTIC])
+
+
+@pytest.mark.parametrize("failing", ["docker ps", "docker inspect"])
+def test_a_failed_listing_or_inspection_fails_the_cell_never_reads_as_down(
+    unit, monkeypatch, failing
+):
+    def answer(command, **_):
+        if command[:2] == ["docker", "ps"]:
+            code, out = (1, "") if failing == "docker ps" else (0, "abc\n")
+        else:
+            code, out = 1, ""
+        return subprocess.CompletedProcess(command, code, out, "daemon error")
+
+    monkeypatch.setattr(unit.subprocess, "run", answer)
+    probe = object.__new__(unit.UnitProbe)
+    probe.environment = {}
+    with pytest.raises(unit.ProbeFailed):
+        probe.service_state()
