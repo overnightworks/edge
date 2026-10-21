@@ -140,8 +140,7 @@ path or file name.
 - `exit_category` is one of `configuration`, `not-ready`, `command-failed`, `verification-failed`,
   `interrupted`, `internal`; `failing_app` is `null` for a failure that belongs to no app.
 - When the backup succeeded but prune or check failed, the apps' backup times have moved on and
-  `state` is `failed`. A failed `check --read-data` gives no app a new restore-test time.
-  Restic exit 3 leaves a partial snapshot, which `restore` never picks.
+  `state` is `failed`.
 - An app that fails does not stop the others, and each app's snapshot is recorded right after its own
   `restic backup` exits 0, so earlier successes stay. A run with any failure prunes nothing. An app
   removed from `apps.toml` keeps its entry; renaming an app makes it a new app.

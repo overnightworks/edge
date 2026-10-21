@@ -2,7 +2,7 @@
 against a fake stream, and the `agent-smoke` service of compose.yaml as a file.
 
 The smoke against the real service is proven by probe/agent-service/unit.py (S4) and by the
-operator's runbook (README "The agent service", "The smoke").
+operator's runbook (docs/agent-service.md, "Proofs").
 """
 
 import importlib.util

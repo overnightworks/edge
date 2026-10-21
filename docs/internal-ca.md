@@ -57,7 +57,8 @@ proofs of the CA (init modes and silence, the ACME directory, no root key in the
 partial-state behaviour) and of the gateway (reachable only with the root, 24-hour certificates, plain
 http refused, the network split as ruled, no new host listener, renewal without restart, apply on and off
 keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). It takes
-about 12 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock`.
+about 12 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock`. Re-run it for every
+step-ca or Traefik upgrade.
 
 ## agent-egress
 

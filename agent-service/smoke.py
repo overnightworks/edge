@@ -9,7 +9,7 @@ are removed from everything the smoke prints, errors included. Without options i
 run and prints each event's type and the text of the answer; exit 0 when the run succeeded.
 `--cancel` starts a long answer, holds the stream open a few seconds after `run_started` so
 the CLI run behind it can be seen, then closes it before any answer, to see that the service
-ends that run; it fails when the run succeeded (README "The agent service", "The smoke").
+ends that run; it fails when the run succeeded (docs/agent-service.md, "Proofs").
 `live_smoke.py` runs it with the sign-in.
 
 Only the standard library of the service image is used.

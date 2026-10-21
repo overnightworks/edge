@@ -196,7 +196,9 @@ notieren) oder verweigert; 2 nicht planbar.
 der Eingang `admin` auf `127.0.0.1:8090` bleibt offen; `edge stop` meldet Erfolg erst, wenn
 Traefik fuer jeden Host innerhalb von 15 s 404 mit dem Header `X-Edge-Barrier: <Einheit>`
 antwortet, sonst Exit 1 (Schalter und Sperre bleiben); `edge start` prueft nach dem Entfernen,
-dass der Header weg ist. Der Beweis auf einem Wegwerf-Stack ist `probe/switches/probe.py`.
+dass der Header weg ist. `edge apply` schreibt oder entfernt nie eine Sperre: eine Einheit, deren Sperre steht, bleibt
+aus, auch wenn kein Schalter notiert ist; `edge start` entfernt die Sperre erst, wenn die Einheit laeuft, und loescht den
+Schalter zuletzt. Der Beweis auf einem Wegwerf-Stack ist `probe/switches/probe.py`.
 
 **Neustart.** Jeder lang laufende Dienst hat `restart: unless-stopped`; Docker startet einen
 ausdruecklich gestoppten Container auch nach einem Neustart nicht, und der Schalter bleibt auf der

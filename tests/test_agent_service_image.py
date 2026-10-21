@@ -18,7 +18,7 @@ PROBE = REPOSITORY / "probe" / "agent-service" / "image.py"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 DOCKERFILE = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
 LOCK = (IMAGE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8")
-README = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+AGENT_SERVICE_DOCUMENT = (REPOSITORY / "docs" / "agent-service.md").read_text(encoding="utf-8")
 
 RELEASE_WHEELS = ("agent-client", "agent-providers", "agent-service")
 DIGEST_PINNED_IMAGE = re.compile(r"^FROM \S+@sha256:[0-9a-f]{64}\b", re.MULTILINE)
@@ -203,11 +203,11 @@ def test_the_lock_holds_webauth_by_url_and_sha256():
     )
 
 
-def test_the_readme_builds_the_name_made_of_the_release_and_the_cli_version():
+def test_the_agent_service_document_builds_the_name_made_of_the_release_and_the_cli_version():
     version = release_tag().removeprefix("v")
     name = f"edge-agent-service:{version}-{dockerfile_argument('CLAUDE_VERSION')}"
     command = f"docker build -f agent-service/image/Dockerfile -t {name} agent-service/image"
-    assert command in README
+    assert command in AGENT_SERVICE_DOCUMENT
 
 
 @pytest.fixture(scope="module")

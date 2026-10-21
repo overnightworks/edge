@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The live smoke of the agent service in one command (README "The agent service", "The smoke").
+"""The live smoke of the agent service in one command (docs/agent-service.md, "Proofs").
 
     cd ~/git/edge && python3 agent-service/live_smoke.py
 
