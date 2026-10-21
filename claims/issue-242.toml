@@ -1,0 +1,8 @@
+claim_id = "50dbf9145f154d8bbf72f3b0cebf4b75"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "0174c159e25787f3dd94e55cbbf9ada554fecd7d"
+branch = "claude/issue-242-realm-step"
+scope = ["docs/architecture.md", "docs/backup.md", "docs/keycloak.md", "keycloak/master.yaml", "keycloak/realm.yaml", "probe/keycloak/probe.py", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "src/edge/realm/reconcile.py", "tests/test_edge_apply.py", "tests/test_keycloak_probe.py", "tests/test_realm_reconcile.py"]
+opened_commit = "8fa126eaf8ed9cbe2ef532fca754c6826c9636b3"
+whole_reason = "One decision path: the plan line, the trigger and the step inside apply, with the compose run it needs, the probe that drives it and the docs whose manual route it replaces."
