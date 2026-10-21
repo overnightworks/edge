@@ -14,6 +14,7 @@ import sys
 import threading
 import urllib.error
 import urllib.parse
+import urllib.request
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -65,9 +66,12 @@ class FakeTokenEndpoint:
         self.answers = list(answers)
         self.forms: list[dict[str, str]] = []
 
-    def __call__(self, address: str, body: bytes, timeout: float):
-        assert address == f"{live_smoke.OIDC}/token"
-        self.forms.append({k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()})
+    def __call__(self, request: urllib.request.Request, timeout: float):
+        assert request.full_url == f"{live_smoke.OIDC}/token"
+        assert request.get_header("User-agent") == live_smoke.USER_AGENT
+        self.forms.append(
+            {k: v[0] for k, v in urllib.parse.parse_qs(request.data.decode()).items()}
+        )
         answer = self.answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
