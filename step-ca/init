@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""step-ca/init: creates the internal CA's key material (README "Interne CA"), the operator's tool.
+"""step-ca/init: creates the internal CA's key material (docs/internal-ca.md), the operator's tool.
 
 Runs in one-off containers of the pinned step-ca image without a network. It makes the root
 (key and certificate) and the intermediate (key and certificate) and installs the intermediate

@@ -1,6 +1,6 @@
 [Unit]
 Description=edge-backup: restore the latest snapshots and prove they are good
-Documentation=file://%h/git/edge/README.md
+Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]
 Type=oneshot

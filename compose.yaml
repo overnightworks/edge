@@ -414,7 +414,7 @@ secrets:
     file: ${HOME}/.secrets/keycloak/clients/hopin
   keycloak_client_presentator:
     file: ${HOME}/.secrets/keycloak/clients/presentator
-  # step-ca/init creates it; README "Interne CA".
+  # step-ca/init creates it; docs/internal-ca.md.
   step_ca_password:
     file: ${HOME}/.secrets/step-ca/password
   # The same init makes it; traefik-mcp trusts the CA through it alone.

@@ -6,7 +6,7 @@ script does (`run_hal`) under an empty HOME.
 Nothing here may reach the real `systemctl`, `docker`, `sudo` or `pkcheck`: a directory of failing
 stand-ins is first on PATH for every test, and every test ends by asserting that none was called.
 The exits are hal's: 0, or 3 for every outcome of the stack that is not "applied or nothing to do"
-(exception E in the README)."""
+(exception E in docs/stack.md)."""
 
 import dataclasses
 import functools
