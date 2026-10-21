@@ -1,4 +1,8 @@
-mock_provider "cloudflare" {}
+mock_provider "cloudflare" {
+  mock_data "cloudflare_zone" {
+    defaults = { id = "0123456789abcdef0123456789abcdef" }
+  }
+}
 
 variables {
   catalog_file = "tests/fixtures/empty.yaml"

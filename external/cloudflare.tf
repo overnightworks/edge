@@ -153,6 +153,45 @@ resource "cloudflare_zone_setting" "hsts" {
   }
 }
 
+# The visitor's address as Cloudflare saw it, in `Forwarded` (RFC 7239): a header the visitor sent
+# is overwritten, which `X-Forwarded-For` cannot be (Cloudflare appends to it and forbids setting
+# it). Keycloak reads only this header (KC_PROXY_HEADERS=forwarded). RFC 7239 quotes an IPv6
+# address in brackets, so the two families are two rules.
+resource "cloudflare_ruleset" "client_address" {
+  zone_id = local.zone_id
+  name    = "client address"
+  kind    = "zone"
+  phase   = "http_request_late_transform"
+  rules = [
+    {
+      description = "Forwarded carries the IPv4 address Cloudflare saw"
+      action      = "rewrite"
+      expression  = "ip.src in {0.0.0.0/0}"
+      action_parameters = {
+        headers = {
+          "Forwarded" = {
+            operation  = "set"
+            expression = "concat(\"for=\", to_string(ip.src), \";proto=https\")"
+          }
+        }
+      }
+    },
+    {
+      description = "Forwarded carries the IPv6 address Cloudflare saw"
+      action      = "rewrite"
+      expression  = "ip.src in {::/0}"
+      action_parameters = {
+        headers = {
+          "Forwarded" = {
+            operation  = "set"
+            expression = "concat(\"for=\\\"[\", to_string(ip.src), \"]\\\";proto=https\")"
+          }
+        }
+      }
+    },
+  ]
+}
+
 import {
   for_each = local.record_ids_to_import
   to       = cloudflare_dns_record.host[each.key]

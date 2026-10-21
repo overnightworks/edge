@@ -1022,3 +1022,16 @@ def test_the_stored_login_events_must_both_carry_the_forwarded_client_address(
     else:
         with pytest.raises(probe.ProbeFailure):
             probe.stored_event_types(events, client_address)
+
+
+@pytest.mark.parametrize(
+    ("address", "header"),
+    [
+        ("198.51.100.23", "for=198.51.100.23;proto=https"),
+        ("2001:db8::23", 'for="[2001:db8::23]";proto=https'),
+    ],
+)
+def test_the_simulated_cloudflare_rule_quotes_only_an_ipv6_address(
+    probe: ModuleType, address: str, header: str
+) -> None:
+    assert probe.cloudflare_forwarded(address) == header
