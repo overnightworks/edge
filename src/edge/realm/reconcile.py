@@ -59,10 +59,13 @@ RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
 
 type Checksums = dict[str, dict[str, str]]  # realm -> import-checksum attribute -> value
+_LISTED_KINDS = [
+    f"top-level {kind}" if kind == FLOW.name else kind for kind in declared_identities.KINDS
+]
 NOTHING_ONLY_IN_KEYCLOAK = (
     "realm: nothing only in Keycloak among "
-    + ", ".join(f"{kind}s" for kind in declared_identities.KINDS[:-1])
-    + f" and {declared_identities.KINDS[-1]}s"
+    + ", ".join(f"{kind}s" for kind in _LISTED_KINDS[:-1])
+    + f" and {_LISTED_KINDS[-1]}s"
 )
 NOT_READ = "realm: not read, so not listed: "
 type Say = Callable[[str], None]  # says one line of the step, with `hal apply`'s prefix

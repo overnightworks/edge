@@ -42,13 +42,11 @@ def declared_realm(text: str) -> DeclaredRealm:
     """The identities one realm file declares. An empty list (`groups:`) declares nothing."""
     try:
         document = yaml.safe_load(text)
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, ValueError) as error:
         raise DeclaredError("a realm file is no YAML") from error
     if not isinstance(document, dict) or not isinstance(document.get("realm"), str):
         raise DeclaredError("a realm file names no realm")
-    roles = document.get("roles") or {}
-    if not isinstance(roles, dict):
-        raise DeclaredError("a realm file's roles are no mapping")
+    roles = _declared(document, "roles", dict, {})
     group, client, scope, role, flow, provider = KINDS
     return DeclaredRealm(
         document["realm"],
@@ -64,11 +62,21 @@ def declared_realm(text: str) -> DeclaredRealm:
 
 
 def _entries(parent: dict, key: str) -> list[dict]:
-    """The mappings listed under `key`; absent or empty is none."""
-    listed = parent.get(key) or []
-    if not isinstance(listed, list) or not all(isinstance(entry, dict) for entry in listed):
+    """The mappings listed under `key`; absent or null is none."""
+    listed = _declared(parent, key, list, [])
+    if not all(isinstance(entry, dict) for entry in listed):
         raise DeclaredError(f"a realm file's {key} are no list of mappings")
     return listed
+
+
+def _declared[T](parent: dict, key: str, expected: type[T], none: T) -> T:
+    """The value under `key` when it has the expected type; only absent or null declares none."""
+    value = parent.get(key)
+    if value is None:
+        return none
+    if not isinstance(value, expected):
+        raise DeclaredError(f"a realm file's {key} are no {expected.__name__}")
+    return value
 
 
 def _name(entry: dict, key: str) -> str:

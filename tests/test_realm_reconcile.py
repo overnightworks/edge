@@ -774,13 +774,25 @@ def test_realm_files_that_cannot_be_read_leave_the_step_as_it_ended(
     assert without_the_list.lines[:-1] == expected.lines[: len(without_the_list.lines) - 1]
 
 
-def test_a_file_in_no_unreadable_encoding_leaves_the_step_as_it_ended(world: World) -> None:
+def test_a_file_in_an_unreadable_encoding_leaves_the_step_as_it_ended(world: World) -> None:
     (world.root / "keycloak" / "realm.yaml").write_bytes(b"realm: \xff\xfe\n")
 
     result = world.step()
 
     assert result.failure is None
     assert result.lines[-1] == UNLISTED
+
+
+def test_a_yaml_scalar_the_loader_cannot_build_still_records_and_says_unreadable(
+    world: World,
+) -> None:
+    world.write_file("realm.yaml", "realm: hallucinai\nsince: 2026-02-30\n")
+
+    result = world.step()
+
+    assert result.failure is None
+    assert result.lines[-1] == UNLISTED
+    assert world.plan().settled
 
 
 def test_a_key_left_empty_in_a_realm_file_still_records_and_lists(world: World) -> None:

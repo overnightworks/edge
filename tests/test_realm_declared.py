@@ -96,6 +96,10 @@ def test_a_list_whose_key_is_empty_declares_nothing_of_it(empty: str) -> None:
         "realm: x\nroles:\n  realm: operator\n",
         "realm: x\nauthenticationFlows:\n  - description: no alias\n",
         "realm: x\nidentityProviders:\n  - alias: 5\n",
+        "realm: x\nsince: 2026-02-30\n",
+        *[f"realm: x\nclients: {value}\n" for value in ("false", "0", "{}", "''")],
+        *[f"realm: x\nroles: {value}\n" for value in ("false", "0", "[]", "''")],
+        *[f"realm: x\nroles:\n  realm: {value}\n" for value in ("false", "0", "{}", "''")],
     ],
 )
 def test_a_file_that_is_no_yaml_mapping_with_a_realm_is_refused(text: str) -> None:
