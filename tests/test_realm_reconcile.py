@@ -617,14 +617,29 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
 # --- edge-backup is stopped, not killed --------------------------------------------------------
 
 WAITS = "while :; do sleep 0.1; done"
-TRAPS_SIGTERM = f"trap 'echo cleaned > \"$1\"; exit 143' TERM; {WAITS}"
-IGNORES_SIGTERM = f"trap '' TERM; {WAITS}"
-# Ready, then four tenths of a second of clean-up on SIGTERM before it leaves its marker.
-CLEANS_UP_SLOWLY = (
-    'trap \'sleep 0.4; echo cleaned > "$1"; exit 143\' TERM; touch "$1.ready"; ' + WAITS
-)
+# A Python child, as the CI shell may have SIGTERM ignored on entry, which a shell cannot trap.
+# It says it is ready, and after SIGTERM cleans up for `argv[2]` seconds before its marker.
+CLEANS_UP_ON_SIGTERM = """
+import pathlib, signal, sys, time
+marker = pathlib.Path(sys.argv[1])
+def clean_up(*_):
+    time.sleep(float(sys.argv[2]))
+    marker.write_text("cleaned\\n")
+    sys.exit(143)
+signal.signal(signal.SIGTERM, clean_up)
+pathlib.Path(f"{marker}.ready").touch()
+while True:
+    time.sleep(0.1)
+"""
+IGNORES_SIGTERM = """
+import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+while True:
+    time.sleep(0.1)
+"""
 DRIVES_THE_STEP = """
-import sys
+import signal, sys
+signal.signal(signal.SIGINT, signal.default_int_handler)
 from edge.realm import reconcile
 try:
     reconcile.run_edge_backup(sys.argv[1:], 600)
@@ -638,8 +653,8 @@ def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
 ) -> None:
     marker = tmp_path / "cleaned"
 
-    with pytest.raises(compose.ComposeError, match="took longer than 1s"):
-        reconcile.run_edge_backup(["sh", "-c", TRAPS_SIGTERM, "sh", str(marker)], 1)
+    with pytest.raises(compose.ComposeError, match="took longer than 3s"):
+        reconcile.run_edge_backup([sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), "0"], 3)
 
     assert marker.read_text() == "cleaned\n"
 
@@ -649,8 +664,8 @@ def test_a_backup_that_ignores_sigterm_still_ends_in_the_timeout_failure(
 ) -> None:
     monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.3)
 
-    with pytest.raises(compose.ComposeError, match="took longer than 1s"):
-        reconcile.run_edge_backup(["sh", "-c", IGNORES_SIGTERM], 1)
+    with pytest.raises(compose.ComposeError, match="took longer than 3s"):
+        reconcile.run_edge_backup([sys.executable, "-c", IGNORES_SIGTERM], 3)
 
 
 def test_a_grandchild_that_holds_the_output_open_cannot_hang_the_step(
@@ -677,11 +692,7 @@ def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path)
         sys.executable,
         "-c",
         DRIVES_THE_STEP,
-        "sh",
-        "-c",
-        CLEANS_UP_SLOWLY,
-        "sh",
-        str(marker),
+        *(sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), "0.4"),
     ]
     step = subprocess.Popen(
         command,
