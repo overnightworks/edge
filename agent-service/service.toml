@@ -27,6 +27,9 @@ token_file = "/run/agent-service/login/claude/token"
 [purposes.chat]
 cli_provider = "claude"
 
+[purposes.copresenter]
+cli_provider = "claude"
+
 # The workload clients of keycloak/realm.yaml; no app lists tools, so none needs an MCP origin.
 [apps.songmaker]
 workload_client = "songmaker"
@@ -34,4 +37,4 @@ purposes = ["chat"]
 
 [apps.presentator]
 workload_client = "presentator"
-purposes = ["chat"]
+purposes = ["copresenter"]

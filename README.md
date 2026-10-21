@@ -1484,8 +1484,10 @@ container, one worker, the networks of `x-agent-attachments`, no published port.
 `1000:1000` with `init`, a read-only root, no capability, `no-new-privileges`, no core dump and
 `restart: unless-stopped`; `/tmp` (its `HOME`) and the working root `/run/agent-service/cli` are
 size-bounded tmpfs mounts owned by 1000 with mode 0700 (the service refuses to start on a working
-root that is not owned by its user with exactly that mode), all `nosuid,nodev,noexec`. No unit in
-`fleet.yaml` starts it yet, so nothing runs live: the switch-on is a later item.
+root that is not owned by its user with exactly that mode), all `nosuid,nodev,noexec`. The unit
+`agent-service` of `fleet.yaml` starts it with `agent-egress`: `hal apply` brings both up, and a
+missing image or login directory stops the start (`pull_policy: never`,
+`create_host_path: false`), so apply reports the unit partial and never on.
 
 **The login.** The service runs the Claude CLI under the operator's subscription, with the one
 token that `claude setup-token` prints, in one file inside a read-only directory bind:
@@ -1537,6 +1539,84 @@ docker compose --profile agent-service up -d --force-recreate agent-service
 ```
 
 recreates it, which ends every run in flight.
+
+**The smoke.** `agent-smoke` (profile `apply`, so `up` never starts it) is the service image running
+`agent-service/smoke.py` on the `agent` network alone, with no port and no secret. It reads the
+person's token and then the workload's from stdin (two lines, nothing else supplies one), starts one
+run and prints each event's type and the answer; no token appears in its output. The identity is the
+`songmaker` client's code flow with PKCE (ruled in edge#184, D6): you sign in as yourself and copy the
+address of the browser's error page, because `songmaker.hallucinai.de` has no DNS yet and the code
+sits in that address. The same client's service account is the workload. Needs only `python3`, `docker`
+and the client's secret file; run it in the live checkout, after `hal apply` and with the image built
+(above). First, the person must be in the group `/ki-abo` (`subscription_group` of `service.toml`):
+if you are not, add yourself once in the admin console on port 8090 (user management, not a realm
+change). The block prints the sign-in address, reads your pasted address without echo, and writes the
+two tokens into a file of mode 0600 that is deleted at the end:
+
+```sh
+cd ~/git/edge
+( umask 077; python3 -I -c "$(cat <<'PY'
+import base64, getpass, hashlib, json, secrets, sys, urllib.error, urllib.parse, urllib.request
+from pathlib import Path
+
+OIDC = "https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect"
+CLIENT = "songmaker"
+REDIRECT = "https://songmaker.hallucinai.de/auth/callback"
+client_secret = (Path.home() / ".secrets/keycloak/clients/songmaker").read_text().strip()
+
+def token(form):
+    body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
+    try:
+        with urllib.request.urlopen(f"{OIDC}/token", body.encode(), timeout=30) as answer:
+            return json.load(answer)["access_token"]
+    except urllib.error.HTTPError as refusal:
+        sys.exit(f"the token endpoint answered {refusal.code}")
+
+verifier = secrets.token_urlsafe(64)
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+state = secrets.token_urlsafe(16)
+print("Open this address and sign in; the page then fails, copy its address:", file=sys.stderr)
+print(f"{OIDC}/auth?" + urllib.parse.urlencode({
+    "client_id": CLIENT, "redirect_uri": REDIRECT, "response_type": "code", "scope": "openid",
+    "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
+}), file=sys.stderr)
+pasted = getpass.getpass("Pasted address (not shown): ", stream=sys.stderr)
+query = urllib.parse.parse_qs(urllib.parse.urlsplit(pasted).query)
+if query.get("state") != [state] or "code" not in query:
+    sys.exit("the address holds no code for this sign-in")
+person = token({"grant_type": "authorization_code", "code": query["code"][0],
+                "redirect_uri": REDIRECT, "code_verifier": verifier})
+print(person)
+print(token({"grant_type": "client_credentials"}))
+PY
+)" > ~/.secrets/agent-service/smoke-tokens )
+docker compose run --rm -T agent-smoke < ~/.secrets/agent-service/smoke-tokens
+docker compose run --rm -T agent-smoke --cancel < ~/.secrets/agent-service/smoke-tokens
+shred -u ~/.secrets/agent-service/smoke-tokens
+```
+
+The workload token lives five minutes at most (the service refuses a longer one), so run the two
+`docker compose run` lines at once; `unauthorized` means the tokens expired, so repeat the block.
+`forbidden` means the person is not in `/ki-abo` or the two tokens do not share an `azp`. The first
+run prints `event: run_started`, `event: assistant_text` and `event: succeeded` (exit 0); `--cancel`
+asks for a long answer and closes the stream after its first text.
+
+What the output proves (edge#214):
+
+- The first run is the real paid turn. `run_started` after admission also shows the issuer's keys were
+  fetched through `agent-egress`, the service's only route out.
+- After `--cancel`, no CLI process of the run remains and the log holds no quarantine `ERROR` line:
+
+  ```sh
+  docker compose exec agent-service sh -c 'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"'   # 0
+  docker compose logs agent-service | grep -c ERROR                                              # 0
+  ```
+
+- Memory of one run: recreate the service (`docker compose --profile agent-service up -d
+  --force-recreate agent-service`), read
+  `docker compose exec agent-service cat /sys/fs/cgroup/memory.peak`, run the first line of the
+  smoke, and read it again. The second figure is the peak of one run's answer phase; report both.
+- No token in `docker inspect agent-service`, `docker compose logs agent-service` or the smoke output.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
 probe/agent-service/unit.py --scratch DIR` (DIR must already exist, empty and writable, for example

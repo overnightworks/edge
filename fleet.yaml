@@ -13,6 +13,9 @@ services:
     run:
       enabled: true
       setup: step-ca/init
+  agent-service:
+    run:
+      enabled: true
   keycloak:
     run:
       enabled: true

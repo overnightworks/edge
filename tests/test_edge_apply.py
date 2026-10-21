@@ -860,6 +860,85 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
     assert "is on" not in out
 
 
+AGENT_SERVICES = ("agent-egress", "agent-service")
+
+
+@pytest.fixture
+def agent_service_unit(repository, scripted) -> None:
+    """The repository's own `agent-service` unit of fleet.yaml and its compose.yaml, with the
+    other units off (their containers and setups are not the question here)."""
+    real = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["services"]["agent-service"]
+    fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
+    write_fleet(repository, yaml.safe_dump(fleet))
+    services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
+    for name in AGENT_SERVICES:
+        scripted.config["services"][name] = {
+            key: services[name][key] for key in ("image", "profiles", "restart")
+        }
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
+    switch, scripted
+):
+    """#214 S1: the real catalog line starts exactly the profile's two services; a second apply
+    plans nothing."""
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "agent-service is on" in out
+    assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
+    assert ["--profile", "agent-service", "up", "-d", "--no-recreate", *AGENT_SERVICES] in (
+        scripted.calls
+    )
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == ["up"]
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+@pytest.mark.parametrize(
+    "docker_line",
+    [
+        "Error response from daemon: No such image: edge-agent-service:0.4.0-2.1.302",
+        'Error response from daemon: invalid mount config for type "bind": bind source path '
+        "does not exist: /home/operator/.secrets/agent-service/claude",
+    ],
+    ids=["missing image", "missing login directory"],
+)
+def test_an_agent_service_whose_image_or_login_is_missing_is_partial_and_never_on(
+    switch, scripted, docker_line
+):
+    """#214 S2: apply's own start and its observation carry the precondition; no setup check is
+    needed, because Compose refuses the start (`pull_policy: never`, `create_host_path: false`)
+    and the unit is never reported on."""
+    scripted.failing_verb, scripted.failure_line = "up", docker_line
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert (
+        f"partial, agent-service: could not start, `docker compose up` exited 1: {docker_line}"
+        in err
+    )
+    assert "agent-service is on" not in out
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_an_agent_service_that_is_created_but_never_runs_is_partial_and_never_on(switch, scripted):
+    """#214 S2: a container that exists but does not run is not reported on."""
+    scripted.unstartable = {"agent-service"}
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, agent-service" in err
+    assert "agent-service is on" not in out
+
+
 def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, scripted, capsys):
     """#52 rule 6: an interrupt names the unit and says its state may be partial (exit 1)."""
 

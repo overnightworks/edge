@@ -299,7 +299,7 @@ services:
 
   # The agent service's egress: a third Traefik instance, a TLS passthrough that dials only the
   # upstream of an allowed SNI (agent-service/egress/dynamic/allowed.yml). The only service on
-  # `internet`. Not in fleet.yaml yet: no unit starts it.
+  # `internet`. The unit `agent-service` of fleet.yaml starts it with the service.
   agent-egress:
     <<: *traefik
     profiles: [agent-service]
@@ -317,10 +317,10 @@ services:
   # The agent service (agent-providers v0.4.0; the image is built on the PC, README "The agent
   # service image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
-  # (README "Agent service"). Not in fleet.yaml yet: no unit starts it.
+  # (README "Agent service"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: edge-agent-service:0.4.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.4.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"
@@ -354,6 +354,31 @@ services:
         read_only: true
         bind:
           create_host_path: false
+
+  # The operator's smoke of the agent service (agent-service/smoke.py; README "The agent service",
+  # "The smoke"): the service image, one run, the answer printed. Run it as
+  # `compose run -T --rm agent-smoke [--cancel]` with the person's and the workload's token on
+  # stdin, one per line. No depends_on: a run never starts the service. On `agent` alone and with
+  # no secret, port or published address: the tokens come in on stdin and never leave in output.
+  agent-smoke:
+    image: *agent-service-image
+    pull_policy: never
+    profiles: [apply]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [agent]
+    # -I ignores the PYTHON* environment, so -B is what keeps bytecode unwritten.
+    entrypoint:
+      - python
+      - -I
+      - -B
+      - /opt/smoke/smoke.py
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./agent-service/smoke.py:/opt/smoke/smoke.py:ro
 
   # The probe's stand-in for the agent service (probe/agent-service/egress.py): the same
   # attachments, hardened like the service, listening on nothing.
