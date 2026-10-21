@@ -630,7 +630,7 @@ def clean_up(*_):
     deadline = time.monotonic() + 30
     while not release.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
-    marker.write_text("cleaned\\n")
+    marker.write_text("cleaned\\n" if release.exists() else "expired\\n")
     sys.exit(143)
 signal.signal(signal.SIGTERM, clean_up)
 pathlib.Path(f"{marker}.pid").write_text(str(__import__("os").getpid()))
@@ -750,12 +750,13 @@ def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path)
         release.touch()
         output, _ = step.communicate(timeout=30)
     finally:
-        kill_group(step.pid)
+        # Before the child wrote its pid, its own 30 second cap ends it.
         if Path(f"{marker}.pid").exists():
             kill_group(int(Path(f"{marker}.pid").read_text()))
+        kill_group(step.pid)
         step.wait(timeout=30)
 
-    assert marker.read_text() == "cleaned\n"
+    assert marker.read_text() == "cleaned\n"  # released by the test, not the watchdog
     assert "KeyboardInterrupt reached the step" in output
 
 
