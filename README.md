@@ -79,7 +79,7 @@ any directory: it syncs that checkout's locked dependencies (`uv sync --locked`,
 never rewriting `uv.lock`) and then becomes `.venv/bin/edge`, from the same
 environment the systemd units call. A failed sync ends with exit 2 and names the
 checkout.
-Slice S2b of overnightworks/edge#100 puts it on PATH as `edge`.
+It is not on PATH: type `hal` (see [Running hal](#running-hal)).
 
 ## Running hal
 
@@ -90,6 +90,14 @@ commands; `hal <command> --help` shows one. The commands:
   whether its tree is clean (the rule `edge apply` uses), and how it stands to the `origin/main`
   the last fetch left. It never fetches and changes nothing. `-v` prints each git call on stderr.
   Installed from a wheel there is no checkout, and it says so.
+- `hal apply [--closed]`, `hal stop <unit>`, `hal start <unit>`, `hal offline` and `hal online` do
+  exactly what `edge apply [--closed]`, `edge stop <unit>`, `edge start <unit>`,
+  `edge stop --all` and `edge start --all` do: the same guards, prompts, state files and lines.
+  `hal offline` stops the tunnel (no terminal needed); `hal online` reopens it once every unit
+  barrier is proven. `stop` and `offline` ask for no confirmation from hal (without a terminal,
+  `offline` suppresses password prompts with `--no-ask-password`); `apply`, `start` and `online`
+  need a terminal and the exact `yes`. There is no `-y` and no `--json` on these five.
+  Agents run `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`.
 
 Every command ends with one of these exit codes:
 
@@ -107,8 +115,35 @@ never a traceback. There is no `-y`, and `--json` exists only on a command whose
 reads. The fleet rules for command lines are overnightworks/quality#80; hal's exit codes and error
 form are implemented in `src/hal/grammar.py`.
 
-Until H5 (the rename), `hal` sits beside `edge` and `home`: link `bin/hal` onto PATH the way `edge`
-is.
+### Exception E: where the five stack commands deviate
+
+Until slice H5a2 of overnightworks/edge#207 (after H5e) classifies the stack's outcomes in their
+owners, `hal apply`, `stop`, `start`, `offline` and `online` end with 0, or with 3 for every
+outcome of the stack that is not "applied or nothing to do". They deviate from the table above in
+exactly three ways:
+
+- **E1:** a guard refusal decided by the stack ends with 3, not 4: no terminal, the apply lock is
+  held, `yes` declined, the unit is disabled or not set up, a barrier is unproven, or the checkout
+  is not the live one or not a clean `main`.
+- **E2:** a Ctrl-C that the stack catches ends by what the stack then observes, not with 130.
+  `apply`, `stop` and `start` print their `interrupted …` line and end with 3. `offline` drops the
+  interrupt and reports the tunnel as observed: 3 with its `partial …` line while the tunnel still
+  runs, 0 when it did stop, the marker is recorded and the boot drop-in is present. A Ctrl-C the
+  stack does not catch ends with 130.
+- **E3:** the stack's lines keep their form `edge <verb>: …`, not `error:`/`next:`, and name `edge`
+  commands until H5e renames them; a number in such a line (for example `exit 1` in
+  `edge apply: the publish did not end clean (exit 1)`) is edge's, not hal's process exit. Type
+  instead:
+
+  | The line names | Type instead |
+  |---|---|
+  | `edge stop <unit>` / `edge start <unit>` | `hal stop <unit>` / `hal start <unit>` |
+  | `edge stop --all` | `hal offline` |
+  | `edge start --all` | `hal online` |
+  | `edge apply [--closed]` | `hal apply [--closed]` |
+  | `edge external check --hosts` | `~/git/edge/bin/edge external check --hosts` (no hal verb until H5c) |
+
+`hal` is on PATH; `edge` is not. `~/git/edge/bin/edge` keeps working.
 
 ## Configure
 
