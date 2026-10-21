@@ -1123,14 +1123,16 @@ caches for up to 30 days under the same URL; a look change therefore names a
 new stylesheet in `theme.properties` (`styles=`) instead of editing one in
 place.
 
-> **The apply adds and changes, and never deletes what the file does not declare.**
+> **The apply adds and changes, and deletes no undeclared top-level object and no person.**
 > `compose.yaml` sets every `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`,
-> the cache off, and `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. What `realm.yaml` and
-> `master.yaml` declare belongs to the file; everything else stays, and no person is ever deleted (a service-account user that a console-enabled service
-> account on a declared client created goes with that reset, below):
-> - **Stays:** every group, subgroup, client, scope, role, flow, identity provider, component and
->   person made in the admin console, with its memberships; and an object the file stopped
->   listing. Renaming a group in the YAML therefore creates the new group and leaves the old one.
+> the cache off, and `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. What the console creates on its
+> own stays: people, their memberships, and the groups, clients, roles and top-level flows the file
+> does not declare. A console addition inside an object the file declares is part of that object
+> and is reset to the file with it, as listed below. No person is ever deleted (a service-account
+> user that a console-enabled service account on a declared client created goes with that reset,
+> below):
+> - **Stays:** an object the file stopped listing. Renaming a group in the YAML therefore creates
+>   the new group and leaves the old one.
 > - **Reset:** a console change to an object the file declares is reset to the file on the next
 >   apply, together with what hangs off that object. The probe (proofs 3c and 3d) measures these, except where marked not measured:
 >   - a step or subflow in a declared flow (`browser-mfa-forms`, `direct-grant-mfa-totp`);
@@ -1401,7 +1403,7 @@ The proofs: the public issuer, the themed login and account pages in German
 and English and the path allow-list (1, 2a), the master issuer and the
 forced second factor on the admin entrypoint, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
 second apply that resets only the pinned console changes to declared objects (the 11 pinned lines) and keeps every other console
-change, and a changed YAML that applies and deletes nothing the file dropped, with a seeded member untouched
+change, and a changed YAML that applies and deletes no undeclared top-level object and no person, with a seeded member untouched
 (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused
 on refresh (5), a back-channel logout reaching the test RP (6), none of the

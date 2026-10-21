@@ -213,7 +213,7 @@ services:
 | The deploy watchers | the catalog | `edge apply` installs one watcher per enabled entry with `deploy: tags` |
 | The release branch | the catalog (`repo.default_branch`) | `edge release` tags that branch; hopin's is `master` |
 
-**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and never deletes: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (edge README, Keycloak section). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
+**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and deletes no undeclared top-level object or person: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (edge README, Keycloak section). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
 
 ### "Dienst an/aus" end to end
 
@@ -231,14 +231,14 @@ services:
 2. `edge apply` clones hopin into `~/srv/hopin`, checks out its newest `v*` tag, starts it and waits for `/health`.
 3. The publish phase then publishes the name, behind its `ready` guard (X8's "protection before reachability"). hopin is in A, or in C under a global stop (section 8 state table).
 
-**The realm apply (R3, ruled 16.10.2026; re-cut by the operator's „ja d“ and „ok“ on 21.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50), [edge#219](https://github.com/overnightworks/edge/issues/219))** adds and changes in the realm and never deletes:
+**The realm apply (R3, ruled 16.10.2026; re-cut by the operator's „ja d“ and „ok“ on 21.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50), [edge#219](https://github.com/overnightworks/edge/issues/219))** adds and changes in the realm and deletes no undeclared top-level object and no person:
 - it reconciles for real, not with a checksum-cached skip (`IMPORT_CACHE_ENABLED=false`);
 - every `IMPORT_MANAGED_*` type is `no-delete`, and a listed user keeps the realm roles and groups the console gave it (client roles are reset), so the tool deletes no undeclared group, client, role or top-level flow and no person, and the reset below is the only loss;
 - a backup and its restore test come before it (stage 1: two commands in the README's „Start and apply“; stage 2: a step inside `edge apply`);
 - the lines of what changed and of what exists only in Keycloak come after it (stage 2);
 - deleting anything in Keycloak waits for the operator's yes.
 
-What the file declares belongs to the file: a console change to a declared object is reset on the next apply, together with what hangs off it (a step or subflow in a declared flow, a mapper on a declared scope or client, a default or optional scope on a declared client that lists its scopes, a client role on a listed service account, a console-enabled service account on a declared client, a flow binding override on a declared client). Everything new in the console stays, and no person is ever deleted (a service-account user that a console-enabled service account on a declared client created goes with that reset). A change to a declared object goes into the file; the README's blockquote after „Theme and language“ lists the measured examples, and the Keycloak probe's proofs 3c and 3d pin them.
+What the file declares belongs to the file: a console change to a declared object is reset on the next apply, together with what hangs off it (a step or subflow in a declared flow, a mapper on a declared scope or client, a default or optional scope on a declared client that lists its scopes, a client role on a listed service account, a console-enabled service account on a declared client, a flow binding override on a declared client). What the console creates on its own stays: people, their memberships, and the groups, clients, roles and top-level flows the file does not declare. No person is ever deleted (a service-account user that a console-enabled service account on a declared client created goes with that reset). A change to a declared object goes into the file; the README's blockquote after „Theme and language“ lists the measured examples, and the Keycloak probe's proofs 3c and 3d pin them.
 
 **Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator. Planned with X6a (#168): the ingress comes from the catalog, so a line is no longer removed by hand; README A8 stays until X8b.
 

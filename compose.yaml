@@ -173,8 +173,9 @@ services:
       IMPORT_FILES_LOCATIONS: file:/config/master.yaml,file:/config/realm.yaml
       IMPORT_VARSUBSTITUTION_ENABLED: "true"
       IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR: "true"
-      # The apply adds and changes and never deletes: every managed type is no-delete, so an
-      # object only Keycloak has stays, and a listed user keeps the realm roles and groups the console gave.
+      # The apply adds and changes and deletes no undeclared top-level object and no person: every
+      # managed type is no-delete, so an object only Keycloak has stays, and a listed user keeps the
+      # realm roles and groups the console gave.
       # The cache would skip an unchanged realm file silently.
       IMPORT_CACHE_ENABLED: "false"
       IMPORT_USERS_MERGEROLES: "true"
