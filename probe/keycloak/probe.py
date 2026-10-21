@@ -174,18 +174,18 @@ FORGED_FORWARDED_FOR = "203.0.113.9, 192.0.2.7"  # a forged first value, then a 
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
-# What an operator adds in the admin console before an apply (#66, the U1 measurement): the
-# default apply removes the first five, the survivors stay, and the observer names exactly that.
+# What an operator adds in the admin console before an apply (#66, the U1 measurement). The apply
+# deletes nothing (#219), so of these only the residue below goes: the observer names exactly it.
 CONSOLE_NAME = "probe-console"
 CONSOLE_FLOW = "console-flow"
 FORMS_FLOW = "browser-mfa-forms"
-REMOVED_BY_THE_APPLY = [
-    f"hallucinai: removal group {CONSOLE_SUBGROUP} (1 member)",
+CONSOLE_SCOPE = f"{CONSOLE_NAME}-scope"
+RESIDUE_OF_THE_APPLY = [
     f"hallucinai: removal protocol mapper scope groups/{CONSOLE_NAME}-mapper",
-    f"master: removal flow {CONSOLE_FLOW}",
     f"master: removal flow step {FORMS_FLOW}/auth-otp-form#1",
-    f"master: removal service-account realm role service-account-config-cli/{CONSOLE_NAME}-role",
 ]
+DROPPED_CLIENT = "hopin"
+DROPPED_GROUP = "ki-abo"
 CHANGED_CONFIG = "browser-mfa-without-passkey"
 ESCAPING_GROUP = "probe\x1b[31mconsole\nname"
 OBSERVER_SECRET = "/run/secrets/config_cli_secret"
@@ -506,15 +506,18 @@ class Stack:
         return target
 
     def apply(
-        self, *, bootstrap: bool = False, config_dir: Path | None = None, cache: bool = True
+        self, *, bootstrap: bool = False, config_dir: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         # Kept until inspected, so proof 7 sees the one-off container's Config.Env too.
         container = f"{PROJECT}-apply-{secrets.token_hex(4)}"
-        options = ["--no-deps", "--name", container]
-        if not cache:
-            options += ["--env", "IMPORT_CACHE_ENABLED=false"]
         result = self.compose(
-            "run", *options, "keycloak-config-cli", bootstrap=bootstrap, config_dir=config_dir
+            "run",
+            "--no-deps",
+            "--name",
+            container,
+            "keycloak-config-cli",
+            bootstrap=bootstrap,
+            config_dir=config_dir,
         )
         self.see_env(container)
         subprocess.run(["docker", "rm", container], capture_output=True, check=True)
@@ -1064,34 +1067,62 @@ class Probe:
 
         self.make_console_changes(admin)
         before = self.observe(digest_key)
-        output = self.stack.must_apply("second apply", cache=False)
+        output = self.stack.must_apply("second apply")
         expect("checksum" not in output.lower(), "the second apply consulted the checksum cache")
         after = self.observe(digest_key)
         removed = change_lines(before, after)
         expect(
-            removed == REMOVED_BY_THE_APPLY,
-            f"the observer lists {removed}, not the console changes the apply removes",
+            removed == RESIDUE_OF_THE_APPLY,
+            f"the observer lists {removed}, not the residue the apply removes",
         )
-        expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
-        self.stack.must_apply("third apply", cache=False)
+        self.console_changes_survive(admin, member_id)
+        self.stack.must_apply("third apply")
         reapplied = self.observe(digest_key)
         again = change_lines(after, reapplied)
-        expect(again == [], f"a re-apply with IMPORT_CACHE_ENABLED=false changed {again}")
+        expect(again == [], f"a re-apply changed {again}")
         for line in removed:
             self.say(f"observer: {line}")
         self.held(
             "3c",
-            "two observes are equal and leave no admin event; a second apply with "
-            f"IMPORT_CACHE_ENABLED=false removes exactly the {len(removed)} console changes the "
-            "observer lists above in both realms, keeps the console client, identity provider, "
-            "component, realm roles and the agent-service mapper, and keeps probe-member in "
-            f"{MEMBER_GROUP}; a third apply lists nothing",
+            "two observes are equal and leave no admin event; a second apply (cache off, nothing "
+            f"managed in full) removes exactly the {len(removed)} console changes the observer "
+            "lists above and keeps the console subgroup with its member, the console flow, the "
+            "service account's extra role, the console default scope on agent-service, the "
+            "console client, identity provider, component, realm roles and the agent-service "
+            f"mapper, and probe-member in {MEMBER_GROUP}; a third apply lists nothing",
         )
         self.realm_settings_as_decided(admin, reapplied)
 
+    def console_changes_survive(self, admin: Admin, member_id: str) -> None:
+        expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
+        member = admin.find(
+            f"/{REALM}/users?username=probe-console-member", "username", "probe-console-member"
+        )
+        expect(
+            admin.group_paths(member["id"]) == [CONSOLE_SUBGROUP],
+            f"the console subgroup {CONSOLE_SUBGROUP} or its member did not survive the apply",
+        )
+        expect(
+            CONSOLE_FLOW in [flow["alias"] for flow in admin.get("/master/authentication/flows")],
+            f"the console flow {CONSOLE_FLOW} did not survive the apply",
+        )
+        agent = admin.find(f"/{REALM}/clients?clientId=agent-service", "clientId", "agent-service")
+        scopes = admin.get(f"/{REALM}/clients/{agent['id']}/default-client-scopes")
+        expect(
+            CONSOLE_SCOPE in [scope["name"] for scope in scopes],
+            f"agent-service lost the default scope {CONSOLE_SCOPE} the console added",
+        )
+        config_cli = admin.find("/master/clients?clientId=config-cli", "clientId", "config-cli")
+        account = admin.get(f"/master/clients/{config_cli['id']}/service-account-user")
+        roles = admin.get(f"/master/users/{account['id']}/role-mappings/realm")
+        expect(
+            f"{CONSOLE_NAME}-role" in [role["name"] for role in roles],
+            "the service account lost the console's extra role",
+        )
+
     def make_console_changes(self, admin: Admin) -> None:
-        """What an operator does in the admin console: five changes inside declared objects or
-        realms that the apply removes, and five additions that survive it."""
+        """What an operator does in the admin console: additions inside declared objects (the
+        residue loses two of them), and further additions of their own."""
         groups_scope = admin.find(f"/{REALM}/client-scopes", "name", "groups")
         admin.create(
             f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
@@ -1117,6 +1148,11 @@ class Probe:
         admin.join_group(
             admin.create_user(REALM, "probe-console-member", password), CONSOLE_SUBGROUP
         )
+        scope_id = admin.create(
+            f"/{REALM}/client-scopes", {"name": CONSOLE_SCOPE, "protocol": "openid-connect"}
+        )
+        agent = admin.find(f"/{REALM}/clients?clientId=agent-service", "clientId", "agent-service")
+        admin.must("PUT", f"/{REALM}/clients/{agent['id']}/default-client-scopes/{scope_id}")
         self.make_survivors(admin)
 
     def make_survivors(self, admin: Admin) -> None:
@@ -1632,12 +1668,15 @@ class Probe:
         text = text.replace(
             "accessTokenLifespan: 300 ", f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
         )
-        text = text.replace("  - name: ki-abo\n", f"  - name: ki-abo\n  - name: {CHANGED_GROUP}\n")
-        realm_file.write_text(text)
-        # Stands in for a subgroup the operator makes in the admin console; README warns that the
-        # apply deletes it, because realm.yaml does not list it.
-        parent = admin.get(f"/{REALM}/group-by-path{CONSOLE_PARENT}")
-        admin.create(f"/{REALM}/groups/{parent['id']}/children", {"name": CONSOLE_SUBGROUP_NAME})
+        # The change swaps one group for another and drops a client: the apply adds the new group
+        # and, deleting nothing, keeps the dropped group and client.
+        dropped_group = f"  - name: {DROPPED_GROUP}\n"
+        expect(dropped_group in text, f"realm.yaml no longer lists the group {DROPPED_GROUP}")
+        text = text.replace(dropped_group, f"  - name: {CHANGED_GROUP}\n")
+        client_start = text.index(f"  - clientId: {DROPPED_CLIENT}\n")
+        client_end = text.index("  # One client for presentator")
+        expect(client_start < client_end, f"realm.yaml no longer lists the client {DROPPED_CLIENT}")
+        realm_file.write_text(text[:client_start] + text[client_end:])
         self.stack.must_apply("changed apply", config_dir=changed)
         realm = admin.get(f"/{REALM}")
         expect(
@@ -1648,16 +1687,22 @@ class Probe:
             admin.call("GET", f"/{REALM}/group-by-path/{CHANGED_GROUP}").status == 200,
             f"group {CHANGED_GROUP} was not created",
         )
+        for path in (f"/{DROPPED_GROUP}", CONSOLE_SUBGROUP):
+            expect(
+                admin.call("GET", f"/{REALM}/group-by-path{path}").status == 200,
+                f"the group {path} did not survive the changed apply",
+            )
         expect(
-            admin.call("GET", f"/{REALM}/group-by-path{CONSOLE_SUBGROUP}").status == 404,
-            f"the console-made subgroup {CONSOLE_SUBGROUP} survived the apply",
+            bool(admin.get(f"/{REALM}/clients?clientId={DROPPED_CLIENT}")),
+            f"the client {DROPPED_CLIENT}, dropped from realm.yaml, did not survive the apply",
         )
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
         self.held(
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
-            f"group /{CHANGED_GROUP}) and deletes the console-made {CONSOLE_SUBGROUP} it does "
-            f"not list; probe-member is still in {MEMBER_GROUP}",
+            f"group /{CHANGED_GROUP}) and deletes nothing: the group /{DROPPED_GROUP} and the "
+            f"client {DROPPED_CLIENT}, both dropped from realm.yaml, and the console-made "
+            f"{CONSOLE_SUBGROUP} stay; probe-member is still in {MEMBER_GROUP}",
         )
 
     def create_probe_rp(self, admin: Admin) -> str:

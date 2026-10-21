@@ -25,8 +25,11 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   fetches the login and account pages through the edge entrypoint and holds when both link a 200 resource under
   `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
   `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
-  runs the realm observer (`realm-observer`, #66) around a default apply with the cache off and
-  holds when it lists exactly the console changes the apply removes; proof 9 checks the
+  runs the realm observer (`realm-observer`, #66) around an apply and holds when it lists exactly
+  the two console additions the apply still removes (a mapper on the scope `groups`, a step in
+  `browser-mfa-forms`) and the console subgroup with its member, flow, default scope and the service
+  account's role are still there; proof 3d holds that a changed YAML which drops a group and a
+  client deletes neither; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an
   escaped line for a group named with ESC and a newline, that SIGINT and SIGTERM, sent as its
   container runs and as its inventory arrives, leave no container, and that an exit 0 carries

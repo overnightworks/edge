@@ -173,6 +173,31 @@ services:
       IMPORT_FILES_LOCATIONS: file:/config/master.yaml,file:/config/realm.yaml
       IMPORT_VARSUBSTITUTION_ENABLED: "true"
       IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR: "true"
+      # The apply adds and changes and never deletes (#219): every managed type is no-delete, so an
+      # object only Keycloak has stays, and a listed user keeps the roles and groups the console gave.
+      # The cache would skip an unchanged realm file silently.
+      IMPORT_CACHE_ENABLED: "false"
+      IMPORT_USERS_MERGEROLES: "true"
+      IMPORT_USERS_MERGEGROUPS: "true"
+      IMPORT_MANAGED_AUTHENTICATIONFLOW: no-delete
+      IMPORT_MANAGED_GROUP: no-delete
+      IMPORT_MANAGED_SUBGROUP: no-delete
+      IMPORT_MANAGED_REQUIREDACTION: no-delete
+      IMPORT_MANAGED_CLIENTSCOPE: no-delete
+      IMPORT_MANAGED_SCOPEMAPPING: no-delete
+      IMPORT_MANAGED_CLIENTSCOPEMAPPING: no-delete
+      IMPORT_MANAGED_COMPONENT: no-delete
+      IMPORT_MANAGED_SUBCOMPONENT: no-delete
+      IMPORT_MANAGED_IDENTITYPROVIDER: no-delete
+      IMPORT_MANAGED_IDENTITYPROVIDERMAPPER: no-delete
+      IMPORT_MANAGED_ROLE: no-delete
+      IMPORT_MANAGED_CLIENT: no-delete
+      IMPORT_MANAGED_CLIENTAUTHORIZATIONRESOURCES: no-delete
+      IMPORT_MANAGED_CLIENTAUTHORIZATIONPOLICIES: no-delete
+      IMPORT_MANAGED_CLIENTAUTHORIZATIONSCOPES: no-delete
+      IMPORT_MANAGED_MESSAGEBUNDLES: no-delete
+      IMPORT_MANAGED_ORGANIZATION: no-delete
+      IMPORT_MANAGED_WORKFLOW: no-delete
       KC_HOSTNAME_ADMIN: *admin-hostname
     secrets:
       - source: keycloak_config_cli_secret

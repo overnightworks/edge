@@ -1,9 +1,10 @@
 # The hallucinai realm: the one login for the apps. Applied by keycloak-config-cli (README, "Apply").
-# People and memberships are managed in the admin console, never here. Groups are managed in full
-# and created or renamed only here: removing or renaming a group below deletes it, and every
-# membership in it, on the next apply, and so does the apply to any subgroup under /apps or /ki-abo
-# that this file lacks, even one made in the admin console. Renaming in the console first is safe
-# only if no apply runs before the matching change here lands.
+# People and memberships are managed in the admin console, never here. The apply adds and changes
+# and never deletes (IMPORT_MANAGED_* is no-delete in compose.yaml): removing or renaming a group
+# below leaves the old group and its memberships in Keycloak, and so does a subgroup the console
+# made under /apps or /ki-abo. What the apply still removes from a listed object is only the
+# console additions to it that the README, "Start and apply", names. Deleting anything is done in
+# the admin console, after a backup.
 # The songmaker, hopin and presentator clients are here before the go-live; the other app clients
 # arrive with each app's cutover, together with its live redirect and logout URLs.
 realm: hallucinai

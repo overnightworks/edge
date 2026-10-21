@@ -213,7 +213,7 @@ services:
 | The deploy watchers | the catalog | `edge apply` installs one watcher per enabled entry with `deploy: tags` |
 | The release branch | the catalog (`repo.default_branch`) | `edge release` tags that branch; hopin's is `master` |
 
-**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli manages groups "in full": a group missing from the YAML is deleted **with every membership in it** (edge README, Keycloak section). If the catalog generated the groups, switching a service off would delete its people's memberships. So `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is its own deliberate pull request.
+**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and never deletes: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (edge README, Keycloak section). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
 
 ### "Dienst an/aus" end to end
 
@@ -231,11 +231,12 @@ services:
 2. `edge apply` clones hopin into `~/srv/hopin`, checks out its newest `v*` tag, starts it and waits for `/health`.
 3. The publish phase then publishes the name, behind its `ready` guard (X8's "protection before reachability"). hopin is in A, or in C under a global stop (section 8 state table).
 
-**The realm apply (R3, ruled 16.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50))** runs inside `edge apply` under four conditions:
-- it reconciles for real, not with a checksum-cached skip;
-- every concrete deletion is shown first;
-- deletions need a **separate** confirmation;
-- a restorable database dump is taken before any deletion.
+**The realm apply (R3, ruled 16.10.2026; re-cut by the operator's „ja d“ and „ok“ on 21.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50), [edge#219](https://github.com/overnightworks/edge/issues/219))** adds and changes in the realm and never deletes:
+- it reconciles for real, not with a checksum-cached skip (`IMPORT_CACHE_ENABLED=false`);
+- every `IMPORT_MANAGED_*` type is `no-delete`, and a listed user keeps the roles and groups the console gave it, so the tool cannot delete a group, client, role, flow or user;
+- a backup and its restore test come before it (stage 1: two commands in the README's „Start and apply“; stage 2: a step inside `edge apply`);
+- the lines of what changed and of what exists only in Keycloak come after it (stage 2);
+- deleting anything in Keycloak waits for the operator's yes.
 
 **Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator. Planned with X6a (#168): the ingress comes from the catalog, so a line is no longer removed by hand; README A8 stays until X8b.
 

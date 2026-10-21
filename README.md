@@ -986,7 +986,8 @@ first failing command and never starts Keycloak after a failed load. If the
 load fails, `pg_restore`'s messages can quote rows of the dump, so they are
 discarded and the session runs with server error logging off (`keycloak` is the
 image's superuser, which may set that); only the exit code is printed. Delete
-`~/restore-keycloak` once you are done.
+`~/restore-keycloak` once you are done. The block acts on the compose project `edge`;
+`EDGE_COMPOSE_PROJECT` names another, which is how it was driven against a throwaway stack.
 
 ```sh
 (
@@ -994,7 +995,7 @@ set -euo pipefail
 umask 077
 restored=~/restore-keycloak
 container() {
-  docker ps --quiet --filter label=com.docker.compose.project=edge \
+  docker ps --quiet --filter label=com.docker.compose.project="${EDGE_COMPOSE_PROJECT:-edge}" \
     --filter label=com.docker.compose.service="$1" \
     --filter label=com.docker.compose.oneoff=False
 }
@@ -1122,24 +1123,18 @@ caches for up to 30 days under the same URL; a look change therefore names a
 new stylesheet in `theme.properties` (`styles=`) instead of editing one in
 place.
 
-> **Managed in full.** Groups are created and renamed only in `realm.yaml`.
-> The apply deletes every top-level group, client, client scope and flow that
-> an earlier apply created and the YAML no longer lists, and below a listed
-> group it deletes **every** subgroup the YAML lacks, whoever created it: a
-> group made in the admin console under `/apps` or `/ki-abo` (say
-> `/apps/newtool`) disappears on the next apply, **with every membership in
-> it** (the probe's proof 3c removes `/apps/probe-console` with its one member).
-> Removing or renaming a group in `realm.yaml` deletes it the same way.
-> Renaming a group in the admin console first is safe only if no apply runs
-> before the matching YAML change lands. A console change inside a declared
-> object goes the same way: a protocol mapper added to the scope `groups`, a
-> realm role added to `service-account-config-cli`, a step added to
-> `browser-mfa-forms`, and a top-level flow made in the console in master. A
-> console-made client, identity provider, component, realm role, and a mapper
-> on `agent-service` survive. Each such removal shows around an apply: the
-> realm observer (`realm-observer`, `src/edge/realm/observe.py`) reads the
-> realms before and after, and `edge.realm` compares the two reads and prints
-> one line per change with its realm.
+> **The apply adds and changes, and never deletes.** `compose.yaml` sets every
+> `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`, the cache off, and
+> `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. A group, client, client scope, role, flow, identity
+> provider or component that `realm.yaml` or `master.yaml` no longer lists, and any subgroup, flow,
+> role or client made in the admin console, stays, with its memberships. Renaming a group in the
+> YAML therefore creates the new group and leaves the old one. The probe's proofs 3c and 3d drive
+> this. Two console additions inside a listed object still go on the next apply (the measured
+> residue): a protocol mapper added to the scope `groups`, and a step added to the flow
+> `browser-mfa-forms`. A console edit to a field the YAML lists is reverted. Deleting a group,
+> client or role is done in the admin console, after a backup, with your yes. The realm observer
+> (`realm-observer`, `src/edge/realm/observe.py`) reads the realms before and after, and
+> `edge.realm` compares the two reads and prints one line per change with its realm.
 
 ### Keycloak secrets
 
@@ -1177,17 +1172,35 @@ environment entry in any compose file Compose may load (`compose*.yaml`,
 ### Start and apply
 
 Start the stack as in [Start, readiness, stop](#start-readiness-stop) (Keycloak with
-`edge apply`), Traefik included, and wait until the readiness check prints `ready`. Then apply
-`keycloak/*.yaml`:
+`edge apply`), Traefik included, and wait until the readiness check prints `ready`. A realm change
+is then three steps, in this order:
 
-```sh
-docker compose --profile keycloak run --rm keycloak-config-cli
-```
+1. **Back up, and test the restore.** The apply deletes nothing, but it overwrites a console edit
+   to a field the YAML lists and the two additions named above, so there is a snapshot to go
+   back to:
+
+   ```sh
+   uv run edge-backup backup
+   uv run edge-backup restore-test
+   ```
+
+   Both must end with exit 0. The way back is [Restore Keycloak](#restore-keycloak).
+2. **Apply `keycloak/*.yaml`:**
+
+   ```sh
+   docker compose --profile keycloak run --rm keycloak-config-cli
+   ```
+
+3. **Look at the result.** `git diff` of the YAML is what you asked for; the admin console shows
+   what the apply left.
 
 The apply signs in as the `config-cli` service client and fails loudly on a
-`$(env:…)` variable that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`).
-It skips a realm whose file has not changed since the last apply; add
-`--env IMPORT_CACHE_ENABLED=false` to force it.
+`$(env:…)` variable that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). It always
+reconciles for real (`IMPORT_CACHE_ENABLED=false` in `compose.yaml`), never skips a realm whose
+file is unchanged. Whatever exists only in Keycloak stays; deleting a group, client or role the
+YAML no longer lists is done in the admin console, with your yes, after the backup above. The
+step inside `edge apply`, with the list of what changed and of what exists only in Keycloak,
+comes when realm changes become frequent (#50).
 
 ### Keycloak go-live
 
@@ -1374,8 +1387,9 @@ flock /tmp/probe-stack.lock \
 The proofs: the public issuer, the themed login and account pages in German
 and English and the path allow-list (1, 2a), the master issuer and the
 forced second factor on the admin entrypoint, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
-cache-off second apply and a changed YAML that applies and deletes a
-console-made subgroup it does not list, with a seeded member untouched (3a–3d),
+second apply that removes only the two pinned console additions and keeps every other console
+change, and a changed YAML that applies and deletes nothing, with a seeded member untouched
+(3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused
 on refresh (5), a back-channel logout reaching the test RP (6), none of the
 credentials it made or received (secret files, passwords, the TOTP seed, the RP
