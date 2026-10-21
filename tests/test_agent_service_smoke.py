@@ -206,8 +206,9 @@ def test_a_token_in_the_environment_is_not_taken(monkeypatch):
     ids=["unknown option", "bad timeout", "bad timeout value", "abbreviated option"],
 )
 def test_a_rejected_argument_is_never_printed(argv, capsys):
+    stdin = io.StringIO(BOTH_TOKENS)
     with pytest.raises(SystemExit) as exit_info:
-        smoke.main(argv, io.StringIO(BOTH_TOKENS))
+        smoke.main(argv, stdin)
 
     captured = capsys.readouterr()
     assert exit_info.value.code == 2
