@@ -369,7 +369,7 @@ ausloest.
 Einstellung allein veroeffentlicht nichts; die Preload-Liste der Browser kennt die Domain erst
 nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Schritte danach:
 
-0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`,
+0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`;
    `fleet-write`: `Zone › Zone Settings › Edit`) das Recht dazu, vor `edge apply`. Das Aendern der
    Rechte behaelt den Wert des Tokens, an den Dateien aendert sich nichts.
 1. `edge apply`; die Publish-Phase wendet die Einstellung an. Danach meldet `edge external plan`
@@ -381,6 +381,51 @@ nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Sc
 4. Der Betreiber sendet das Formular auf hstspreload.org ab.
 
 Zum Zuruecknehmen vor Schritt 4 (dem Absenden) setzt du `enabled = false` und wendest es an; den Block zu loeschen ist nicht belegt als Zuruecksetzen der Einstellung bei Cloudflare. Nach dem Absenden reicht `enabled = false` nicht, denn die Domain bleibt auf den Preload-Listen der Browser, bis sie entfernt ist: dazu den Header ohne `preload` ausliefern, das Formular auf https://hstspreload.org/removal/ absenden und fuer die Monate bis zur Entfernung gueltiges HTTPS auf jeder Subdomain halten; Browser, die den Header gesehen haben, behalten ihn bis zum Ablauf seines max-age.
+
+`apply` setzt ausserdem eine Request-Header-Transform-Regel der Zone
+(`cloudflare_ruleset.client_address`, Phase `http_request_late_transform`): `Forwarded` ist die
+Adresse, die Cloudflare sah (`for=<IPv4>;proto=https`, bei IPv6 `for="[<IPv6>]";proto=https`),
+ein vom Besucher gesendetes `Forwarded` wird ueberschrieben. Keycloak liest nur diesen Header
+(`KC_PROXY_HEADERS=forwarded`) und speichert in seinen Ereignissen (Anmeldungen und
+fehlgeschlagene Anmeldungen, 90 Tage) deshalb die Adresse des Besuchers, nie einen vom Client
+gefaelschten `X-Forwarded-For`. Apps, die `X-Forwarded-For` loggen, bleiben faelschbar; jede liest
+`Forwarded` oder `Cf-Connecting-IP` selbst.
+
+Bei IPv6 speichert Keycloak die Adresse mit den Klammern des Headers (`[2001:db8::1]`).
+
+Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei
+einer geaenderten Umgebung nie neu (`up -d --no-recreate`); der Betreiber startet es erst, wenn
+die Regel bei Cloudflare steht: `docker compose --profile keycloak up -d --no-deps keycloak`, in
+`~/git/edge`, und nur wenn `hal apply` sauber endete **und** `edge external plan` "No changes"
+meldet. So gibt es kein Fenster: Keycloak liest `Forwarded` erst, wenn davor die Regel steht. Ein
+Keycloak auf `forwarded` ohne Regel davor wuerde ein vom Besucher gesendetes `Forwarded`
+vertrauen.
+
+Die Token-Rechte, vor `hal apply` im Cloudflare-Dashboard: `Zone › Transform Rules › Read`
+(`fleet-read`) und `› Edit` (`fleet-write`). `Account › Account Rulesets › Read` ist nicht
+gemessen: es kommt nur dazu, wenn ein 403 es nennt; ob es noetig war, steht dann auf #190.
+
+Scheitert die Publish-Phase, bleibt Keycloak auf `xforwarded`: nicht neu erstellen, das Ergebnis
+auf #190 melden. Bekannte Ursachen und der naechste Schritt:
+
+- Cloudflare lehnt den Header ab: Option (b) oder hinnehmen, der Betreiber entscheidet auf #190.
+- Cloudflare lehnt die `/0`-Listen ab: den genauen Fehlertext auf #190 schreiben.
+- In der Phase besteht schon ein Ruleset: importieren und seine Regeln vorher in
+  `cloudflare_ruleset.client_address` uebernehmen; der Plan darf keine Regel entfernen; sonst auf
+  #190 melden.
+- 403: ein fehlendes Recht (siehe oben).
+
+Danach prueft der Betreiber (L1): eine fehlgeschlagene Anmeldung durch den Tunnel mit gefaelschtem
+`X-Forwarded-For` **und** gefaelschtem `Forwarded`:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'X-Forwarded-For: 203.0.113.9, 192.0.2.7' -H 'Forwarded: for=203.0.113.9' \
+  -d grant_type=password -d client_id=nobody -d username=nobody -d password=wrong \
+  https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect/token
+```
+
+Das Ereignis in der Admin-Konsole (Admin-Eingang, Events) traegt seine echte Adresse.
 
 ## Dienste an und aus
 
@@ -1302,7 +1347,7 @@ scratch directory, and always removes it again, volumes included. It runs beside
 the live edge: its Traefik listens on two free loopback ports of its own (never
 8081 or 8090) and routes only its own project. It stands in for Cloudflare by
 sending `Host: auth.hallucinai.de` and `X-Forwarded-Proto: https` to its edge
-entrypoint. The test relying party
+entrypoint (and the `Forwarded` header Cloudflare's rule sets, for EV2). The test relying party
 `probe-rp` and its client exist only there.
 
 ```sh
@@ -1340,9 +1385,10 @@ container it ran (the bootstrap Keycloak and every keycloak-config-cli run
 included), in any compose, apply or service log output, or in its own output
 (7), the realm settings as decided, with admin events that carry no client
 representation (8), a sign-in and a wrong password that store exactly one LOGIN and one
-LOGIN_ERROR event, both with exactly the address the simulated cloudflared forwards in
-`X-Forwarded-For`, and a logout that stores none (EV2; the probe does not prove what
-Cloudflare passes on, and a client-forged leftmost value is stored, #190), and the
+LOGIN_ERROR event, both with exactly the address of the `Forwarded` header the probe sends the way
+Cloudflare's rule sets it, though a forged `X-Forwarded-For` rides along, one more wrong password
+from an IPv6 address that stores that address in brackets, and a logout that stores none (EV2; the probe does
+not prove that Cloudflare sets the header, the tofu test and the live check do), and the
 songmaker, hopin and presentator clients: a PKCE sign-in with the
 scratch secret that ends in an ID token with the member's group (`/apps/songmaker/admin`,
 `/apps/hopin`, `/apps/presentator/admin`), an exact callback, the password grant,
