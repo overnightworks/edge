@@ -1102,6 +1102,10 @@ class Probe:
         )
         return Admin(tokens["access_token"], self.stack.admin_url)
 
+    def admin_now(self) -> Admin:
+        """An admin whose token is fresh: master tokens live 60 s."""
+        return self.admin_with_client(self.secret_values["config-cli-secret"])
+
     def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
@@ -1150,7 +1154,7 @@ class Probe:
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
-        self.the_realm_step(admin)
+        self.the_realm_step()
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -2355,11 +2359,11 @@ class Probe:
             f"back-channel url {backchannel_url}",
         )
 
-    def the_realm_step(self, admin: Admin) -> None:
+    def the_realm_step(self) -> None:
         """Proof 12 (#242): the realm step of `edge apply` against this stack, with edge-backup
         under a scratch HOME and its own apps.toml. The same Keycloak, its database and its
         config-cli answer; only the repository, the HOME and the project are the probe's."""
-        stand = RealmStepStand.at(self.stack)
+        stand = RealmStepStand.at(self.stack)  # a backup outlives the admin token's 60 s
         expect(stand.edge_backup("init").returncode == 0, "edge-backup init failed")
 
         baseline = stand.apply()
@@ -2398,7 +2402,8 @@ class Probe:
         ]
         expect(sorted(applied.lines[1:]) == sorted(expected), f"the lines are {applied.lines[1:]}")
         expect(
-            admin.get(f"/{REALM}")["accessTokenLifespan"] == CHANGED_ACCESS_TOKEN_LIFESPAN,
+            self.admin_now().get(f"/{REALM}")["accessTokenLifespan"]
+            == CHANGED_ACCESS_TOKEN_LIFESPAN,
             "the realm does not hold the changed lifespan",
         )
         expect(stand.plan().settled and stand.plan().lines == [], "the next plan is not quiet")
@@ -2408,9 +2413,9 @@ class Probe:
             "restore test, and the lines equal the YAML diff: " + "; ".join(expected) + " (cell 3)",
         )
 
-        realm = admin.get(f"/{REALM}")
+        realm = self.admin_now().get(f"/{REALM}")
         checksum = next(key for key in realm["attributes"] if key.startswith(CHECKSUM_PREFIX))
-        admin.must(
+        self.admin_now().must(
             "PUT",
             f"/{REALM}",
             {**realm, "attributes": {**realm["attributes"], checksum: "restored"}},
@@ -2427,8 +2432,8 @@ class Probe:
             "changed) is applied again, and the next plan is quiet (cell 7)",
         )
 
-        groups_scope = admin.find(f"/{REALM}/client-scopes", "name", "groups")
-        admin.create(
+        groups_scope = self.admin_now().find(f"/{REALM}/client-scopes", "name", "groups")
+        self.admin_now().create(
             f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
             hardcoded_claim(STEP_CONSOLE_MAPPER),
         )
