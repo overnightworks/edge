@@ -1,4 +1,4 @@
-# First start and first apply only (README, "Keycloak go-live"). Keycloak creates the temporary
+# First start and first apply only (docs/keycloak.md, "Go-live"). Keycloak creates the temporary
 # admin when it initialises an empty database, keycloak/admin-frontend.sh moves the master realm
 # to the admin entrypoint, and the first apply signs in as that admin because the config-cli
 # client does not exist yet. Never use this overlay afterwards.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keycloak go-live as one command (README "Keycloak go-live"): the operator's tool.
+"""Keycloak go-live as one command (docs/keycloak.md, "Go-live"): the operator's tool.
 
 Runs the runbook's steps 2-6 and the end of step 7, asks for the operator's admin name and first
 password (step 6), and stops for the human part, the browser (TOTP and passkey, step 7). It ends
@@ -191,7 +191,7 @@ class Tools:
 
 @dataclass(frozen=True)
 class Step:
-    number: str  # the runbook step in the README
+    number: str  # the step number `--help` prints
     name: str
     is_done: Callable[[], bool]
     do: Callable[[], None]
@@ -206,7 +206,7 @@ class GoLive:
         self.typed_secrets: list[str] = []  # what the operator typed: scrubbed from every failure
         self.created_admin: str | None = None  # the admin step 6 made in this run
 
-    # --- the emergency switch (README "Keycloak go-live") ---------------------
+    # --- the emergency switch (docs/keycloak.md, "Go-live") ---------------------
 
     def switched_off_reason(self) -> str | None:
         since = self.marks.since(UNIT)
@@ -922,7 +922,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         epilog=(
-            f"Steps (numbers as in the README), each skipped when already done:\n{steps}\n\n"
+            f"Steps, each skipped when already done:\n{steps}\n\n"
             f"{NEXT_STEP}"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

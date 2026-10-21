@@ -429,7 +429,7 @@ volumes:
   traefik-mcp-acme:
 
 secrets:
-  # Files only, outside the repository; README "Keycloak secrets" names how to create them.
+  # Files only, outside the repository; docs/keycloak.md, "Secrets", names how they are made.
   keycloak_db_password:
     file: ${HOME}/.secrets/keycloak/db-password
   keycloak_config_cli_secret:

@@ -1,4 +1,4 @@
-"""Keycloak probe: proves the edge's Keycloak service on a throwaway stack (README "Keycloak").
+"""Keycloak probe: proves the edge's Keycloak service on a throwaway stack (docs/keycloak.md).
 
 It starts its own compose project from this checkout with throwaway secrets in the scratch
 directory, stands in for Cloudflare by sending `Host: auth.<domain>` and
@@ -2468,7 +2468,7 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
         if stack is not None and not stack.down():
-            failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
+            failures.append(f"stack {PROJECT} is left behind; docs/keycloak.md says how to remove it")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1

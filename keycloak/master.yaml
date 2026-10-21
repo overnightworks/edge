@@ -1,4 +1,4 @@
-# The master realm holds only administration. Applied by keycloak-config-cli (README, "Apply").
+# The master realm holds only administration. Applied by keycloak-config-cli (docs/keycloak.md, "Start and apply").
 # People are managed in the admin console; this file never lists a human user.
 realm: master
 # Master logins and tokens live on the loopback admin entrypoint, never on the public hostname.
