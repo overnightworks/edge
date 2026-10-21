@@ -168,7 +168,8 @@ CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
-CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as cloudflared forwards it
+CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as Cloudflare saw it
+CLIENT_ADDRESS_IPV6 = "2001:db8::23"  # the same, for a person on IPv6
 FORGED_FORWARDED_FOR = "203.0.113.9, 192.0.2.7"  # a forged first value, then a proxy's
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
@@ -324,11 +325,17 @@ def tunnel_request_url(edge_url: str, method: str, url: str, **kwargs: Any) -> R
     )
 
 
+def cloudflare_forwarded(address: str) -> str:
+    """The `Forwarded` value external/cloudflare.tf sets: RFC 7239 brackets and quotes IPv6."""
+    node = f'"[{address}]"' if ipaddress.ip_address(address).version == 6 else address
+    return f"for={node};proto=https"
+
+
 def stored_event_types(events: list[dict[str, Any]], request_address: str) -> list[str]:
     """The sorted types of stored user events, each proven to carry `request_address`.
 
-    The address is the client's, as cloudflared forwards it in X-Forwarded-For and Traefik and
-    Keycloak pass it on; a dropped link would store the loopback address instead.
+    The address is the one Cloudflare put in `Forwarded`, which Traefik and Keycloak pass on and
+    read; a dropped link would store the loopback address instead.
     """
     for event in events:
         address = event.get("ipAddress")
@@ -1737,7 +1744,10 @@ class Probe:
     def only_logins_and_failed_logins_are_stored(self, admin: Admin, rp_secret: str) -> None:
         password = self.keep_secret("probe-events password", secrets.token_urlsafe(16))
         user_id = admin.create_user(REALM, "probe-events", password)
-        forwarded = {"X-Forwarded-For": CLIENT_ADDRESS}
+        forwarded = {
+            "Forwarded": cloudflare_forwarded(CLIENT_ADDRESS),
+            "X-Forwarded-For": FORGED_FORWARDED_FOR,
+        }
 
         def wrong_password(headers: dict[str, str]) -> Response:
             return self.through_tunnel(
@@ -1772,19 +1782,22 @@ class Probe:
             stored == ["LOGIN", "LOGIN_ERROR"],
             f"probe-events has the stored events {stored}, not one LOGIN and one LOGIN_ERROR",
         )
+        forwarded_ipv6 = {**forwarded, "Forwarded": cloudflare_forwarded(CLIENT_ADDRESS_IPV6)}
+        refused_ipv6 = wrong_password(forwarded_ipv6)
+        expect(refused_ipv6.status == 400, f"a wrong password answered {refused_ipv6.status}")
+        newest = max(admin.get(events_path), key=lambda event: event["time"])
+        stored_ipv6 = f"[{CLIENT_ADDRESS_IPV6}]"  # Keycloak keeps RFC 7239's brackets
+        expect(
+            newest["type"] == "LOGIN_ERROR" and newest.get("ipAddress") == stored_ipv6,
+            f"the newest {newest['type']} event carries the IP address {newest.get('ipAddress')}, "
+            f"not {stored_ipv6}",
+        )
         self.held(
             "EV2",
             "a sign-in stored one LOGIN, a wrong password one LOGIN_ERROR, both with the "
-            f"forwarded client address {CLIENT_ADDRESS}, a logout none",
-        )
-        forged = wrong_password({"X-Forwarded-For": FORGED_FORWARDED_FOR})
-        expect(
-            forged.status == 400, f"a wrong password with a forged header answered {forged.status}"
-        )
-        newest = max(admin.get(events_path), key=lambda event: event["time"])
-        self.say(
-            f"INFO EV2: X-Forwarded-For {FORGED_FORWARDED_FOR!r} is stored as the "
-            f"{newest['type']} IP address {newest.get('ipAddress')}"
+            f"Forwarded client address {CLIENT_ADDRESS} and not the forged X-Forwarded-For "
+            f"{FORGED_FORWARDED_FOR!r}, a wrong password from {CLIENT_ADDRESS_IPV6} one more "
+            "LOGIN_ERROR with that IPv6 address in brackets, a logout none",
         )
 
     def app_client(self, admin: Admin, client: AppClient) -> None:

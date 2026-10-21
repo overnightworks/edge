@@ -1,7 +1,7 @@
 mock_provider "cloudflare" {
   mock_data "cloudflare_zone" {
     defaults = {
-      id      = "zone-id"
+      id      = "0123456789abcdef0123456789abcdef"
       account = { id = "account-id", name = "fixture account" }
     }
   }
@@ -32,7 +32,7 @@ run "c1_public_hosts_get_proxied_cnames_to_the_tunnel_and_no_app" {
       && cloudflare_dns_record.host[fqdn].content == "tunnel-id.cfargotunnel.com"
       && cloudflare_dns_record.host[fqdn].proxied
       && cloudflare_dns_record.host[fqdn].ttl == 1
-      && cloudflare_dns_record.host[fqdn].zone_id == "zone-id"
+      && cloudflare_dns_record.host[fqdn].zone_id == "0123456789abcdef0123456789abcdef"
     ])
     error_message = "the apex and www are not proxied CNAMEs to the tunnel with TTL 1"
   }
@@ -53,7 +53,7 @@ run "c18_the_zone_sends_hsts_with_preload_for_every_subdomain" {
 
   assert {
     condition = (
-      cloudflare_zone_setting.hsts.zone_id == "zone-id"
+      cloudflare_zone_setting.hsts.zone_id == "0123456789abcdef0123456789abcdef"
       && cloudflare_zone_setting.hsts.setting_id == "security_header"
       && cloudflare_zone_setting.hsts.value.strict_transport_security == {
         enabled            = true
@@ -64,6 +64,34 @@ run "c18_the_zone_sends_hsts_with_preload_for_every_subdomain" {
       }
     )
     error_message = "the zone's HSTS is not max-age=31536000; includeSubDomains; preload without nosniff"
+  }
+}
+
+run "c19_the_zone_overwrites_forwarded_with_the_address_cloudflare_saw" {
+  command = plan
+
+  assert {
+    condition = (
+      cloudflare_ruleset.client_address.zone_id == "0123456789abcdef0123456789abcdef"
+      && cloudflare_ruleset.client_address.kind == "zone"
+      && cloudflare_ruleset.client_address.phase == "http_request_late_transform"
+    )
+    error_message = "the client address ruleset is not the zone's late request transform entry point"
+  }
+
+  assert {
+    condition = [
+      for rule in cloudflare_ruleset.client_address.rules : [
+        rule.action,
+        rule.expression,
+        rule.action_parameters.headers["Forwarded"].operation,
+        rule.action_parameters.headers["Forwarded"].expression,
+      ]
+      ] == [
+      ["rewrite", "ip.src in {0.0.0.0/0}", "set", "concat(\"for=\", to_string(ip.src), \";proto=https\")"],
+      ["rewrite", "ip.src in {::/0}", "set", "concat(\"for=\\\"[\", to_string(ip.src), \"]\\\";proto=https\")"],
+    ]
+    error_message = "Forwarded is not set from ip.src, bare for IPv4 and quoted in brackets for IPv6"
   }
 }
 
@@ -284,7 +312,7 @@ run "c1_one_live_cname_on_www_is_imported" {
   }
 
   assert {
-    condition     = local.record_ids_to_import == { "www.edge-fixture.invalid" = "zone-id/cname-id" }
+    condition     = local.record_ids_to_import == { "www.edge-fixture.invalid" = "0123456789abcdef0123456789abcdef/cname-id" }
     error_message = "the live CNAME on www is not imported by its zone and record id"
   }
 }
@@ -304,7 +332,7 @@ run "c10_a_live_cname_with_other_content_is_imported_without_failure" {
   }
 
   assert {
-    condition     = local.record_ids_to_import == { "www.edge-fixture.invalid" = "zone-id/cname-id" }
+    condition     = local.record_ids_to_import == { "www.edge-fixture.invalid" = "0123456789abcdef0123456789abcdef/cname-id" }
     error_message = "a CNAME with other content was not adopted, or it failed the plan"
   }
 }
@@ -363,7 +391,7 @@ run "t7_without_hosts_only_the_zone_and_the_tunnel_are_looked_up" {
   }
 
   assert {
-    condition     = data.cloudflare_zone.this.id == "zone-id" && data.cloudflare_zero_trust_tunnel_cloudflared.this.id == "tunnel-id"
+    condition     = data.cloudflare_zone.this.id == "0123456789abcdef0123456789abcdef" && data.cloudflare_zero_trust_tunnel_cloudflared.this.id == "tunnel-id"
     error_message = "the zone and the tunnel are not looked up without a host"
   }
 

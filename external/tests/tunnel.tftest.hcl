@@ -1,7 +1,7 @@
 mock_provider "cloudflare" {
   mock_data "cloudflare_zone" {
     defaults = {
-      id      = "zone-id"
+      id      = "0123456789abcdef0123456789abcdef"
       account = { id = "account-id", name = "fixture account" }
     }
   }

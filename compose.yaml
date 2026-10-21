@@ -121,7 +121,7 @@ services:
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
       # TLS ends at Cloudflare; Traefik forwards plain HTTP from the host side of the keycloak network.
       KC_HTTP_ENABLED: "true"
-      KC_PROXY_HEADERS: xforwarded
+      KC_PROXY_HEADERS: forwarded
       # The keycloak network's subnet (networks.keycloak below takes it from here).
       KC_PROXY_TRUSTED_ADDRESSES: &keycloak-subnet 172.31.253.0/24
     secrets:
