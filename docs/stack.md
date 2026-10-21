@@ -29,8 +29,11 @@ and `edge apply --closed` writes it again.
   the live checkout by `git -C ~/git/edge pull --ff-only` (until S2.4c); a local edit leaves the tree
   dirty and the apply refuses it, naming the path.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
-  gets 404 on 8081, and Keycloak answers the master realm on 8090. `hal apply` and its host check are the
-  proof; Keycloak's start takes longest.
+  gets 404 on 8081, and Keycloak answers the master realm on 8090; Keycloak's start takes
+  longest. No command checks these four facts together (a named gap on overnightworks/edge#222).
+  What proves what today: `hal apply` observes the containers running; `docker compose ps` shows
+  their health; the publish phase asks each declared host's `ready` path, only for a plan with
+  changes; `keycloak/go-live` probes 8081 and 8090.
 - **Stop.** `docker compose --profile keycloak --profile probe down`. Without `--profile keycloak`
   Keycloak and its database keep running, without `--profile probe` a running probe `hello` stays. It
   removes no volume; never add `--volumes`, because that deletes the Keycloak database.
@@ -96,11 +99,12 @@ schaltet das Profil ab; `run.setup` nennt optional den Befehl, der den Schluesse
 wenn der mit Exit 0 endete, die Publish-Phase (`edge external apply`, [external.md](external.md)). Jeder
 Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt es nirgends etwas zu aendern,
 fragt `edge apply` nichts. Endet der lokale Teil nicht mit 0, steht eine Zeile "nothing published", es
-laeuft kein tofu, und der Exit ist der des lokalen Teils. Ein Ctrl-C oder SIGTERM vor der Publish-Phase
+laeuft kein tofu, und der Exit ist der des lokalen Teils. Ein Ctrl-C (SIGINT) vor der Publish-Phase
 endet mit Exit 1 und "interrupted, nothing published"; waehrend der Publish-Phase gelten deren
 Unterbrechungsregeln, und ihr Exit bleibt, sobald sie ihr Urteil festgehalten hat. Kommt eine
 Unterbrechung ohne festgehaltenen Exit aus ihr heraus, endet es mit Exit 1 und der Zeile
-"run `edge external check --hosts`".
+"run `edge external check --hosts`". Ein SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess
+wie bei `--closed`: nichts wird veroeffentlicht.
 
 **Der lokale Teil.** Er bringt jede Einheit in den Zustand, den `enabled` sagt. An:
 `docker compose --profile <Einheit> up -d` fuer genau die Dienste des Profils. Aus: `stop`, dann `rm -f`
@@ -131,21 +135,9 @@ von `edge apply` neu erstellt (`traefik.yml`, `traefik-mcp.yml`, `compose.yaml`)
 Betreiber bis S2.4c mit `git -C ~/git/edge merge --ff-only <Hash>` selbst herein und ruft den Apply
 noch einmal auf.
 
-**Der Kern und die Follower.** `socket-proxy` und `traefik` erstellt er vor allen Einheiten neu
-(`up -d --no-deps --force-recreate`, im selben Plan, mit demselben `yes`), wenn sich die
-Compose-Definition (`docker compose config --hash` gegen das Label `com.docker.compose.config-hash`)
-geaendert hat, und `traefik` auch, wenn `traefik.yml` sich seit dem letzten vollstaendigen Lauf
-geaendert hat oder in `~/.local/state/edge/applied.json` kein Eintrag steht (der Eintrag und seine
-Pflege: [architecture.md](architecture.md), Abschnitt 8). `socket-proxy` zuerst, ein neu erstellter
-zieht `traefik` nach. Der Eintrag wird vor dem Neuerstellen geleert und erst neu geschrieben, wenn jeder
-Dienst laeuft und jede aktive Sperre bewiesen ist; dann meldet der Lauf "the core is current".
-Scheitert ein Schritt, ist der Lauf teilweise (Exit 1), keine Einheit wird geschaltet und der naechste
-Lauf versucht es wieder. Einen gestoppten Kerndienst nennt er nur und startet ihn nie, auch nicht, wenn
-er zwischen Plan und `yes` stoppte (teilweise, Exit 1). `traefik-mcp` und `agent-egress` folgen ebenso
-ihrer Static-Datei und ihrer Compose-Definition, nach dem Kern: ist die zugehoerige Einheit (`step-ca`
-bzw. `agent-service`) an, erstellt der Lauf nur den Follower neu (die Einheit behaelt Container und
-Zertifikat); ist sie aus oder abgeschaltet, nennt er die Aenderung nur und startet nichts. Schaltet ein
-Lauf `step-ca` an, schreibt er den Eintrag von `traefik-mcp`, sobald die Einheit laeuft.
+**Der Kern und die Follower.** Welche Dienste `edge apply --closed` neu erstellt, in welcher
+Reihenfolge, und wie der Eintrag in `applied.json` gefuehrt wird:
+[architecture.md](architecture.md), Abschnitt 8, "The applied record".
 
 **Images.** Laeuft ein Dienst einer Einheit, die nicht ausgeschaltet wird, auf einem anderen Image, als
 `compose.yaml` jetzt nennt, nennt der Plan es und tauscht es nie; der Lauf bleibt `nothing to change`.
@@ -162,16 +154,17 @@ Zeitlimit, Ausgabe ungefiltert; die Schluessel macht allein dieser Befehl, `edge
 Dann prueft `--check` noch einmal und der Plan folgt mit seinem eigenen `yes`. Ein Setup, das scheitert
 oder per Ctrl-C unterbrochen wird, schaltet nichts (Exit 1); was es gemacht hat, bleibt auch nach einem
 `no` zum Plan (Loeschen bleibt Handarbeit). Ohne Terminal laeuft nie ein Setup. Eine per `edge stop`
-ausgeschaltete, noch laufende Einheit ohne Setup wird abgewiesen (`edge stop` noch einmal).
+ausgeschaltete, noch laufende Einheit, die nicht eingerichtet ist, wird abgewiesen (`edge stop` noch
+einmal).
 
 **Exit.** 0 angewendet und beobachtet oder nichts zu tun; 1 verweigert (auch: ein anderes Apply laeuft),
 abgebrochen, fehlgeschlagen oder teilweise; 2 nicht planbar (falscher Checkout oder Zweig, Baum nicht
 sauber, `.env` abweichend oder unlesbar, keine Gruppe `docker`, `cloudflare.zone` ungueltig, git nicht
 befragbar, Abruf gescheitert, Checkout vor oder neben `origin/main`, Katalog oder Compose ungueltig,
-`traefik.yml` oder `traefik-mcp.yml` fehlt, ein Setup-Check, der es nicht sagen kann). Das blosse
-`edge apply` gibt den Exit des lokalen Teils unveraendert zurueck, solange der nicht 0 ist, danach den
-der Publish-Phase, deren Exit 2 zu 1 wird. Ein Exit 2 von `edge apply` heisst also: nichts wurde
-veroeffentlicht, und ein Setup, das schon lief, kann Aenderungen hinterlassen haben. Ueber `bin/edge`
+`traefik.yml` oder `traefik-mcp.yml` fehlt, ein Setup-Check, der es nicht sagen kann, u. a.). Das
+blosse `edge apply` gibt den Exit des lokalen Teils unveraendert zurueck, solange der nicht 0 ist,
+danach den der Publish-Phase, deren Exit 2 zu 1 wird. Ein Exit 2 von `edge apply` heisst also:
+nichts wurde veroeffentlicht, und ein Setup, das schon lief, kann Aenderungen hinterlassen haben. Ueber `bin/edge`
 kann Exit 2 auch vom `uv sync` des Starters kommen; seine Zeile nennt das Sync.
 
 ## Notschalter: `edge stop` und `edge start`
@@ -198,18 +191,12 @@ Ein `stopped/`-Verzeichnis, das nicht 0700 ist, setzt `edge stop` auf 0700 zurue
 oder schon so; 1 teilweise (Schalter notiert, aber ein Container laeuft noch, oder er liess sich nicht
 notieren) oder verweigert; 2 nicht planbar.
 
-**Die Sperre vor Traefik.** Hat die Einheit einen Dienst mit `traefik.enable` und einem `edge.name`,
-schreibt `edge stop` vor dem `stop` die Datei `dynamic/switch-<Einheit>.yml` (flach, atomar, von git
-ignoriert). Sie haengt pro Host einen Router hoechster Prioritaet nur an den Eingang `edge`; Traefik
-antwortet `404 page not found`, der Eingang `admin` auf `127.0.0.1:8090` bleibt offen. `edge stop`
-meldet Erfolg erst, wenn Traefik fuer jeden Host innerhalb von 15 s 404 mit dem Header
-`X-Edge-Barrier: <Einheit>` antwortet, sonst Exit 1 (Schalter und Sperre bleiben). `edge start` entfernt
-die Sperre erst, wenn die Einheit laeuft, prueft, dass der Header weg ist, und loescht den Schalter
-zuletzt. `edge apply` schreibt und entfernt eine Sperre nie; nur nach einem Neuerstellen von Traefik
-rendert es jede aktive Sperre neu und beweist sie, bevor es Erfolg meldet. Eine Einheit, deren Sperre
-ohne Schalter steht, bleibt bei `edge apply` aus. Die Sperre ist eine Datei im Checkout und gilt nach
-einem Neustart von Traefik und des PCs weiter. Der Beweis auf einem Wegwerf-Stack ist
-`probe/switches/probe.py`.
+**Die Sperre vor Traefik.** Was die Sperre ist, wie sie entsteht und was sie deckt:
+[architecture.md](architecture.md), Abschnitt 8, "The ingress barrier". Hier nur, was dort fehlt:
+der Eingang `admin` auf `127.0.0.1:8090` bleibt offen; `edge stop` meldet Erfolg erst, wenn
+Traefik fuer jeden Host innerhalb von 15 s 404 mit dem Header `X-Edge-Barrier: <Einheit>`
+antwortet, sonst Exit 1 (Schalter und Sperre bleiben); `edge start` prueft nach dem Entfernen,
+dass der Header weg ist. Der Beweis auf einem Wegwerf-Stack ist `probe/switches/probe.py`.
 
 **Neustart.** Jeder lang laufende Dienst hat `restart: unless-stopped`; Docker startet einen
 ausdruecklich gestoppten Container auch nach einem Neustart nicht, und der Schalter bleibt auf der

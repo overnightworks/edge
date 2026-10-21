@@ -1,7 +1,7 @@
 # The internal CA, traefik-mcp and agent-egress
 
-Reference for the operator and for an engineer changing the MCP gateway. Three services, one switch each
-in `fleet.yaml`: `step-ca` (and with it `traefik-mcp`), and `agent-egress` (with the unit
+Reference for the operator and for an engineer changing the MCP gateway. Three services, two
+switches in `fleet.yaml`: `step-ca` (and with it `traefik-mcp`), and `agent-egress` (with the unit
 `agent-service`). Their commands are `step-ca/init [--check]` and `hal apply`; the probes under
 `probe/step-ca/` and `probe/agent-service/` hold the proofs. The recreate rules for the followers are in
 [stack.md](stack.md); the platform picture is [architecture.md](architecture.md).

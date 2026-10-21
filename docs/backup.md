@@ -139,6 +139,9 @@ path or file name.
 - A `running` that outlasts the timer's 6-hour limit means the run died: treat it as failed.
 - `exit_category` is one of `configuration`, `not-ready`, `command-failed`, `verification-failed`,
   `interrupted`, `internal`; `failing_app` is `null` for a failure that belongs to no app.
+- When the backup succeeded but prune or check failed, the apps' backup times have moved on and
+  `state` is `failed`. A failed `check --read-data` gives no app a new restore-test time.
+  Restic exit 3 leaves a partial snapshot, which `restore` never picks.
 - An app that fails does not stop the others, and each app's snapshot is recorded right after its own
   `restic backup` exits 0, so earlier successes stay. A run with any failure prunes nothing. An app
   removed from `apps.toml` keeps its entry; renaming an app makes it a new app.
@@ -159,32 +162,118 @@ Exit 0: every phase succeeded. Exit 1: a run failed; one German line names why.
 
 ### Restore one app
 
-`uv run edge-backup restore <app> --target <new directory>` restores the snapshot of that app's **last
-successful backup** (`apps.<app>.last_snapshot_id`) and prints its short ID, never a newer snapshot that
-a failed run left behind. The target is a new directory, not under `~/.cache/edge-backup`; it holds
-`db/db.dump` and `audio/`. It refuses with one German line and exit 1, naming the newest snapshot, when
-no successful backup of that app is recorded or the recorded snapshot is missing in the repository. On a
-machine without the status file, list with `edge-backup snapshots` and pass `--snapshot` with the first 8
-or more characters of the ID; an unknown, ambiguous or other app's ID is refused.
+The two blocks below stay until `restore <app> --live` exists (`docs/architecture.md` gap 18;
+follow-up on overnightworks/edge#222).
 
-**Loading a restore into the live app is a deliberate manual step and no command ships it yet**
-(architecture.md, gap 18: a scripted `restore <app> --live` is a planned item). Its invariants:
+```sh
+uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
+```
 
-- Stop every container of the app except its database; the database and the audio volume are found by
-  their compose labels, and exactly one database container must match.
-- Load the dump with `pg_restore --clean --if-exists --single-transaction --exit-on-error`. A failed
-  load changes nothing, and the app stays down until the cause is fixed.
-- Copy the audio back with `cp -a` from inside edge-backup's own pinned restic image, so no unpinned
-  image gets write access to the live audio volume. It adds and overwrites; audio written after the
-  snapshot stays. After a failed copy the database is already restored: fix the cause and copy again
-  before starting the app.
-- Start the stopped containers again only when both halves succeeded.
-- Keycloak: only the operator restores it. Stop `keycloak` alone (Traefik and every other service keep
-  running), load the dump into `keycloak-db` as its superuser `keycloak` with server error logging off
-  and `pg_restore`'s messages discarded (they can quote rows of a dump that holds keys), start
-  `keycloak`, then delete the restore directory.
+It restores the snapshot of that app's **last successful backup**
+(`apps.<app>.last_snapshot_id` in the status) and prints its short ID, never a
+newer snapshot that a failed run left behind (restic exit 3 leaves a partial
+one). `restore` refuses with one German line and exit 1, names the newest
+snapshot and says how to choose it, in two cases: no successful backup of that
+app is recorded yet, or the recorded snapshot is missing in the repository.
+The restore test verifies each app against its own last good snapshot and
+refuses the same way; a failed `check --read-data` gives no app a new time.
 
-The exact sequences of both loads are in git history (README before the move to this file).
+Disaster recovery on a machine without the status file: list the repository
+with `uv run edge-backup snapshots`, then choose a snapshot of that app by the
+first 8 or more characters of its ID:
+
+```sh
+uv run edge-backup restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
+```
+
+An ID that is unknown, ambiguous or another app's is refused with one German
+line. The target holds
+`db/db.dump` and `audio/`. Loading them into the live app is a deliberate
+manual step. Stop every Songmaker container except its database,
+load the dump, copy the audio back into the volume, start them again. Paste the
+block as a whole: it runs in a subshell that stops at the first failing command,
+so a failed load or copy never goes on to the other half or restarts the app:
+
+```sh
+(
+set -euo pipefail
+restored=~/restore-songmaker
+# The copy runs in edge-backup's own restic image, pinned by version and digest: no
+# unpinned image ever gets write access to the live audio volume.
+image=$(cd ~/git/edge && .venv/bin/python -c \
+  'from edge_backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
+pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
+  --filter label=com.docker.compose.service=postgres \
+  --filter label=com.docker.compose.oneoff=False)
+[ "$(wc -w <<<"$pg")" -eq 1 ] \
+  || { echo "need exactly one Songmaker database container, found: ${pg:-none}" >&2; exit 1; }
+stopped=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
+  | { grep -vx "$pg" || true; })
+[ -n "$stopped" ] || { echo "no running Songmaker container to stop" >&2; exit 1; }
+docker stop $stopped
+docker exec -i "$pg" pg_restore --username songmaker --dbname songmaker \
+  --clean --if-exists --single-transaction --exit-on-error < "$restored/db/db.dump"
+docker run --rm --network none \
+  --mount type=bind,source="$restored/audio",target=/from,readonly \
+  --mount type=volume,source=songmaker_audiofiles,target=/to \
+  --entrypoint cp "$image" -a /from/. /to/
+docker start $stopped
+)
+```
+
+When it stops, Songmaker stays down; `docker stop` printed the IDs of the
+containers it stopped. A failed load changed nothing (`--single-transaction`),
+so `docker start` with those IDs brings the old state back. After a failed copy
+the database is already restored: fix the cause and copy again before you start
+them.
+
+`cp -a` adds and overwrites; audio written after the snapshot stays in the
+volume. The copied files keep the owner restic restored them with (your user).
+
+### Restore Keycloak
+
+Only you restore Keycloak, and the block below overwrites only Keycloak's
+database. It stops `keycloak` only (Traefik and every other service keep
+running), loads the dump into `keycloak-db`, and starts `keycloak` again. First
+restore the snapshot as above, `uv run edge-backup restore keycloak --target
+~/restore-keycloak`; the dump holds keys, so the block deletes that directory
+after a successful `docker start`. Paste the block as a whole: it stops at the
+first failing command and never starts Keycloak after a failed load. If the
+load fails, `pg_restore`'s messages can quote rows of the dump, so they are
+discarded and the session runs with server error logging off (`keycloak` is the
+image's superuser, which may set that); only the exit code is printed. Delete
+`~/restore-keycloak` once you are done. The block acts on the compose project `edge`;
+`EDGE_COMPOSE_PROJECT` names another, which is how it was driven against a throwaway stack.
+
+```sh
+(
+set -euo pipefail
+umask 077
+restored=~/restore-keycloak
+container() {
+  docker ps --quiet --filter label=com.docker.compose.project="${EDGE_COMPOSE_PROJECT:-edge}" \
+    --filter label=com.docker.compose.service="$1" \
+    --filter label=com.docker.compose.oneoff=False
+}
+db=$(container keycloak-db)
+kc=$(container keycloak)
+[ "$(wc -w <<<"$db")" -eq 1 ] \
+  || { echo "need exactly one running keycloak-db, found: ${db:-none}" >&2; exit 1; }
+[ "$(wc -w <<<"$kc")" -eq 1 ] \
+  || { echo "need exactly one running keycloak, found: ${kc:-none}" >&2; exit 1; }
+docker stop "$kc"
+docker exec -i -e PGOPTIONS='-c log_min_messages=panic -c log_min_error_statement=panic' \
+  "$db" pg_restore --username keycloak --dbname keycloak \
+  --clean --if-exists --single-transaction --exit-on-error \
+  < "$restored/db/db.dump" 2>/dev/null \
+  || { code=$?; echo "pg_restore failed with exit $code; keycloak stays stopped, start it with: docker start $kc" >&2; exit 1; }
+docker start "$kc"
+rm -rf "$restored"
+)
+```
+
+A failed load changed nothing (`--single-transaction`); `docker start` with the
+printed ID brings the old Keycloak back.
 
 ### Stale locks
 

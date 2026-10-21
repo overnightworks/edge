@@ -213,7 +213,7 @@ services:
 | The deploy watchers | the catalog | `edge apply` installs one watcher per enabled entry with `deploy: tags` |
 | The release branch | the catalog (`repo.default_branch`) | `edge release` tags that branch; hopin's is `master` |
 
-**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli manages groups "in full": a group missing from the YAML is deleted **with every membership in it** (edge README, Keycloak section). If the catalog generated the groups, switching a service off would delete its people's memberships. So `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is its own deliberate pull request.
+**Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and deletes no undeclared top-level object or person: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (edge README, Keycloak section). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
 
 ### "Dienst an/aus" end to end
 
@@ -231,11 +231,14 @@ services:
 2. `edge apply` clones hopin into `~/srv/hopin`, checks out its newest `v*` tag, starts it and waits for `/health`.
 3. The publish phase then publishes the name, behind its `ready` guard (X8's "protection before reachability"). hopin is in A, or in C under a global stop (section 8 state table).
 
-**The realm apply (R3, ruled 16.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50))** runs inside `edge apply` under four conditions:
-- it reconciles for real, not with a checksum-cached skip;
-- every concrete deletion is shown first;
-- deletions need a **separate** confirmation;
-- a restorable database dump is taken before any deletion.
+**The realm apply (R3, ruled 16.10.2026; re-cut by the operator's „ja d“ and „ok“ on 21.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50), [edge#219](https://github.com/overnightworks/edge/issues/219))** adds and changes in the realm and deletes no undeclared top-level object and no person:
+- it reconciles for real, not with a checksum-cached skip (`IMPORT_CACHE_ENABLED=false`);
+- every `IMPORT_MANAGED_*` type is `no-delete`, and a listed user keeps the realm roles and groups the console gave it (client roles are reset), so the tool deletes no undeclared group, client, role or top-level flow and no person, and the reset below is the only loss;
+- a backup and its restore test come before it (stage 1: two commands in the README's „Start and apply“; stage 2: a step inside `edge apply`);
+- the lines of what changed and of what exists only in Keycloak come after it (stage 2);
+- deleting anything in Keycloak waits for the operator's yes.
+
+What the file declares belongs to the file: a console change to a declared object is reset on the next apply, together with what hangs off it (a step or subflow in a declared flow, a mapper on a declared scope or client, a default or optional scope on a declared client that lists its scopes, a client role on a listed service account, a console-enabled service account on a declared client, a flow binding override on a declared client). What the console creates on its own stays: people, their memberships, and the groups, clients, roles and top-level flows the file does not declare. No person is ever deleted (a service-account user that a console-enabled service account on a declared client created goes with that reset). A change to a declared object goes into the file; the README's blockquote after „Theme and language“ lists the measured examples, and the Keycloak probe's proofs 3c and 3d pin them.
 
 **Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator. Planned with X6a (#168): the ingress comes from the catalog, so a line is no longer removed by hand; README A8 stays until X8b.
 
@@ -338,7 +341,7 @@ Every finding names the subject and a page to fix it, never a value.
 | **SonarCloud** | `GET api/user_tokens/search`: token names, `createdAt`, `lastConnectionDate`, `expirationDate`; `api/projects/search?organization=overnightworks` | a SonarCloud user token (read; verify which permission the project search needs when building) | extra and unused tokens; a repo with `sonar-project.properties` but no project |
 | **Cloudflare API tokens** | each token verifies itself: `GET /user/tokens/verify` (or `/accounts/{id}/tokens/verify`) returns status and `expires_on`. A list of all tokens needs the permission "API Tokens Read" | the token itself; for the full list, one more read permission (D8) | stale, expiring; extra only with the list permission |
 | **Cloudflare tunnels and Access service tokens** | `GET /accounts/{id}/cfd_tunnel`; `GET /accounts/{id}/access/service_tokens` (names, `expires_at`) | `cloudflare/fleet-read` plus Tunnel read and Service Tokens read | extra tunnel (a second live tunnel is an open door); expiring service token |
-| **Keycloak clients** | the client list, which clients are confidential, their redirect URIs. `realm.yaml` already deletes undeclared clients at every apply, so drift appears only between applies | a **read-only** service account in `hallucinai` with `view-clients` and `view-realm`. It cannot change anything and is not an admin credential (D8) | extra client; a confidential client whose secret file is missing in `~/.secrets` |
+| **Keycloak clients** | the client list, which clients are confidential, their redirect URIs. The apply deletes no client, so a console-made client stays and appears as drift at the next read | a **read-only** service account in `hallucinai` with `view-clients` and `view-realm`. It cannot change anything and is not an admin credential (D8) | extra client; a confidential client whose secret file is missing in `~/.secrets` |
 
 **The checks stay narrow.** Each source is one small reader returning findings in edge-check's shape. GitHub and Cloudflare already come from `edge external check` (X5); only the token self-checks, SonarCloud, the compose scan and Keycloak are new. `home check` aggregates them, with notify-on-change as today.
 

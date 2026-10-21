@@ -171,7 +171,7 @@ only in the admin console; no file lists a person. The songmaker, hopin and pres
 clients are in `realm.yaml` before the go-live, each secret the file
 `~/.secrets/keycloak/clients/<clientId>` (the go-live makes it; presentator's one client serves
 `presentator` and `presentator-talk`); the other app clients
-arrive at K13/K14, after K3c.
+arrive at K13/K14.
 
 songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
 service accounts are the only users `realm.yaml` lists, each holding the realm role
@@ -204,24 +204,33 @@ caches for up to 30 days under the same URL; a look change therefore names a
 new stylesheet in `theme.properties` (`styles=`) instead of editing one in
 place.
 
-> **Managed in full.** Groups are created and renamed only in `realm.yaml`.
-> The apply deletes every top-level group, client, client scope and flow that
-> an earlier apply created and the YAML no longer lists, and below a listed
-> group it deletes **every** subgroup the YAML lacks, whoever created it: a
-> group made in the admin console under `/apps` or `/ki-abo` (say
-> `/apps/newtool`) disappears on the next apply, **with every membership in
-> it** (the probe's proof 3c removes `/apps/probe-console` with its one member).
-> Removing or renaming a group in `realm.yaml` deletes it the same way.
-> Renaming a group in the admin console first is safe only if no apply runs
-> before the matching YAML change lands. A console change inside a declared
-> object goes the same way: a protocol mapper added to the scope `groups`, a
-> realm role added to `service-account-config-cli`, a step added to
-> `browser-mfa-forms`, and a top-level flow made in the console in master. A
-> console-made client, identity provider, component, realm role, and a mapper
-> on `agent-service` survive. Each such removal shows around an apply: the
-> realm observer (`realm-observer`, `src/edge/realm/observe.py`) reads the
-> realms before and after, and `edge.realm` compares the two reads and prints
-> one line per change with its realm.
+> **The apply adds and changes, and deletes no undeclared top-level object and no person.**
+> `compose.yaml` sets every `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`,
+> the cache off, and `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. What the console creates on its
+> own stays: people, their memberships, and the groups, clients, roles and top-level flows the file
+> does not declare. A console addition inside an object the file declares is part of that object
+> and is reset to the file with it, as listed below. No person is ever deleted (a service-account
+> user that a console-enabled service account on a declared client created goes with that reset,
+> below):
+> - **Stays:** an object the file stopped listing. Renaming a group in the YAML therefore creates
+>   the new group and leaves the old one.
+> - **Reset:** a console change to an object the file declares is reset to the file on the next
+>   apply, together with what hangs off that object. The probe (proofs 3c and 3d) measures these, except where marked not measured:
+>   - a step or subflow in a declared flow (`browser-mfa-forms`, `direct-grant-mfa-totp`);
+>   - a mapper on a declared client scope (the scope `groups`); a mapper on a declared client is
+>     ruled the same way but not measured;
+>   - a default scope on a declared client that lists its scopes (songmaker, hopin, presentator;
+>     an optional scope is ruled the same way but not measured), while a client without scope lists (`agent-service`) keeps its additions;
+>   - a client role on a listed service account (`service-account-songmaker`); its realm roles
+>     and groups stay;
+>   - a service account enabled in the console on a declared client (hopin), which removes the
+>     service-account user with it (driven without a membership);
+>   - a flow binding override on a declared client.
+>
+>   A change to a declared object is made in the file, by an agent, never in the console. Deleting
+>   a group, client or role is done in the admin console, after a backup, with your yes. The realm
+>   observer (`realm-observer`, `src/edge/realm/observe.py`) reads the realms before and after,
+>   and `edge.realm` compares the two reads and prints one line per change with its realm.
 
 ### Keycloak secrets
 
@@ -259,17 +268,35 @@ environment entry in any compose file Compose may load (`compose*.yaml`,
 ### Start and apply
 
 Start the stack as in [docs/stack.md](docs/stack.md) (Start, readiness, stop) (Keycloak with
-`edge apply`), Traefik included, and wait until Keycloak answers the master realm on 8090. Then apply
-`keycloak/*.yaml`:
+`edge apply`), Traefik included, and wait until Keycloak answers the master realm on 8090. A realm
+change is then three steps, in this order:
 
-```sh
-docker compose --profile keycloak run --rm keycloak-config-cli
-```
+1. **Back up, and test the restore.** The apply deletes no person, but it overwrites a console edit
+   to a field the YAML lists and resets the console changes to declared objects named above, so there is a snapshot to go
+   back to:
+
+   ```sh
+   uv run edge-backup backup
+   uv run edge-backup restore-test
+   ```
+
+   Both must end with exit 0. The way back is [Restore Keycloak](docs/backup.md#restore-keycloak).
+2. **Apply `keycloak/*.yaml`:**
+
+   ```sh
+   docker compose --profile keycloak run --rm keycloak-config-cli
+   ```
+
+3. **Look at the result.** `git diff` of the YAML is what you asked for; the admin console shows
+   what the apply left.
 
 The apply signs in as the `config-cli` service client and fails loudly on a
-`$(env:…)` variable that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`).
-It skips a realm whose file has not changed since the last apply; add
-`--env IMPORT_CACHE_ENABLED=false` to force it.
+`$(env:…)` variable that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). It always
+reconciles for real (`IMPORT_CACHE_ENABLED=false` in `compose.yaml`), never skips a realm whose
+file is unchanged. Whatever exists only in Keycloak stays; deleting a group, client or role the
+YAML no longer lists is done in the admin console, with your yes, after the backup above. The
+step inside `edge apply`, with the list of what changed and of what exists only in Keycloak,
+comes when realm changes become frequent (#50).
 
 ### Keycloak go-live
 
@@ -456,8 +483,9 @@ flock /tmp/probe-stack.lock \
 The proofs: the public issuer, the themed login and account pages in German
 and English and the path allow-list (1, 2a), the master issuer and the
 forced second factor on the admin entrypoint, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
-cache-off second apply and a changed YAML that applies and deletes a
-console-made subgroup it does not list, with a seeded member untouched (3a–3d),
+second apply that resets only the pinned console changes to declared objects (the 11 pinned lines) and keeps every other console
+change, and a changed YAML that applies and deletes no undeclared top-level object and no person, with a seeded member untouched
+(3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused
 on refresh (5), a back-channel logout reaching the test RP (6), none of the
 credentials it made or received (secret files, passwords, the TOTP seed, the RP
