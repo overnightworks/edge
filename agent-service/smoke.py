@@ -7,9 +7,9 @@ Stdin holds exactly two lines, the person's token and then the workload's, and n
 supplies one: there is no option, no environment variable and no file for a token. Both tokens
 are removed from everything the smoke prints, errors included. Without options it starts one
 run and prints each event's type and the text of the answer; exit 0 when the run succeeded.
-`--cancel` starts a long answer and closes the stream right after `run_started`, before any
-answer, to see that the service ends the CLI run behind it; it fails when the run succeeded
-(README "The agent service", "The smoke").
+`--cancel` starts a long answer, holds the stream open a few seconds after `run_started` so
+the CLI run behind it can be seen, then closes it before any answer, to see that the service
+ends that run; it fails when the run succeeded (README "The agent service", "The smoke").
 
 Only the standard library of the service image is used.
 """
@@ -20,6 +20,7 @@ import argparse
 import http.client
 import json
 import sys
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, NoReturn
@@ -29,7 +30,8 @@ PURPOSE = "chat"
 WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
 ANSWER_PROMPT = "Reply with the single word: ok"
-LONG_ANSWER_PROMPT = "Count from 1 to 500, one number per line, and write nothing else."
+LONG_ANSWER_PROMPT = "Count from 1 to 20000, one number per line, and write nothing else."
+CANCEL_HOLD_SECONDS = 3.0
 SERVICE_HOST = "agent-service"
 SERVICE_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -114,10 +116,13 @@ def refusal_line(response: http.client.HTTPResponse) -> str:
 
 
 class Smoke:
-    def __init__(self, tokens: Tokens, out: IO[str], connect: Connect) -> None:
+    def __init__(
+        self, tokens: Tokens, out: IO[str], connect: Connect, pause: Callable[[float], None]
+    ) -> None:
         self.tokens = tokens
         self.out = out
         self.connect = connect
+        self.pause = pause
 
     def say(self, line: str) -> None:
         for token in (self.tokens.person, self.tokens.workload):
@@ -153,6 +158,8 @@ class Smoke:
             self.say(f"event: {frame.event}")
             self.say_text(frame)
             if cancel and frame.event == "run_started":
+                self.say(f"holding the stream open {CANCEL_HOLD_SECONDS:g} s")
+                self.pause(CANCEL_HOLD_SECONDS)
                 self.say("closing the stream before the answer")
                 return 0
         if cancel:
@@ -172,6 +179,7 @@ def main(
     stdin: IO[str] = sys.stdin,
     out: IO[str] = sys.stdout,
     connect: Connect = http.client.HTTPConnection,
+    pause: Callable[[float], None] = time.sleep,
 ) -> int:
     parser = QuietParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
@@ -183,7 +191,7 @@ def main(
         print(f"smoke: {failure}", file=sys.stderr)
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
-    return Smoke(tokens, out, connect).run(arguments.timeout, prompt, arguments.cancel)
+    return Smoke(tokens, out, connect, pause).run(arguments.timeout, prompt, arguments.cancel)
 
 
 if __name__ == "__main__":

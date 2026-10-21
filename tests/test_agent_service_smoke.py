@@ -51,6 +51,7 @@ class FakeConnection:
         self.response = response
         self.requests: list[tuple[str, str, bytes, dict]] = []
         self.closed = False
+        self.holds: list[tuple[float, bool]] = []  # each pause, and whether it was closed by then
 
     def request(self, method: str, path: str, body: bytes, headers: dict) -> None:
         self.requests.append((method, path, body, headers))
@@ -69,7 +70,13 @@ def drive(
 ) -> tuple[int, str, FakeConnection]:
     connection = FakeConnection(answer)
     out = io.StringIO()
-    exit_code = smoke.main(list(arguments), io.StringIO(stdin), out, lambda *_: connection)
+    exit_code = smoke.main(
+        list(arguments),
+        io.StringIO(stdin),
+        out,
+        lambda *_: connection,
+        lambda seconds: connection.holds.append((seconds, connection.closed)),
+    )
     return exit_code, out.getvalue(), connection
 
 
@@ -161,8 +168,10 @@ def test_cancel_closes_the_stream_right_after_run_started_before_any_answer():
     exit_code, out, connection = drive(response, "--cancel")
 
     assert exit_code == 0
-    assert out.splitlines() == ["event: run_started", "closing the stream before the answer"]
+    assert out.splitlines()[0] == "event: run_started"
+    assert out.splitlines()[-1] == "closing the stream before the answer"
     assert connection.closed
+    assert connection.holds == [(smoke.CANCEL_HOLD_SECONDS, False)]
     assert b"assistant_text" in response.read()
 
 

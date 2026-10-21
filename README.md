@@ -1615,38 +1615,60 @@ memory peak right after it (L7), the cancelled turn (L4), the checks of L3, L4 a
 shred. Run it in the same shell, from `~/git/edge`:
 
 ```sh
-tokens=~/.secrets/agent-service/smoke-tokens
-docker compose --profile agent-service up -d --force-recreate agent-service
-until docker compose logs agent-service 2>&1 | grep -q 'Uvicorn running'; do sleep 1; done
-cgroup() { docker compose exec -T agent-service cat "/sys/fs/cgroup/$1"; }
-echo "idle memory.current: $(cgroup memory.current)"
-first=$(docker compose run --rm -T agent-smoke < "$tokens"); echo "$first"
-echo "memory.peak after the turn: $(cgroup memory.peak)"
-since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-second=$(docker compose run --rm -T agent-smoke --cancel < "$tokens"); echo "$second"
-sleep 5
-echo "CLI processes left after the cancel (0):" \
-  "$(docker compose exec -T agent-service sh -c 'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"')"
-echo "ERROR lines since the cancel (0):" \
-  "$(docker compose logs --since "$since" agent-service | grep -c ERROR)"
-secrets=(-f "$tokens" -f ~/.secrets/agent-service/claude/token -f ~/.secrets/keycloak/clients/songmaker)
-echo "secrets in docker inspect (0):" \
-  "$(docker inspect "$(docker compose ps -q agent-service)" | grep -c -F "${secrets[@]}")"
-echo "secrets in the service log (0):" "$(docker compose logs agent-service | grep -c -F "${secrets[@]}")"
-echo "secrets in the smoke output (0):" "$(printf '%s\n%s\n' "$first" "$second" | grep -c -F "${secrets[@]}")"
-shred -u "$tokens"
+smoke_run() {
+  local tokens=~/.secrets/agent-service/smoke-tokens held=~/.secrets/agent-service/smoke-cancel-output
+  docker compose --profile agent-service up -d --force-recreate agent-service
+  for _ in $(seq 120); do
+    docker compose logs agent-service 2>&1 | grep -q 'Uvicorn running' && break
+    sleep 1
+  done
+  if ! docker compose logs agent-service 2>&1 | grep -q 'Uvicorn running'; then
+    echo "the service is not listening after 120 s; read: docker compose logs agent-service" >&2
+    shred -u "$tokens"; return 1
+  fi
+  cgroup() { docker compose exec -T agent-service cat "/sys/fs/cgroup/$1"; }
+  clis() {
+    docker compose exec -T agent-service sh -c 'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"'
+  }
+  echo "idle memory.current: $(cgroup memory.current)"
+  first=$(docker compose run --rm -T agent-smoke < "$tokens"); status=$?
+  echo "$first"; echo "the smoke exited (0): $status"
+  echo "memory.peak after the turn: $(cgroup memory.peak)"
+  echo "CLI processes before the cancelled turn (0): $(clis)"
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  docker compose run --rm -T agent-smoke --cancel < "$tokens" > "$held" &
+  smoke=$!
+  for _ in $(seq 60); do grep -q 'holding the stream' "$held" && break; sleep 0.5; done
+  echo "CLI processes while the stream is held open (1 or more): $(clis)"
+  wait "$smoke"; status=$?; echo "the cancelling smoke exited (0): $status"
+  second=$(cat "$held"); echo "$second"
+  sleep 5
+  echo "CLI processes left after the cancel (0): $(clis)"
+  echo "ERROR lines since the cancel (0):" \
+    "$(docker compose logs --since "$since" agent-service | grep -c ERROR)"
+  secrets=(-f "$tokens" -f ~/.secrets/agent-service/claude/token -f ~/.secrets/keycloak/clients/songmaker)
+  echo "secrets in docker inspect (0):" \
+    "$(docker inspect "$(docker compose ps -q agent-service)" | grep -c -F "${secrets[@]}")"
+  echo "secrets in the service log (0):" "$(docker compose logs agent-service | grep -c -F "${secrets[@]}")"
+  echo "secrets in the smoke output (0):" "$(printf '%s\n%s\n' "$first" "$second" | grep -c -F "${secrets[@]}")"
+  shred -u "$tokens"; rm -f "$held"
+}
+smoke_run
 ```
 
 Each `(0)` is the expected figure; `grep -c` prints 0 and exits 1 when nothing matches, which is the
 good answer. What the output proves (edge#214):
 
 - **L2, the paid turn.** `first` holds `event: run_started`, `event: assistant_text`, the answer and
-  `event: succeeded` (the smoke exited 0). `run_started` after admission also shows the issuer's
+  `event: succeeded` (the smoke exited 0, printed right after it). `run_started` after admission also shows the issuer's
   keys were fetched through `agent-egress`, the service's only route out (L3).
-- **L4, the cancel.** `--cancel` closes the stream right after `run_started`, before any answer; the
-  smoke fails if `succeeded` arrives. Five seconds later no CLI process of the run remains in the
-  container's `/proc`, and the log holds no quarantine `ERROR` line. The block does not show that a
-  CLI child existed during that second turn: it is gone before a second command could look.
+- **L4, the cancel.** `--cancel` starts a long answer, holds the stream open for three seconds after
+  `run_started` and then closes it before any answer; the smoke fails if `succeeded` arrives. The
+  block counts the processes whose command line holds `claude` before the turn (0), while the stream
+  is held open (1 or more: a CLI child of the run exists) and five seconds after the smoke exited
+  (0: the service ended it), and counts the log's `ERROR` lines since the turn (0, no quarantine).
+  The hold and the sample are a few seconds apart, so a count of 0 during the hold means the child
+  was not up yet: repeat the block.
 - **L6, no token anywhere.** The three searches look for the person's and the workload's token, the
   login token and the `songmaker` client secret in `docker inspect`, the service log and the
   smoke output.
@@ -1656,19 +1678,37 @@ good answer. What the output proves (edge#214):
 
 **L5, the egress cells against the live container.** `docker compose exec` into the running service
 only reads: nothing is written, nothing is started. The program below drives the cells E6, E7
-(the default route and the docker0 address), E8, E9 and E10's resolution part of #189, as
-`probe/agent-service/egress.py` does, and prints `held` or `FAILED` per cell (exit 1 on any
-`FAILED`). The address of the provider is looked up on the host, because the container has no DNS:
+(docker0, the internet bridge and the LAN address unreachable; no gateway on `agent` and `egress`;
+an unused address on each unreachable; no default route), E8, E9 and E10's resolution part of #189,
+as `probe/agent-service/egress.py` does, and prints `held` or `FAILED` per cell (exit 1 on any
+`FAILED`). The host looks up the addresses, because the container has no DNS and no Docker:
 
 ```sh
+project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' \
+  "$(docker compose ps -q agent-service)")
+network() { docker network ls -q --filter "label=com.docker.compose.project=$project" \
+  --filter "label=com.docker.compose.network=$1"; }
+gateways() { docker network inspect "$1" | python3 -I -c 'import json, sys
+configs = json.load(sys.stdin)[0]["IPAM"]["Config"] or []
+print(" ".join(config["Gateway"] for config in configs if config.get("Gateway")))'; }
 provider=$(getent ahostsv4 api.anthropic.com | awk 'NR==1 {print $1}')
-docker0=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
-docker compose exec -T agent-service python -I - "$provider" "$docker0" <<'PY'
+docker0=$(gateways bridge)
+internet=$(gateways "$(network internet)")
+lan=$(python3 -I -c 'import socket
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+    route.connect(("1.1.1.1", 53)); print(route.getsockname()[0])')
+unused() { docker network inspect "$(network "$1")" | python3 -I -c 'import ipaddress, json, sys
+network = json.load(sys.stdin)[0]
+owned = {ipaddress.ip_interface(member["IPv4Address"]).ip for member in network["Containers"].values()}
+subnet = ipaddress.ip_network(network["IPAM"]["Config"][0]["Subnet"])
+print(next(host for host in subnet.hosts() if host != subnet.network_address + 1 and host not in owned))'; }
+docker compose exec -T agent-service python -I - "$provider" "$docker0" "$internet" "$lan" \
+  "$(unused agent)" "$(unused egress)" "$(gateways "$(network agent)")" "$(gateways "$(network egress)")" <<'PY'
 import errno, socket, sys
 
 UNREACHABLE = {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EADDRNOTAVAIL}
 PUBLIC_V4, PUBLIC_V6 = "1.1.1.1", "2606:4700:4700::1111"
-provider, docker0 = sys.argv[1:3]
+provider, docker0, internet, lan, agent_free, egress_free, agent_gateways, egress_gateways = sys.argv[1:9]
 failed = False
 
 def report(cell, held, detail):
@@ -1699,9 +1739,13 @@ report("E6", all(code in UNREACHABLE for code in codes.values()),
 
 with open("/proc/net/route") as table:
     defaults = [row.split()[0] for row in table.read().splitlines()[1:] if row.split()[1] == "00000000"]
-code = tcp(docker0, 22)
-report("E7", not defaults and code in UNREACHABLE,
-       f"default routes {defaults}; TCP to the docker0 address {docker0}:22 {name(code)}")
+targets = {"docker0": docker0, "the internet bridge": internet, "the LAN address": lan,
+           "an unused address on agent": agent_free, "an unused address on egress": egress_free}
+codes = {label: tcp(target, 22) for label, target in targets.items()}
+report("E7", not defaults and not agent_gateways and not egress_gateways
+       and all(code in UNREACHABLE for code in codes.values()),
+       f"default routes {defaults}; gateways of agent '{agent_gateways}' and egress '{egress_gateways}'; TCP to "
+       + ", ".join(f"{label} {targets[label]}:22 {name(code)}" for label, code in codes.items()))
 
 with open("/proc/net/if_inet6") as table:
     interfaces = sorted({row.split()[-1] for row in table if row.strip()})
@@ -1726,26 +1770,38 @@ sys.exit(1 if failed else 0)
 PY
 ```
 
+E7 holds when the default routes are `[]`, both gateway lists are empty and each of the five TCP
+attempts ends in `ENETUNREACH`, `EHOSTUNREACH` or `EADDRNOTAVAIL`; `ECONNREFUSED` or a timeout means
+the address is reachable, and it prints `FAILED`.
+
 E12, the gateway's own listeners, is read from a throwaway container that shares the gateway's
-network namespace and runs as nobody with no capability (it writes nothing):
+network namespace and runs as nobody with no capability (it writes nothing); it takes the image
+from the running service:
 
 ```sh
 docker run --rm --network "container:$(docker compose ps -q agent-egress)" --read-only \
   --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true \
-  --entrypoint python edge-agent-service:0.4.0-2.1.302 -I -c '
+  --entrypoint python \
+  "$(docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q agent-service)")" -I -c '
 import socket
-for table in ("tcp", "udp"):
+for table in ("tcp", "udp", "tcp6", "udp6"):
     for row in open(f"/proc/net/{table}").read().splitlines()[1:]:
         fields = row.split()
-        if table == "tcp" and fields[3] != "0A":
+        if table.startswith("tcp") and fields[3] != "0A":
             continue
         address, port = fields[1].split(":")
-        print(table, socket.inet_ntoa(bytes.fromhex(address)[::-1]), int(port, 16))'
+        raw = bytes.fromhex(address)
+        if table.endswith("6"):
+            shown = socket.inet_ntop(socket.AF_INET6, b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+        else:
+            shown = socket.inet_ntoa(raw[::-1])
+        print(table, shown, int(port, 16))'
 ```
 
 It must print `tcp 172.31.252.10 443` and, besides that, only lines for Docker's embedded resolver
-on `127.0.0.11` (which no other container reaches): no other TCP listener and no UDP socket on
-`172.31.252.10`. E3-E5 and E10's packet windows need the probe's host capture and stay with
+on `127.0.0.11` (which no other container reaches): no other TCP listener, no UDP socket on
+`172.31.252.10` and no IPv6 listener or socket (the gateway has no IPv6 address, so `tcp6` and
+`udp6` print nothing). E3-E5 and E10's packet windows need the probe's host capture and stay with
 `egress.py`.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
@@ -1761,7 +1817,8 @@ the service not running. U12 is `egress.py --target service`; CI holds the stati
 `tests/test_agent_service_unit.py`. `unit.py --scratch DIR --cell smoke` drives U14: the
 `agent-smoke` of the runbook against the service with a stand-in issuer, so the tokens verify and
 the CLI meets the real upstream with the dummy login (`run_started`, then `failed`, no token in any
-output).
+output); its `--cancel` turn is held open and closed, and the container's `/proc` is sampled during
+the hold and after the smoke (a dummy login may end the run before a CLI child is up).
 
 ## Rollback
 

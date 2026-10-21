@@ -613,6 +613,7 @@ def start(repository, scripted, at_terminal, capsys, state, ingress, setup_check
             repository,
             ingress.verifier,
             setup_check,
+            ingress.watch,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -954,6 +955,21 @@ def test_an_agent_service_that_runs_and_then_restarts_is_partial_and_never_on(sw
     assert exit_code == 1
     assert "partial, agent-service is not on after the change" in err
     assert "agent-service is on" not in out
+
+
+def test_every_service_that_is_down_at_any_look_of_the_watch_is_named(
+    scripted, repository, ingress
+):
+    """#214 gate: a service that dies at once and one that restarts only later are both found,
+    so neither counts as observed on."""
+    engine = compose.Compose(scripted.run, repository)
+    scripted.after_up = lambda: scripted.containers.update({"step-ca": "exited"})
+    scripted.crash_loops = {"traefik-mcp"}
+    engine.start("step-ca", STEP_CA_SERVICES)
+
+    down = engine.down_while_watched(scripted.config, STEP_CA_SERVICES, ingress.watch)
+
+    assert down == ("step-ca", "traefik-mcp")
 
 
 def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, scripted, capsys):
@@ -2198,6 +2214,21 @@ def test_start_with_any_answer_but_yes_aborts_and_keeps_the_switch(start, script
     assert "aborted, nothing changed" in err
     assert marker(state) == SWITCHED_OFF_AT
     assert scripted.changing_verbs() == []
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_a_start_of_an_agent_service_that_restarts_is_partial_and_never_on(start, scripted, state):
+    """P15, #214: `edge start` decides through the watch, not one look: a login the upstream
+    refuses makes the container restart, and the unit stays switched off."""
+    switch_off(state, unit="agent-service")
+    scripted.crash_loops = {"agent-service"}
+
+    exit_code, out, err = start(unit="agent-service")
+
+    assert exit_code == 1
+    assert "partial, agent-service is not on after the start; its switch stays" in err
+    assert marker(state, "agent-service") == SWITCHED_OFF_AT
+    assert "is on" not in out
 
 
 @pytest.mark.parametrize("failure", ["failing_verb", "starts_nothing"])
