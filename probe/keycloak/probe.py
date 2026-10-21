@@ -996,7 +996,8 @@ class RealmStepStand:
         for old, new in replacements:
             expect(old in text, f"realm.yaml no longer holds {old!r}")
             text = text.replace(old, new)
-        self.realm_file.write_text(text + append)
+        # The file lies in the probe's own --scratch directory, which only the operator names.
+        self.realm_file.write_text(text + append)  # NOSONAR(S2083)
 
     def edge_backup(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         command = [*self.backup_command, *arguments]
@@ -1872,10 +1873,8 @@ class Probe:
         changed = self.stack.copy_config(self.stack.scratch / "config-changed")
         realm_file = changed / REALM_FILE
         text = realm_file.read_text()
-        expect("accessTokenLifespan: 300 " in text, "realm.yaml no longer sets 300 s as expected")
-        text = text.replace(
-            "accessTokenLifespan: 300 ", f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
-        )
+        expect(LIFESPAN_SETTING in text, "realm.yaml no longer sets 300 s as expected")
+        text = text.replace(LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING)
         # The change swaps one group for another and drops a client: the apply adds the new group
         # and, deleting nothing, keeps the dropped group and client.
         dropped_group = f"  - name: {DROPPED_GROUP}\n"

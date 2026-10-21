@@ -508,8 +508,10 @@ def test_a_failing_backup_says_the_last_line_edge_backup_wrote() -> None:
 
 
 def test_a_backup_that_names_no_snapshot_is_a_failure() -> None:
+    backup = reconcile.Backup(("edge-backup",), Commands(stdout="edge-backup: fertig\n"))
+
     with pytest.raises(reconcile.RealmError, match="named no pre-apply snapshot"):
-        reconcile.Backup(("edge-backup",), Commands(stdout="edge-backup: fertig\n")).pre_apply()
+        backup.pre_apply()
 
 
 def test_the_installed_backup_is_the_checkouts_own_edge_backup(tmp_path: Path) -> None:
