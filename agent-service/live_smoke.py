@@ -405,7 +405,9 @@ def paid_turn(stack: Stack, tokens: Tokens, seconds: int = PAID_TURN_SECONDS) ->
         process = subprocess.CompletedProcess(
             [], TIMED_OUT, f"the host gave up after {seconds} s", ""
         )
-    return PaidTurn(process, remove_smoke_containers(stack))
+    finally:
+        cleanup = remove_smoke_containers(stack)
+    return PaidTurn(process, cleanup)
 
 
 @dataclass(frozen=True)

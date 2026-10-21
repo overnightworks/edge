@@ -389,7 +389,7 @@ def test_a_cleanup_that_failed_is_reported_without_the_secret(failing):
 
     cells = [c for c in run_smoke_cells(stack) if c.name.startswith("cleanup")]
 
-    assert cells
+    assert len(cells) == 2  # the paid turn's and the cancelled turn's, each on its own
     assert all(cell.verdict is Verdict.FAILED for cell in cells)
     assert all(f"docker {failing} exited 1" in cell.figure for cell in cells)
     assert all(secret[:8] not in cell.figure for cell in cells)
@@ -446,6 +446,20 @@ def test_a_paid_turn_the_host_stops_waiting_for_fails_l2_and_removes_its_contain
 
     assert cells["L2"].verdict is Verdict.FAILED
     assert "the host gave up" in cells["L2"].figure
+    assert "docker rm -f leftover" in asked_commands(stack)
+
+
+def test_an_interrupted_paid_turn_still_removes_its_container():
+    def interrupted(command):
+        if "agent-smoke" in command:
+            raise KeyboardInterrupt
+        return with_leftover(command)
+
+    stack = FakeStack(answer=interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        live_smoke.paid_turn(stack, TOKENS)
+
     assert "docker rm -f leftover" in asked_commands(stack)
 
 
