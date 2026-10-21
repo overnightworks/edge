@@ -35,6 +35,7 @@ cli_provider = "claude"
 workload_client = "songmaker"
 purposes = ["chat"]
 
+# The copresenter sees only the talk, so presentator lists no tools and no MCP origin.
 [apps.presentator]
 workload_client = "presentator"
 purposes = ["copresenter"]

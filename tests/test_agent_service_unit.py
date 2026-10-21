@@ -180,3 +180,9 @@ def test_the_one_profile_is_claude_with_its_token_file(configuration):
             "token_file": "/run/agent-service/login/claude/token",
         }
     }
+
+
+def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_mcp_origin(
+    configuration,
+):
+    assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
