@@ -186,7 +186,9 @@ def fakes(repository, scripted, ingress, setup_check, systemd, state, monkeypatc
     }
     monkeypatch.setattr(emergency, "stop_unit", functools.partial(REAL_STOP_UNIT, **boundaries))
     monkeypatch.setattr(
-        emergency, "start_unit", functools.partial(REAL_START_UNIT, **boundaries, check=setup_check)
+        emergency,
+        "start_unit",
+        functools.partial(REAL_START_UNIT, **boundaries, check=setup_check, watch=ingress.watch),
     )
     monkeypatch.setattr(emergency, "start_all", functools.partial(REAL_START_ALL, **boundaries))
     monkeypatch.setattr(

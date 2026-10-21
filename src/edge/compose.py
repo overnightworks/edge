@@ -153,15 +153,16 @@ class Compose:
     def down_while_watched(
         self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch
     ) -> tuple[str, ...]:
-        """The services found not up at the first look before the watch is over that finds one,
-        none when all stay up: a container that dies right after it started and is restarting is
-        not running."""
+        """Every service found not up at any look through the watch, in the order given, none
+        when all stay up: a container that dies right after it started and is restarting is not
+        running, and a service that fails later than another is still named."""
         deadline = watch.clock() + watch.seconds
-        while not (down := not_up(self.states(), config, services)):
+        seen_down: set[str] = set()
+        while True:
+            seen_down.update(not_up(self.states(), config, services))
             if watch.clock() >= deadline:
-                return ()
+                return tuple(name for name in services if name in seen_down)
             watch.sleep(_SETTLE_POLL_SECONDS)
-        return down
 
     def stop(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "stop", list(services), CHANGE_SECONDS)

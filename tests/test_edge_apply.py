@@ -613,6 +613,7 @@ def start(repository, scripted, at_terminal, capsys, state, ingress, setup_check
             repository,
             ingress.verifier,
             setup_check,
+            ingress.watch,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -858,6 +859,117 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
     assert exit_code == 1
     assert "partial, step-ca: could not start, `docker compose up` exited 1: last line" in err
     assert "is on" not in out
+
+
+@pytest.fixture
+def agent_service_unit(repository, scripted) -> None:
+    """The repository's own `agent-service` unit of fleet.yaml and its compose.yaml, with the
+    other units off (their containers and setups are not the question here)."""
+    real = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["services"]["agent-service"]
+    fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
+    write_fleet(repository, yaml.safe_dump(fleet))
+    services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
+    for name, definition in services.items():
+        if "agent-service" in definition.get("profiles", ()):
+            scripted.config["services"][name] = definition | {
+                "volumes": [_resolved_mount(mount) for mount in definition.get("volumes", [])]
+            }
+
+
+def _resolved_mount(mount: str | dict) -> dict:
+    """A volume as `docker compose config` spells it: the short form `source:target[:ro]` of
+    compose.yaml becomes the long form."""
+    if isinstance(mount, dict):
+        return mount
+    source, target, *mode = mount.split(":")
+    return {"type": "bind", "source": source, "target": target, "read_only": mode == ["ro"]}
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
+    switch, scripted
+):
+    """#214 S1: the real catalog line starts exactly the profile's two services; a second apply
+    plans nothing."""
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "agent-service is on" in out
+    assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == ["up"]
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+@pytest.mark.parametrize(
+    "docker_line",
+    [
+        "Error response from daemon: No such image: edge-agent-service:0.4.0-2.1.302",
+        'Error response from daemon: invalid mount config for type "bind": bind source path '
+        "does not exist: /home/operator/.secrets/agent-service/claude",
+    ],
+    ids=["missing image", "missing login directory"],
+)
+def test_an_agent_service_whose_image_or_login_is_missing_is_partial_and_never_on(
+    switch, scripted, docker_line
+):
+    """#214 S2: apply's own start and its observation carry the precondition; no setup check is
+    needed, because Compose refuses the start (`pull_policy: never`, `create_host_path: false`)
+    and the unit is never reported on."""
+    scripted.failing_verb, scripted.failure_line = "up", docker_line
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert (
+        f"partial, agent-service: could not start, `docker compose up` exited 1: {docker_line}"
+        in err
+    )
+    assert "agent-service is on" not in out
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_an_agent_service_that_is_created_but_never_runs_is_partial_and_never_on(switch, scripted):
+    """#214 S2: a container that exists but does not run is not reported on."""
+    scripted.unstartable = {"agent-service"}
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, agent-service" in err
+    assert "agent-service is on" not in out
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_an_agent_service_that_runs_and_then_restarts_is_partial_and_never_on(switch, scripted):
+    """#214 S2: the first look after `up` sees it running; a refused login makes it restart, and
+    the watch finds that before the unit is reported or recorded on."""
+    scripted.crash_loops = {"agent-service"}
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, agent-service is not on after the change" in err
+    assert "agent-service is on" not in out
+
+
+def test_every_service_that_is_down_at_any_look_of_the_watch_is_named(
+    scripted, repository, ingress
+):
+    """#214 gate: a service that dies at once and one that restarts only later are both found,
+    so neither counts as observed on."""
+    engine = compose.Compose(scripted.run, repository)
+    scripted.after_up = lambda: scripted.containers.update({"step-ca": "exited"})
+    scripted.crash_loops = {"traefik-mcp"}
+    engine.start("step-ca", STEP_CA_SERVICES)
+
+    down = engine.down_while_watched(scripted.config, STEP_CA_SERVICES, ingress.watch)
+
+    assert down == ("step-ca", "traefik-mcp")
 
 
 def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, scripted, capsys):
@@ -2102,6 +2214,21 @@ def test_start_with_any_answer_but_yes_aborts_and_keeps_the_switch(start, script
     assert "aborted, nothing changed" in err
     assert marker(state) == SWITCHED_OFF_AT
     assert scripted.changing_verbs() == []
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_a_start_of_an_agent_service_that_restarts_is_partial_and_never_on(start, scripted, state):
+    """P15, #214: `edge start` decides through the watch, not one look: a login the upstream
+    refuses makes the container restart, and the unit stays switched off."""
+    switch_off(state, unit="agent-service")
+    scripted.crash_loops = {"agent-service"}
+
+    exit_code, out, err = start(unit="agent-service")
+
+    assert exit_code == 1
+    assert "partial, agent-service is not on after the start; its switch stays" in err
+    assert marker(state, "agent-service") == SWITCHED_OFF_AT
+    assert "is on" not in out
 
 
 @pytest.mark.parametrize("failure", ["failing_verb", "starts_nothing"])
