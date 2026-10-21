@@ -14,14 +14,17 @@ secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs
 
 ## Start
 
-The first `hal apply --closed` writes `.env`; Traefik and the socket proxy are started by hand, and
-`hal apply` then switches the catalog's units on and publishes. Readiness and stop are in
-[docs/stack.md](docs/stack.md).
+The first `hal apply --closed` plans, asks to run each setup still missing (for example
+`keycloak/go-live`, which itself starts the socket proxy and Traefik), asks `yes` and switches the
+catalog's units on. Apply never starts a stopped core service, so Traefik and the socket proxy are
+started by hand; `hal apply` then publishes, and `hal online` opens the tunnel, which `home setup`
+installs disabled. Readiness and stop are in [docs/stack.md](docs/stack.md).
 
 ```sh
 hal apply --closed
 docker compose up -d --no-recreate socket-proxy traefik
 hal apply
+hal online
 ```
 
 ## The commands
@@ -88,6 +91,5 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 
 ## Checks
 
-CI (`.github/workflows/ci.yml`) runs lint, the tests, the compose renders, the check that no secret
-is in any file, the root layout check `scripts/check_root_layout.py` and a wheel smoke test; it never
-starts containers. The shared gate `quality / verdict` follows (see `AGENTS.md`).
+`.github/workflows/ci.yml` names each CI step by what it proves; none of them starts containers. The
+shared gate `quality / verdict` follows (see `AGENTS.md`, "Checks").

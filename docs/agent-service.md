@@ -21,7 +21,7 @@ docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.3
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
 only writer of `requirements.txt`, and changes the CLI pin in the Dockerfile and the image name in
-`compose.yaml` together. `probe/agent-service/image.py` builds without cache and starts the
+`compose.yaml` and in the build line above together. `probe/agent-service/image.py` builds without cache and starts the
 entrypoint from the clean image. No command builds the image yet: the `docker build` line is the
 operator's step.
 
@@ -89,6 +89,8 @@ use it). No CA mount is needed: the service is plain http on an isolated interna
 host process can reach it, because the network has no host address and publishes no port.
 
 ## Proofs
+
+Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-providers upgrade.
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in as yourself (the
