@@ -143,12 +143,12 @@ def test_an_app_named_like_the_pre_apply_tag_is_refused_before_anything_runs(
     edge_backup, machine, home
 ):
     """Its tag scope would select every app's pre-apply snapshots under `forget`."""
-    pre_apply_app = RADIO_TOML.replace("[app.radio]", "[app.pre-apply]")
+    pre_apply_app = RADIO_TOML.replace("app.radio", "app.pre-apply")
 
     outcome = edge_backup(*declare_apps(home, pre_apply_app), "backup", "pre-apply")
 
     assert (outcome.exit_code, machine.calls) == (1, [])
-    assert "pre-apply" in outcome.err
+    assert "als restic-Tag pre-apply belegt" in outcome.err
     assert outcome.status is None
 
 
