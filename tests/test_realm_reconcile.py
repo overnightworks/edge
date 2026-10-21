@@ -30,8 +30,18 @@ def group(name: str, members: int = 0) -> dict:
     return {"fields": {"name": name, "members": members}, "digests": {}}
 
 
-def inventory(*groups: dict) -> dict:
-    return {"hallucinai": {"group": {entry["fields"]["name"]: entry for entry in groups}}}
+def inventory(*groups: dict, **kinds: dict[str, dict]) -> dict:
+    """Both realms as the observer reads them: the groups, and other kinds by identity."""
+    entries = {"group": {entry["fields"]["name"]: entry for entry in groups}}
+    return {"master": {}, "hallucinai": {**entries, **kinds}}
+
+
+def entity(**fields: object) -> dict:
+    return {"fields": fields, "digests": {}}
+
+
+def flow(*, top_level: bool = True, built_in: bool | None = None) -> dict:
+    return entity(topLevel=top_level, builtIn=built_in)
 
 
 @dataclass
@@ -46,14 +56,14 @@ class World:
     config_cli_running: bool = False
     failing: set[str] = field(default_factory=set)
     interrupted: set[str] = field(default_factory=set)
-    before: dict = field(default_factory=lambda: inventory(group("apps")))
-    after: dict = field(default_factory=lambda: inventory(group("apps")))
+    before: dict = field(default_factory=lambda: inventory(group("/apps")))
+    after: dict = field(default_factory=lambda: inventory(group("/apps")))
     meanwhile: Callable[[], None] | None = None  # what changes right before config-cli runs
 
     def __post_init__(self) -> None:
         (self.root / "keycloak").mkdir(parents=True)
-        self.write_file("realm.yaml", "realm: one\n")
-        self.write_file("master.yaml", "master: one\n")
+        self.write_file("realm.yaml", "realm: hallucinai\ngroups:\n  - name: apps\n")
+        self.write_file("master.yaml", "realm: master\n")
         self.write_file("entrypoint.sh", "#!/bin/sh\n")
         self.record = core.Record(self.root / "state")
         self.marks = switches.Switches(self.root / "state")
@@ -272,7 +282,7 @@ def test_the_step_backs_up_proves_observes_applies_observes_and_lists_the_change
     world: World,
 ) -> None:
     """Cell 3: the order, and the lines equal what changed."""
-    world.after = inventory(group("apps"), group("operators", members=2))
+    world.after = inventory(group("/apps"), group("operators", members=2))
 
     result = world.step()
 
@@ -280,7 +290,7 @@ def test_the_step_backs_up_proves_observes_applies_observes_and_lists_the_change
         "backup", "restore test", "observe", "config-cli", "observe", "checksums",
     ]  # fmt: skip
     assert result.failure is None
-    assert result.lines == (
+    assert result.lines[:2] == (
         f"realm: applied keycloak/*.yaml; pre-apply snapshot {SNAPSHOT} "
         "(0s backup, 0s restore test)",
         "hallucinai: addition group operators (2 members)",
@@ -288,17 +298,17 @@ def test_the_step_backs_up_proves_observes_applies_observes_and_lists_the_change
 
 
 def test_an_apply_that_changes_nothing_says_so(world: World) -> None:
-    assert world.step().lines[1:] == ("realm: no changes",)
+    assert world.step().lines[1] == "realm: no changes"
 
 
 def test_a_removal_is_printed_as_reset_to_the_file_with_the_snapshot(world: World) -> None:
     """Cell 13 (R4): a console change under a declared object, reset by the apply."""
-    world.before = inventory(group("apps"), group("console-made"))
+    world.before = inventory(group("/apps"), group("console-made"))
 
     result = world.step()
 
     assert result.failure is None
-    assert result.lines[1:] == (
+    assert result.lines[1:2] == (
         "hallucinai: removal group console-made (0 members): reset to the file, "
         f"pre-apply snapshot {SNAPSHOT}",
     )
@@ -353,6 +363,7 @@ def test_a_failed_config_cli_is_partial_names_the_way_back_and_is_planned_again(
         f'pre-apply snapshot {SNAPSHOT}, the way back is docs/backup.md "Restore Keycloak"; '
         "the next run repeats the step"
     )
+    assert result.lines == ()  # cell 5: a failed step lists nothing
     assert world.plan().action is RealmAction.RUN
 
 
@@ -543,9 +554,23 @@ def test_a_backup_that_names_no_snapshot_is_a_failure() -> None:
 
 
 def test_the_installed_backup_is_the_checkouts_own_edge_backup(tmp_path: Path) -> None:
-    backup = reconcile.Backup.installed(tmp_path)
+    backup = reconcile.Backup.installed(tmp_path, lambda _line: None)
 
     assert backup.command == (str(tmp_path / ".venv" / "bin" / "edge-backup"),)
+
+
+def test_the_installed_backup_says_the_waiting_line_through_the_line_it_was_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cell 7: the waiting line leaves through the channel that carries the step's prefix."""
+    monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.2)
+    said: list[str] = []
+    backup = reconcile.Backup.installed(tmp_path, said.append)
+
+    with pytest.raises(compose.ComposeError, match="took longer than 1s"):
+        backup.run(["sh", "-c", WAITS], 1)
+
+    assert said == ["realm: waiting up to 0.2s for edge-backup to clean up"]
 
 
 def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -> None:
@@ -599,7 +624,7 @@ def test_a_bind_resolution_that_fails_is_a_partial_line_not_a_traceback(
 def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repeats(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    world.after = inventory(group("apps"), group("operators", members=2))
+    world.after = inventory(group("/apps"), group("operators", members=2))
 
     def refuse(*_: object) -> None:
         raise core.CoreError("cannot write applied.json (Permission denied)")
@@ -612,6 +637,112 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
     assert result.failure == (
         "realm: applied and observed, but the record could not be written "
         "(cannot write applied.json (Permission denied)); the next run repeats the step"
+    )
+
+
+# --- What exists only in Keycloak --------------------------------------------------------------
+
+NOT_READ = "realm: not read, so not listed: "
+
+
+@pytest.mark.parametrize(
+    ("kind", "identity", "made"),
+    [
+        ("client", "console-client", entity(clientId="console-client", enabled=True)),
+        ("client scope", "console-scope", entity(name="console-scope")),
+        ("realm role", "console-role", entity(name="console-role")),
+        ("flow", "console flow", flow()),
+        ("identity provider", "console-idp", entity(alias="console-idp")),
+    ],
+)
+def test_an_object_made_in_the_console_is_listed_and_has_no_removal_line(
+    world: World, kind: str, identity: str, made: dict
+) -> None:
+    """Cell 1: it survives the step, so the step says it exists only in Keycloak."""
+    world.before = world.after = inventory(
+        group("/apps"), group("console-made"), **{kind: {identity: made}}
+    )
+
+    result = world.step()
+
+    assert result.failure is None
+    assert f"realm: only in Keycloak: hallucinai {kind} {identity}" in result.lines
+    assert "realm: only in Keycloak: hallucinai group console-made" in result.lines
+    assert [line for line in result.lines if "removal" in line] == []
+
+
+def test_what_the_files_declare_and_keycloak_brings_itself_is_not_listed(world: World) -> None:
+    """Cell 2: nothing else in a realm the files made means nothing is listed."""
+    world.after = inventory(
+        group("/apps"),
+        flow={
+            "browser": flow(built_in=True),
+            "sub flow": flow(top_level=False),
+        },
+        client={name: entity(clientId=name) for name in ("account", "realm-management")},
+        **{"realm role": {"default-roles-hallucinai": entity(name="default-roles-hallucinai")}},
+    )
+    world.after["master"] = {"client": {"hallucinai-realm": entity(clientId="hallucinai-realm")}}
+    world.before = world.after
+
+    result = world.step()
+
+    assert result.lines[2] == "realm: nothing only in Keycloak"
+    assert len(result.lines) == 4
+
+
+def test_a_declared_group_in_a_declared_sub_tree_is_not_listed(world: World) -> None:
+    world.write_file(
+        "realm.yaml",
+        "realm: hallucinai\ngroups:\n  - name: apps\n    subGroups:\n      - name: admin\n",
+    )
+    world.before = world.after = inventory(group("/apps"), group("/apps/admin"), group("/other"))
+
+    lines = world.step().lines
+
+    assert [line for line in lines if "only in Keycloak" in line] == [
+        "realm: only in Keycloak: hallucinai group /other"
+    ]
+
+
+def test_the_kinds_that_cannot_be_read_are_named_on_one_line(world: World) -> None:
+    """Cell 3."""
+    lines = world.step().lines
+
+    unread = [line for line in lines if line.startswith(NOT_READ)]
+    assert len(unread) == 1
+    assert "default groups" in unread[0]
+    assert "workflows" in unread[0]
+
+
+def test_the_list_holds_names_only(world: World) -> None:
+    """Cell 6: no attribute and no secret of a listed object is in any line."""
+    made = entity(clientId="console-client", secret="planted-secret", attributes={"k": "planted"})
+    world.before = world.after = inventory(group("/apps"), client={"console-client": made})
+
+    lines = world.step().lines
+
+    assert "realm: only in Keycloak: hallucinai client console-client" in lines
+    assert not [line for line in lines if "planted" in line]
+
+
+def test_a_console_name_with_an_escape_stays_one_line(world: World) -> None:
+    named = "console\x1b[31m\nname"
+    world.before = world.after = inventory(group("/apps"), group(named))
+
+    lines = world.step().lines
+
+    assert not [line for line in lines if "\x1b" in line or "\n" in line]
+
+
+def test_realm_files_that_cannot_be_read_leave_the_step_as_it_ended(world: World) -> None:
+    world.write_file("realm.yaml", "realm: [unclosed\n")
+
+    result = world.step()
+
+    assert result.failure is None
+    assert (
+        result.lines[-1] == "realm: only in Keycloak: not listed, the realm files could not be read"
     )
 
 
@@ -654,7 +785,7 @@ def interrupted(*_):
 signal.signal(signal.SIGINT, interrupted)
 from edge.realm import reconcile
 try:
-    reconcile.run_edge_backup(sys.argv[2:], 600)
+    reconcile.run_edge_backup(sys.argv[2:], 600, say=print)
 except KeyboardInterrupt:
     print("KeyboardInterrupt reached the step")
 """
@@ -669,7 +800,9 @@ def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
 
     with pytest.raises(compose.ComposeError, match="took longer than 3s"):
         reconcile.run_edge_backup(
-            [sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), str(release)], 3
+            [sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), str(release)],
+            3,
+            say=lambda _line: None,
         )
 
     assert marker.read_text() == "cleaned\n"
@@ -681,7 +814,9 @@ def test_a_backup_that_ignores_sigterm_still_ends_in_the_timeout_failure(
     monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.3)
 
     with pytest.raises(compose.ComposeError, match="took longer than 3s"):
-        reconcile.run_edge_backup([sys.executable, "-c", IGNORES_SIGTERM], 3)
+        reconcile.run_edge_backup(
+            [sys.executable, "-c", IGNORES_SIGTERM], 3, say=lambda _line: None
+        )
 
 
 def test_a_grandchild_that_holds_the_output_open_cannot_hang_the_step(
@@ -695,7 +830,7 @@ def test_a_grandchild_that_holds_the_output_open_cannot_hang_the_step(
     try:
         started = time.monotonic()
         with pytest.raises(compose.ComposeError, match="took longer than 1s"):
-            reconcile.run_edge_backup(["sh", "-c", leaves_a_grandchild], 1)
+            reconcile.run_edge_backup(["sh", "-c", leaves_a_grandchild], 1, say=lambda _line: None)
         assert time.monotonic() - started < 10
     finally:
         os.kill(int(escaped.read_text()), signal.SIGKILL)
@@ -761,7 +896,9 @@ def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path)
 
 
 def test_a_finished_backup_returns_its_exit_code_and_output() -> None:
-    result = reconcile.run_edge_backup(["sh", "-c", "echo out; echo err >&2; exit 3"], 30)
+    result = reconcile.run_edge_backup(
+        ["sh", "-c", "echo out; echo err >&2; exit 3"], 30, say=lambda _line: None
+    )
 
     assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
 

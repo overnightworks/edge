@@ -11,9 +11,10 @@ secret file.
 
 An apply that runs takes `edge-backup backup keycloak --pre-apply`, proves that snapshot with
 `restore-test keycloak --snapshot`, observes both realms, runs config-cli, observes again and
-lists what changed. The entry is emptied before config-cli and filled only after the observe, so a
-step that did not finish is planned again. Nothing is deleted but what config-cli resets to the
-file; those removals say so.
+lists what changed, then what exists only in Keycloak: the objects of the kinds the operator
+creates that the files do not declare, which the step never deletes. The entry is emptied before
+config-cli and filled only after the observe, so a step that did not finish is planned again.
+Nothing is deleted but what config-cli resets to the file; those removals say so.
 """
 
 import contextlib
@@ -23,16 +24,18 @@ import re
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from edge import compose, core, switches
 from edge import realm as realm_lines
 from edge.realm import OBSERVER_SERVICE, Kind, new_digest_key
-from edge.realm.observe import Inventory
+from edge.realm import declared as declared_identities
+from edge.realm.observe import COVERAGE, REALM_ROLE, Entity, Gap, Inventory, keys
 
 REALM_UNIT = "keycloak"
 CONFIG_CLI = "keycloak-config-cli"
@@ -46,6 +49,7 @@ RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
 
 type Checksums = dict[str, dict[str, str]]  # realm -> import-checksum attribute -> value
+type Say = Callable[[str], None]  # says one line of the step, with `hal apply`'s prefix
 
 
 class RealmError(Exception):
@@ -196,7 +200,7 @@ def _why(reading: core.Reading, inputs: Inputs, observed: Checksums | None) -> s
 
 
 def run_edge_backup(
-    command: list[str], timeout: int, stdin: str | None = None
+    command: list[str], timeout: int, stdin: str | None = None, *, say: Say
 ) -> subprocess.CompletedProcess[str]:
     """Run edge-backup to its end, in a session of its own, so the terminal's Ctrl-C reaches only
     this step. On the timeout or the first Ctrl-C it is stopped as the `edge-backup` systemd unit
@@ -215,22 +219,22 @@ def run_edge_backup(
             try:
                 stdout, stderr = process.communicate(stdin, timeout)
             except subprocess.TimeoutExpired as error:
-                _stop(process)
+                _stop(process, say)
                 raise compose.ComposeError(
                     f"`{' '.join(command[:3])}` took longer than {timeout}s"
                 ) from error
             except KeyboardInterrupt:
-                _stop(process)
+                _stop(process, say)
                 raise
     except OSError as error:
         raise compose.ComposeError(f"cannot run {command[0]}: {error.strerror}") from error
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _stop(process: subprocess.Popen[str]) -> None:
+def _stop(process: subprocess.Popen[str], say: Say) -> None:
     """SIGTERM to the group and a grace that no further Ctrl-C shortens; then the group is killed
     and the output collected for a bounded time, so a grandchild holding a pipe cannot hang."""
-    print(f"realm: waiting up to {STOP_GRACE_SECONDS:g}s for edge-backup to clean up", flush=True)
+    say(f"realm: waiting up to {STOP_GRACE_SECONDS:g}s for edge-backup to clean up")
     _signal_group(process, signal.SIGTERM)
     deadline = time.monotonic() + STOP_GRACE_SECONDS
     while (remaining := deadline - time.monotonic()) > 0:
@@ -256,11 +260,15 @@ class Backup:
     """edge-backup as the timers run it, for Keycloak alone."""
 
     command: tuple[str, ...]
-    run: compose.Runner = run_edge_backup
+    run: compose.Runner
 
     @classmethod
-    def installed(cls, repository: Path) -> "Backup":
-        return cls((str(repository / ".venv" / "bin" / "edge-backup"),))
+    def installed(cls, repository: Path, say: Say) -> "Backup":
+        """`say` carries the step's lines while a stopped edge-backup is waited for."""
+        return cls(
+            (str(repository / ".venv" / "bin" / "edge-backup"),),
+            partial(run_edge_backup, say=say),
+        )
 
     def pre_apply(self) -> str:
         """The new snapshot's ID."""
@@ -347,7 +355,11 @@ class Realm:
             f"realm: applied keycloak/*.yaml; pre-apply snapshot {progress.snapshot} "
             f"({backup_seconds:.0f}s backup, {test_seconds:.0f}s restore test)"
         )
-        lines = (timing, *_change_lines(before, after, progress.snapshot))
+        lines = (
+            timing,
+            *_change_lines(before, after, progress.snapshot),
+            *self.only_in_keycloak_lines(after),
+        )
         try:
             self.record.write(CONFIG_CLI, {**plan.entry, **_flat(checksums)}, followed)
         except core.CoreError as error:
@@ -357,6 +369,16 @@ class Realm:
                 "the next run repeats the step",
             )
         return StepResult(lines)
+
+    def only_in_keycloak_lines(self, after: Inventory) -> list[str]:
+        """What the step leaves alone: the list never changes the step's outcome."""
+        try:
+            files = [(self.repository / name).read_text() for name in REALM_FILES]
+            declared = [declared_identities.declared_realm(text) for text in files]
+        except (OSError, declared_identities.DeclaredError):
+            return ["realm: only in Keycloak: not listed, the realm files could not be read"]
+        found = only_in_keycloak(after, declared)
+        return [*(_only_in_keycloak_line(item) for item in found), *_not_read_lines(found)]
 
     def _timed[T](self, action: Callable[[], T]) -> tuple[T, float]:
         started = self.clock()
@@ -404,3 +426,79 @@ def _change_lines(before: Inventory, after: Inventory, snapshot: str | None) -> 
             shown += f": reset to the file, pre-apply snapshot {snapshot}"
         lines.append(shown)
     return lines or ["realm: no changes"]
+
+
+# --- What exists only in Keycloak ---------------------------------------------------------------
+
+# Keycloak 26.8.1's own objects of the kinds the list compares (`compose.yaml` pins the version),
+# read from a fresh import of the realm files by the probe's proof 3a; a Keycloak upgrade that
+# adds one fails that proof. A flow carries its own `builtIn` flag instead.
+_BUILT_IN_CLIENTS = keys("account account-console admin-cli broker security-admin-console")
+_BUILT_IN_SCOPES = keys(
+    """AuthnContextClassRef acr address basic email microprofile-jwt offline_access organization
+    phone profile role_list roles saml_organization service_account web-origins"""
+)
+_BUILT_IN_ROLES = keys("offline_access uma_authorization")
+BUILT_IN: Mapping[str, declared_identities.Identities] = {
+    "master": {
+        declared_identities.CLIENT: _BUILT_IN_CLIENTS | {"master-realm", "hallucinai-realm"},
+        declared_identities.CLIENT_SCOPE: _BUILT_IN_SCOPES,
+        REALM_ROLE: _BUILT_IN_ROLES | {"admin", "create-realm", "default-roles-master"},
+    },
+    "hallucinai": {
+        declared_identities.CLIENT: _BUILT_IN_CLIENTS | {"realm-management"},
+        declared_identities.CLIENT_SCOPE: _BUILT_IN_SCOPES,
+        REALM_ROLE: _BUILT_IN_ROLES | {"default-roles-hallucinai"},
+    },
+}
+
+
+@dataclass(frozen=True)
+class OnlyInKeycloak:
+    """One object of a kind the operator creates that the realm files do not declare."""
+
+    realm: str
+    kind: str
+    identity: str
+
+
+def only_in_keycloak(
+    inventory: Inventory, declared: Iterable[declared_identities.DeclaredRealm]
+) -> list[OnlyInKeycloak]:
+    """What `inventory` holds of the declared kinds beyond the files and Keycloak's own."""
+    found = []
+    for realm in declared:
+        for kind, declared_names in realm.identities.items():
+            built_in = BUILT_IN.get(realm.realm, {}).get(kind, frozenset())
+            objects = inventory[realm.realm].get(kind, {})
+            found += [
+                OnlyInKeycloak(realm.realm, kind, identity)
+                for identity in sorted(objects.keys() - declared_names - built_in)
+                if _made_by_the_operator(kind, objects[identity])
+            ]
+    return found
+
+
+def _made_by_the_operator(kind: str, entity: Entity) -> bool:
+    """A flow is the operator's when it is top-level and Keycloak does not flag it built in."""
+    if kind != declared_identities.FLOW:
+        return True
+    return bool(entity["fields"]["topLevel"]) and not entity["fields"]["builtIn"]
+
+
+def _only_in_keycloak_line(item: OnlyInKeycloak) -> str:
+    identity = compose.printable(item.identity)
+    return f"realm: only in Keycloak: {compose.printable(item.realm)} {item.kind} {identity}"
+
+
+def _not_read_lines(found: list[OnlyInKeycloak]) -> list[str]:
+    """The empty-list line when nothing was found, then the one that names what is not read."""
+    unread = "; ".join(
+        coverage.why
+        for name, coverage in COVERAGE.items()
+        if isinstance(coverage, Gap) and "." not in name
+    )
+    return [
+        *([] if found else ["realm: nothing only in Keycloak"]),
+        f"realm: not read, so not listed: {unread}",
+    ]

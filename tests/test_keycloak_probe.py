@@ -758,6 +758,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         return object()
 
     for later_proof in (
+        "fresh_realm_has_nothing_only_in_keycloak",
         "seed_member",
         "apply_removes_what_the_observer_names",
         "public_issuer_and_paths",

@@ -174,9 +174,14 @@ apply`.
 The apply signs in as the `config-cli` service client and fails loudly on a `$(env:…)` variable
 that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). Whatever exists only in Keycloak
 stays; deleting a group, client or role the YAML no longer lists is done in the admin console, with
-your yes, after a backup. The list of what exists only in Keycloak comes with #235's slice C. A
-console change to a declared object is reset by the next apply that runs the step, not by every
-apply.
+your yes, after a backup. After the change lines the step prints one line per group, client,
+client scope, realm role, top-level flow and identity provider that the files do not declare
+(`realm: only in Keycloak: hallucinai group /console-made`), or `realm: nothing only in Keycloak`,
+and one line naming the kinds it cannot read (default groups, workflows and the like). Keycloak's
+own objects are left out: flows by their `builtIn` flag, the rest by a list pinned to Keycloak
+26.8.1 in `src/edge/realm/reconcile.py`, which the probe's proof 3a keeps true. The list appears
+only when the step runs and never changes its outcome. A console change to a declared object is
+reset by the next apply that runs the step, not by every apply.
 
 ## Go-live
 

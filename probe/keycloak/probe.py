@@ -202,6 +202,10 @@ LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
 CHANGED_LIFESPAN_SETTING = f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
 STEP_GROUP = "probe-realm-step"  # a group proof 12 adds to realm.yaml
 STEP_CONSOLE_MAPPER = "probe-step-mapper"  # a console change proof 12's step resets
+STEP_CONSOLE_GROUP = "probe-step-console-group"  # console objects proof 12's step leaves alone
+STEP_CONSOLE_CLIENT = "probe-step-console-client"
+STEP_CONSOLE_FLOW = "probe-step-console-flow"
+ONLY_IN_KEYCLOAK = "realm: only in Keycloak: "
 COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
 RESIDUE_OF_THE_APPLY = [
     # a default scope on a declared client with scope lists, and the one Keycloak adds with a
@@ -1051,9 +1055,10 @@ class RealmStepStand:
             False,
         )
 
-    def apply(self) -> reconcile.StepResult:
+    @property
+    def realm(self) -> reconcile.Realm:
         engine, state = self.engine, self.root / "state"
-        realm = reconcile.Realm(
+        return reconcile.Realm(
             engine,
             reconcile.Observer(engine),
             reconcile.Backup(self.backup_command, self.run_backup),
@@ -1063,7 +1068,9 @@ class RealmStepStand:
             switches.Switches(state),
             None,
         )
-        return realm.run(self.plan())
+
+    def apply(self) -> reconcile.StepResult:
+        return self.realm.run(self.plan())
 
 
 # --- Proofs -------------------------------------------------------------------------------------
@@ -1160,10 +1167,12 @@ class Probe:
         bootstrap_admin = self.start_with_bootstrap_admin()
         self.missing_variable_fails_loudly(bootstrap_admin)
         admin = self.apply_and_restart()
+        stand = self.fresh_realm_has_nothing_only_in_keycloak()
         self.held(
             "3a",
             "a fresh apply created the master configuration (the config-cli client signs in "
-            "after a restart without the bootstrap overlay) and the hallucinai realm",
+            "after a restart without the bootstrap overlay) and the hallucinai realm; both "
+            "realms hold nothing only in Keycloak: only declared objects and Keycloak's own",
         )
 
         member_id = self.seed_member(admin)
@@ -1180,7 +1189,7 @@ class Probe:
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
-        self.the_realm_step()
+        self.the_realm_step(stand)
         admin = self.admin_now()  # proof 12 outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
@@ -2382,11 +2391,23 @@ class Probe:
             f"back-channel url {backchannel_url}",
         )
 
-    def the_realm_step(self) -> None:
+    def fresh_realm_has_nothing_only_in_keycloak(self) -> RealmStepStand:
+        """Proof 3a's end (#248, cell 2): the realms the files just made hold only what they
+        declare and Keycloak 26.8.1 brings itself, so a Keycloak upgrade that adds a built-in
+        fails here loudly. Returns the stand proof 12 drives."""
+        stand = RealmStepStand.at(self.stack)
+        realm = stand.realm
+        lines = realm.only_in_keycloak_lines(realm.observer.inventory())
+        expect(
+            lines[0] == "realm: nothing only in Keycloak",
+            f"a fresh import lists {[line for line in lines if ONLY_IN_KEYCLOAK in line]}",
+        )
+        return stand
+
+    def the_realm_step(self, stand: RealmStepStand) -> None:
         """Proof 12 (#242): the realm step of `edge apply` against this stack, with edge-backup
         under a scratch HOME and its own apps.toml. The same Keycloak, its database and its
         config-cli answer; only the repository, the HOME and the project are the probe's."""
-        stand = RealmStepStand.at(self.stack)  # a backup outlives the admin token's 60 s
         expect(stand.edge_backup("init").returncode == 0, "edge-backup init failed")
 
         baseline = stand.apply()
@@ -2424,16 +2445,19 @@ class Probe:
         )
         plan = stand.plan()
         expect("keycloak/realm.yaml changed" in plan.line, f"the plan says {plan.line!r}")
+        console_made = self.make_console_objects()
         applied = stand.apply()
         expect(applied.failure is None, f"the changed realm step failed: {applied.failure}")
         for line in applied.lines:
             self.say(f"realm step: {line}")
+        self.step_lists_what_is_only_in_keycloak(applied.lines, console_made)
+        changes = [line for line in applied.lines if not line.startswith("realm: ")]
         expected = [
             f"{REALM}: addition group /{STEP_GROUP} (0 members)",
             f"{REALM}: change realm {REALM} accessTokenLifespan: "
             f"300 → {CHANGED_ACCESS_TOKEN_LIFESPAN}",
         ]
-        expect(sorted(applied.lines[1:]) == sorted(expected), f"the lines are {applied.lines[1:]}")
+        expect(sorted(changes) == sorted(expected), f"the lines are {changes}")
         expect(
             self.admin_now().get(f"/{REALM}")["accessTokenLifespan"]
             == CHANGED_ACCESS_TOKEN_LIFESPAN,
@@ -2443,7 +2467,11 @@ class Probe:
         self.held(
             "12b",
             "a changed realm.yaml is applied after a Keycloak-only backup and "
-            "restore test, and the lines equal the YAML diff: " + "; ".join(expected) + " (cell 3)",
+            "restore test, and the lines equal the YAML diff: "
+            + "; ".join(expected)
+            + " (cell 3); a "
+            "group, a client and a top-level flow made in the console survive it, are listed as "
+            "only in Keycloak with no removal line, and one line names the unread kinds",
         )
 
         realm = self.admin_now().get(f"/{REALM}")
@@ -2523,6 +2551,51 @@ class Probe:
             "12f",
             "proves the entrypoint trigger: a changed entrypoint.sh that config-cli binds "
             "plans the step",
+        )
+
+    def make_console_objects(self) -> list[str]:
+        """A group, a client and a top-level flow made in the console; returns the lines the
+        step is to list for them."""
+        admin = self.admin_now()
+        admin.create(f"/{REALM}/groups", {"name": STEP_CONSOLE_GROUP})
+        admin.create(f"/{REALM}/clients", {"clientId": STEP_CONSOLE_CLIENT, "enabled": True})
+        admin.create(
+            f"/{REALM}/authentication/flows",
+            {
+                "alias": STEP_CONSOLE_FLOW,
+                "providerId": "basic-flow",
+                "topLevel": True,
+                "builtIn": False,
+            },
+        )
+        return [
+            f"{ONLY_IN_KEYCLOAK}{REALM} group /{STEP_CONSOLE_GROUP}",
+            f"{ONLY_IN_KEYCLOAK}{REALM} client {STEP_CONSOLE_CLIENT}",
+            f"{ONLY_IN_KEYCLOAK}{REALM} flow {STEP_CONSOLE_FLOW}",
+        ]
+
+    def step_lists_what_is_only_in_keycloak(self, lines: tuple[str, ...], made: list[str]) -> None:
+        """#248, cells 1 and 3: the console objects survive the step, are listed and have no
+        removal line; one line names the kinds that cannot be read."""
+        missing = [line for line in made if line not in lines]
+        expect(not missing, f"the step does not list {missing}")
+        made_names = (STEP_CONSOLE_GROUP, STEP_CONSOLE_CLIENT, STEP_CONSOLE_FLOW)
+        removed = [x for x in lines if "removal" in x and any(name in x for name in made_names)]
+        expect(not removed, f"the step resets a console object: {removed}")
+        admin = self.admin_now()
+        expect(
+            admin.get(f"/{REALM}/group-by-path/{STEP_CONSOLE_GROUP}")["name"] == STEP_CONSOLE_GROUP
+            and admin.client(STEP_CONSOLE_CLIENT)["clientId"] == STEP_CONSOLE_CLIENT
+            and any(
+                flow["alias"] == STEP_CONSOLE_FLOW
+                for flow in admin.get(f"/{REALM}/authentication/flows")
+            ),
+            "a console object did not survive the step",
+        )
+        unread = [line for line in lines if line.startswith("realm: not read, so not listed: ")]
+        expect(
+            len(unread) == 1 and "default groups" in unread[0] and "workflows" in unread[0],
+            f"the unread kinds are said as {unread}",
         )
 
     def the_observer_door(self, admin: Admin) -> None:
