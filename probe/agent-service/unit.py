@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Probe of the agent service unit (#201 cells U1-U11): the real `agent-service` of compose.yaml,
+"""Probe of the agent service unit (#201 U1-U11, #214 U15): `agent-service` of compose.yaml,
 with its real `service.toml`, in a throwaway compose project of its own and a scratch HOME that
 holds a dummy login (never a real token).
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
         python3 probe/agent-service/unit.py --scratch DIR
 
-U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. The image
+U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`
+drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
+issuer on the `agent` network, so the tokens verify and the CLI meets the real upstream with the
+dummy login. The image
 `edge-agent-service:0.4.0-2.1.302` must exist (README "The agent service image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
@@ -19,6 +22,7 @@ The container is asked through the `Inside` class below: the driver sends its so
 from __future__ import annotations
 
 import argparse
+import base64
 import errno
 import hashlib
 import inspect
@@ -30,14 +34,18 @@ import signal
 import subprocess
 import sys
 import time
+from enum import StrEnum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))  # edge's own observation
 
 from egress import (
+    COMPOSE_FILE,
     LABEL,
     LOGIN_DIRECTORY,
     PROJECT,
+    SERVICE_CONFIGURATION,
     SERVICE_PORT,
     Probe,
     ProbeFailed,
@@ -48,6 +56,8 @@ from egress import (
     service_configuration,
     write_dummy_token,
 )
+
+from edge import compose
 
 SERVICE = Target.SERVICE.compose_service
 LISTEN_SECONDS = 90
@@ -279,6 +289,7 @@ class UnitProbe(Probe):
         self.cell_u6_refusal()
         self.cell_u10()
         self.cell_u11()
+        self.cell_u15()
 
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + LISTEN_SECONDS
@@ -544,14 +555,244 @@ class UnitProbe(Probe):
             f"and {token_path()}, never the content",
         )
 
+    def cell_u15(self) -> None:
+        """A login directory without its token: `up -d` exits 0 and the first look sees the
+        service running, and `hal apply`'s own observation finds it not running."""
+        aside = self.token.with_name("token.aside")
+        self.token.rename(aside)
+        try:
+            started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+            expect(started.returncode == 0, f"U15: up exited {started.returncode}")
+            engine = self.edge_compose()
+            down = engine.down_while_watched(
+                engine.resolved_configuration(), (SERVICE,), compose.SETTLED
+            )
+            expect(down == (SERVICE,), f"U15: apply's observation found {down} not running")
+            logs = self.service_logs()
+            expect(LISTENING not in logs, "U15: the service listened without its token")
+        finally:
+            aside.rename(self.token)
+            self.compose("down", "--timeout", "10")
+        self.hold(
+            "U15",
+            f"with the login directory but no token, up exited 0 and apply's observation found "
+            f"{', '.join(down)} not running",
+        )
+
+    def edge_compose(self) -> compose.Compose:
+        """The engine `hal apply` uses, on this probe's project and its copy of compose.yaml."""
+
+        def run(command: list[str], timeout: int):
+            verb_and_arguments = command[command.index("--profile") + 2 :]
+            return self.run(self.compose_command(*verb_and_arguments), check=False, timeout=timeout)
+
+        return compose.Compose(run, COMPOSE_FILE.parent)
+
+
+ISSUER_SERVICE = "agent-issuer"
+ISSUER_PORT = 8443
+ISSUER_ORIGIN = f"https://{ISSUER_SERVICE}:{ISSUER_PORT}"
+REAL_ISSUER_ORIGIN = "https://auth.hallucinai.de"
+KEY_ID = "probe-key"
+WORKLOAD_CLIENT = "songmaker"
+TOKEN_SECONDS = 240  # the service refuses a workload token that lives longer than 300
+SMOKE_SERVICE = "agent-smoke"
+ISSUER_PROGRAM = (
+    f"ISSUER_PORT = {ISSUER_PORT}\n"
+    + """\
+import http.server, ssl
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = open("/issuer/jwks.json", "rb").read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/issuer/cert.pem", "/issuer/key.pem")
+server = http.server.HTTPServer(("0.0.0.0", ISSUER_PORT), Handler)
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+"""
+)
+
+
+def openssl(*arguments: str, stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(
+        ["openssl", *arguments], input=stdin, capture_output=True, check=False, timeout=60
+    )
+    expect(result.returncode == 0, f"openssl {arguments[0]} failed: {result.stderr[-200:]!r}")
+    return result.stdout
+
+
+def base64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+class StandInIssuer:
+    """A signing key, its certificate for `agent-issuer`, the JWKS it serves and the tokens it
+    signs: the realm's side of a run, all of it throwaway."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        directory.mkdir()
+        self.key = directory / "key.pem"
+        openssl("genrsa", "-out", str(self.key), "2048")
+        openssl(
+            "req", "-x509", "-new", "-key", str(self.key), "-out", str(directory / "cert.pem"),
+            "-days", "1", "-subj", f"/CN={ISSUER_SERVICE}",
+            "-addext", f"subjectAltName=DNS:{ISSUER_SERVICE}",
+        )  # fmt: skip
+        modulus = openssl("rsa", "-in", str(self.key), "-noout", "-modulus").decode()
+        keys = {"keys": [{
+            "kty": "RSA", "use": "sig", "alg": "RS256", "kid": KEY_ID, "e": "AQAB",
+            "n": base64url(bytes.fromhex(modulus.strip().removeprefix("Modulus="))),
+        }]}  # fmt: skip
+        (directory / "jwks.json").write_text(json.dumps(keys), encoding="utf-8")
+        for name in ("key.pem", "cert.pem", "jwks.json"):
+            (directory / name).chmod(0o644)
+        directory.chmod(0o755)
+
+    def token(self, issuer: str, claims: dict) -> str:
+        now = int(time.time())
+        payload = {"iss": issuer, "aud": "agent-service", "iat": now, "exp": now + TOKEN_SECONDS}
+        header = {"alg": "RS256", "kid": KEY_ID, "typ": "JWT"}
+        signing_input = ".".join(
+            base64url(json.dumps(part).encode()) for part in (header, {**payload, **claims})
+        )
+        signature = openssl("dgst", "-sha256", "-sign", str(self.key), stdin=signing_input.encode())
+        return f"{signing_input}.{base64url(signature)}"
+
+
+class SmokeProbe(Probe):
+    """The service with a stand-in issuer, asked by the repository's own `agent-smoke`."""
+
+    def __init__(self, scratch: Path) -> None:
+        super().__init__(scratch, Target.SERVICE)
+        self.issuer = StandInIssuer(scratch / "issuer")
+        configuration = scratch / "service.toml"
+        configuration.write_text(
+            SERVICE_CONFIGURATION.read_text(encoding="utf-8").replace(
+                REAL_ISSUER_ORIGIN, ISSUER_ORIGIN
+            ),
+            encoding="utf-8",
+        )
+        configuration.chmod(0o644)
+        program = scratch / "issuer.py"
+        program.write_text(ISSUER_PROGRAM, encoding="utf-8")
+        overlay = scratch / "compose.smoke.yaml"
+        overlay.write_text(
+            json.dumps({"services": {
+                "agent-service": {
+                    "environment": {"SSL_CERT_FILE": "/issuer/cert.pem"},
+                    "volumes": [
+                        {"type": "bind", "source": str(configuration), "read_only": True,
+                         "target": "/etc/agent-service/service.toml"},
+                        {"type": "bind", "source": str(self.issuer.directory), "read_only": True,
+                         "target": "/issuer"},
+                    ],
+                },
+                ISSUER_SERVICE: {
+                    "image": self.service_image(),
+                    "profiles": ["agent-service"],
+                    "user": "65534:65534", "read_only": True, "cap_drop": ["ALL"],
+                    "security_opt": ["no-new-privileges:true"], "networks": ["agent"],
+                    "entrypoint": ["python", "-I", "-B", "/issuer.py"],
+                    "volumes": [
+                        {"type": "bind", "source": str(program), "target": "/issuer.py",
+                         "read_only": True},
+                        {"type": "bind", "source": str(self.issuer.directory),
+                         "target": "/issuer", "read_only": True},
+                    ],
+                },
+            }}),
+            encoding="utf-8",
+        )  # fmt: skip
+        self.overlays.append(overlay)
+
+    def service_image(self) -> str:
+        """The issuer is a python script, and the service image is the python already on the PC;
+        compose resolves the image as it does for the service."""
+        resolved = self.run(
+            ["docker", "compose", "--project-directory", str(COMPOSE_FILE.parent),
+             "--file", str(COMPOSE_FILE), "--profile", "agent-service", "config",
+             "--format", "json"],
+        )  # fmt: skip
+        return json.loads(resolved.stdout)["services"][SERVICE]["image"]
+
+    def services_to_start(self) -> tuple[str, ...]:
+        return ("agent-egress", ISSUER_SERVICE, SERVICE)
+
+    def drive(self) -> None:
+        self.cell_u14()
+
+    def cell_u14(self) -> None:
+        issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"
+        person = self.issuer.token(
+            issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": ["/ki-abo"]}
+        )
+        workload = self.issuer.token(
+            issuer,
+            {"sub": "workload", "azp": WORKLOAD_CLIENT, "client_id": WORKLOAD_CLIENT,
+             "realm_access": {"roles": ["agent-workload"]}},
+        )  # fmt: skip
+        dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
+        self.wait_until_listening()
+        smoke = self.run(
+            self.compose_command(
+                "run", "--rm", "-T", "--no-deps", "--label", LABEL, SMOKE_SERVICE,
+                "--timeout", "180",
+            ),
+            stdin=f"{person}\n{workload}\n", check=False, timeout=240,
+        )  # fmt: skip
+        logs = self.run(["docker", "logs", self.container(SERVICE)])
+        shown = smoke.stdout + smoke.stderr
+        lines = smoke.stdout.splitlines()
+        expect(lines[:1] == ["event: run_started"], f"U14: the smoke began with {lines[:2]}")
+        expect("event: failed" in lines, f"U14: no failed event for the dummy login: {lines}")
+        expect(
+            "CliLoginRefusedError" in logs.stdout + logs.stderr,
+            "U14: the service log does not name the upstream's refusal of the login",
+        )
+        for secret in (person, workload, dummy):
+            expect(secret not in shown + logs.stdout + logs.stderr, "U14: a token was printed")
+        self.held.append("U14")
+        print(
+            f"U14 held: the smoke exited {smoke.returncode}; its output was {lines}; no token "
+            "in it or in the service log; the log ends "
+            f"{(logs.stdout + logs.stderr).strip().splitlines()[-3:]}",
+            flush=True,
+        )
+
+    def wait_until_listening(self) -> None:
+        deadline = time.monotonic() + LISTEN_SECONDS
+        while time.monotonic() < deadline:
+            logs = self.run(["docker", "logs", self.container(SERVICE)])
+            if LISTENING in logs.stdout + logs.stderr:
+                return
+            time.sleep(0.5)
+        raise ProbeFailed("U14: the service did not listen in time")
+
+    @property
+    def token_path(self) -> Path:
+        return Path(self.environment["HOME"]) / LOGIN_DIRECTORY
+
+
+class Cell(StrEnum):
+    UNIT = "unit"
+    SMOKE = "smoke"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=scratch_directory, required=True)
+    parser.add_argument("--cell", type=Cell, choices=list(Cell), default=Cell.UNIT)
     arguments = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupt)
+    probe_class = SmokeProbe if arguments.cell is Cell.SMOKE else UnitProbe
     try:
-        with UnitProbe(arguments.scratch) as probe:
+        with probe_class(arguments.scratch) as probe:
             probe.drive()
     except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
         print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)

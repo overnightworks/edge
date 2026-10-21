@@ -245,6 +245,7 @@ def start_unit(
     repository: Path = compose.REPOSITORY,
     verifier: barrier.Verifier = barrier.PROVEN_OVER_HTTP,
     check: setup.SetupCheck = setup.run_setup_check,
+    watch: compose.Watch = compose.SETTLED,
 ) -> int:
     if terminal.refused_without_terminal(START):
         return ApplyExit.REFUSED
@@ -289,7 +290,7 @@ def start_unit(
     if not terminal.confirmed(f"start {key}"):
         _complain(START, "aborted, nothing changed")
         return ApplyExit.REFUSED
-    return _open(engine, marks, ingress, key, services, read, fleet.config)
+    return _open(engine, marks, ingress, key, services, read, fleet.config, watch)
 
 
 def _switched_off_again_line(key: str, current: switches.Mark | None) -> str:
@@ -323,14 +324,14 @@ def _open(
     services: tuple[str, ...],
     read: switches.Mark | None,
     config: dict,
+    watch: compose.Watch,
 ) -> int:
     try:
         with marks.lock():
             if changed := marks.changed(key, read):
                 return _refused_before_up(key, changed.current)
             engine.start(key, services)
-            observed_on = compose.is_up(engine.states(), config, services)
-            if not observed_on:
+            if engine.down_while_watched(config, services, watch):
                 _complain(START, f"partial, {key} is not on after the start; its switch stays")
                 return ApplyExit.REFUSED
             try:

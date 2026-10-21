@@ -274,16 +274,24 @@ def _since_of(changed: switches.Changed) -> str:
 
 
 def _unobserved(
-    engine: compose.Compose, plans: Sequence[UnitPlan], config: Mapping[str, Any]
+    engine: compose.Compose,
+    plans: Sequence[UnitPlan],
+    config: Mapping[str, Any],
+    watch: compose.Watch,
 ) -> list[UnitPlan]:
+    """The plans whose result is not observed: a unit switched on counts only when its services
+    stay up through the watch, the way a recreated core service does."""
+    switched_on = [plan for plan in plans if plan.action is Action.ON]
+    watched = tuple(dict.fromkeys(service for plan in switched_on for service in plan.services))
+    down = set(engine.down_while_watched(config, watched, watch)) if watched else set()
     states = engine.states()
     return [
         plan
         for plan in plans
-        if not (
-            compose.is_up(states, config, plan.services)
+        if (
+            down.intersection(plan.services)
             if plan.action is Action.ON
-            else compose.is_gone(states, plan.services)
+            else not compose.is_gone(states, plan.services)
         )
     ]
 
@@ -895,7 +903,7 @@ def _observe_and_record(
     """The started plans not observed as planned; each unit observed on records the followers
     that started with it (#89, P15)."""
     progress.step = "observe the result"
-    mismatched = _unobserved(engine, started, planned.fleet.config)
+    mismatched = _unobserved(engine, started, planned.fleet.config, core_phase.watch)
     switched_on = [plan for plan in started if plan.action is Action.ON and plan not in mismatched]
     core_phase.record_switched_on(planned, switched_on, progress)
     return mismatched
