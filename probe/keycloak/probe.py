@@ -166,7 +166,9 @@ LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
-SUBSCRIPTION_GROUP = "/ai-subscription"  # the agent service's subscription group
+# the subscription group the agent service reads from agent-providers 0.6.0 on
+# (#218 switches service.toml)
+SUBSCRIPTION_GROUP = "/ai-subscription"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as Cloudflare saw it
