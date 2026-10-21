@@ -1,8 +1,0 @@
-claim_id = "8a780023b7ce44048e164d4bf4454828"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "486a8659700b5672224d92e94d93bfd1c0a2f652"
-branch = "claude/issue-209-probe-beside-live"
-scope = [".github/workflows/ci.yml", "README.md", "probe/edge_copy.py", "probe/keycloak/README.md", "probe/keycloak/compose.probe.yaml", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py"]
-opened_commit = "b884225b0017e209d721804f65b7f61c55ce3374"
-whole_reason = "The Keycloak probe's own ports, its copy of the stack and its README, and the tests that pin them."
