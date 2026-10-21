@@ -335,6 +335,7 @@ IMPORT_TYPES = {
     "realm": "realm",
     "user": "users",
     "group": "groups",
+    "sub-group": "groups",
     "role": "roles",
     "client": "clients",
     "client-scope": "clientScopes",
@@ -353,6 +354,7 @@ IMPORT_TYPES = {
     "client-profiles": "clientProfiles",
     "message-bundles": "messageBundles",
     "user-profile": "userProfile",
+    "organization": "organizations",
     "workflow": "workflows",
 }
 

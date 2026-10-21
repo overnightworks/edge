@@ -1090,7 +1090,7 @@ only in the admin console; no file lists a person. The songmaker, hopin and pres
 clients are in `realm.yaml` before the go-live, each secret the file
 `~/.secrets/keycloak/clients/<clientId>` (the go-live makes it; presentator's one client serves
 `presentator` and `presentator-talk`); the other app clients
-arrive at K13/K14, after K3c.
+arrive at K13/K14.
 
 songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
 service accounts are the only users `realm.yaml` lists, each holding the realm role
@@ -1123,18 +1123,29 @@ caches for up to 30 days under the same URL; a look change therefore names a
 new stylesheet in `theme.properties` (`styles=`) instead of editing one in
 place.
 
-> **The apply adds and changes, and never deletes.** `compose.yaml` sets every
-> `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`, the cache off, and
-> `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. A group, client, client scope, role, flow, identity
-> provider or component that `realm.yaml` or `master.yaml` no longer lists, and any subgroup, flow,
-> role or client made in the admin console, stays, with its memberships. Renaming a group in the
-> YAML therefore creates the new group and leaves the old one. The probe's proofs 3c and 3d drive
-> this. Two console additions inside a listed object still go on the next apply (the measured
-> residue): a protocol mapper added to the scope `groups`, and a step added to the flow
-> `browser-mfa-forms`. A console edit to a field the YAML lists is reverted. Deleting a group,
-> client or role is done in the admin console, after a backup, with your yes. The realm observer
-> (`realm-observer`, `src/edge/realm/observe.py`) reads the realms before and after, and
-> `edge.realm` compares the two reads and prints one line per change with its realm.
+> **The apply adds and changes, and never deletes what the file does not declare.**
+> `compose.yaml` sets every `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`,
+> the cache off, and `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. What `realm.yaml` and
+> `master.yaml` declare belongs to the file; everything else stays, and users are never deleted:
+> - **Stays:** every group, subgroup, client, scope, role, flow, identity provider, component and
+>   person made in the admin console, with its memberships; and an object the file stopped
+>   listing. Renaming a group in the YAML therefore creates the new group and leaves the old one.
+> - **Reset:** a console change to an object the file declares is reset to the file on the next
+>   apply, together with what hangs off that object. The probe (proofs 3c and 3d) measures these:
+>   - a step or subflow in a declared flow (`browser-mfa-forms`, `direct-grant-mfa-totp`);
+>   - a mapper on a declared client scope or client (the scope `groups`);
+>   - a default or optional scope on a declared client that lists its scopes (songmaker, hopin,
+>     presentator), while a client without scope lists (`agent-service`) keeps its additions;
+>   - a client role on a listed service account (`service-account-songmaker`); its realm roles
+>     and groups stay;
+>   - a service account enabled in the console on a declared client (hopin), which removes the
+>     service-account user with it (driven without a membership);
+>   - a flow binding override on a declared client.
+>
+>   A change to a declared object is made in the file, by an agent, never in the console. Deleting
+>   a group, client or role is done in the admin console, after a backup, with your yes. The realm
+>   observer (`realm-observer`, `src/edge/realm/observe.py`) reads the realms before and after,
+>   and `edge.realm` compares the two reads and prints one line per change with its realm.
 
 ### Keycloak secrets
 

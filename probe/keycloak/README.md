@@ -26,10 +26,13 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
   `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
   runs the realm observer (`realm-observer`, #66) around an apply and holds when it lists exactly
-  the two console additions the apply still removes (a mapper on the scope `groups`, a step in
-  `browser-mfa-forms`) and the console subgroup with its member, flow, default scope and the service
-  account's role are still there; proof 3d holds that a changed YAML which drops a group and a
-  client deletes neither; proof 9 checks the
+  the console changes to declared objects that the apply resets (a mapper on the scope `groups`,
+  a step in `browser-mfa-forms`, a subflow under `direct-grant-mfa-totp`, a default scope and a
+  flow binding override on songmaker, a client role on its service account, a service account
+  enabled on hopin; the README's blockquote after „Theme and language“ states the class) and the
+  console subgroup with its member, flows, role and group on service accounts, and the default
+  scope on `agent-service` (a client without scope lists) are still there; proof 3d holds that a changed YAML which drops a group, a client
+  and the realm role `agent-workload` deletes none of them nor the role's mappings; proof 9 checks the
   observer's container (65534, read-only, the keycloak network alone, its secret a file), an
   escaped line for a group named with ESC and a newline, that SIGINT and SIGTERM, sent as its
   container runs and as its inventory arrives, leave no container, and that an exit 0 carries

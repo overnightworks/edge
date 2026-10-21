@@ -2,9 +2,11 @@
 # People and memberships are managed in the admin console, never here. The apply adds and changes
 # and never deletes (IMPORT_MANAGED_* is no-delete in compose.yaml): removing or renaming a group
 # below leaves the old group and its memberships in Keycloak, and so does a subgroup the console
-# made under /apps or /ki-abo. What the apply still removes from a listed object is only the
-# console additions to it that the README, "Start and apply", names. Deleting anything is done in
-# the admin console, after a backup.
+# made under /apps or /ki-abo. What this file declares belongs to it: a console change to a
+# declared object (a flow step, a mapper, a client's scope list, a service account's client role,
+# a flow binding override) is reset on the next apply. The README blockquote after "Theme and
+# language" states that class with its measured examples; change a declared object here.
+# Deleting anything is done in the admin console, after a backup.
 # The songmaker, hopin and presentator clients are here before the go-live; the other app clients
 # arrive with each app's cutover, together with its live redirect and logout URLs.
 realm: hallucinai
