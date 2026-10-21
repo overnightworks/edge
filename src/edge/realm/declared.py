@@ -6,19 +6,22 @@ A kind is named as the observer names it (`edge.realm.observe`), so a declared i
 with an observed one directly.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
 import yaml
 
-from edge.realm.observe import REALM_ROLE
+from edge.realm import observe
 
-GROUP = "group"
-CLIENT = "client"
-CLIENT_SCOPE = "client scope"
-FLOW = "flow"
-IDENTITY_PROVIDER = "identity provider"
+# The kinds compared, in the order they are named: each is the observer's own name for it.
+KINDS = (
+    observe.GROUP.name,
+    observe.CLIENT.name,
+    observe.CLIENT_SCOPE.name,
+    observe.REALM_ROLE,
+    observe.FLOW.name,
+    observe.IDP.name,
+)
 
 type Identities = dict[str, frozenset[str]]  # observer kind -> identities
 
@@ -32,36 +35,55 @@ class DeclaredRealm:
 
 
 class DeclaredError(Exception):
-    """A realm file is no YAML mapping with a `realm`."""
+    """A realm file is no YAML mapping with a `realm`, or declares a list in another shape."""
 
 
 def declared_realm(text: str) -> DeclaredRealm:
-    """The identities one realm file declares."""
+    """The identities one realm file declares. An empty list (`groups:`) declares nothing."""
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as error:
         raise DeclaredError("a realm file is no YAML") from error
-    if not isinstance(document, dict) or "realm" not in document:
+    if not isinstance(document, dict) or not isinstance(document.get("realm"), str):
         raise DeclaredError("a realm file names no realm")
+    roles = document.get("roles") or {}
+    if not isinstance(roles, dict):
+        raise DeclaredError("a realm file's roles are no mapping")
+    group, client, scope, role, flow, provider = KINDS
     return DeclaredRealm(
         document["realm"],
         {
-            GROUP: frozenset(_group_paths(document.get("groups", ()), "")),
-            CLIENT: _names(document.get("clients", ()), "clientId"),
-            CLIENT_SCOPE: _names(document.get("clientScopes", ()), "name"),
-            REALM_ROLE: _names((document.get("roles") or {}).get("realm", ()), "name"),
-            FLOW: _names(document.get("authenticationFlows", ()), "alias"),
-            IDENTITY_PROVIDER: _names(document.get("identityProviders", ()), "alias"),
+            group: frozenset(_group_paths(_entries(document, "groups"), "")),
+            client: _names(_entries(document, "clients"), "clientId"),
+            scope: _names(_entries(document, "clientScopes"), "name"),
+            role: _names(_entries(roles, "realm"), "name"),
+            flow: _names(_entries(document, "authenticationFlows"), "alias"),
+            provider: _names(_entries(document, "identityProviders"), "alias"),
         },
     )
 
 
-def _names(objects: Iterable[Mapping[str, Any]], key: str) -> frozenset[str]:
-    return frozenset(item[key] for item in objects)
+def _entries(parent: dict, key: str) -> list[dict]:
+    """The mappings listed under `key`; absent or empty is none."""
+    listed = parent.get(key) or []
+    if not isinstance(listed, list) or not all(isinstance(entry, dict) for entry in listed):
+        raise DeclaredError(f"a realm file's {key} are no list of mappings")
+    return listed
 
 
-def _group_paths(groups: Iterable[Mapping[str, Any]], parent: str) -> Iterable[str]:
+def _name(entry: dict, key: str) -> str:
+    name = entry.get(key)
+    if not isinstance(name, str):
+        raise DeclaredError(f"a realm file's entry has no {key}")
+    return name
+
+
+def _names(entries: list[dict], key: str) -> frozenset[str]:
+    return frozenset(_name(entry, key) for entry in entries)
+
+
+def _group_paths(groups: list[dict], parent: str) -> Iterable[str]:
     for group in groups:
-        path = f"{parent}/{group['name']}"
+        path = f"{parent}/{_name(group, 'name')}"
         yield path
-        yield from _group_paths(group.get("subGroups", ()), path)
+        yield from _group_paths(_entries(group, "subGroups"), path)

@@ -58,7 +58,7 @@ sys.path.insert(0, str(REPO / "src"))
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
 from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
-from edge.realm.observe import IMPORT_CHECKSUM, Inventory  # noqa: E402
+from edge.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
 
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
@@ -2397,11 +2397,19 @@ class Probe:
         fails here loudly. Returns the stand proof 12 drives."""
         stand = RealmStepStand.at(self.stack)
         realm = stand.realm
-        lines = realm.only_in_keycloak_lines(realm.observer.inventory())
+        inventory = realm.observer.inventory()
+        lines = realm.only_in_keycloak_lines(inventory)
         expect(
-            lines[0] == "realm: nothing only in Keycloak",
+            lines[0] == reconcile.NOTHING_ONLY_IN_KEYCLOAK,
             f"a fresh import lists {[line for line in lines if ONLY_IN_KEYCLOAK in line]}",
         )
+        missing = [
+            f"{realm_name} {kind} {identity}"
+            for realm_name, kinds in reconcile.BUILT_IN.items()
+            for kind, identities in kinds.items()
+            for identity in sorted(identities - inventory[realm_name].get(kind, {}).keys())
+        ]
+        expect(not missing, f"pinned built-ins a fresh import does not hold: {missing}")
         return stand
 
     def the_realm_step(self, stand: RealmStepStand) -> None:
@@ -2569,9 +2577,9 @@ class Probe:
             },
         )
         return [
-            f"{ONLY_IN_KEYCLOAK}{REALM} group /{STEP_CONSOLE_GROUP}",
-            f"{ONLY_IN_KEYCLOAK}{REALM} client {STEP_CONSOLE_CLIENT}",
-            f"{ONLY_IN_KEYCLOAK}{REALM} flow {STEP_CONSOLE_FLOW}",
+            f"{ONLY_IN_KEYCLOAK}{REALM} {GROUP.name} /{STEP_CONSOLE_GROUP}",
+            f"{ONLY_IN_KEYCLOAK}{REALM} {CLIENT.name} {STEP_CONSOLE_CLIENT}",
+            f"{ONLY_IN_KEYCLOAK}{REALM} {FLOW.name} {STEP_CONSOLE_FLOW}",
         ]
 
     def step_lists_what_is_only_in_keycloak(self, lines: tuple[str, ...], made: list[str]) -> None:
@@ -2592,9 +2600,9 @@ class Probe:
             ),
             "a console object did not survive the step",
         )
-        unread = [line for line in lines if line.startswith("realm: not read, so not listed: ")]
+        unread = [line for line in lines if line.startswith(reconcile.NOT_READ)]
         expect(
-            len(unread) == 1 and "default groups" in unread[0] and "workflows" in unread[0],
+            len(unread) == 1 and "defaultGroups" in unread[0] and "workflows" in unread[0],
             f"the unread kinds are said as {unread}",
         )
 

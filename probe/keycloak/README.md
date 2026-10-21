@@ -76,7 +76,8 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `entrypoint.sh` plans the step; and that a group, a client and a top-level flow made in the
   console survive a step that runs, are listed as only in Keycloak with no removal line, and the
   unread kinds are named on one line (#248). Proof 3a also holds that the freshly imported realms
-  list nothing only in Keycloak, so a Keycloak upgrade that adds a built-in fails it. Proof EV2 (#181) signs in, sends a wrong
+  list nothing only in Keycloak and hold every pinned built-in, so a Keycloak upgrade that adds or
+  drops a built-in fails it. Proof EV2 (#181) signs in, sends a wrong
   password and logs out through the edge entrypoint, sending `Forwarded` the way Cloudflare's
   rule sets it (`external/cloudflare.tf`) next to a forged `X-Forwarded-For`, and holds when the
   user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with exactly the

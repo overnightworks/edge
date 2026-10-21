@@ -176,10 +176,12 @@ that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). Whatever exists onl
 stays; deleting a group, client or role the YAML no longer lists is done in the admin console, with
 your yes, after a backup. After the change lines the step prints one line per group, client,
 client scope, realm role, top-level flow and identity provider that the files do not declare
-(`realm: only in Keycloak: hallucinai group /console-made`), or `realm: nothing only in Keycloak`,
-and one line naming the kinds it cannot read (default groups, workflows and the like). Keycloak's
+(`realm: only in Keycloak: hallucinai group /console-made`), or `realm: nothing only in Keycloak among groups, clients, client scopes, realm roles, flows and
+identity providers`, and one line naming the kinds it cannot read (`defaultGroups`, `workflows`
+and the like, as the realm files name them). Keycloak's
 own objects are left out: flows by their `builtIn` flag, the rest by a list pinned to Keycloak
-26.8.1 in `src/edge/realm/reconcile.py`, which the probe's proof 3a keeps true. The list appears
+26.8.1 in `src/edge/realm/reconcile.py`, which the probe's proof 3a keeps true in both
+directions: a fresh import holds nothing only in Keycloak, and holds every pinned entry. The list appears
 only when the step runs and never changes its outcome. A console change to a declared object is
 reset by the next apply that runs the step, not by every apply.
 

@@ -18,12 +18,15 @@ import pytest
 import yaml
 
 from edge import compose, core, switches
-from edge.realm import reconcile
+from edge.realm import observe, reconcile
 from edge.realm.reconcile import RealmAction, RealmPlan
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
 ATTRIBUTE = "de.adorsys.keycloak.config.import-checksum-default"
+
+
+GROUP = observe.GROUP.name
 
 
 def group(name: str, members: int = 0) -> dict:
@@ -32,7 +35,7 @@ def group(name: str, members: int = 0) -> dict:
 
 def inventory(*groups: dict, **kinds: dict[str, dict]) -> dict:
     """Both realms as the observer reads them: the groups, and other kinds by identity."""
-    entries = {"group": {entry["fields"]["name"]: entry for entry in groups}}
+    entries = {GROUP: {entry["fields"]["name"]: entry for entry in groups}}
     return {"master": {}, "hallucinai": {**entries, **kinds}}
 
 
@@ -634,6 +637,7 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
     result = world.step()
 
     assert "hallucinai: addition group operators (2 members)" in result.lines
+    assert not [line for line in result.lines if "only in Keycloak" in line]
     assert result.failure == (
         "realm: applied and observed, but the record could not be written "
         "(cannot write applied.json (Permission denied)); the next run repeats the step"
@@ -642,17 +646,15 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
 
 # --- What exists only in Keycloak --------------------------------------------------------------
 
-NOT_READ = "realm: not read, so not listed: "
-
 
 @pytest.mark.parametrize(
     ("kind", "identity", "made"),
     [
-        ("client", "console-client", entity(clientId="console-client", enabled=True)),
-        ("client scope", "console-scope", entity(name="console-scope")),
-        ("realm role", "console-role", entity(name="console-role")),
-        ("flow", "console flow", flow()),
-        ("identity provider", "console-idp", entity(alias="console-idp")),
+        (observe.CLIENT.name, "console-client", entity(clientId="console-client", enabled=True)),
+        (observe.CLIENT_SCOPE.name, "console-scope", entity(name="console-scope")),
+        (observe.REALM_ROLE, "console-role", entity(name="console-role")),
+        (observe.FLOW.name, "console flow", flow()),
+        (observe.IDP.name, "console-idp", entity(alias="console-idp")),
     ],
 )
 def test_an_object_made_in_the_console_is_listed_and_has_no_removal_line(
@@ -667,7 +669,7 @@ def test_an_object_made_in_the_console_is_listed_and_has_no_removal_line(
 
     assert result.failure is None
     assert f"realm: only in Keycloak: hallucinai {kind} {identity}" in result.lines
-    assert "realm: only in Keycloak: hallucinai group console-made" in result.lines
+    assert f"realm: only in Keycloak: hallucinai {GROUP} console-made" in result.lines
     assert [line for line in result.lines if "removal" in line] == []
 
 
@@ -675,19 +677,27 @@ def test_what_the_files_declare_and_keycloak_brings_itself_is_not_listed(world: 
     """Cell 2: nothing else in a realm the files made means nothing is listed."""
     world.after = inventory(
         group("/apps"),
-        flow={
-            "browser": flow(built_in=True),
-            "sub flow": flow(top_level=False),
+        **{
+            observe.FLOW.name: {
+                "browser": flow(built_in=True),
+                "sub flow": flow(top_level=False),
+            },
+            observe.CLIENT.name: {
+                name: entity(clientId=name) for name in ("account", "realm-management")
+            },
+            observe.REALM_ROLE: {
+                "default-roles-hallucinai": entity(name="default-roles-hallucinai")
+            },
         },
-        client={name: entity(clientId=name) for name in ("account", "realm-management")},
-        **{"realm role": {"default-roles-hallucinai": entity(name="default-roles-hallucinai")}},
     )
-    world.after["master"] = {"client": {"hallucinai-realm": entity(clientId="hallucinai-realm")}}
+    world.after["master"] = {
+        observe.CLIENT.name: {"hallucinai-realm": entity(clientId="hallucinai-realm")}
+    }
     world.before = world.after
 
     result = world.step()
 
-    assert result.lines[2] == "realm: nothing only in Keycloak"
+    assert result.lines[2] == reconcile.NOTHING_ONLY_IN_KEYCLOAK
     assert len(result.lines) == 4
 
 
@@ -701,7 +711,7 @@ def test_a_declared_group_in_a_declared_sub_tree_is_not_listed(world: World) -> 
     lines = world.step().lines
 
     assert [line for line in lines if "only in Keycloak" in line] == [
-        "realm: only in Keycloak: hallucinai group /other"
+        f"realm: only in Keycloak: hallucinai {GROUP} /other"
     ]
 
 
@@ -709,20 +719,23 @@ def test_the_kinds_that_cannot_be_read_are_named_on_one_line(world: World) -> No
     """Cell 3."""
     lines = world.step().lines
 
-    unread = [line for line in lines if line.startswith(NOT_READ)]
+    unread = [line for line in lines if line.startswith(reconcile.NOT_READ)]
     assert len(unread) == 1
-    assert "default groups" in unread[0]
+    assert "defaultGroups" in unread[0]
     assert "workflows" in unread[0]
+    assert ":" not in unread[0].removeprefix(reconcile.NOT_READ)
 
 
 def test_the_list_holds_names_only(world: World) -> None:
     """Cell 6: no attribute and no secret of a listed object is in any line."""
     made = entity(clientId="console-client", secret="planted-secret", attributes={"k": "planted"})
-    world.before = world.after = inventory(group("/apps"), client={"console-client": made})
+    world.before = world.after = inventory(
+        group("/apps"), **{observe.CLIENT.name: {"console-client": made}}
+    )
 
     lines = world.step().lines
 
-    assert "realm: only in Keycloak: hallucinai client console-client" in lines
+    assert f"realm: only in Keycloak: hallucinai {observe.CLIENT.name} console-client" in lines
     assert not [line for line in lines if "planted" in line]
 
 
@@ -735,15 +748,74 @@ def test_a_console_name_with_an_escape_stays_one_line(world: World) -> None:
     assert not [line for line in lines if "\x1b" in line or "\n" in line]
 
 
-def test_realm_files_that_cannot_be_read_leave_the_step_as_it_ended(world: World) -> None:
-    world.write_file("realm.yaml", "realm: [unclosed\n")
+UNLISTED = "realm: only in Keycloak: not listed, the realm files could not be read"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "realm: [unclosed\n",
+        "realm: [a, b]\n",
+        "realm: hallucinai\nclients:\n  - secret: s\n",
+        "realm: hallucinai\nclients:\n  - web\n",
+        "realm: hallucinai\ngroups:\n  - name: a\n    subGroups: oops\n",
+    ],
+)
+def test_realm_files_that_cannot_be_read_leave_the_step_as_it_ended(
+    world: World, text: str
+) -> None:
+    world.write_file("realm.yaml", text)
+    without_the_list = world.step()
+    world.write_file("realm.yaml", "realm: hallucinai\n")
+    expected = world.step()
+
+    assert without_the_list.failure is None
+    assert without_the_list.lines[-1] == UNLISTED
+    assert without_the_list.lines[:-1] == expected.lines[: len(without_the_list.lines) - 1]
+
+
+def test_a_file_in_no_unreadable_encoding_leaves_the_step_as_it_ended(world: World) -> None:
+    (world.root / "keycloak" / "realm.yaml").write_bytes(b"realm: \xff\xfe\n")
 
     result = world.step()
 
     assert result.failure is None
-    assert (
-        result.lines[-1] == "realm: only in Keycloak: not listed, the realm files could not be read"
-    )
+    assert result.lines[-1] == UNLISTED
+
+
+def test_a_key_left_empty_in_a_realm_file_still_records_and_lists(world: World) -> None:
+    """The list never changes the outcome: `clients: null` reads as no clients."""
+    world.write_file("realm.yaml", "realm: hallucinai\nclients: null\ngroups:\n")
+    world.before = world.after = inventory(group("/console"))
+
+    result = world.step()
+
+    assert result.failure is None
+    assert f"realm: only in Keycloak: hallucinai {GROUP} /console" in result.lines
+    assert world.plan().settled
+
+
+def test_a_realm_the_files_name_that_was_not_observed_is_one_line_not_a_traceback(
+    world: World,
+) -> None:
+    world.write_file("master.yaml", "realm: elsewhere\n")
+
+    result = world.step()
+
+    assert result.failure is None
+    assert "realm: only in Keycloak: elsewhere not listed, it was not observed" in result.lines
+    assert reconcile.NOTHING_ONLY_IN_KEYCLOAK not in result.lines
+
+
+def test_a_failed_step_lists_nothing_only_in_keycloak(world: World) -> None:
+    """Cell 5: a failure after config-cli (the checksum read) says no list."""
+    world.failing = {"checksums"}
+    world.after = inventory(group("/apps"), group("console-made"))
+
+    result = world.step()
+
+    assert result.failure is not None
+    assert not [line for line in result.lines if "only in Keycloak" in line]
 
 
 # --- edge-backup is stopped, not killed --------------------------------------------------------
@@ -783,7 +855,7 @@ def interrupted(*_):
         file.write("interrupted\\n")
     raise KeyboardInterrupt
 signal.signal(signal.SIGINT, interrupted)
-from edge.realm import reconcile
+from edge.realm import observe, reconcile
 try:
     reconcile.run_edge_backup(sys.argv[2:], 600, say=print)
 except KeyboardInterrupt:

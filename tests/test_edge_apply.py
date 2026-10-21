@@ -601,6 +601,7 @@ def switch(
         run_setup: setup.SetupRunner | None = None,
         at_a_terminal: bool = True,
         ensure_environment: apply.EnsureEnvironment = trusted_environment,
+        installed_backup: bool = False,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -617,7 +618,7 @@ def switch(
             ingress.watch,
             git or scripted_git,
             ensure_environment,
-            realm_backup,
+            None if installed_backup else realm_backup,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -4490,6 +4491,25 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
     assert exit_code == 0
     assert "nothing to change" in out
     assert (realm_backup.asked, scripted.realm_applies) == (["backup", "restore test"], 1)
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_the_waiting_line_of_a_stopped_edge_backup_carries_the_prefix_of_the_steps_lines(
+    switch, repository, monkeypatch
+):
+    """Cell 7, through the wiring `apply` gives the installed backup."""
+    monkeypatch.setattr(reconcile, "BACKUP_SECONDS", 1)
+    monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.2)
+    edge_backup = repository / ".venv/bin/edge-backup"
+    edge_backup.parent.mkdir(parents=True)
+    edge_backup.write_text("#!/bin/sh\nexec sleep 30\n")
+    edge_backup.chmod(0o755)
+
+    exit_code, out, _ = switch(installed_backup=True)
+
+    assert exit_code == 1
+    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for edge-backup to clean up" in out
+    assert "\nrealm: waiting" not in out
 
 
 @pytest.mark.usefixtures("realm_unit")

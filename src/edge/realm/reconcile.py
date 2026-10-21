@@ -35,7 +35,17 @@ from edge import compose, core, switches
 from edge import realm as realm_lines
 from edge.realm import OBSERVER_SERVICE, Kind, new_digest_key
 from edge.realm import declared as declared_identities
-from edge.realm.observe import COVERAGE, REALM_ROLE, Entity, Gap, Inventory, keys
+from edge.realm.observe import (
+    CLIENT,
+    CLIENT_SCOPE,
+    COVERAGE,
+    FLOW,
+    REALM_ROLE,
+    Entity,
+    Gap,
+    Inventory,
+    keys,
+)
 
 REALM_UNIT = "keycloak"
 CONFIG_CLI = "keycloak-config-cli"
@@ -49,6 +59,12 @@ RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
 
 type Checksums = dict[str, dict[str, str]]  # realm -> import-checksum attribute -> value
+NOTHING_ONLY_IN_KEYCLOAK = (
+    "realm: nothing only in Keycloak among "
+    + ", ".join(f"{kind}s" for kind in declared_identities.KINDS[:-1])
+    + f" and {declared_identities.KINDS[-1]}s"
+)
+NOT_READ = "realm: not read, so not listed: "
 type Say = Callable[[str], None]  # says one line of the step, with `hal apply`'s prefix
 
 
@@ -355,11 +371,7 @@ class Realm:
             f"realm: applied keycloak/*.yaml; pre-apply snapshot {progress.snapshot} "
             f"({backup_seconds:.0f}s backup, {test_seconds:.0f}s restore test)"
         )
-        lines = (
-            timing,
-            *_change_lines(before, after, progress.snapshot),
-            *self.only_in_keycloak_lines(after),
-        )
+        lines = (timing, *_change_lines(before, after, progress.snapshot))
         try:
             self.record.write(CONFIG_CLI, {**plan.entry, **_flat(checksums)}, followed)
         except core.CoreError as error:
@@ -368,17 +380,24 @@ class Realm:
                 f"realm: applied and observed, but the record could not be written ({error}); "
                 "the next run repeats the step",
             )
-        return StepResult(lines)
+        return StepResult((*lines, *self.only_in_keycloak_lines(after)))
 
     def only_in_keycloak_lines(self, after: Inventory) -> list[str]:
-        """What the step leaves alone: the list never changes the step's outcome."""
+        """What the step leaves alone, said only once the step has succeeded. A realm file that
+        cannot be read as a declaration shortens the list and nothing else."""
         try:
             files = [(self.repository / name).read_text() for name in REALM_FILES]
             declared = [declared_identities.declared_realm(text) for text in files]
-        except (OSError, declared_identities.DeclaredError):
+        except (OSError, UnicodeDecodeError, declared_identities.DeclaredError):
             return ["realm: only in Keycloak: not listed, the realm files could not be read"]
+        absent = [realm for realm in declared if realm.realm not in after]
         found = only_in_keycloak(after, declared)
-        return [*(_only_in_keycloak_line(item) for item in found), *_not_read_lines(found)]
+        return [
+            *(_only_in_keycloak_line(item) for item in found),
+            *(_absent_realm_line(realm.realm) for realm in absent),
+            *([] if found or absent else [NOTHING_ONLY_IN_KEYCLOAK]),
+            _not_read_line(),
+        ]
 
     def _timed[T](self, action: Callable[[], T]) -> tuple[T, float]:
         started = self.clock()
@@ -441,13 +460,13 @@ _BUILT_IN_SCOPES = keys(
 _BUILT_IN_ROLES = keys("offline_access uma_authorization")
 BUILT_IN: Mapping[str, declared_identities.Identities] = {
     "master": {
-        declared_identities.CLIENT: _BUILT_IN_CLIENTS | {"master-realm", "hallucinai-realm"},
-        declared_identities.CLIENT_SCOPE: _BUILT_IN_SCOPES,
+        CLIENT.name: _BUILT_IN_CLIENTS | {"master-realm", "hallucinai-realm"},
+        CLIENT_SCOPE.name: _BUILT_IN_SCOPES,
         REALM_ROLE: _BUILT_IN_ROLES | {"admin", "create-realm", "default-roles-master"},
     },
     "hallucinai": {
-        declared_identities.CLIENT: _BUILT_IN_CLIENTS | {"realm-management"},
-        declared_identities.CLIENT_SCOPE: _BUILT_IN_SCOPES,
+        CLIENT.name: _BUILT_IN_CLIENTS | {"realm-management"},
+        CLIENT_SCOPE.name: _BUILT_IN_SCOPES,
         REALM_ROLE: _BUILT_IN_ROLES | {"default-roles-hallucinai"},
     },
 }
@@ -465,9 +484,10 @@ class OnlyInKeycloak:
 def only_in_keycloak(
     inventory: Inventory, declared: Iterable[declared_identities.DeclaredRealm]
 ) -> list[OnlyInKeycloak]:
-    """What `inventory` holds of the declared kinds beyond the files and Keycloak's own."""
+    """What `inventory` holds of the declared kinds beyond the files and Keycloak's own, in the
+    realms it holds."""
     found = []
-    for realm in declared:
+    for realm in (realm for realm in declared if realm.realm in inventory):
         for kind, declared_names in realm.identities.items():
             built_in = BUILT_IN.get(realm.realm, {}).get(kind, frozenset())
             objects = inventory[realm.realm].get(kind, {})
@@ -481,7 +501,7 @@ def only_in_keycloak(
 
 def _made_by_the_operator(kind: str, entity: Entity) -> bool:
     """A flow is the operator's when it is top-level and Keycloak does not flag it built in."""
-    if kind != declared_identities.FLOW:
+    if kind != FLOW.name:
         return True
     return bool(entity["fields"]["topLevel"]) and not entity["fields"]["builtIn"]
 
@@ -491,14 +511,13 @@ def _only_in_keycloak_line(item: OnlyInKeycloak) -> str:
     return f"realm: only in Keycloak: {compose.printable(item.realm)} {item.kind} {identity}"
 
 
-def _not_read_lines(found: list[OnlyInKeycloak]) -> list[str]:
-    """The empty-list line when nothing was found, then the one that names what is not read."""
+def _absent_realm_line(realm: str) -> str:
+    return f"realm: only in Keycloak: {compose.printable(realm)} not listed, it was not observed"
+
+
+def _not_read_line() -> str:
+    """What the list cannot see: the observer's named gaps, by their keys in the realm files."""
     unread = "; ".join(
-        coverage.why
-        for name, coverage in COVERAGE.items()
-        if isinstance(coverage, Gap) and "." not in name
+        name for name, coverage in COVERAGE.items() if isinstance(coverage, Gap) and "." not in name
     )
-    return [
-        *([] if found else ["realm: nothing only in Keycloak"]),
-        f"realm: not read, so not listed: {unread}",
-    ]
+    return f"{NOT_READ}{unread}"
