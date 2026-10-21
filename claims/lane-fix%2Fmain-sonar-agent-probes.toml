@@ -1,0 +1,8 @@
+claim_id = "42165173b9e24681bea0994c65d31a88"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "0cd3642392caa31da3b1c274e97671b45c282353"
+branch = "fix/main-sonar-agent-probes"
+scope = ["probe/agent-service/capture.py", "probe/agent-service/image.py", "tests/test_agent_egress.py", "tests/test_agent_service_image.py"]
+opened_commit = "055da4d1c7b7ad22aee8196789b1939658e5ea38"
+whole_reason = "One fix: main's ten Sonar findings in the two agent-service probe scripts and the tests that pin them."
