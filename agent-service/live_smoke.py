@@ -11,10 +11,11 @@ The run recreates the service, takes the idle
 memory, runs the paid turn (L2, L3), the memory peak (L7), the cancelled turn (L4, counts only), the
 searches for a leaked secret (L6) and the egress cells of the running container (L5: E6-E10, E12).
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
-L7's figures are the idle `memory.current` of the recreated service and its `memory.peak` right after
-the one turn (an upper bound of the answer phase, it includes the start). A refusal `unauthorized`
+L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
+right after the one turn (an upper bound of the answer phase, it includes the start). A refusal `unauthorized`
 means expired tokens, `forbidden` a missing `/ki-abo` or tokens that do not share an `azp`.
-`agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile `apply`).
+`agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
+`apply`).
 
 The compose project and the egress gateway's address are read from `docker compose config` of the
 repository this file sits in. The in-container smoke is `smoke.py`, used as it is, and the egress
