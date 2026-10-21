@@ -227,7 +227,7 @@ class AgentServiceSetup:
 
     def directory_gap(self, directory: Path) -> Gap | None:
         try:
-            status = directory.lstat()
+            status = os.lstat(directory)
         except FileNotFoundError:
             return Gap(GapKind.DIRECTORY_MISSING, f"{directory} does not exist", directory)
         return self.judge_directory(directory, status)
