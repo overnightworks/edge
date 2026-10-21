@@ -1,8 +1,0 @@
-claim_id = "a515a7f46e494c5196952b36d156fba8"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "486a8659700b5672224d92e94d93bfd1c0a2f652"
-branch = "claude/issue-201-agent-service-unit"
-scope = ["README.md", "agent-service/service.toml", "compose.yaml", "docs/architecture.md", "probe/agent-service/capture.py", "probe/agent-service/compose.probe.yaml", "probe/agent-service/egress.py", "probe/agent-service/unit.py", "sonar-project.properties", "src/home_tools/secrets_manifest.toml", "tests/home/test_secrets_view.py", "tests/test_agent_egress.py", "tests/test_agent_service_unit.py"]
-opened_commit = "d3efa3a6be070efc5626399774f0ae9445ae861c"
-whole_reason = "One unit: its compose service, its config, its login bind and manifest entry, and the probe and tests that prove its containment."
