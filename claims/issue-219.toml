@@ -1,0 +1,8 @@
+claim_id = "20cdda3a9de241688b61ee8cc3c22a78"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "e3ce3f5a910989e83ce57fb3c25cc18edb393f65"
+branch = "claude/issue-219-realm-tool-cannot-delete"
+scope = ["README.md", "compose.yaml", "docs/architecture.md", "keycloak/realm.yaml", "probe/keycloak/probe.py", "src/edge/realm/observe.py", "tests/test_keycloak_probe.py", "tests/test_realm_observe.py"]
+opened_commit = "976a3b7f5ae374ed3b982f570d623037cb4b1dd3"
+whole_reason = "One protection: the tool's switches, the probe that proves them and the residue, the restore drive, and the docs that state the stage-1 route."
