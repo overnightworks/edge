@@ -24,7 +24,6 @@ the container, so the client needs nothing but the standard library of the pinne
 from __future__ import annotations
 
 import argparse
-import errno
 import inspect
 import ipaddress
 import json
@@ -50,8 +49,21 @@ from urllib.parse import urlsplit
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
+sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with live_smoke.py
 
+import egress_observe  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
+from egress_observe import (  # noqa: E402
+    PUBLIC_RESOLVER,
+    PUBLIC_RESOLVER_V6,
+    default_routes,
+    ipv6_interfaces,
+    lan_address,
+    listening_sockets,
+    resolve_name,
+    tcp_connect,
+    udp_connect,
+)
 
 PROJECT = "edge-agentegress-probe"
 LABEL = f"edge.probe={PROJECT}"
@@ -80,9 +92,7 @@ OUTSIDE_NAME = "example.com"
 NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
 UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
 EMBEDDED_RESOLVER = "127.0.0.11"
-PUBLIC_RESOLVER = "1.1.1.1"  # NOSONAR(S1313) a deliberate unreachable target for E6
-PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"  # NOSONAR(S1313) a deliberate unreachable target for E8
-CLIENT_IMPORTS = "import errno, json, selectors, socket, ssl, struct, sys, time\n"
+CLIENT_IMPORTS = "import json, selectors, socket, ssl, struct, sys, time\n"
 
 
 class NotDriven(ProbeFailed):
@@ -190,45 +200,12 @@ class Client:
             return {"connected": True, "reply": first.split(b"\r\n")[0].decode("ascii", "replace")}
         return {"connected": True, "reply": "closed" if not first else "not http"}
 
-    @staticmethod
-    def connect(address: str, port: str) -> dict:
-        family = socket.AF_INET6 if ":" in address else socket.AF_INET
-        with socket.socket(family, socket.SOCK_STREAM) as attempt:
-            attempt.settimeout(8)  # an address nobody owns answers after the ARP retries, ~3 s
-            code = attempt.connect_ex((address, int(port)))
-        return {"result": "connected" if code == 0 else errno.errorcode.get(code, str(code))}
-
-    @staticmethod
-    def udp(address: str, port: str) -> dict:
-        family = socket.AF_INET6 if ":" in address else socket.AF_INET
-        with socket.socket(family, socket.SOCK_DGRAM) as attempt:
-            try:
-                attempt.connect((address, int(port)))
-            except OSError as error:
-                return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
-        return {"result": "routable"}
-
-    @staticmethod
-    def routes() -> dict:
-        with open("/proc/net/route") as table:
-            rows = [line.split() for line in table.read().splitlines()[1:]]
-        return {"default_routes": [row[0] for row in rows if row[1] == "00000000"]}
-
-    @staticmethod
-    def ipv6() -> dict:
-        try:
-            with open("/proc/net/if_inet6") as table:
-                return {"interfaces": sorted({line.split()[-1] for line in table if line.strip()})}
-        except FileNotFoundError:
-            return {"interfaces": []}
-
-    @staticmethod
-    def resolve(name: str) -> dict:
-        try:
-            found = socket.getaddrinfo(name, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        except socket.gaierror as error:
-            return {"addresses": [], "error": errno.errorcode.get(error.errno or 0, str(error))}
-        return {"addresses": sorted({entry[4][0] for entry in found})}
+    connect = staticmethod(tcp_connect)
+    udp = staticmethod(udp_connect)
+    routes = staticmethod(default_routes)
+    ipv6 = staticmethod(ipv6_interfaces)
+    resolve = staticmethod(resolve_name)
+    listeners = staticmethod(listening_sockets)
 
     @staticmethod
     def rawdns(name: str) -> dict:
@@ -282,33 +259,16 @@ class Client:
         return completed
 
     @staticmethod
-    def listeners() -> dict:
-        found = {"tcp": [], "udp": []}
-        for protocol in ("tcp", "udp"):
-            for table, version in ((protocol, 4), (protocol + "6", 6)):
-                with open(f"/proc/net/{table}") as sockets:
-                    rows = [line.split() for line in sockets.read().splitlines()[1:]]
-                for row in rows:
-                    if protocol == "udp" or row[3] == "0A":
-                        found[protocol].append(Client._socket_name(row[1], version))
-        return found
-
-    @staticmethod
-    def _socket_name(hexadecimal: str, version: int) -> str:
-        address, port = hexadecimal.split(":")
-        if version == 4:
-            return f"{socket.inet_ntoa(bytes.fromhex(address)[::-1])}:{int(port, 16)}"
-        words = [bytes.fromhex(address[at : at + 8])[::-1] for at in range(0, 32, 8)]
-        return f"[{socket.inet_ntop(socket.AF_INET6, b''.join(words))}]:{int(port, 16)}"
-
-    @staticmethod
     def main(arguments: list[str]) -> int:
         print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)
         return 0
 
 
 CLIENT_PROGRAM = (
-    CLIENT_IMPORTS + inspect.getsource(Client) + "\nsys.exit(Client.main(sys.argv[1:]))\n"
+    CLIENT_IMPORTS
+    + inspect.getsource(egress_observe)
+    + inspect.getsource(Client)
+    + "\nsys.exit(Client.main(sys.argv[1:]))\n"
 )
 
 
@@ -319,13 +279,6 @@ def free_subnet(taken: list[str]) -> ipaddress.IPv4Network:
         if not any(candidate.overlaps(other) for other in used if other.version == 4):
             return candidate
     raise ProbeFailed(f"no free /24 among {SUBNET_CANDIDATES[0]} ... {SUBNET_CANDIDATES[-1]}")
-
-
-def lan_address() -> str:
-    """The address the host would use to reach the internet; a UDP connect sends nothing."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
-        route.connect((PUBLIC_RESOLVER, 53))
-        return route.getsockname()[0]
 
 
 class Probe:

@@ -10,6 +10,7 @@ run and prints each event's type and the text of the answer; exit 0 when the run
 `--cancel` starts a long answer, holds the stream open a few seconds after `run_started` so
 the CLI run behind it can be seen, then closes it before any answer, to see that the service
 ends that run; it fails when the run succeeded (README "The agent service", "The smoke").
+`live_smoke.py` runs it with the sign-in.
 
 Only the standard library of the service image is used.
 """
@@ -33,6 +34,7 @@ ANSWER_PROMPT = "Reply with the single word: ok"
 LONG_ANSWER_PROMPT = "Count from 1 to 2000, one number per line, and write nothing else."
 CANCEL_HOLD_SECONDS = 3.0
 CANCEL_PROBE_SECONDS = 0.5
+HOLDING_MESSAGE = "holding the stream open"
 RUN_END_EVENTS = {"succeeded", "failed", "cancelled"}
 SERVICE_HOST = "agent-service"
 SERVICE_PORT = 8080
@@ -165,7 +167,7 @@ class Smoke:
             self.say(f"event: {frame.event}")
             self.say_text(frame)
             if cancel and frame.event == "run_started":
-                self.say(f"holding the stream open {CANCEL_HOLD_SECONDS:g} s")
+                self.say(f"{HOLDING_MESSAGE} {CANCEL_HOLD_SECONDS:g} s")
                 self.pause(CANCEL_HOLD_SECONDS)
                 return self.close_while_running(response, connection)
         if cancel:

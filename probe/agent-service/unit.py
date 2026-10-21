@@ -9,7 +9,8 @@ holds a dummy login (never a real token).
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`
 drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
 issuer on the `agent` network, so the tokens verify and the CLI meets the real upstream with the
-dummy login. The image
+dummy login. U16 then runs the cells of `agent-service/live_smoke.py` there, past its sign-in.
+The image
 `edge-agent-service:0.4.0-2.1.302` must exist (README "The agent service image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
@@ -39,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))  # edge's own observation
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent-service"))  # live_smoke.py
 
 from egress import (
     COMPOSE_FILE,
@@ -56,6 +58,9 @@ from egress import (
     service_configuration,
     write_dummy_token,
 )
+from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
+from live_smoke import egress_cells as live_egress_cells
+from smoke import Tokens
 
 from edge import compose
 
@@ -726,8 +731,9 @@ class SmokeProbe(Probe):
 
     def drive(self) -> None:
         self.cell_u14()
+        self.cell_u16()
 
-    def cell_u14(self) -> None:
+    def tokens(self) -> Tokens:
         issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"
         person = self.issuer.token(
             issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": ["/ki-abo"]}
@@ -737,6 +743,36 @@ class SmokeProbe(Probe):
             {"sub": "workload", "azp": WORKLOAD_CLIENT, "client_id": WORKLOAD_CLIENT,
              "realm_access": {"roles": ["agent-workload"]}},
         )  # fmt: skip
+        return Tokens(person=person, workload=workload)
+
+    def cell_u16(self) -> None:
+        """`agent-service/live_smoke.py` after its sign-in, which needs the real realm and a
+        browser: every cell but L2 holds with the dummy login, and L2 must fail, because the
+        upstream refuses the dummy login."""
+        stack = Stack(
+            compose_prefix=tuple(self.compose_command()), environment=self.environment,
+            directory=COMPOSE_FILE.parent,
+        )  # fmt: skip
+        expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")
+        expect(stack.gateway == self.address, f"U16: compose names the gateway {stack.gateway}")
+        dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
+        known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")
+        report = Report(known.values(), out=lambda line: print(f"  {line}", flush=True))
+        smoke_cells(stack, known, report)
+        report.add(*live_egress_cells(stack))
+        failed = sorted(
+            cell.name.split()[0] for cell in report.cells if cell.verdict is Verdict.FAILED
+        )
+        expect(failed == ["L2"], f"U16: the cells that failed were {failed}, not only L2")
+        self.held.append("U16")
+        print(
+            "U16 held: the live smoke's cells ran; only L2 failed, as the dummy login must",
+            flush=True,
+        )
+
+    def cell_u14(self) -> None:
+        tokens = self.tokens()
+        person, workload = tokens.person, tokens.workload
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
         self.wait_until_listening()
         smoke = self.run(
