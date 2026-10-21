@@ -69,6 +69,9 @@ THEME = "hallucinai"
 REALM_FILE = "realm.yaml"
 CONFIG_FILES = ("master.yaml", REALM_FILE)
 ENTRYPOINT_FILE = "entrypoint.sh"
+UNDEFINED_VARIABLE_LINE = (
+    "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"  # a realm.yaml line config-cli cannot resolve
+)
 PUBLIC_HOST = f"auth.{DOMAIN}"
 REALM_PATH = f"/realms/{REALM}"
 PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
@@ -1202,9 +1205,7 @@ class Probe:
     def missing_variable_fails_loudly(self, admin: Admin) -> None:
         broken = self.stack.copy_config(self.stack.scratch / "config-missing-variable")
         realm_file = broken / REALM_FILE
-        realm_file.write_text(
-            realm_file.read_text() + "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"
-        )
+        realm_file.write_text(realm_file.read_text() + UNDEFINED_VARIABLE_LINE)
         result = self.stack.apply(bootstrap=True, config_dir=broken)
         output = result.stdout + result.stderr
         expect(result.returncode != 0, "an apply with an undefined variable exited 0")
@@ -2487,7 +2488,7 @@ class Probe:
             "the snapshot, exit 0 (cell 13)",
         )
 
-        stand.edit_realm(append="displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n")
+        stand.edit_realm(append=UNDEFINED_VARIABLE_LINE)
         asked = len(stand.asked)
         failed = stand.apply()
         named = re.search(r"pre-apply snapshot (\S+),", failed.failure or "")
@@ -2508,7 +2509,7 @@ class Probe:
             'names the snapshot and "Restore Keycloak", and the next plan repeats it (cell 11)',
         )
 
-        stand.edit_realm(("displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n", ""))
+        stand.edit_realm((UNDEFINED_VARIABLE_LINE, ""))
         expect(stand.apply().failure is None, "the step after the repaired realm failed")
         expect(stand.plan().settled, "the repaired realm is not recorded")
         entrypoint = stand.repository / "keycloak" / ENTRYPOINT_FILE
