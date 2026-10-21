@@ -80,7 +80,7 @@ read by anyone, ever:** losing the key loses every backup, and restic has no rec
 
 | Timer | When | Does |
 |---|---|---|
-| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --prune` and `check`, only when every app backed up |
+| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --keep-tag pre-apply --prune` and `check`, only when every app backed up |
 | `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database is not up yet, the backup
@@ -91,6 +91,19 @@ command waits silently until that run ends.
 To run now, start the same units the timers take (`systemctl --user start edge-backup.service` and
 `edge-backup-restore-test.service`); the last journal line of the unit is the verdict.
 `uv run edge-backup snapshots` lists the repository.
+
+### One app, and the pre-apply snapshot
+
+`edge-backup backup <app>` and `edge-backup restore-test <app>` work on that app alone: its dump, its
+snapshot, its retention and its restore test, in seconds. The other apps' entries in the status file
+stay as they are, and a name `apps.toml` does not declare is refused before anything runs. The one-app
+`restore-test` checks the repository's structure but does not read data (`check` without
+`--read-data-subset`); the monthly run keeps that. Without a name both commands do what the timers do.
+
+`edge-backup backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, prints its ID and
+keeps the last 10 pre-apply snapshots of that app (`forget --keep-last 10`, scoped to both tags),
+without touching the app's other snapshots. The weekly retention never deletes a `pre-apply`
+snapshot (`--keep-tag pre-apply`). Restore one with `edge-backup restore <app> --snapshot <ID> --target <dir>`.
 
 ### What a backup holds, and its limit
 

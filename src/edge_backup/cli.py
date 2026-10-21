@@ -53,16 +53,28 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(required=True, metavar="COMMAND")
     for name, command, help_text in (
         ("init", _init, "create the restic repository once"),
-        ("backup", _backup, "dump, scan and back up every app, then forget, prune and check"),
-        (
-            "restore-test",
-            _restore_test,
-            "restore the last successful backup's snapshot and prove it is good",
-        ),
         ("snapshots", _snapshots, "list the repository's snapshots"),
         ("unlock", _unlock, "remove stale restic locks"),
     ):
         commands.add_parser(name, help=help_text).set_defaults(command=command)
+    backup = commands.add_parser(
+        "backup", help="dump, scan and back up every app (or one), then forget, prune and check"
+    )
+    backup.add_argument("app", nargs="?", help="back up this app only")
+    backup.add_argument(
+        "--pre-apply",
+        action="store_true",
+        help=f"tag the snapshot {restic.PRE_APPLY_TAG} and keep the last {restic.KEEP_PRE_APPLY} "
+        "such snapshots of the app (needs the app's name)",
+    )
+    backup.set_defaults(command=_backup)
+    restore_test = commands.add_parser(
+        "restore-test",
+        help="restore the last successful backup's snapshot of every app (or one) and prove it "
+        "is good",
+    )
+    restore_test.add_argument("app", nargs="?", help="test this app only, without reading data")
+    restore_test.set_defaults(command=_restore_test)
     restore = commands.add_parser("restore", help="restore one app's last successful backup")
     restore.add_argument("app", help="the app's name in apps.toml")
     restore.add_argument("--target", type=Path, required=True, help="a directory to create")
@@ -84,11 +96,27 @@ def _init(settings: Settings, _: argparse.Namespace) -> int:
 
 
 def _backup(settings: Settings, arguments: argparse.Namespace) -> int:
-    return _recorded(settings, arguments, runner.backup)
+    if arguments.pre_apply and arguments.app is None:
+        raise StepFailed(ExitCategory.CONFIGURATION, "--pre-apply braucht den Namen einer App")
+    _require_declared(arguments)
+
+    def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+        runner.backup(settings, apps, run, only=arguments.app, pre_apply=arguments.pre_apply)
+
+    def announce(run: Run) -> None:
+        if arguments.pre_apply:
+            print(f"edge-backup: pre-apply-Snapshot {run.snapshot_of(arguments.app)}")
+
+    return _recorded(settings, arguments, step, announce)
 
 
 def _restore_test(settings: Settings, arguments: argparse.Namespace) -> int:
-    return _recorded(settings, arguments, runner.restore_test)
+    _require_declared(arguments)
+
+    def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+        runner.restore_test(settings, apps, run, only=arguments.app)
+
+    return _recorded(settings, arguments, step)
 
 
 def _snapshots(settings: Settings, _: argparse.Namespace) -> int:
@@ -106,8 +134,7 @@ def _unlock(settings: Settings, _: argparse.Namespace) -> int:
 
 def _restore(settings: Settings, arguments: argparse.Namespace) -> int:
     apps = _apps(arguments.apps)
-    if (app := {app.name: app for app in apps}.get(arguments.app)) is None:
-        raise StepFailed(ExitCategory.CONFIGURATION, f"{arguments.app} ist nicht deklariert")
+    app = runner.declared_app(apps, arguments.app)
     snapshot_id = _command(
         runner.restore, settings, apps, app, arguments.target, arguments.snapshot
     )
@@ -119,8 +146,9 @@ def _recorded(
     settings: Settings,
     arguments: argparse.Namespace,
     step: Callable[[Settings, tuple[App, ...], Run], None],
+    announce: Callable[[Run], None] = lambda _: None,
 ) -> int:
-    """Every outcome lands in the status file; only a full run is `ok`."""
+    """Every outcome lands in the status file; only a run that went through is `ok`."""
     started = host.now()
     try:
         previous = runner.previous_status(settings)
@@ -145,7 +173,14 @@ def _recorded(
         run.failed(ExitCategory.INTERNAL)
         raise
     run.succeeded()
+    announce(run)
     return ExitCode.OK
+
+
+def _require_declared(arguments: argparse.Namespace) -> None:
+    """A mistyped app is refused before any status is written: nothing ran."""
+    if arguments.app is not None:
+        runner.declared_app(_apps(arguments.apps), arguments.app)
 
 
 def _apps(path: Path) -> tuple[App, ...]:

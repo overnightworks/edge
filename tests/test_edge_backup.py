@@ -63,10 +63,78 @@ def test_backup_forgets_by_host_and_app_tag_then_checks(edge_backup, machine):
     expected_scope = ["--host", "edge-backup", "--tag", "songmaker", "--group-by", "host,tags"]
     assert forget[forget.index("forget") + 1 :] == [
         *expected_scope,
-        *["--keep-weekly", "4", "--keep-monthly", "3", "--prune"],
+        *["--keep-weekly", "4", "--keep-monthly", "3", "--keep-tag", "pre-apply", "--prune"],
     ]
     assert "--retry-lock" in forget
     assert "--no-lock" not in forget
+
+
+def test_backup_of_one_app_touches_only_that_app(edge_backup, machine, home):
+    """#238 matrix cell 1."""
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert [snapshot["app"] for snapshot in machine.snapshots] == ["radio"]
+    assert machine.labels().count("pg_dump") == 1
+    assert machine.argv_of("restic forget")[
+        machine.argv_of("restic forget").index("--tag") + 1
+    ] == ("radio")
+    assert list(outcome.status["apps"]) == ["radio"]
+
+
+def test_restore_test_of_one_app_keeps_the_other_apps_status_and_reads_no_data(
+    edge_backup, machine, home
+):
+    """#238 matrix cell 2."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup")
+    songmaker_before = app_history(edge_backup(*two_apps, "snapshots").status)
+    machine.calls.clear()
+
+    outcome = edge_backup(*two_apps, "restore-test", "radio")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert machine.labels().count("restic restore") == 1
+    [check] = [argv for label, argv in machine.calls if label == "restic check"]
+    assert check[check.index("check") + 1 :] == []
+    assert app_history(outcome.status, "radio")["last_successful_restore_test"] is not None
+    assert app_history(outcome.status) == songmaker_before
+
+
+def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_apply(
+    edge_backup, machine, home
+):
+    """#238 matrix cell 3 and ruling R1."""
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio", "--pre-apply")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert outcome.out == f"edge-backup: pre-apply-Snapshot {machine.snapshots[-1]['id']}\n"
+    backup = machine.argv_of("restic backup")
+    assert backup[backup.index("--tag") + 1] == "radio,pre-apply"
+    forget = machine.argv_of("restic forget")
+    assert forget[forget.index("forget") + 1 :] == [
+        *["--host", "edge-backup", "--tag", "radio,pre-apply", "--group-by", "host,tags"],
+        *["--keep-last", "10", "--prune"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "complaint"),
+    [
+        (("backup", "nobody"), "nobody ist nicht deklariert"),
+        (("restore-test", "nobody"), "nobody ist nicht deklariert"),
+        (("backup", "--pre-apply"), "--pre-apply braucht den Namen einer App"),
+    ],
+)
+def test_a_refused_app_argument_runs_nothing_and_writes_no_status(
+    edge_backup, machine, arguments, complaint
+):
+    """#238 matrix cell 7."""
+    outcome = edge_backup(*arguments)
+
+    assert (outcome.exit_code, outcome.err) == (1, f"edge-backup: fehlgeschlagen: {complaint}\n")
+    assert machine.calls == []
+    assert outcome.status is None
 
 
 def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_backup, machine):
