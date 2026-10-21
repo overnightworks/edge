@@ -314,6 +314,7 @@ COVERAGE: dict[str, Coverage] = {
     "identityProviderMappers": Read("identity provider mappers"),
     "components": Read("components by providerType/providerId/subType/name only"),
     "organizations": Gap("organizations"),
+    "workflows": Gap("workflows"),
     "subComponents": Gap("component config and sub-components: component config never leaves"),
     "scopeMappings": Gap("scope mappings"),
     "clientScopeMappings": Gap("client scope mappings"),
@@ -334,6 +335,7 @@ IMPORT_TYPES = {
     "realm": "realm",
     "user": "users",
     "group": "groups",
+    "sub-group": "groups",
     "role": "roles",
     "client": "clients",
     "client-scope": "clientScopes",
@@ -352,6 +354,8 @@ IMPORT_TYPES = {
     "client-profiles": "clientProfiles",
     "message-bundles": "messageBundles",
     "user-profile": "userProfile",
+    "organization": "organizations",
+    "workflow": "workflows",
 }
 
 
