@@ -155,7 +155,8 @@ class Network(NamedTuple):
 
 
 def network_layer(frame: bytes, offset: int, version: int) -> Network | None:
-    """The IP header's reading; None for a packet that is neither IPv4 nor IPv6 or is no gap."""
+    """The IP header's reading; None for a packet that is neither IPv4 nor IPv6, or a fragment
+    of neither TCP nor UDP."""
     if version == 4:
         protocol = frame[offset + 9]
         destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16 : offset + 20])
@@ -175,13 +176,13 @@ def network_layer(frame: bytes, offset: int, version: int) -> Network | None:
 
 
 def transport_contents(
-    protocol: int, transport: bytes, header_bytes: int
+    protocol: int, transport: bytes, header_bytes: int, carries_dns: bool
 ) -> tuple[int, bytes, bool]:
     """The TCP flags, the payload, and whether a DNS-over-TCP message is cut short."""
     if protocol != PROTOCOL_TCP:
         return 0, transport[UDP_HEADER_BYTES:], False
     flags, payload = transport[13], transport[header_bytes:]
-    if DNS_PORT in struct.unpack_from("!HH", transport) and payload:
+    if carries_dns and payload:
         # DNS over TCP: a two-byte length comes first, and one whole message follows it.
         declared = int.from_bytes(payload[:2])
         return flags, payload[2:], len(payload) != 2 + declared
@@ -220,7 +221,7 @@ def parse(
     if carries_dns and (truncated or declared_bytes > len(transport)):
         # The capture cut the DNS message (or its TCP options): the question is not all here.
         return gap
-    flags, payload, partial = transport_contents(protocol, transport, header_bytes)
+    flags, payload, partial = transport_contents(protocol, transport, header_bytes, carries_dns)
     question = dns_question(payload) if carries_dns else ""
     return Segment(
         outgoing, interface, protocol, destination, source_port, destination_port, flags,
