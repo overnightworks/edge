@@ -1155,6 +1155,7 @@ class Probe:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
         self.the_realm_step()
+        admin = self.admin_now()  # proof 12 outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
