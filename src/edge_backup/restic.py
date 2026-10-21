@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from edge_backup import host
+from edge_backup.apps import PRE_APPLY_TAG
 from edge_backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
 
 REPOSITORY = "/repo"
@@ -18,6 +19,8 @@ SCRATCH = "/scratch"
 RETRY_LOCK = "5m"
 KEEP_WEEKLY = 4
 KEEP_MONTHLY = 3
+# A snapshot taken right before a change is applied carries this tag besides its app's name.
+KEEP_PRE_APPLY = 10
 CHECK_READ_DATA_SUBSET = "10%"
 # The snapshot layout under an app's source path: the dump and manifest, and the audio.
 DB_FOLDER = "db"
@@ -83,28 +86,50 @@ def init(settings: Settings) -> None:
     _restic(settings, "restic init", ["init"])
 
 
-def backup(settings: Settings, app: str, staging: Path, audio_volume: str | None) -> str:
+def backup(
+    settings: Settings,
+    app: str,
+    staging: Path,
+    audio_volume: str | None,
+    *,
+    pre_apply: bool = False,
+) -> str:
     """One snapshot holding dump, manifest and audio (none for a DB-only app); any non-zero
     exit (3 too) is a failure."""
     mounts = [Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}")]
     if audio_volume is not None:
         mounts.append(Mount(MountKind.VOLUME, audio_volume, f"{app_source(app)}/{AUDIO_FOLDER}"))
     output = _restic(
-        settings, "restic backup", ["backup", "--json", *_tag(app), app_source(app)], *mounts
+        settings,
+        "restic backup",
+        ["backup", "--json", *_tag(app, pre_apply=pre_apply), app_source(app)],
+        *mounts,
     )
     return _snapshot_id(output)
 
 
-def forget(settings: Settings, app: str) -> None:
+def forget(settings: Settings, app: str, *, pre_apply: bool = False) -> None:
+    """The weekly policy never deletes a pre-apply snapshot; a pre-apply run thins only those."""
     _restic(
         settings,
         "restic forget",
         [
-            "forget", *_scope(app), "--group-by", "host,tags",
-            "--keep-weekly", str(KEEP_WEEKLY), "--keep-monthly", str(KEEP_MONTHLY),
+            "forget", *_scope(app, pre_apply=pre_apply), "--group-by", "host,tags",
+            *(_pre_apply_policy() if pre_apply else _weekly_policy()),
             "--prune",
         ],
     )  # fmt: skip
+
+
+def _pre_apply_policy() -> list[str]:
+    return ["--keep-last", str(KEEP_PRE_APPLY)]
+
+
+def _weekly_policy() -> list[str]:
+    return [
+        "--keep-weekly", str(KEEP_WEEKLY), "--keep-monthly", str(KEEP_MONTHLY),
+        "--keep-tag", PRE_APPLY_TAG,
+    ]  # fmt: skip
 
 
 def check(settings: Settings, *, read_data: bool) -> None:
@@ -167,13 +192,14 @@ def _restic(settings: Settings, label: str, command: list[str], *mounts: Mount) 
         raise
 
 
-def _scope(app: str) -> list[str]:
-    return ["--host", RESTIC_HOSTNAME, *_tag(app)]
+def _scope(app: str, *, pre_apply: bool = False) -> list[str]:
+    return ["--host", RESTIC_HOSTNAME, *_tag(app, pre_apply=pre_apply)]
 
 
-def _tag(app: str) -> list[str]:
-    """Each app's snapshots carry its name as their tag."""
-    return ["--tag", app]
+def _tag(app: str, *, pre_apply: bool = False) -> list[str]:
+    """Each app's snapshots carry its name as their tag; restic reads a comma list as all of them
+    when it selects and as the whole set when it tags."""
+    return ["--tag", f"{app},{PRE_APPLY_TAG}" if pre_apply else app]
 
 
 def _snapshot_id(backup_output: bytes) -> str:

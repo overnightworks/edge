@@ -163,39 +163,68 @@ class _Deadline:
         return cls(timeout, host.monotonic() + timeout.total_seconds())
 
 
-def backup(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+def backup(
+    settings: Settings,
+    apps: tuple[App, ...],
+    run: Run,
+    *,
+    only: str | None = None,
+    pre_apply: bool = False,
+) -> None:
+    """Every declared app, or `only` that one; `pre_apply` tags its snapshot and thins those."""
+    targets = _targets(apps, only)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
     first_readiness = _Deadline.start(READINESS_TIMEOUT)
-    _require_docker_with_pinned_images(run, apps, first_readiness)
+    _require_docker_with_pinned_images(run, targets, first_readiness)
     with run.phase(Phase.PREPARE):
         run.attribute_legacy_evidence(settings, apps)
-    for index, app in enumerate(apps):
+    for index, app in enumerate(targets):
         with run.isolated(app.name):
-            _back_up(settings, app, run, first_readiness if index == 0 else _Deadline.start())
+            _back_up(
+                settings,
+                app,
+                run,
+                first_readiness if index == 0 else _Deadline.start(),
+                pre_apply=pre_apply,
+            )
     run.raise_first_app_failure()
-    for app in apps:
+    for app in targets:
         with run.phase(Phase.FORGET):
-            restic.forget(settings, app.name)
+            restic.forget(settings, app.name, pre_apply=pre_apply)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=False)
 
 
-def restore_test(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
+def restore_test(
+    settings: Settings, apps: tuple[App, ...], run: Run, *, only: str | None = None
+) -> None:
+    """Every declared app, or `only` that one, which skips the data-reading check."""
+    targets = _targets(apps, only)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
-    _require_docker_with_pinned_images(run, apps, _Deadline.start())
+    _require_docker_with_pinned_images(run, targets, _Deadline.start())
     with run.phase(Phase.PREPARE):
         run.attribute_legacy_evidence(settings, apps)
     verified = []
-    for app in apps:
+    for app in targets:
         with run.isolated(app.name):
             _restore_test(settings, app, run)
             verified.append(app.name)
     with run.phase(Phase.CHECK):
-        restic.check(settings, read_data=True)
+        restic.check(settings, read_data=only is None)
     run.restore_tested(verified)
     run.raise_first_app_failure()
+
+
+def declared_app(apps: tuple[App, ...], name: str) -> App:
+    if (app := {app.name: app for app in apps}.get(name)) is None:
+        raise StepFailed(ExitCategory.CONFIGURATION, f"{name} ist nicht deklariert")
+    return app
+
+
+def _targets(apps: tuple[App, ...], only: str | None) -> tuple[App, ...]:
+    return apps if only is None else (declared_app(apps, only),)
 
 
 def _require_docker_with_pinned_images(
@@ -260,7 +289,9 @@ def restore(
     return snapshot_id
 
 
-def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> None:
+def _back_up(
+    settings: Settings, app: App, run: Run, readiness: _Deadline, *, pre_apply: bool
+) -> None:
     with run.phase(Phase.READINESS):
         container = _wait_until_ready(
             lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
@@ -278,7 +309,10 @@ def _back_up(settings: Settings, app: App, run: Run, readiness: _Deadline) -> No
             manifest = Manifest(app.name, audio_files)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
-            run.backed_up(app.name, restic.backup(settings, app.name, staging, audio_volume))
+            run.backed_up(
+                app.name,
+                restic.backup(settings, app.name, staging, audio_volume, pre_apply=pre_apply),
+            )
 
 
 def _restore_test(settings: Settings, app: App, run: Run) -> None:
