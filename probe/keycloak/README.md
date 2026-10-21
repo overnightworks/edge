@@ -21,7 +21,20 @@ its SIGTERM ends `hold` as a normal `HOLD ENDED` with exit 0 once the teardown s
 proof window is bounded by that cap. A cap reached before `READY`, or a teardown that leaves the
 stack behind, ends with `PROBE FAILED` and exit 1.
 
-- `run` (the default) proves proofs 1-11 and ends with `PROBE PASSED: proofs 1-11 hold`. Proof 1
+- `run` (the default) prints one `PROOF <n> held:` line per proof and ends with
+  `PROBE PASSED: proofs 1-11 hold`. Besides the proofs below it holds: the public issuer and the path
+  allow-list (1, 2a); the master issuer and the forced second factor on the admin entrypoint, for
+  the console and for a password grant (2b); a failing undefined variable, a fresh apply, an
+  unchanged export after a second apply that resets only the pinned console changes to declared
+  objects and keeps every other console change, and a changed YAML that applies and deletes no
+  undeclared top-level object and no person, with a seeded member untouched (3a-3d); the `groups`
+  claim and the `agent-service` audience (4); a disabled user refused on refresh (5); a
+  back-channel logout reaching the test relying party `probe-rp` (6); and none of the credentials
+  it made or received (secret files, passwords, the TOTP seed, the relying party's secret, every
+  token of every token response, each client secret and its tokens, and the admin console's PKCE
+  verifiers, authorization codes and session cookies) in the `Config.Env` of any container it ran,
+  in any compose, apply or service log output, or in its own output (7); the realm settings as decided, with admin events that carry no client
+  representation (8). Proof 1
   fetches the login and account pages through the edge entrypoint and holds when both link a 200 resource under
   `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
   `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
@@ -29,7 +42,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the console changes to declared objects that the apply resets (a mapper on the scope `groups`,
   a step in `browser-mfa-forms`, a subflow under `direct-grant-mfa-totp`, a default scope and a
   flow binding override on songmaker, a client role on its service account, a service account
-  enabled on hopin; the README's blockquote after „Theme and language“ states the class) and the
+  enabled on hopin; the blockquote in docs/keycloak.md after „Theme and language“ states the class) and the
   console subgroup with its member, flows, role and group on service accounts, and the default
   scope on `agent-service` (a client without scope lists) are still there; proof 3d holds that a changed YAML which drops a group, a client
   and the realm role `agent-workload` deletes none of them nor the role's mappings; proof 9 checks the
@@ -60,6 +73,22 @@ stack behind, ends with `PROBE FAILED` and exit 1.
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker`, `hopin` and `presentator` clients, which callers must not create
   themselves; they create their other clients and users through the admin API.
+
+## Exit codes, stopping and cleanup
+
+`run` ends with `PROBE PASSED` (exit 0) or `PROBE FAILED: <what>` (exit 1); exit 2 refuses an
+argument (`--scratch` must be a new or empty directory). Under the `timeout` wrapper Ctrl-C never
+reaches the probe, so stop it with `kill -TERM` on the probe. A SIGTERM or Ctrl-C stop of `run`
+ends with exit 1 and a finished teardown.
+
+The lock is held for at most 590 seconds: at 540 `timeout` stops the probe, which still tears down
+(exit 124), and 50 seconds later it kills the probe and its teardown (exit 137). After an exit 137
+or a `teardown: stack edge-kc-probe FAILED` line, remove the project under the lock, from a
+directory without a compose file, because Compose finds its containers, networks and volumes by the
+name:
+
+    flock /tmp/probe-stack.lock \
+        timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
 
 ## `hold` contract
 

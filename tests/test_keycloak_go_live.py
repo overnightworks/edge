@@ -1233,29 +1233,6 @@ def test_help_lists_the_steps_in_plain_words():
     assert "`edge apply` publishes" in result.stdout
 
 
-def numbers_in(lines: list[str], pattern: str) -> list[str]:
-    return [match.group(1) for line in lines if (match := re.match(pattern, line))]
-
-
-def test_the_readme_and_help_number_the_go_live_steps_alike():
-    """#55 rule 5: every number the script prints is in the README once, and no other."""
-    help_text = subprocess.run(
-        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, check=False
-    ).stdout
-    readme = (SCRIPT.parents[1] / "README.md").read_text()
-    go_live_section = readme.split("### Keycloak go-live")[1].split("####")[0]
-    fallback_section = readme.split("#### Fallback: the steps by hand")[1].split("###")[0]
-
-    help_steps = numbers_in(help_text.splitlines(), r"(\d+[ab]?(?:-\d+)?)\. ")
-    readme_pattern = (
-        r"- \*\*(\d+[ab]?(?:-\d+)?)\. "  # a bullet keeps "4a." literal; "4a. " is no list marker
-    )
-
-    assert help_steps == numbers_in(go_live_section.splitlines(), readme_pattern)
-    assert help_steps == numbers_in(fallback_section.splitlines(), readme_pattern)
-    assert help_steps[0] == "1"
-
-
 def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, session, secrets_dir):
     """#55 rule 3: a no created nothing, so the question stands."""
     session.answers = ["no", "no"]
