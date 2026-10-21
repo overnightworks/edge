@@ -2,8 +2,9 @@
 
 It starts its own compose project from this checkout with throwaway secrets in the scratch
 directory, stands in for Cloudflare by sending `Host: auth.<domain>` and
-`X-Forwarded-Proto: https` to 127.0.0.1:8081, prints one line per proof, and always tears the
-stack down, volumes included. It needs 127.0.0.1:8081 and :8090 free, so the live edge is stopped.
+`X-Forwarded-Proto: https` to its edge entrypoint, prints one line per proof, and always tears
+the stack down, volumes included. Its Traefik entrypoints listen on free loopback ports it picks
+and its keycloak network takes a free /24, so it runs beside the live edge, which stays up.
 
     flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
         python3 probe/keycloak/probe.py --scratch DIR
@@ -21,6 +22,7 @@ import hashlib
 import hmac
 import importlib.machinery
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -68,8 +70,26 @@ PUBLIC_HOST = f"auth.{DOMAIN}"
 REALM_PATH = f"/realms/{REALM}"
 PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
 PUBLIC_ISSUER = f"https://{PUBLIC_HOST}{REALM_PATH}"
-EDGE_URL = "http://127.0.0.1:8081"
-ADMIN_URL = "http://localhost:8090"
+LOOPBACK_ADDRESS = "127.0.0.1"
+# The live entrypoint addresses in traefik.yml, which the probe's copy of it replaces.
+LIVE_EDGE_ADDRESS = f"{LOOPBACK_ADDRESS}:8081"
+LIVE_ADMIN_ADDRESS = f"{LOOPBACK_ADDRESS}:8090"
+# What keycloak/go-live pins for the live edge, which no step over the probe's stack may reach.
+LIVE_GO_LIVE_ADDRESSES = (
+    "localhost:8090",
+    "localhost:8081",
+    LIVE_ADMIN_ADDRESS,
+    LIVE_EDGE_ADDRESS,
+)
+TRAEFIK_CONFIG = "traefik.yml"
+NETWORK_OVERLAY = "network.compose.yaml"
+# Which containers the Docker provider routes: the live one takes any `edge.name` label that
+# matches; the probe's takes its own project only, and its keycloak carries an `edge.name` the
+# live provider refuses (compose.probe.yaml), so neither Traefik sees the other's containers.
+LIVE_CONSTRAINTS = "LabelRegex(`edge.name`, `^[a-z0-9-]{1,63}$`)"
+PROBE_CONSTRAINTS = f"Label(`com.docker.compose.project`, `{PROJECT}`)"
+# The /24s a probe's keycloak network may take, clear of the live one (172.31.253.0/24).
+SUBNET_CANDIDATES = tuple(f"172.31.{third}.0/24" for third in range(200, 250))
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
 
 
@@ -209,9 +229,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class LocalhostIsSecure(DefaultCookiePolicy):
-    """Sends Secure cookies to a loopback origin (http://localhost, or 8081 on 127.0.0.1). 8081
-    with `X-Forwarded-Proto: https` stands in for the https origin auth.hallucinai.de, where a
-    browser does send them."""
+    """Sends Secure cookies to a loopback origin (http://localhost, or the edge entrypoint on
+    127.0.0.1). The edge entrypoint with `X-Forwarded-Proto: https` stands in for the https
+    origin auth.hallucinai.de, where a browser does send them."""
 
     def return_ok_secure(self, cookie: Cookie, request: Request) -> bool:
         return urlsplit(request.full_url).hostname in LOOPBACK_HOSTS or super().return_ok_secure(
@@ -277,7 +297,8 @@ def http(
         return Response(error.code, dict(error.headers), error.read())
 
 
-def through_tunnel(
+def tunnel_request(
+    edge_url: str,
     method: str,
     path: str,
     *,
@@ -285,19 +306,22 @@ def through_tunnel(
     headers: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> Response:
-    """What cloudflared sends for a public request: the public host and the original scheme."""
+    """What cloudflared sends to the edge entrypoint at `edge_url` for a public request: the
+    public host and the original scheme."""
     sent = {"Host": host, "X-Forwarded-Proto": "https", **(headers or {})}
-    return http(method, EDGE_URL + path, headers=sent, **kwargs)
+    return http(method, edge_url + path, headers=sent, **kwargs)
 
 
-def through_tunnel_url(method: str, url: str, **kwargs: Any) -> Response:
+def tunnel_request_url(edge_url: str, method: str, url: str, **kwargs: Any) -> Response:
     """Follows an absolute URL Keycloak gave out on the public host, through the tunnel."""
     target = urlsplit(url)
     expect(
         target.scheme == "https" and target.hostname == PUBLIC_HOST,
         f"{url} is not https on {PUBLIC_HOST}",
     )
-    return through_tunnel(method, urlunsplit(("", "", target.path, target.query, "")), **kwargs)
+    return tunnel_request(
+        edge_url, method, urlunsplit(("", "", target.path, target.query, "")), **kwargs
+    )
 
 
 def stored_event_types(events: list[dict[str, Any]], request_address: str) -> list[str]:
@@ -345,7 +369,13 @@ def is_workload_identity_of(access: dict[str, Any], client_id: str) -> bool:
 @dataclass
 class Stack:
     scratch: Path
-    admin_url: str = ADMIN_URL
+    admin_url: str = ""  # a test's stand-in; empty, the admin entrypoint's own free port
+    edge_url: str = field(init=False)
+    edge_port: int = field(init=False)
+    admin_port: int = field(init=False)
+    traefik_config: Path = field(init=False)
+    network_overlay: Path = field(init=False)
+    keycloak_subnet: str = field(init=False)
     secrets_dir: Path = field(init=False)
     config_dir: Path = field(init=False)
     # Everything a secret could leak into, for proof 7: each container's Config.Env as it was
@@ -356,6 +386,13 @@ class Stack:
     def __post_init__(self) -> None:
         self.secrets_dir = self.scratch / "secrets"
         self.config_dir = self.scratch / "config"
+        self.traefik_config = self.scratch / TRAEFIK_CONFIG
+        self.edge_port, self.admin_port = free_loopback_ports(2)
+        self.edge_url = f"http://127.0.0.1:{self.edge_port}"
+        self.admin_url = self.admin_url or f"http://localhost:{self.admin_port}"
+        self.keycloak_subnet = free_subnet()
+        self.network_overlay = self.scratch / NETWORK_OVERLAY
+        self.write_network_overlay()
 
     @property
     def master_issuer(self) -> str:
@@ -376,7 +413,34 @@ class Stack:
             "DOCKER_GID": os.environ.get("DOCKER_GID") or str(grp.getgrnam("docker").gr_gid),
             "PROBE_SECRETS_DIR": str(self.secrets_dir),
             "PROBE_CONFIG_DIR": str(config_dir),
+            "PROBE_TRAEFIK_CONFIG": str(self.traefik_config),
+            "PROBE_ADMIN_URL": self.admin_url,
+            "PROBE_KEYCLOAK_SUBNET": self.keycloak_subnet,
         }
+
+    def write_network_overlay(self) -> None:
+        """The keycloak network on this stack's free subnet instead of the live one. A compose
+        file cannot replace the base file's list of subnets, so the base file's is dropped with
+        compose's own `!override` tag here, which the repository's YAML checks never read."""
+        self.scratch.mkdir(parents=True, exist_ok=True)
+        self.network_overlay.write_text(
+            "networks:\n  keycloak:\n    ipam:\n      config: !override\n"
+            f"        - subnet: {self.keycloak_subnet}\n"
+        )
+
+    def write_traefik_config(self) -> None:
+        """The repository's traefik.yml with the entrypoints on the probe's free ports and the
+        Docker provider limited to the probe's own project, so the probe runs beside the live
+        edge (which holds 8081 and 8090) and neither Traefik routes to the other's containers."""
+        text = (REPO / TRAEFIK_CONFIG).read_text()
+        for live, probe in {
+            LIVE_EDGE_ADDRESS: f"{LOOPBACK_ADDRESS}:{self.edge_port}",
+            LIVE_ADMIN_ADDRESS: f"{LOOPBACK_ADDRESS}:{self.admin_port}",
+            LIVE_CONSTRAINTS: PROBE_CONSTRAINTS,
+        }.items():
+            expect(live in text, f"{TRAEFIK_CONFIG} no longer holds {live}")
+            text = text.replace(live, probe)
+        self.traefik_config.write_text(text)
 
     def compose(
         self,
@@ -413,7 +477,7 @@ class Stack:
         ]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
-        return command
+        return [*command, "--file", str(self.network_overlay)]
 
     def write_secrets(self) -> dict[str, str]:
         self.secrets_dir.mkdir(mode=0o700, parents=True)
@@ -624,13 +688,40 @@ def tail(output: str, lines: int = 15) -> str:
     return "\n".join(meaningful[-lines:])
 
 
-def ports_free(*ports: int) -> list[int]:
-    taken = []
-    for port in ports:
-        with socket.socket() as probe_socket:
-            if probe_socket.connect_ex(("127.0.0.1", port)) == 0:
-                taken.append(port)
-    return taken
+def free_loopback_ports(count: int) -> list[int]:
+    """`count` distinct loopback ports nothing listens on, which the kernel handed out together."""
+    sockets = [socket.socket() for _ in range(count)]
+    try:
+        for held in sockets:
+            held.bind((LOOPBACK_ADDRESS, 0))
+        return [held.getsockname()[1] for held in sockets]
+    finally:
+        for held in sockets:
+            held.close()
+
+
+def free_subnet() -> str:
+    """The first of SUBNET_CANDIDATES that no Docker network on this host overlaps."""
+    listed = docker("network", "ls", "--quiet")
+    expect(listed.returncode == 0, f"docker network ls failed:\n{tail(listed.stderr)}")
+    ids = listed.stdout.split()
+    taken: list[ipaddress.IPv4Network] = []
+    if ids:
+        inspected = docker(
+            "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}", *ids
+        )
+        expect(
+            inspected.returncode == 0, f"docker network inspect failed:\n{tail(inspected.stderr)}"
+        )
+        taken = [
+            network
+            for network in map(ipaddress.ip_network, inspected.stdout.split())
+            if isinstance(network, ipaddress.IPv4Network)
+        ]
+    for candidate in SUBNET_CANDIDATES:
+        if not any(ipaddress.ip_network(candidate).overlaps(network) for network in taken):
+            return candidate
+    raise ProbeFailure(f"no free /24 among {SUBNET_CANDIDATES[0]} ... {SUBNET_CANDIDATES[-1]}")
 
 
 def wait_until_ready(admin_url: str) -> None:
@@ -813,6 +904,12 @@ class Probe:
     def held(self, proof: str, detail: str) -> None:
         self.say(f"PROOF {proof} held: {detail}")
 
+    def through_tunnel(self, method: str, path: str, **kwargs: Any) -> Response:
+        return tunnel_request(self.stack.edge_url, method, path, **kwargs)
+
+    def through_tunnel_url(self, method: str, url: str, **kwargs: Any) -> Response:
+        return tunnel_request_url(self.stack.edge_url, method, url, **kwargs)
+
     def keep_secret(self, name: str, value: str) -> str:
         """Registers a credential the probe made or received, so proof 7 looks for it too."""
         self.secret_values[name] = value
@@ -854,6 +951,7 @@ class Probe:
     def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
+        self.stack.write_traefik_config()
         self.stack.up(bootstrap=True)
         wait_until_ready(self.stack.admin_url)
         self.stack.move_master_to_admin_entrypoint()
@@ -910,7 +1008,7 @@ class Probe:
     def ready_line(self) -> str:
         details = {
             "admin_url": self.stack.admin_url,
-            "edge_url": EDGE_URL,
+            "edge_url": self.stack.edge_url,
             "realm": REALM,
             "public_issuer": PUBLIC_ISSUER,
             "admin_client_id": "config-cli",
@@ -1119,7 +1217,7 @@ class Probe:
         )
 
     def public_issuer_and_paths(self) -> None:
-        discovery = through_tunnel("GET", f"{REALM_PATH}/.well-known/openid-configuration")
+        discovery = self.through_tunnel("GET", f"{REALM_PATH}/.well-known/openid-configuration")
         expect(discovery.status == 200, f"public discovery answered {discovery.status}")
         issuer = discovery.json()["issuer"]
         expect(issuer == PUBLIC_ISSUER, f"public issuer is {issuer}")
@@ -1133,23 +1231,23 @@ class Probe:
                 "code_challenge_method": "S256",
             }
         )
-        login_page = through_tunnel("GET", login_path)
+        login_page = self.through_tunnel("GET", login_path)
         expect(login_page.status == 200, f"public login page answered {login_page.status}")
         expect("HTTPS required" not in login_page.text, "the login page demands HTTPS")
         login_resource = self.themed_resource(login_page, "login")
-        german = through_tunnel("GET", login_path, headers={"Accept-Language": "de"})
+        german = self.through_tunnel("GET", login_path, headers={"Accept-Language": "de"})
         expect(
             "Passwort" in german.text and 'lang="de"' in german.text,
             "the login page does not speak German for Accept-Language: de",
         )
         expect(self.has_language_switcher(german), "the German login page has no language switcher")
         for asked in ({"Accept-Language": "fr"}, {}):
-            english = through_tunnel("GET", login_path, headers=asked)
+            english = self.through_tunnel("GET", login_path, headers=asked)
             expect(
                 'lang="en"' in english.text and "Password" in english.text,
                 f"the login page does not speak English for {asked or 'no language'}",
             )
-        account_page = through_tunnel("GET", f"{REALM_PATH}/account/")
+        account_page = self.through_tunnel("GET", f"{REALM_PATH}/account/")
         expect(account_page.status == 200, f"the account console answered {account_page.status}")
         account_resource = self.themed_resource(account_page, "account")
         self.held(
@@ -1160,7 +1258,7 @@ class Probe:
             "fr and for none",
         )
 
-        localization = through_tunnel("GET", f"/resources/{REALM}/account/en")
+        localization = self.through_tunnel("GET", f"/resources/{REALM}/account/en")
         expect(
             localization.status == 200,
             f"the hallucinai account localization answered {localization.status}",
@@ -1180,28 +1278,31 @@ class Probe:
             ("localhost", "/admin/master/console/"),
         ]
         for host, path in refused:
-            answer = through_tunnel("GET", path, host=host)
+            answer = self.through_tunnel("GET", path, host=host)
             expect(
                 answer.status == 404 and answer.body == TRAEFIK_NOT_FOUND,
-                f"8081 {host}{path} answered {answer.status}, not Traefik's 404",
+                f"the edge entrypoint {host}{path} answered {answer.status}, not Traefik's 404",
             )
         account_page = f"https://{PUBLIC_HOST}{REALM_PATH}/account"
         for bare_address in ("/", "/?x=1"):
-            redirect = through_tunnel("GET", bare_address)
+            redirect = self.through_tunnel("GET", bare_address)
             expect(
                 (redirect.status, redirect.headers.get("Location")) == (302, account_page),
-                f"8081 {PUBLIC_HOST}{bare_address} answered {redirect.status} "
+                f"the edge entrypoint {PUBLIC_HOST}{bare_address} answered {redirect.status} "
                 f"to {redirect.headers.get('Location')}, not 302 to {account_page}",
             )
         # Inside the admitted prefix, so only the entrypoint's encoded-character rule stops it.
-        encoded = through_tunnel("GET", "/realms/hallucinai/..%2Fmaster/")
-        expect(encoded.status == 400, f"an encoded slash on 8081 answered {encoded.status}")
+        encoded = self.through_tunnel("GET", "/realms/hallucinai/..%2Fmaster/")
+        expect(
+            encoded.status == 400,
+            f"an encoded slash on the edge entrypoint answered {encoded.status}",
+        )
         self.held(
             "2a",
-            f"8081 answers /realms/hallucinai/, its localization and the versioned static "
-            f"resources; Traefik refuses {len(refused)} master realm and master resources, admin, "
-            "metrics, health, traversal and Host: localhost requests (404), redirects the bare / "
-            "and /?x=1 to the account page (302) "
+            "the edge entrypoint answers /realms/hallucinai/, its localization and the versioned "
+            f"static resources; Traefik refuses {len(refused)} master realm and master resources, "
+            "admin, metrics, health, traversal and Host: localhost requests (404), redirects the "
+            "bare / and /?x=1 to the account page (302) "
             "and refuses an encoded slash inside the admitted prefix (400)",
         )
 
@@ -1216,7 +1317,7 @@ class Probe:
         )
         expect(link is not None, f"the {area} page links nothing under {area}/{THEME}/")
         path = link.group(1)
-        resource = through_tunnel("GET", path[path.index("/resources/") :])
+        resource = self.through_tunnel("GET", path[path.index("/resources/") :])
         expect(resource.status == 200, f"{path} answered {resource.status}")
         self.say(f"{path} Cache-Control: {resource.headers.get('Cache-Control')}")
         return path
@@ -1406,6 +1507,18 @@ class Probe:
         compose command may run, because go-live's compose targets the operator's project. A
         step that must not ask makes any prompt a failure."""
         go_live = load_go_live()
+        # go-live pins the live entrypoint addresses; this stack's are its own.
+        go_live.ADMIN_URL = self.stack.admin_url
+        go_live.EDGE_URL = self.stack.edge_url
+        go_live.MASTER_ISSUER = self.stack.master_issuer
+        go_live.MASTER_TOKEN_URL = self.stack.master_token_url
+        go_live.ADMIN_REALMS = f"{self.stack.admin_url}/admin/realms"
+        for name, value in vars(go_live).items():
+            expect(
+                not isinstance(value, str)
+                or not any(live in value for live in LIVE_GO_LIVE_ADDRESSES),
+                f"go-live's {name} still names the live edge: {value}",
+            )
 
         def no_command(*_args: object, **_kwargs: object) -> object:
             raise ProbeFailure("go-live's admin step ran a command")
@@ -1442,10 +1555,14 @@ class Probe:
             "GET", f"{self.stack.admin_url}/realms/hallucinai/", headers={"Host": PUBLIC_HOST}
         )
         expect(
-            foreign_host.status == 404, f"8090 with the public host answered {foreign_host.status}"
+            foreign_host.status == 404,
+            f"the admin entrypoint with the public host answered {foreign_host.status}",
         )
         encoded = http("GET", f"{self.stack.admin_url}/admin%2Fmaster/console/")
-        expect(encoded.status == 400, f"an encoded slash on 8090 answered {encoded.status}")
+        expect(
+            encoded.status == 400,
+            f"an encoded slash on the admin entrypoint answered {encoded.status}",
+        )
 
         password = self.keep_secret("probe-admin password", secrets.token_urlsafe(16))
         admin_id = admin.create_user("master", "probe-admin", password)
@@ -1494,9 +1611,9 @@ class Probe:
         )
         self.held(
             "2b",
-            f"on localhost:8090 the master issuer is {issuer}; a new admin's admin-cli password "
-            "grant without TOTP is refused (401), the admin must enrol TOTP before the console "
-            "login completes, the next login demands the code; 8090 refuses the public host "
+            f"on the admin entrypoint the master issuer is {issuer}; a new admin's admin-cli "
+            "password grant without TOTP is refused (401), the admin must enrol TOTP before the "
+            "console login completes, the next login demands the code; it refuses the public host "
             "(404) and an encoded slash (400)",
         )
 
@@ -1549,7 +1666,7 @@ class Probe:
         rp_secret: str,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        response = through_tunnel(
+        response = self.through_tunnel(
             "POST",
             PUBLIC_TOKEN_PATH,
             headers=headers,
@@ -1582,7 +1699,7 @@ class Probe:
         user_id = admin.create_user(REALM, "probe-disabled", password)
         tokens = self.password_grant("probe-disabled", password, rp_secret)
         admin.must("PUT", f"/{REALM}/users/{user_id}", {"enabled": False})
-        refresh = through_tunnel(
+        refresh = self.through_tunnel(
             "POST",
             PUBLIC_TOKEN_PATH,
             form={
@@ -1623,7 +1740,7 @@ class Probe:
         forwarded = {"X-Forwarded-For": CLIENT_ADDRESS}
 
         def wrong_password(headers: dict[str, str]) -> Response:
-            return through_tunnel(
+            return self.through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
                 headers=headers,
@@ -1639,7 +1756,7 @@ class Probe:
         tokens = self.password_grant("probe-events", password, rp_secret, forwarded)
         refused = wrong_password(forwarded)
         expect(refused.status == 400, f"a wrong password answered {refused.status}")
-        logout = through_tunnel(
+        logout = self.through_tunnel(
             "POST",
             PUBLIC_LOGOUT_PATH,
             form={
@@ -1737,10 +1854,10 @@ class Probe:
         query = self.app_client_authorization_query(
             client, code_challenge=challenge.rstrip(b"=").decode(), code_challenge_method="S256"
         )
-        login_page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}", opener=opener)
+        login_page = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}", opener=opener)
         expect(login_page.status == 200, f"{name}'s login page answered {login_page.status}")
         action, fields = form_with(login_page, "username")
-        signed_in = through_tunnel_url(
+        signed_in = self.through_tunnel_url(
             "POST",
             action,
             form=fields | {"username": username, "password": password},
@@ -1756,7 +1873,7 @@ class Probe:
         code = self.keep_secret(f"{name} authorization code", parse_qs(callback.query)["code"][0])
         return self.tokens_from(
             username,
-            through_tunnel(
+            self.through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
                 form={
@@ -1774,7 +1891,7 @@ class Probe:
         self, client: AppClient, client_secret: str
     ) -> None:
         """Cells T3 to T5: PKCE is required, the callback is exact, no other grant works."""
-        without_challenge = through_tunnel(
+        without_challenge = self.through_tunnel(
             "GET", f"{PUBLIC_AUTH_PATH}?{self.app_client_authorization_query(client)}"
         )
         error = parse_qs(urlsplit(without_challenge.headers.get("Location", "")).query)
@@ -1791,7 +1908,7 @@ class Probe:
             query = self.app_client_authorization_query(
                 client, redirect_uri=redirect_uri, **challenge
             )
-            page = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
+            page = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
             expect(
                 page.status == 400 and "Invalid parameter: redirect_uri" in page.text,
                 f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
@@ -1801,7 +1918,7 @@ class Probe:
         if not client.agent_workload:
             refused_grants.insert(0, {"grant_type": "client_credentials"})
         for grant in refused_grants:
-            refused = through_tunnel(
+            refused = self.through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
                 form={"client_id": client.client_id, "client_secret": client_secret, **grant},
@@ -1838,7 +1955,7 @@ class Probe:
         realm_lifespan = admin.get(f"/{REALM}")["accessTokenLifespan"]
         tokens = self.tokens_from(
             f"{name} workload",
-            through_tunnel(
+            self.through_tunnel(
                 "POST",
                 PUBLIC_TOKEN_PATH,
                 form={
@@ -1878,7 +1995,7 @@ class Probe:
         query = self.app_client_authorization_query(
             client, scope="openid offline_access", **challenge
         )
-        refused = through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
+        refused = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
         location = refused.headers.get("Location", "")
         error = parse_qs(urlsplit(location).query)
         expect(
@@ -1906,7 +2023,7 @@ class Probe:
                     "post_logout_redirect_uri": post_logout_redirect_uri,
                 }
             )
-            return through_tunnel("GET", f"{PUBLIC_LOGOUT_PATH}?{query}", opener=browser)
+            return self.through_tunnel("GET", f"{PUBLIC_LOGOUT_PATH}?{query}", opener=browser)
 
         registered = end_session(client.logout_redirect)
         expect(
@@ -2083,7 +2200,6 @@ class Probe:
         )
 
 
-PORT_TAKEN_EXIT = 3
 READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 # Per mode: the Probe method that runs it and the line that reports it ended well.
@@ -2150,21 +2266,21 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
         parser.error(f"{scratch} is not an empty directory")
-    taken = ports_free(8081, 8090)
-    if taken:
-        print(f"probe refused: 127.0.0.1 port(s) {taken} in use; stop the live edge first")
-        return PORT_TAKEN_EXIT
-    stack = make_stack(scratch)
-    # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
-    # below still runs and the probe ends with its one FAILED line.
+    # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so even a stop
+    # while the stack is being built ends with the one FAILED line, and the teardown below still
+    # runs for a stack that exists.
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, stop_as_failure)
     failures = []
-    probe = Probe(stack)
+    stack = None
     method_name, success_line = MODES[arguments.mode]
     try:
         try:
-            getattr(probe, method_name)()
+            try:
+                stack = make_stack(scratch)
+            except OSError as failure:
+                raise ProbeFailure(str(failure)) from failure
+            getattr(Probe(stack), method_name)()
         finally:
             # Inside the try whose handlers take a stop signal: one landing while this swaps
             # the handlers still ends the run as a stop or a failure, never as a skipped teardown.
@@ -2180,7 +2296,7 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
             failures.append(str(failure.__context__))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
-        if not stack.down():
+        if stack is not None and not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
