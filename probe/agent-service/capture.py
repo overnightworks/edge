@@ -37,6 +37,7 @@ import struct
 import sys
 import time
 from dataclasses import dataclass
+from typing import NamedTuple
 
 WINDOW_SECONDS = 20
 FRAME_CAP = 20_000
@@ -144,6 +145,50 @@ def link_header_bytes(frame: bytes, hardware_type: int) -> tuple[int, int | None
     return length, {ETHERTYPE_IPV4: 4, ETHERTYPE_IPV6: 6}.get(ethertype)
 
 
+class Network(NamedTuple):
+    """What the IP header yields: where the packet goes, its protocol, and the bytes behind it."""
+
+    destination: str
+    protocol: int
+    transport: bytes
+    undecoded: bool = False
+
+
+def network_layer(frame: bytes, offset: int, version: int) -> Network | None:
+    """The IP header's reading; None for a packet that is neither IPv4 nor IPv6, or a fragment
+    of neither TCP nor UDP."""
+    if version == 4:
+        protocol = frame[offset + 9]
+        destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16 : offset + 20])
+        transport = frame[offset + (frame[offset] & 0x0F) * 4 :]
+        if struct.unpack_from("!H", frame, offset + 6)[0] & IPV4_FRAGMENT_BITS:
+            # Not reassembled: a fragment of a TCP or UDP datagram is a gap, and fails closed.
+            if protocol in (PROTOCOL_TCP, PROTOCOL_UDP):
+                return Network(destination, 0, b"", undecoded=True)
+            return None
+        return Network(destination, protocol, transport)
+    if version == 6:
+        destination = socket.inet_ntop(socket.AF_INET6, frame[offset + 24 : offset + 40])
+        if (reached := ipv6_transport(frame, offset)) is None:
+            return Network(destination, 0, b"", undecoded=True)
+        return Network(destination, *reached)
+    return None
+
+
+def transport_contents(
+    protocol: int, transport: bytes, header_bytes: int, carries_dns: bool
+) -> tuple[int, bytes, bool]:
+    """The TCP flags, the payload, and whether a DNS-over-TCP message is cut short."""
+    if protocol != PROTOCOL_TCP:
+        return 0, transport[UDP_HEADER_BYTES:], False
+    flags, payload = transport[13], transport[header_bytes:]
+    if carries_dns and payload:
+        # DNS over TCP: a two-byte length comes first, and one whole message follows it.
+        declared = int.from_bytes(payload[:2])
+        return flags, payload[2:], len(payload) != 2 + declared
+    return flags, payload, False
+
+
 def parse(
     frame: bytes,
     interface: str,
@@ -156,46 +201,28 @@ def parse(
     offset, version = link_header_bytes(frame, hardware_type)
     if len(frame) <= offset:
         return None
-    version = version or frame[offset] >> 4
-    if version == 4:
-        protocol = frame[offset + 9]
-        destination = socket.inet_ntop(socket.AF_INET, frame[offset + 16 : offset + 20])
-        transport = frame[offset + (frame[offset] & 0x0F) * 4 :]
-        if struct.unpack_from("!H", frame, offset + 6)[0] & IPV4_FRAGMENT_BITS:
-            # Not reassembled: a fragment of a TCP or UDP datagram is a gap, and fails closed.
-            if protocol in (PROTOCOL_TCP, PROTOCOL_UDP):
-                return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
-            return None
-    elif version == 6:
-        destination = socket.inet_ntop(socket.AF_INET6, frame[offset + 24 : offset + 40])
-        if (reached := ipv6_transport(frame, offset)) is None:
-            return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
-        protocol, transport = reached
-    else:
+    network = network_layer(frame, offset, version or frame[offset] >> 4)
+    if network is None:
         return None
+    destination, protocol, transport, undecoded = network
+    gap = Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
+    if undecoded:
+        return gap
     if protocol not in (PROTOCOL_TCP, PROTOCOL_UDP):
         return None
     if len(transport) < (TCP_HEADER_BYTES if protocol == PROTOCOL_TCP else UDP_HEADER_BYTES):
-        return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
+        return gap
     source_port, destination_port = struct.unpack_from("!HH", transport)
     header_bytes = (transport[12] >> 4) * 4 if protocol == PROTOCOL_TCP else UDP_HEADER_BYTES
     declared_bytes = (
         header_bytes if protocol == PROTOCOL_TCP else struct.unpack_from("!H", transport, 4)[0]
     )
-    if DNS_PORT in (source_port, destination_port) and (
-        truncated or declared_bytes > len(transport)
-    ):
+    carries_dns = DNS_PORT in (source_port, destination_port)
+    if carries_dns and (truncated or declared_bytes > len(transport)):
         # The capture cut the DNS message (or its TCP options): the question is not all here.
-        return Segment(outgoing, interface, 0, destination, 0, 0, 0, "", at, undecoded=True)
-    flags, payload, partial = 0, transport[UDP_HEADER_BYTES:], False
-    if protocol == PROTOCOL_TCP:
-        flags, payload = transport[13], transport[header_bytes:]
-        if DNS_PORT in (source_port, destination_port) and payload:
-            # DNS over TCP: a two-byte length comes first, and one whole message follows it.
-            declared = int.from_bytes(payload[:2])
-            partial = len(payload) != 2 + declared
-            payload = payload[2:]
-    question = dns_question(payload) if DNS_PORT in (source_port, destination_port) else ""
+        return gap
+    flags, payload, partial = transport_contents(protocol, transport, header_bytes, carries_dns)
+    question = dns_question(payload) if carries_dns else ""
     return Segment(
         outgoing, interface, protocol, destination, source_port, destination_port, flags,
         question, at, partial_dns=partial,
@@ -214,6 +241,8 @@ def dns_question(message: bytes) -> str:
 
 # (label, opcode, operand, jump to this label if true, if false); no label: the next instruction.
 Step = tuple[str | None, int, int, str | None, str | None]
+IPV4_PORTS = "ipv4 ports"
+IPV6_PORTS = "ipv6 ports"
 DNS_FILTER: list[Step] = [
     (None, LOAD_WORD, HARDWARE_TYPE_OFFSET, None, None),
     (None, JUMP_EQUAL, ARPHRD_ETHER, "ethernet", None),
@@ -223,9 +252,9 @@ DNS_FILTER: list[Step] = [
     (None, JUMP_EQUAL, ETHERTYPE_IPV6, "ipv6", None),
     (None, JUMP_EQUAL, ETHERTYPE_VLAN, "pass", "drop"),
     ("ipv4", LOAD_BYTE, IPV4_PROTOCOL_OFFSET, None, None),
-    (None, JUMP_EQUAL, PROTOCOL_TCP, "ipv4 ports", None),
-    (None, JUMP_EQUAL, PROTOCOL_UDP, "ipv4 ports", "drop"),
-    ("ipv4 ports", LOAD_HALF, IPV4_FRAGMENT_OFFSET, None, None),
+    (None, JUMP_EQUAL, PROTOCOL_TCP, IPV4_PORTS, None),
+    (None, JUMP_EQUAL, PROTOCOL_UDP, IPV4_PORTS, "drop"),
+    (IPV4_PORTS, LOAD_HALF, IPV4_FRAGMENT_OFFSET, None, None),
     (None, JUMP_ANY_BIT, FRAGMENT_BITS, "drop", None),
     (None, LOAD_HEADER_LENGTH_INTO_X, IPV4_HEADER_OFFSET, None, None),
     (None, LOAD_HALF_INDEXED, IPV4_HEADER_OFFSET, None, None),
@@ -233,12 +262,12 @@ DNS_FILTER: list[Step] = [
     (None, LOAD_HALF_INDEXED, IPV4_HEADER_OFFSET + 2, None, None),
     (None, JUMP_EQUAL, DNS_PORT, "pass", "drop"),
     ("ipv6", LOAD_BYTE, IPV6_PROTOCOL_OFFSET, None, None),
-    (None, JUMP_EQUAL, PROTOCOL_TCP, "ipv6 ports", None),
-    (None, JUMP_EQUAL, PROTOCOL_UDP, "ipv6 ports", None),
+    (None, JUMP_EQUAL, PROTOCOL_TCP, IPV6_PORTS, None),
+    (None, JUMP_EQUAL, PROTOCOL_UDP, IPV6_PORTS, None),
     # The ports lie behind an extension header chain, which the filter cannot walk.
     *[(None, JUMP_EQUAL, header, "pass", None) for header in IPV6_EXTENSION_HEADERS],
     (None, RETURN, DROP_FRAME, None, None),
-    ("ipv6 ports", LOAD_HALF, IPV6_SOURCE_PORT_OFFSET, None, None),
+    (IPV6_PORTS, LOAD_HALF, IPV6_SOURCE_PORT_OFFSET, None, None),
     (None, JUMP_EQUAL, DNS_PORT, "pass", None),
     (None, LOAD_HALF, IPV6_SOURCE_PORT_OFFSET + 2, None, None),
     (None, JUMP_EQUAL, DNS_PORT, "pass", "drop"),
@@ -266,7 +295,8 @@ def attach_filter(watcher: socket.socket, steps: list[Step]) -> None:
     """The kernel's classic-BPF filter for the socket."""
     program = assemble(steps)
     instructions = ctypes.create_string_buffer(program, len(program))
-    descriptor = struct.pack("@HL", len(steps), ctypes.addressof(instructions))
+    address = ctypes.cast(instructions, ctypes.c_void_p).value
+    descriptor = struct.pack("@HL", len(steps), address)
     watcher.setsockopt(socket.SOL_SOCKET, SO_ATTACH_FILTER, descriptor)
 
 

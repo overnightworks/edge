@@ -8,7 +8,8 @@ packages are exactly the lock's. Run it from the repository root, in the probe-s
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3 probe/agent-service/image.py
 
 Every image and container it makes carries the probe-only name below and is removed at the end.
-Docker's transcripts go to `--output` (default: a new temporary directory, printed).
+Docker's transcripts go to `--output`, an existing directory (default: a new temporary one,
+printed).
 """
 
 from __future__ import annotations
@@ -31,9 +32,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
+
+from egress import scratch_directory  # noqa: E402
+
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 PROBE_NAME = f"edge-probe-agent-image-{os.getpid()}"
 IMAGE = f"{PROBE_NAME}:probe"
+CLAUDE_CLI_PATH = "/tmp/claude"  # NOSONAR(S5443) where the build downloads the CLI inside the image
 CLI_REPORT = "2.1.302 (Claude Code)"
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
@@ -108,9 +114,7 @@ def lock_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
     for line in (IMAGE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8").splitlines():
         pinned = re.match(r"([A-Za-z0-9._-]+)==([^\s;]+)", line)
-        wheel = re.match(
-            r"([A-Za-z0-9._-]+) @ \S+/[^/\s]+?-([0-9][^-/\s]*)-py3-none-any\.whl", line
-        )
+        wheel = re.match(r"([A-Za-z0-9._-]+) @ \S+/[^/\s]+?-(\d[^-/\s]*)-py3-none-any\.whl", line)
         if match := pinned or wheel:
             versions[match.group(1).lower().replace("_", "-")] = match.group(2)
     return versions
@@ -120,7 +124,7 @@ def cell_i1(output: Path) -> None:
     result = build(IMAGE_DIRECTORY, output / "i1-build.txt")
     expect(result.returncode == 0, f"I1: the build failed (see {output / 'i1-build.txt'})")
     text = result.stdout + result.stderr
-    expect("/tmp/claude: OK" in text, "I1: the build did not report the CLI's sha256 as OK")
+    expect(f"{CLAUDE_CLI_PATH}: OK" in text, "I1: the build did not report the CLI's sha256 as OK")
     expect("No broken requirements found." in text, "I1: pip check did not pass in the build")
 
 
@@ -135,7 +139,7 @@ def cell_i2(output: Path, scratch: Path) -> None:
     )
     expect(altered_cli.returncode != 0, "I2: a build with an altered CLI hash succeeded")
     expect(
-        "/tmp/claude: FAILED" in altered_cli.stdout + altered_cli.stderr,
+        f"{CLAUDE_CLI_PATH}: FAILED" in altered_cli.stdout + altered_cli.stderr,
         "I2: sha256sum did not fail on the CLI",
     )
     context = scratch / "altered-wheel"
@@ -388,11 +392,14 @@ def interrupt(*_: object) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, help="where the docker transcripts go")
+    parser.add_argument(
+        "--output",
+        type=scratch_directory,
+        help="an existing, writable directory for the docker transcripts",
+    )
     arguments = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, interrupt)
     output = arguments.output or Path(tempfile.mkdtemp(prefix="agent-image-probe-"))
-    output.mkdir(parents=True, exist_ok=True)
     print(f"transcripts: {output}")
     with tempfile.TemporaryDirectory(prefix="agent-image-probe-") as scratch_name:
         scratch = Path(scratch_name)
