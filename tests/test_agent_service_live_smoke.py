@@ -4,13 +4,17 @@ probe/agent-service/unit.py (cell U16) and by the operator.
 """
 
 import base64
+import getpass
 import hashlib
+import http.client
 import io
 import json
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.parse
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,6 +107,31 @@ def test_a_refusing_token_endpoint_stops_with_its_status_and_no_secret():
     assert str(stopped.value) == "the token endpoint answered 401"
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("junk"), [], {"other": 1}],
+)
+def test_a_broken_token_answer_ends_as_one_line_without_its_content(answer):
+    endpoint = FakeTokenEndpoint(answer)
+
+    with pytest.raises(LiveSmokeFailed) as stopped:
+        live_smoke.access_token({}, "the-secret", endpoint)
+
+    assert str(stopped.value) == "the token endpoint gave no access token"
+    assert stopped.value.__cause__ is None
+
+
+def test_a_terminal_that_cannot_hide_the_input_stops_the_sign_in(monkeypatch):
+    def echoing(prompt, stream=None):
+        warnings.warn("cannot control echo", getpass.GetPassWarning, stacklevel=1)
+        return "https://songmaker.hallucinai.de/auth/callback?state=S&code=C"
+
+    monkeypatch.setattr(live_smoke.getpass, "getpass", echoing)
+
+    with pytest.raises(LiveSmokeFailed, match="cannot hide the input"):
+        live_smoke.ask_without_echo("Pasted address: ", stream=None)
+
+
 # --- the report -------------------------------------------------------------------------------
 
 
@@ -128,6 +157,7 @@ def test_one_failed_cell_fails_the_run_and_an_observation_does_not():
     ("returncode", "output", "paid", "admitted"),
     [
         (0, "event: run_started\nevent: assistant_text\nok\nevent: succeeded\nok\n", True, True),
+        (0, "event: run_started\nevent: succeeded\n\n", False, True),
         (1, "event: run_started\nevent: failed\nprovider_error: x\n", False, True),
         (1, "refused with 401 unauthorized: expired\n", False, False),
     ],
@@ -135,7 +165,7 @@ def test_one_failed_cell_fails_the_run_and_an_observation_does_not():
 def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
     returncode, output, paid, admitted
 ):
-    l2, l3 = live_smoke.turn_cells(returncode, output)
+    l2, l3 = live_smoke.turn_cells(returncode, output, KNOWN)
 
     assert (l2.verdict is Verdict.HELD, l3.verdict is Verdict.HELD) == (paid, admitted)
     assert ("unauthorized" in l2.figure) == ("401" in output)
@@ -144,18 +174,40 @@ def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
 # --- the service, against a scripted docker ---------------------------------------------------
 
 
-@dataclass(frozen=True)
 class FakeProcess:
-    lines: list[str]
-    returncode: int = 0
-    stdin: io.StringIO = field(default_factory=io.StringIO)
+    """The cancelling smoke: prints its lines, then ends, hangs until killed, or is interrupted."""
+
+    def __init__(
+        self, lines: list[str], returncode: int = 0, hangs: bool = False, interrupted: bool = False
+    ) -> None:
+        self.lines, self.returncode = lines, returncode
+        self.hangs, self.interrupted = hangs, interrupted
+        self.stdin = io.StringIO()
+        self.exited = threading.Event()
+        self.terminated = self.killed = False
 
     @property
     def stdout(self):
-        return iter(self.lines)
+        yield from self.lines
+        if self.interrupted:
+            raise KeyboardInterrupt
+        if self.hangs:
+            self.exited.wait(10)
 
-    def wait(self) -> int:
-        return self.returncode
+    def poll(self):
+        return self.returncode if self.exited.is_set() else None
+
+    def wait(self, timeout=None) -> int:
+        self.exited.set()
+        return -9 if self.killed else self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.exited.set()
+
+    def kill(self) -> None:
+        self.killed = True
+        self.exited.set()
 
 
 @dataclass(frozen=True)
@@ -171,12 +223,14 @@ class FakeStack(Stack):
         return self.answer(list(command))
 
     def start_compose(self, *arguments):
-        self.asked.append([*self.prefix(), *arguments])
+        self.asked.append([*self.compose_prefix, *arguments])
         return self.cancelling
 
 
 def healthy_service(command: list[str]) -> subprocess.CompletedProcess:
     text = " ".join(command)
+    if "config" in command:
+        return completed(json.dumps({"name": "edge", "x-egress-address": GATEWAY}))
     if "cat /sys/fs/cgroup/memory" in text:
         return completed("1234\n")
     if "grep -c" in text:
@@ -273,6 +327,111 @@ def test_a_cli_count_that_could_not_be_read_prints_sample_failed():
     assert live_smoke.cli_processes(stack) == "SAMPLE FAILED"
 
 
+def with_leftover(command: list[str]) -> subprocess.CompletedProcess:
+    if command[:2] == ["docker", "ps"]:
+        return completed("leftover\n")
+    return healthy_service(command)
+
+
+def asked_commands(stack: FakeStack) -> list[str]:
+    return [" ".join(command) for command in stack.asked]
+
+
+@pytest.mark.parametrize("secret", KNOWN.values())
+def test_a_secret_across_the_cut_of_the_paid_answer_leaves_no_beginning(secret):
+    output = f"event: run_started\nevent: succeeded\n{'x' * 290}{secret}\n"
+
+    l2, _ = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert secret[:8] not in l2.figure
+
+
+@pytest.mark.parametrize("secret", KNOWN.values())
+def test_a_secret_across_the_cut_of_the_cancelled_answer_leaves_no_beginning(secret):
+    lines = ["event: run_started\n", "holding the stream open 3 s\n", f"{'x' * 290}{secret}\n"]
+    stack = FakeStack(answer=healthy_service, cancelling=FakeProcess(lines))
+
+    turn = live_smoke.cancelled_turn(stack, TOKENS)
+    (cell,) = live_smoke.cancel_cells(stack, "0", turn, KNOWN, pause=lambda _: None)
+
+    assert secret[:8] not in cell.figure
+
+
+def test_a_failed_recreate_is_failed_even_when_the_old_container_still_listens():
+    secret = KNOWN.client_secret
+
+    def failing_up(command):
+        if "up" in command:
+            return completed("", returncode=1, stderr=f"first\n{'e' * 190}{secret}\n")
+        return healthy_service(command)
+
+    stack = FakeStack(answer=failing_up)
+
+    cells = run_smoke_cells(stack)
+
+    assert [(cell.name, cell.verdict) for cell in cells] == [("recreate", Verdict.FAILED)]
+    assert "exited 1" in cells[0].figure
+    assert secret[:8] not in cells[0].figure
+    assert not any("agent-smoke" in command for command in stack.asked)
+
+
+def test_a_log_that_could_not_be_read_prints_sample_failed_for_l4():
+    def unreadable_since(command):
+        if "--since" in command:
+            return completed("", returncode=1)
+        return healthy_service(command)
+
+    stack = FakeStack(answer=unreadable_since, cancelling=held_cancel())
+
+    cells = {cell.name.split()[0]: cell for cell in run_smoke_cells(stack)}
+
+    assert "ERROR lines since (0) SAMPLE FAILED" in cells["L4"].figure
+    assert cells["L4"].verdict is Verdict.OBSERVED
+
+
+def test_a_paid_turn_the_host_stops_waiting_for_fails_l2_and_removes_its_container():
+    def hanging(command):
+        if "agent-smoke" in command and "--cancel" not in command:
+            raise subprocess.TimeoutExpired(command, 1)
+        return with_leftover(command)
+
+    stack = FakeStack(answer=hanging, cancelling=held_cancel())
+
+    cells = {cell.name.split()[0]: cell for cell in run_smoke_cells(stack)}
+
+    assert cells["L2"].verdict is Verdict.FAILED
+    assert "the host gave up" in cells["L2"].figure
+    assert "docker rm -f leftover" in asked_commands(stack)
+
+
+def test_a_cancelled_turn_that_hangs_is_killed_at_the_deadline_and_its_container_removed():
+    hanging = FakeProcess(["event: run_started\n"], hangs=True)
+    stack = FakeStack(
+        answer=with_leftover,
+        cancelling=hanging,
+    )
+
+    turn = live_smoke.cancelled_turn(stack, TOKENS, seconds=0.05)
+
+    assert hanging.killed
+    assert "the host gave up after 0.05 s" in turn.output
+    assert "docker rm -f leftover" in asked_commands(stack)
+
+
+def test_an_interrupted_cancelled_turn_ends_its_child_and_removes_its_container():
+    interrupted = FakeProcess(["event: run_started\n"], interrupted=True)
+    stack = FakeStack(
+        answer=with_leftover,
+        cancelling=interrupted,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        live_smoke.cancelled_turn(stack, TOKENS)
+
+    assert interrupted.terminated
+    assert "docker rm -f leftover" in asked_commands(stack)
+
+
 # --- L5, judged from what the container saw ---------------------------------------------------
 
 
@@ -309,10 +468,10 @@ def test_the_unreachable_world_holds_e6_to_e10():
     ("cell", "change"),
     [
         ("E6", lambda seen: seen["public_tcp"].update({"1.1.1.1": "ECONNREFUSED"})),
-        ("E7", lambda seen: seen["reach"].update({"lan": "0"})),
+        ("E7", lambda seen: seen["reach"].update({"lan": "connected"})),
         ("E7", lambda seen: seen.update(defaults=["eth0"])),
         ("E8", lambda seen: seen.update(ipv6_interfaces=["lo", "eth0"])),
-        ("E9", lambda seen: seen["udp"].update({"53": "0"})),
+        ("E9", lambda seen: seen["udp"].update({"53": "routable"})),
         ("E10", lambda seen: seen.update(outside=["93.184.216.34"])),
         ("E10", lambda seen: seen.update(gateway=["10.0.0.1"])),
     ],
@@ -335,17 +494,17 @@ def test_a_gateway_on_the_agent_network_fails_e7():
 
 
 @pytest.mark.parametrize(
-    ("listing", "held"),
+    ("listening", "held"),
     [
-        (f"tcp {GATEWAY} 443\ntcp 127.0.0.11 40001\nudp 127.0.0.11 50002\n", True),
-        (f"tcp {GATEWAY} 443\ntcp 0.0.0.0 8080\n", False),
-        (f"tcp {GATEWAY} 443\nudp {GATEWAY} 53\n", False),
-        (f"tcp {GATEWAY} 443\ntcp6 :: 443\n", False),
-        ("tcp 127.0.0.11 40001\n", False),
+        ({"tcp": [f"{GATEWAY}:443", "127.0.0.11:40001"], "udp": ["127.0.0.11:50002"]}, True),
+        ({"tcp": [f"{GATEWAY}:443", "0.0.0.0:8080"], "udp": []}, False),
+        ({"tcp": [f"{GATEWAY}:443"], "udp": [f"{GATEWAY}:53"]}, False),
+        ({"tcp": [f"{GATEWAY}:443", "[::]:443"], "udp": []}, False),
+        ({"tcp": ["127.0.0.11:40001"], "udp": []}, False),
     ],
 )
-def test_only_the_gateways_443_and_the_embedded_resolver_may_listen(listing, held):
-    assert (live_smoke.judge_listeners(listing, GATEWAY).verdict is Verdict.HELD) is held
+def test_only_the_gateways_443_and_the_embedded_resolver_may_listen(listening, held):
+    assert (live_smoke.judge_listeners(listening, GATEWAY).verdict is Verdict.HELD) is held
 
 
 def test_the_unused_address_is_the_last_one_no_member_holds():
@@ -359,8 +518,20 @@ def test_the_unused_address_is_the_last_one_no_member_holds():
     assert live_smoke.gateways_of({"IPAM": {"Config": [{"Subnet": "10.0.0.0/24"}]}}) == []
 
 
-def test_the_project_and_the_gateway_default_to_the_live_stack():
-    stack = Stack()
+def test_the_stack_is_anchored_to_the_repository_and_names_what_compose_resolves():
+    stack = FakeStack(answer=healthy_service)
 
-    assert stack.prefix()[:4] == ["docker", "compose", "-p", "edge"]
-    assert stack.gateway == "172.31.252.10"
+    assert stack.compose_prefix[:5] == (
+        "docker", "compose", "--project-directory", str(ROOT), "--file",
+    )  # fmt: skip
+    assert (stack.project, stack.gateway) == ("edge", GATEWAY)
+
+
+def test_a_compose_that_cannot_resolve_stops_the_run_with_its_last_line():
+    def refusing(command):
+        return completed(
+            "", returncode=1, stderr="warning\nrequired variable EDGE_DOMAIN missing\n"
+        )
+
+    with pytest.raises(LiveSmokeFailed, match="config failed: required variable EDGE_DOMAIN"):
+        FakeStack(answer=refusing).project  # noqa: B018

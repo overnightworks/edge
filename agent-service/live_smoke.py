@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The live smoke of the agent service in one command (README "The agent service", "The smoke").
 
-    cd ~/git/edge && python3 agent-service/live_smoke.py [--project edge] [--gateway 172.31.252.10]
+    cd ~/git/edge && python3 agent-service/live_smoke.py
 
 You sign in as yourself (the `songmaker` client's code flow with PKCE): open the printed
 address, sign in, and paste the address of the page that then fails; it is read without echo.
@@ -11,8 +11,14 @@ The run recreates the service, takes the idle
 memory, runs the paid turn (L2, L3), the memory peak (L7), the cancelled turn (L4, counts only), the
 searches for a leaked secret (L6) and the egress cells of the running container (L5: E6-E10, E12).
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
+L7's figures are the idle `memory.current` of the recreated service and its `memory.peak` right after
+the one turn (an upper bound of the answer phase, it includes the start). A refusal `unauthorized`
+means expired tokens, `forbidden` a missing `/ki-abo` or tokens that do not share an `azp`.
+`agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile `apply`).
 
-The in-container smoke is `smoke.py`, used as it is. Only the standard library is used.
+The compose project and the egress gateway's address are read from `docker compose config` of the
+repository this file sits in. The in-container smoke is `smoke.py`, used as it is, and the egress
+observations are `egress_observe.py`, shared with the probe. Only the standard library is used.
 """
 
 from __future__ import annotations
@@ -21,22 +27,29 @@ import argparse
 import base64
 import getpass
 import hashlib
+import http.client
+import inspect
 import ipaddress
 import json
 import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 
+import egress_observe
+from egress_observe import PUBLIC_RESOLVER, lan_address
 from smoke import HOLDING_MESSAGE, Tokens
 
 OIDC = "https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect"
@@ -45,8 +58,12 @@ REDIRECT = "https://songmaker.hallucinai.de/auth/callback"
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
 LOGIN_TOKEN_FILE = SECRETS_DIRECTORY / "agent-service/claude/token"
-DEFAULT_PROJECT = "edge"
-DEFAULT_GATEWAY = "172.31.252.10"
+REPOSITORY = Path(__file__).resolve().parents[1]
+LIVE_COMPOSE = (
+    "docker", "compose", "--project-directory", str(REPOSITORY),
+    "--file", str(REPOSITORY / "compose.yaml"), "--profile", "agent-service",
+)  # fmt: skip
+GATEWAY_ADDRESS_KEY = "x-egress-address"
 SERVICE = "agent-service"
 SMOKE_SERVICE = "agent-smoke"
 EGRESS_SERVICE = "agent-egress"
@@ -54,11 +71,15 @@ LISTENING = "Uvicorn running"
 LISTEN_ATTEMPTS = 120
 SETTLE_SECONDS = 5
 TOKEN_TIMEOUT_SECONDS = 30
+PAID_TURN_SECONDS = 420  # above the 300 s of each socket of smoke.py
+CANCELLED_TURN_SECONDS = 420
+CHILD_END_SECONDS = 10
+RECREATE_REASON_CHARACTERS = 200
 SAMPLE_FAILED = "SAMPLE FAILED"
+TIMED_OUT = 124
 UNREACHABLE = {"ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"}
 EMBEDDED_RESOLVER = "127.0.0.11"
 PROVIDER_HOST = "api.anthropic.com"
-PUBLIC_RESOLVER = "1.1.1.1"
 CLI_PROCESS_COUNT = (
     'file=$(mktemp) && cat /proc/[0-9]*/cmdline > "$file" && tr "\\0" "\\n" < "$file" '
     '| grep -c "[c]laude"; status=$?; rm -f "$file"; test "$status" -le 1'
@@ -86,6 +107,13 @@ class Cell:
         return f"{self.name} {self.verdict}: {self.figure}"
 
 
+def redacted(text: str, values: Sequence[str]) -> str:
+    """`text` with every value removed, the longest first so that none leaves a part behind."""
+    for value in sorted(values, key=len, reverse=True):
+        text = text.replace(value, "[secret]")
+    return text
+
+
 @dataclass(frozen=True)
 class Secrets:
     """Everything that must appear nowhere: the two tokens, the login token, the client secret."""
@@ -100,24 +128,21 @@ class Secrets:
         )  # fmt: skip
         return [value for value in everything if value]
 
+    def redact(self, text: str) -> str:
+        return redacted(text, self.values())
+
 
 @dataclass(frozen=True)
 class Stack:
-    """One compose project, the address of its egress gateway and how docker is asked.
+    """One compose project and how docker is asked for it.
 
-    `compose_prefix` is everything before the compose subcommand; the probe passes its own."""
+    `compose_prefix` is everything before the compose subcommand: the repository's own files for
+    the live stack, the probe's project and files for the probe. The project's name and the egress
+    gateway's address are read from the configuration compose resolves for that prefix."""
 
-    project: str = DEFAULT_PROJECT
-    gateway: str = DEFAULT_GATEWAY
-    compose_prefix: tuple[str, ...] = ()
+    compose_prefix: tuple[str, ...] = LIVE_COMPOSE
     environment: Mapping[str, str] | None = None
     directory: Path | None = None
-
-    def prefix(self) -> list[str]:
-        return list(
-            self.compose_prefix
-            or ("docker", "compose", "-p", self.project, "--profile", "agent-service")
-        )
 
     def run(
         self, command: Sequence[str], stdin: str | None = None, timeout: int = 300
@@ -130,13 +155,32 @@ class Stack:
     def compose(
         self, *arguments: str, stdin: str | None = None, timeout: int = 300
     ) -> subprocess.CompletedProcess[str]:
-        return self.run([*self.prefix(), *arguments], stdin, timeout)
+        return self.run([*self.compose_prefix, *arguments], stdin, timeout)
 
     def start_compose(self, *arguments: str) -> subprocess.Popen[str]:
         return subprocess.Popen(
-            [*self.prefix(), *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [*self.compose_prefix, *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, env=self.environment, cwd=self.directory,
         )  # fmt: skip
+
+    @cached_property
+    def configuration(self) -> dict:
+        answer = self.compose("config", "--format", "json")
+        try:
+            configuration = json.loads(answer.stdout) if answer.returncode == 0 else None
+        except ValueError:
+            configuration = None
+        if not isinstance(configuration, dict):
+            raise LiveSmokeFailed(f"docker compose config failed: {last_line(answer.stderr)}")
+        return configuration
+
+    @property
+    def project(self) -> str:
+        return self.configuration["name"]
+
+    @property
+    def gateway(self) -> str:
+        return self.configuration[GATEWAY_ADDRESS_KEY]
 
 
 @dataclass
@@ -150,10 +194,7 @@ class Report:
     def add(self, *cells: Cell) -> None:
         for cell in cells:
             self.cells.append(cell)
-            line = cell.line()
-            for value in self.secret_values:
-                line = line.replace(value, "[secret]")
-            self.out(line)
+            self.out(redacted(cell.line(), self.secret_values))
 
     def failed(self) -> bool:
         return any(cell.verdict is Verdict.FAILED for cell in self.cells)
@@ -191,13 +232,25 @@ def access_token(
             return json.load(answer)["access_token"]
     except urllib.error.HTTPError as refusal:
         raise LiveSmokeFailed(f"the token endpoint answered {refusal.code}") from None
-    except (OSError, ValueError, KeyError):
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError):
         raise LiveSmokeFailed("the token endpoint gave no access token") from None
+
+
+def ask_without_echo(prompt: str, stream) -> str:
+    """The pasted address holds a one-time code: stop rather than read it echoed."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            return getpass.getpass(prompt, stream=stream)
+        except getpass.GetPassWarning:
+            raise LiveSmokeFailed(
+                "this terminal cannot hide the input; run it in a terminal"
+            ) from None
 
 
 def sign_in(
     client_secret: str,
-    ask: Callable[..., str] = getpass.getpass,
+    ask: Callable[..., str] = ask_without_echo,
     urlopen=urllib.request.urlopen,
 ) -> Tokens:
     verifier, challenge = pkce_pair()
@@ -217,6 +270,11 @@ def sign_in(
 # --- what a smoke prints ----------------------------------------------------------------------
 
 
+def last_line(text: str) -> str:
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-1].strip() if lines else "no output"
+
+
 def lines_holding(text: str, values: Sequence[str]) -> int:
     return sum(any(value in line for value in values) for line in text.splitlines())
 
@@ -233,10 +291,14 @@ def other_lines(output: str) -> str:
     return " | ".join(kept)[:300]
 
 
-def turn_cells(returncode: int, output: str) -> list[Cell]:
+def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
+    """The secrets go out of the output before it is cut, so that none leaves its beginning."""
+    output = known.redact(output)
     events = event_names(output)
-    said = f"exit {returncode}; events {events}; {other_lines(output)}"
-    paid = returncode == 0 and events[-1:] == ["succeeded"]
+    text = other_lines(output)
+    said = f"exit {returncode}; events {events}; {text}"
+    answered = "assistant_text" in events or bool(text)
+    paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
     admitted = "run_started" in events
     return [
         Cell("L2 the paid turn", Verdict.HELD if paid else Verdict.FAILED, said),
@@ -260,8 +322,15 @@ def wait_until_listening(stack: Stack, pause: Callable[[float], None] = time.sle
     return False
 
 
-def recreate_service(stack: Stack, pause: Callable[[float], None] = time.sleep) -> Cell:
-    stack.compose("up", "-d", "--force-recreate", SERVICE)
+def recreate_service(
+    stack: Stack, known: Secrets, pause: Callable[[float], None] = time.sleep
+) -> Cell:
+    started = stack.compose("up", "-d", "--force-recreate", SERVICE)
+    if started.returncode != 0:
+        reason = known.redact(last_line(started.stderr))[:RECREATE_REASON_CHARACTERS]
+        return Cell(
+            "recreate", Verdict.FAILED, f"docker compose up exited {started.returncode}: {reason}"
+        )
     if wait_until_listening(stack, pause):
         return Cell("recreate", Verdict.HELD, "the service listens")
     return Cell(
@@ -290,10 +359,34 @@ def memory_cell(idle: str | None, peak: str | None) -> Cell:
     )  # fmt: skip
 
 
-def paid_turn(stack: Stack, tokens: Tokens) -> subprocess.CompletedProcess[str]:
-    return stack.compose(
-        "run", "--rm", "-T", SMOKE_SERVICE, stdin=f"{tokens.person}\n{tokens.workload}\n"
-    )
+def remove_smoke_containers(stack: Stack) -> None:
+    """A smoke the host stopped waiting for leaves its `run --rm` container behind."""
+    listed = stack.run([
+        "docker", "ps", "-aq",
+        "--filter", f"label=com.docker.compose.project={stack.project}",
+        "--filter", f"label=com.docker.compose.service={SMOKE_SERVICE}",
+    ])  # fmt: skip
+    leftovers = listed.stdout.split()
+    if leftovers:
+        stack.run(["docker", "rm", "-f", *leftovers])
+
+
+def paid_turn(
+    stack: Stack, tokens: Tokens, seconds: int = PAID_TURN_SECONDS
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return stack.compose(
+            "run",
+            "--rm",
+            "-T",
+            SMOKE_SERVICE,
+            stdin=f"{tokens.person}\n{tokens.workload}\n",
+            timeout=seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess([], TIMED_OUT, f"the host gave up after {seconds} s", "")
+    finally:
+        remove_smoke_containers(stack)
 
 
 @dataclass(frozen=True)
@@ -304,37 +397,75 @@ class CancelledTurn:
     since: str
 
 
-def cancelled_turn(stack: Stack, tokens: Tokens) -> CancelledTurn:
-    """Starts the cancelling smoke and counts the CLI processes while it holds its stream open."""
+def end_child(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=CHILD_END_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+def cancelled_turn(
+    stack: Stack, tokens: Tokens, seconds: float = CANCELLED_TURN_SECONDS
+) -> CancelledTurn:
+    """Starts the cancelling smoke and counts the CLI processes while it holds its stream open.
+    The host gives up after `seconds`, and the child and its container end however this leaves."""
     since = datetime.now(UTC).strftime(TIME_FORMAT)
     process = stack.start_compose("run", "--rm", "-T", SMOKE_SERVICE, "--cancel")
-    try:
-        process.stdin.write(f"{tokens.person}\n{tokens.workload}\n")
-        process.stdin.close()
-    except BrokenPipeError:
-        pass  # the smoke ended first; its output and exit code say why
+    gave_up = threading.Event()
+
+    def give_up() -> None:
+        gave_up.set()
+        process.kill()
+
+    watchdog = threading.Timer(seconds, give_up)
+    watchdog.daemon = True
+    watchdog.start()
     during = "no hold seen"
     lines = []
-    for line in process.stdout:
-        lines.append(line)
-        if HOLDING_MESSAGE in line:
-            during = cli_processes(stack)
-    return CancelledTurn(process.wait(), "".join(lines), during, since)
+    try:
+        try:
+            process.stdin.write(f"{tokens.person}\n{tokens.workload}\n")
+            process.stdin.close()
+        except BrokenPipeError:
+            pass  # the smoke ended first; its output and exit code say why
+        for line in process.stdout:
+            lines.append(line)
+            if HOLDING_MESSAGE in line:
+                during = cli_processes(stack)
+        returncode = process.wait()
+    finally:
+        watchdog.cancel()
+        end_child(process)
+        remove_smoke_containers(stack)
+    if gave_up.is_set():
+        lines.append(f"the host gave up after {seconds:g} s\n")
+    return CancelledTurn(returncode, "".join(lines), during, since)
 
 
 def cancel_cells(
-    stack: Stack, before: str, turn: CancelledTurn, pause: Callable[[float], None] = time.sleep
+    stack: Stack,
+    before: str,
+    turn: CancelledTurn,
+    known: Secrets,
+    pause: Callable[[float], None] = time.sleep,
 ) -> list[Cell]:
     pause(SETTLE_SECONDS)
     after = cli_processes(stack)
     logs = stack.compose("logs", "--since", turn.since, SERVICE)
-    errors = lines_holding(logs.stdout + logs.stderr, ["ERROR"])
+    errors = (
+        lines_holding(logs.stdout + logs.stderr, ["ERROR"])
+        if logs.returncode == 0
+        else SAMPLE_FAILED
+    )
     return [
         Cell(
             "L4 the cancelled turn", Verdict.OBSERVED,
             f"smoke exit {turn.returncode}; CLI processes before (0) {before}, while held "
             f"(1 or more) {turn.during}, left after the cancel (0) {after}; "
-            f"ERROR lines since (0) {errors}; {other_lines(turn.output)}",
+            f"ERROR lines since (0) {errors}; {other_lines(known.redact(turn.output))}",
         )
     ]  # fmt: skip
 
@@ -379,69 +510,35 @@ class EgressTargets:
     egress_gateways: list[str]
 
 
-EGRESS_PROGRAM = """\
-import errno, json, socket, sys
-
+EGRESS_PROGRAM = (
+    "import json, sys\n"
+    + inspect.getsource(egress_observe)
+    + """
 targets = json.loads(sys.argv[1])
-public_v4, public_v6 = "1.1.1.1", "2606:4700:4700::1111"
-
-def name(code):
-    return errno.errorcode.get(code, str(code))
-
-def tcp(address, port):
-    family = socket.AF_INET6 if ":" in address else socket.AF_INET
-    with socket.socket(family, socket.SOCK_STREAM) as attempt:
-        attempt.settimeout(8)
-        return name(attempt.connect_ex((address, port)))
-
-def udp(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as attempt:
-        try:
-            attempt.connect((public_v4, port))
-        except OSError as error:
-            return name(error.errno)
-    return "0"
-
-def resolved(host):
-    try:
-        return sorted({entry[4][0] for entry in socket.getaddrinfo(host, 443)})
-    except socket.gaierror:
-        return []
-
-with open("/proc/net/route") as table:
-    rows = [row.split() for row in table.read().splitlines()[1:]]
-    defaults = [row[0] for row in rows if row[1] == "00000000"]
-with open("/proc/net/if_inet6") as table:
-    interfaces = sorted({row.split()[-1] for row in table if row.strip()})
 print(json.dumps({
-    "public_tcp": {target: tcp(target, 443) for target in (public_v4, targets["provider"])},
-    "defaults": defaults,
-    "reach": {label: tcp(targets[label], 22) for label in
-              ("docker0", "internet", "lan", "agent_free", "egress_free")},
-    "ipv6_interfaces": interfaces,
-    "ipv6_tcp": tcp(public_v6, 443),
-    "udp": {str(port): udp(port) for port in (443, 53)},
-    "outside": resolved("example.com"),
-    "gateway": resolved("agent-egress"),
+    "public_tcp": {
+        target: tcp_connect(target, 443)["result"]
+        for target in (PUBLIC_RESOLVER, targets["provider"])
+    },
+    "defaults": default_routes()["default_routes"],
+    "reach": {
+        label: tcp_connect(targets[label], 22)["result"]
+        for label in ("docker0", "internet", "lan", "agent_free", "egress_free")
+    },
+    "ipv6_interfaces": ipv6_interfaces()["interfaces"],
+    "ipv6_tcp": tcp_connect(PUBLIC_RESOLVER_V6, 443)["result"],
+    "udp": {str(port): udp_connect(PUBLIC_RESOLVER, port)["result"] for port in (443, 53)},
+    "outside": resolve_name("example.com")["addresses"],
+    "gateway": resolve_name("agent-egress")["addresses"],
 }))
 """
+)
 
-LISTENERS_PROGRAM = """\
-import socket
-for table in ("tcp", "udp", "tcp6", "udp6"):
-    for row in open(f"/proc/net/{table}").read().splitlines()[1:]:
-        fields = row.split()
-        if table.startswith("tcp") and fields[3] != "0A":
-            continue
-        address, port = fields[1].split(":")
-        raw = bytes.fromhex(address)
-        if table.endswith("6"):
-            words = (raw[i:i + 4][::-1] for i in range(0, 16, 4))
-            shown = socket.inet_ntop(socket.AF_INET6, b"".join(words))
-        else:
-            shown = socket.inet_ntoa(raw[::-1])
-        print(table, shown, int(port, 16))
-"""
+LISTENERS_PROGRAM = (
+    "import json\n"
+    + inspect.getsource(egress_observe)
+    + "\nprint(json.dumps(listening_sockets()))\n"
+)
 
 
 def network_ids(stack: Stack, name: str) -> list[str]:
@@ -481,13 +578,6 @@ def unused_address(network: dict) -> str:
     }
     subnet = ipaddress.ip_network(network["IPAM"]["Config"][0]["Subnet"])
     return str(next(host for host in reversed(list(subnet.hosts())) if host not in owned))
-
-
-def lan_address() -> str:
-    """The address the host would use to reach the internet; a UDP connect sends nothing."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
-        route.connect((PUBLIC_RESOLVER, 53))
-        return route.getsockname()[0]
 
 
 def egress_targets(stack: Stack) -> EgressTargets:
@@ -542,14 +632,17 @@ def judge_egress(targets: EgressTargets, seen: dict, gateway: str) -> list[Cell]
     ]  # fmt: skip
 
 
-def judge_listeners(output: str, gateway: str) -> Cell:
+def judge_listeners(listening: Mapping[str, Sequence[str]], gateway: str) -> Cell:
     """Only the gateway's TCP 443 and Docker's embedded resolver may listen."""
-    rows = [line.split() for line in output.splitlines() if line.strip()]
-    others = [row for row in rows if row[1] != EMBEDDED_RESOLVER]
-    held = others == [["tcp", gateway, "443"]]
+    others = [
+        f"{protocol} {name}"
+        for protocol, names in listening.items()
+        for name in names
+        if not name.startswith(f"{EMBEDDED_RESOLVER}:")
+    ]
     return Cell(
-        "E12 the gateway's listeners", Verdict.HELD if held else Verdict.FAILED,
-        f"listening: {[' '.join(row) for row in others]}",
+        "E12 the gateway's listeners", verdict_of(others == [f"tcp {gateway}:443"]),
+        f"listening: {others}",
     )  # fmt: skip
 
 
@@ -583,9 +676,13 @@ def listeners_cell(stack: Stack, service: str) -> Cell:
         "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
         "--entrypoint", "python", image, "-I", "-c", LISTENERS_PROGRAM,
     ])  # fmt: skip
-    if listing.returncode != 0:
+    try:
+        listening = json.loads(listing.stdout) if listing.returncode == 0 else None
+    except ValueError:
+        listening = None
+    if not isinstance(listening, dict):
         return Cell("E12 the gateway's listeners", Verdict.FAILED, SAMPLE_FAILED)
-    return judge_listeners(listing.stdout, stack.gateway)
+    return judge_listeners(listening, stack.gateway)
 
 
 # --- the run ----------------------------------------------------------------------------------
@@ -595,17 +692,17 @@ def smoke_cells(
     stack: Stack, known: Secrets, report: Report, pause: Callable[[float], None] = time.sleep
 ) -> None:
     """Recreate, idle memory, the paid turn, the peak, the cancelled turn, the searches."""
-    recreated = recreate_service(stack, pause)
+    recreated = recreate_service(stack, known, pause)
     report.add(recreated)
     if recreated.verdict is Verdict.FAILED:
         return
     idle = cgroup_figure(stack, "memory.current")
     paid = paid_turn(stack, known.tokens)
-    report.add(*turn_cells(paid.returncode, paid.stdout))
+    report.add(*turn_cells(paid.returncode, paid.stdout, known))
     report.add(memory_cell(idle, cgroup_figure(stack, "memory.peak")))
     before = cli_processes(stack)
     cancelled = cancelled_turn(stack, known.tokens)
-    report.add(*cancel_cells(stack, before, cancelled, pause))
+    report.add(*cancel_cells(stack, before, cancelled, known, pause))
     report.add(*leak_cells(stack, known, paid.stdout + paid.stderr + cancelled.output))
 
 
@@ -623,19 +720,21 @@ def read_secret(path: Path, what: str) -> str:
 
 
 def main(argv: Sequence[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--project", default=DEFAULT_PROJECT)
-    parser.add_argument("--gateway", default=DEFAULT_GATEWAY)
-    arguments = parser.parse_args(argv)
+    argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args(argv)
     try:
         client_secret = read_secret(CLIENT_SECRET_FILE, "the client secret")
         login_token = read_secret(LOGIN_TOKEN_FILE, "the login token")
         known = Secrets(sign_in(client_secret), login_token, client_secret)
-        stack = Stack(project=arguments.project, gateway=arguments.gateway)
-        return live_smoke(stack, known, Report(known.values()))
+        return live_smoke(Stack(), known, Report(known.values()))
     except LiveSmokeFailed as failure:
         print(f"live smoke: {failure}", file=sys.stderr)
         return 1
+    except subprocess.TimeoutExpired:
+        print("live smoke: a docker command ran out of time", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("live smoke: interrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

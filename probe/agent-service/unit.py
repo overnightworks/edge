@@ -750,9 +750,11 @@ class SmokeProbe(Probe):
         browser: every cell but L2 holds with the dummy login, and L2 must fail, because the
         upstream refuses the dummy login."""
         stack = Stack(
-            project=PROJECT, gateway=self.address, compose_prefix=tuple(self.compose_command()),
-            environment=self.environment, directory=COMPOSE_FILE.parent,
+            compose_prefix=tuple(self.compose_command()), environment=self.environment,
+            directory=COMPOSE_FILE.parent,
         )  # fmt: skip
+        expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")
+        expect(stack.gateway == self.address, f"U16: compose names the gateway {stack.gateway}")
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
         known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")
         report = Report(known.values(), out=lambda line: print(f"  {line}", flush=True))

@@ -1607,25 +1607,12 @@ process can reach it, because the network has no host address and publishes no p
 cd ~/git/edge && python3 agent-service/live_smoke.py
 ```
 
-It prints the sign-in address (the `songmaker` client's code flow with PKCE, ruled in edge#184, D6:
-you sign in as yourself and paste the address of the browser's error page, read without echo),
-recreates the service, runs one paid turn (L2, L3), reads `memory.current` and `memory.peak` (L7),
-runs a cancelled turn and counts the CLI processes and `ERROR` lines (L4, an observation), searches
-`docker inspect`, the service log and the smoke output for the four secrets (L6) and drives the egress
-cells E6-E10 and E12 against the running container (L5). Both tokens stay in memory; the report
-carries no secret, a failed sample prints `SAMPLE FAILED`, and the exit is 1 when a cell prints
-`FAILED`. It needs `python3`, `docker`, the client's secret file and the login token under
-`~/.secrets`, and the person in the group `/ki-abo` (`subscription_group` of `service.toml`; add
-yourself once in the admin console on port 8090 if not). The workload token lives five minutes at
-most, so run it at once; a refusal `unauthorized` means expired tokens, `forbidden` a missing
-`/ki-abo` or tokens that do not share an `azp`. Send the head its report. The in-container half is
-`agent-smoke` (profile `apply`, so `up` never starts it): the service image running
-`agent-service/smoke.py` on the `agent` network alone, with no port and no secret, which reads the two
-tokens from stdin and prints each event's type and the answer.
-
-L7's two figures are the idle `memory.current` of the freshly recreated service and its `memory.peak`
-right after the one turn (an upper bound of the answer phase, it includes the start). E3-E5 and
-E10's packet windows need the probe's host capture and stay with `egress.py`.
+It signs you in as yourself (the `songmaker` client's code flow, edge#184 D6), recreates the service
+and runs the live cells L2-L7 and E6-E10, E12 against it, which the module docstring lists; E3-E5 and
+E10's packet windows stay with the probe's `egress.py`. It needs the image, the client's secret file and
+the login token under `~/.secrets`, and the person in the group `/ki-abo` (add yourself once in the
+admin console on port 8090). Run it at once, as the workload token lives five minutes, and send the head
+its report.
 
 Proof: `flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3
 probe/agent-service/unit.py --scratch DIR` (DIR must already exist, empty and writable, for example
