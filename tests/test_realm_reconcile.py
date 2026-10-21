@@ -2,6 +2,7 @@
 step), with Compose, the observer and edge-backup faked. Each test names its cell of the item's
 scenario matrix."""
 
+import contextlib
 import json
 import os
 import signal
@@ -618,15 +619,21 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
 
 WAITS = "while :; do sleep 0.1; done"
 # A Python child, as the CI shell may have SIGTERM ignored on entry, which a shell cannot trap.
-# It says it is ready, and after SIGTERM cleans up for `argv[2]` seconds before its marker.
+# It says it is ready; on SIGTERM it says it is cleaning up, holds until `argv[2]` exists (at most
+# 30 seconds, so it cannot outlive a failed test), then writes its marker.
 CLEANS_UP_ON_SIGTERM = """
 import pathlib, signal, sys, time
 marker = pathlib.Path(sys.argv[1])
+release = pathlib.Path(sys.argv[2])
 def clean_up(*_):
-    time.sleep(float(sys.argv[2]))
+    pathlib.Path(f"{marker}.cleaning").touch()
+    deadline = time.monotonic() + 30
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
     marker.write_text("cleaned\\n")
     sys.exit(143)
 signal.signal(signal.SIGTERM, clean_up)
+pathlib.Path(f"{marker}.pid").write_text(str(__import__("os").getpid()))
 pathlib.Path(f"{marker}.ready").touch()
 while True:
     time.sleep(0.1)
@@ -638,11 +645,16 @@ while True:
     time.sleep(0.1)
 """
 DRIVES_THE_STEP = """
-import signal, sys
-signal.signal(signal.SIGINT, signal.default_int_handler)
+import pathlib, signal, sys
+seen = pathlib.Path(sys.argv[1])
+def interrupted(*_):
+    with seen.open("a") as file:
+        file.write("interrupted\\n")
+    raise KeyboardInterrupt
+signal.signal(signal.SIGINT, interrupted)
 from edge.realm import reconcile
 try:
-    reconcile.run_edge_backup(sys.argv[1:], 600)
+    reconcile.run_edge_backup(sys.argv[2:], 600)
 except KeyboardInterrupt:
     print("KeyboardInterrupt reached the step")
 """
@@ -652,9 +664,13 @@ def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "cleaned"
+    release = tmp_path / "release"
+    release.touch()
 
     with pytest.raises(compose.ComposeError, match="took longer than 3s"):
-        reconcile.run_edge_backup([sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), "0"], 3)
+        reconcile.run_edge_backup(
+            [sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), str(release)], 3
+        )
 
     assert marker.read_text() == "cleaned\n"
 
@@ -685,14 +701,34 @@ def test_a_grandchild_that_holds_the_output_open_cannot_hang_the_step(
         os.kill(int(escaped.read_text()), signal.SIGKILL)
 
 
+def wait_for(condition: Callable[[], bool], what: str, step: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 30
+    while not condition():
+        if step.poll() is not None:
+            pytest.fail(
+                f"the step ended before {what}: {step.stdout.read() if step.stdout else ''}"
+            )
+        if time.monotonic() > deadline:
+            pytest.fail(f"no {what} within 30 seconds")
+        time.sleep(0.02)
+
+
+def kill_group(process_group: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process_group, signal.SIGKILL)
+
+
 def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path) -> None:
     """The terminal's Ctrl-C goes to the step's group alone: edge-backup runs in its own."""
     marker = tmp_path / "cleaned"
+    release = tmp_path / "release"
+    interrupts = tmp_path / "interrupts"
     command = [
         sys.executable,
         "-c",
         DRIVES_THE_STEP,
-        *(sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), "0.4"),
+        str(interrupts),
+        *(sys.executable, "-c", CLEANS_UP_ON_SIGTERM, str(marker), str(release)),
     ]
     step = subprocess.Popen(
         command,
@@ -701,13 +737,23 @@ def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path)
         text=True,
         start_new_session=True,
     )
-    while not Path(f"{marker}.ready").exists():
-        time.sleep(0.05)
-
-    for _ in range(3):  # the first stops edge-backup, the others come during its clean-up
-        os.killpg(step.pid, signal.SIGINT)
-        time.sleep(0.1)
-    output, _ = step.communicate(timeout=60)
+    try:
+        wait_for(Path(f"{marker}.ready").exists, "the backup was ready", step)
+        os.killpg(step.pid, signal.SIGINT)  # stops edge-backup
+        wait_for(Path(f"{marker}.cleaning").exists, "the backup began its clean-up", step)
+        os.killpg(step.pid, signal.SIGINT)  # comes while the clean-up is held
+        wait_for(
+            lambda: interrupts.exists() and interrupts.read_text().count("\n") == 2,
+            "the second interrupt",
+            step,
+        )
+        release.touch()
+        output, _ = step.communicate(timeout=30)
+    finally:
+        kill_group(step.pid)
+        if Path(f"{marker}.pid").exists():
+            kill_group(int(Path(f"{marker}.pid").read_text()))
+        step.wait(timeout=30)
 
     assert marker.read_text() == "cleaned\n"
     assert "KeyboardInterrupt reached the step" in output
