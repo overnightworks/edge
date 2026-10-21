@@ -75,7 +75,12 @@ LOOPBACK_ADDRESS = "127.0.0.1"
 LIVE_EDGE_ADDRESS = f"{LOOPBACK_ADDRESS}:8081"
 LIVE_ADMIN_ADDRESS = f"{LOOPBACK_ADDRESS}:8090"
 # What keycloak/go-live pins for the live edge, which no step over the probe's stack may reach.
-LIVE_GO_LIVE_ADDRESSES = ("localhost:8090", LIVE_EDGE_ADDRESS)
+LIVE_GO_LIVE_ADDRESSES = (
+    "localhost:8090",
+    "localhost:8081",
+    LIVE_ADMIN_ADDRESS,
+    LIVE_EDGE_ADDRESS,
+)
 TRAEFIK_CONFIG = "traefik.yml"
 NETWORK_OVERLAY = "network.compose.yaml"
 # Which containers the Docker provider routes: the live one takes any `edge.name` label that
@@ -2253,22 +2258,21 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
     scratch = arguments.scratch.resolve()
     if scratch.exists() and (not scratch.is_dir() or any(scratch.iterdir())):
         parser.error(f"{scratch} is not an empty directory")
-    try:
-        stack = make_stack(scratch)
-    except (ProbeFailure, OSError) as failure:
-        # Nothing has started yet, so there is nothing to tear down.
-        print(f"PROBE FAILED: {failure}", flush=True)
-        return 1
-    # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so the teardown
-    # below still runs and the probe ends with its one FAILED line.
+    # `timeout` sends SIGTERM and Ctrl-C sends SIGINT; turn both into a failure so even a stop
+    # while the stack is being built ends with the one FAILED line, and the teardown below still
+    # runs for a stack that exists.
     for stopping in STOP_SIGNALS:
         signal.signal(stopping, stop_as_failure)
     failures = []
-    probe = Probe(stack)
+    stack = None
     method_name, success_line = MODES[arguments.mode]
     try:
         try:
-            getattr(probe, method_name)()
+            try:
+                stack = make_stack(scratch)
+            except OSError as failure:
+                raise ProbeFailure(str(failure)) from failure
+            getattr(Probe(stack), method_name)()
         finally:
             # Inside the try whose handlers take a stop signal: one landing while this swaps
             # the handlers still ends the run as a stop or a failure, never as a skipped teardown.
@@ -2284,7 +2288,7 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
             failures.append(str(failure.__context__))
     finally:
         # The teardown must finish and say so; the SIGKILL of `timeout --kill-after` bounds it.
-        if not stack.down():
+        if stack is not None and not stack.down():
             failures.append(f"stack {PROJECT} is left behind; README says how to remove it")
     if failures:
         print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)

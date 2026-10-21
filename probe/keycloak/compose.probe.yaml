@@ -6,7 +6,7 @@
 services:
   traefik:
     volumes:
-      - ${PROBE_TRAEFIK_CONFIG:-/nonexistent}:/etc/traefik/traefik.yml:ro
+      - ${PROBE_TRAEFIK_CONFIG:?run through probe/keycloak/probe.py}:/etc/traefik/traefik.yml:ro
 
   keycloak:
     environment:

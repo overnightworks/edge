@@ -170,6 +170,7 @@ def run_main(
     *,
     run_signal: signal.Signals | None,
     down_signal: signal.Signals | None,
+    construct_signal: signal.Signals | None = None,
 ) -> int:
     """main() over a stack and proofs that each receive a signal, as `timeout` or Ctrl-C would."""
 
@@ -181,7 +182,9 @@ def run_main(
                 os.kill(os.getpid(), run_signal)
 
     class FakeStack:
-        def __init__(self, _scratch: Path) -> None: ...
+        def __init__(self, _scratch: Path) -> None:
+            if construct_signal:
+                os.kill(os.getpid(), construct_signal)
 
         def down(self) -> bool:
             if down_signal:
@@ -229,6 +232,28 @@ def test_a_signal_during_the_proofs_tears_down_and_ends_with_one_failed_line(
         "teardown: stack edge-kc-probe removed",
         f"PROBE FAILED: stopped by {signal_name.name}",
     ]
+
+
+@pytest.mark.parametrize("signal_name", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_while_the_stack_is_built_fails_without_a_teardown(
+    probe: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
+    signal_name: signal.Signals,
+) -> None:
+    exit_code = run_main(
+        probe,
+        monkeypatch,
+        tmp_path / "s",
+        run_signal=None,
+        down_signal=None,
+        construct_signal=signal_name,
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().out.splitlines() == [f"PROBE FAILED: stopped by {signal_name.name}"]
 
 
 def test_a_scratch_that_is_a_file_or_not_empty_is_refused_with_the_usage_exit_code(

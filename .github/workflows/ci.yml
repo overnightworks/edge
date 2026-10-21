@@ -106,6 +106,7 @@ jobs:
           docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --profile keycloak --profile apply config -q
           PROBE_SECRETS_DIR=/nonexistent PROBE_CONFIG_DIR=/nonexistent \
+            PROBE_TRAEFIK_CONFIG=/nonexistent \
             PROBE_ADMIN_URL=http://localhost:1 PROBE_KEYCLOAK_SUBNET=172.31.200.0/24 \
             docker compose --file compose.yaml --file keycloak/bootstrap.compose.yaml \
             --file probe/keycloak/compose.probe.yaml --profile keycloak --profile apply config -q
