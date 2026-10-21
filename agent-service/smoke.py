@@ -179,12 +179,17 @@ class Smoke:
         """A frame already waiting after the hold that ends the run, or a stream the service
         closed, means there was nothing left to cancel."""
         connection.sock.settimeout(CANCEL_PROBE_SECONDS)
+        ended = ""
         try:
-            waiting = next(frames(response), None)
+            for waiting in frames(response):
+                if waiting.event in RUN_END_EVENTS:
+                    ended = f"sent {waiting.event}"
+                    break
+            else:
+                ended = "closed its stream"
         except TimeoutError:
-            waiting = Frame("", {})
-        if waiting is None or waiting.event in RUN_END_EVENTS:
-            ended = "closed its stream" if waiting is None else f"sent {waiting.event}"
+            pass
+        if ended:
             self.say(f"the run ended before the close ({ended}); L4 is not proven")
             return 1
         self.say("closing the stream before the answer")

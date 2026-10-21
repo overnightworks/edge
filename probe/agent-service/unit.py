@@ -770,8 +770,8 @@ class SmokeProbe(Probe):
     def cancel_cell(self, person: str, workload: str) -> None:
         """The mechanics of the runbook's L4 as far as a dummy login goes: `--cancel` holds the
         stream open and closes it, and the container's /proc is sampled while it is held and
-        after. The dummy login may end the run before a CLI child can be seen; then the count
-        during the hold is 0 and the live run is the proof."""
+        after. The dummy login ends the run before the close, which the smoke reports as exit 1;
+        the cell then says L4 is not driven, and the live run is the proof."""
         with ThreadPoolExecutor(max_workers=1) as pool:
             smoke = pool.submit(
                 self.run,
@@ -787,19 +787,31 @@ class SmokeProbe(Probe):
                 time.sleep(0.25)
             finished = smoke.result()
         lines = finished.stdout.splitlines()
-        expect(
-            finished.returncode == 0, f"U14 cancel: the smoke exited {finished.returncode}: {lines}"
+        not_driven = finished.returncode == 1 and any(
+            line.startswith("the run ended before the close (") for line in lines[-1:]
         )
-        expect(
-            lines[:1] == ["event: run_started"]
-            and lines[-1:] == ["closing the stream before the answer"],
-            f"U14 cancel: the output was {lines}",
-        )
+        if not not_driven:
+            expect(
+                finished.returncode == 0,
+                f"U14 cancel: the smoke exited {finished.returncode}: {lines}",
+            )
+            expect(
+                lines[:1] == ["event: run_started"]
+                and lines[-1:] == ["closing the stream before the answer"],
+                f"U14 cancel: the output was {lines}",
+            )
         time.sleep(5)
         after = self.cli_processes()
         expect(after == 0, f"U14 cancel: {after} CLI processes remain after the smoke exited")
         logs = self.run(["docker", "logs", self.container(SERVICE)])
         expect("ERROR" not in logs.stdout + logs.stderr, "U14 cancel: an ERROR line in the log")
+        if not_driven:
+            print(
+                "U14 cancel not driven: the dummy login ends the run before the close; "
+                "L4 is the operator's live line",
+                flush=True,
+            )
+            return
         self.held.append("U14 cancel")
         print(
             f"U14 cancel held: the smoke exited 0 after {lines}; CLI processes seen during the "

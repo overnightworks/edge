@@ -1869,7 +1869,8 @@ the service not running. U12 is `egress.py --target service`; CI holds the stati
 `agent-smoke` of the runbook against the service with a stand-in issuer, so the tokens verify and
 the CLI meets the real upstream with the dummy login (`run_started`, then `failed`, no token in any
 output); its `--cancel` turn is held open and closed, and the container's `/proc` is sampled during
-the hold and after the smoke (a dummy login may end the run before a CLI child is up).
+the hold and after the smoke; the dummy login ends that run during the hold, so the cell prints
+"U14 cancel not driven" (the exit 1 of the smoke is expected there) and L4 is the operator's live line.
 
 ## Rollback
 

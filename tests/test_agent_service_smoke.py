@@ -201,6 +201,15 @@ def test_cancel_fails_when_the_run_ends_during_the_hold(ending):
     assert "closing the stream before the answer" not in out
 
 
+def test_cancel_fails_when_the_run_ending_waits_behind_another_frame():
+    response = StalledResponse(200, stream_of(*SUCCESS))
+
+    exit_code, out, _ = drive(response, "--cancel")
+
+    assert exit_code == 1
+    assert "the run ended before the close (sent succeeded); L4 is not proven" in out
+
+
 def test_cancel_of_a_run_that_succeeded_without_a_start_to_cancel_at_fails():
     exit_code, out, _ = drive(run_events(*SUCCESS[1:]), "--cancel")
 
