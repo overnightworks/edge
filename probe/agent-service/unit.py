@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe of the agent service unit (#201 cells U1-U11): the real `agent-service` of compose.yaml,
+"""Probe of the agent service unit (#201 U1-U11, #214 U15): `agent-service` of compose.yaml,
 with its real `service.toml`, in a throwaway compose project of its own and a scratch HOME that
 holds a dummy login (never a real token).
 
@@ -38,6 +38,7 @@ from enum import StrEnum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))  # edge's own observation
 
 from egress import (
     COMPOSE_FILE,
@@ -55,6 +56,8 @@ from egress import (
     service_configuration,
     write_dummy_token,
 )
+
+from edge import compose
 
 SERVICE = Target.SERVICE.compose_service
 LISTEN_SECONDS = 90
@@ -286,6 +289,7 @@ class UnitProbe(Probe):
         self.cell_u6_refusal()
         self.cell_u10()
         self.cell_u11()
+        self.cell_u15()
 
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + LISTEN_SECONDS
@@ -551,6 +555,39 @@ class UnitProbe(Probe):
             f"and {token_path()}, never the content",
         )
 
+    def cell_u15(self) -> None:
+        """A login directory without its token: `up -d` exits 0 and the first look sees the
+        service running, and `hal apply`'s own observation finds it not running."""
+        aside = self.token.with_name("token.aside")
+        self.token.rename(aside)
+        try:
+            started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+            expect(started.returncode == 0, f"U15: up exited {started.returncode}")
+            engine = self.edge_compose()
+            down = engine.down_while_watched(
+                engine.resolved_configuration(), (SERVICE,), compose.SETTLED
+            )
+            expect(down == (SERVICE,), f"U15: apply's observation found {down} not running")
+            logs = self.service_logs()
+            expect(LISTENING not in logs, "U15: the service listened without its token")
+        finally:
+            aside.rename(self.token)
+            self.compose("down", "--timeout", "10")
+        self.hold(
+            "U15",
+            f"with the login directory but no token, up exited 0 and apply's observation found "
+            f"{', '.join(down)} not running",
+        )
+
+    def edge_compose(self) -> compose.Compose:
+        """The engine `hal apply` uses, on this probe's project and its copy of compose.yaml."""
+
+        def run(command: list[str], timeout: int):
+            verb_and_arguments = command[command.index("--profile") + 2 :]
+            return self.run(self.compose_command(*verb_and_arguments), check=False, timeout=timeout)
+
+        return compose.Compose(run, COMPOSE_FILE.parent)
+
 
 ISSUER_SERVICE = "agent-issuer"
 ISSUER_PORT = 8443
@@ -674,12 +711,15 @@ class SmokeProbe(Probe):
         )  # fmt: skip
         self.overlays.append(overlay)
 
-    @staticmethod
-    def service_image() -> str:
-        """The issuer is a python script, and the service image is the python already on the PC."""
-        found = re.search(r"image: &agent-service-image (\S+)", COMPOSE_FILE.read_text())
-        expect(found is not None, "compose.yaml names no agent-service image")
-        return found.group(1)
+    def service_image(self) -> str:
+        """The issuer is a python script, and the service image is the python already on the PC;
+        compose resolves the image as it does for the service."""
+        resolved = self.run(
+            ["docker", "compose", "--project-directory", str(COMPOSE_FILE.parent),
+             "--file", str(COMPOSE_FILE), "--profile", "agent-service", "config",
+             "--format", "json"],
+        )  # fmt: skip
+        return json.loads(resolved.stdout)["services"][SERVICE]["image"]
 
     def services_to_start(self) -> tuple[str, ...]:
         return ("agent-egress", ISSUER_SERVICE, SERVICE)

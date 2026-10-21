@@ -7,8 +7,9 @@ Stdin holds exactly two lines, the person's token and then the workload's, and n
 supplies one: there is no option, no environment variable and no file for a token. Both tokens
 are removed from everything the smoke prints, errors included. Without options it starts one
 run and prints each event's type and the text of the answer; exit 0 when the run succeeded.
-`--cancel` starts a long answer and closes the stream after its first text, to see that the
-service ends the CLI run behind it (README "The agent service", "The smoke").
+`--cancel` starts a long answer and closes the stream right after `run_started`, before any
+answer, to see that the service ends the CLI run behind it; it fails when the run succeeded
+(README "The agent service", "The smoke").
 
 Only the standard library of the service image is used.
 """
@@ -21,8 +22,7 @@ import json
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import IO
-from urllib.parse import urlsplit
+from typing import IO, NoReturn
 
 PROTOCOL_VERSION = 1
 PURPOSE = "chat"
@@ -30,7 +30,8 @@ WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
 ANSWER_PROMPT = "Reply with the single word: ok"
 LONG_ANSWER_PROMPT = "Count from 1 to 500, one number per line, and write nothing else."
-DEFAULT_BASE_URL = "http://agent-service:8080"
+SERVICE_HOST = "agent-service"
+SERVICE_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 300.0
 TEXT_EVENTS = {"assistant_text", "succeeded"}
 MAX_REFUSAL_BYTES = 65536
@@ -39,6 +40,13 @@ REDACTED = "[token]"
 
 class SmokeFailed(Exception):
     """The smoke cannot go on; the message is the one line to print, free of any token."""
+
+
+class QuietParser(argparse.ArgumentParser):
+    """A rejected argument is never printed: a token typed as an option must not reach a log."""
+
+    def error(self, message: str) -> NoReturn:
+        self.exit(2, "smoke: unusable arguments; the options are --timeout and --cancel\n")
 
 
 @dataclass(frozen=True)
@@ -81,8 +89,18 @@ def frames(response: http.client.HTTPResponse) -> Iterator[Frame]:
             name, _, value = line.partition(":")
             fields[name] = value.removeprefix(" ")
         elif "data" in fields:
-            yield Frame(fields.get("event", ""), json.loads(fields["data"]))
+            data = json.loads(fields["data"])
+            if not isinstance(data, dict):
+                raise ValueError("a frame whose data is no object")
+            yield Frame(fields.get("event", ""), data)
             fields = {}
+
+
+def text_of(frame: Frame, key: str) -> str:
+    value = frame.data.get(key, "")
+    if not isinstance(value, str):
+        raise ValueError(f"a {frame.event} frame whose {key} is no text")
+    return value
 
 
 def refusal_line(response: http.client.HTTPResponse) -> str:
@@ -106,9 +124,8 @@ class Smoke:
             line = line.replace(token, REDACTED)
         print(line, file=self.out, flush=True)
 
-    def run(self, base_url: str, timeout_seconds: float, prompt: str, cancel: bool) -> int:
-        address = urlsplit(base_url)
-        connection = self.connect(address.hostname or "", address.port or 80, timeout_seconds)
+    def run(self, timeout_seconds: float, prompt: str, cancel: bool) -> int:
+        connection = self.connect(SERVICE_HOST, SERVICE_PORT, timeout_seconds)
         try:
             connection.request("POST", "/runs", request_body(prompt), self.headers())
             response = connection.getresponse()
@@ -135,8 +152,8 @@ class Smoke:
             last = frame.event
             self.say(f"event: {frame.event}")
             self.say_text(frame)
-            if cancel and frame.event == "assistant_text":
-                self.say("closing the stream during the answer")
+            if cancel and frame.event == "run_started":
+                self.say("closing the stream before the answer")
                 return 0
         if cancel:
             self.say("the run ended before the stream could be closed")
@@ -145,9 +162,9 @@ class Smoke:
 
     def say_text(self, frame: Frame) -> None:
         if frame.event in TEXT_EVENTS:
-            self.say(frame.data.get("text", ""))
+            self.say(text_of(frame, "text"))
         elif frame.event == "failed":
-            self.say(f"{frame.data.get('code', '')}: {frame.data.get('message', '')}")
+            self.say(f"{text_of(frame, 'code')}: {text_of(frame, 'message')}")
 
 
 def main(
@@ -156,8 +173,7 @@ def main(
     out: IO[str] = sys.stdout,
     connect: Connect = http.client.HTTPConnection,
 ) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser = QuietParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--cancel", action="store_true")
     arguments = parser.parse_args(argv)
@@ -167,9 +183,7 @@ def main(
         print(f"smoke: {failure}", file=sys.stderr)
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
-    return Smoke(tokens, out, connect).run(
-        arguments.base_url, arguments.timeout, prompt, arguments.cancel
-    )
+    return Smoke(tokens, out, connect).run(arguments.timeout, prompt, arguments.cancel)
 
 
 if __name__ == "__main__":

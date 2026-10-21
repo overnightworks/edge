@@ -375,8 +375,6 @@ services:
       - -I
       - -B
       - /opt/smoke/smoke.py
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - ./agent-service/smoke.py:/opt/smoke/smoke.py:ro
 

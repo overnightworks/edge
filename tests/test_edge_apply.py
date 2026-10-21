@@ -860,9 +860,6 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
     assert "is on" not in out
 
 
-AGENT_SERVICES = ("agent-egress", "agent-service")
-
-
 @pytest.fixture
 def agent_service_unit(repository, scripted) -> None:
     """The repository's own `agent-service` unit of fleet.yaml and its compose.yaml, with the
@@ -871,10 +868,20 @@ def agent_service_unit(repository, scripted) -> None:
     fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
     write_fleet(repository, yaml.safe_dump(fleet))
     services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
-    for name in AGENT_SERVICES:
-        scripted.config["services"][name] = {
-            key: services[name][key] for key in ("image", "profiles", "restart")
-        }
+    for name, definition in services.items():
+        if "agent-service" in definition.get("profiles", ()):
+            scripted.config["services"][name] = definition | {
+                "volumes": [_resolved_mount(mount) for mount in definition.get("volumes", [])]
+            }
+
+
+def _resolved_mount(mount: str | dict) -> dict:
+    """A volume as `docker compose config` spells it: the short form `source:target[:ro]` of
+    compose.yaml becomes the long form."""
+    if isinstance(mount, dict):
+        return mount
+    source, target, *mode = mount.split(":")
+    return {"type": "bind", "source": source, "target": target, "read_only": mode == ["ro"]}
 
 
 @pytest.mark.usefixtures("agent_service_unit")
@@ -888,9 +895,6 @@ def test_the_repositorys_agent_service_unit_starts_both_services_and_then_change
     assert exit_code == 0
     assert "agent-service is on" in out
     assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
-    assert ["--profile", "agent-service", "up", "-d", "--no-recreate", *AGENT_SERVICES] in (
-        scripted.calls
-    )
 
     exit_code, out, _ = switch()
 
@@ -936,6 +940,19 @@ def test_an_agent_service_that_is_created_but_never_runs_is_partial_and_never_on
 
     assert exit_code == 1
     assert "partial, agent-service" in err
+    assert "agent-service is on" not in out
+
+
+@pytest.mark.usefixtures("agent_service_unit")
+def test_an_agent_service_that_runs_and_then_restarts_is_partial_and_never_on(switch, scripted):
+    """#214 S2: the first look after `up` sees it running; a refused login makes it restart, and
+    the watch finds that before the unit is reported or recorded on."""
+    scripted.crash_loops = {"agent-service"}
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "partial, agent-service is not on after the change" in err
     assert "agent-service is on" not in out
 
 

@@ -134,26 +134,40 @@ def test_a_refusal_that_is_no_typed_body_prints_the_status_only():
     assert out.strip() == "refused with 502"
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        run_events(("assistant_text", {"text": 5})),
+        FakeResponse(200, b'event: assistant_text\ndata: ["ok"]\n\n'),
+    ],
+    ids=["text of no text", "data of no object"],
+)
+def test_a_frame_of_the_wrong_shape_ends_the_run_as_broken_off(answer):
+    exit_code, out, _ = drive(answer)
+
+    assert exit_code == 1
+    assert out.splitlines()[-1] == "the run broke off: ValueError"
+
+
 def test_a_stream_cut_short_fails_the_run():
     exit_code, _, _ = drive(run_events(SUCCESS[0]))
 
     assert exit_code == 1
 
 
-def test_cancel_closes_the_stream_after_the_first_text_and_reads_no_further():
+def test_cancel_closes_the_stream_right_after_run_started_before_any_answer():
     response = run_events(*SUCCESS)
 
     exit_code, out, connection = drive(response, "--cancel")
 
     assert exit_code == 0
-    assert out.splitlines()[-1] == "closing the stream during the answer"
-    assert "event: succeeded" not in out
+    assert out.splitlines() == ["event: run_started", "closing the stream before the answer"]
     assert connection.closed
-    assert b"succeeded" in response.read()
+    assert b"assistant_text" in response.read()
 
 
-def test_cancel_of_a_run_that_ended_first_fails():
-    exit_code, out, _ = drive(run_events(*SUCCESS[:1]), "--cancel")
+def test_cancel_of_a_run_that_succeeded_without_a_start_to_cancel_at_fails():
+    exit_code, out, _ = drive(run_events(*SUCCESS[1:]), "--cancel")
 
     assert exit_code == 1
     assert "ended before the stream could be closed" in out
@@ -171,18 +185,35 @@ def test_anything_but_two_token_lines_on_stdin_starts_no_run(stdin, capsys):
     assert "two lines" in capsys.readouterr().err
 
 
-def test_a_token_in_the_environment_or_in_argv_is_not_taken(monkeypatch, capsys):
+def test_a_token_in_the_environment_is_not_taken(monkeypatch):
     monkeypatch.setenv("AGENT_PERSON_TOKEN", PERSON_TOKEN)
     monkeypatch.setenv("AGENT_WORKLOAD_TOKEN", WORKLOAD_TOKEN)
 
     exit_code, _, connection = drive(run_events(*SUCCESS), stdin="")
-    stdin, argv = io.StringIO(BOTH_TOKENS), ["--person-token", PERSON_TOKEN]
-    with pytest.raises(SystemExit):
-        smoke.main(argv, stdin)
 
     assert exit_code == 1
     assert connection.requests == []
-    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--person-token", PERSON_TOKEN, WORKLOAD_TOKEN],
+        [f"--timeout={PERSON_TOKEN}"],
+        ["--timeout", WORKLOAD_TOKEN],
+        [f"--can{PERSON_TOKEN}"],
+    ],
+    ids=["unknown option", "bad timeout", "bad timeout value", "abbreviated option"],
+)
+def test_a_rejected_argument_is_never_printed(argv, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        smoke.main(argv, io.StringIO(BOTH_TOKENS))
+
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 2
+    assert captured.err
+    for token in (PERSON_TOKEN, WORKLOAD_TOKEN):
+        assert token not in captured.out + captured.err
 
 
 @pytest.mark.parametrize(
@@ -196,13 +227,23 @@ def test_a_token_in_the_environment_or_in_argv_is_not_taken(monkeypatch, capsys)
         FakeResponse(401, json.dumps({"code": "unauthorized", "message": PERSON_TOKEN}).encode()),
         OSError(f"connection to the service broke with {WORKLOAD_TOKEN}"),
         FakeResponse(200, b"event: x\ndata: {" + PERSON_TOKEN.encode() + b"\n\n"),
+        run_events(("assistant_text", {"text": [PERSON_TOKEN]})),
+        FakeResponse(200, f'event: x\ndata: ["{PERSON_TOKEN}"]\n\n'.encode()),
     ],
-    ids=["events", "refusal", "connection error", "broken frame"],
+    ids=[
+        "events",
+        "refusal",
+        "connection error",
+        "broken frame",
+        "text of no text",
+        "data of no object",
+    ],
 )
 def test_no_token_reaches_the_output_whichever_path_a_run_takes(answer, capsys):
     _, out, _ = drive(answer)
 
-    printed = out + capsys.readouterr().out + capsys.readouterr().err
+    captured = capsys.readouterr()
+    printed = out + captured.out + captured.err
     assert PERSON_TOKEN not in printed
     assert WORKLOAD_TOKEN not in printed
 
@@ -241,9 +282,7 @@ def test_agent_smoke_sits_on_the_agent_network_alone_with_no_port_secret_or_publ
         volume.endswith(":ro") and volume.startswith("./agent-service/smoke.py:")
         for volume in smoke_service["volumes"]
     )
-    assert "environment" not in smoke_service or set(smoke_service["environment"]) <= {
-        "PYTHONDONTWRITEBYTECODE"
-    }
+    assert "environment" not in smoke_service
 
 
 def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
@@ -254,8 +293,8 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
     assert smoke_service["volumes"] == ["./agent-service/smoke.py:/opt/smoke/smoke.py:ro"]
 
 
-def test_agent_smoke_reaches_the_service_by_the_name_and_port_the_smoke_defaults_to(services):
-    assert smoke.DEFAULT_BASE_URL == "http://agent-service:8080"
+def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
+    assert smoke.SERVICE_HOST in services
     assert "agent" in services["agent-service"]["networks"]
 
 
