@@ -55,8 +55,10 @@ from urllib.request import (
 REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
 sys.path.insert(0, str(REPO / "src"))
-from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key  # noqa: E402
-from edge.realm.observe import Inventory  # noqa: E402
+from edge import compose as edge_compose  # noqa: E402
+from edge import core, switches  # noqa: E402
+from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
+from edge.realm.observe import IMPORT_CHECKSUM, Inventory  # noqa: E402
 
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
@@ -66,6 +68,10 @@ REALM = "hallucinai"
 THEME = "hallucinai"
 REALM_FILE = "realm.yaml"
 CONFIG_FILES = ("master.yaml", REALM_FILE)
+ENTRYPOINT_FILE = "entrypoint.sh"
+UNDEFINED_VARIABLE_LINE = (
+    "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"  # a realm.yaml line config-cli cannot resolve
+)
 PUBLIC_HOST = f"auth.{DOMAIN}"
 REALM_PATH = f"/realms/{REALM}"
 PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
@@ -190,6 +196,13 @@ CONSOLE_CLIENT_ROLE = f"{CONSOLE_NAME}-client-role"
 SCOPED_CLIENT = "songmaker"  # lists its default scopes, as do hopin and presentator
 SERVICE_ACCOUNT_CLIENT = "songmaker"  # a listed service account
 ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # declared with serviceAccountsEnabled: false
+BACKUP_ASKED = ["backup", "keycloak", "--pre-apply"]  # what edge-backup was asked, after --apps
+RESTORE_TEST_ASKED = ["restore-test", "keycloak", "--snapshot"]  # then the snapshot just made
+LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
+CHANGED_LIFESPAN_SETTING = f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
+STEP_GROUP = "probe-realm-step"  # a group proof 12 adds to realm.yaml
+STEP_CONSOLE_MAPPER = "probe-step-mapper"  # a console change proof 12's step resets
+COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
 RESIDUE_OF_THE_APPLY = [
     # a default scope on a declared client with scope lists, and the one Keycloak adds with a
     # console-enabled service account
@@ -940,6 +953,119 @@ def within_keycloak(
     return response
 
 
+@dataclass
+class RealmStepStand:
+    """What proof 12 drives `edge.realm.reconcile` with: this stack's Compose (its project and
+    overlays), a repository of the realm files the stack's config-cli mounts, and edge-backup
+    under a scratch HOME that backs up this stack's Keycloak database and no other."""
+
+    stack: Stack
+    root: Path
+    backup_command: tuple[str, ...]
+    asked: list[list[str]] = field(default_factory=list)
+
+    @classmethod
+    def at(cls, stack: Stack) -> RealmStepStand:
+        root = stack.scratch / "realm-step"
+        password_file = root / "home" / ".secrets" / "restic" / "password"
+        password_file.parent.mkdir(mode=0o700, parents=True)
+        password_file.write_text(secrets.token_urlsafe(32))
+        password_file.chmod(0o600)
+        config_dir = stack.copy_config(root / "repository" / "keycloak")
+        shutil.copy(REPO / "keycloak" / ENTRYPOINT_FILE, config_dir / ENTRYPOINT_FILE)
+        apps = root / "apps.toml"
+        apps.write_text(
+            "[app.keycloak]\n"
+            f'compose_project = "{PROJECT}"\n'
+            'db_service = "keycloak-db"\ndump = "pg_dump_custom"\n'
+            'db_user = "keycloak"\ndb_name = "keycloak"\npostgres_major = 17\n'
+            '[app.keycloak.restore_test]\ncount_table = "realm"\nrequire_rows = true\n'
+        )
+        executable = shutil.which(
+            "edge-backup", path=f"{REPO / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"
+        )
+        expect(executable is not None, "no edge-backup in the checkout's .venv or on the PATH")
+        return cls(stack, root, (executable, "--apps", str(apps)))
+
+    @property
+    def repository(self) -> Path:
+        return self.root / "repository"
+
+    @property
+    def realm_file(self) -> Path:
+        return self.repository / "keycloak" / REALM_FILE
+
+    def edit_realm(self, *replacements: tuple[str, str], append: str = "") -> None:
+        text = self.realm_file.read_text()
+        for old, new in replacements:
+            expect(old in text, f"realm.yaml no longer holds {old!r}")
+            text = text.replace(old, new)
+        # The file lies in the probe's own --scratch directory, which only the operator names.
+        self.realm_file.write_text(text + append)  # NOSONAR(S2083)
+
+    def edge_backup(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        command = [*self.backup_command, *arguments]
+        result = subprocess.run(
+            command,
+            env={**os.environ, "HOME": str(self.root / "home")},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=900,
+        )
+        self.stack.outputs.append(result.stdout + result.stderr)
+        return result
+
+    def run_backup(self, command: list[str], _timeout: int, _stdin: str | None = None):
+        self.asked.append(command[len(self.backup_command) :])
+        return self.edge_backup(*command[len(self.backup_command) :])
+
+    def run_compose(self, command: list[str], _timeout: int, stdin: str | None = None):
+        return self.stack.compose(
+            *command[COMPOSE_PREFIX_LENGTH:], stdin=stdin, config_dir=self.repository / "keycloak"
+        )
+
+    @property
+    def engine(self) -> edge_compose.Compose:
+        return edge_compose.Compose(self.run_compose, self.repository)
+
+    @property
+    def configuration(self) -> dict[str, Any]:
+        """As Compose resolves it, with config-cli's entrypoint bind on this stand's copy: the
+        stack mounts the checkout's own, which lies outside the stand's repository."""
+        config = self.engine.resolved_configuration()
+        for mount in config["services"][reconcile.CONFIG_CLI]["volumes"]:
+            if mount["target"] == "/opt/edge/entrypoint.sh":
+                mount["source"] = str(self.repository / "keycloak" / ENTRYPOINT_FILE)
+        return config
+
+    def plan(self) -> reconcile.RealmPlan:
+        record = core.Record(self.root / "state")
+        return reconcile.plan_realm(
+            self.engine,
+            reconcile.Observer(self.engine),
+            record,
+            self.configuration,
+            self.repository,
+            core.Gate.ON,
+            False,
+        )
+
+    def apply(self) -> reconcile.StepResult:
+        engine, state = self.engine, self.root / "state"
+        realm = reconcile.Realm(
+            engine,
+            reconcile.Observer(engine),
+            reconcile.Backup(self.backup_command, self.run_backup),
+            core.Record(state),
+            self.configuration,
+            self.repository,
+            switches.Switches(state),
+            None,
+        )
+        return realm.run(self.plan())
+
+
 # --- Proofs -------------------------------------------------------------------------------------
 
 
@@ -1002,6 +1128,10 @@ class Probe:
         )
         return Admin(tokens["access_token"], self.stack.admin_url)
 
+    def admin_now(self) -> Admin:
+        """An admin whose token is fresh: master tokens live 60 s."""
+        return self.admin_with_client(self.secret_values["config-cli-secret"])
+
     def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
         self.stack.copy_config(self.stack.config_dir)
@@ -1050,6 +1180,8 @@ class Probe:
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
+        self.the_realm_step()
+        admin = self.admin_now()  # proof 12 outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -1073,9 +1205,7 @@ class Probe:
     def missing_variable_fails_loudly(self, admin: Admin) -> None:
         broken = self.stack.copy_config(self.stack.scratch / "config-missing-variable")
         realm_file = broken / REALM_FILE
-        realm_file.write_text(
-            realm_file.read_text() + "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"
-        )
+        realm_file.write_text(realm_file.read_text() + UNDEFINED_VARIABLE_LINE)
         result = self.stack.apply(bootstrap=True, config_dir=broken)
         output = result.stdout + result.stderr
         expect(result.returncode != 0, "an apply with an undefined variable exited 0")
@@ -1757,10 +1887,8 @@ class Probe:
         changed = self.stack.copy_config(self.stack.scratch / "config-changed")
         realm_file = changed / REALM_FILE
         text = realm_file.read_text()
-        expect("accessTokenLifespan: 300 " in text, "realm.yaml no longer sets 300 s as expected")
-        text = text.replace(
-            "accessTokenLifespan: 300 ", f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
-        )
+        expect(LIFESPAN_SETTING in text, "realm.yaml no longer sets 300 s as expected")
+        text = text.replace(LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING)
         # The change swaps one group for another and drops a client: the apply adds the new group
         # and, deleting nothing, keeps the dropped group and client.
         dropped_group = f"  - name: {DROPPED_GROUP}\n"
@@ -2254,6 +2382,149 @@ class Probe:
             f"back-channel url {backchannel_url}",
         )
 
+    def the_realm_step(self) -> None:
+        """Proof 12 (#242): the realm step of `edge apply` against this stack, with edge-backup
+        under a scratch HOME and its own apps.toml. The same Keycloak, its database and its
+        config-cli answer; only the repository, the HOME and the project are the probe's."""
+        stand = RealmStepStand.at(self.stack)  # a backup outlives the admin token's 60 s
+        expect(stand.edge_backup("init").returncode == 0, "edge-backup init failed")
+
+        baseline = stand.apply()
+        expect(baseline.failure is None, f"the first realm step failed: {baseline.failure}")
+        snapshots = stand.edge_backup("snapshots").stdout
+        expect(
+            [call[: len(BACKUP_ASKED)] for call in stand.asked]
+            == [BACKUP_ASKED, RESTORE_TEST_ASKED],
+            f"it asked {stand.asked}",
+        )
+        first_snapshot = re.search(r"pre-apply snapshot (\S+)", baseline.lines[0])
+        expect(first_snapshot is not None, f"no snapshot named in {baseline.lines[0]!r}")
+        expect(
+            stand.asked[-1] == [*RESTORE_TEST_ASKED, first_snapshot[1]],
+            f"the restore test was asked {stand.asked[-1]}, not for the snapshot just made",
+        )
+        expect(stand.plan().settled, "the step is planned again right after it finished")
+        expect(stand.plan().lines == [], "a settled realm still says something")
+        asked = len(stand.asked)
+        expect(stand.apply() == reconcile.StepResult(), "a settled realm's step did something")
+        expect(stand.asked == stand.asked[:asked], "a settled realm's step called edge-backup")
+        expect(stand.edge_backup("snapshots").stdout == snapshots, "a quiet step made a snapshot")
+        self.held(
+            "12a",
+            "a first step backs up, proves that snapshot's restore and applies; a second "
+            "plan right after it is quiet, and running its step makes no snapshot (cells 1, 4)",
+        )
+
+        stand.edit_realm(
+            (LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING),
+            (
+                f"  - name: {DROPPED_GROUP}\n",
+                f"  - name: {DROPPED_GROUP}\n  - name: {STEP_GROUP}\n",
+            ),
+        )
+        plan = stand.plan()
+        expect("keycloak/realm.yaml changed" in plan.line, f"the plan says {plan.line!r}")
+        applied = stand.apply()
+        expect(applied.failure is None, f"the changed realm step failed: {applied.failure}")
+        for line in applied.lines:
+            self.say(f"realm step: {line}")
+        expected = [
+            f"{REALM}: addition group /{STEP_GROUP} (0 members)",
+            f"{REALM}: change realm {REALM} accessTokenLifespan: "
+            f"300 → {CHANGED_ACCESS_TOKEN_LIFESPAN}",
+        ]
+        expect(sorted(applied.lines[1:]) == sorted(expected), f"the lines are {applied.lines[1:]}")
+        expect(
+            self.admin_now().get(f"/{REALM}")["accessTokenLifespan"]
+            == CHANGED_ACCESS_TOKEN_LIFESPAN,
+            "the realm does not hold the changed lifespan",
+        )
+        expect(stand.plan().settled and stand.plan().lines == [], "the next plan is not quiet")
+        self.held(
+            "12b",
+            "a changed realm.yaml is applied after a Keycloak-only backup and "
+            "restore test, and the lines equal the YAML diff: " + "; ".join(expected) + " (cell 3)",
+        )
+
+        realm = self.admin_now().get(f"/{REALM}")
+        checksum = next(key for key in realm["attributes"] if key.startswith(IMPORT_CHECKSUM))
+        self.admin_now().must(
+            "PUT",
+            f"/{REALM}",
+            {**realm, "attributes": {**realm["attributes"], checksum: "restored"}},
+        )
+        plan = stand.plan()
+        expect(
+            "import checksum is not the recorded one" in plan.line, f"the plan says {plan.line!r}"
+        )
+        expect(stand.apply().failure is None, "the step after a restored database failed")
+        expect(stand.plan().settled, "the checksum was not recorded again")
+        self.held(
+            "12c",
+            "a tampered import-checksum attribute (what a restored database would show) is "
+            "applied again, and the next plan is quiet (cell 7)",
+        )
+
+        groups_scope = self.admin_now().find(f"/{REALM}/client-scopes", "name", "groups")
+        self.admin_now().create(
+            f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
+            hardcoded_claim(STEP_CONSOLE_MAPPER),
+        )
+        stand.edit_realm((CHANGED_LIFESPAN_SETTING, LIFESPAN_SETTING))
+        reset = stand.apply()
+        expect(
+            reset.failure is None, f"the step that resets a console change failed: {reset.failure}"
+        )
+        snapshot = re.search(r"pre-apply snapshot (\S+)", reset.lines[0])
+        expect(snapshot is not None, f"no snapshot named in {reset.lines[0]!r}")
+        removal = (
+            f"{REALM}: removal protocol mapper scope groups/{STEP_CONSOLE_MAPPER}: "
+            f"reset to the file, pre-apply snapshot {snapshot[1]}"
+        )
+        expect(removal in reset.lines, f"the reset is not listed as such: {reset.lines}")
+        self.held(
+            "12d",
+            "a console mapper on the scope groups is listed as reset to the file with "
+            "the snapshot, exit 0 (cell 13)",
+        )
+
+        stand.edit_realm(append=UNDEFINED_VARIABLE_LINE)
+        asked = len(stand.asked)
+        failed = stand.apply()
+        named = re.search(r"pre-apply snapshot (\S+),", failed.failure or "")
+        expect(
+            named is not None and "Restore Keycloak" in failed.failure,
+            f"a failed config-cli ends as {failed.failure!r}",
+        )
+        expect(
+            stand.asked[asked:] == [BACKUP_ASKED, [*RESTORE_TEST_ASKED, named[1]]],
+            f"the failed step asked edge-backup {stand.asked[asked:]}",
+        )
+        expect(
+            stand.plan().action is reconcile.RealmAction.RUN, "the failed step is not planned again"
+        )
+        self.held(
+            "12e",
+            "a config-cli that fails (an undefined variable) ends the step partial, "
+            'names the snapshot and "Restore Keycloak", and the next plan repeats it (cell 11)',
+        )
+
+        stand.edit_realm((UNDEFINED_VARIABLE_LINE, ""))
+        expect(stand.apply().failure is None, "the step after the repaired realm failed")
+        expect(stand.plan().settled, "the repaired realm is not recorded")
+        entrypoint = stand.repository / "keycloak" / ENTRYPOINT_FILE
+        original = entrypoint.read_text()
+        entrypoint.write_text(original + "# changed\n")
+        plan = stand.plan()
+        expect("keycloak/entrypoint.sh changed" in plan.line, f"the plan says {plan.line!r}")
+        entrypoint.write_text(original)
+        expect(stand.plan().settled, "the plan is not quiet with the entrypoint as it was")
+        self.held(
+            "12f",
+            "proves the entrypoint trigger: a changed entrypoint.sh that config-cli binds "
+            "plans the step",
+        )
+
     def the_observer_door(self, admin: Admin) -> None:
         """Proof 9 (#66): the observer's container, its console-change lines and its stops. Runs
         last but for proof 7, when every credential proof 7 looks for exists."""
@@ -2386,7 +2657,7 @@ READY_MARK = "READY"
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 # Per mode: the Probe method that runs it and the line that reports it ended well.
 MODES = {
-    "run": ("run", "PROBE PASSED: proofs 1-11 hold"),
+    "run": ("run", "PROBE PASSED: proofs 1-12 hold"),
     "hold": ("hold", "HOLD ENDED"),
 }
 

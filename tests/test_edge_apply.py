@@ -41,12 +41,14 @@ from edge import (
     checkout,
     cli,
     compose,
+    core,
     emergency,
     environment,
     setup,
     switches,
     tunnel,
 )
+from edge.realm import reconcile
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -182,8 +184,13 @@ class ScriptedCompose:
     just_started: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
     config: dict = field(default_factory=resolved_configuration)
+    realm_checksums: dict = field(default_factory=lambda: {"master": {}, "hallucinai": {}})
+    realm_applies: int = 0  # how often config-cli ran
+    config_cli_fails: bool = False
 
-    def run(self, command: list[str], _timeout: int) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, command: list[str], _timeout: int, _stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         self.calls.append(command[PROJECT_PREFIX:])
         _, profile, verb, *arguments = command[PROJECT_PREFIX:]
         refused = NEVER_RUN & {verb, *arguments}
@@ -192,6 +199,8 @@ class ScriptedCompose:
             return subprocess.CompletedProcess(
                 command, 1, "", f"{verb} broke\n{self.failure_line}\n\n"
             )
+        if verb == "run" and self.config_cli_fails and "realm-observer" not in arguments:
+            return subprocess.CompletedProcess(command, 1, "", "config-cli broke\n")
         output = getattr(self, f"verb_{verb}")(profile, arguments)
         if verb == "up" and self.unstartable & set(arguments):
             return subprocess.CompletedProcess(command, 1, output, "up broke\ncannot start")
@@ -214,6 +223,15 @@ class ScriptedCompose:
             self.containers[service] = "restarting"
         self.just_started.clear()
         return output
+
+    def verb_run(self, _profile: str, arguments: list[str]) -> str:
+        """The realm's one-off containers: the observer's two answers and config-cli's run."""
+        if "realm-observer" not in arguments:
+            self.realm_applies += 1
+            return ""
+        if "--import-checksums" in arguments:
+            return json.dumps(self.realm_checksums)
+        return json.dumps({"hallucinai": {}})
 
     def verb_up(self, _profile: str, arguments: list[str]) -> str:
         if self.starts_nothing:
@@ -301,6 +319,27 @@ class ScriptedCompose:
 
     def changing_verbs(self) -> list[str]:
         return [call[2] for call in self.calls if call[2] not in {"config", "ps"}]
+
+
+@dataclass
+class RealmBackup:
+    """edge-backup as the realm step calls it: what it was asked, and the part that fails."""
+
+    asked: list[str] = field(default_factory=list)
+    failing: str | None = None
+
+    def pre_apply(self) -> str:
+        return self._ask("backup")
+
+    def restore_test(self, snapshot: str) -> None:
+        assert snapshot == "ab12cd34"
+        self._ask("restore test")
+
+    def _ask(self, part: str) -> str:
+        self.asked.append(part)
+        if part == self.failing:
+            raise reconcile.RealmError(f"{part} broke")
+        return "ab12cd34"
 
 
 @dataclass
@@ -517,6 +556,11 @@ def scripted() -> ScriptedCompose:
 
 
 @pytest.fixture
+def realm_backup() -> RealmBackup:
+    return RealmBackup()
+
+
+@pytest.fixture
 def setup_check() -> Setup:
     return Setup()
 
@@ -542,7 +586,7 @@ def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
 @pytest.fixture
 def switch(
     repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
-    scripted_git, monkeypatch,
+    scripted_git, monkeypatch, realm_backup,
 ):  # fmt: skip
     """Run `edge apply --closed` from the live checkout, a clean `main` (or from `tree`, with
     `git`); the operator types `yes` at a terminal unless told otherwise."""
@@ -573,6 +617,7 @@ def switch(
             ingress.watch,
             git or scripted_git,
             ensure_environment,
+            realm_backup,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1670,6 +1715,7 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         b"dynamic/x.yml": b"http: {}\n",
         b"uv.lock": b"version = 1\n",
         b"keycloak/realm.yaml": b"realm: x\n",
+        b"keycloak/entrypoint.sh": b"#!/bin/sh\n",
         b"compose.yaml": b"services: {}\n",
         b"fleet.yaml": DISABLED.encode(),
     }
@@ -1691,10 +1737,12 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         "  recreated by edge apply:",
         "    A compose.yaml",
         "    M traefik.yml",
+        "  applied by hal apply (the realm step):",
+        "    A keycloak/realm.yaml",
         "  stops for `uv sync`:",
         "    A uv.lock",
         "  not applied by edge apply (block 6):",
-        "    A keycloak/realm.yaml",
+        "    A keycloak/entrypoint.sh",
         "  other:",
         "    M fleet.yaml",
         f"the live checkout is 3 commits behind; to bring them: git -C ~/git/edge merge "
@@ -4390,3 +4438,169 @@ def test_the_repositorys_agent_service_unit_that_is_not_set_up_runs_its_setup_wi
     assert "run `agent-service/setup` now" in out
     assert setup_run.commands == [(repository / "agent-service/setup", repository)]
     assert "agent-service is on" in out
+
+
+KEYCLOAK_ENABLED = "services:\n  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
+KEYCLOAK_DISABLED = "services:\n  keycloak:\n    run: {enabled: false, setup: keycloak/init}\n"
+REALM_APPLIED = f"{apply.COMMAND}: realm: applied keycloak/*.yaml; pre-apply snapshot ab12cd34"
+
+
+@pytest.fixture
+def realm_unit(repository, scripted) -> None:
+    """Keycloak enabled, set up and running; its realm files, and config-cli as compose.yaml
+    resolves it: it binds `entrypoint.sh` from the checkout, so edge follows it (#242)."""
+    write_fleet(repository, KEYCLOAK_ENABLED)
+    (repository / "keycloak/realm.yaml").write_text("realm: one\n")
+    (repository / "keycloak/master.yaml").write_text("master: one\n")
+    (repository / "keycloak/entrypoint.sh").write_text("#!/bin/sh\n")
+    scripted.config["services"]["keycloak-config-cli"] = {
+        "profiles": ["apply"],
+        "volumes": [bind(repository / "keycloak/entrypoint.sh", "/opt/edge/entrypoint.sh")],
+    }
+    scripted.put_containers({"keycloak": "running"})
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_realm_not_applied_before_is_planned_and_a_no_backs_up_and_applies_nothing(
+    switch, scripted, realm_backup
+):
+    """Cell 2."""
+    exit_code, out, err = switch("no")
+
+    assert exit_code == 1
+    assert "realm: apply keycloak/*.yaml (no realm apply is recorded)" in out
+    assert "aborted, nothing changed" in err
+    assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply_is_quiet(
+    switch, scripted, realm_backup
+):
+    """Cells 3 and 4: one backup and one config-cli run; the second apply asks and does nothing."""
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert REALM_APPLIED in out
+    assert f"{apply.COMMAND}: realm: no changes" in out
+    assert (realm_backup.asked, scripted.realm_applies) == (["backup", "restore test"], 1)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert (realm_backup.asked, scripted.realm_applies) == (["backup", "restore test"], 1)
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_failed_backup_ends_partial_exit_1_and_applies_nothing(switch, scripted, realm_backup):
+    """Cell 8."""
+    realm_backup.failing = "backup"
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert f"{apply.COMMAND}: partial, realm: backup broke; nothing applied" in err
+    assert scripted.realm_applies == 0
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_config_cli_that_fails_ends_partial_names_the_snapshot_and_is_planned_again(
+    switch, scripted, realm_backup
+):
+    """Cell 11."""
+    scripted.config_cli_fails = True
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert realm_backup.asked == ["backup", "restore test"]
+    assert "partial, realm:" in err
+    assert "the realm may be partly applied; pre-apply snapshot ab12cd34" in err
+    assert 'docs/backup.md "Restore Keycloak"' in err
+
+    scripted.config_cli_fails = False
+    _, out, _ = switch("no")
+
+    assert "realm: apply keycloak/*.yaml" in out
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_core_error_inside_the_realm_hook_ends_partial_not_in_a_traceback(
+    switch, scripted, monkeypatch
+):
+    """The hook sits inside the partial handling: resolving config-cli's binds is part of it."""
+
+    def refuse(*_: object) -> frozenset[str]:
+        raise core.CoreError("cannot read keycloak (Permission denied)")
+
+    monkeypatch.setattr(core, "followed_services", refuse)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, realm: cannot read keycloak (Permission denied); nothing applied" in err
+    assert scripted.realm_applies == 0
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_an_interrupt_while_the_realm_step_is_built_ends_partial_without_a_traceback(
+    switch, scripted, monkeypatch
+):
+    built = []
+    original = reconcile.Observer.__init__
+
+    def interrupted_after_the_plan(self, engine):
+        if built:
+            raise KeyboardInterrupt
+        built.append(engine)
+        original(self, engine)
+
+    monkeypatch.setattr(reconcile.Observer, "__init__", interrupted_after_the_plan)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "interrupted while changing keycloak (apply the realm step)" in err
+    assert "Traceback" not in err
+    assert scripted.realm_applies == 0
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_keycloak_switched_off_by_the_config_is_one_line_and_no_step(
+    switch, repository, scripted, realm_backup
+):
+    """Cell 14."""
+    write_fleet(repository, KEYCLOAK_DISABLED)
+
+    _, out, _ = switch("no")
+
+    assert "realm: no realm apply is recorded; Keycloak is off, so it is not applied" in out
+    assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_keycloak_switched_off_by_its_marker_is_never_started_or_applied(
+    switch, state, scripted, realm_backup
+):
+    """Cell 15: the unit stays as it was, and the changed realm waits."""
+    switch_off(state, unit="keycloak")
+
+    _, out, _ = switch()
+
+    assert "Keycloak is switched off, so it is not applied" in out
+    assert scripted.containers == {"keycloak": "running"}
+    assert (realm_backup.asked, scripted.realm_applies, scripted.changing_verbs()) == ([], 0, [])
+
+
+def test_keycloak_that_starts_in_this_run_is_not_checked_and_one_line_says_so(
+    switch, repository, scripted, realm_backup
+):
+    """Its realm is checked by the next apply."""
+    write_fleet(repository, KEYCLOAK_ENABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
+    assert (realm_backup.asked, scripted.realm_applies) == ([], 0)

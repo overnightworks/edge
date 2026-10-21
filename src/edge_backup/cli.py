@@ -74,6 +74,11 @@ def _parser() -> argparse.ArgumentParser:
         "is good",
     )
     restore_test.add_argument("app", nargs="?", help="test this app only, without reading data")
+    restore_test.add_argument(
+        "--snapshot",
+        help="test this snapshot of the app (ID from `snapshots`) instead of the last "
+        "successful backup's (needs the app's name)",
+    )
     restore_test.set_defaults(command=_restore_test)
     restore = commands.add_parser("restore", help="restore one app's last successful backup")
     restore.add_argument("app", help="the app's name in apps.toml")
@@ -111,10 +116,14 @@ def _backup(settings: Settings, arguments: argparse.Namespace) -> int:
 
 
 def _restore_test(settings: Settings, arguments: argparse.Namespace) -> int:
+    if arguments.snapshot is not None and arguments.app is None:
+        raise StepFailed(ExitCategory.CONFIGURATION, "--snapshot braucht den Namen einer App")
     _require_declared(arguments)
 
     def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-        runner.restore_test(settings, apps, run, only=arguments.app)
+        runner.restore_test(
+            settings, apps, run, only=arguments.app, snapshot_prefix=arguments.snapshot
+        )
 
     return _recorded(settings, arguments, step)
 

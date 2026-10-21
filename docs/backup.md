@@ -100,6 +100,9 @@ and the prune (from the 11th pre-apply snapshot on) on the live repository are n
 other apps' entries in the status file stay as they are, and a name `apps.toml` does not declare is refused before anything runs. The one-app
 `restore-test` checks the repository's structure but does not read data (`check` without
 `--read-data-subset`); the monthly run keeps that. Without a name both commands do what the timers do.
+`edge-backup restore-test <app> --snapshot <ID>` restores and verifies that snapshot of the app instead of
+the one the status file names (it needs the app's name); `hal apply` uses it on the snapshot its own backup
+just made, so a timer backup in between cannot swap the snapshot under test.
 
 `edge-backup backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, prints its ID and
 keeps the last 10 pre-apply snapshots of that app (`forget --keep-last 10`, scoped to both tags),
@@ -261,6 +264,8 @@ discarded and the session runs with server error logging off (`keycloak` is the
 image's superuser, which may set that); only the exit code is printed. Delete
 `~/restore-keycloak` once you are done. The block acts on the compose project `edge`;
 `EDGE_COMPOSE_PROJECT` names another, which is how it was driven against a throwaway stack.
+A failed realm step of `hal apply` names its pre-apply snapshot; restore that one with
+`uv run edge-backup restore keycloak --snapshot <ID> --target ~/restore-keycloak`.
 
 ```sh
 (

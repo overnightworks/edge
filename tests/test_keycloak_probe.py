@@ -771,6 +771,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "only_logins_and_failed_logins_are_stored",
         "app_client",
         "agent_service_stays_audience_only",
+        "the_realm_step",
         "the_observer_door",
         "no_secret_leaked",
     ):
@@ -778,6 +779,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
     monkeypatch.setattr(probe.Probe, "start_with_bootstrap_admin", start_with_bootstrap_admin)
     monkeypatch.setattr(probe.Probe, "missing_variable_fails_loudly", missing_variable_fails_loudly)
     monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
+    monkeypatch.setattr(probe.Probe, "admin_now", lambda _self: object())
 
     probe.Probe(stack=object()).run()
 

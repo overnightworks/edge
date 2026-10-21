@@ -58,6 +58,7 @@ from edge import (
     switches,
     terminal,
 )
+from edge.realm import reconcile
 
 EnsureEnvironment = Callable[[Path], str | None]
 COMMAND = "edge apply --closed"
@@ -80,6 +81,7 @@ class Effect(StrEnum):
 
     LIVE = "live once updated"
     RECREATED = "recreated by edge apply"
+    REALM = "applied by hal apply (the realm step)"
     UV_SYNC = "stops for `uv sync`"
     NOT_APPLIED = "not applied by edge apply (block 6)"
     OTHER = "other"
@@ -314,19 +316,20 @@ class Plan:
     followers: list[core.FollowerPlan]
     plans: list[UnitPlan]
     images: list[KeptImage]
+    realm: reconcile.RealmPlan
 
     @property
     def changes_nothing(self) -> bool:
         return (
-            all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
+            self.realm.settled
+            and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
             and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
         )
 
     def describe(self) -> list[str]:
-        return [
-            plan.describe() for plan in (*self.core, *self.followers, *self.plans, *self.images)
-        ]
+        plans = (*self.core, *self.followers, *self.plans, *self.images)
+        return [*(plan.describe() for plan in plans), *self.realm.lines]
 
 
 @dataclass(frozen=True)
@@ -355,7 +358,19 @@ def _plan(
     images = plan_kept_images(
         fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
     )
-    return Plan(fleet, read, core_plans, follower_plans, plans, images)
+    starts_keycloak = any(
+        plan.unit.key == reconcile.REALM_UNIT and plan.action is Action.ON for plan in plans
+    )
+    realm = reconcile.plan_realm(
+        engine,
+        reconcile.Observer(engine),
+        record,
+        fleet.config,
+        repository,
+        gates.get(reconcile.REALM_UNIT),
+        starts_keycloak,
+    )
+    return Plan(fleet, read, core_plans, follower_plans, plans, images, realm)
 
 
 def _gates(
@@ -399,6 +414,7 @@ def apply_closed(
     watch: compose.Watch = compose.SETTLED,
     git: checkout.Runner = checkout.run_git,
     ensure_environment: EnsureEnvironment = environment.ensure,
+    realm_backup: reconcile.Backup | None = None,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -420,7 +436,15 @@ def apply_closed(
         if (waiting := _fetched(live)) is None:
             return ApplyExit.CANNOT_PLAN
         return _plan_and_apply(
-            state_directory, engine, repository, check, run_setup, verifier, watch, waiting
+            state_directory,
+            engine,
+            repository,
+            check,
+            run_setup,
+            verifier,
+            watch,
+            waiting,
+            realm_backup or reconcile.Backup.installed(repository),
         )
     finally:
         os.close(lock)
@@ -480,7 +504,7 @@ class Waiting:
     commits: tuple[checkout.Commit, ...]
     files: tuple[checkout.ChangedFile, ...]
 
-    def describe(self, binds: core.CheckoutBinds) -> list[str]:
+    def describe(self, binds: core.CheckoutBinds, realm_files: Collection[str]) -> list[str]:
         """The waiting commits, their files by effect, the interim way to bring them in and what
         the plan below applies (#98 rule 4)."""
         one = len(self.commits) == 1
@@ -490,7 +514,9 @@ class Waiting:
         lines.append("their files, by what an update does with them:")
         by_effect = {effect: [] for effect in Effect}
         for file in sorted(self.files, key=lambda changed: changed.path):
-            by_effect[_effect(file.path, binds)].append(f"    {file.status} {file.shown}")
+            by_effect[_effect(file.path, binds, realm_files)].append(
+                f"    {file.status} {file.shown}"
+            )
         for effect, files in by_effect.items():
             if files:
                 lines += [f"  {effect}:", *files]
@@ -502,13 +528,15 @@ class Waiting:
         ]
 
 
-def _effect(path: str, binds: core.CheckoutBinds) -> Effect:
+def _effect(path: str, binds: core.CheckoutBinds, realm_files: Collection[str]) -> Effect:
     if path == _CORE_DEFINITIONS or core.is_bound(path, binds.recreated):
         return Effect.RECREATED
     if core.is_bound(path, binds.live):
         return Effect.LIVE
     if path in _UV_SYNC_FILES:
         return Effect.UV_SYNC
+    if path in realm_files:
+        return Effect.REALM
     if core.is_bound(path, binds.units):
         return Effect.NOT_APPLIED
     return Effect.OTHER
@@ -552,6 +580,7 @@ def _plan_and_apply(
     verifier: barrier.Verifier,
     watch: compose.Watch,
     waiting: Waiting,
+    realm_backup: reconcile.Backup,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -562,7 +591,7 @@ def _plan_and_apply(
             binds = core.checkout_binds(
                 fleet.config, repository, {unit.key for unit in fleet.units}
             )
-            for line in waiting.describe(binds):
+            for line in waiting.describe(binds, reconcile.REALM_FILES):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
         missing = _missing_setups(planned, repository, check)
@@ -588,7 +617,12 @@ def _plan_and_apply(
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
     return _confirm_and_switch(
-        engine, planned, marks, CorePhase(record, repository, verifier, watch), completed
+        engine,
+        planned,
+        marks,
+        CorePhase(record, repository, verifier, watch),
+        completed,
+        realm_backup,
     )
 
 
@@ -909,12 +943,39 @@ def _observe_and_record(
     return mismatched
 
 
+def _apply_realm(
+    engine: compose.Compose,
+    planned: Plan,
+    marks: switches.Switches,
+    core_phase: CorePhase,
+    backup: reconcile.Backup,
+) -> bool:
+    """The realm step after the unit switches; says its lines and whether it ended partial."""
+    realm = reconcile.Realm(
+        engine,
+        reconcile.Observer(engine),
+        backup,
+        core_phase.record,
+        planned.fleet.config,
+        core_phase.repository,
+        marks,
+        planned.read.get(reconcile.REALM_UNIT),
+    )
+    result = realm.run(planned.realm)
+    for line in result.lines:
+        print(f"{COMMAND}: {line}")
+    if result.failure:
+        print(f"{COMMAND}: partial, {result.failure}; run `{COMMAND}` again", file=sys.stderr)
+    return bool(result.failure)
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
     marks: switches.Switches,
     core_phase: CorePhase,
     completed_setups: Sequence[str],
+    realm_backup: reconcile.Backup,
 ) -> int:
     print(f"{COMMAND}: the plan")
     for line in planned.describe():
@@ -943,6 +1004,8 @@ def _confirm_and_switch(
                 withheld[plan.unit.key] = since
         started = [plan for plan in changes if plan.unit.key not in withheld]
         mismatched = _observe_and_record(engine, planned, core_phase, started, progress)
+        progress.unit, progress.step = reconcile.REALM_UNIT, "apply the realm step"
+        realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
@@ -967,7 +1030,7 @@ def _confirm_and_switch(
             f"{COMMAND}: partial, {plan.unit.key} is not {plan.action} after the change",
             file=sys.stderr,
         )
-    if mismatched or withheld:
+    if mismatched or withheld or realm_failed:
         return ApplyExit.REFUSED
     for plan in changes:
         print(f"{COMMAND}: {plan.unit.key} is {plan.action}")

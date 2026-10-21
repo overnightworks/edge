@@ -217,7 +217,8 @@ services:
 
   # Reads both realms through the admin API, GET only, and prints one JSON inventory
   # (src/edge/realm/observe.py). No depends_on: an observe never starts Keycloak. Run it as
-  # `compose run -T --rm realm-observer [--base-url URL]` with the per-run digest key on stdin.
+  # `compose run -T --rm --no-deps realm-observer` with the per-run digest key on stdin, or with
+  # `--import-checksums` after it, which needs no key and prints config-cli's import checksums.
   realm-observer:
     # The probe's python pin (probe/keycloak/compose.probe.yaml); ci.yml checks the two are equal.
     image: &python python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
@@ -233,7 +234,8 @@ services:
       - -I
       - -B
       - /opt/observer/observe.py
-    command: ["--base-url", "http://keycloak:8080"]
+      - --base-url
+      - http://keycloak:8080
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
     secrets:

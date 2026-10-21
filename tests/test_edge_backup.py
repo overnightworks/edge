@@ -103,6 +103,23 @@ def test_restore_test_of_one_app_keeps_the_other_apps_status_and_reads_no_data(
     assert app_history(outcome.status) == songmaker_before
 
 
+def test_restore_test_with_a_snapshot_tests_that_one_not_the_one_the_status_names(
+    edge_backup, machine, home
+):
+    """#242: a backup in between must not swap the snapshot under test."""
+    two_apps = declare_two_apps(home)
+    edge_backup(*two_apps, "backup", "radio", "--pre-apply")
+    chosen = machine.snapshots[-1]["id"]
+    edge_backup(*two_apps, "backup", "radio")
+    machine.calls.clear()
+
+    outcome = edge_backup(*two_apps, "restore-test", "radio", "--snapshot", chosen)
+
+    assert outcome.exit_code == 0, outcome.err
+    assert machine.argv_of("restic restore")[-3].split(":")[0] == chosen
+    assert chosen != machine.snapshots[-1]["id"]
+
+
 def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_apply(
     edge_backup, machine, home
 ):
@@ -126,6 +143,8 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
         (("backup", "nobody"), "nobody ist nicht deklariert"),
         (("restore-test", "nobody"), "nobody ist nicht deklariert"),
         (("backup", "--pre-apply"), "--pre-apply braucht den Namen einer App"),
+        (("restore-test", "--snapshot", "0" * 12), "--snapshot braucht den Namen einer App"),
+        (("restore-test", "--snapshot", ""), "--snapshot braucht den Namen einer App"),
     ],
 )
 def test_a_refused_app_argument_runs_nothing_and_writes_no_status(

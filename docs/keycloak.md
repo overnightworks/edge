@@ -144,30 +144,39 @@ secrets.
 ## Start and apply
 
 Start the stack as in [stack.md](stack.md) (Start, readiness, stop; Keycloak comes with `edge
-apply`), and wait until Keycloak answers the master realm on 8090. A realm change is then three
-steps, in this order:
+apply`), and wait until Keycloak answers the master realm on 8090. A realm change reaches it
+through `hal apply`: merge the change to `keycloak/realm.yaml` or `keycloak/master.yaml`, update the
+live checkout, run `hal apply`.
 
-1. **Back up, and test the restore.** The apply deletes no person, but it overwrites a console
-   edit to a field the YAML lists and resets the console changes to declared objects named above,
-   so there is a snapshot to go back to: `uv run edge-backup backup`, then `uv run edge-backup
-   restore-test`; both must end with exit 0. The way back is
-   [Restore Keycloak](backup.md#restore-keycloak).
-2. **Apply `keycloak/*.yaml`:**
+`hal apply` runs the realm step after the unit switches, when Keycloak is on, set up and running
+and an input changed: `keycloak/realm.yaml`, `keycloak/master.yaml`, `keycloak/entrypoint.sh` or
+config-cli's resolved definition (the image pin and the `IMPORT_*` switches) differ from what `applied.json` recorded
+after the last step, or Keycloak's own import-checksum attributes differ from the recorded ones (a
+restored database, a go-live import). Unchanged inputs mean the step does nothing: no backup and
+no run. A rotated client secret alone does not trigger it, because Compose's definition hash
+ignores the content of a secret file; change a realm file or wait for the next realm change.
 
-   ```sh
-   docker compose --profile keycloak run --rm keycloak-config-cli
-   ```
-
-3. **Look at the result.** `git diff` of the YAML is what you asked for; the admin console shows
-   what the apply left.
+The plan names the step in one line. After your yes it takes a Keycloak-only backup tagged
+`pre-apply` (the last ten are kept) and restore-tests that snapshot, observes both realms, runs
+config-cli, observes again and prints one line per change, with the seconds the backup and the
+restore test took. A failed backup or restore test applies nothing and ends the run partial with
+exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
+not checked"). edge-backup runs in a process group of its own, so Ctrl-C does not reach it. A step
+that outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
+minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A
+failure after config-cli started ends the run with exit 1 and names the snapshot; the way back is
+[Restore Keycloak](backup.md#restore-keycloak), and the next `hal apply` repeats the step. A console
+change to a declared object that the apply resets is printed as "reset to the file" with the
+snapshot ID, exit 0. Keycloak that is switched off or disabled is never started by the step: the
+plan says its realm files wait. Keycloak that starts in the same run is checked by the next `hal
+apply`.
 
 The apply signs in as the `config-cli` service client and fails loudly on a `$(env:…)` variable
-that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). It always reconciles for real
-(`IMPORT_CACHE_ENABLED=false` in `compose.yaml`), never skips a realm whose file is unchanged.
-Whatever exists only in Keycloak stays; deleting a group, client or role the YAML no longer lists
-is done in the admin console, with your yes, after the backup above. The step inside `edge apply`,
-with the list of what changed and of what exists only in Keycloak, comes when realm changes become
-frequent (#50).
+that is not set (`IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR`). Whatever exists only in Keycloak
+stays; deleting a group, client or role the YAML no longer lists is done in the admin console, with
+your yes, after a backup. The list of what exists only in Keycloak comes with #235's slice C. A
+console change to a declared object is reset by the next apply that runs the step, not by every
+apply.
 
 ## Go-live
 
