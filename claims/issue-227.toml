@@ -1,0 +1,8 @@
+claim_id = "e8b437ccd2194c8787bc9ecd55b32bf4"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "43f117d4d48584d75c7c4430a41035d636988d29"
+branch = "claude/issue-227-readme-slice-b"
+scope = ["README.md", "docs/architecture.md", "docs/keycloak.md", "keycloak/go-live", "keycloak/realm.yaml", "probe/keycloak/README.md"]
+opened_commit = "9ed474f1473e768cc5b7c707a6f0997829cd6213"
+whole_reason = "One move: the Keycloak subtree, its new docs file, and the pointers that cite it."
