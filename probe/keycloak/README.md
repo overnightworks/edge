@@ -33,7 +33,8 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   it made or received (secret files, passwords, the TOTP seed, the relying party's secret, every
   token of every token response, each client secret and its tokens, and the admin console's PKCE
   verifiers, authorization codes and session cookies) in the `Config.Env` of any container it ran,
-  in any compose, apply or service log output, or in its own output (7). Proof 1
+  in any compose, apply or service log output, or in its own output (7); the realm settings as decided, with admin events that carry no client
+  representation (8). Proof 1
   fetches the login and account pages through the edge entrypoint and holds when both link a 200 resource under
   `/resources/<version>/{login,account}/hallucinai/` and the login page speaks German for
   `Accept-Language: de` (with a language switcher) and English for `fr` or none. Proof 3c
