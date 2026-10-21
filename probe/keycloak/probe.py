@@ -2393,7 +2393,8 @@ class Probe:
             self.say(f"realm step: {line}")
         expected = [
             f"{REALM}: addition group /{STEP_GROUP} (0 members)",
-            f"{REALM}: change realm accessTokenLifespan: 300 → {CHANGED_ACCESS_TOKEN_LIFESPAN}",
+            f"{REALM}: change realm {REALM} accessTokenLifespan: "
+            f"300 → {CHANGED_ACCESS_TOKEN_LIFESPAN}",
         ]
         expect(sorted(applied.lines[1:]) == sorted(expected), f"the lines are {applied.lines[1:]}")
         expect(

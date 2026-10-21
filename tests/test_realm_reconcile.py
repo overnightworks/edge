@@ -419,16 +419,22 @@ class RecordedCompose:
         return self.answer
 
 
-def test_the_observer_reads_checksums_with_no_key_and_the_inventory_with_a_fresh_one() -> None:
+def test_the_observer_reads_checksums_with_no_key_and_inventories_under_one_key() -> None:
+    """The two inventories a step compares are digested under the same key; the checksums need
+    none."""
     engine = RecordedCompose('{"master": {}}')
     observer = reconcile.Observer(engine)
 
     observer.checksums()
     observer.inventory()
+    observer.inventory()
 
-    (_, checksum_arguments, checksum_input), (_, inventory_arguments, key_line) = engine.calls
+    (_, checksum_arguments, checksum_input), (_, arguments, first_key), (_, _, second_key) = (
+        engine.calls
+    )
     assert (checksum_arguments, checksum_input) == (["--import-checksums"], "")
-    assert inventory_arguments == [] and len(key_line.strip()) >= 64
+    assert arguments == [] and len(first_key.strip()) >= 64
+    assert first_key == second_key
 
 
 @pytest.mark.parametrize(

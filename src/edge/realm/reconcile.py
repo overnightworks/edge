@@ -105,13 +105,15 @@ class RealmPlan:
 
 
 class Observer:
-    """The realm observer through its compose service (`edge.realm.observe`)."""
+    """The realm observer through its compose service (`edge.realm.observe`). One observer holds
+    one digest key, so the inventories it reads before and after an apply can be compared."""
 
     def __init__(self, engine: compose.Compose) -> None:
         self.engine = engine
+        self.digest_key = new_digest_key()
 
     def inventory(self) -> Inventory:
-        return self._read([], new_digest_key() + "\n")
+        return self._read([], self.digest_key + "\n")
 
     def checksums(self) -> Checksums:
         return self._read(["--import-checksums"], "")
