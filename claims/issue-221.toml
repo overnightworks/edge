@@ -1,8 +1,0 @@
-claim_id = "4ece886834fc4a81a2f93684986409a4"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "d4eb2a6e869168ba5c8101927583a2314538f736"
-branch = "claude/issue-221-live-smoke-command"
-scope = ["README.md", "agent-service/egress_observe.py", "agent-service/live_smoke.py", "agent-service/smoke.py", "probe/agent-service/egress.py", "probe/agent-service/unit.py", "tests/test_agent_egress.py", "tests/test_agent_service_live_smoke.py"]
-opened_commit = "983aec78cec05d071f9002308771aaa965872cfa"
-whole_reason = "One command: the script, the one owner of the in-container egress observations it shares with the probe, its tests, the probe drive, and the README lines it replaces."
