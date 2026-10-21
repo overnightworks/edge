@@ -37,7 +37,8 @@ What a change to a checkout path does once the checkout is updated is read from 
 (#98 rule 4): a directory the core or a planned follower binds is live through Traefik's watch, a
 file they bind is recreated by edge apply, and any bind of another service, a follower whose
 profile is no catalog unit included, is not applied by edge apply (block 6); the realm files
-`keycloak/realm.yaml` and `keycloak/master.yaml` are applied by its realm step (#242).
+`keycloak/realm.yaml` and `keycloak/master.yaml` alone are applied by its realm step (#242),
+`keycloak/entrypoint.sh` stays not applied.
 """
 
 import hashlib

@@ -116,7 +116,7 @@ def _backup(settings: Settings, arguments: argparse.Namespace) -> int:
 
 
 def _restore_test(settings: Settings, arguments: argparse.Namespace) -> int:
-    if arguments.snapshot and arguments.app is None:
+    if arguments.snapshot is not None and arguments.app is None:
         raise StepFailed(ExitCategory.CONFIGURATION, "--snapshot braucht den Namen einer App")
     _require_declared(arguments)
 

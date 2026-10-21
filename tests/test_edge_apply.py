@@ -1715,6 +1715,7 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         b"dynamic/x.yml": b"http: {}\n",
         b"uv.lock": b"version = 1\n",
         b"keycloak/realm.yaml": b"realm: x\n",
+        b"keycloak/entrypoint.sh": b"#!/bin/sh\n",
         b"compose.yaml": b"services: {}\n",
         b"fleet.yaml": DISABLED.encode(),
     }
@@ -1740,6 +1741,8 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         "    A keycloak/realm.yaml",
         "  stops for `uv sync`:",
         "    A uv.lock",
+        "  not applied by edge apply (block 6):",
+        "    A keycloak/entrypoint.sh",
         "  other:",
         "    M fleet.yaml",
         f"the live checkout is 3 commits behind; to bring them: git -C ~/git/edge merge "
@@ -4502,7 +4505,7 @@ def test_a_failed_backup_ends_partial_exit_1_and_applies_nothing(switch, scripte
 
 
 @pytest.mark.usefixtures("realm_unit")
-def test_a_config_cli_that_fails_ends_partial_names_the_snapshot_and_runs_again(
+def test_a_config_cli_that_fails_ends_partial_names_the_snapshot_and_is_planned_again(
     switch, scripted, realm_backup
 ):
     """Cell 11."""
@@ -4537,6 +4540,29 @@ def test_a_core_error_inside_the_realm_hook_ends_partial_not_in_a_traceback(
 
     assert exit_code == 1
     assert "partial, realm: cannot read keycloak (Permission denied); nothing applied" in err
+    assert scripted.realm_applies == 0
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_an_interrupt_while_the_realm_step_is_built_ends_partial_without_a_traceback(
+    switch, scripted, monkeypatch
+):
+    built = []
+    original = reconcile.Observer.__init__
+
+    def interrupted_after_the_plan(self, engine):
+        if built:
+            raise KeyboardInterrupt
+        built.append(engine)
+        original(self, engine)
+
+    monkeypatch.setattr(reconcile.Observer, "__init__", interrupted_after_the_plan)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "interrupted while changing keycloak (apply the realm step)" in err
+    assert "Traceback" not in err
     assert scripted.realm_applies == 0
 
 

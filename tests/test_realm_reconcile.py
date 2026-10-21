@@ -3,7 +3,11 @@ step), with Compose, the observer and edge-backup faked. Each test names its cel
 scenario matrix."""
 
 import json
+import os
+import signal
 import subprocess
+import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -335,7 +339,9 @@ def test_an_observer_that_fails_before_applies_nothing(world: World) -> None:
     )
 
 
-def test_a_failed_config_cli_is_partial_names_the_way_back_and_runs_again(world: World) -> None:
+def test_a_failed_config_cli_is_partial_names_the_way_back_and_is_planned_again(
+    world: World,
+) -> None:
     """Cell 11."""
     world.failing.add("config-cli")
 
@@ -558,7 +564,9 @@ def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -
 # --- What the step leaves alone, and what it says when a part breaks ---------------------------
 
 
-def test_a_settled_plan_makes_no_backup_no_config_cli_and_no_record_write(world: World) -> None:
+def test_a_settled_plan_makes_no_backup_no_config_cli_and_leaves_the_record_bytes_unchanged(
+    world: World,
+) -> None:
     world.applied_once()
     recorded = world.record.path.read_bytes()
     plan = world.plan()
@@ -570,7 +578,7 @@ def test_a_settled_plan_makes_no_backup_no_config_cli_and_no_record_write(world:
     assert world.record.path.read_bytes() == recorded
 
 
-def test_a_record_that_cannot_be_resolved_for_the_step_is_a_partial_line_not_a_traceback(
+def test_a_bind_resolution_that_fails_is_a_partial_line_not_a_traceback(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = world.plan()
@@ -611,6 +619,18 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
 WAITS = "while :; do sleep 0.1; done"
 TRAPS_SIGTERM = f"trap 'echo cleaned > \"$1\"; exit 143' TERM; {WAITS}"
 IGNORES_SIGTERM = f"trap '' TERM; {WAITS}"
+# Ready, then four tenths of a second of clean-up on SIGTERM before it leaves its marker.
+CLEANS_UP_SLOWLY = (
+    'trap \'sleep 0.4; echo cleaned > "$1"; exit 143\' TERM; touch "$1.ready"; ' + WAITS
+)
+DRIVES_THE_STEP = """
+import sys
+from edge.realm import reconcile
+try:
+    reconcile.run_edge_backup(sys.argv[1:], 600)
+except KeyboardInterrupt:
+    print("KeyboardInterrupt reached the step")
+"""
 
 
 def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
@@ -624,13 +644,62 @@ def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
     assert marker.read_text() == "cleaned\n"
 
 
-def test_a_backup_that_ignores_sigterm_is_killed_after_the_grace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_backup_that_ignores_sigterm_still_ends_in_the_timeout_failure(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.3)
 
     with pytest.raises(compose.ComposeError, match="took longer than 1s"):
         reconcile.run_edge_backup(["sh", "-c", IGNORES_SIGTERM], 1)
+
+
+def test_a_grandchild_that_holds_the_output_open_cannot_hang_the_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.2)
+    monkeypatch.setattr(reconcile, "COLLECT_SECONDS", 0.5)
+    escaped = tmp_path / "escaped.pid"
+    leaves_a_grandchild = f"setsid sh -c 'echo $$ > {escaped}; exec sleep 60' & {WAITS}"
+
+    try:
+        started = time.monotonic()
+        with pytest.raises(compose.ComposeError, match="took longer than 1s"):
+            reconcile.run_edge_backup(["sh", "-c", leaves_a_grandchild], 1)
+        assert time.monotonic() - started < 10
+    finally:
+        os.kill(int(escaped.read_text()), signal.SIGKILL)
+
+
+def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path) -> None:
+    """The terminal's Ctrl-C goes to the step's group alone: edge-backup runs in its own."""
+    marker = tmp_path / "cleaned"
+    command = [
+        sys.executable,
+        "-c",
+        DRIVES_THE_STEP,
+        "sh",
+        "-c",
+        CLEANS_UP_SLOWLY,
+        "sh",
+        str(marker),
+    ]
+    step = subprocess.Popen(
+        command,
+        env={**os.environ, "PYTHONPATH": str(REPOSITORY / "src")},
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    while not Path(f"{marker}.ready").exists():
+        time.sleep(0.05)
+
+    for _ in range(3):  # the first stops edge-backup, the others come during its clean-up
+        os.killpg(step.pid, signal.SIGINT)
+        time.sleep(0.1)
+    output, _ = step.communicate(timeout=60)
+
+    assert marker.read_text() == "cleaned\n"
+    assert "KeyboardInterrupt reached the step" in output
 
 
 def test_a_finished_backup_returns_its_exit_code_and_output() -> None:
@@ -639,9 +708,9 @@ def test_a_finished_backup_returns_its_exit_code_and_output() -> None:
     assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
 
 
-def test_config_cli_of_the_real_compose_yaml_is_followed_and_its_entrypoint_is_digested() -> None:
-    """compose.yaml's own binds of keycloak-config-cli: edge follows it, and its digests cover the
-    entrypoint beside the two realm files its directory bind carries."""
+def test_config_cli_of_the_real_compose_yaml_is_followed_and_its_bound_files_are_listed() -> None:
+    """compose.yaml's own binds of keycloak-config-cli: edge follows it, and its bound files list
+    the entrypoint beside the two realm files its directory bind carries."""
     document = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())
     mounts = document["services"][reconcile.CONFIG_CLI]["volumes"]
     binds = [{"type": "bind", "source": str(REPOSITORY / mount.split(":")[0])} for mount in mounts]

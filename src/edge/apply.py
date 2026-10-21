@@ -591,11 +591,7 @@ def _plan_and_apply(
             binds = core.checkout_binds(
                 fleet.config, repository, {unit.key for unit in fleet.units}
             )
-            realm_files = {
-                path.relative_to(repository).as_posix()
-                for path in reconcile.bound_files(fleet.config, repository)
-            }
-            for line in waiting.describe(binds, realm_files):
+            for line in waiting.describe(binds, reconcile.REALM_FILES):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
         missing = _missing_setups(planned, repository, check)
@@ -1008,6 +1004,8 @@ def _confirm_and_switch(
                 withheld[plan.unit.key] = since
         started = [plan for plan in changes if plan.unit.key not in withheld]
         mismatched = _observe_and_record(engine, planned, core_phase, started, progress)
+        progress.unit, progress.step = reconcile.REALM_UNIT, "apply the realm step"
+        realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
@@ -1021,7 +1019,6 @@ def _confirm_and_switch(
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
-    realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
     for unit, since in withheld.items():
         print(
             f"{COMMAND}: partial, {unit} was switched off meanwhile "

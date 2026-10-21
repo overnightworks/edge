@@ -70,9 +70,10 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   own `apps.toml` for this stack's Keycloak database. It holds that a first step backs up, proves
   the restore of that snapshot and applies, and a second plan is quiet and its step makes no
   snapshot; that a changed `realm.yaml` applies with lines equal to the YAML diff; that a tampered
-  import-checksum attribute (what a restored database would show) is applied again; that a changed
-  `entrypoint.sh` plans the step; that a console mapper on `groups` is listed as reset to the file with the snapshot; and that a failing
-  config-cli ends the step partial with the way back and is planned again. Proof EV2 (#181) signs in, sends a wrong
+  import-checksum attribute (what a restored database would show) is applied again; that a console
+  mapper on `groups` is listed as reset to the file with the snapshot; that a failing
+  config-cli ends the step partial with the way back and is planned again; and that a changed
+  `entrypoint.sh` plans the step. Proof EV2 (#181) signs in, sends a wrong
   password and logs out through the edge entrypoint, sending `Forwarded` the way Cloudflare's
   rule sets it (`external/cloudflare.tf`) next to a forged `X-Forwarded-For`, and holds when the
   user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with exactly the

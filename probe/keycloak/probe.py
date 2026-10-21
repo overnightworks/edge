@@ -2464,15 +2464,6 @@ class Probe:
             "applied again, and the next plan is quiet (cell 7)",
         )
 
-        entrypoint = stand.repository / "keycloak" / ENTRYPOINT_FILE
-        original = entrypoint.read_text()
-        entrypoint.write_text(original + "# changed\n")
-        plan = stand.plan()
-        expect("keycloak/entrypoint.sh changed" in plan.line, f"the plan says {plan.line!r}")
-        entrypoint.write_text(original)
-        expect(stand.plan().settled, "the plan is not quiet with the entrypoint as it was")
-        self.held("12f", "a changed entrypoint.sh that config-cli binds plans the step")
-
         groups_scope = self.admin_now().find(f"/{REALM}/client-scopes", "name", "groups")
         self.admin_now().create(
             f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
@@ -2515,6 +2506,22 @@ class Probe:
             "12e",
             "a config-cli that fails (an undefined variable) ends the step partial, "
             'names the snapshot and "Restore Keycloak", and the next plan repeats it (cell 11)',
+        )
+
+        stand.edit_realm(("displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n", ""))
+        expect(stand.apply().failure is None, "the step after the repaired realm failed")
+        expect(stand.plan().settled, "the repaired realm is not recorded")
+        entrypoint = stand.repository / "keycloak" / ENTRYPOINT_FILE
+        original = entrypoint.read_text()
+        entrypoint.write_text(original + "# changed\n")
+        plan = stand.plan()
+        expect("keycloak/entrypoint.sh changed" in plan.line, f"the plan says {plan.line!r}")
+        entrypoint.write_text(original)
+        expect(stand.plan().settled, "the plan is not quiet with the entrypoint as it was")
+        self.held(
+            "12f",
+            "proves the entrypoint trigger: a changed entrypoint.sh that config-cli binds "
+            "plans the step",
         )
 
     def the_observer_door(self, admin: Admin) -> None:

@@ -16,7 +16,9 @@ step that did not finish is planned again. Nothing is deleted but what config-cl
 file; those removals say so.
 """
 
+import contextlib
 import json
+import os
 import re
 import signal
 import subprocess
@@ -39,6 +41,7 @@ REALM_FILES = ("keycloak/master.yaml", "keycloak/realm.yaml")
 DEFINITION_KEY = "definition"  # the entry's key for config-cli's `compose config --hash`
 BACKUP_SECONDS = 1800
 STOP_GRACE_SECONDS = 120  # what edge-backup gets to remove its staging and restore container
+COLLECT_SECONDS = 5  # what the output of a killed edge-backup gets before its pipes are closed
 RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
 
@@ -195,10 +198,10 @@ def _why(reading: core.Reading, inputs: Inputs, observed: Checksums | None) -> s
 def run_edge_backup(
     command: list[str], timeout: int, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Run edge-backup to its end. On the timeout or an interrupt it is stopped, not killed
-    first: SIGTERM, then `STOP_GRACE_SECONDS` to remove its staging and restore container.
-
-    It shares the terminal's process group, so a Ctrl-C reached it as SIGINT already."""
+    """Run edge-backup to its end, in a session of its own, so the terminal's Ctrl-C reaches only
+    this step. On the timeout or the first Ctrl-C it is stopped as the `edge-backup` systemd unit
+    is (`KillMode=control-group` default): SIGTERM to its whole group, then `STOP_GRACE_SECONDS`
+    to remove its staging and restore container."""
     try:
         with subprocess.Popen(
             command,
@@ -207,38 +210,45 @@ def run_edge_backup(
             stderr=subprocess.PIPE,
             text=True,
             cwd=compose.REPOSITORY,
+            start_new_session=True,
         ) as process:
             try:
                 stdout, stderr = process.communicate(stdin, timeout)
             except subprocess.TimeoutExpired as error:
-                _stop(process, (signal.SIGTERM,))
+                _stop(process)
                 raise compose.ComposeError(
                     f"`{' '.join(command[:3])}` took longer than {timeout}s"
                 ) from error
             except KeyboardInterrupt:
-                _stop(process, (None, signal.SIGTERM))
+                _stop(process)
                 raise
     except OSError as error:
         raise compose.ComposeError(f"cannot run {command[0]}: {error.strerror}") from error
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _stop(process: subprocess.Popen[str], signals: tuple[signal.Signals | None, ...]) -> None:
-    """Each signal, then a grace to exit; a process still running after the last is killed. A
-    further interrupt stops the waiting and kills."""
-    try:
-        for sent in signals:
-            if sent is not None:
-                process.send_signal(sent)
-            try:
-                process.communicate(timeout=STOP_GRACE_SECONDS)
-                return
-            except subprocess.TimeoutExpired:
-                continue
-    except KeyboardInterrupt:
-        pass
-    process.kill()
-    process.communicate()
+def _stop(process: subprocess.Popen[str]) -> None:
+    """SIGTERM to the group and a grace that no further Ctrl-C shortens; then the group is killed
+    and the output collected for a bounded time, so a grandchild holding a pipe cannot hang."""
+    print(f"realm: waiting up to {STOP_GRACE_SECONDS:g}s for edge-backup to clean up", flush=True)
+    _signal_group(process, signal.SIGTERM)
+    deadline = time.monotonic() + STOP_GRACE_SECONDS
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            process.communicate(timeout=remaining)
+            break
+        except subprocess.TimeoutExpired:
+            break
+        except KeyboardInterrupt:
+            continue  # edge-backup was told once; only its exit or the grace ends the wait
+    _signal_group(process, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired, KeyboardInterrupt):
+        process.communicate(timeout=COLLECT_SECONDS)  # leaving the `with` closes the pipes
+
+
+def _signal_group(process: subprocess.Popen[str], sent: signal.Signals) -> None:
+    with contextlib.suppress(ProcessLookupError):  # the group is gone already
+        os.killpg(process.pid, sent)
 
 
 @dataclass(frozen=True)

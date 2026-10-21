@@ -161,8 +161,9 @@ The plan names the step in one line. After your yes it takes a Keycloak-only bac
 config-cli, observes again and prints one line per change, with the seconds the backup and the
 restore test took. A failed backup or restore test applies nothing and ends the run partial with
 exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
-not checked"). A step that outlives its time or is interrupted stops edge-backup with SIGTERM and
-waits for its cleanup before killing it. A failure after
+not checked"). edge-backup runs in a process group of its own, so Ctrl-C does not reach it. A step that
+outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
+minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A failure after
 config-cli started ends the run with exit 1 and names the snapshot; the way back is
 [Restore Keycloak](backup.md#restore-keycloak), and the next `hal apply` repeats the step. A
 console change to a declared object that the apply resets is printed as "reset to the file" with

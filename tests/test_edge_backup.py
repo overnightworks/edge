@@ -144,6 +144,7 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
         (("restore-test", "nobody"), "nobody ist nicht deklariert"),
         (("backup", "--pre-apply"), "--pre-apply braucht den Namen einer App"),
         (("restore-test", "--snapshot", "0" * 12), "--snapshot braucht den Namen einer App"),
+        (("restore-test", "--snapshot", ""), "--snapshot braucht den Namen einer App"),
     ],
 )
 def test_a_refused_app_argument_runs_nothing_and_writes_no_status(
