@@ -289,7 +289,7 @@ def event_names(output: str) -> list[str]:
 
 def other_lines(output: str) -> str:
     """The answer and any refusal (`unauthorized`, `forbidden`); the smoke prints no token."""
-    kept = [line for line in output.splitlines() if line and not line.startswith("event: ")]
+    kept = [line for line in output.splitlines() if line.strip() and not line.startswith("event: ")]
     return " | ".join(kept)[:300]
 
 
@@ -299,7 +299,7 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     events = event_names(output)
     text = other_lines(output)
     said = f"exit {returncode}; events {events}; {text}"
-    answered = "assistant_text" in events or bool(text)
+    answered = bool(text)  # an answer needs text of its own, not only the event that carries it
     paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
     admitted = "run_started" in events
     return [
@@ -318,7 +318,7 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
 def wait_until_listening(stack: Stack, pause: Callable[[float], None] = time.sleep) -> bool:
     for _ in range(LISTEN_ATTEMPTS):
         logs = stack.compose("logs", SERVICE)
-        if LISTENING in logs.stdout + logs.stderr:
+        if logs.returncode == 0 and LISTENING in logs.stdout + logs.stderr:
             return True
         pause(1)
     return False
@@ -361,23 +361,39 @@ def memory_cell(idle: str | None, peak: str | None) -> Cell:
     )  # fmt: skip
 
 
-def remove_smoke_containers(stack: Stack) -> None:
-    """A smoke the host stopped waiting for leaves its `run --rm` container behind."""
+def remove_smoke_containers(stack: Stack) -> str | None:
+    """A smoke the host stopped waiting for leaves its `run --rm` container behind. Returns why
+    the clean-up failed, in one line that may still hold a secret, or None."""
     listed = stack.run([
         "docker", "ps", "-aq",
         "--filter", f"label=com.docker.compose.project={stack.project}",
         "--filter", f"label=com.docker.compose.service={SMOKE_SERVICE}",
     ])  # fmt: skip
+    if listed.returncode != 0:
+        return f"docker ps exited {listed.returncode}: {last_line(listed.stderr)}"
     leftovers = listed.stdout.split()
-    if leftovers:
-        stack.run(["docker", "rm", "-f", *leftovers])
+    if not leftovers:
+        return None
+    removed = stack.run(["docker", "rm", "-f", *leftovers])
+    if removed.returncode != 0:
+        return f"docker rm exited {removed.returncode}: {last_line(removed.stderr)}"
+    return None
 
 
-def paid_turn(
-    stack: Stack, tokens: Tokens, seconds: int = PAID_TURN_SECONDS
-) -> subprocess.CompletedProcess[str]:
+def cleanup_cell(failure: str | None, known: Secrets) -> list[Cell]:
+    reason = known.redact(failure or "")[:RECREATE_REASON_CHARACTERS]
+    return [Cell("cleanup of the smoke containers", Verdict.FAILED, reason)] if failure else []
+
+
+@dataclass(frozen=True)
+class PaidTurn:
+    process: subprocess.CompletedProcess[str]
+    cleanup: str | None
+
+
+def paid_turn(stack: Stack, tokens: Tokens, seconds: int = PAID_TURN_SECONDS) -> PaidTurn:
     try:
-        return stack.compose(
+        process = stack.compose(
             "run",
             "--rm",
             "-T",
@@ -386,9 +402,10 @@ def paid_turn(
             timeout=seconds,
         )
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess([], TIMED_OUT, f"the host gave up after {seconds} s", "")
-    finally:
-        remove_smoke_containers(stack)
+        process = subprocess.CompletedProcess(
+            [], TIMED_OUT, f"the host gave up after {seconds} s", ""
+        )
+    return PaidTurn(process, remove_smoke_containers(stack))
 
 
 @dataclass(frozen=True)
@@ -397,6 +414,7 @@ class CancelledTurn:
     output: str
     during: str
     since: str
+    cleanup: str | None = None
 
 
 def end_child(process: subprocess.Popen[str]) -> None:
@@ -427,6 +445,7 @@ def cancelled_turn(
     watchdog.start()
     during = "no hold seen"
     lines = []
+    cleanup = None
     try:
         try:
             process.stdin.write(f"{tokens.person}\n{tokens.workload}\n")
@@ -441,10 +460,10 @@ def cancelled_turn(
     finally:
         watchdog.cancel()
         end_child(process)
-        remove_smoke_containers(stack)
+        cleanup = remove_smoke_containers(stack)
     if gave_up.is_set():
         lines.append(f"the host gave up after {seconds:g} s\n")
-    return CancelledTurn(returncode, "".join(lines), during, since)
+    return CancelledTurn(returncode, "".join(lines), during, since, cleanup)
 
 
 def cancel_cells(
@@ -555,7 +574,10 @@ def inspect_network(stack: Stack, reference: str) -> dict:
     answer = stack.run(["docker", "network", "inspect", reference])
     if answer.returncode != 0:
         raise LiveSmokeFailed(f"docker network inspect {reference} failed")
-    return json.loads(answer.stdout)[0]
+    try:
+        return json.loads(answer.stdout)[0]
+    except (ValueError, IndexError):
+        raise LiveSmokeFailed(f"docker network inspect {reference} gave no network") from None
 
 
 def project_network(stack: Stack, name: str) -> dict:
@@ -700,12 +722,16 @@ def smoke_cells(
         return
     idle = cgroup_figure(stack, "memory.current")
     paid = paid_turn(stack, known.tokens)
-    report.add(*turn_cells(paid.returncode, paid.stdout, known))
+    report.add(*turn_cells(paid.process.returncode, paid.process.stdout, known))
+    report.add(*cleanup_cell(paid.cleanup, known))
     report.add(memory_cell(idle, cgroup_figure(stack, "memory.peak")))
     before = cli_processes(stack)
     cancelled = cancelled_turn(stack, known.tokens)
     report.add(*cancel_cells(stack, before, cancelled, known, pause))
-    report.add(*leak_cells(stack, known, paid.stdout + paid.stderr + cancelled.output))
+    report.add(*cleanup_cell(cancelled.cleanup, known))
+    report.add(
+        *leak_cells(stack, known, paid.process.stdout + paid.process.stderr + cancelled.output)
+    )
 
 
 def live_smoke(stack: Stack, known: Secrets, report: Report) -> int:

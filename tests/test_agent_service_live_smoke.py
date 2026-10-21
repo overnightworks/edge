@@ -158,6 +158,8 @@ def test_one_failed_cell_fails_the_run_and_an_observation_does_not():
     [
         (0, "event: run_started\nevent: assistant_text\nok\nevent: succeeded\nok\n", True, True),
         (0, "event: run_started\nevent: succeeded\n\n", False, True),
+        (0, "event: run_started\nevent: assistant_text\n\nevent: succeeded\n", False, True),
+        (0, "event: run_started\nevent: assistant_text\n   \nevent: succeeded\n \n", False, True),
         (1, "event: run_started\nevent: failed\nprovider_error: x\n", False, True),
         (1, "refused with 401 unauthorized: expired\n", False, False),
     ],
@@ -355,6 +357,49 @@ def test_a_secret_across_the_cut_of_the_cancelled_answer_leaves_no_beginning(sec
     (cell,) = live_smoke.cancel_cells(stack, "0", turn, KNOWN, pause=lambda _: None)
 
     assert secret[:8] not in cell.figure
+
+
+def test_a_log_that_failed_to_be_read_does_not_make_the_recreate_ready():
+    def failing_logs(command):
+        if "logs" in command:
+            return completed("Uvicorn running on http://0.0.0.0:8080\n", returncode=1)
+        return healthy_service(command)
+
+    stack = FakeStack(answer=failing_logs)
+
+    cells = run_smoke_cells(stack)
+
+    assert [(cell.name, cell.verdict) for cell in cells] == [("recreate", Verdict.FAILED)]
+
+
+@pytest.mark.parametrize("failing", ["ps", "rm"])
+def test_a_cleanup_that_failed_is_reported_without_the_secret(failing):
+    secret = KNOWN.client_secret
+
+    def failing_cleanup(command):
+        if command[:2] == ["docker", "ps"]:
+            if failing == "ps":
+                return completed("", returncode=1, stderr=f"no daemon {secret}\n")
+            return completed("leftover\n")
+        if command[:2] == ["docker", "rm"]:
+            return completed("", returncode=1, stderr=f"busy {secret}\n")
+        return healthy_service(command)
+
+    stack = FakeStack(answer=failing_cleanup, cancelling=held_cancel())
+
+    cells = [c for c in run_smoke_cells(stack) if c.name.startswith("cleanup")]
+
+    assert cells
+    assert all(cell.verdict is Verdict.FAILED for cell in cells)
+    assert all(f"docker {failing} exited 1" in cell.figure for cell in cells)
+    assert all(secret[:8] not in cell.figure for cell in cells)
+
+
+def test_a_network_inspect_that_is_not_json_fails_in_one_line():
+    stack = FakeStack(answer=lambda _: completed("not json"))
+
+    with pytest.raises(LiveSmokeFailed, match="gave no network"):
+        live_smoke.inspect_network(stack, "network-id")
 
 
 def test_a_failed_recreate_is_failed_even_when_the_old_container_still_listens():
