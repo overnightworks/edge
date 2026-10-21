@@ -365,6 +365,7 @@ def _plan(
         engine,
         reconcile.Observer(engine),
         record,
+        fleet.config,
         repository,
         gates.get(reconcile.REALM_UNIT),
         starts_keycloak,
@@ -503,7 +504,7 @@ class Waiting:
     commits: tuple[checkout.Commit, ...]
     files: tuple[checkout.ChangedFile, ...]
 
-    def describe(self, binds: core.CheckoutBinds) -> list[str]:
+    def describe(self, binds: core.CheckoutBinds, realm_files: Collection[str]) -> list[str]:
         """The waiting commits, their files by effect, the interim way to bring them in and what
         the plan below applies (#98 rule 4)."""
         one = len(self.commits) == 1
@@ -513,7 +514,9 @@ class Waiting:
         lines.append("their files, by what an update does with them:")
         by_effect = {effect: [] for effect in Effect}
         for file in sorted(self.files, key=lambda changed: changed.path):
-            by_effect[_effect(file.path, binds)].append(f"    {file.status} {file.shown}")
+            by_effect[_effect(file.path, binds, realm_files)].append(
+                f"    {file.status} {file.shown}"
+            )
         for effect, files in by_effect.items():
             if files:
                 lines += [f"  {effect}:", *files]
@@ -525,14 +528,14 @@ class Waiting:
         ]
 
 
-def _effect(path: str, binds: core.CheckoutBinds) -> Effect:
+def _effect(path: str, binds: core.CheckoutBinds, realm_files: Collection[str]) -> Effect:
     if path == _CORE_DEFINITIONS or core.is_bound(path, binds.recreated):
         return Effect.RECREATED
     if core.is_bound(path, binds.live):
         return Effect.LIVE
     if path in _UV_SYNC_FILES:
         return Effect.UV_SYNC
-    if path in reconcile.REALM_FILES:
+    if path in realm_files:
         return Effect.REALM
     if core.is_bound(path, binds.units):
         return Effect.NOT_APPLIED
@@ -588,7 +591,11 @@ def _plan_and_apply(
             binds = core.checkout_binds(
                 fleet.config, repository, {unit.key for unit in fleet.units}
             )
-            for line in waiting.describe(binds):
+            realm_files = {
+                path.relative_to(repository).as_posix()
+                for path in reconcile.bound_files(fleet.config, repository)
+            }
+            for line in waiting.describe(binds, realm_files):
                 print(f"{COMMAND}: {line}")
         planned = _plan(engine, marks, record, repository)
         missing = _missing_setups(planned, repository, check)
@@ -948,17 +955,15 @@ def _apply_realm(
     backup: reconcile.Backup,
 ) -> bool:
     """The realm step after the unit switches; says its lines and whether it ended partial."""
-    if planned.realm.settled:
-        return False
-    followed = core.followed_services(planned.fleet.config, core_phase.repository)
     realm = reconcile.Realm(
         engine,
         reconcile.Observer(engine),
         backup,
         core_phase.record,
-        followed,
+        planned.fleet.config,
+        core_phase.repository,
         marks,
-        planned.read[reconcile.REALM_UNIT],
+        planned.read.get(reconcile.REALM_UNIT),
     )
     result = realm.run(planned.realm)
     for line in result.lines:

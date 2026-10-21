@@ -4,24 +4,28 @@ R2-R4).
 
 The step runs only when Keycloak is on, set up and running, and an input changed: the step's entry
 in `applied.json` (under `keycloak-config-cli`) is missing, unfinished, or differs from the digests
-of the two raw files and config-cli's resolved definition, or Keycloak's own import-checksum
-attributes differ from the ones the entry saw after the last apply. A rotated client secret alone
-does not trigger it: Compose's definition hash ignores the content of a secret file.
+of the checkout files config-cli reads and its resolved definition, or Keycloak's own
+import-checksum attributes differ from the ones the entry saw after the last apply. A rotated
+client secret alone does not trigger it: Compose's definition hash ignores the content of a
+secret file.
 
-An apply that runs takes `edge-backup backup keycloak --pre-apply`, proves it with `restore-test
-keycloak`, observes both realms, runs config-cli, observes again and lists what changed. The entry
-is emptied before config-cli and filled only after the observe, so a step that did not finish is
-planned again. Nothing is deleted but what config-cli resets to the file; those removals say so.
+An apply that runs takes `edge-backup backup keycloak --pre-apply`, proves that snapshot with
+`restore-test keycloak --snapshot`, observes both realms, runs config-cli, observes again and
+lists what changed. The entry is emptied before config-cli and filled only after the observe, so a
+step that did not finish is planned again. Nothing is deleted but what config-cli resets to the
+file; those removals say so.
 """
 
 import json
 import re
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from edge import compose, core, switches
 from edge import realm as realm_lines
@@ -30,9 +34,11 @@ from edge.realm.observe import Inventory
 
 REALM_UNIT = "keycloak"
 CONFIG_CLI = "keycloak-config-cli"
+# config-cli imports these from its directory bind of keycloak/, which `core.file_binds` skips.
 REALM_FILES = ("keycloak/master.yaml", "keycloak/realm.yaml")
 DEFINITION_KEY = "definition"  # the entry's key for config-cli's `compose config --hash`
 BACKUP_SECONDS = 1800
+STOP_GRACE_SECONDS = 120  # what edge-backup gets to remove its staging and restore container
 RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
 
@@ -68,8 +74,15 @@ class Inputs:
         return None
 
 
-def read_inputs(engine: compose.Compose, repository: Path) -> Inputs:
-    files = core.digests((repository / name for name in REALM_FILES), repository)
+def bound_files(config: Mapping[str, Any], repository: Path) -> tuple[Path, ...]:
+    """The checkout files config-cli reads: the realm files and every file it binds (its
+    entrypoint)."""
+    realm_files = tuple(repository / name for name in REALM_FILES)
+    return (*realm_files, *core.file_binds(config["services"].get(CONFIG_CLI, {}), repository))
+
+
+def read_inputs(engine: compose.Compose, config: Mapping[str, Any], repository: Path) -> Inputs:
+    files = core.digests(bound_files(config, repository), repository)
     return Inputs(files, engine.config_hashes((CONFIG_CLI,))[CONFIG_CLI])
 
 
@@ -131,6 +144,7 @@ def plan_realm(
     engine: compose.Compose,
     observer: Observer,
     record: core.Record,
+    config: Mapping[str, Any],
     repository: Path,
     gate: core.Gate | None,
     starts_now: bool,
@@ -142,7 +156,7 @@ def plan_realm(
     if starts_now:
         line = "realm: not checked, Keycloak starts now; the next `hal apply` checks it"
         return RealmPlan(RealmAction.NOT_CHECKED, line)
-    inputs = read_inputs(engine, repository)
+    inputs = read_inputs(engine, config, repository)
     reading = record.read()
     if gate is not core.Gate.ON:
         if why := _why(reading, inputs, None):
@@ -178,12 +192,61 @@ def _why(reading: core.Reading, inputs: Inputs, observed: Checksums | None) -> s
 # --- The step ----------------------------------------------------------------------------------
 
 
+def run_edge_backup(
+    command: list[str], timeout: int, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run edge-backup to its end. On the timeout or an interrupt it is stopped, not killed
+    first: SIGTERM, then `STOP_GRACE_SECONDS` to remove its staging and restore container.
+
+    It shares the terminal's process group, so a Ctrl-C reached it as SIGINT already."""
+    try:
+        with subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=compose.REPOSITORY,
+        ) as process:
+            try:
+                stdout, stderr = process.communicate(stdin, timeout)
+            except subprocess.TimeoutExpired as error:
+                _stop(process, (signal.SIGTERM,))
+                raise compose.ComposeError(
+                    f"`{' '.join(command[:3])}` took longer than {timeout}s"
+                ) from error
+            except KeyboardInterrupt:
+                _stop(process, (None, signal.SIGTERM))
+                raise
+    except OSError as error:
+        raise compose.ComposeError(f"cannot run {command[0]}: {error.strerror}") from error
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _stop(process: subprocess.Popen[str], signals: tuple[signal.Signals | None, ...]) -> None:
+    """Each signal, then a grace to exit; a process still running after the last is killed. A
+    further interrupt stops the waiting and kills."""
+    try:
+        for sent in signals:
+            if sent is not None:
+                process.send_signal(sent)
+            try:
+                process.communicate(timeout=STOP_GRACE_SECONDS)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+    except KeyboardInterrupt:
+        pass
+    process.kill()
+    process.communicate()
+
+
 @dataclass(frozen=True)
 class Backup:
     """edge-backup as the timers run it, for Keycloak alone."""
 
     command: tuple[str, ...]
-    run: compose.Runner = compose.run_docker
+    run: compose.Runner = run_edge_backup
 
     @classmethod
     def installed(cls, repository: Path) -> "Backup":
@@ -196,8 +259,10 @@ class Backup:
             raise RealmError("edge-backup named no pre-apply snapshot")
         return named[1]
 
-    def restore_test(self) -> None:
-        self._run(["restore-test", REALM_UNIT], "the restore test failed")
+    def restore_test(self, snapshot: str) -> None:
+        """Proves the snapshot just made, whatever a timer backs up in between."""
+        arguments = ["restore-test", REALM_UNIT, "--snapshot", snapshot]
+        self._run(arguments, "the restore test failed")
 
     def _run(self, arguments: list[str], failure: str) -> subprocess.CompletedProcess[str]:
         try:
@@ -238,12 +303,16 @@ class Realm:
     observer: Observer
     backup: Backup
     record: core.Record
-    followed: frozenset[str]
+    config: Mapping[str, Any]
+    repository: Path
     marks: switches.Switches
     mark: switches.Mark | None  # Keycloak's marker as the plan read it
     clock: Callable[[], float] = time.monotonic
 
     def run(self, plan: RealmPlan) -> StepResult:
+        """Alone decides whether the step acts: a settled plan has no effect."""
+        if plan.settled:
+            return StepResult()
         if plan.action is RealmAction.UNREADABLE:
             return StepResult(failure=plan.line)
         progress = _Progress()
@@ -255,20 +324,29 @@ class Realm:
             return StepResult(failure=_failure(progress, "interrupted"))
 
     def _apply(self, plan: RealmPlan, progress: _Progress) -> StepResult:
+        followed = core.followed_services(self.config, self.repository)
         self._refuse_while_config_cli_runs()
         progress.snapshot, backup_seconds = self._timed(self.backup.pre_apply)
-        _, test_seconds = self._timed(self.backup.restore_test)
+        _, test_seconds = self._timed(lambda: self.backup.restore_test(progress.snapshot))
         progress.proven = True
         before = self.observer.inventory()
-        self._run_config_cli(progress)
+        self._run_config_cli(progress, followed)
         after = self.observer.inventory()
         checksums = self.observer.checksums()
-        self.record.write(CONFIG_CLI, {**plan.entry, **_flat(checksums)}, self.followed)
         timing = (
             f"realm: applied keycloak/*.yaml; pre-apply snapshot {progress.snapshot} "
             f"({backup_seconds:.0f}s backup, {test_seconds:.0f}s restore test)"
         )
-        return StepResult((timing, *_change_lines(before, after, progress.snapshot)))
+        lines = (timing, *_change_lines(before, after, progress.snapshot))
+        try:
+            self.record.write(CONFIG_CLI, {**plan.entry, **_flat(checksums)}, followed)
+        except core.CoreError as error:
+            return StepResult(
+                lines,
+                f"realm: applied and observed, but the record could not be written ({error}); "
+                "the next run repeats the step",
+            )
+        return StepResult(lines)
 
     def _timed[T](self, action: Callable[[], T]) -> tuple[T, float]:
         started = self.clock()
@@ -278,13 +356,13 @@ class Realm:
         if compose.has_running_container(self.engine.states(), (CONFIG_CLI,)):
             raise RealmError("a config-cli container is still running")
 
-    def _run_config_cli(self, progress: _Progress) -> None:
+    def _run_config_cli(self, progress: _Progress, followed: frozenset[str]) -> None:
         """Under the switch lock, so a marker set since the plan stops it before Keycloak could
         be touched; config-cli never starts Keycloak (`--no-deps`)."""
         with self.marks.lock():
             if self.marks.changed(REALM_UNIT, self.mark):
                 raise RealmError(f"{REALM_UNIT} was switched off meanwhile; config-cli is not run")
-            self.record.mark_unfinished([CONFIG_CLI], self.followed)
+            self.record.mark_unfinished([CONFIG_CLI], followed)
             progress.stage = Stage.APPLYING
             self.engine.run_once(CONFIG_CLI, [])
         progress.stage = Stage.APPLIED

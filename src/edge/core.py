@@ -21,7 +21,10 @@ it finished, so a recreate that did not finish is planned again whatever the fil
 5). A core container found created and never started is retried only while the entry of a
 recreate that took it in is empty; socket-proxy keeps none, so traefik's, emptied with it, speaks
 for it (#87 rule 4). An entry for a service that binds no file from the checkout is ignored and
-dropped at the next write (#87 rule 6).
+dropped at the next write (#87 rule 6). The realm step (`edge.realm.reconcile`) keeps its own
+keys in the entry of `keycloak-config-cli`, beside the digests of its file binds: `definition`,
+config-cli's `compose config --hash`, and one `<realm> <attribute>` key per import checksum
+Keycloak showed after the last apply (#242).
 
 A follower is a profile service that binds a file at Traefik's static-config path (#89). It is
 changed as a core service is, by its file binds against the record or its definition hash against
@@ -52,7 +55,9 @@ TRAEFIK_STATIC_CONFIG = "/etc/traefik/traefik.yml"  # where Traefik reads its st
 DEFINITION_CHANGED = "its compose definition changed"
 UNFINISHED = "the last recreate did not finish"
 
-type Digests = Mapping[str, str]  # a file bind's path in the checkout -> the sha256 of its bytes
+# A file bind's path in the checkout -> the sha256 of its bytes. The entry of a followed service
+# may hold more keys, owned by the step that writes it (`edge.realm.reconcile`).
+type Digests = Mapping[str, str]
 
 
 class CoreError(Exception):

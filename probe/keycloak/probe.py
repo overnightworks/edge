@@ -58,7 +58,7 @@ sys.path.insert(0, str(REPO / "src"))
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
 from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
-from edge.realm.observe import Inventory  # noqa: E402
+from edge.realm.observe import IMPORT_CHECKSUM, Inventory  # noqa: E402
 
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
@@ -68,6 +68,7 @@ REALM = "hallucinai"
 THEME = "hallucinai"
 REALM_FILE = "realm.yaml"
 CONFIG_FILES = ("master.yaml", REALM_FILE)
+ENTRYPOINT_FILE = "entrypoint.sh"
 PUBLIC_HOST = f"auth.{DOMAIN}"
 REALM_PATH = f"/realms/{REALM}"
 PUBLIC_TOKEN_PATH = f"{REALM_PATH}/protocol/openid-connect/token"
@@ -192,9 +193,8 @@ CONSOLE_CLIENT_ROLE = f"{CONSOLE_NAME}-client-role"
 SCOPED_CLIENT = "songmaker"  # lists its default scopes, as do hopin and presentator
 SERVICE_ACCOUNT_CLIENT = "songmaker"  # a listed service account
 ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # declared with serviceAccountsEnabled: false
-CHECKSUM_PREFIX = "de.adorsys.keycloak.config.import-checksum"
 BACKUP_ASKED = ["backup", "keycloak", "--pre-apply"]  # what edge-backup was asked, after --apps
-RESTORE_TEST_ASKED = ["restore-test", "keycloak"]
+RESTORE_TEST_ASKED = ["restore-test", "keycloak", "--snapshot"]  # then the snapshot just made
 LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
 CHANGED_LIFESPAN_SETTING = f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
 STEP_GROUP = "probe-realm-step"  # a group proof 12 adds to realm.yaml
@@ -968,7 +968,8 @@ class RealmStepStand:
         password_file.parent.mkdir(mode=0o700, parents=True)
         password_file.write_text(secrets.token_urlsafe(32))
         password_file.chmod(0o600)
-        stack.copy_config(root / "repository" / "keycloak")
+        config_dir = stack.copy_config(root / "repository" / "keycloak")
+        shutil.copy(REPO / "keycloak" / ENTRYPOINT_FILE, config_dir / ENTRYPOINT_FILE)
         apps = root / "apps.toml"
         apps.write_text(
             "[app.keycloak]\n"
@@ -1025,12 +1026,23 @@ class RealmStepStand:
     def engine(self) -> edge_compose.Compose:
         return edge_compose.Compose(self.run_compose, self.repository)
 
+    @property
+    def configuration(self) -> dict[str, Any]:
+        """As Compose resolves it, with config-cli's entrypoint bind on this stand's copy: the
+        stack mounts the checkout's own, which lies outside the stand's repository."""
+        config = self.engine.resolved_configuration()
+        for mount in config["services"][reconcile.CONFIG_CLI]["volumes"]:
+            if mount["target"] == "/opt/edge/entrypoint.sh":
+                mount["source"] = str(self.repository / "keycloak" / ENTRYPOINT_FILE)
+        return config
+
     def plan(self) -> reconcile.RealmPlan:
         record = core.Record(self.root / "state")
         return reconcile.plan_realm(
             self.engine,
             reconcile.Observer(self.engine),
             record,
+            self.configuration,
             self.repository,
             core.Gate.ON,
             False,
@@ -1043,7 +1055,8 @@ class RealmStepStand:
             reconcile.Observer(engine),
             reconcile.Backup(self.backup_command, self.run_backup),
             core.Record(state),
-            frozenset({reconcile.CONFIG_CLI}),
+            self.configuration,
+            self.repository,
             switches.Switches(state),
             None,
         )
@@ -2378,14 +2391,27 @@ class Probe:
         baseline = stand.apply()
         expect(baseline.failure is None, f"the first realm step failed: {baseline.failure}")
         snapshots = stand.edge_backup("snapshots").stdout
-        expect(stand.asked == [BACKUP_ASKED, RESTORE_TEST_ASKED], f"it asked {stand.asked}")
+        expect(
+            [call[: len(BACKUP_ASKED)] for call in stand.asked]
+            == [BACKUP_ASKED, RESTORE_TEST_ASKED],
+            f"it asked {stand.asked}",
+        )
+        first_snapshot = re.search(r"pre-apply snapshot (\S+)", baseline.lines[0])
+        expect(first_snapshot is not None, f"no snapshot named in {baseline.lines[0]!r}")
+        expect(
+            stand.asked[-1] == [*RESTORE_TEST_ASKED, first_snapshot[1]],
+            f"the restore test was asked {stand.asked[-1]}, not for the snapshot just made",
+        )
         expect(stand.plan().settled, "the step is planned again right after it finished")
         expect(stand.plan().lines == [], "a settled realm still says something")
-        expect(stand.edge_backup("snapshots").stdout == snapshots, "a quiet plan made a snapshot")
+        asked = len(stand.asked)
+        expect(stand.apply() == reconcile.StepResult(), "a settled realm's step did something")
+        expect(stand.asked == stand.asked[:asked], "a settled realm's step called edge-backup")
+        expect(stand.edge_backup("snapshots").stdout == snapshots, "a quiet step made a snapshot")
         self.held(
             "12a",
-            "a first step backs up, proves the restore and applies; a second plan "
-            "right after it is quiet and makes no snapshot (cells 1, 4)",
+            "a first step backs up, proves that snapshot's restore and applies; a second "
+            "plan right after it is quiet, and running its step makes no snapshot (cells 1, 4)",
         )
 
         stand.edit_realm(
@@ -2420,7 +2446,7 @@ class Probe:
         )
 
         realm = self.admin_now().get(f"/{REALM}")
-        checksum = next(key for key in realm["attributes"] if key.startswith(CHECKSUM_PREFIX))
+        checksum = next(key for key in realm["attributes"] if key.startswith(IMPORT_CHECKSUM))
         self.admin_now().must(
             "PUT",
             f"/{REALM}",
@@ -2434,9 +2460,18 @@ class Probe:
         expect(stand.plan().settled, "the checksum was not recorded again")
         self.held(
             "12c",
-            "a database restored from an older snapshot (its import checksum "
-            "changed) is applied again, and the next plan is quiet (cell 7)",
+            "a tampered import-checksum attribute (what a restored database would show) is "
+            "applied again, and the next plan is quiet (cell 7)",
         )
+
+        entrypoint = stand.repository / "keycloak" / ENTRYPOINT_FILE
+        original = entrypoint.read_text()
+        entrypoint.write_text(original + "# changed\n")
+        plan = stand.plan()
+        expect("keycloak/entrypoint.sh changed" in plan.line, f"the plan says {plan.line!r}")
+        entrypoint.write_text(original)
+        expect(stand.plan().settled, "the plan is not quiet with the entrypoint as it was")
+        self.held("12f", "a changed entrypoint.sh that config-cli binds plans the step")
 
         groups_scope = self.admin_now().find(f"/{REALM}/client-scopes", "name", "groups")
         self.admin_now().create(
@@ -2464,13 +2499,14 @@ class Probe:
         stand.edit_realm(append="displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n")
         asked = len(stand.asked)
         failed = stand.apply()
+        named = re.search(r"pre-apply snapshot (\S+),", failed.failure or "")
         expect(
-            failed.failure is not None and "Restore Keycloak" in failed.failure,
+            named is not None and "Restore Keycloak" in failed.failure,
             f"a failed config-cli ends as {failed.failure!r}",
         )
         expect(
-            stand.asked[asked:] == [BACKUP_ASKED, RESTORE_TEST_ASKED],
-            "the failed step skipped the backup",
+            stand.asked[asked:] == [BACKUP_ASKED, [*RESTORE_TEST_ASKED, named[1]]],
+            f"the failed step asked edge-backup {stand.asked[asked:]}",
         )
         expect(
             stand.plan().action is reconcile.RealmAction.RUN, "the failed step is not planned again"

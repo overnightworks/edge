@@ -197,9 +197,15 @@ def backup(
 
 
 def restore_test(
-    settings: Settings, apps: tuple[App, ...], run: Run, *, only: str | None = None
+    settings: Settings,
+    apps: tuple[App, ...],
+    run: Run,
+    *,
+    only: str | None = None,
+    snapshot_prefix: str | None = None,
 ) -> None:
-    """Every declared app, or `only` that one, which skips the data-reading check."""
+    """Every declared app, or `only` that one, which skips the data-reading check. With
+    `snapshot_prefix` (one app only) it tests that snapshot instead of the last successful one."""
     targets = _targets(apps, only)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
@@ -209,7 +215,7 @@ def restore_test(
     verified = []
     for app in targets:
         with run.isolated(app.name):
-            _restore_test(settings, app, run)
+            _restore_test(settings, app, run, snapshot_prefix)
             verified.append(app.name)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=only is None)
@@ -315,9 +321,13 @@ def _back_up(
             )
 
 
-def _restore_test(settings: Settings, app: App, run: Run) -> None:
+def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str | None) -> None:
     with run.phase(Phase.RESTORE):
-        snapshot_id = _last_successful_snapshot(settings, app, run.snapshot_of(app.name))
+        snapshot_id = (
+            _last_successful_snapshot(settings, app, run.snapshot_of(app.name))
+            if snapshot_prefix is None
+            else _chosen_snapshot(settings, app, snapshot_prefix)
+        )
     with _private_directory(settings.work_dir) as restored:
         with run.phase(Phase.RESTORE):
             restic.restore(settings, app.name, snapshot_id, restored)

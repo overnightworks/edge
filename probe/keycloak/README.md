@@ -68,9 +68,10 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `edge apply` (`edge.realm.reconcile`) against this stack: its Compose, a repository of the realm
   files, and `edge-backup` (from the checkout's `.venv` or the PATH) under a scratch HOME with its
   own `apps.toml` for this stack's Keycloak database. It holds that a first step backs up, proves
-  the restore and applies, and a second plan is quiet; that a changed `realm.yaml` applies with
-  lines equal to the YAML diff; that a changed import-checksum attribute is applied again; that a
-  console mapper on `groups` is listed as reset to the file with the snapshot; and that a failing
+  the restore of that snapshot and applies, and a second plan is quiet and its step makes no
+  snapshot; that a changed `realm.yaml` applies with lines equal to the YAML diff; that a tampered
+  import-checksum attribute (what a restored database would show) is applied again; that a changed
+  `entrypoint.sh` plans the step; that a console mapper on `groups` is listed as reset to the file with the snapshot; and that a failing
   config-cli ends the step partial with the way back and is planned again. Proof EV2 (#181) signs in, sends a wrong
   password and logs out through the edge entrypoint, sending `Forwarded` the way Cloudflare's
   rule sets it (`external/cloudflare.tf`) next to a forged `X-Forwarded-For`, and holds when the

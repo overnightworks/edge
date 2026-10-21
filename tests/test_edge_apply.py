@@ -41,6 +41,7 @@ from edge import (
     checkout,
     cli,
     compose,
+    core,
     emergency,
     environment,
     setup,
@@ -185,6 +186,7 @@ class ScriptedCompose:
     config: dict = field(default_factory=resolved_configuration)
     realm_checksums: dict = field(default_factory=lambda: {"master": {}, "hallucinai": {}})
     realm_applies: int = 0  # how often config-cli ran
+    config_cli_fails: bool = False
 
     def run(
         self, command: list[str], _timeout: int, _stdin: str | None = None
@@ -197,6 +199,8 @@ class ScriptedCompose:
             return subprocess.CompletedProcess(
                 command, 1, "", f"{verb} broke\n{self.failure_line}\n\n"
             )
+        if verb == "run" and self.config_cli_fails and "realm-observer" not in arguments:
+            return subprocess.CompletedProcess(command, 1, "", "config-cli broke\n")
         output = getattr(self, f"verb_{verb}")(profile, arguments)
         if verb == "up" and self.unstartable & set(arguments):
             return subprocess.CompletedProcess(command, 1, output, "up broke\ncannot start")
@@ -327,7 +331,8 @@ class RealmBackup:
     def pre_apply(self) -> str:
         return self._ask("backup")
 
-    def restore_test(self) -> None:
+    def restore_test(self, snapshot: str) -> None:
+        assert snapshot == "ab12cd34"
         self._ask("restore test")
 
     def _ask(self, part: str) -> str:
@@ -4444,6 +4449,7 @@ def realm_unit(repository, scripted) -> None:
     write_fleet(repository, KEYCLOAK_ENABLED)
     (repository / "keycloak/realm.yaml").write_text("realm: one\n")
     (repository / "keycloak/master.yaml").write_text("master: one\n")
+    (repository / "keycloak/entrypoint.sh").write_text("#!/bin/sh\n")
     scripted.config["services"]["keycloak-config-cli"] = {
         "profiles": ["apply"],
         "volumes": [bind(repository / "keycloak/entrypoint.sh", "/opt/edge/entrypoint.sh")],
@@ -4496,21 +4502,42 @@ def test_a_failed_backup_ends_partial_exit_1_and_applies_nothing(switch, scripte
 
 
 @pytest.mark.usefixtures("realm_unit")
-def test_a_config_cli_that_fails_ends_partial_and_the_next_apply_plans_the_realm_again(
-    switch, scripted
+def test_a_config_cli_that_fails_ends_partial_names_the_snapshot_and_runs_again(
+    switch, scripted, realm_backup
 ):
     """Cell 11."""
-    scripted.failing_verb = "run"
+    scripted.config_cli_fails = True
 
     exit_code, _, err = switch()
 
     assert exit_code == 1
+    assert realm_backup.asked == ["backup", "restore test"]
     assert "partial, realm:" in err
+    assert "the realm may be partly applied; pre-apply snapshot ab12cd34" in err
+    assert 'docs/backup.md "Restore Keycloak"' in err
 
-    scripted.failing_verb = None
+    scripted.config_cli_fails = False
     _, out, _ = switch("no")
 
     assert "realm: apply keycloak/*.yaml" in out
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_a_core_error_inside_the_realm_hook_ends_partial_not_in_a_traceback(
+    switch, scripted, monkeypatch
+):
+    """The hook sits inside the partial handling: resolving config-cli's binds is part of it."""
+
+    def refuse(*_: object) -> frozenset[str]:
+        raise core.CoreError("cannot read keycloak (Permission denied)")
+
+    monkeypatch.setattr(core, "followed_services", refuse)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial, realm: cannot read keycloak (Permission denied); nothing applied" in err
+    assert scripted.realm_applies == 0
 
 
 @pytest.mark.usefixtures("realm_unit")
@@ -4543,7 +4570,7 @@ def test_keycloak_switched_off_by_its_marker_is_never_started_or_applied(
 def test_keycloak_that_starts_in_this_run_is_not_checked_and_one_line_says_so(
     switch, repository, scripted, realm_backup
 ):
-    """Cell 18: its realm is checked by the next apply."""
+    """Its realm is checked by the next apply."""
     write_fleet(repository, KEYCLOAK_ENABLED)
 
     exit_code, out, _ = switch()

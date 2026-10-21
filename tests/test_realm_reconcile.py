@@ -10,11 +10,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 
 from edge import compose, core, switches
 from edge.realm import reconcile
 from edge.realm.reconcile import RealmAction, RealmPlan
 
+REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
 ATTRIBUTE = "de.adorsys.keycloak.config.import-checksum-default"
 
@@ -47,11 +49,22 @@ class World:
         (self.root / "keycloak").mkdir(parents=True)
         self.write_file("realm.yaml", "realm: one\n")
         self.write_file("master.yaml", "master: one\n")
+        self.write_file("entrypoint.sh", "#!/bin/sh\n")
         self.record = core.Record(self.root / "state")
         self.marks = switches.Switches(self.root / "state")
 
     def write_file(self, name: str, text: str) -> None:
         (self.root / "keycloak" / name).write_text(text)
+
+    @property
+    def config(self) -> dict:
+        """config-cli as compose.yaml resolves it: its entrypoint is a file bind, `keycloak/` a
+        directory bind."""
+        binds = [
+            {"type": "bind", "source": str(self.root / "keycloak/entrypoint.sh")},
+            {"type": "bind", "source": str(self.root / "keycloak")},
+        ]
+        return {"services": {reconcile.CONFIG_CLI: {"volumes": binds}}}
 
     # the fakes ---------------------------------------------------------------------------------
 
@@ -81,7 +94,8 @@ class World:
         self.act("backup")
         return SNAPSHOT
 
-    def restore_test(self) -> None:
+    def restore_test(self, snapshot: str) -> None:
+        assert snapshot == SNAPSHOT
         self.act("restore test")
 
     def inventory(self) -> dict:
@@ -96,7 +110,9 @@ class World:
     # the step ----------------------------------------------------------------------------------
 
     def plan(self, gate: core.Gate | None = core.Gate.ON, starts_now: bool = False) -> RealmPlan:
-        return reconcile.plan_realm(self, self, self.record, self.root, gate, starts_now)
+        return reconcile.plan_realm(
+            self, self, self.record, self.config, self.root, gate, starts_now
+        )
 
     def run(self, plan: RealmPlan, mark: switches.Mark | None = None) -> reconcile.StepResult:
         realm = reconcile.Realm(
@@ -104,7 +120,8 @@ class World:
             self,
             self,
             self.record,
-            frozenset({reconcile.CONFIG_CLI}),
+            self.config,
+            self.root,
             self.marks,
             mark,
             clock=lambda: 0.0,
@@ -162,6 +179,10 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
             "keycloak/master.yaml changed",
         ),
         (
+            lambda world: world.write_file("entrypoint.sh", "#!/bin/sh\nexit 1\n"),
+            "keycloak/entrypoint.sh changed",
+        ),
+        (
             lambda world: setattr(world, "definition", "definition two"),
             "config-cli's definition changed",
         ),
@@ -170,12 +191,12 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
             "Keycloak's import checksum is not the recorded one",
         ),
     ],
-    ids=["realm file", "master file", "config-cli definition", "database restored"],
+    ids=["realm file", "master file", "entrypoint", "config-cli definition", "database restored"],
 )
 def test_each_input_that_changed_plans_the_step_and_names_it(
     world: World, change: Callable[[World], None], why: str
 ) -> None:
-    """Cells 3, 5, 6 and 7."""
+    """Cells 3, 5, 6 and 7, and the entrypoint config-cli binds."""
     world.applied_once()
 
     change(world)
@@ -328,7 +349,7 @@ def test_a_failed_config_cli_is_partial_names_the_way_back_and_runs_again(world:
     assert world.plan().action is RealmAction.RUN
 
 
-def test_an_observer_that_fails_after_is_partial_and_the_step_is_not_recorded(
+def test_a_checksum_read_that_fails_after_config_cli_is_partial_and_not_recorded(
     world: World,
 ) -> None:
     """Cell 12."""
@@ -485,12 +506,12 @@ def test_the_backup_asks_for_keycloak_alone_and_reads_the_snapshot_id() -> None:
     backup = reconcile.Backup(("edge-backup", "--apps", "apps.toml"), commands)
 
     snapshot = backup.pre_apply()
-    backup.restore_test()
+    backup.restore_test(snapshot)
 
     assert snapshot == SNAPSHOT
     assert commands.asked == [
         ["edge-backup", "--apps", "apps.toml", "backup", "keycloak", "--pre-apply"],
-        ["edge-backup", "--apps", "apps.toml", "restore-test", "keycloak"],
+        ["edge-backup", "--apps", "apps.toml", "restore-test", "keycloak", "--snapshot", SNAPSHOT],
     ]
 
 
@@ -526,8 +547,111 @@ def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -
     on_disk = json.loads(world.record.path.read_text())
 
     assert set(on_disk[reconcile.CONFIG_CLI]) == {
+        "keycloak/entrypoint.sh",
         "keycloak/master.yaml",
         "keycloak/realm.yaml",
         "definition",
         f"hallucinai {ATTRIBUTE}",
     }
+
+
+# --- What the step leaves alone, and what it says when a part breaks ---------------------------
+
+
+def test_a_settled_plan_makes_no_backup_no_config_cli_and_no_record_write(world: World) -> None:
+    world.applied_once()
+    recorded = world.record.path.read_bytes()
+    plan = world.plan()
+    world.events.clear()
+
+    result = world.run(plan)
+
+    assert (result, world.events) == (reconcile.StepResult(), [])
+    assert world.record.path.read_bytes() == recorded
+
+
+def test_a_record_that_cannot_be_resolved_for_the_step_is_a_partial_line_not_a_traceback(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = world.plan()
+    world.events.clear()
+
+    def refuse(*_: object) -> frozenset[str]:
+        raise core.CoreError("cannot read keycloak (Permission denied)")
+
+    monkeypatch.setattr(core, "followed_services", refuse)
+
+    result = world.run(plan)
+
+    assert result.failure == ("realm: cannot read keycloak (Permission denied); nothing applied")
+    assert world.events == []
+
+
+def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repeats(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.after = inventory(group("apps"), group("operators", members=2))
+
+    def refuse(*_: object) -> None:
+        raise core.CoreError("cannot write applied.json (Permission denied)")
+
+    monkeypatch.setattr(core.Record, "write", refuse)
+
+    result = world.step()
+
+    assert "hallucinai: addition group operators (2 members)" in result.lines
+    assert result.failure == (
+        "realm: applied and observed, but the record could not be written "
+        "(cannot write applied.json (Permission denied)); the next run repeats the step"
+    )
+
+
+# --- edge-backup is stopped, not killed --------------------------------------------------------
+
+WAITS = "while :; do sleep 0.1; done"
+TRAPS_SIGTERM = f"trap 'echo cleaned > \"$1\"; exit 143' TERM; {WAITS}"
+IGNORES_SIGTERM = f"trap '' TERM; {WAITS}"
+
+
+def test_a_backup_that_runs_past_its_timeout_gets_sigterm_and_time_to_clean_up(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "cleaned"
+
+    with pytest.raises(compose.ComposeError, match="took longer than 1s"):
+        reconcile.run_edge_backup(["sh", "-c", TRAPS_SIGTERM, "sh", str(marker)], 1)
+
+    assert marker.read_text() == "cleaned\n"
+
+
+def test_a_backup_that_ignores_sigterm_is_killed_after_the_grace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.3)
+
+    with pytest.raises(compose.ComposeError, match="took longer than 1s"):
+        reconcile.run_edge_backup(["sh", "-c", IGNORES_SIGTERM], 1)
+
+
+def test_a_finished_backup_returns_its_exit_code_and_output() -> None:
+    result = reconcile.run_edge_backup(["sh", "-c", "echo out; echo err >&2; exit 3"], 30)
+
+    assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
+
+
+def test_config_cli_of_the_real_compose_yaml_is_followed_and_its_entrypoint_is_digested() -> None:
+    """compose.yaml's own binds of keycloak-config-cli: edge follows it, and its digests cover the
+    entrypoint beside the two realm files its directory bind carries."""
+    document = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())
+    mounts = document["services"][reconcile.CONFIG_CLI]["volumes"]
+    binds = [{"type": "bind", "source": str(REPOSITORY / mount.split(":")[0])} for mount in mounts]
+    config = {"services": {reconcile.CONFIG_CLI: {"volumes": binds}}}
+
+    files = reconcile.bound_files(config, REPOSITORY)
+
+    assert core.followed_services(config, REPOSITORY) == {reconcile.CONFIG_CLI}
+    assert [path.relative_to(REPOSITORY).as_posix() for path in files] == [
+        "keycloak/master.yaml",
+        "keycloak/realm.yaml",
+        "keycloak/entrypoint.sh",
+    ]

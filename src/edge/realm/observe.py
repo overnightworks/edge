@@ -3,8 +3,9 @@
 It runs inside the `realm-observer` compose service (compose.yaml), standard library only, so it
 imports with `python -I` and nothing beside it:
 
-    printf '%s\\n' "$DIGEST_KEY_HEX" | docker compose run -T --rm realm-observer \\
-        --base-url http://keycloak:8080
+    printf '%s\\n' "$DIGEST_KEY_HEX" | docker compose run -T --rm --no-deps realm-observer
+
+The service's entrypoint carries `--base-url http://keycloak:8080`.
 
 It signs in once as `config-cli` (client credentials, the secret from a file), sends GET only to
 `/admin/realms/...`, and prints one JSON inventory to stdout: per realm, per type, every object

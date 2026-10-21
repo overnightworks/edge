@@ -149,17 +149,20 @@ through `hal apply`: merge the change to `keycloak/realm.yaml` or `keycloak/mast
 live checkout, run `hal apply`.
 
 `hal apply` runs the realm step after the unit switches, when Keycloak is on, set up and running
-and an input changed: `keycloak/realm.yaml`, `keycloak/master.yaml` or config-cli's resolved
-definition (the image pin and the `IMPORT_*` switches) differ from what `applied.json` recorded
+and an input changed: `keycloak/realm.yaml`, `keycloak/master.yaml`, `keycloak/entrypoint.sh` or
+config-cli's resolved definition (the image pin and the `IMPORT_*` switches) differ from what `applied.json` recorded
 after the last step, or Keycloak's own import-checksum attributes differ from the recorded ones (a
 restored database, a go-live import). Unchanged inputs mean the step does nothing: no backup and
 no run. A rotated client secret alone does not trigger it, because Compose's definition hash
 ignores the content of a secret file; change a realm file or wait for the next realm change.
 
 The plan names the step in one line. After your yes it takes a Keycloak-only backup tagged
-`pre-apply` (the last ten are kept) and restore-tests it, observes both realms, runs
+`pre-apply` (the last ten are kept) and restore-tests that snapshot, observes both realms, runs
 config-cli, observes again and prints one line per change, with the seconds the backup and the
-restore test took. A failure of the backup or the restore test applies nothing. A failure after
+restore test took. A failed backup or restore test applies nothing and ends the run partial with
+exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
+not checked"). A step that outlives its time or is interrupted stops edge-backup with SIGTERM and
+waits for its cleanup before killing it. A failure after
 config-cli started ends the run with exit 1 and names the snapshot; the way back is
 [Restore Keycloak](backup.md#restore-keycloak), and the next `hal apply` repeats the step. A
 console change to a declared object that the apply resets is printed as "reset to the file" with
