@@ -787,7 +787,9 @@ class SmokeProbe(Probe):
                 time.sleep(0.25)
             finished = smoke.result()
         lines = finished.stdout.splitlines()
-        expect(finished.returncode == 0, f"U14 cancel: the smoke exited {finished.returncode}")
+        expect(
+            finished.returncode == 0, f"U14 cancel: the smoke exited {finished.returncode}: {lines}"
+        )
         expect(
             lines[:1] == ["event: run_started"]
             and lines[-1:] == ["closing the stream before the answer"],
@@ -806,12 +808,21 @@ class SmokeProbe(Probe):
         )
 
     def cli_processes(self) -> int:
+        """The count of CLI processes in the container; grep exits 1 for no match, any other
+        failure (docker, the shell, the enumeration) raises instead of reading as 0."""
         counted = self.run(
             ["docker", "exec", self.container(SERVICE), "sh", "-c",
-             'cat /proc/[0-9]*/cmdline | tr "\\0" "\\n" | grep -c "[c]laude"'],
+             'cat /proc/[0-9]*/cmdline | tr "\\0" "\\n" | grep -c "[c]laude"; '
+             'test "$?" -le 1 || exit 2'],
             check=False,
         )  # fmt: skip
-        return int(counted.stdout.strip() or 0)
+        figure = counted.stdout.strip()
+        if counted.returncode not in (0, 1) or not figure.isdigit():
+            raise ProbeFailed(
+                f"U14: counting CLI processes failed ({counted.returncode}): "
+                f"{counted.stderr.strip()[:200]}"
+            )
+        return int(figure)
 
     def wait_until_listening(self) -> None:
         deadline = time.monotonic() + LISTEN_SECONDS

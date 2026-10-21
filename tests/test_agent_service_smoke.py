@@ -44,6 +44,21 @@ class FakeResponse(io.BytesIO):
         self.status = status
 
 
+class StalledResponse(FakeResponse):
+    """A stream whose service sends nothing more for now: the next read times out."""
+
+    def readline(self, *_) -> bytes:
+        line = super().readline()
+        if not line:
+            raise TimeoutError
+        return line
+
+
+class FakeSocket:
+    def settimeout(self, seconds: float) -> None:
+        self.timeout = seconds
+
+
 class FakeConnection:
     """What the service answers; it records the request and whether it was closed."""
 
@@ -51,6 +66,7 @@ class FakeConnection:
         self.response = response
         self.requests: list[tuple[str, str, bytes, dict]] = []
         self.closed = False
+        self.sock = FakeSocket()
         self.holds: list[tuple[float, bool]] = []  # each pause, and whether it was closed by then
 
     def request(self, method: str, path: str, body: bytes, headers: dict) -> None:
@@ -162,8 +178,8 @@ def test_a_stream_cut_short_fails_the_run():
     assert exit_code == 1
 
 
-def test_cancel_closes_the_stream_right_after_run_started_before_any_answer():
-    response = run_events(*SUCCESS)
+def test_cancel_closes_a_stream_that_is_still_running_after_the_hold():
+    response = StalledResponse(200, stream_of(SUCCESS[0]))
 
     exit_code, out, connection = drive(response, "--cancel")
 
@@ -172,7 +188,17 @@ def test_cancel_closes_the_stream_right_after_run_started_before_any_answer():
     assert out.splitlines()[-1] == "closing the stream before the answer"
     assert connection.closed
     assert connection.holds == [(smoke.CANCEL_HOLD_SECONDS, False)]
-    assert b"assistant_text" in response.read()
+
+
+@pytest.mark.parametrize("ending", ["succeeded", "failed", "cancelled"])
+def test_cancel_fails_when_the_run_ends_during_the_hold(ending):
+    response = StalledResponse(200, stream_of(SUCCESS[0], (ending, {"text": "ok"})))
+
+    exit_code, out, _ = drive(response, "--cancel")
+
+    assert exit_code == 1
+    assert f"the run ended before the close (sent {ending}); L4 is not proven" in out
+    assert "closing the stream before the answer" not in out
 
 
 def test_cancel_of_a_run_that_succeeded_without_a_start_to_cancel_at_fails():

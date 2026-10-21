@@ -30,8 +30,10 @@ PURPOSE = "chat"
 WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
 ANSWER_PROMPT = "Reply with the single word: ok"
-LONG_ANSWER_PROMPT = "Count from 1 to 20000, one number per line, and write nothing else."
+LONG_ANSWER_PROMPT = "Count from 1 to 2000, one number per line, and write nothing else."
 CANCEL_HOLD_SECONDS = 3.0
+CANCEL_PROBE_SECONDS = 0.5
+RUN_END_EVENTS = {"succeeded", "failed", "cancelled"}
 SERVICE_HOST = "agent-service"
 SERVICE_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -137,7 +139,7 @@ class Smoke:
             if response.status != http.HTTPStatus.OK:
                 self.say(refusal_line(response))
                 return 1
-            return self.read_run(response, cancel)
+            return self.read_run(response, connection, cancel)
         except (OSError, http.client.HTTPException, ValueError) as error:
             self.say(f"the run broke off: {type(error).__name__}")
             return 1
@@ -151,7 +153,12 @@ class Smoke:
             WORKLOAD_TOKEN_HEADER: self.tokens.workload,
         }
 
-    def read_run(self, response: http.client.HTTPResponse, cancel: bool) -> int:
+    def read_run(
+        self,
+        response: http.client.HTTPResponse,
+        connection: http.client.HTTPConnection,
+        cancel: bool,
+    ) -> int:
         last = ""
         for frame in frames(response):
             last = frame.event
@@ -160,12 +167,28 @@ class Smoke:
             if cancel and frame.event == "run_started":
                 self.say(f"holding the stream open {CANCEL_HOLD_SECONDS:g} s")
                 self.pause(CANCEL_HOLD_SECONDS)
-                self.say("closing the stream before the answer")
-                return 0
+                return self.close_while_running(response, connection)
         if cancel:
             self.say("the run ended before the stream could be closed")
             return 1
         return 0 if last == "succeeded" else 1
+
+    def close_while_running(
+        self, response: http.client.HTTPResponse, connection: http.client.HTTPConnection
+    ) -> int:
+        """A frame already waiting after the hold that ends the run, or a stream the service
+        closed, means there was nothing left to cancel."""
+        connection.sock.settimeout(CANCEL_PROBE_SECONDS)
+        try:
+            waiting = next(frames(response), None)
+        except TimeoutError:
+            waiting = Frame("", {})
+        if waiting is None or waiting.event in RUN_END_EVENTS:
+            ended = "closed its stream" if waiting is None else f"sent {waiting.event}"
+            self.say(f"the run ended before the close ({ended}); L4 is not proven")
+            return 1
+        self.say("closing the stream before the answer")
+        return 0
 
     def say_text(self, frame: Frame) -> None:
         if frame.event in TEXT_EVENTS:

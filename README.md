@@ -1674,7 +1674,10 @@ smoke_run() {
   fi
   cgroup() { docker compose exec -T agent-service cat "/sys/fs/cgroup/$1"; }
   clis() {
-    docker compose exec -T agent-service sh -c 'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"'
+    local count
+    count=$(docker compose exec -T agent-service sh -c \
+      'cat /proc/[0-9]*/cmdline | tr "\0" "\n" | grep -c "[c]laude"; test "$?" -le 1 || exit 2') \
+      && [[ $count =~ ^[0-9]+$ ]] && echo "$count" || echo "SAMPLE FAILED"
   }
   echo "idle memory.current: $(cgroup memory.current)"
   first=$(docker compose run --rm -T agent-smoke < "$tokens"); status=$?
@@ -1703,13 +1706,15 @@ smoke_run
 ```
 
 Each `(0)` is the expected figure; `grep -c` prints 0 and exits 1 when nothing matches, which is the
-good answer. What the output proves (edge#214):
+good answer, and a sample that failed prints `SAMPLE FAILED`, never 0. What the output proves (edge#214):
 
 - **L2, the paid turn.** `first` holds `event: run_started`, `event: assistant_text`, the answer and
   `event: succeeded` (the smoke exited 0, printed right after it). `run_started` after admission also shows the issuer's
   keys were fetched through `agent-egress`, the service's only route out (L3).
 - **L4, the cancel.** `--cancel` starts a long answer, holds the stream open for three seconds after
-  `run_started` and then closes it before any answer; the smoke fails if `succeeded` arrives. The
+  `run_started`, reads for half a second and then closes it; the smoke fails (exit 1, "L4 is not
+  proven") if a `succeeded`, `failed` or `cancelled` frame was waiting by then or the service had
+  closed the stream, because then no run was left to cancel. The
   block counts the processes whose command line holds `claude` before the turn (0), while the stream
   is held open (1 or more: a CLI child of the run exists) and five seconds after the smoke exited
   (0: the service ended it), and counts the log's `ERROR` lines since the turn (0, no quarantine).
