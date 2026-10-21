@@ -1,8 +1,0 @@
-claim_id = "3eed4b627f7d4bd1863fbb9fbad18da0"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "8b1059e2ddd40e506ecd8298c5c96071be753ab6"
-branch = "claude/issue-239-quality-v030"
-scope = [".github/workflows/ci.yml", "docs/home.md", "src/home_tools/setup.py", "tests/home/conftest.py"]
-opened_commit = "6ae5eb3a2b22cd95c3f74f2a72afe2f23a61faa4"
-whole_reason = "One version in its two pins, with the test value and the doc lines that follow them."
