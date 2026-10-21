@@ -105,7 +105,9 @@ def build(context: Path, transcript: Path, *extra: str, tag: str = IMAGE, cache:
         ],
         timeout=BUILD_SECONDS,
     )
-    transcript.write_text(result.stdout + result.stderr, encoding="utf-8")
+    # The path is the operator's own --output, resolved once at the argparse boundary by
+    # egress.scratch_directory; Sonar does not follow that resolution across calls.
+    transcript.write_text(result.stdout + result.stderr, encoding="utf-8")  # NOSONAR(S8707)
     return result
 
 
@@ -305,7 +307,11 @@ def cell_i5(output: Path, scratch: Path) -> None:
         status = unauthenticated_run_status(port)
     finally:
         logs = docker(["logs", PROBE_NAME])
-        (output / "i5-service.txt").write_text(logs.stdout + logs.stderr, encoding="utf-8")
+        # The path is the operator's own --output, resolved once at the argparse boundary by
+        # egress.scratch_directory; Sonar does not follow that resolution across calls.
+        (output / "i5-service.txt").write_text(  # NOSONAR(S8707)
+            logs.stdout + logs.stderr, encoding="utf-8"
+        )
     expect(status == 401, f"I5: POST /runs without tokens answered {status}, not 401")
 
 
