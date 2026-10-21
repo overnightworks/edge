@@ -1,7 +1,8 @@
 # Probe overlay (probe/keycloak/probe.py): throwaway secrets and config copies from the probe's
 # scratch directory, plus a test relying party that records back-channel logouts. It also moves the
 # stack off the live edge's addresses: Traefik's entrypoints (a copy of traefik.yml), the admin
-# front end and the keycloak network's subnet. Never used live.
+# front end and the trusted subnet (the network itself: probe.py's generated overlay). Never used
+# live.
 services:
   traefik:
     volumes:
@@ -32,12 +33,6 @@ services:
     command: ["python", "-u", "/rp/test_rp.py"]
     volumes:
       - ./probe/keycloak/test_rp.py:/rp/test_rp.py:ro
-
-networks:
-  keycloak:
-    ipam:
-      config: !override
-        - subnet: ${PROBE_KEYCLOAK_SUBNET}
 
 secrets:
   keycloak_db_password:

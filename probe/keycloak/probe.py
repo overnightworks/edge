@@ -75,6 +75,7 @@ LOOPBACK_ADDRESS = "127.0.0.1"
 LIVE_EDGE_ADDRESS = f"{LOOPBACK_ADDRESS}:8081"
 LIVE_ADMIN_ADDRESS = f"{LOOPBACK_ADDRESS}:8090"
 TRAEFIK_CONFIG = "traefik.yml"
+NETWORK_OVERLAY = "network.compose.yaml"
 # Which containers the Docker provider routes: the live one takes any `edge.name` label that
 # matches; the probe's takes its own project only, and its keycloak carries an `edge.name` the
 # live provider refuses (compose.probe.yaml), so neither Traefik sees the other's containers.
@@ -366,6 +367,7 @@ class Stack:
     edge_port: int = field(init=False)
     admin_port: int = field(init=False)
     traefik_config: Path = field(init=False)
+    network_overlay: Path = field(init=False)
     keycloak_subnet: str = field(init=False)
     secrets_dir: Path = field(init=False)
     config_dir: Path = field(init=False)
@@ -382,6 +384,8 @@ class Stack:
         self.edge_url = f"http://{LOOPBACK_ADDRESS}:{self.edge_port}"
         self.admin_url = self.admin_url or f"http://localhost:{self.admin_port}"
         self.keycloak_subnet = free_subnet()
+        self.network_overlay = self.scratch / NETWORK_OVERLAY
+        self.write_network_overlay()
 
     @property
     def master_issuer(self) -> str:
@@ -406,6 +410,16 @@ class Stack:
             "PROBE_ADMIN_URL": self.admin_url,
             "PROBE_KEYCLOAK_SUBNET": self.keycloak_subnet,
         }
+
+    def write_network_overlay(self) -> None:
+        """The keycloak network on this stack's free subnet instead of the live one. A compose
+        file cannot replace the base file's list of subnets, so the base file's is dropped with
+        compose's own `!override` tag here, which the repository's YAML checks never read."""
+        self.scratch.mkdir(parents=True, exist_ok=True)
+        self.network_overlay.write_text(
+            "networks:\n  keycloak:\n    ipam:\n      config: !override\n"
+            f"        - subnet: {self.keycloak_subnet}\n"
+        )
 
     def write_traefik_config(self) -> None:
         """The repository's traefik.yml with the entrypoints on the probe's free ports and the
@@ -456,7 +470,7 @@ class Stack:
         ]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
-        return command
+        return [*command, "--file", str(self.network_overlay)]
 
     def write_secrets(self) -> dict[str, str]:
         self.secrets_dir.mkdir(mode=0o700, parents=True)
