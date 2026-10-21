@@ -73,6 +73,8 @@ LISTENING = "Uvicorn running"
 LISTEN_ATTEMPTS = 120
 SETTLE_SECONDS = 5
 TOKEN_TIMEOUT_SECONDS = 30
+# Cloudflare in front of the token endpoint refuses the default Python-urllib agent (error 1010)
+USER_AGENT = "edge-live-smoke/1"
 PAID_TURN_SECONDS = 420  # above the 300 s of each socket of smoke.py
 CANCELLED_TURN_SECONDS = 420
 CHILD_END_SECONDS = 10
@@ -229,8 +231,11 @@ def access_token(
     form: Mapping[str, str], client_secret: str, urlopen=urllib.request.urlopen
 ) -> str:
     body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
+    request = urllib.request.Request(
+        f"{OIDC}/token", body.encode(), headers={"User-Agent": USER_AGENT}
+    )
     try:
-        with urlopen(f"{OIDC}/token", body.encode(), timeout=TOKEN_TIMEOUT_SECONDS) as answer:
+        with urlopen(request, timeout=TOKEN_TIMEOUT_SECONDS) as answer:
             return json.load(answer)["access_token"]
     except urllib.error.HTTPError as refusal:
         raise LiveSmokeFailed(f"the token endpoint answered {refusal.code}") from None
