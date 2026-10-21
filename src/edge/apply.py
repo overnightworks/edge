@@ -444,7 +444,7 @@ def apply_closed(
             verifier,
             watch,
             waiting,
-            realm_backup or reconcile.Backup.installed(repository),
+            realm_backup or reconcile.Backup.installed(repository, _tell),
         )
     finally:
         os.close(lock)
@@ -452,6 +452,10 @@ def apply_closed(
 
 def _say(line: str) -> None:
     print(f"{COMMAND}: {line}", file=sys.stderr)
+
+
+def _tell(line: str) -> None:
+    print(f"{COMMAND}: {line}", flush=True)
 
 
 def _take_apply_lock(state_directory: Path) -> int | None:
