@@ -381,7 +381,7 @@ class Stack:
         self.config_dir = self.scratch / "config"
         self.traefik_config = self.scratch / TRAEFIK_CONFIG
         self.edge_port, self.admin_port = free_loopback_ports(2)
-        self.edge_url = f"http://{LOOPBACK_ADDRESS}:{self.edge_port}"
+        self.edge_url = f"http://127.0.0.1:{self.edge_port}"
         self.admin_url = self.admin_url or f"http://localhost:{self.admin_port}"
         self.keycloak_subnet = free_subnet()
         self.network_overlay = self.scratch / NETWORK_OVERLAY
