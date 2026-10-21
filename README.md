@@ -369,9 +369,8 @@ ausloest.
 Einstellung allein veroeffentlicht nichts; die Preload-Liste der Browser kennt die Domain erst
 nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Schritte danach:
 
-0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`,
-   `Zone › Transform Rules › Read`; `fleet-write`: `Zone › Zone Settings › Edit`,
-   `Zone › Transform Rules › Edit`) das Recht dazu, vor `edge apply`. Das Aendern der
+0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`;
+   `fleet-write`: `Zone › Zone Settings › Edit`) das Recht dazu, vor `edge apply`. Das Aendern der
    Rechte behaelt den Wert des Tokens, an den Dateien aendert sich nichts.
 1. `edge apply`; die Publish-Phase wendet die Einstellung an. Danach meldet `edge external plan`
    "No changes".
@@ -411,7 +410,9 @@ auf #190 melden. Bekannte Ursachen und der naechste Schritt:
 
 - Cloudflare lehnt den Header ab: Option (b) oder hinnehmen, der Betreiber entscheidet auf #190.
 - Cloudflare lehnt die `/0`-Listen ab: den genauen Fehlertext auf #190 schreiben.
-- In der Phase besteht schon ein Ruleset: importieren, nie ueberschreiben, seine Regeln bleiben.
+- In der Phase besteht schon ein Ruleset: importieren und seine Regeln vorher in
+  `cloudflare_ruleset.client_address` uebernehmen; der Plan darf keine Regel entfernen; sonst auf
+  #190 melden.
 - 403: ein fehlendes Recht (siehe oben).
 
 Danach prueft der Betreiber (L1): eine fehlgeschlagene Anmeldung durch den Tunnel mit gefaelschtem
