@@ -437,7 +437,7 @@ class GoLive:
             raise StepFailure(f"{what} not ready after {READY_TIMEOUT_SECONDS}s")
 
     def edge_is_ready(self) -> bool:
-        """docs/stack.md "Start, readiness, stop": an unknown host gets 404 on 8081, master answers on 8090."""
+        """docs/stack.md "Start, readiness, stop": 404 for an unknown host on 8081, master on 8090."""
         try:
             unknown = self.tools.fetch("GET", f"{EDGE_URL}/", headers={"Host": "unknown.invalid"})
             master = self.tools.fetch("GET", f"{ADMIN_URL}/realms/master")
