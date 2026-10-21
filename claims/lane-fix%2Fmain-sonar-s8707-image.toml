@@ -1,7 +1,0 @@
-claim_id = "ddbef0be186c4b538f58b2c62f0f2b65"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "53225ed9e4c0bf2a9dd36638a5b43cb330200db0"
-branch = "fix/main-sonar-s8707-image"
-scope = ["probe/agent-service/image.py"]
-opened_commit = "e62fc6cffe40593d2ad6f0ecf2896392a634af52"
