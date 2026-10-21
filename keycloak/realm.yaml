@@ -1,11 +1,11 @@
-# The hallucinai realm: the one login for the apps. Applied by keycloak-config-cli (docs/keycloak.md, "Start and apply").
+# The hallucinai realm: the one login for the apps. Applied by `hal apply` through keycloak-config-cli (docs/keycloak.md, "Start and apply").
 # People and memberships are managed in the admin console, never here. The apply adds and changes
 # and deletes no undeclared top-level object and no person (IMPORT_MANAGED_* is no-delete in compose.yaml);
 # a console addition inside an object declared here is reset with it. Removing or renaming a group
 # below leaves the old group and its memberships in Keycloak, and so does a subgroup the console
 # made under /apps or /ki-abo. What this file declares belongs to it: a console change to a
 # declared object (a flow step, a mapper, a client's scope list, a service account's client role,
-# a flow binding override) is reset on the next apply. The blockquote in docs/keycloak.md after "Theme and
+# a flow binding override) is reset on the next apply that runs the realm step. The blockquote in docs/keycloak.md after "Theme and
 # language" states that class with its measured examples; change a declared object here.
 # Deleting anything is done in the admin console, after a backup.
 # The songmaker, hopin and presentator clients are here before the go-live; the other app clients

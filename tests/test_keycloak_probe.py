@@ -771,6 +771,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "only_logins_and_failed_logins_are_stored",
         "app_client",
         "agent_service_stays_audience_only",
+        "the_realm_step",
         "the_observer_door",
         "no_secret_leaked",
     ):

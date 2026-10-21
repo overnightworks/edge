@@ -91,8 +91,9 @@ def run_observer(
         command: Callable[..., int] = observer.main,
         key_line: str = KEY,
         secret: Path = secret_file,
+        flags: tuple[str, ...] = (),
     ) -> Run:
-        code = command(["--base-url", base_url], io.StringIO(key_line + "\n"), secret)
+        code = command(["--base-url", base_url, *flags], io.StringIO(key_line + "\n"), secret)
         captured = capsys.readouterr()
         return Run(code, captured.out, captured.err)
 
@@ -495,6 +496,26 @@ def test_the_observer_sends_get_only_plus_one_token_post(keycloak: FakeKeycloak)
         if not (method == "GET" and path.startswith("/admin/realms/"))
     ]
     assert not_admin_reads == [("POST", "/realms/master/protocol/openid-connect/token")]
+
+
+def test_import_checksums_prints_only_each_realms_checksum_attributes_and_needs_no_key(
+    keycloak: FakeKeycloak, run_observer: Callable[..., Run]
+) -> None:
+    """#242: the host's trigger read; the realm's other attributes and every inventory object stay
+    unread, and the digest key is neither needed nor read."""
+    key = "de.adorsys.keycloak.config.import-checksum-default"
+
+    run = run_observer(keycloak.url, key_line="", flags=("--import-checksums",))
+
+    assert (run.exit_code, run.stderr) == (0, "")
+    assert json.loads(run.stdout) == {
+        "master": {key: "a-checksum"},
+        "hallucinai": {key: "a-checksum"},
+    }
+    assert [path for method, path in keycloak.requests if method == "GET"] == [
+        "/admin/realms/master",
+        "/admin/realms/hallucinai",
+    ]
 
 
 def fresh_observer(name: str) -> ModuleType:

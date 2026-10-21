@@ -15,6 +15,10 @@ A failure is one line on stderr naming the status and the path, never a reply bo
 and stdout stays empty. A stop by SIGINT or SIGTERM exits 130; sent to `compose run`, it ends
 compose at once, which stops relaying the container's output, so stdout may hold the start of
 an inventory, which never parses. Stdout is an inventory only when the exit is 0.
+
+`--import-checksums` prints `{realm: {attribute: value}}` instead: the realms'
+`de.adorsys.keycloak.config.import-checksum…` attributes, and nothing else. It reads no
+inventory and needs no digest key, so a console name that breaks the inventory cannot block it.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ REQUEST_SECONDS = 15.0
 SECRET_FILE = Path("/run/secrets/config_cli_secret")
 # config-cli's own checksum and state attributes change on every apply that writes them.
 CONFIG_CLI_STATE = "de.adorsys.keycloak.config"
+IMPORT_CHECKSUM = f"{CONFIG_CLI_STATE}.import-checksum"  # keycloak-config-cli writes it last
 # UUIDs and the caller's own permissions: never an identity, never compared.
 VOLATILE = frozenset({"id", "containerId", "parentId", "flowId", "internalId", "access"})
 
@@ -733,6 +738,24 @@ def observe(session: Session, digest: Digester, realms: tuple[str, ...] = REALMS
         raise ObserveError(f"a reply lacks the key {error}") from error
 
 
+def import_checksums(
+    session: Session, realms: tuple[str, ...] = REALMS
+) -> dict[str, dict[str, str]]:
+    """Each realm's import-checksum attributes, and nothing else of it."""
+    try:
+        session.sign_in()
+        return {
+            realm: {
+                name: value
+                for name, value in session.get(f"/{realm}").get("attributes", {}).items()
+                if name.startswith(IMPORT_CHECKSUM)
+            }
+            for realm in realms
+        }
+    except (KeyError, AttributeError) as error:
+        raise ObserveError(f"a reply lacks the realm attributes ({error})") from error
+
+
 # --- The command ------------------------------------------------------------------------------
 
 
@@ -743,23 +766,29 @@ def stop(_signum: int, _frame: object) -> None:
 def main(
     argv: list[str] | None = None, stdin: TextIO | None = None, secret_file: Path = SECRET_FILE
 ) -> int:
-    """The command; `stdin` carries the digest key line and defaults to the process's stdin."""
+    """The command; `stdin` carries the digest key line, which `--import-checksums` does not read,
+    and defaults to the process's stdin."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base-url", required=True, help="Keycloak, e.g. http://keycloak:8080")
+    parser.add_argument(
+        "--import-checksums",
+        action="store_true",
+        help="print the realms' import-checksum attributes instead of the inventory",
+    )
     arguments = parser.parse_args(argv)
     # PID 1 in a container ignores SIGTERM unless it handles it.
     signal.signal(signal.SIGTERM, stop)
     try:
-        key = digest_key((stdin or sys.stdin).readline())
+        key = None if arguments.import_checksums else digest_key((stdin or sys.stdin).readline())
         session = Session(arguments.base_url.rstrip("/"), read_secret(secret_file))
-        inventory = observe(session, Digester(key))
+        found = import_checksums(session) if key is None else observe(session, Digester(key))
     except ObserveError as error:
         print(f"realm-observer: {error}", file=sys.stderr, flush=True)
         return 1
     except KeyboardInterrupt:
         print("realm-observer: stopped", file=sys.stderr, flush=True)
         return 130
-    json.dump(inventory, sys.stdout, sort_keys=True)
+    json.dump(found, sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
     return 0
 

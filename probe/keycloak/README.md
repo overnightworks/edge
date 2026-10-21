@@ -22,7 +22,7 @@ proof window is bounded by that cap. A cap reached before `READY`, or a teardown
 stack behind, ends with `PROBE FAILED` and exit 1.
 
 - `run` (the default) prints one `PROOF <n> held:` line per proof and ends with
-  `PROBE PASSED: proofs 1-11 hold`. Besides the proofs below it holds: the public issuer and the path
+  `PROBE PASSED: proofs 1-12 hold`. Besides the proofs below it holds: the public issuer and the path
   allow-list (1, 2a); the master issuer and the forced second factor on the admin entrypoint, for
   the console and for a password grant (2b); a failing undefined variable, a fresh apply, an
   unchanged export after a second apply that resets only the pinned console changes to declared
@@ -64,7 +64,14 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `webauthn-register` pending (both enabled in master), is refused a password grant without TOTP,
   meets the TOTP enrolment and then the passkey page at the browser sign-in, and a second run asks
   nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
-  are off. Passkey registration itself is not driven. Proof EV2 (#181) signs in, sends a wrong
+  are off. Passkey registration itself is not driven. Proof 12 (#242) drives the realm step of
+  `edge apply` (`edge.realm.reconcile`) against this stack: its Compose, a repository of the realm
+  files, and `edge-backup` (from the checkout's `.venv` or the PATH) under a scratch HOME with its
+  own `apps.toml` for this stack's Keycloak database. It holds that a first step backs up, proves
+  the restore and applies, and a second plan is quiet; that a changed `realm.yaml` applies with
+  lines equal to the YAML diff; that a changed import-checksum attribute is applied again; that a
+  console mapper on `groups` is listed as reset to the file with the snapshot; and that a failing
+  config-cli ends the step partial with the way back and is planned again. Proof EV2 (#181) signs in, sends a wrong
   password and logs out through the edge entrypoint, sending `Forwarded` the way Cloudflare's
   rule sets it (`external/cloudflare.tf`) next to a forged `X-Forwarded-For`, and holds when the
   user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with exactly the

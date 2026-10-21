@@ -261,6 +261,8 @@ discarded and the session runs with server error logging off (`keycloak` is the
 image's superuser, which may set that); only the exit code is printed. Delete
 `~/restore-keycloak` once you are done. The block acts on the compose project `edge`;
 `EDGE_COMPOSE_PROJECT` names another, which is how it was driven against a throwaway stack.
+A failed realm step of `hal apply` names its pre-apply snapshot; restore that one with
+`uv run edge-backup restore keycloak --snapshot <ID> --target ~/restore-keycloak`.
 
 ```sh
 (

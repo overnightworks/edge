@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 READ_SECONDS = 60
@@ -32,7 +32,13 @@ CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 _CONFIG_HASH = re.compile(rf"(?:^|,){re.escape(CONFIG_HASH_LABEL)}=([0-9a-f]{{64}})(?:,|$)")
 _HASH_LINE = re.compile(r"(\S+) ([0-9a-f]{64})")
 
-Runner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
+
+class Runner(Protocol):
+    """Runs a command; `stdin` is passed only by a caller that feeds the command's input."""
+
+    def __call__(
+        self, command: list[str], timeout: int, stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]: ...
 
 
 class ComposeError(Exception):
@@ -65,10 +71,18 @@ def named_volumes(service: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
-def run_docker(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+def run_docker(
+    command: list[str], timeout: int, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
-            command, capture_output=True, text=True, check=False, timeout=timeout, cwd=REPOSITORY
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            cwd=REPOSITORY,
+            input=stdin,
         )
     except subprocess.TimeoutExpired as error:
         raise ComposeError(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error
@@ -150,6 +164,13 @@ class Compose:
         services it depends on are left as they are, and its volumes are kept."""
         self._call("*", "up", ["-d", "--no-deps", "--force-recreate", service], CHANGE_SECONDS)
 
+    def run_once(self, service: str, arguments: list[str], stdin: str = "") -> str:
+        """A one-off container of one service, removed afterwards and started with nothing it
+        depends on; its stdout. `stdin` is all its input, so it never reads the terminal."""
+        return self._call(
+            "*", "run", ["-T", "--rm", "--no-deps", service, *arguments], CHANGE_SECONDS, stdin
+        )
+
     def down_while_watched(
         self, config: Mapping[str, Any], services: tuple[str, ...], watch: Watch
     ) -> tuple[str, ...]:
@@ -170,12 +191,15 @@ class Compose:
     def remove_containers(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "rm", ["-f", *services], CHANGE_SECONDS)
 
-    def _call(self, profile: str, verb: str, arguments: list[str], timeout: int) -> str:
+    def _call(
+        self, profile: str, verb: str, arguments: list[str], timeout: int, stdin: str | None = None
+    ) -> str:
         prefix = [
             "docker", "compose", "--project-directory", str(self.repository),
             "--file", str(self.repository / "compose.yaml"),
         ]  # fmt: skip
-        result = self.run([*prefix, "--profile", profile, verb, *arguments], timeout)
+        command = [*prefix, "--profile", profile, verb, *arguments]
+        result = self.run(command, timeout) if stdin is None else self.run(command, timeout, stdin)
         if result.returncode != 0:
             raise ComposeError(_failure_line(verb, result))
         return result.stdout
