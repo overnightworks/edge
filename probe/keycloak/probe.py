@@ -195,6 +195,8 @@ ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # declared with serviceAccountsEnabled
 CHECKSUM_PREFIX = "de.adorsys.keycloak.config.import-checksum"
 BACKUP_ASKED = ["backup", "keycloak", "--pre-apply"]  # what edge-backup was asked, after --apps
 RESTORE_TEST_ASKED = ["restore-test", "keycloak"]
+LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
+CHANGED_LIFESPAN_SETTING = f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
 STEP_GROUP = "probe-realm-step"  # a group proof 12 adds to realm.yaml
 STEP_CONSOLE_MAPPER = "probe-step-mapper"  # a console change proof 12's step resets
 COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
@@ -988,6 +990,13 @@ class RealmStepStand:
     @property
     def realm_file(self) -> Path:
         return self.repository / "keycloak" / REALM_FILE
+
+    def edit_realm(self, *replacements: tuple[str, str], append: str = "") -> None:
+        text = self.realm_file.read_text()
+        for old, new in replacements:
+            expect(old in text, f"realm.yaml no longer holds {old!r}")
+            text = text.replace(old, new)
+        self.realm_file.write_text(text + append)
 
     def edge_backup(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         command = [*self.backup_command, *arguments]
@@ -2380,15 +2389,12 @@ class Probe:
             "right after it is quiet and makes no snapshot (cells 1, 4)",
         )
 
-        text = stand.realm_file.read_text()
-        stand.realm_file.write_text(
-            text.replace(
-                "accessTokenLifespan: 300 ",
-                f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} ",
-            ).replace(
+        stand.edit_realm(
+            (LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING),
+            (
                 f"  - name: {DROPPED_GROUP}\n",
                 f"  - name: {DROPPED_GROUP}\n  - name: {STEP_GROUP}\n",
-            )
+            ),
         )
         plan = stand.plan()
         expect("keycloak/realm.yaml changed" in plan.line, f"the plan says {plan.line!r}")
@@ -2438,12 +2444,7 @@ class Probe:
             f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
             hardcoded_claim(STEP_CONSOLE_MAPPER),
         )
-        stand.realm_file.write_text(
-            stand.realm_file.read_text().replace(
-                f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} ",
-                "accessTokenLifespan: 300 ",
-            )
-        )
+        stand.edit_realm((CHANGED_LIFESPAN_SETTING, LIFESPAN_SETTING))
         reset = stand.apply()
         expect(
             reset.failure is None, f"the step that resets a console change failed: {reset.failure}"
@@ -2461,9 +2462,7 @@ class Probe:
             "the snapshot, exit 0 (cell 13)",
         )
 
-        stand.realm_file.write_text(
-            stand.realm_file.read_text() + "displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n"
-        )
+        stand.edit_realm(append="displayName: $(env:PROBE_UNDEFINED_VARIABLE)\n")
         asked = len(stand.asked)
         failed = stand.apply()
         expect(

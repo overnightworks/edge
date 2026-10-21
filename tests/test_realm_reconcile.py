@@ -62,7 +62,9 @@ class World:
         return {reconcile.CONFIG_CLI: {"running"}} if self.config_cli_running else {}
 
     def run_once(self, service: str, arguments: list[str], stdin: str = "") -> str:
-        assert service == reconcile.CONFIG_CLI and not arguments and not stdin
+        assert service == reconcile.CONFIG_CLI
+        assert not arguments
+        assert not stdin
         self.act("config-cli")
         if self.meanwhile:
             self.meanwhile()
@@ -201,7 +203,8 @@ def test_a_changed_file_while_keycloak_is_off_is_one_line_and_reads_nothing(
     """Cells 14 and 15: no step, Keycloak is not asked."""
     plan = world.plan(gate)
 
-    assert plan.action is RealmAction.HELD and plan.settled
+    assert plan.action is RealmAction.HELD
+    assert plan.settled
     assert plan.lines == [
         f"realm: no realm apply is recorded; Keycloak is {gate}, so it is not applied"
     ]
@@ -399,7 +402,8 @@ def test_the_record_is_emptied_before_config_cli_and_filled_after_the_observe(
     world.step()
 
     entry = world.record.read().entries[reconcile.CONFIG_CLI]
-    assert entry["keycloak/realm.yaml"] and entry["definition"]
+    assert entry["keycloak/realm.yaml"]
+    assert entry["definition"]
     assert entry[f"hallucinai {ATTRIBUTE}"] == "checksum one"
 
 
@@ -433,7 +437,8 @@ def test_the_observer_reads_checksums_with_no_key_and_inventories_under_one_key(
         engine.calls
     )
     assert (checksum_arguments, checksum_input) == (["--import-checksums"], "")
-    assert arguments == [] and len(first_key.strip()) >= 64
+    assert arguments == []
+    assert len(first_key.strip()) >= 64
     assert first_key == second_key
 
 
@@ -451,8 +456,12 @@ def test_the_observer_reads_checksums_with_no_key_and_inventories_under_one_key(
 def test_an_observer_that_fails_or_answers_nonsense_is_one_line(
     engine: RecordedCompose, message: str
 ) -> None:
-    with pytest.raises(reconcile.RealmError, match=message.replace("(", r"\(").replace(")", r"\)")):
-        reconcile.Observer(engine).checksums()
+    observer = reconcile.Observer(engine)
+
+    with pytest.raises(reconcile.RealmError) as raised:
+        observer.checksums()
+
+    assert str(raised.value) == message
 
 
 @dataclass
@@ -488,8 +497,10 @@ def test_the_backup_asks_for_keycloak_alone_and_reads_the_snapshot_id() -> None:
 def test_a_failing_backup_says_the_last_line_edge_backup_wrote() -> None:
     commands = Commands(stdout="", stderr="edge-backup: fehlgeschlagen: kein Passwort\n", code=1)
 
+    backup = reconcile.Backup(("edge-backup",), commands)
+
     with pytest.raises(reconcile.RealmError) as raised:
-        reconcile.Backup(("edge-backup",), commands).pre_apply()
+        backup.pre_apply()
 
     assert str(raised.value) == (
         "the Keycloak backup failed (edge-backup: fehlgeschlagen: kein Passwort)"
