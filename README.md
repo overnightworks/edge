@@ -46,7 +46,8 @@ Access protects every edge name except `auth`, which is public by design:
 there Traefik admits only `/realms/hallucinai/`, `/resources/hallucinai/` and
 Keycloak's versioned static `/resources/<5 characters>/`, so the master realm (its
 `/resources/master/` texts included), the admin console, metrics and health never
-reach the tunnel. On the machine any process reaches any tool, the Keycloak admin
+reach the tunnel. The bare `https://auth.<domain>/` answers 302 to the hallucinai
+realm's account page. On the machine any process reaches any tool, the Keycloak admin
 entrypoint included.
 
 The allowed container inspection is privileged read access and can expose
@@ -327,6 +328,24 @@ bedienen nichts. Der Wechsel von `local` auf `cloudflare` ist einseitig (laut
 einer Aussage der cloudflared-Maintainer). Den Wechsel macht der Betreiber
 (overnightworks/edge#168); dieser Absatz verspricht nicht, dass `apply` ihn
 ausloest.
+
+`apply` setzt auch HSTS der Zone (`cloudflare_zone_setting.hsts`, `security_header`):
+`max-age=31536000; includeSubDomains; preload`, auf dem Apex und jeder Subdomain. Die
+Einstellung allein veroeffentlicht nichts; die Preload-Liste der Browser kennt die Domain erst
+nach dem Absenden des Formulars (Schritt 4, nicht umkehrbar fuer Monate). Die Schritte danach:
+
+0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens (`fleet-read`: `Zone › Zone Settings › Read`,
+   `fleet-write`: `Zone › Zone Settings › Edit`) das Recht dazu, vor `edge apply`. Das Aendern der
+   Rechte behaelt den Wert des Tokens, an den Dateien aendert sich nichts.
+1. `edge apply`; die Publish-Phase wendet die Einstellung an. Danach meldet `edge external plan`
+   "No changes".
+2. `curl -sI https://hallucinai.de/ | grep -ci '^strict-transport-security'` liefert 1, ebenso fuer
+   `www` und `auth` (Gross-/Kleinschreibung egal). Sind es zwei, verwerfen zuerst die
+   Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
+3. `https://hstspreload.org/api/v2/preloadable?domain=hallucinai.de` meldet keinen Fehler.
+4. Der Betreiber sendet das Formular auf hstspreload.org ab.
+
+Zum Zuruecknehmen vor Schritt 4 (dem Absenden) setzt du `enabled = false` und wendest es an; den Block zu loeschen ist nicht belegt als Zuruecksetzen der Einstellung bei Cloudflare. Nach dem Absenden reicht `enabled = false` nicht, denn die Domain bleibt auf den Preload-Listen der Browser, bis sie entfernt ist: dazu den Header ohne `preload` ausliefern, das Formular auf https://hstspreload.org/removal/ absenden und fuer die Monate bis zur Entfernung gueltiges HTTPS auf jeder Subdomain halten; Browser, die den Header gesehen haben, behalten ihn bis zum Ablauf seines max-age.
 
 ## Dienste an und aus
 
@@ -972,7 +991,7 @@ two ways:
 
 | Entrypoint | Host | Admits |
 |---|---|---|
-| `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…`, `/resources/hallucinai/…` and the versioned static `/resources/<5 characters>/…` only; everything else, `/resources/master/…` included, is Traefik's 404 |
+| `edge` (`127.0.0.1:8081`, the tunnel target) | `auth.<EDGE_DOMAIN>` | `/realms/hallucinai/…`, `/resources/hallucinai/…` and the versioned static `/resources/<5 characters>/…` only; everything else, `/resources/master/…` included, is Traefik's 404, except the bare `/`, which redirects (302) to the realm's account page |
 | `admin` (`127.0.0.1:8090`, this PC only) | `localhost` | the admin console and the master realm (`http://localhost:8090/admin/`); `127.0.0.1:8090` answers a bare 404 by design, because the WebAuthn rpId is a hostname |
 
 The public issuer is `https://auth.<EDGE_DOMAIN>/realms/hallucinai`; the

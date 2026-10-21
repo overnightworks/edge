@@ -48,6 +48,25 @@ run "c1_public_hosts_get_proxied_cnames_to_the_tunnel_and_no_app" {
   }
 }
 
+run "c18_the_zone_sends_hsts_with_preload_for_every_subdomain" {
+  command = plan
+
+  assert {
+    condition = (
+      cloudflare_zone_setting.hsts.zone_id == "zone-id"
+      && cloudflare_zone_setting.hsts.setting_id == "security_header"
+      && cloudflare_zone_setting.hsts.value.strict_transport_security == {
+        enabled            = true
+        include_subdomains = true
+        max_age            = 31536000
+        nosniff            = false
+        preload            = true
+      }
+    )
+    error_message = "the zone's HSTS is not max-age=31536000; includeSubDomains; preload without nosniff"
+  }
+}
+
 run "c3_a_bypass_host_gets_a_record_an_app_and_the_bypass_policy" {
   command = plan
 

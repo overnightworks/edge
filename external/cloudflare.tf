@@ -137,6 +137,22 @@ resource "cloudflare_dns_record" "host" {
   depends_on = [cloudflare_zero_trust_access_application.host]
 }
 
+# HSTS at the zone's edge, for the apex and every subdomain: the preload list is a property of the
+# domain. The origins already send nosniff, so it stays off here.
+resource "cloudflare_zone_setting" "hsts" {
+  zone_id    = local.zone_id
+  setting_id = "security_header"
+  value = {
+    strict_transport_security = {
+      enabled            = true
+      include_subdomains = true
+      max_age            = 31536000
+      nosniff            = false
+      preload            = true
+    }
+  }
+}
+
 import {
   for_each = local.record_ids_to_import
   to       = cloudflare_dns_record.host[each.key]
