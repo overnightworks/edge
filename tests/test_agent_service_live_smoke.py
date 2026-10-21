@@ -95,9 +95,10 @@ def test_the_sign_in_exchanges_the_pasted_code_and_asks_for_the_workload_token(c
 
 def test_a_refusing_token_endpoint_stops_with_its_status_and_no_secret():
     refusal = urllib.error.HTTPError("x", 401, "no", {}, None)
+    endpoint = FakeTokenEndpoint(refusal)
 
     with pytest.raises(LiveSmokeFailed) as stopped:
-        live_smoke.access_token({}, "the-secret", FakeTokenEndpoint(refusal))
+        live_smoke.access_token({}, "the-secret", endpoint)
 
     assert str(stopped.value) == "the token endpoint answered 401"
 
