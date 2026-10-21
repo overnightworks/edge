@@ -335,7 +335,7 @@ def stored_event_types(events: list[dict[str, Any]], request_address: str) -> li
     """The sorted types of stored user events, each proven to carry `request_address`.
 
     The address is the one Cloudflare put in `Forwarded`, which Traefik and Keycloak pass on and
-    read; a dropped link would store the loopback address instead.
+    read; a dropped link would store Traefik's address on the keycloak network instead.
     """
     for event in events:
         address = event.get("ipAddress")
@@ -1785,7 +1785,14 @@ class Probe:
         forwarded_ipv6 = {**forwarded, "Forwarded": cloudflare_forwarded(CLIENT_ADDRESS_IPV6)}
         refused_ipv6 = wrong_password(forwarded_ipv6)
         expect(refused_ipv6.status == 400, f"a wrong password answered {refused_ipv6.status}")
-        newest = max(admin.get(events_path), key=lambda event: event["time"])
+        events_after_ipv6 = admin.get(events_path)
+        types_after_ipv6 = sorted(event["type"] for event in events_after_ipv6)
+        expect(
+            types_after_ipv6 == ["LOGIN", "LOGIN_ERROR", "LOGIN_ERROR"],
+            f"probe-events has the stored events {types_after_ipv6} after the IPv6 wrong password, "
+            "not one LOGIN and two LOGIN_ERROR",
+        )
+        newest = max(events_after_ipv6, key=lambda event: event["time"])
         stored_ipv6 = f"[{CLIENT_ADDRESS_IPV6}]"  # Keycloak keeps RFC 7239's brackets
         expect(
             newest["type"] == "LOGIN_ERROR" and newest.get("ipAddress") == stored_ipv6,

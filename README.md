@@ -394,13 +394,37 @@ gefaelschten `X-Forwarded-For`. Apps, die `X-Forwarded-For` loggen, bleiben fael
 
 Bei IPv6 speichert Keycloak die Adresse mit den Klammern des Headers (`[2001:db8::1]`).
 
-Die Reihenfolge der Umstellung: erst `edge apply` (die Regel ist bei Cloudflare), dann
-`docker compose --profile keycloak up -d keycloak`, denn `edge apply` erstellt Keycloak bei einer
-geaenderten Umgebung nicht neu (Traefik und `socket-proxy` ja, Keycloak nie). Wer Keycloak zuerst
-umstellt, hat bis zur Regel Sekunden, in denen Keycloak die Adresse von Traefik speichert; das ist
-hingenommen (keine App hat Nutzer). Danach prueft der Betreiber: eine fehlgeschlagene Anmeldung
-durch den Tunnel mit einem gefaelschten `X-Forwarded-For`; das Ereignis in der Admin-Konsole
-(Admin-Eingang, Events) traegt seine echte Adresse.
+Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei
+einer geaenderten Umgebung nie neu (`up -d --no-recreate`); der Betreiber startet es erst, wenn
+die Regel bei Cloudflare steht: `docker compose --profile keycloak up -d --no-deps keycloak`, in
+`~/git/edge`, und nur wenn `hal apply` sauber endete **und** `edge external plan` "No changes"
+meldet. So gibt es kein Fenster: Keycloak liest `Forwarded` erst, wenn davor die Regel steht. Ein
+Keycloak auf `forwarded` ohne Regel davor wuerde ein vom Besucher gesendetes `Forwarded`
+vertrauen.
+
+Die Token-Rechte, vor `hal apply` im Cloudflare-Dashboard: `Zone › Transform Rules › Read`
+(`fleet-read`) und `› Edit` (`fleet-write`). `Account › Account Rulesets › Read` ist nicht
+gemessen: es kommt nur dazu, wenn ein 403 es nennt; ob es noetig war, steht dann auf #190.
+
+Scheitert die Publish-Phase, bleibt Keycloak auf `xforwarded`: nicht neu erstellen, das Ergebnis
+auf #190 melden. Bekannte Ursachen und der naechste Schritt:
+
+- Cloudflare lehnt den Header ab: Option (b) oder hinnehmen, der Betreiber entscheidet auf #190.
+- Cloudflare lehnt die `/0`-Listen ab: den genauen Fehlertext auf #190 schreiben.
+- In der Phase besteht schon ein Ruleset: importieren, nie ueberschreiben, seine Regeln bleiben.
+- 403: ein fehlendes Recht (siehe oben).
+
+Danach prueft der Betreiber (L1): eine fehlgeschlagene Anmeldung durch den Tunnel mit gefaelschtem
+`X-Forwarded-For` **und** gefaelschtem `Forwarded`:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'X-Forwarded-For: 203.0.113.9, 192.0.2.7' -H 'Forwarded: for=203.0.113.9' \
+  -d grant_type=password -d client_id=nobody -d username=nobody -d password=wrong \
+  https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect/token
+```
+
+Das Ereignis in der Admin-Konsole (Admin-Eingang, Events) traegt seine echte Adresse.
 
 ## Dienste an und aus
 
