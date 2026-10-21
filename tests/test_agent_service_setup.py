@@ -517,3 +517,132 @@ def test_a_renewal_holds_a_lock_on_the_login_folder_from_cleanup_to_rename(
     assert make_setup().run(renew=True) == 0
     assert competitors_refused
     assert all(competitors_refused)
+
+
+def test_a_folder_that_cannot_be_synced_after_the_rename_says_the_new_token_is_in_place(
+    make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+    terminal.pastes = [SECOND_TOKEN]
+    fsync = os.fsync
+
+    def only_the_folder_fails(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", only_the_folder_fails)
+
+    assert make_setup().run(renew=True) == 1
+    assert "the new token is in place" in terminal.said[-1]
+    assert "Input/output error" in terminal.said[-1]
+    assert "old token is kept" not in terminal.said[-1]
+    assert token_path(home).read_text() == SECOND_TOKEN + "\n"
+
+
+@pytest.mark.parametrize("target_exists", [False, True], ids=["dangling", "valid"])
+def test_a_symlinked_token_is_not_set_up_and_setup_replaces_the_link_not_its_target(
+    make_setup, home, terminal, tmp_path, target_exists
+):
+    make_login_directory(home)
+    target = tmp_path / "elsewhere-token"
+    if target_exists:
+        target.write_text(DUMMY_TOKEN + "\n")
+        target.chmod(0o640)
+    token_path(home).symlink_to(target)
+
+    assert make_setup().check() == 1
+    assert "is a symbolic link; it must be a regular file" in terminal.said[-1]
+
+    terminal.pastes = [SECOND_TOKEN]
+    assert make_setup().run(renew=False) == 0
+    assert not token_path(home).is_symlink()
+    assert token_path(home).read_text() == SECOND_TOKEN + "\n"
+    assert mode_of(token_path(home)) == 0o600
+    assert target.exists() == target_exists
+    if target_exists:
+        assert target.read_text() == DUMMY_TOKEN + "\n"
+        assert mode_of(target) == 0o640
+    assert make_setup().check() == 0
+
+
+def test_an_ancestor_swapped_for_a_link_after_the_check_is_never_narrowed_through(
+    setup_module, make_setup, home, terminal, tmp_path
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+    login_directory(home).chmod(0o755)
+    outside = tmp_path / "outside"
+    (outside / "claude").mkdir(parents=True, mode=0o755)
+    (outside / "claude").chmod(0o755)
+
+    def swap_when_narrowing(line: str) -> None:
+        terminal.say(line)
+        if line.startswith("narrowing"):
+            os.replace(home / ".secrets" / "agent-service", tmp_path / "moved")
+            (home / ".secrets" / "agent-service").symlink_to(outside)
+
+    setup = make_setup()
+    setup.tools = setup_module.Tools(
+        run=setup.tools.run, say=swap_when_narrowing, read_secret=terminal.read_secret,
+        service_uid=os.getuid(),
+    )  # fmt: skip
+
+    assert setup.run(renew=False) == 1
+    assert "not a plain folder" in terminal.said[-1]
+    assert mode_of(outside / "claude") == 0o755
+
+
+def test_a_pasted_line_that_is_not_utf8_is_one_line_and_chains_nothing(
+    setup_module, make_setup, home, terminal, monkeypatch
+):
+    write_token(home, DUMMY_TOKEN + "\n")
+
+    def not_utf8(prompt: str) -> str:
+        raise UnicodeDecodeError("utf-8", b"\xff-secret", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(getpass, "getpass", not_utf8)
+
+    assert make_setup(read_secret=setup_module.read_pasted_line).run(renew=True) == 1
+    assert terminal.said[-1] == (
+        "agent-service/setup FAILED: the pasted line is not UTF-8 text; nothing was written"
+    )
+    assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+def test_a_token_that_cannot_be_read_is_refused_and_replaced_by_the_paste(
+    make_setup, home, terminal
+):
+    write_token(home, DUMMY_TOKEN + "\n", mode=0o000)
+
+    assert make_setup().check() == 1
+    assert terminal.said[-1].endswith("cannot be read: Permission denied")
+
+    assert make_setup().run(renew=False) == 0
+    assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+    assert make_setup().check() == 0
+
+
+def test_a_run_that_finds_the_lock_held_says_it_waits(make_setup, home, terminal, monkeypatch):
+    write_token(home, DUMMY_TOKEN + "\n")
+    terminal.pastes = [SECOND_TOKEN]
+    flock = fcntl.flock
+
+    def held_until_the_blocking_attempt(descriptor: int, operation: int) -> None:
+        if operation & fcntl.LOCK_NB:
+            raise BlockingIOError
+        flock(descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", held_until_the_blocking_attempt)
+
+    assert make_setup().run(renew=True) == 0
+    assert "waiting for another run of agent-service/setup" in terminal.said
+    assert token_path(home).read_text() == SECOND_TOKEN + "\n"
+
+
+def test_a_long_docker_diagnostic_is_cut_to_a_bounded_line(setup_module):
+    result = subprocess.CompletedProcess(["docker"], 1, "", "first\n" + "x" * 5000 + "\n")
+
+    line = setup_module.failure_line("docker build", result)
+
+    assert line.startswith("`docker build` exited 1: xxx")
+    assert len(line) < 300

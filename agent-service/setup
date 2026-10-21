@@ -51,6 +51,7 @@ MAX_TOKEN_FILE_BYTES = 16 * 1024  # reader: MAX_SECRET_FILE_BYTES
 API_KEY_PREFIX = "sk-ant-api"  # reader: API_KEY_PREFIX
 JSON_WHITESPACE = " \t\r\n"  # reader: _JSON_WHITESPACE
 BUILD_SECONDS = 1800
+MAX_DIAGNOSTIC_CHARACTERS = 200  # what one docker diagnostic line may add to a printed line
 SHORT_COMMAND_SECONDS = 60
 DOCKERFILE = "agent-service/image/Dockerfile"
 BUILD_CONTEXT = "agent-service/image"
@@ -115,6 +116,9 @@ def read_pasted_line(prompt: str) -> str:
             raise StepFailure(
                 "no token was pasted (the input ended); nothing was written"
             ) from error
+        except UnicodeDecodeError:
+            # `from None`: the error would carry the pasted bytes into any traceback chain
+            raise StepFailure("the pasted line is not UTF-8 text; nothing was written") from None
 
 
 @dataclass(frozen=True)
@@ -195,6 +199,7 @@ class AgentServiceSetup:
         self.service_directory = self.secrets_root / SERVICE
         self.login_directory = self.service_directory / "claude"
         self.token_path = self.login_directory / TOKEN_FILE
+        self.login_chain = (self.secrets_root, self.service_directory, self.login_directory)
         self.pasted = False
 
     # --- what is missing ----------------------------------------------------------------------
@@ -254,12 +259,25 @@ class AgentServiceSetup:
         )
 
     def token_gap(self) -> Gap | None:
-        """The token file judged through one descriptor, as the reader does; never its content."""
+        """The token file judged through one descriptor, as the reader does; never its content.
+
+        A link is never set up: compose.yaml binds only the login folder, so a link that resolves
+        on the host may not resolve in the container."""
         path = self.token_path
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            descriptor = os.open(path, flags)
         except FileNotFoundError:
             return Gap(GapKind.TOKEN_MISSING, f"{path} does not exist")
+        except PermissionError as error:
+            return Gap(GapKind.TOKEN_REFUSED, f"{path} cannot be read: {error.strerror}")
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                return Gap(
+                    GapKind.TOKEN_REFUSED,
+                    f"{path} is a symbolic link; it must be a regular file",
+                )
+            raise
         try:
             return self.judge_open_token(descriptor)
         finally:
@@ -316,13 +334,34 @@ class AgentServiceSetup:
         os.mkdir(directory, DIRECTORY_MODE)
 
     def narrow(self, path: Path, mode: int) -> None:
-        """Change the mode through a descriptor opened without following a link."""
+        """Change the mode through the verified chain of descriptors, as the swap does: what is
+        changed is what the check looked at, and a folder swapped for a link in between is not."""
         self.tools.say(f"narrowing {path} to {mode:04o}")
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        is_token = path == self.token_path
+        parents = self.login_chain if is_token else self.login_chain[: self.login_chain.index(path)]
+        parent = self.open_verified_directories(parents)
         try:
-            os.fchmod(descriptor, mode)
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+            try:
+                descriptor = os.open(path.name, flags, dir_fd=parent)
+            except OSError as error:
+                if error.errno == errno.ELOOP:
+                    raise StepFailure(f"{path} is a symbolic link; nothing was changed") from error
+                raise
+            try:
+                if not self.still_narrowable(path, os.fstat(descriptor), is_token):
+                    raise StepFailure(f"{path} changed since it was judged; nothing was changed")
+                os.fchmod(descriptor, mode)
+            finally:
+                os.close(descriptor)
         finally:
-            os.close(descriptor)
+            os.close(parent)
+
+    def still_narrowable(self, path: Path, status: os.stat_result, is_token: bool) -> bool:
+        if is_token:
+            return stat.S_ISREG(status.st_mode) and status.st_uid == self.tools.service_uid
+        gap = self.judge_directory(path, status)
+        return gap is None or gap.kind is GapKind.DIRECTORY_OPEN
 
     def paste_token(self, reason: str | None = None) -> None:
         """Take the token, judge the bytes to write, and swap them in by rename."""
@@ -338,13 +377,12 @@ class AgentServiceSetup:
 
     def swap_in(self, payload: bytes) -> None:
         """Write token.new and rename it over token inside the verified, locked login folder."""
-        directory = self.open_login_directory()
+        directory = self.open_verified_directories(self.login_chain)
         try:
-            fcntl.flock(directory, fcntl.LOCK_EX)  # held until the descriptor closes
+            self.lock(directory)  # held until the descriptor closes
             try:
                 self.write_pending(directory, payload)
                 os.replace(PENDING_FILE, TOKEN_FILE, src_dir_fd=directory, dst_dir_fd=directory)
-                os.fsync(directory)
             except OSError as error:
                 with contextlib.suppress(OSError):  # the failure being reported is the first one
                     os.unlink(PENDING_FILE, dir_fd=directory)
@@ -352,8 +390,22 @@ class AgentServiceSetup:
                     f"cannot write the token ({error.filename or TOKEN_FILE}): {error.strerror};"
                     " the old token is kept"
                 ) from error
+            try:
+                os.fsync(directory)
+            except OSError as error:
+                raise StepFailure(
+                    f"the new token is in place, but the folder could not be synced: "
+                    f"{error.strerror}"
+                ) from error
         finally:
             os.close(directory)
+
+    def lock(self, directory: int) -> None:
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.tools.say("waiting for another run of agent-service/setup")
+            fcntl.flock(directory, fcntl.LOCK_EX)
 
     @staticmethod
     def write_pending(directory: int, payload: bytes) -> None:
@@ -367,12 +419,12 @@ class AgentServiceSetup:
             pending_file.flush()
             os.fsync(descriptor)
 
-    def open_login_directory(self) -> int:
-        """A descriptor of the login folder, each folder from home on opened without following a
+    def open_verified_directories(self, directories: tuple[Path, ...]) -> int:
+        """A descriptor of the last folder, each folder from home on opened without following a
         link and judged by its own descriptor: what is written lands where the check looked."""
         directory = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
-            for path in (self.secrets_root, self.service_directory, self.login_directory):
+            for path in directories:
                 child = self.open_without_link(directory, path)
                 os.close(directory)
                 directory = child
@@ -446,7 +498,8 @@ def failure_line(what: str, result: subprocess.CompletedProcess[str]) -> str:
     """Docker says why on stderr and may print `[]` on stdout, so stderr is read first."""
     for stream in (result.stderr, result.stdout):
         if lines := [line.strip() for line in stream.splitlines() if line.strip()]:
-            return f"`{what}` exited {result.returncode}: {lines[-1]}"
+            line = lines[-1][:MAX_DIAGNOSTIC_CHARACTERS]
+            return f"`{what}` exited {result.returncode}: {line}"
     return f"`{what}` exited {result.returncode}: no output"
 
 
