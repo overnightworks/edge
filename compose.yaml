@@ -174,7 +174,7 @@ services:
       IMPORT_VARSUBSTITUTION_ENABLED: "true"
       IMPORT_VARSUBSTITUTION_UNDEFINEDISERROR: "true"
       # The apply adds and changes and never deletes: every managed type is no-delete, so an
-      # object only Keycloak has stays, and a listed user keeps the roles and groups the console gave.
+      # object only Keycloak has stays, and a listed user keeps the realm roles and groups the console gave.
       # The cache would skip an unchanged realm file silently.
       IMPORT_CACHE_ENABLED: "false"
       IMPORT_USERS_MERGEROLES: "true"

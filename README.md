@@ -1126,16 +1126,18 @@ place.
 > **The apply adds and changes, and never deletes what the file does not declare.**
 > `compose.yaml` sets every `IMPORT_MANAGED_*` type of keycloak-config-cli 6.5.1 to `no-delete`,
 > the cache off, and `IMPORT_USERS_MERGEROLES`/`MERGEGROUPS` on. What `realm.yaml` and
-> `master.yaml` declare belongs to the file; everything else stays, and users are never deleted:
+> `master.yaml` declare belongs to the file; everything else stays, and no person is ever deleted (a service-account user that a console-enabled service
+> account on a declared client created goes with that reset, below):
 > - **Stays:** every group, subgroup, client, scope, role, flow, identity provider, component and
 >   person made in the admin console, with its memberships; and an object the file stopped
 >   listing. Renaming a group in the YAML therefore creates the new group and leaves the old one.
 > - **Reset:** a console change to an object the file declares is reset to the file on the next
->   apply, together with what hangs off that object. The probe (proofs 3c and 3d) measures these:
+>   apply, together with what hangs off that object. The probe (proofs 3c and 3d) measures these, except where marked not measured:
 >   - a step or subflow in a declared flow (`browser-mfa-forms`, `direct-grant-mfa-totp`);
->   - a mapper on a declared client scope or client (the scope `groups`);
->   - a default or optional scope on a declared client that lists its scopes (songmaker, hopin,
->     presentator), while a client without scope lists (`agent-service`) keeps its additions;
+>   - a mapper on a declared client scope (the scope `groups`); a mapper on a declared client is
+>     ruled the same way but not measured;
+>   - a default scope on a declared client that lists its scopes (songmaker, hopin, presentator;
+>     an optional scope is ruled the same way but not measured), while a client without scope lists (`agent-service`) keeps its additions;
 >   - a client role on a listed service account (`service-account-songmaker`); its realm roles
 >     and groups stay;
 >   - a service account enabled in the console on a declared client (hopin), which removes the
@@ -1186,8 +1188,8 @@ Start the stack as in [Start, readiness, stop](#start-readiness-stop) (Keycloak 
 `edge apply`), Traefik included, and wait until the readiness check prints `ready`. A realm change
 is then three steps, in this order:
 
-1. **Back up, and test the restore.** The apply deletes nothing, but it overwrites a console edit
-   to a field the YAML lists and the two additions named above, so there is a snapshot to go
+1. **Back up, and test the restore.** The apply deletes no person, but it overwrites a console edit
+   to a field the YAML lists and resets the console changes to declared objects named above, so there is a snapshot to go
    back to:
 
    ```sh
@@ -1398,8 +1400,8 @@ flock /tmp/probe-stack.lock \
 The proofs: the public issuer, the themed login and account pages in German
 and English and the path allow-list (1, 2a), the master issuer and the
 forced second factor on the admin entrypoint, for the console and for a password grant (2b), a failing undefined variable, a fresh apply, an unchanged export after a
-second apply that removes only the two pinned console additions and keeps every other console
-change, and a changed YAML that applies and deletes nothing, with a seeded member untouched
+second apply that resets only the pinned console changes to declared objects (the 11 pinned lines) and keeps every other console
+change, and a changed YAML that applies and deletes nothing the file dropped, with a seeded member untouched
 (3a–3d),
 the `groups` claim and the `agent-service` audience (4), a disabled user refused
 on refresh (5), a back-channel logout reaching the test RP (6), none of the

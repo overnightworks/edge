@@ -216,6 +216,9 @@ DROPPED_ROLE_BLOCK = (
     "marker of an app workload calling the agent service.\n"
 )
 CHANGED_CONFIG = "browser-mfa-without-passkey"
+# 6.5.1 reads the managed-role switch only when the file has a roles section, so an empty
+# list stays in it.
+EMPTY_REALM_ROLES = "roles:\n  realm: []\n"
 ESCAPING_GROUP = "probe\x1b[31mconsole\nname"
 OBSERVER_SECRET = "/run/secrets/config_cli_secret"
 OBSERVER_SCRIPT = "/opt/observer/observe.py"
@@ -1768,7 +1771,7 @@ class Probe:
         text = text[:client_start] + text[client_end:]
         role_start = text.find(DROPPED_ROLE_BLOCK)
         expect(role_start >= 0, f"realm.yaml no longer lists the role {DROPPED_ROLE}")
-        text = text.replace(DROPPED_ROLE_BLOCK, "")
+        text = text.replace(DROPPED_ROLE_BLOCK, EMPTY_REALM_ROLES)
         realm_file.write_text(text)
         self.stack.must_apply("changed apply", config_dir=changed)
         realm = admin.get(f"/{REALM}")
@@ -1800,7 +1803,7 @@ class Probe:
         self.held(
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
-            f"group /{CHANGED_GROUP}) and deletes nothing: the group /{DROPPED_GROUP} and the "
+            f"group /{CHANGED_GROUP}) and deletes nothing it dropped: the group /{DROPPED_GROUP} and the "
             f"client {DROPPED_CLIENT} and the role {DROPPED_ROLE} with its two service-account "
             f"holders, all dropped from realm.yaml, and the console-made {CONSOLE_SUBGROUP} stay; "
             f"probe-member is still in {MEMBER_GROUP}",
