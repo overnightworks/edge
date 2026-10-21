@@ -5,6 +5,9 @@ import tomllib
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 
+PRE_APPLY_TAG = "pre-apply"
+"""The restic tag of a pre-apply snapshot; no app may carry it as its own tag."""
+
 # Names end up in `docker` filters, restic tags and SQL identifiers, so they stay this plain.
 _PLAIN_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,62}")
 _SQL_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}")
@@ -94,6 +97,8 @@ def _parse_app(name: str, record: object) -> App:
     label = f"apps.toml [app.{name}]"
     if not _PLAIN_NAME.fullmatch(name):
         raise AppsError(f"{label}: der App-Name ist nicht schlicht genug")
+    if name == PRE_APPLY_TAG:
+        raise AppsError(f"{label}: der App-Name ist als restic-Tag {PRE_APPLY_TAG} belegt")
     if not isinstance(record, dict):
         raise AppsError(f"{label}: muss eine Tabelle sein")
     _require_exact_keys(label, record, _APP_KEYS, optional=frozenset({_AUDIO_VOLUME_KEY}))

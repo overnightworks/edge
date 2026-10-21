@@ -15,12 +15,14 @@ from edge_backup_support import (
     AUDIO,
     CANARY_PASSWORD,
     DUMP,
+    RADIO_TOML,
     RESTORE_SERVER_ID,
     SONGMAKER_CONTAINER,
     STATUS_KEYS,
     SYSTEMD,
     Machine,
     app_history,
+    declare_apps,
     declare_shipped_apps,
     declare_two_apps,
     mode_of,
@@ -134,6 +136,19 @@ def test_a_refused_app_argument_runs_nothing_and_writes_no_status(
 
     assert (outcome.exit_code, outcome.err) == (1, f"edge-backup: fehlgeschlagen: {complaint}\n")
     assert machine.calls == []
+    assert outcome.status is None
+
+
+def test_an_app_named_like_the_pre_apply_tag_is_refused_before_anything_runs(
+    edge_backup, machine, home
+):
+    """Its tag scope would select every app's pre-apply snapshots under `forget`."""
+    pre_apply_app = RADIO_TOML.replace("[app.radio]", "[app.pre-apply]")
+
+    outcome = edge_backup(*declare_apps(home, pre_apply_app), "backup", "pre-apply")
+
+    assert (outcome.exit_code, machine.calls) == (1, [])
+    assert "pre-apply" in outcome.err
     assert outcome.status is None
 
 

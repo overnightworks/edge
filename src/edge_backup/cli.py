@@ -9,7 +9,7 @@ from enum import IntEnum
 from pathlib import Path
 
 from edge_backup import host, restic, runner
-from edge_backup.apps import App, AppsError, parse_apps
+from edge_backup.apps import PRE_APPLY_TAG, App, AppsError, parse_apps
 from edge_backup.runner import Run, StepFailed
 from edge_backup.settings import Settings
 from edge_backup.status import ExitCategory, first_attempt
@@ -64,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument(
         "--pre-apply",
         action="store_true",
-        help=f"tag the snapshot {restic.PRE_APPLY_TAG} and keep the last {restic.KEEP_PRE_APPLY} "
+        help=f"tag the snapshot {PRE_APPLY_TAG} and keep the last {restic.KEEP_PRE_APPLY} "
         "such snapshots of the app (needs the app's name)",
     )
     backup.set_defaults(command=_backup)

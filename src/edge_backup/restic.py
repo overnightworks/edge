@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from edge_backup import host
+from edge_backup.apps import PRE_APPLY_TAG
 from edge_backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
 
 REPOSITORY = "/repo"
@@ -19,7 +20,6 @@ RETRY_LOCK = "5m"
 KEEP_WEEKLY = 4
 KEEP_MONTHLY = 3
 # A snapshot taken right before a change is applied carries this tag besides its app's name.
-PRE_APPLY_TAG = "pre-apply"
 KEEP_PRE_APPLY = 10
 CHECK_READ_DATA_SUBSET = "10%"
 # The snapshot layout under an app's source path: the dump and manifest, and the audio.
