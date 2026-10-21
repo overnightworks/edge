@@ -1,5 +1,5 @@
 # The agent service image: every byte that enters it is pinned by digest or sha256.
-# Built on the PC with the command in README.md; the context is this directory.
+# Built on the PC with the command in docs/agent-service.md; the context is this directory.
 
 FROM docker.io/curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06 AS claude-download
 ARG CLAUDE_VERSION=2.1.302

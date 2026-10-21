@@ -11,7 +11,7 @@ drives U14 instead (#214 S4): the operator's `agent-smoke` against the service w
 issuer on the `agent` network, so the tokens verify and the CLI meets the real upstream with the
 dummy login. U16 then runs the cells of `agent-service/live_smoke.py` there, past its sign-in.
 The image
-`edge-agent-service:0.4.0-2.1.302` must exist (README "The agent service image"). The probe
+`edge-agent-service:0.4.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
 directory. Exit 0: every cell held, 1: a cell failed.

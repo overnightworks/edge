@@ -340,10 +340,10 @@ services:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
 
-  # The agent service (agent-providers v0.4.0; the image is built on the PC, README "The agent
-  # service image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
+  # The agent service (agent-providers v0.4.0; the image is built on the PC, docs/agent-service.md,
+  # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
-  # (README "Agent service"). The unit `agent-service` of fleet.yaml starts it.
+  # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
     image: &agent-service-image edge-agent-service:0.4.0-2.1.302
@@ -381,8 +381,8 @@ services:
         bind:
           create_host_path: false
 
-  # The operator's smoke of the agent service (agent-service/smoke.py; README "The agent service",
-  # "The smoke"): the service image, one run, the answer printed. Run it as
+  # The operator's smoke of the agent service (agent-service/smoke.py; docs/agent-service.md,
+  # "Proofs"): the service image, one run, the answer printed. Run it as
   # `compose run -T --rm agent-smoke [--cancel]` with the person's and the workload's token on
   # stdin, one per line. No depends_on: a run never starts the service. On `agent` alone and with
   # no secret, port or published address: the tokens come in on stdin and never leave in output.
@@ -463,7 +463,7 @@ networks:
   mcp-backends:
     internal: true
   # The agent service's API and its callers; from the apps' lanes they join it as an external network
-  # (README "The agent service"). The fixed name survives the project's rename to `hal`.
+  # (docs/agent-service.md, "An app's side"). The fixed name survives the project's rename to `hal`.
   agent:
     name: hal_agent
     internal: true
