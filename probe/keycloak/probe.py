@@ -175,7 +175,8 @@ CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
 # What an operator adds in the admin console before an apply (#66, the U1 measurement). The apply
-# deletes nothing, so of these only the residue below goes: the observer names exactly it.
+# deletes no undeclared top-level object and no person; a console addition inside a declared object
+# is reset with it. So of these only the residue below goes: the observer names exactly it.
 CONSOLE_NAME = "probe-console"
 CONSOLE_FLOW = "console-flow"
 FORMS_FLOW = "browser-mfa-forms"
