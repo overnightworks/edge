@@ -176,8 +176,9 @@ def test_a_token_in_the_environment_or_in_argv_is_not_taken(monkeypatch, capsys)
     monkeypatch.setenv("AGENT_WORKLOAD_TOKEN", WORKLOAD_TOKEN)
 
     exit_code, _, connection = drive(run_events(*SUCCESS), stdin="")
+    stdin, argv = io.StringIO(BOTH_TOKENS), ["--person-token", PERSON_TOKEN]
     with pytest.raises(SystemExit):
-        smoke.main(["--person-token", PERSON_TOKEN], io.StringIO(BOTH_TOKENS))
+        smoke.main(argv, stdin)
 
     assert exit_code == 1
     assert connection.requests == []
