@@ -14,7 +14,7 @@ secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs
 
 ## Start
 
-The first `hal apply --closed` plans, asks to run each setup still missing (for example
+The first `hal apply --closed` writes `.env`, plans, asks to run each setup still missing (for example
 `keycloak/go-live`, which itself starts the socket proxy and Traefik), asks `yes` and switches the
 catalog's units on. Apply never starts a stopped core service, so Traefik and the socket proxy are
 started by hand; `hal apply` then publishes, and `hal online` opens the tunnel, which `home setup`
