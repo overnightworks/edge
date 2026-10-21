@@ -230,7 +230,16 @@ class FakeRealm:
 
 def hallucinai() -> FakeRealm:
     realm = FakeRealm("hallucinai", realm_rep("hallucinai"))
-    for path in ("/apps", "/apps/songmaker", "/apps/presentator", "/apps/hopin", "/ki-abo"):
+    for path in (
+        "/apps",
+        "/apps/songmaker",
+        "/apps/presentator",
+        "/apps/hopin",
+        "/apps/hopin/admin",
+        "/ai-subscription",
+        "/ai-api",
+        "/ki-abo",
+    ):
         realm.groups[path] = Group()
     realm.groups["/apps/hopin"].members = [uid("hallucinai", "anna"), uid("hallucinai", "ben")]
     realm.roles = [role_rep("hallucinai", "", name) for name in ("offline_access", "uma")]
