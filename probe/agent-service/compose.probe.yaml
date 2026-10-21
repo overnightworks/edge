@@ -1,6 +1,11 @@
 # Probe overlay (probe/agent-service/egress.py), laid over a copy of compose.yaml that the probe
 # moved to a free /24, so it never collides with the live stack's edge_egress (172.31.252.0/24):
 # the gateway's static file from that copy, and the two packet windows. Never used live.
+networks:
+  # The live network has a fixed name (compose.yaml); a probe takes its own, so it never meets it.
+  agent:
+    name: ${COMPOSE_PROJECT_NAME:?run through probe/agent-service/egress.py}_agent
+
 services:
   agent-egress:
     volumes:

@@ -1540,6 +1540,21 @@ docker compose --profile agent-service up -d --force-recreate agent-service
 
 recreates it, which ends every run in flight.
 
+**An app's side.** An app reaches the service by joining the `agent` network, whose name is fixed
+(`hal_agent`, so the project's rename does not move it), as an external network:
+
+```yaml
+services:
+  app:
+    networks: [default, agent]
+networks:
+  agent: {external: true, name: hal_agent}
+```
+
+and calls `http://agent-service:8080` (the port the service listens on; the smoke and the unit probe
+use it). No CA mount is needed: the service is plain http on an isolated internal network, and no host
+process can reach it, because the network has no host address and publishes no port.
+
 **The smoke.** `agent-smoke` (profile `apply`, so `up` never starts it) is the service image running
 `agent-service/smoke.py` on the `agent` network alone, with no port and no secret. It reads the
 person's token and then the workload's from stdin (two lines, nothing else supplies one), starts one

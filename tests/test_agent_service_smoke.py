@@ -177,7 +177,7 @@ def test_a_token_in_the_environment_or_in_argv_is_not_taken(monkeypatch, capsys)
 
     exit_code, _, connection = drive(run_events(*SUCCESS), stdin="")
     with pytest.raises(SystemExit):
-        drive(run_events(*SUCCESS), "--person-token", PERSON_TOKEN)
+        smoke.main(["--person-token", PERSON_TOKEN], io.StringIO(BOTH_TOKENS))
 
     assert exit_code == 1
     assert connection.requests == []
@@ -256,3 +256,10 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
 def test_agent_smoke_reaches_the_service_by_the_name_and_port_the_smoke_defaults_to(services):
     assert smoke.DEFAULT_BASE_URL == "http://agent-service:8080"
     assert "agent" in services["agent-service"]["networks"]
+
+
+def test_the_agent_network_has_the_fixed_name_apps_join_as_an_external_network():
+    networks = yaml.safe_load((ROOT / "compose.yaml").read_text())["networks"]
+
+    assert networks["agent"]["name"] == "hal_agent"
+    assert networks["agent"]["internal"] is True

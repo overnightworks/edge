@@ -438,8 +438,10 @@ networks:
   # traefik-mcp and the apps' MCP servers.
   mcp-backends:
     internal: true
-  # The agent service's API and its callers; from the apps' lanes they join it as an external network.
+  # The agent service's API and its callers; from the apps' lanes they join it as an external network
+  # (README "The agent service"). The fixed name survives the project's rename to `hal`.
   agent:
+    name: hal_agent
     internal: true
     driver_opts: *isolated-bridge
   # The agent service and agent-egress, the only way out of the service.
