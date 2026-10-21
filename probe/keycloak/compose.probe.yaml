@@ -1,7 +1,24 @@
 # Probe overlay (probe/keycloak/probe.py): throwaway secrets and config copies from the probe's
-# scratch directory, plus a test relying party that records back-channel logouts. Never used live.
+# scratch directory, plus a test relying party that records back-channel logouts. It also moves the
+# stack off the live edge's addresses: Traefik's entrypoints (a copy of traefik.yml), the admin
+# front end and the keycloak network's subnet. Never used live.
 services:
+  traefik:
+    volumes:
+      - ${PROBE_TRAEFIK_CONFIG:?run through probe/keycloak/probe.py}:/etc/traefik/traefik.yml:ro
+
+  keycloak:
+    environment:
+      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL:?run through probe/keycloak/probe.py}
+      KC_PROXY_TRUSTED_ADDRESSES: ${PROBE_KEYCLOAK_SUBNET:?run through probe/keycloak/probe.py}
+    labels:
+      # The live Traefik routes only a name of lowercase letters, digits and hyphens, so it must
+      # not pick this container up and route the public host to it.
+      edge.name: PROBE
+
   keycloak-config-cli:
+    environment:
+      KC_HOSTNAME_ADMIN: ${PROBE_ADMIN_URL}
     volumes:
       - ${PROBE_CONFIG_DIR:?run through probe/keycloak/probe.py}:/config:ro
 
@@ -15,6 +32,12 @@ services:
     command: ["python", "-u", "/rp/test_rp.py"]
     volumes:
       - ./probe/keycloak/test_rp.py:/rp/test_rp.py:ro
+
+networks:
+  keycloak:
+    ipam:
+      config: !override
+        - subnet: ${PROBE_KEYCLOAK_SUBNET}
 
 secrets:
   keycloak_db_password:

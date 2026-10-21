@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -184,7 +185,6 @@ def run_main(
             return True
 
     monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(scratch)])
-    monkeypatch.setattr(probe, "ports_free", lambda *_: [])
     monkeypatch.setattr(probe, "Probe", FakeProbe)
     return probe.main(FakeStack)
 
@@ -245,13 +245,18 @@ def test_a_scratch_that_is_a_file_or_not_empty_is_refused_with_the_usage_exit_co
         assert f"{scratch} is not an empty directory" in capsys.readouterr().err
 
 
-def test_a_taken_port_is_refused_with_its_own_exit_code(
-    probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_the_stack_listens_on_ports_of_its_own_beside_the_live_edge(
+    probe: ModuleType, tmp_path: Path, docker_host: DockerHost
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(tmp_path / "s")])
-    monkeypatch.setattr(probe, "ports_free", lambda *_: [8081])
+    stack = probe.Stack(tmp_path)
+    stack.write_traefik_config()
 
-    assert probe.main() == 3
+    config = stack.traefik_config.read_text()
+    assert f'address: "127.0.0.1:{stack.edge_port}"' in config
+    assert f'address: "127.0.0.1:{stack.admin_port}"' in config
+    assert {stack.edge_port, stack.admin_port}.isdisjoint({8081, 8090})
+    assert stack.edge_url == f"http://127.0.0.1:{stack.edge_port}"
+    assert stack.admin_url == f"http://localhost:{stack.admin_port}"
 
 
 FRESH_APPLY_LINE = "fresh apply done"
@@ -349,7 +354,6 @@ def run_hold(
         ["probe.py", "hold", "--scratch", str(scratch)],
     )
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
-    monkeypatch.setattr(probe, "ports_free", lambda *_: [])
     if while_ready_is_written:
         monkeypatch.setattr(sys, "stdout", SignallingStdout(sys.stdout, while_ready_is_written))
     return probe.main(lambda stack_scratch: probe.Stack(stack_scratch, admin_url))
@@ -386,9 +390,12 @@ def test_hold_prints_one_ready_line_naming_the_secret_file_and_no_secret_value(
 
     output = capsys.readouterr().out
     [ready] = ready_lines(output)
-    assert json.loads(ready.removeprefix("READY ")) == {
+    details = json.loads(ready.removeprefix("READY "))
+    assert re.fullmatch(r"http://127\.0\.0\.1:\d+", details["edge_url"])
+    assert details["edge_url"] not in ("http://127.0.0.1:8081", "http://127.0.0.1:8090")
+    assert details | {"edge_url": ""} == {
         "admin_url": fake_keycloak,
-        "edge_url": "http://127.0.0.1:8081",
+        "edge_url": "",
         "realm": "hallucinai",
         "public_issuer": "https://auth.hallucinai.de/realms/hallucinai",
         "admin_client_id": "config-cli",
