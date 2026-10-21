@@ -1803,8 +1803,8 @@ class Probe:
         self.held(
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
-            f"group /{CHANGED_GROUP}) and deletes nothing it dropped: the group /{DROPPED_GROUP} and the "
-            f"client {DROPPED_CLIENT} and the role {DROPPED_ROLE} with its two service-account "
+            f"group /{CHANGED_GROUP}) and deletes nothing it dropped: "
+            f"the group /{DROPPED_GROUP} and the client {DROPPED_CLIENT} and the role {DROPPED_ROLE} with its two service-account "
             f"holders, all dropped from realm.yaml, and the console-made {CONSOLE_SUBGROUP} stay; "
             f"probe-member is still in {MEMBER_GROUP}",
         )
