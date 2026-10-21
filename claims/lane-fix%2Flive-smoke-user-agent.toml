@@ -1,0 +1,7 @@
+claim_id = "1b3a67c663cc46af98f674806ccc7558"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "505b027a0ec6c18bb9f8f05dd990d15033050cc5"
+branch = "fix/live-smoke-user-agent"
+scope = ["agent-service/live_smoke.py", "tests/test_agent_service_live_smoke.py"]
+opened_commit = "29e1d9a256e20892c17043d677f292b9c4d9c829"
