@@ -5,7 +5,7 @@ Pure over a `Snapshot`; `check_hosts` is the entry for callers (the command, lat
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Any
@@ -114,7 +114,7 @@ def check_hosts(document: Any, cloudflare: CloudflareRead, prober: host_probe.Pr
     hosts = catalog.hosts(document)
     snapshot = cloudflare.read(zone)
     answers = {name: prober.ask(name) for name in names_to_probe(hosts, snapshot)}
-    return compare(zone, hosts, snapshot, answers)
+    return compare(zone, hosts, snapshot, answers, catalog.redirected_fqdns(document))
 
 
 def names_to_probe(hosts: Sequence[catalog.Host], snapshot: Snapshot) -> dict[str, catalog.Host]:
@@ -139,12 +139,16 @@ def _probe_name(host: catalog.Host) -> str:
 
 
 def compare(
-    zone: str, hosts: Sequence[catalog.Host], snapshot: Snapshot, answers: Answers
+    zone: str,
+    hosts: Sequence[catalog.Host],
+    snapshot: Snapshot,
+    answers: Answers,
+    redirected: frozenset[str] = frozenset(),
 ) -> HostCheck:
     declared = {host.fqdn: host for host in hosts}
     findings = [finding for host in hosts for finding in _record_findings(host, snapshot)]
     hosts_without_record = {f.subject for f in findings if f.problem is Problem.RECORD_MISSING}
-    findings += _undeclared_records(declared, snapshot.records)
+    findings += _undeclared_records(declared.keys() | redirected, snapshot.records)
     access_unused = False
     if snapshot.apps is None:
         needs_access = any(host.exposure is not catalog.Exposure.PUBLIC for host in hosts)
@@ -202,9 +206,7 @@ def _address_records(records: Sequence[Record]) -> list[Record]:
     return [record for record in records if record.type in ADDRESS_RECORD_TYPES]
 
 
-def _undeclared_records(
-    declared: dict[str, catalog.Host], records: Sequence[Record]
-) -> list[Finding]:
+def _undeclared_records(declared: Collection[str], records: Sequence[Record]) -> list[Finding]:
     return [
         Finding(Problem.UNDECLARED_RECORD, record.name, f"{record.type} {record.content}")
         for record in _address_records(records)

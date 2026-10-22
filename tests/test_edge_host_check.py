@@ -445,6 +445,15 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
     assert result == expected
 
 
+def test_the_records_of_redirected_names_are_declared_and_other_names_still_are_not():
+    current = snapshot(tunnel_record("@"), tunnel_record("www"), tunnel_record("stray"))
+    redirected = frozenset({fqdn("@"), fqdn("www")})
+    check = host_check.compare(ZONE, [], current, {}, redirected)
+    assert [(f.problem.value, f.subject) for f in check.findings] == [
+        ("undeclared-record", fqdn("stray"))
+    ]
+
+
 @pytest.mark.parametrize(
     ("stray_app", "expected"),
     [
