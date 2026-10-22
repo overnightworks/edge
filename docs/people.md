@@ -15,14 +15,21 @@ contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's pro
 - **Target.** `{subject}` is the target person's Keycloak `sub`, compared exactly. hal must resolve a
   name to the `sub` with an exact match before calling any app. A lookup by `{subject}` never creates
   an account in the app.
-- **Caller.** A separate identity: the operator, with his own access token, from the login hal must offer
-  (#256); no such login exists yet. The app admits it only if the token comes from the realm's issuer,
-  its audience names the app's own client, and its `groups` contain `/apps/<app>/admin`. A missing or
-  invalid token, including one whose audience does not name the app's own client, answers `401`; a
-  valid token without `/apps/<app>/admin` answers `403`. The token authenticates the caller;
-  it never names the target. There is no hal service account and no standing secret for these routes.
+- **Caller.** A separate identity: the operator, with his own access token, from the login hal
+  must offer (#256); no such login exists yet. The app checks the token in this order:
+  1. the issuer is the realm's;
+  2. the JWT header `typ` is `at+jwt` or `application/at+jwt` (RFC 9068);
+  3. `aud` names exactly the app's own client, and no other app or Keycloak's `account`;
+  4. `azp` is a client id the app's configuration allows, in practice hal's client.
+
+  A missing token or any failure among these makes the token invalid and answers `401`. A valid
+  token whose `groups` hold neither `/apps/<app>/admin` nor a group below it answers `403`. A
+  member of any subgroup of `/apps/<app>/admin` is admin, as in the browser login. The token
+  authenticates the caller; it never names the target. There is no hal service account and no
+  standing secret for these routes.
 - A request to these routes never creates or provisions an account, neither the caller's nor the
-  target's; a caller without an account in the app is authorised by the token alone or refused with `403`.
+  target's. Given a valid token, a caller without an account in the app is authorised by the
+  token alone or refused with `403`.
 - An app that admits only browser sessions today says so, and hal cannot call it until it admits the
   token.
 - Every answer carries `Cache-Control: no-store`.
