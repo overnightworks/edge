@@ -1,5 +1,6 @@
 """The legal unit (#285): the repository's real compose.yaml, fleet.yaml and legal/ tree."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -89,3 +90,63 @@ def test_every_font_the_stylesheet_names_exists_in_the_mounted_directory():
     names = [part.split('"')[0] for part in stylesheet.split('url("fonts/')[1:]]
     assert names
     assert all((ROOT / FONTS / name).is_file() for name in names)
+
+
+PAGES = ("impressum", "datenschutz", "nutzungsbedingungen")
+TEXT_PAGES = PAGES[1:]
+
+
+def read_page(name: str) -> str:
+    return (ROOT / "legal/pages" / f"{name}.html").read_text()
+
+
+@pytest.mark.parametrize("name", PAGES)
+def test_the_unit_serves_each_page_at_its_path_through_try_files(name):
+    config = (ROOT / "legal/nginx/default.conf").read_text()
+    assert "try_files $uri.html =404;" in config
+    assert (ROOT / "legal/pages" / f"{name}.html").is_file()
+
+
+@pytest.mark.parametrize("name", PAGES)
+def test_a_page_links_only_assets_the_unit_serves(name):
+    served = {f"/_rechtliches/{path.name}" for path in (ROOT / "legal/assets").iterdir()}
+    linked = set(re.findall(r'(?:href|src)="(/_rechtliches/[^"]+)"', read_page(name)))
+    assert linked
+    assert linked <= served
+
+
+@pytest.mark.parametrize("name", TEXT_PAGES)
+def test_every_table_of_contents_entry_jumps_to_a_heading_of_the_page(name):
+    page = read_page(name)
+    contents = page.split('<aside class="toc"')[1].split("</aside>")[0]
+    targets = re.findall(r'href="#([^"]+)"', contents)
+    assert "songmaker" in targets
+    assert all(f'id="{target}"' in page for target in targets)
+
+
+@pytest.mark.parametrize("name", TEXT_PAGES)
+def test_the_songmaker_section_is_one_anchored_block_with_its_own_subsections(name):
+    page = read_page(name)
+    assert page.count('id="songmaker"') == 1
+    assert 'id="songmaker-' in page
+
+
+@pytest.mark.parametrize(
+    "path",
+    [f"legal/pages/{name}.html" for name in PAGES] + ["docs/design/legal-pages.html"],
+)
+@pytest.mark.parametrize(
+    "mark",
+    [
+        "Zu prüfen",
+        "zu prüfen",
+        'class="check',
+        'class="todo"',
+        'class="slot"',
+        "hopin",
+        "presentator",
+        "TODO",
+    ],
+)
+def test_neither_a_page_nor_the_frozen_picture_carries_a_placeholder_or_a_review_mark(path, mark):
+    assert mark not in (ROOT / path).read_text()
