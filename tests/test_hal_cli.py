@@ -234,7 +234,9 @@ def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     real repository; their stdin cell runs on the fake host in test_edge_backup."""
     tree = main_checkout(tmp_path)
 
-    result = run_hal(tmp_path, hal_program(tree, before=FORBIDDEN_STDIN), command.name)
+    arguments = ("former", "current") if command.name == "rename" else ()
+
+    result = run_hal(tmp_path, hal_program(tree, before=FORBIDDEN_STDIN), command.name, *arguments)
 
     assert result.returncode == ExitCode.OK
 

@@ -91,16 +91,27 @@ Rulings of overnightworks/edge#24 recorded in the table:
 
 1. Before: `aco status` in that repo shows no claim and no live lane.
 2. The operator approves; an agent runs `gh repo rename`.
-3. In every clone, including deploy checkouts, run `git remote set-url origin ...`
-   right after the rename. Never re-clone: the local `refs/aco/state` and its
-   fetch refspec must survive. aco reads the identity from the remote URL
-   first and uses `gh repo view` only as a fallback.
-4. `mv` the clone and its `-worktrees`, then run `git worktree repair` from the
-   main clone and in each worktree.
-5. Recreate path-bound `.venv`s with `uv sync`, and reinstall uv tools from the
-   new path.
-6. Update the repo description, the memory files and the callers' URLs (git
-   URLs redirect in the meantime).
+3. Run `hal rename OLD NEW` to see the moves, then `hal rename OLD NEW --apply`.
+   It moves every clone under `~/git` and its `-worktrees`, repairs the
+   worktrees, sets `origin` to the new name (never re-clone: the local
+   `refs/aco/state` and its fetch refspec must survive; aco reads the identity
+   from the remote URL first and uses `gh repo view` only as a fallback),
+   carries the Claude project memory, sets the `origin` of a deploy checkout
+   outside `~/git` and, in every clone and worktree with a `uv.lock`, runs
+   `uv venv --allow-existing` and `uv sync --locked --reinstall` on every run,
+   so a moved `.venv` names its new path and a rerun finishes a half-built one;
+   `uv venv` gets the venv's own Python minor version (3.12 stays 3.12; the patch
+   release and the interpreter install it comes from may change). It deletes nothing.
+   It refuses, changing nothing, while a process runs inside a clone, a target
+   exists, a symbolic link lies anywhere in a clone, worktree (inside or outside `~/git`,
+   as git lists it), `.venv` or target path, or GitHub does not know the new name. `hal rename NEW OLD` undoes it.
+   A step that fails stops it, names the step and what is done; run the same
+   command again once the cause is fixed and it finishes the half-moved clones.
+4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that
+   point into a moved clone; the repository's own head fixes those (reinstall
+   uv tools from the new path).
+5. Update the repo description and the callers' URLs (git URLs redirect in the
+   meantime).
 
 GitHub redirects git and web URLs, but **not** calls to actions and reusable
 workflows in a renamed repo: move those callers first.
