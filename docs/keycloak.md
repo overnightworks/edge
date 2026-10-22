@@ -54,12 +54,16 @@ demands a TOTP code as well, so an administrator without TOTP gets no token
 that way. Remote administration while travelling arrives with the A9 travel
 setup (an SSH or Tailscale forward to 8090), never through the tunnel.
 
-Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`,
-applied by keycloak-config-cli. People and their group memberships are managed
-only in the admin console; no file lists a person. The songmaker, hopin and presentator
-clients are in `realm.yaml`, each secret the file `~/.secrets/keycloak/clients/<clientId>`
-(`keycloak/go-live` makes it; presentator's one client serves `presentator` and
-`presentator-talk`); the other app clients arrive at K13/K14.
+Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`, applied
+by keycloak-config-cli. People and their group memberships are managed only in
+the admin console; no file lists a person. An invited person gets the username
+they ask for, a pseudonym included, and nothing checks the names they enter at
+first sign-in, because the privacy notice promises pseudonymous use (§ 19 Abs. 2
+TDDDG; the operator's ruling of 22.10.2026, edge#312). The songmaker, hopin and
+presentator clients are in `realm.yaml`, each secret the file
+`~/.secrets/keycloak/clients/<clientId>` (`keycloak/go-live` makes it;
+presentator's one client serves `presentator` and `presentator-talk`); the other
+app clients arrive at K13/K14.
 
 songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
 service accounts are the only users `realm.yaml` lists, each holding the realm role
