@@ -334,24 +334,33 @@ def test_a_token_that_arrives_after_the_code_expired_is_refused():
     assert str(stopped.value) == "the code ran out before it was confirmed; run the smoke again"
 
 
-def test_the_expiry_is_not_extended_by_time_spent_between_calls():
-    class TickingClock(FakeClock):
+def test_a_token_after_the_original_expiry_is_refused_though_a_rebuilt_deadline_would_allow_it():
+    class SlowClock(FakeClock):
+        """Until the request goes out, each look at the clock costs `delay` seconds."""
+
+        delay = 0.25
+
         def __call__(self) -> float:
-            self.now += 1  # every look at the clock costs a second
+            self.now += self.delay
             return self.now
 
-    clock = TickingClock()
+    clock = SlowClock()
     expiry = clock.now + 6
-    # answered after 3 ticks past the point where a deadline re-derived at the call would end
-    slow = trickling(clock, [b'{"access_token": "late"}'], delay=2)
+    arrival = expiry + 0.1  # after the expiry, before the expiry plus the time lost on the way
+    answer = TrickledAnswer(clock, [b'{"access_token": "late"}'])
+
+    def urlopen(_request, timeout):
+        clock.delay = 0
+        clock.now = arrival
+        return answer
 
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
         device_sign_in.person_token(
-            device_sign_in.DeviceAuthorization("code", "user", "link", 6, 1),
+            device_sign_in.DeviceAuthorization("code", "user", "link", 6, 5),
             expiry,
             "verifier",
             "s",
-            slow,
+            urlopen,
             clock.pause,
             clock,
         )
