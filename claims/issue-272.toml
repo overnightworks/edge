@@ -3,6 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "8c1b82f8ccd603987b8e35c4c6ec1da7e3ec610b"
 branch = "claude/issue-272-hal-setup-user-units"
-scope = ["docs/backup.md", "docs/home.md", "quality/baseline.toml", "src/home_tools/cli.py", "src/home_tools/setup.py", "src/home_tools/user_units.py", "tests/home/conftest.py", "tests/home/test_setup.py", "tests/home/test_user_units.py"]
+scope = ["docs/backup.md", "docs/home.md", "quality/baseline.toml", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "src/home_tools/cli.py", "src/home_tools/setup.py", "src/home_tools/tidy_home.py", "src/home_tools/user_units.py", "tests/home/conftest.py", "tests/home/test_setup.py", "tests/home/test_user_units.py"]
 opened_commit = "eaeb9be5f47ba26d6b244912876ad06194307fa6"
 whole_reason = "One shipped step and the two documents that described its hand sequence."
