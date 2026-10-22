@@ -85,8 +85,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -108,7 +112,7 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Impressum, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;de&quot;&gt;
@@ -173,8 +177,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -196,7 +204,7 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure></div></section>
 <section class="spec" id="datenschutz">
@@ -265,8 +273,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -278,7 +290,7 @@ h1{font-size:34px}
 &lt;div class=&quot;wrap&quot;&gt;
 &lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
 &lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
-&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details open&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
 &lt;h1&gt;Datenschutzerklärung&lt;/h1&gt;
 &lt;h2 id=&quot;verantwortlicher&quot;&gt;Verantwortlicher&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlicher&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
 &lt;p&gt;Felix Hummert&lt;br&gt; Wöhrstr. 6a, 91054 Erlangen&lt;br&gt; E-Mail: legal@hallucinai.de&lt;/p&gt;
@@ -324,7 +336,7 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Datenschutzerklärung, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;de&quot;&gt;
@@ -389,8 +401,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -402,7 +418,7 @@ h1{font-size:34px}
 &lt;div class=&quot;wrap&quot;&gt;
 &lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
 &lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
-&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details open&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
 &lt;h1&gt;Datenschutzerklärung&lt;/h1&gt;
 &lt;h2 id=&quot;verantwortlicher&quot;&gt;Verantwortlicher&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlicher&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
 &lt;p&gt;Felix Hummert&lt;br&gt; Wöhrstr. 6a, 91054 Erlangen&lt;br&gt; E-Mail: legal@hallucinai.de&lt;/p&gt;
@@ -448,12 +464,12 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure></div></section>
 <section class="spec" id="nutzungsbedingungen">
 <header><h2>hallucinai.de/nutzungsbedingungen</h2>
-<p class="cap"><b>Entschieden</b> gleiche Form wie die Datenschutzerklärung; gemeinsam ist nur das anwendbare Recht, alles andere ist songmakers Abschnitt.</p></header>
+<p class="cap"><b>Vorschlag des Heads unter U4, nicht vom Betreiber entschieden:</b> gleiche Form wie die Datenschutzerklärung; gemeinsam ist nur das anwendbare Recht, alles andere ist songmakers Abschnitt.</p></header>
 <div class="pair"><figure class="dev w390"><figcaption>Telefon<span>390 px</span></figcaption><div class="chrome"><iframe title="Nutzungsbedingungen, 390 px" width="390" height="900" srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;de&quot;&gt;
 &lt;head&gt;
@@ -517,8 +533,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -530,7 +550,7 @@ h1{font-size:34px}
 &lt;div class=&quot;wrap&quot;&gt;
 &lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
 &lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
-&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details open&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
 &lt;h1&gt;Nutzungsbedingungen&lt;/h1&gt;
 &lt;h2 id=&quot;recht&quot;&gt;Anwendbares Recht&lt;a class=&quot;anchor&quot; href=&quot;#recht&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
 &lt;p&gt;Es gilt deutsches Recht.&lt;/p&gt;
@@ -551,7 +571,7 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Nutzungsbedingungen, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;de&quot;&gt;
@@ -616,8 +636,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }
@@ -629,7 +653,7 @@ h1{font-size:34px}
 &lt;div class=&quot;wrap&quot;&gt;
 &lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
 &lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
-&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details open&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
 &lt;h1&gt;Nutzungsbedingungen&lt;/h1&gt;
 &lt;h2 id=&quot;recht&quot;&gt;Anwendbares Recht&lt;a class=&quot;anchor&quot; href=&quot;#recht&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
 &lt;p&gt;Es gilt deutsches Recht.&lt;/p&gt;
@@ -650,7 +674,7 @@ h1{font-size:34px}
 &lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
 &lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
 &lt;/div&gt;
-&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});if(matchMedia(&#x27;(max-width:899px)&#x27;).matches){const d=document.querySelector(&#x27;aside.toc details&#x27;);if(d)d.open=false}&lt;/script&gt;&lt;/body&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
 &lt;/html&gt;
 "></iframe></div></figure></div></section>
 </div>

@@ -82,8 +82,12 @@ footer a[aria-current]{color:var(--primary)}
 .layout:has(>aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
 aside.toc{position:sticky;top:16px;margin:0}
 aside.toc details{border:0;background:none}
-aside.toc summary{pointer-events:none;padding-left:0;list-style:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
 aside.toc summary::-webkit-details-marker{display:none}
+}
 article{padding:34px 40px 28px}
 h1{font-size:34px}
 }

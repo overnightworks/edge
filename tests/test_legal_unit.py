@@ -101,22 +101,30 @@ def read_page(name: str) -> str:
 
 
 @pytest.mark.parametrize("name", PAGES)
-def test_the_unit_serves_each_page_at_its_path_through_try_files(name):
+def test_each_page_file_exists_and_the_config_resolves_paths_through_try_files(name):
     config = (ROOT / "legal/nginx/default.conf").read_text()
     assert "try_files $uri.html =404;" in config
     assert (ROOT / "legal/pages" / f"{name}.html").is_file()
 
 
 @pytest.mark.parametrize("name", PAGES)
-def test_a_page_links_only_assets_the_unit_serves(name):
+def test_a_page_links_only_assets_the_unit_has_files_for(name):
     served = {f"/_rechtliches/{path.name}" for path in (ROOT / "legal/assets").iterdir()}
     linked = set(re.findall(r'(?:href|src)="(/_rechtliches/[^"]+)"', read_page(name)))
     assert linked
     assert linked <= served
 
 
+@pytest.mark.parametrize("name", PAGES)
+def test_a_page_carries_no_inline_style_and_no_script_the_csp_would_refuse(name):
+    page = read_page(name)
+    assert " style=" not in page
+    assert "<style" not in page
+    assert "<script" not in page
+
+
 @pytest.mark.parametrize("name", TEXT_PAGES)
-def test_every_table_of_contents_entry_jumps_to_a_heading_of_the_page(name):
+def test_every_table_of_contents_entry_targets_an_id_of_the_page(name):
     page = read_page(name)
     contents = page.split('<aside class="toc"')[1].split("</aside>")[0]
     targets = re.findall(r'href="#([^"]+)"', contents)
@@ -125,7 +133,7 @@ def test_every_table_of_contents_entry_jumps_to_a_heading_of_the_page(name):
 
 
 @pytest.mark.parametrize("name", TEXT_PAGES)
-def test_the_songmaker_section_is_one_anchored_block_with_its_own_subsections(name):
+def test_the_songmaker_section_has_an_anchored_heading_and_subsection_ids(name):
     page = read_page(name)
     assert page.count('id="songmaker"') == 1
     assert 'id="songmaker-' in page
