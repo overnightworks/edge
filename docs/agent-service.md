@@ -76,6 +76,24 @@ inode, and the rename would never reach the running container. A missing directo
 instead of becoming a root-owned one; the directory itself stays for ever, so never replace or
 re-create it.
 
+## What a turn leaves behind
+
+The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
+are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
+drops them. The only host binds are `service.toml` and the login directory, both read-only
+([The login](#the-login)); the login reaches the CLI only through its environment. The service sets
+no `logging` override, so its logs follow the Docker daemon's settings; their destination and
+retention are set there, not in this file (log retention: edge#167,
+<https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
+agent-providers' to state and is not specified here. The content of
+a turn leaves this PC for Anthropic, which generates the answer.
+
+**Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
+Claude subscription serves only his own use. Every other person reaches the service only through the
+API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
+enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
+gets 403 `not_enabled`. An app's privacy text therefore describes only the API route.
+
 ## An app's side
 
 An app reaches the service by joining the `agent` network, whose name is fixed (`hal_agent`, so the

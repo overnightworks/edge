@@ -249,6 +249,17 @@ def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running
     }
 
 
+def test_the_playbook_vacuums_two_days_short_of_the_ruled_retention(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T6: the timer's `--vacuum-time` is the ruled 30 days minus the file-span and slack days."""
+    run_setup(sandbox, capsys, "--apply")
+
+    (argv,) = sandbox.system.playbook.calls
+    extra_vars = json.loads(argv[argv.index("--extra-vars") + 1])
+    assert (system_step.LOG_RETENTION_DAYS, extra_vars["journal_vacuum_days"]) == (30, 28)
+
+
 def test_the_playbook_ships_inside_the_package() -> None:
     """Rule 3: the playbook is read from beside the module, so a non-editable install carries it."""
     assert system_step.PLAYBOOK.is_file()
