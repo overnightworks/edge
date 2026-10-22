@@ -71,11 +71,27 @@ design; the secret stays the app's own file. hopin has no service account.
 
 Keycloak's login and account pages use the realm theme `hallucinai`
 (`loginTheme` and `accountTheme` in `realm.yaml`). Its files sit in
-`keycloak/themes/hallucinai/{login,account}/theme.properties`, which for now
-only name the parents `keycloak.v2` and `keycloak.v3`; compose mounts the
-directory read-only into the `keycloak` service. A later look (logo, colours,
-font) therefore changes theme files only, never the realm. The email and
-admin themes, the master realm and the admin console stay Keycloak's own.
+`keycloak/themes/hallucinai/{login,account}`; compose mounts the directory
+read-only into the `keycloak` service, so a change of look changes theme files
+only, never the realm. The email and admin themes, the master realm and the
+admin console stay Keycloak's own.
+
+The themes give both pages the look of hallucinai.de, always dark, with the
+violet main button of songmaker's vocabulary (`docs/design/keycloak-theme.html`
+is the picture): the wordmark, hallucinai's colours and shapes over
+Keycloak's PatternFly, Oswald and Open Sans carried in the theme (songmaker's
+font files and their licences, so no page asks a third party), the favicon,
+and Impressum and Datenschutz in the sign-in card. They are CSS, `footer.ftl`
+and message texts on top of `keycloak.v2` and `keycloak.v3`, never a copy of
+Keycloak's `template.ftl`, so a Keycloak update needs no catching up. The
+account console hides its "Gruppen" page (its own `content.json`) and the
+sentences under titles and sign-in methods; its "Anwendungen" lists only apps
+a person has used, because the app clients carry `alwaysDisplayInConsole:
+false` in `realm.yaml`. What Keycloak does not let a theme change stays
+Keycloak's: the fields and paths the realm offers (no registration, no
+"Passwort vergessen?", no mail: the operator resets passwords in the admin
+console), the account console's layout and its pages, the browser's passkey
+window and the code page's content.
 
 The pages appear in German and English: the browser's language decides,
 English applies when neither is asked for, and the pages carry a language
