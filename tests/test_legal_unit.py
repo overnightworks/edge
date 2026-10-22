@@ -110,6 +110,7 @@ def test_each_page_file_exists_and_the_config_resolves_paths_through_try_files(n
 @pytest.mark.parametrize("name", PAGES)
 def test_a_page_links_only_assets_the_unit_has_files_for(name):
     served = {f"/_rechtliches/{path.name}" for path in (ROOT / "legal/assets").iterdir()}
+    served |= {f"/_rechtliches/fonts/{path.name}" for path in (ROOT / FONTS).iterdir()}
     linked = set(re.findall(r'(?:href|src)="(/_rechtliches/[^"]+)"', read_page(name)))
     assert linked
     assert linked <= served
