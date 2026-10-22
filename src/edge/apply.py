@@ -41,24 +41,28 @@ in the checkout changes: only `.git` gains the fetched objects, FETCH_HEAD and `
 import fcntl
 import os
 import sys
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from edge import (
-    barrier,
-    catalog,
-    checkout,
-    compose,
-    core,
-    environment,
-    setup,
-    switches,
-    terminal,
-)
+from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.realm import reconcile
+from edge.unit_plans import (
+    Action,
+    Fleet,
+    KeptImage,
+    Progress,
+    UnitPlan,
+    plan_kept_images,
+    plan_switches,
+    read_fleet,
+    since_of,
+    switch,
+    unobserved,
+)
+from edge.waiting import Waiting, fetched
 
 EnsureEnvironment = Callable[[Path], str | None]
 COMMAND = "edge apply --closed"
@@ -74,228 +78,6 @@ class ApplyExit(IntEnum):
     APPLIED_OR_NOTHING = 0
     REFUSED = 1
     CANNOT_PLAN = 2
-
-
-class Effect(StrEnum):
-    """What updating the live checkout does with a changed file (#98 rule 4), in shown order."""
-
-    LIVE = "live once updated"
-    RECREATED = "recreated by edge apply"
-    REALM = "applied by hal apply (the realm step)"
-    UV_SYNC = "stops for `uv sync`"
-    NOT_APPLIED = "not applied by edge apply (block 6)"
-    OTHER = "other"
-
-
-_CORE_DEFINITIONS = "compose.yaml"  # what the core is recreated from when its definition changed
-_UV_SYNC_FILES = frozenset({"pyproject.toml", "uv.lock"})  # edge's own code needs `uv sync` (S10)
-
-
-class Action(StrEnum):
-    ON = "on"
-    OFF = "off"
-    STAYS_STOPPED = "stays stopped"
-
-
-@dataclass(frozen=True)
-class UnitPlan:
-    unit: catalog.Unit
-    action: Action
-    services: tuple[str, ...]
-    volumes: tuple[str, ...]
-    switched_off_since: str | None = None
-    running: bool = False
-
-    def describe(self) -> str:
-        touched = f"services {', '.join(self.services)}"
-        if self.action is Action.STAYS_STOPPED and self.switched_off_since is None:
-            return f"{self.unit.key} stays stopped (its barrier stands; no switch recorded)"
-        if self.action is Action.STAYS_STOPPED:
-            return f"{self.unit.key} stays stopped (switch since {self._since()})"
-        if self.action is Action.OFF:
-            line = f"{self.unit.key}: off ({touched}; volumes {', '.join(self.volumes)} stay)"
-            if self.switched_off_since:
-                line += f"; its switch since {self._since()} stays"
-            return line
-        return f"{self.unit.key}: on ({touched})"
-
-    def _since(self) -> str:
-        return switches.describe_since(self.switched_off_since or "")
-
-
-@dataclass(frozen=True)
-class Fleet:
-    """What `fleet.yaml` and Compose say about this repository's units."""
-
-    config: Mapping[str, Any]
-    profile_services: Mapping[str, tuple[str, ...]]
-    units: tuple[catalog.Unit, ...]
-
-
-def read_fleet(engine: compose.Compose, repository: Path) -> Fleet:
-    config = engine.resolved_configuration()
-    profile_services = compose.profile_services(config)
-    return Fleet(config, profile_services, catalog.load(repository, profile_services))
-
-
-def plan_switches(
-    units: Sequence[catalog.Unit],
-    profile_services: Mapping[str, tuple[str, ...]],
-    config: Mapping[str, Any],
-    states: Mapping[str, set[str]],
-    switched_off: Mapping[str, str | None],
-) -> list[UnitPlan]:
-    """What each unit needs to become what the catalog says; a unit already so is left out.
-
-    `switched_off` maps a switched-off unit to the time of its switch, None when only its barrier
-    stands: that unit is never started, and an enabled one is listed as staying stopped.
-    """
-    plans = []
-    for unit in units:
-        services = profile_services[unit.key]
-        since = switched_off.get(unit.key)
-        if unit.enabled and unit.key in switched_off:
-            action = Action.STAYS_STOPPED
-        elif unit.enabled and not compose.is_up(states, config, services):
-            action = Action.ON
-        elif not unit.enabled and not compose.is_gone(states, services):
-            action = Action.OFF
-        else:
-            continue
-        volumes = sorted(
-            {v for name in services for v in compose.named_volumes(config["services"][name])}
-        )
-        running = compose.has_running_container(states, services)
-        plans.append(UnitPlan(unit, action, services, tuple(volumes), since, running))
-    return plans
-
-
-KEPT_IMAGE_OWNER = "the upgrade is yours (block 6; Keycloak with a dump first, K11b)"
-
-
-@dataclass(frozen=True)
-class KeptImage:
-    """A live service of a unit that runs another image than compose.yaml names now."""
-
-    unit: str
-    service: str
-    running: str
-    configured: str
-
-    def describe(self) -> str:
-        return (
-            f"{self.unit}: {self.service} runs {self.running}, compose.yaml names "
-            f"{self.configured}; edge apply never swaps the image of a running unit, so it "
-            f"keeps running; {KEPT_IMAGE_OWNER}"
-        )
-
-
-def plan_kept_images(
-    units: Sequence[catalog.Unit],
-    profile_services: Mapping[str, tuple[str, ...]],
-    config: Mapping[str, Any],
-    containers: Sequence[compose.Container],
-    plans: Sequence[UnitPlan],
-    followers: Collection[str],
-) -> list[KeptImage]:
-    """Each live service of a unit whose container's image is not the exact reference its
-    resolved definition names, in catalog and file order (#91 rules 2, 3). The core has no
-    profile, the followers are recreated by their own plan, a unit planned off loses its
-    containers, and a service whose definition names no image has no pin to compare."""
-    planned_off = {plan.unit.key for plan in plans if plan.action is Action.OFF}
-    live = [container for container in containers if container.live]
-    kept: dict[KeptImage, None] = {}
-    for unit in units:
-        if unit.key not in planned_off:
-            services = [
-                service for service in profile_services[unit.key] if service not in followers
-            ]
-            kept.update(dict.fromkeys(_kept_images_of(unit.key, services, config, live)))
-    return list(kept)
-
-
-def _kept_images_of(
-    unit: str, services: Sequence[str], config: Mapping[str, Any], live: Sequence[compose.Container]
-) -> Iterator[KeptImage]:
-    for service in services:
-        configured = config["services"][service].get("image")
-        if configured is None:
-            continue
-        for running in _running_images(service, live):
-            if running != configured:
-                yield KeptImage(unit, service, running, configured)
-
-
-def _running_images(service: str, live: Sequence[compose.Container]) -> list[str]:
-    """The images the service's live containers were created from; a ps line naming none cannot
-    be compared, so it cannot be planned, as a missing label is (#87)."""
-    images = []
-    for container in live:
-        if container.service != service:
-            continue
-        if container.image is None:
-            raise compose.ComposeError(
-                f"a live {service} container's `docker compose ps` line names no Image"
-            )
-        images.append(container.image)
-    return images
-
-
-@dataclass
-class Progress:
-    unit: str = ""
-    step: str = ""
-
-
-def _switch(
-    engine: compose.Compose,
-    plan: UnitPlan,
-    progress: Progress,
-    marks: switches.Switches,
-    read: Mapping[str, switches.Mark | None],
-) -> str | None:
-    """Switch one unit; the time of a switch that appeared meanwhile when the unit stays down."""
-    progress.unit = plan.unit.key
-    if plan.action is Action.ON:
-        progress.step = "start"
-        with marks.lock():
-            if changed := marks.changed(plan.unit.key, read[plan.unit.key]):
-                return _since_of(changed)
-            engine.start(plan.unit.key, plan.services)
-        return None
-    progress.step = "stop"
-    engine.stop(plan.unit.key, plan.services)
-    progress.step = "remove the containers"
-    engine.remove_containers(plan.unit.key, plan.services)
-    return None
-
-
-def _since_of(changed: switches.Changed) -> str:
-    """The time of a switch that appeared after the plan was read."""
-    return changed.current.since if changed.current else switches.UNKNOWN_SWITCH_TIME
-
-
-def _unobserved(
-    engine: compose.Compose,
-    plans: Sequence[UnitPlan],
-    config: Mapping[str, Any],
-    watch: compose.Watch,
-) -> list[UnitPlan]:
-    """The plans whose result is not observed: a unit switched on counts only when its services
-    stay up through the watch, the way a recreated core service does."""
-    switched_on = [plan for plan in plans if plan.action is Action.ON]
-    watched = tuple(dict.fromkeys(service for plan in switched_on for service in plan.services))
-    down = set(engine.down_while_watched(config, watched, watch)) if watched else set()
-    states = engine.states()
-    return [
-        plan
-        for plan in plans
-        if (
-            down.intersection(plan.services)
-            if plan.action is Action.ON
-            else not compose.is_gone(states, plan.services)
-        )
-    ]
 
 
 CANNOT_PLAN_ERRORS = (
@@ -433,7 +215,7 @@ def apply_closed(
         live = checkout.Git(repository, git)
         if not (_on_clean_main(live) and _environment_ready(repository, ensure_environment)):
             return ApplyExit.CANNOT_PLAN
-        if (waiting := _fetched(live)) is None:
+        if (waiting := fetched(live, _show, _say)) is None:
             return ApplyExit.CANNOT_PLAN
         return _plan_and_apply(
             state_directory,
@@ -452,6 +234,10 @@ def apply_closed(
 
 def _say(line: str) -> None:
     print(f"{COMMAND}: {line}", file=sys.stderr)
+
+
+def _show(line: str) -> None:
+    print(f"{COMMAND}: {line}")
 
 
 def _tell(line: str) -> None:
@@ -498,81 +284,6 @@ def _environment_ready(repository: Path, ensure_environment: EnsureEnvironment) 
     if written:
         _say(written)
     return True
-
-
-@dataclass(frozen=True)
-class Waiting:
-    """What waits on origin's `main` for the live checkout; nothing while it is current."""
-
-    origin: checkout.Origin
-    commits: tuple[checkout.Commit, ...]
-    files: tuple[checkout.ChangedFile, ...]
-
-    def describe(self, binds: core.CheckoutBinds, realm_files: Collection[str]) -> list[str]:
-        """The waiting commits, their files by effect, the interim way to bring them in and what
-        the plan below applies (#98 rule 4)."""
-        one = len(self.commits) == 1
-        commits = "1 commit" if one else f"{len(self.commits)} commits"
-        lines = [f"{commits} {'waits' if one else 'wait'} on origin {checkout.MAIN}:"]
-        lines += [f"  {commit.short} {commit.subject}" for commit in self.commits]
-        lines.append("their files, by what an update does with them:")
-        by_effect = {effect: [] for effect in Effect}
-        for file in sorted(self.files, key=lambda changed: changed.path):
-            by_effect[_effect(file.path, binds, realm_files)].append(
-                f"    {file.status} {file.shown}"
-            )
-        for effect, files in by_effect.items():
-            if files:
-                lines += [f"  {effect}:", *files]
-        return [
-            *lines,
-            f"the live checkout is {commits} behind; to bring them: git -C "
-            f"{checkout.LIVE_CHECKOUT} merge --ff-only {self.origin.sha}",
-            f"the plan below applies HEAD {self.origin.head}, without the waiting commits",
-        ]
-
-
-def _effect(path: str, binds: core.CheckoutBinds, realm_files: Collection[str]) -> Effect:
-    if path == _CORE_DEFINITIONS or core.is_bound(path, binds.recreated):
-        return Effect.RECREATED
-    if core.is_bound(path, binds.live):
-        return Effect.LIVE
-    if path in _UV_SYNC_FILES:
-        return Effect.UV_SYNC
-    if path in realm_files:
-        return Effect.REALM
-    if core.is_bound(path, binds.units):
-        return Effect.NOT_APPLIED
-    return Effect.OTHER
-
-
-def _fetched(git: checkout.Git) -> Waiting | None:
-    """origin's `main` fetched and pinned, and what waits on it; None after saying why the apply
-    stops there: the fetch failed (S4), or HEAD is ahead of or beside it (S3) (#98 rules 2, 3)."""
-    try:
-        origin = checkout.fetch_origin(git)
-    except checkout.GitError as error:
-        _say(f"cannot fetch {checkout.MAIN} from origin, {error}; nothing changed")
-        return None
-    print(f"{COMMAND}: fetched {checkout.MAIN} from {origin.url}")
-    standing = origin.standing
-    if standing is checkout.Standing.CURRENT:
-        print(f"{COMMAND}: live checkout current ({origin.short})")
-        return Waiting(origin, (), ())
-    if standing is not checkout.Standing.BEHIND:
-        stands = "is ahead of" if standing is checkout.Standing.AHEAD else "has diverged from"
-        _say(
-            f"the live checkout {stands} origin {checkout.MAIN} (HEAD {origin.head}, origin "
-            f"{checkout.MAIN} {origin.short}); nothing reset, a change reaches it through a pull "
-            "request"
-        )
-        return None
-    try:
-        commits = tuple(git.waiting_commits(origin.sha))
-        return Waiting(origin, commits, tuple(git.waiting_files(origin.sha)))
-    except checkout.GitError as error:
-        _say(f"cannot read what waits on origin {checkout.MAIN}, {error}; nothing changed")
-        return None
 
 
 def _plan_and_apply(
@@ -849,7 +560,7 @@ class CorePhase:
                 progress.unit = plan.service
                 with marks.lock():
                     if changed := marks.changed(plan.unit, planned.read[plan.unit]):
-                        since = switches.describe_since(_since_of(changed))
+                        since = switches.describe_since(since_of(changed))
                         return (
                             f"{plan.unit} was switched off meanwhile (since {since}); "
                             f"{plan.service} is not recreated"
@@ -941,7 +652,7 @@ def _observe_and_record(
     """The started plans not observed as planned; each unit observed on records the followers
     that started with it (#89, P15)."""
     progress.step = "observe the result"
-    mismatched = _unobserved(engine, started, planned.fleet.config, core_phase.watch)
+    mismatched = unobserved(engine, started, planned.fleet.config, core_phase.watch)
     switched_on = [plan for plan in started if plan.action is Action.ON and plan not in mismatched]
     core_phase.record_switched_on(planned, switched_on, progress)
     return mismatched
@@ -1004,7 +715,7 @@ def _confirm_and_switch(
             )
             return ApplyExit.REFUSED
         for plan in changes:
-            if since := _switch(engine, plan, progress, marks, read):
+            if since := switch(engine, plan, progress, marks, read):
                 withheld[plan.unit.key] = since
         started = [plan for plan in changes if plan.unit.key not in withheld]
         mismatched = _observe_and_record(engine, planned, core_phase, started, progress)
@@ -1023,6 +734,15 @@ def _confirm_and_switch(
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
+    return _report_switched(changes, withheld, mismatched, realm_failed)
+
+
+def _report_switched(
+    changes: Sequence[UnitPlan],
+    withheld: Mapping[str, str],
+    mismatched: Sequence[UnitPlan],
+    realm_failed: bool,
+) -> int:
     for unit, since in withheld.items():
         print(
             f"{COMMAND}: partial, {unit} was switched off meanwhile "

@@ -4,7 +4,7 @@
     "exposure": "public",
     "reason": "the apex is not covered by the wildcard",
     "ready": null,
-    "target": "http://localhost:8080",
+    "target": "http://127.0.0.1:8081",
     "deny_public": []
   },
   "*.edge-fixture.invalid": {

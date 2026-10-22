@@ -1,5 +1,11 @@
 cloudflare:
   zone: hallucinai.de
+  redirect:
+    hosts: ["@", www]
+    target: "https://auth.hallucinai.de/"
+    keep:
+      - {path: /impressum, target: "https://songmaker.hallucinai.de"}
+      - {path: /datenschutz, target: "https://songmaker.hallucinai.de"}
 
 github:
   org: overnightworks
@@ -8,8 +14,6 @@ services:
   songmaker:
     hosts:
       - {name: songmaker, exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
-      - {name: "@", exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
-      - {name: www, exposure: public, reason: "the apex's alias", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
   step-ca:
     run:
       enabled: true

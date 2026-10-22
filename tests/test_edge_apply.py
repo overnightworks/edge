@@ -49,6 +49,7 @@ from edge import (
     tunnel,
 )
 from edge.realm import reconcile
+from edge.unit_plans import KeptImage, plan_kept_images
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -4276,7 +4277,7 @@ def test_only_a_live_container_is_named_for_its_image(state, exit_code, named):
     config = resolved_configuration()
     config["services"]["step-ca"]["image"] = STEP_CA_BUMP
 
-    kept = apply.plan_kept_images(
+    kept = plan_kept_images(
         (catalog.Unit("step-ca", True, None),),
         compose.profile_services(config),
         config,
@@ -4285,7 +4286,7 @@ def test_only_a_live_container_is_named_for_its_image(state, exit_code, named):
         (),
     )
 
-    assert kept == ([apply.KeptImage("step-ca", "step-ca", IMAGE, STEP_CA_BUMP)] if named else [])
+    assert kept == ([KeptImage("step-ca", "step-ca", IMAGE, STEP_CA_BUMP)] if named else [])
 
 
 def test_a_unit_planned_off_is_not_named_for_its_image(switch, scripted, repository):
