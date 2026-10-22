@@ -56,6 +56,7 @@ REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
 sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
+import device_grant_cell  # noqa: E402
 
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
@@ -2246,6 +2247,7 @@ class Probe:
                 error == "unauthorized_client",
                 f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
             )
+        device_grant_cell.prove(self, client.client_id, client_secret, expect)
 
     @staticmethod
     def person_token_is_no_workload(client: AppClient, access_token: str) -> None:

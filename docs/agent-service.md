@@ -117,7 +117,12 @@ Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-p
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in as yourself (the
-`songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
+`songmaker` client's device grant, edge#184 D6): it prints a link and a code and opens the link
+where a browser is there; you sign in and confirm on any device, and the run goes on by itself,
+nothing is pasted (it waits as long as the code lives). Keycloak starts a
+device sign-in only for a request with songmaker's client secret, which lives in `~/.secrets` on
+this machine, so no stranger can send you a link to confirm; no other client allows the grant.
+It recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
 `~/.secrets`, and the person in the groups `/apps/songmaker` and `/services/agent-service/subscription`.

@@ -3,8 +3,8 @@
 
     cd ~/git/edge && python3 agent-service/live_smoke.py
 
-You sign in as yourself (the `songmaker` client's code flow with PKCE): open the printed
-address, sign in, and paste the address of the page that then fails; it is read without echo.
+You sign in as yourself (the `songmaker` client's device grant, `device_sign_in.py`): open the
+printed link, sign in and confirm the code; the run then carries on by itself, nothing is pasted.
 The person's and the workload's token live in this process only and reach `agent-smoke`
 on its stdin; no token or secret is on a command line, in a file or in the report.
 The run recreates the service, takes the idle
@@ -26,25 +26,16 @@ observations are `egress_observe.py`, shared with the probe. Only the standard l
 from __future__ import annotations
 
 import argparse
-import base64
-import getpass
-import hashlib
-import http.client
 import inspect
 import ipaddress
 import json
 import re
-import secrets
 import socket
 import subprocess
 import sys
 import threading
 import time
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -54,12 +45,10 @@ from pathlib import Path
 from typing import Final
 
 import egress_observe
+from device_sign_in import CLIENT, SignInFailed, sign_in
 from egress_observe import PUBLIC_RESOLVER, lan_address
 from smoke import HOLDING_MESSAGE, Tokens
 
-OIDC = "https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect"
-CLIENT = "songmaker"
-REDIRECT = "https://songmaker.hallucinai.de/auth/callback"
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
 LOGIN_TOKEN_FILE = SECRETS_DIRECTORY / "agent-service/claude/token"
@@ -75,9 +64,6 @@ EGRESS_SERVICE = "agent-egress"
 LISTENING = "Uvicorn running"
 LISTEN_ATTEMPTS = 120
 SETTLE_SECONDS = 5
-TOKEN_TIMEOUT_SECONDS = 30
-# Cloudflare in front of the token endpoint refuses the default Python-urllib agent (error 1010)
-USER_AGENT = "edge-live-smoke/1"
 PAID_TURN_SECONDS = 420  # above the 300 s of each socket of smoke.py
 CANCELLED_TURN_SECONDS = 420
 CHILD_END_SECONDS = 10
@@ -205,76 +191,6 @@ class Report:
 
     def failed(self) -> bool:
         return any(cell.verdict is Verdict.FAILED for cell in self.cells)
-
-
-# --- the sign-in (ruled in edge#184, D6) ------------------------------------------------------
-
-
-def pkce_pair() -> tuple[str, str]:
-    verifier = secrets.token_urlsafe(64)
-    digest = hashlib.sha256(verifier.encode()).digest()
-    return verifier, base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-
-
-def authorization_address(challenge: str, state: str) -> str:
-    return f"{OIDC}/auth?" + urllib.parse.urlencode({
-        "client_id": CLIENT, "redirect_uri": REDIRECT, "response_type": "code", "scope": "openid",
-        "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
-    })  # fmt: skip
-
-
-def code_in(pasted: str, state: str) -> str:
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(pasted.strip()).query)
-    if query.get("state") != [state] or "code" not in query:
-        raise LiveSmokeFailed("the address holds no code for this sign-in")
-    return query["code"][0]
-
-
-def access_token(
-    form: Mapping[str, str], client_secret: str, urlopen=urllib.request.urlopen
-) -> str:
-    body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
-    request = urllib.request.Request(
-        f"{OIDC}/token", body.encode(), headers={"User-Agent": USER_AGENT}
-    )
-    try:
-        with urlopen(request, timeout=TOKEN_TIMEOUT_SECONDS) as answer:
-            return json.load(answer)["access_token"]
-    except urllib.error.HTTPError as refusal:
-        raise LiveSmokeFailed(f"the token endpoint answered {refusal.code}") from None
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError):
-        raise LiveSmokeFailed("the token endpoint gave no access token") from None
-
-
-def ask_without_echo(prompt: str, stream) -> str:
-    """The pasted address holds a one-time code: stop rather than read it echoed."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", getpass.GetPassWarning)
-        try:
-            return getpass.getpass(prompt, stream=stream)
-        except getpass.GetPassWarning:
-            raise LiveSmokeFailed(
-                "this terminal cannot hide the input; run it in a terminal"
-            ) from None
-
-
-def sign_in(
-    client_secret: str,
-    ask: Callable[..., str] = ask_without_echo,
-    urlopen=urllib.request.urlopen,
-) -> Tokens:
-    verifier, challenge = pkce_pair()
-    state = secrets.token_urlsafe(16)
-    print("Open this address and sign in; the page then fails, copy its address:", file=sys.stderr)
-    print(authorization_address(challenge, state), file=sys.stderr)
-    pasted = ask("Pasted address (not shown): ", stream=sys.stderr)
-    person = access_token(
-        {"grant_type": "authorization_code", "code": code_in(pasted, state),
-         "redirect_uri": REDIRECT, "code_verifier": verifier},
-        client_secret, urlopen,
-    )  # fmt: skip
-    workload = access_token({"grant_type": "client_credentials"}, client_secret, urlopen)
-    return Tokens(person=person, workload=workload)
 
 
 # --- what a smoke prints ----------------------------------------------------------------------
@@ -783,7 +699,7 @@ def main(argv: Sequence[str]) -> int:
         login_token = read_secret(LOGIN_TOKEN_FILE, "the login token")
         known = Secrets(sign_in(client_secret), login_token, client_secret)
         return live_smoke(Stack(), known, Report(known.values()))
-    except LiveSmokeFailed as failure:
+    except (LiveSmokeFailed, SignInFailed) as failure:
         print(f"live smoke: {failure}", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:

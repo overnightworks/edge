@@ -242,6 +242,61 @@ def test_songmaker_is_logged_out_by_a_back_channel_call_that_needs_no_session_id
     assert songmaker["attributes"]["backchannel.logout.session.required"] == "false"
 
 
+def test_only_songmaker_allows_the_device_grant():
+    """#297: the live smoke signs in by device grant; a stranger needs songmaker's secret."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+
+    allowing = [
+        client["clientId"]
+        for client in realm["clients"]
+        if client.get("attributes", {}).get("oauth2.device.authorization.grant.enabled") == "true"
+    ]
+
+    assert allowing == ["songmaker"]
+
+
+@pytest.mark.parametrize(
+    ("client_id", "answers"),
+    [
+        ("songmaker", {"with": 200, "without": 401}),
+        ("hopin", {"with": 400, "without": 400}),
+    ],
+)
+def test_the_device_grant_cell_accepts_only_songmaker_with_its_secret(
+    monkeypatch, client_id, answers
+):
+    """#297: the cell reports a held cell for the ruled answers and no other."""
+    monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
+    import device_grant_cell
+
+    def answer(status):
+        body = {"device_code": "d", "user_code": "u"} if status == 200 else {"error": "x"}
+        return SimpleNamespace(status=status, text=json.dumps(body), json=lambda: body)
+
+    class FakeProbe:
+        def __init__(self, status_for):
+            self.status_for = status_for
+            self.held_lines = []
+
+        def through_tunnel(self, _method, _path, form):
+            return answer(self.status_for(form.get("client_secret")))
+
+        def held(self, proof, detail):
+            self.held_lines.append((proof, detail))
+
+    def expecting(failures):
+        return lambda held, message: held or failures.append(message)
+
+    failures = []
+    ruled = FakeProbe(lambda secret: answers["with" if secret == "s3" else "without"])
+    device_grant_cell.prove(ruled, client_id, "s3", expecting(failures))
+    assert failures == []
+    assert [proof for proof, _ in ruled.held_lines] == ["DG1"]
+
+    device_grant_cell.prove(FakeProbe(lambda _secret: 200), client_id, "s3", expecting(failures))
+    assert failures
+
+
 def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments(monkeypatch):
     """#293: process arguments are visible to the host; the secret goes through stdin."""
     monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))

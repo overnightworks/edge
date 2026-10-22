@@ -8,7 +8,7 @@
 
 [file_lines]
 "probe/agent-service/unit.py" = 841
-"probe/keycloak/probe.py" = 2841
+"probe/keycloak/probe.py" = 2843
 "probe/step-ca/probe.py" = 1054
 "probe/switches/probe.py" = 813
 "src/edge/realm/observe.py" = 815

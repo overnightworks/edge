@@ -4,7 +4,6 @@ probe/agent-service/unit.py (cell U16) and by the operator.
 """
 
 import base64
-import getpass
 import hashlib
 import http.client
 import io
@@ -16,7 +15,6 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +24,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agent-service"))
 
+import device_sign_in  # noqa: E402
 import live_smoke  # noqa: E402
 from live_smoke import Cell, LiveSmokeFailed, Report, Secrets, Stack, Verdict  # noqa: E402
 from smoke import Tokens  # noqa: E402
@@ -42,99 +41,116 @@ def completed(stdout: str = "", returncode: int = 0, stderr: str = ""):
 # --- the sign-in ------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("pasted", "refused"),
-    [
-        ("https://songmaker.hallucinai.de/auth/callback?state=S&code=C", False),
-        ("  https://songmaker.hallucinai.de/auth/callback?code=C&state=S\n", False),
-        ("https://songmaker.hallucinai.de/auth/callback?state=other&code=C", True),
-        ("https://songmaker.hallucinai.de/auth/callback?state=S", True),
-        ("not an address", True),
-    ],
-)
-def test_the_pasted_address_must_hold_the_code_of_this_sign_in(pasted, refused):
-    if refused:
-        with pytest.raises(LiveSmokeFailed, match="no code for this sign-in"):
-            live_smoke.code_in(pasted, "S")
-    else:
-        assert live_smoke.code_in(pasted, "S") == "C"
+class FakeKeycloak:
+    """Answers each request in turn (an HTTPError is a 400 refusal) and keeps what was asked."""
 
-
-class FakeTokenEndpoint:
-    """Answers each token request in turn and keeps what was asked."""
-
-    def __init__(self, *answers: dict | urllib.error.HTTPError) -> None:
+    def __init__(self, *answers: dict) -> None:
         self.answers = list(answers)
-        self.forms: list[dict[str, str]] = []
+        self.requests: list[tuple[str, dict[str, str]]] = []
 
     def __call__(self, request: urllib.request.Request, timeout: float):
-        assert request.full_url == f"{live_smoke.OIDC}/token"
-        assert request.get_header("User-agent") == live_smoke.USER_AGENT
-        self.forms.append(
-            {k: v[0] for k, v in urllib.parse.parse_qs(request.data.decode()).items()}
-        )
+        assert request.get_header("User-agent") == device_sign_in.USER_AGENT
+        path = request.full_url.removeprefix(f"{device_sign_in.OIDC}/")
+        form = {k: v[0] for k, v in urllib.parse.parse_qs(request.data.decode()).items()}
+        self.requests.append((path, form))
         answer = self.answers.pop(0)
-        if isinstance(answer, Exception):
-            raise answer
+        if "error" in answer:
+            raise urllib.error.HTTPError(
+                request.full_url, 400, "refused", {}, io.BytesIO(json.dumps(answer).encode())
+            )
         return io.BytesIO(json.dumps(answer).encode())
 
 
-def test_the_sign_in_exchanges_the_pasted_code_and_asks_for_the_workload_token(capsys):
-    endpoint = FakeTokenEndpoint({"access_token": "person"}, {"access_token": "workload"})
-    shown: list[str] = []
+AUTHORIZATION = {
+    "device_code": "the-device-code",
+    "user_code": "ABCD-EFGH",
+    "verification_uri_complete": "https://auth.example/device?user_code=ABCD-EFGH",
+    "expires_in": 300,
+    "interval": 5,
+}
+PENDING = {"error": "authorization_pending"}
 
-    def ask(prompt: str, stream) -> str:
-        shown.extend(capsys.readouterr().err.splitlines())
-        state = urllib.parse.parse_qs(urllib.parse.urlsplit(shown[-1]).query)["state"][0]
-        return f"https://songmaker.hallucinai.de/auth/callback?state={state}&code=the-code"
 
-    tokens = live_smoke.sign_in("the-secret", ask, endpoint)
+def signed_in(*answers: dict):
+    keycloak = FakeKeycloak(AUTHORIZATION, *answers)
+    pauses: list[float] = []
+    opened: list[str] = []
+    outcome = device_sign_in.sign_in(
+        "the-secret", keycloak, pauses.append, lambda link: opened.append(link)
+    )
+    return outcome, keycloak, pauses, opened
+
+
+def test_the_sign_in_waits_for_the_confirmation_and_asks_for_the_workload_token(capsys):
+    tokens, keycloak, pauses, opened = signed_in(
+        PENDING, {"access_token": "person"}, {"access_token": "workload"}
+    )
 
     assert tokens == Tokens(person="person", workload="workload")
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(shown[-1]).query)
+    assert pauses == [5, 5]
+    assert opened == [AUTHORIZATION["verification_uri_complete"]]
+    shown = capsys.readouterr().err
+    assert AUTHORIZATION["verification_uri_complete"] in shown
+    assert "ABCD-EFGH" in shown
+    assert all(form["client_secret"] == "the-secret" for _, form in keycloak.requests)
+    assert keycloak.requests[1][1]["device_code"] == "the-device-code"
     challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(endpoint.forms[0]["code_verifier"].encode()).digest()
+        hashlib.sha256(keycloak.requests[1][1]["code_verifier"].encode()).digest()
     ).rstrip(b"=")
-    assert query["code_challenge"] == [challenge.decode()]
-    assert endpoint.forms[0]["code"] == "the-code"
-    assert endpoint.forms[1]["grant_type"] == "client_credentials"
-    assert all(form["client_secret"] == "the-secret" for form in endpoint.forms)
-    assert endpoint.forms[0]["code_verifier"] not in "\n".join(shown)
+    assert keycloak.requests[0][1]["code_challenge"] == challenge.decode()
+    assert keycloak.requests[3][1]["grant_type"] == "client_credentials"
+    assert not any(text in shown for text in ("person", "the-secret", "the-device-code"))
 
 
-def test_a_refusing_token_endpoint_stops_with_its_status_and_no_secret():
-    refusal = urllib.error.HTTPError("x", 401, "no", {}, None)
-    endpoint = FakeTokenEndpoint(refusal)
+def test_slow_down_makes_the_sign_in_wait_longer_between_asks():
+    _, _, pauses, _ = signed_in(
+        {"error": "slow_down"}, PENDING, {"access_token": "p"}, {"access_token": "w"}
+    )
 
-    with pytest.raises(LiveSmokeFailed) as stopped:
-        live_smoke.access_token({}, "the-secret", endpoint)
+    assert pauses == [5, 10, 10]
 
-    assert str(stopped.value) == "the token endpoint answered 401"
+
+def test_a_refusal_in_the_browser_ends_the_sign_in_with_one_sentence():
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        signed_in({"error": "access_denied"})
+
+    assert str(stopped.value) == "the sign-in was refused in the browser (access_denied)"
+
+
+def test_an_expired_code_ends_the_sign_in_with_one_sentence():
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        signed_in(PENDING, {"error": "expired_token"})
+
+    assert str(stopped.value) == "the code ran out before it was confirmed; run the smoke again"
+
+
+def test_a_device_request_keycloak_refuses_starts_no_sign_in():
+    keycloak = FakeKeycloak({"error": "unauthorized_client"})
+
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        device_sign_in.sign_in("wrong", keycloak, lambda _seconds: None, lambda _link: None)
+
+    assert str(stopped.value) == "the device endpoint answered 400 and started no sign-in"
 
 
 @pytest.mark.parametrize(
     "answer",
-    [http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("junk"), [], {"other": 1}],
+    [http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("junk")],
 )
-def test_a_broken_token_answer_ends_as_one_line_without_its_content(answer):
-    endpoint = FakeTokenEndpoint(answer)
+def test_a_broken_answer_ends_as_one_line_without_its_content(answer):
+    def broken(_request, timeout):
+        raise answer
 
-    with pytest.raises(LiveSmokeFailed) as stopped:
-        live_smoke.access_token({}, "the-secret", endpoint)
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        device_sign_in.access_token({}, "the-secret", broken)
 
-    assert str(stopped.value) == "the token endpoint gave no access token"
+    assert str(stopped.value) == "the token endpoint gave no answer to read"
     assert stopped.value.__cause__ is None
 
 
-def test_a_terminal_that_cannot_hide_the_input_stops_the_sign_in(monkeypatch):
-    def echoing(prompt, stream=None):
-        warnings.warn("cannot control echo", getpass.GetPassWarning, stacklevel=1)
-        return "https://songmaker.hallucinai.de/auth/callback?state=S&code=C"
-
-    monkeypatch.setattr(live_smoke.getpass, "getpass", echoing)
-
-    with pytest.raises(LiveSmokeFailed, match="cannot hide the input"):
-        live_smoke.ask_without_echo("Pasted address: ", stream=None)
+def test_a_token_answer_without_an_access_token_is_refused():
+    with pytest.raises(device_sign_in.SignInFailed, match="no access token"):
+        device_sign_in.access_token({}, "the-secret", FakeKeycloak({"other": 1}))
 
 
 # --- the report -------------------------------------------------------------------------------
