@@ -3,6 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "dc3eee4e65e16589c18de24f4cc62e06bfdea0f9"
 branch = "claude/issue-321-291-s3-image-pins"
-scope = [".github/dependabot.yml", "docs/backup.md", "probe/switches/probe.py", "src/edge_backup/images/Dockerfile", "src/edge_backup/settings.py", "tests/test_edge_backup.py", "tests/test_edge_backup_images.py"]
+scope = [".github/dependabot.yml", "docs/backup.md", "probe/switches/probe.py", "quality/baseline.toml", "src/edge_backup/images/Dockerfile", "src/edge_backup/settings.py", "tests/test_edge_backup.py", "tests/test_edge_backup_images.py"]
 opened_commit = "1620579c7137075d1cad8013582d7730fc5efa89"
 whole_reason = "One owner for the backup's images plus the Dependabot declaration of every image directory."
