@@ -242,7 +242,14 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 `--setup` das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
 `chmod` bleibt ein Handgriff.
 
-### Einrichten: `home secrets --setup`
+### Einrichten: `hal setup --apply`
+
+`hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
+auf diesem PC kein offenes Geheimnis hat (nur `stat`); offen ist auch ein Eintrag, dessen
+Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen (`fehlt:`,
+`nicht feststellbar:`, `von Hand:`) und ändert nichts; `--apply` führt den Assistenten aus, der ein eigenes Terminal braucht. Der
+Assistent ist derselbe wie `home secrets --setup`, und `--setup` unten meint ihn. Ein Eintrag mit
+`loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
 `--setup` geht die fehlenden Einträge des Manifests der Reihe nach durch,
 zuerst die fünf von `edge external`. Gelesen werden davon drei:
@@ -321,14 +328,14 @@ Einträge: die für einen neuen Lauf („noch offen: cloudflare/fleet-read“) u
 von Hand („von Hand offen, siehe oben: gitlab, sonarcloud/token“). Genau eine
 Zeile beginnt mit `next:`, die letzte: Ist noch etwas offen, nennt sie zuerst den
 Befehl, der eine Weigerung aufhebt, dann den neuen Lauf („next: `chmod 700
-~/.secrets`, dann `home secrets --setup` noch einmal“); sonst den Plan-Schritt,
+~/.secrets`, dann `hal setup --apply` noch einmal“); sonst den Plan-Schritt,
 oder, fehlt von Hand noch ein Eintrag, den `edge external plan` liest, diesen
 („next: erst <Eintrag> anlegen; …“). Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
 Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
 Eintrag, nie seine Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
-Eintrag danach gespeichert ist, und `home secrets --setup` zum Weitermachen;
+Eintrag danach gespeichert ist, und `hal setup --apply` zum Weitermachen;
 vorher gespeicherte Einträge bleiben.
 
 `--by-service` dreht `read_by` des Manifests um: je Dienst die Geheimnisse,

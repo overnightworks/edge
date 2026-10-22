@@ -41,3 +41,42 @@
 
 [function_lines."tests/test_edge_external.py"]
 "terminal" = 72
+
+[clones."probe/agent-service/egress.py"]
+"Client.main" = [["probe/agent-service/unit.py", "Inside.main"]]
+write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
+
+[clones."probe/apps/probe.py"]
+"Probe.wait_until" = [["probe/switches/probe.py", "Probe.wait_until"]]
+main = [["probe/switches/probe.py", "main"]]
+prove = [["probe/step-ca/probe.py", "prove"]]
+
+[clones."probe/keycloak/probe.py"]
+claims = [["probe/keycloak/test_rp.py", "token_claims"]]
+
+[clones."src/home_tools/secrets_setup.py"]
+register = [["src/home_tools/setup.py", "register"], ["src/home_tools/tidy_home.py", "register"]]
+
+[clones."src/home_tools/setup.py"]
+register = [["src/home_tools/tidy_home.py", "register"]]
+
+[clones."tests/test_agent_service_setup.py"]
+setup_module = [["tests/test_keycloak_go_live.py", "golive"]]
+
+[clones."tests/test_edge_app_compose.py"]
+"Docker.run" = [["tests/test_realm_reconcile.py", "Commands.__call__"]]
+
+[clones."tests/test_edge_apps.py"]
+home = [["tests/test_edge_checkout.py", "home"], ["tests/test_edge_deploy_checkout.py", "home"], ["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
+
+[clones."tests/test_edge_checkout.py"]
+home = [["tests/test_edge_deploy_checkout.py", "home"], ["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
+
+[clones."tests/test_edge_deploy_checkout.py"]
+home = [["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
+
+[clones."tests/test_hal_cli.py"]
+home = [["tests/test_hal_version.py", "home"]]
+
+[clones."tests/test_keycloak_probe.py"]
+probe = [["tests/test_step_ca_init.py", "probe"]]

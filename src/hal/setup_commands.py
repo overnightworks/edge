@@ -27,7 +27,7 @@ def _setup(arguments: argparse.Namespace) -> ExitCode:
 COMMANDS = (
     Command(
         "setup",
-        "set up quality, the commit hook and the system step (sudo, terminal)",
+        "set up quality, the commit hook, the system step (sudo, terminal) and the missing secrets",
         _setup,
         _configure,
         json=False,

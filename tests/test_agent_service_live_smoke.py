@@ -1,22 +1,14 @@
-"""The live smoke command (`agent-service/live_smoke.py`, #221): the sign-in, the report and the
+"""The live smoke command (`agent-service/live_smoke.py`, #221): the report, the cells and the
 no-secret rule against a scripted docker. The command against a running service is driven by
 probe/agent-service/unit.py (cell U16) and by the operator.
 """
 
-import base64
-import getpass
-import hashlib
-import http.client
 import io
 import json
 import subprocess
 import sys
 import threading
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,104 +29,6 @@ GATEWAY = "172.31.252.10"
 
 def completed(stdout: str = "", returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
-
-
-# --- the sign-in ------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("pasted", "refused"),
-    [
-        ("https://songmaker.hallucinai.de/auth/callback?state=S&code=C", False),
-        ("  https://songmaker.hallucinai.de/auth/callback?code=C&state=S\n", False),
-        ("https://songmaker.hallucinai.de/auth/callback?state=other&code=C", True),
-        ("https://songmaker.hallucinai.de/auth/callback?state=S", True),
-        ("not an address", True),
-    ],
-)
-def test_the_pasted_address_must_hold_the_code_of_this_sign_in(pasted, refused):
-    if refused:
-        with pytest.raises(LiveSmokeFailed, match="no code for this sign-in"):
-            live_smoke.code_in(pasted, "S")
-    else:
-        assert live_smoke.code_in(pasted, "S") == "C"
-
-
-class FakeTokenEndpoint:
-    """Answers each token request in turn and keeps what was asked."""
-
-    def __init__(self, *answers: dict | urllib.error.HTTPError) -> None:
-        self.answers = list(answers)
-        self.forms: list[dict[str, str]] = []
-
-    def __call__(self, request: urllib.request.Request, timeout: float):
-        assert request.full_url == f"{live_smoke.OIDC}/token"
-        assert request.get_header("User-agent") == live_smoke.USER_AGENT
-        self.forms.append(
-            {k: v[0] for k, v in urllib.parse.parse_qs(request.data.decode()).items()}
-        )
-        answer = self.answers.pop(0)
-        if isinstance(answer, Exception):
-            raise answer
-        return io.BytesIO(json.dumps(answer).encode())
-
-
-def test_the_sign_in_exchanges_the_pasted_code_and_asks_for_the_workload_token(capsys):
-    endpoint = FakeTokenEndpoint({"access_token": "person"}, {"access_token": "workload"})
-    shown: list[str] = []
-
-    def ask(prompt: str, stream) -> str:
-        shown.extend(capsys.readouterr().err.splitlines())
-        state = urllib.parse.parse_qs(urllib.parse.urlsplit(shown[-1]).query)["state"][0]
-        return f"https://songmaker.hallucinai.de/auth/callback?state={state}&code=the-code"
-
-    tokens = live_smoke.sign_in("the-secret", ask, endpoint)
-
-    assert tokens == Tokens(person="person", workload="workload")
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(shown[-1]).query)
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(endpoint.forms[0]["code_verifier"].encode()).digest()
-    ).rstrip(b"=")
-    assert query["code_challenge"] == [challenge.decode()]
-    assert endpoint.forms[0]["code"] == "the-code"
-    assert endpoint.forms[1]["grant_type"] == "client_credentials"
-    assert all(form["client_secret"] == "the-secret" for form in endpoint.forms)
-    assert endpoint.forms[0]["code_verifier"] not in "\n".join(shown)
-
-
-def test_a_refusing_token_endpoint_stops_with_its_status_and_no_secret():
-    refusal = urllib.error.HTTPError("x", 401, "no", {}, None)
-    endpoint = FakeTokenEndpoint(refusal)
-
-    with pytest.raises(LiveSmokeFailed) as stopped:
-        live_smoke.access_token({}, "the-secret", endpoint)
-
-    assert str(stopped.value) == "the token endpoint answered 401"
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("junk"), [], {"other": 1}],
-)
-def test_a_broken_token_answer_ends_as_one_line_without_its_content(answer):
-    endpoint = FakeTokenEndpoint(answer)
-
-    with pytest.raises(LiveSmokeFailed) as stopped:
-        live_smoke.access_token({}, "the-secret", endpoint)
-
-    assert str(stopped.value) == "the token endpoint gave no access token"
-    assert stopped.value.__cause__ is None
-
-
-def test_a_terminal_that_cannot_hide_the_input_stops_the_sign_in(monkeypatch):
-    def echoing(prompt, stream=None):
-        warnings.warn("cannot control echo", getpass.GetPassWarning, stacklevel=1)
-        return "https://songmaker.hallucinai.de/auth/callback?state=S&code=C"
-
-    monkeypatch.setattr(live_smoke.getpass, "getpass", echoing)
-
-    with pytest.raises(LiveSmokeFailed, match="cannot hide the input"):
-        live_smoke.ask_without_echo("Pasted address: ", stream=None)
 
 
 # --- the report -------------------------------------------------------------------------------

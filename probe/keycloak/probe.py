@@ -56,6 +56,7 @@ REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
 sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
+import device_grant_cell  # noqa: E402
 
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
@@ -2208,7 +2209,7 @@ class Probe:
     def app_client_refuses_what_it_does_not_use(
         self, client: AppClient, client_secret: str
     ) -> None:
-        """Cells T3 to T5: PKCE is required, the callback is exact, no other grant works."""
+        """Cells T3-T5, DG1: PKCE required, exact callback, only songmaker's device grant."""
         without_challenge = self.through_tunnel(
             "GET", f"{PUBLIC_AUTH_PATH}?{self.app_client_authorization_query(client)}"
         )
@@ -2222,9 +2223,8 @@ class Probe:
             f"{client.callback}/x",
             client.callback.replace("https", "http"),
         ):
-            challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
             query = self.app_client_authorization_query(
-                client, redirect_uri=redirect_uri, **challenge
+                client, redirect_uri=redirect_uri, **device_grant_cell.PKCE
             )
             page = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
             expect(
@@ -2246,6 +2246,7 @@ class Probe:
                 error == "unauthorized_client",
                 f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
             )
+        device_grant_cell.prove(self, client.client_id, client_secret, expect)
 
     @staticmethod
     def person_token_is_no_workload(client: AppClient, access_token: str) -> None:
@@ -2309,9 +2310,8 @@ class Probe:
 
     def app_client_refuses_offline_access(self, client: AppClient) -> None:
         """Cell T13: no optional scope is attached, so no offline token can be asked for."""
-        challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
         query = self.app_client_authorization_query(
-            client, scope="openid offline_access", **challenge
+            client, scope="openid offline_access", **device_grant_cell.PKCE
         )
         refused = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
         location = refused.headers.get("Location", "")
