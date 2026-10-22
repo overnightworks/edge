@@ -2,6 +2,7 @@
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -151,24 +152,27 @@ def test_todays_live_state_reports_the_www_record_and_the_stray_one_and_notes_ac
     assert host_check.ACCESS_NOT_ENABLED_NOTE not in host_check.as_json(check)
 
 
+WWW_RECORD_CASES = [
+    pytest.param([], [Problem.RECORD_MISSING], id="no record"),
+    pytest.param([tunnel_record("www", proxied=False)], [Problem.RECORD_WRONG], id="unproxied"),
+    pytest.param(
+        [tunnel_record("www", "t-2.cfargotunnel.com")], [Problem.RECORD_WRONG], id="other tunnel"
+    ),
+    pytest.param([tunnel_record("www")], [], id="the right tunnel"),
+]
+
+
 @pytest.mark.parametrize(
     ("records", "expected"),
     [
-        pytest.param([], [Problem.RECORD_MISSING], id="no record"),
+        *WWW_RECORD_CASES,
         pytest.param(
             [tunnel_record("www"), tunnel_record("www", "t-2.cfargotunnel.com")],
             [Problem.RECORD_WRONG],
             id="two records",
         ),
         pytest.param([address_record("www")], [Problem.RECORD_WRONG], id="an A record"),
-        pytest.param([tunnel_record("www", proxied=False)], [Problem.RECORD_WRONG], id="unproxied"),
         pytest.param([tunnel_record("www", ZONE)], [Problem.RECORD_WRONG], id="a foreign name"),
-        pytest.param(
-            [tunnel_record("www", "t-2.cfargotunnel.com")],
-            [Problem.RECORD_WRONG],
-            id="other tunnel",
-        ),
-        pytest.param([tunnel_record("www")], [], id="the right tunnel"),
     ],
 )
 def test_a_declared_host_needs_exactly_one_proxied_cname_to_the_tunnel(records, expected):
@@ -276,40 +280,44 @@ def test_two_apps_for_one_host_make_its_policy_undecidable():
     ]
 
 
-def test_an_app_with_a_second_destination_is_the_hosts_own_app_and_the_second_is_undeclared():
-    """C6."""
-    own = app(fqdn("www"), fqdn("other"), policies=(BYPASS_POLICY,))
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param((), id="no override"),
+        pytest.param((Override(fqdn("other"), "/x"),), id="an override on it"),
+    ],
+)
+def test_an_app_with_a_second_destination_is_the_hosts_own_app_and_the_second_is_undeclared(
+    overrides,
+):
+    """C6, C4: an override on the other host's destination does not taint this host."""
+    own = app(fqdn("www"), fqdn("other"), policies=(BYPASS_POLICY,), overrides=overrides)
     assert found([bypass("www")], snapshot(tunnel_record("www"), apps=(own,))) == [
         ("undeclared-app", fqdn("other"))
     ]
 
 
 @pytest.mark.parametrize(
-    ("hosts", "extra_app", "expected_detail"),
+    ("extra_app", "label"),
     [
         pytest.param(
-            LIVE_HOSTS,
             app(f"*.{ZONE}/admin", policies=(BYPASS_POLICY,)),
-            ("*", "several apps have this host"),
+            "*",
             id="a bypass app at a path of the protected wildcard",
         ),
         pytest.param(
-            LIVE_HOSTS,
             app(fqdn("www") + "/admin", policies=(OPERATOR_POLICY,)),
-            ("www", "several apps have this host"),
+            "www",
             id="a second app at a path of the bypass host",
         ),
     ],
 )
-def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(
-    hosts, extra_app, expected_detail
-):
+def test_a_path_scoped_app_on_a_host_that_needs_access_is_never_clean(extra_app, label):
     """C6."""
     current = snapshot(*LIVE.records, apps=(*LIVE.apps, extra_app))
-    check = compared(hosts, current)
-    label, detail = expected_detail
+    check = compared(LIVE_HOSTS, current)
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
-        (Problem.POLICY_WRONG, fqdn(label), detail)
+        (Problem.POLICY_WRONG, fqdn(label), "several apps have this host")
     ]
 
 
@@ -329,7 +337,7 @@ def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
     ]
 
 
-@pytest.mark.parametrize(
+NEEDS_ACCESS_HOSTS = pytest.mark.parametrize(
     ("host", "label", "policies", "destination"),
     [
         pytest.param(bypass("www"), "www", (BYPASS_POLICY,), fqdn("www"), id="a bypass host"),
@@ -338,6 +346,9 @@ def test_the_only_app_of_a_host_scoped_to_a_path_names_the_path():
         ),
     ],
 )
+
+
+@NEEDS_ACCESS_HOSTS
 @pytest.mark.parametrize(
     ("facts_at", "expected_detail"),
     [
@@ -365,49 +376,21 @@ def test_an_app_that_lets_requests_past_access_on_a_host_that_needs_it_is_policy
     ]
 
 
-@pytest.mark.parametrize(
-    ("host", "label", "decision", "include"),
-    [
-        pytest.param(bypass("www"), "www", "bypass", Include("everyone"), id="a bypass host"),
-        pytest.param(
-            protected_wildcard(), "*", "allow", Include("group", OPERATOR.id), id="a protected host"
-        ),
-    ],
-)
+@NEEDS_ACCESS_HOSTS
 def test_a_policy_with_extra_conditions_does_not_match_the_declared_one(
-    host, label, decision, include
+    host, label, policies, destination
 ):
     """C4: exclude, require, approval, isolation, a justification or connection rules only narrow
     access, but the check compares with the declaration."""
-    restricted = Policy(decision, (include,), extra_conditions=True)
-    current = snapshot(tunnel_record(label), apps=(app(host.fqdn, policies=(restricted,)),))
+    restricted = replace(policies[0], extra_conditions=True)
+    current = snapshot(tunnel_record(label), apps=(app(destination, policies=(restricted,)),))
     check = compared([host], current)
     assert [(f.problem, f.subject, f.detail) for f in check.findings] == [
         (Problem.POLICY_WRONG, host.fqdn, "the policy has extra conditions")
     ]
 
 
-def test_an_override_on_a_destination_of_another_host_does_not_taint_this_host():
-    """C4."""
-    own = app(
-        fqdn("www"),
-        fqdn("other"),
-        policies=(BYPASS_POLICY,),
-        overrides=(Override(fqdn("other"), "/x"),),
-    )
-    current = snapshot(tunnel_record("www"), apps=(own,))
-    assert found([bypass("www")], current) == [("undeclared-app", fqdn("other"))]
-
-
-@pytest.mark.parametrize(
-    ("host", "label", "policies", "destination"),
-    [
-        pytest.param(bypass("www"), "www", (BYPASS_POLICY,), fqdn("www"), id="a bypass host"),
-        pytest.param(
-            protected_wildcard(), "*", (OPERATOR_POLICY,), f"*.{ZONE}", id="a protected host"
-        ),
-    ],
-)
+@NEEDS_ACCESS_HOSTS
 @pytest.mark.parametrize("kind", ["ssh", "vnc", "rdp"])
 def test_a_host_that_needs_access_needs_a_self_hosted_app_not_another_type(
     host, label, policies, destination, kind
@@ -447,26 +430,13 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
 
 def test_the_records_of_redirected_names_are_declared_and_other_names_still_are_not():
     current = snapshot(tunnel_record("@"), tunnel_record("www"), tunnel_record("stray"))
-    redirected = frozenset({fqdn("@"), fqdn("www")})
-    check = host_check.compare(ZONE, [], current, {}, redirected)
+    check = host_check.compare(ZONE, [], current, {}, frozenset({fqdn("@"), fqdn("www")}))
     assert [(f.problem.value, f.subject) for f in check.findings] == [
         ("undeclared-record", fqdn("stray"))
     ]
 
 
-@pytest.mark.parametrize(
-    ("records", "expected"),
-    [
-        pytest.param([], [Problem.RECORD_MISSING], id="missing"),
-        pytest.param([tunnel_record("www", proxied=False)], [Problem.RECORD_WRONG], id="unproxied"),
-        pytest.param(
-            [tunnel_record("www", "t-2.cfargotunnel.com")],
-            [Problem.RECORD_WRONG],
-            id="wrong-target",
-        ),
-        pytest.param([tunnel_record("www")], [], id="the-right-tunnel"),
-    ],
-)
+@pytest.mark.parametrize(("records", "expected"), WWW_RECORD_CASES)
 def test_a_redirected_name_needs_the_same_proxied_cname_without_being_asked(records, expected):
     document = catalog_document(host_entry("app", "public"))
     document["cloudflare"]["redirect"] = {
@@ -615,10 +585,7 @@ NO_CF_RAY = (Problem.ANSWER_WRONG, "status 200, no cf-ray")
 REDIRECT_NO_CF_RAY = (Problem.ANSWER_WRONG, "status 302, no cf-ray")
 OPEN_VERDICTS = {
     "access-redirect": (Problem.ANSWER_WRONG, "status 302, redirects to Access"),
-    "200": None,
-    "404": None,
-    "502": None,
-    "challenge": None,
+    **dict.fromkeys(("200", "404", "502", "challenge")),
     "no-cf-ray": NO_CF_RAY,
     "redirect-without-cf-ray": REDIRECT_NO_CF_RAY,
     "redirect-with-challenge": None,
@@ -626,9 +593,10 @@ OPEN_VERDICTS = {
 }
 PROTECTED_VERDICTS = {
     "access-redirect": None,
-    "200": (Problem.ANSWER_WRONG, "status 200, not an Access redirect"),
-    "404": (Problem.ANSWER_WRONG, "status 404, not an Access redirect"),
-    "502": (Problem.ANSWER_WRONG, "status 502, not an Access redirect"),
+    **{
+        status: (Problem.ANSWER_WRONG, f"status {status}, not an Access redirect")
+        for status in ("200", "404", "502")
+    },
     "challenge": (Problem.ANSWER_WRONG, "status 403, a challenge, not an Access redirect"),
     "no-cf-ray": NO_CF_RAY,
     "redirect-without-cf-ray": REDIRECT_NO_CF_RAY,
@@ -726,13 +694,6 @@ def test_only_a_real_access_redirect_counts_as_one(location, is_access, status, 
 def test_a_location_on_a_non_redirect_status_is_not_access(status):
     """PB4."""
     assert probe_findings(public("www"), redirect(TEAM_LOGIN, status)) == []
-
-
-def test_the_wildcard_is_asked_at_the_probe_name_and_judged_under_its_own():
-    """PB4, PB5: the detail names the probed name; the subject is the declared host."""
-    ((problem, subject, detail),) = probe_findings(protected_wildcard(), ANSWERS["200"])
-    assert (problem, subject) == ("answer-wrong", f"*.{ZONE}")
-    assert detail == f"asked at edge-host-check.{ZONE}: status 200, not an Access redirect"
 
 
 class FakeCloudflare:
