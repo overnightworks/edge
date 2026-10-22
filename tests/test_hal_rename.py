@@ -374,7 +374,7 @@ def test_the_real_boundaries_call_gh_and_uv(tmp_path, monkeypatch):
     assert world.github_knows("known")
     assert not world.github_knows("missing")
     world.uv_sync(project)
-    assert (tmp_path / "log").read_text().strip() == f"sync --locked --reinstall in {project}"
+    assert (tmp_path / "log").read_text().strip() == f"sync --locked in {project}"
     assert world.uv_tools() == "tool listing\n"
 
 
@@ -619,33 +619,6 @@ def test_a_rerun_finishes_a_clone_that_a_halfway_stop_left_moved_but_not_complet
     assert not memory_of(home, repository).exists()
 
 
-def test_a_rerun_finishes_the_venv_a_failed_sync_left_behind_and_then_has_nothing_to_do(
-    home, world, repository
-):
-    scripts = repository / ".venv" / "bin"
-    scripts.mkdir(parents=True)
-    (repository / "uv.lock").write_text("")
-    (repository / ".gitignore").write_text(".venv/\n")
-    (scripts / "tool").write_text(f"#!{repository}/.venv/bin/python\n")
-    (scripts / "activate").write_text("# no path in this script\n")
-    (scripts / "python").symlink_to("/usr/bin/env")
-    synced = []
-
-    def sync(project: Path) -> None:
-        synced.append(project)
-        (project / ".venv" / "bin" / "tool").write_text(f"#!{project}/.venv/bin/python\n")
-
-    world.uv_sync = lambda path: (_ for _ in ()).throw(subprocess.CalledProcessError(1, "uv"))
-    rename(world)
-    world.uv_sync = sync
-
-    finished = rename(world)
-    repeated = rename(world)
-
-    assert (finished, repeated) == (ExitCode.OK, ExitCode.OK)
-    assert synced == [home / "git" / "fresh"]
-
-
 def test_a_worktree_whose_directory_is_gone_is_left_for_git_to_prune(
     home, world, repository, capsys
 ):
@@ -691,59 +664,126 @@ def test_a_clone_whose_memory_directory_is_the_same_for_both_names_keeps_it(
 
 
 @pytest.fixture
-def two_scripts_naming_the_old_clone(repository):
-    scripts = repository / ".venv" / "bin"
-    scripts.mkdir(parents=True)
+def locked(repository):
     (repository / "uv.lock").write_text("")
     (repository / ".gitignore").write_text(".venv/\n")
-    for name in ("first", "second"):
-        (scripts / name).write_text(f"#!{repository}/.venv/bin/python\n")
-    return scripts
+    (repository / ".venv").mkdir()
+    return repository
 
 
 def failing_sync(project: Path) -> None:
     raise subprocess.CalledProcessError(1, "uv")
 
 
-def test_a_rerun_syncs_a_venv_whose_failed_sync_rewrote_only_some_scripts(
-    home, world, two_scripts_naming_the_old_clone
-):
-    def rewrites_one_script_and_fails(project: Path) -> None:
-        (project / ".venv" / "bin" / "first").write_text(f"#!{project}/.venv/bin/python\n")
-        failing_sync(project)
+def test_a_failed_sync_exits_with_failure_and_names_the_project(home, world, locked, capsys):
+    world.uv_sync = failing_sync
 
-    synced = []
-    world.uv_sync = rewrites_one_script_and_fails
+    code = rename(world)
+
+    assert code == ExitCode.FAILURE
+    assert f"stopped halfway at `uv sync in {home / 'git' / 'fresh'}`" in capsys.readouterr().err
+
+
+def test_a_rerun_after_a_failed_sync_runs_the_sync_again_and_succeeds(home, world, locked, fakes):
+    world.uv_sync = failing_sync
     rename(world)
-    world.uv_sync = synced.append
+    world.uv_sync = fakes.synced.append
 
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert synced == [home / "git" / "fresh"]
+    assert fakes.synced == [home / "git" / "fresh"]
 
 
-@pytest.mark.parametrize("failed", [True, False])
-def test_a_venv_with_no_script_naming_a_path_is_reported_as_needing_a_sync(
-    home, world, two_scripts_naming_the_old_clone, failed, capsys
+def test_a_dry_run_lists_the_syncs_and_runs_none(home, world, locked, fakes, capsys):
+    code = rename(world, apply=False)
+
+    assert code == ExitCode.OK
+    assert f"uv sync in {home / 'git' / 'fresh'}" in capsys.readouterr().out
+    assert fakes.synced == []
+
+
+def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
+    home, world, locked, fakes, capsys
 ):
-    def removes_the_scripts(project: Path) -> None:
-        for script in (project / ".venv" / "bin").glob("*"):
-            script.unlink()
-        if failed:
-            failing_sync(project)
-
-    world.uv_sync = removes_the_scripts
     rename(world)
-    synced = []
-    world.uv_sync = synced.append
     capsys.readouterr()
 
     code = rename(world)
 
-    assert code == ExitCode.FINDINGS
     out = capsys.readouterr().out
-    assert "cannot be proven rebuilt" in out
-    assert f"run `uv sync --locked` in {home / 'git' / 'fresh'}" in out
+    assert code == ExitCode.OK
+    assert fakes.synced == [home / "git" / "fresh"] * 2
+    assert out.splitlines()[-1] == "nothing to move; ran 1 uv syncs"
     assert "nothing to do" not in out
-    assert synced == []
+
+
+def test_a_session_in_a_worktree_under_another_clones_directory_refuses_the_run(
+    home, world, repository, capsys
+):
+    land = make_clone(home / "git" / "old-land", HTTPS.format("old"))
+    stray = home / "git" / "old-worktrees" / "stray"
+    plain_git(land, "worktree", "add", "-b", "stray", str(stray))
+    session = RunningProcess(4242, "claude", stray / "src")
+    world.running_in = lambda roots: (
+        [session] if any(session.directory.is_relative_to(root) for root in roots) else []
+    )
+
+    code = rename(world)
+
+    assert code == ExitCode.REFUSED
+    assert f"pid 4242 (claude) runs in {session.directory}" in capsys.readouterr().err
+    assert (home / "git" / "old").is_dir()
+
+
+def with_activate_script(project: Path) -> None:
+    (project / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+    (project / ".venv" / "bin" / "activate").write_text(f"VIRTUAL_ENV='{project}/.venv'\n")
+
+
+def test_a_moved_venv_is_built_fresh_so_its_activate_script_names_the_new_path(home, world, locked):
+    with_activate_script(locked)
+    (locked / ".venv" / "bin" / "leftover").write_text("old")
+    seen = []
+
+    def sync(project: Path) -> None:
+        seen.append((project / ".venv").exists())
+        with_activate_script(project)
+
+    world.uv_sync = sync
+
+    rename(world)
+
+    fresh = home / "git" / "fresh"
+    assert seen == [False]
+    assert str(fresh) in (fresh / ".venv" / "bin" / "activate").read_text()
+    assert not (fresh / ".venv" / "bin" / "leftover").exists()
+
+
+def test_a_rerun_after_a_failed_sync_builds_the_venv_and_keeps_a_current_one(
+    home, world, locked, fakes
+):
+    with_activate_script(locked)
+    world.uv_sync = failing_sync
+    rename(world)
+    with_activate_script(home / "git" / "fresh")
+    current = home / "git" / "fresh" / ".venv" / "bin" / "marker"
+    current.write_text("kept")
+    world.uv_sync = fakes.synced.append
+
+    code = rename(world)
+
+    assert code == ExitCode.OK
+    assert current.read_text() == "kept"
+    assert fakes.synced == [home / "git" / "fresh"]
+
+
+def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home, world, capsys):
+    make_clone(home / "git" / "fresh", SSH.format("old"))
+    (home / "current").symlink_to(home / "git" / "fresh")
+
+    code = rename(world)
+
+    assert code == ExitCode.OK
+    assert origin_of(home / "git" / "fresh") == SSH.format("fresh")
+    assert "current" not in capsys.readouterr().err

@@ -10,11 +10,11 @@ were moved but not completed."""
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from enum import Enum, auto
 from pathlib import Path
 
 from edge import compose
@@ -66,6 +66,7 @@ class Move:
 class Step:
     description: str
     run: Callable[[], None]
+    is_sync: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,8 +87,7 @@ class Relocation:
     new_url: str | None  # None when `origin` already names the new repository
     linked: tuple[Move, ...]
     outside: tuple[Path, ...]
-    venvs: tuple[Path, ...]  # to sync again
-    unproven_venvs: tuple[Path, ...]  # nothing in them says whether the sync finished
+    syncs: tuple[Path, ...]  # every project with a lock file, synced on each run
 
     @property
     def clone_moves(self) -> tuple[Move, ...]:
@@ -107,7 +107,7 @@ class Relocation:
     @property
     def needs_work(self) -> bool:
         return bool(
-            self.clone_moves or self.new_url or self.needs_repair or self.memory_move or self.venvs
+            self.clone_moves or self.new_url or self.needs_repair or self.memory_move or self.syncs
         )
 
 
@@ -159,7 +159,7 @@ def _github_knows(name: str) -> bool:
 
 def _uv_sync(project: Path) -> None:
     subprocess.run(
-        ["uv", "sync", "--locked", "--reinstall"],
+        ["uv", "sync", "--locked"],
         cwd=project, check=True, stdin=subprocess.DEVNULL,
     )  # fmt: skip
 
@@ -269,36 +269,6 @@ def _current(move: Move) -> Path:
     return move.source if os.path.lexists(move.source) else move.target
 
 
-class VenvState(Enum):
-    STALE = auto()  # still names a path from before the move, or the project has not moved yet
-    REBUILT = auto()  # names the project's new path and no old one
-    UNPROVEN = auto()  # names no path at all, such as after a sync that failed halfway
-
-
-def _venv_evidence(venv: Path) -> list[str]:
-    """The text in a venv that names where it was built: the head of its entry-point scripts
-    and the direct URL of its installed projects."""
-    scripts = [path for path in sorted((venv / "bin").glob("*")) if path.is_file()]
-    heads = [path.read_bytes()[:1024].decode(errors="replace") for path in scripts]
-    urls = sorted(venv.glob("lib/python*/site-packages/*.dist-info/direct_url.json"))
-    return heads + [url.read_text(errors="replace") for url in urls]
-
-
-def _venv_state(project: Move, old_roots: Sequence[Path]) -> VenvState | None:
-    """None when the project has no venv to rebuild."""
-    current = _current(project)
-    if not ((current / "uv.lock").is_file() and (current / ".venv").is_dir()):
-        return None
-    if current != project.target:
-        return VenvState.STALE
-    evidence = _venv_evidence(current / ".venv")
-    if any(_mentions(text, old_roots) for text in evidence):
-        return VenvState.STALE
-    if any(_mentions(text, [project.target]) for text in evidence):
-        return VenvState.REBUILT
-    return VenvState.UNPROVEN
-
-
 def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Relocation:
     linked, outside = [], []
     for path in sorted(registered_worktrees(site.here, _output_of) - {site.here.resolve()}):
@@ -307,15 +277,17 @@ def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Reloca
             outside.append(path)
         elif relocated is not None and (path.exists() or relocated.exists()):
             linked.append(Move(path, relocated))
-    old_roots = [move.source for move in moves]
-    states = {project.target: _venv_state(project, old_roots) for project in (site.clone, *linked)}
+    syncs = [
+        project.target
+        for project in (site.clone, *linked)
+        if (_current(project) / "uv.lock").is_file()
+    ]
     return Relocation(
         site=site,
         new_url=_renamed_url(_origin(site.here), old, new),
         linked=tuple(linked),
         outside=tuple(outside),
-        venvs=tuple(path for path, state in states.items() if state is VenvState.STALE),
-        unproven_venvs=tuple(path for path, state in states.items() if state is VenvState.UNPROVEN),
+        syncs=tuple(syncs),
     )
 
 
@@ -393,14 +365,6 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
     return found
 
 
-def _unproven_venv_findings(relocations: Sequence[Relocation]) -> list[str]:
-    return [
-        f"venv of {path} cannot be proven rebuilt after the move: run `uv sync --locked` in {path}"
-        for relocation in relocations
-        for path in relocation.unproven_venvs
-    ]
-
-
 def _both_exist(move: Move) -> bool:
     return not move.is_noop and os.path.lexists(move.source) and os.path.lexists(move.target)
 
@@ -445,16 +409,35 @@ def _refusals(
     return refusals
 
 
-def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[str]:
-    """A session counts wherever the clone is now: a rerun can find it already moved."""
-    roots = [
-        current
-        for relocation in relocations
-        if relocation.needs_work
-        for move in (relocation.site.clone, relocation.site.worktrees)
-        if os.path.lexists(current := _current(move))
+def _trees_of(relocation: Relocation) -> list[Path]:
+    """Every tree of the clone as it is now: the clone, its `-worktrees` directory and each
+    worktree git lists, under the old and the new name."""
+    site = relocation.site
+    places = [
+        site.clone.source,
+        site.clone.target,
+        site.worktrees.source,
+        site.worktrees.target,
     ]
-    running = world.running_in(roots) if roots else []
+    for move in relocation.linked:
+        places += [move.source, move.target]
+    return [*places, *relocation.outside]
+
+
+def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[str]:
+    """A session counts wherever any tree of any clone is now: a rerun can find it already
+    moved, and a worktree can lie under another clone's directory."""
+    roots = (
+        {
+            path
+            for relocation in relocations
+            for path in _trees_of(relocation)
+            if os.path.lexists(path)
+        }
+        if any(relocation.needs_work for relocation in relocations)
+        else set()
+    )
+    running = world.running_in(sorted(roots)) if roots else []
     return [
         f"pid {process.pid} ({process.command}) runs in {process.directory}: end that session first"
         for process in running
@@ -480,6 +463,23 @@ def _repair_step(relocation: Relocation) -> Step:
     )
 
 
+def _recreate_stale_venv(project: Path) -> None:
+    """A venv built at another path keeps that path in `bin/activate*` and its scripts, so it is
+    removed and built fresh; the `.venv` is derived. A current one is left to an idempotent sync."""
+    venv = project / ".venv"
+    activate = venv / "bin" / "activate"
+    if activate.is_file() and not _mentions(activate.read_text(errors="replace"), [venv]):
+        shutil.rmtree(venv)
+
+
+def _sync_step(world: World, project: Path) -> Step:
+    def sync() -> None:
+        _recreate_stale_venv(project)
+        world.uv_sync(project)
+
+    return Step(f"uv sync in {project}", sync, is_sync=True)
+
+
 def _steps(
     world: World, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
 ) -> tuple[Step, ...]:
@@ -497,9 +497,7 @@ def _steps(
     ]
     steps += [_origin_step(checkout.path, checkout.new_url) for checkout in deploy]
     steps += [
-        Step(f"uv sync in {venv}", lambda venv=venv: world.uv_sync(venv))
-        for relocation in relocations
-        for venv in relocation.venvs
+        _sync_step(world, project) for relocation in relocations for project in relocation.syncs
     ]
     return tuple(steps)
 
@@ -509,12 +507,11 @@ def make_plan(world: World, old: str, new: str) -> Plan:
     moves = [move for site in sites for move in (site.clone, site.worktrees)]
     relocations = [_relocation(site, moves, old, new) for site in sites]
     roots = [move.source for move in moves]
-    deploy = _deploy_checkouts(world, old, new, roots)
+    deploy = _deploy_checkouts(world, old, new, roots + [move.target for move in moves])
     steps = _steps(world, relocations, deploy)
     refusals = _refusals(world, relocations, deploy, bool(steps), new)
     refusals += _process_refusals(world, relocations)
     findings = _findings(world, roots, relocations) if steps else []
-    findings += _unproven_venv_findings(relocations)
     return Plan(steps, tuple(findings), tuple(refusals))
 
 
@@ -547,6 +544,14 @@ def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
     print(f"next: hal rename {new} {old} --apply", file=sys.stderr)
 
 
+def _summary(steps: Sequence[Step]) -> str:
+    syncs = sum(step.is_sync for step in steps)
+    moved = len(steps) - syncs
+    if moved:
+        return f"ran {moved} steps and {syncs} uv syncs"
+    return f"nothing to move; ran {syncs} uv syncs"
+
+
 def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
     plan = make_plan(world, old, new)
     if plan.refusals:
@@ -566,6 +571,8 @@ def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
     if halfway:
         _report_halfway(halfway, old, new)
         return ExitCode.FAILURE
+    if apply and plan.steps:
+        _say(_summary(plan.steps))
     return ExitCode.FINDINGS if plan.findings else ExitCode.OK
 
 
