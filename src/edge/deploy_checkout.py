@@ -51,11 +51,14 @@ class AppCheckout:
         """Make the checkout when `~/srv/<key>` is new or empty; else refuse unless it is a clean
         main worktree of this app's origin with HEAD detached or unborn."""
         tree = self.git.tree
-        tree.mkdir(parents=True, exist_ok=True)
-        marker = tree / ".git"
-        if not marker.exists() and not marker.is_symlink():
-            self._make(tree)
-            return
+        try:
+            tree.mkdir(parents=True, exist_ok=True)
+            marker = tree / ".git"
+            if not marker.exists() and not marker.is_symlink():
+                self._make(tree)
+                return
+        except OSError as error:
+            raise CheckoutRefused(f"cannot be made ({error.strerror})") from error
         if not marker.is_dir() or marker.is_symlink():
             raise CheckoutRefused("is not a main worktree (its .git is not a directory)")
         self._refuse_foreign_origin()

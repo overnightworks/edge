@@ -59,6 +59,7 @@ def test_the_fetch_mirrors_the_release_tags_and_writes_only_dot_git(origin, app)
     app.fetch()
 
     assert app.tags().mirrored == ("v2026.10.22.1", "v2026.10.22.2")
+    assert app.tags().on_branch == {"v2026.10.22.1", "v2026.10.22.2"}
     assert app.commit_of("v2026.10.22.1") == sha == app.commit_of("v2026.10.22.2")
     assert sorted(path.name for path in app.git.tree.iterdir()) == [".git"]
 
@@ -211,6 +212,14 @@ def test_a_directory_that_is_no_checkout_cannot_be_planned(app):
         app.prepare()
 
 
+def test_a_regular_file_where_the_checkout_belongs_is_refused_not_raised(app):
+    app.git.tree.parent.mkdir(parents=True, exist_ok=True)
+    app.git.tree.write_text("mine")
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match="cannot be made"):
+        app.prepare()
+
+
 def test_a_linked_worktree_is_no_main_worktree(app):
     app.git.tree.mkdir(parents=True)
     (app.git.tree / ".git").write_text("gitdir: /elsewhere\n")
@@ -249,9 +258,10 @@ def test_a_compose_file_that_is_no_utf8_is_refused(origin, fetched):
     origin.push("master")
     origin.tag("v2026.10.22.1")
     fetched.fetch()
+    sha = fetched.commit_of("v2026.10.22.1")
 
     with pytest.raises(deploy_checkout.CheckoutRefused, match=r"compose\.yaml is not UTF-8"):
-        fetched.compose_file(fetched.commit_of("v2026.10.22.1"))
+        fetched.compose_file(sha)
 
 
 def test_a_tag_listing_that_git_does_not_give_in_three_fields_is_an_error(app):

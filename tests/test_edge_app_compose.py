@@ -59,6 +59,7 @@ def test_the_containers_carry_their_state_and_health():
     entries = [
         {"Name": "hopin-hopin-1", "Service": "hopin", "State": "running", "Health": "healthy"},
         {"Name": "hopin-db-1", "Service": "db", "State": "created", "Health": ""},
+        {"Name": "hopin-old-1", "Service": "old", "State": "exited", "Health": "healthy"},
     ]
     docker = Docker(stdout="\n".join(json.dumps(entry) for entry in entries))
 
@@ -67,14 +68,17 @@ def test_the_containers_carry_their_state_and_health():
     assert [container.describe() for container in containers] == [
         "hopin-hopin-1 running (healthy)",
         "hopin-db-1 created",
+        "hopin-old-1 exited (healthy)",
     ]
-    assert [container.healthy for container in containers] == [True, False]
+    assert [container.healthy for container in containers] == [True, False, False]
 
 
 @pytest.mark.parametrize("answer", ['[{"Service": "x"}]', "[1, 2]", '"text"'])
 def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(answer):
+    engine = engine_over(Docker(stdout=answer))
+
     with pytest.raises(compose.ComposeError) as failed:
-        engine_over(Docker(stdout=answer)).containers()
+        engine.containers()
 
     assert str(failed.value) == f"`docker compose ps` of {KEY} answered no list of containers"
 
@@ -92,9 +96,10 @@ def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(an
 )
 def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     docker = Docker(exit_code=17, stdout=SENTINEL)
+    engine = engine_over(docker)
 
     with pytest.raises(compose.ComposeError) as failed:
-        step(engine_over(docker))
+        step(engine)
 
     line = str(failed.value)
     assert SENTINEL not in line

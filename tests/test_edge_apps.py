@@ -78,7 +78,7 @@ class World:
     docker: ScriptedDocker
 
     def plan(self) -> apps.AppsPlan:
-        return apps.plan_apps(self.repository, {}, self.runtime)
+        return apps.plan_apps(self.repository, {}, "edge", self.runtime)
 
     def run(self, plan: apps.AppsPlan | None = None) -> list[str | None]:
         """The failure line of each app's run; None where it is on and recorded."""
@@ -311,11 +311,11 @@ def test_an_interrupt_during_the_health_wait_names_it_and_records_nothing(
 def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts_again(
     world, origin, break_it, now
 ):
-    deploy(world, origin, FIRST)
+    sha = deploy(world, origin, FIRST)
     break_it(world.docker)
 
     assert world.plan().describe() == [
-        f"hopin: start again at {FIRST} (recorded); now: hopin-hopin-1 {now}"
+        f"hopin: start again at {FIRST} ({sha}, recorded); now: hopin-hopin-1 {now}"
     ]
 
 
@@ -330,12 +330,12 @@ def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts
 def test_one_container_per_service_and_no_orphan_is_needed_for_nothing_to_change(
     world, origin, arrange
 ):
-    deploy(world, origin, FIRST)
+    sha = deploy(world, origin, FIRST)
     arrange(world.docker)
 
     [line] = world.plan().describe()
 
-    assert line.startswith(f"hopin: start again at {FIRST} (recorded)")
+    assert line.startswith(f"hopin: start again at {FIRST} ({sha}, recorded)")
 
 
 def test_running_containers_without_a_record_are_replaced_and_their_volumes_kept(world, origin):
@@ -358,6 +358,15 @@ def test_a_dirty_checkout_cannot_be_planned_and_is_not_reset(world, origin):
         world.plan()
 
     assert (world.srv / "stray").read_text() == "mine"
+
+
+def test_a_regular_file_at_the_checkout_cannot_be_planned_with_one_line(world, origin):
+    origin.release(FIRST)
+    world.srv.parent.mkdir(parents=True, exist_ok=True)
+    world.srv.write_text("mine")
+
+    with pytest.raises(apps.AppError, match=r"services.hopin: ~/srv/hopin cannot be made"):
+        world.plan()
 
 
 def test_a_tag_moved_on_origin_against_the_record_cannot_be_planned_naming_both_shas(world, origin):
@@ -459,6 +468,14 @@ def test_an_update_interrupted_after_part_of_the_containers_was_replaced_is_repa
         (
             "services: {web: {depends_on: {db: {condition: service_completed_successfully}}}}",
             "service web waits for health or completion (depends_on condition)",
+        ),
+        (
+            "services: {web: {depends_on: {db: {condition: '${X:-service_healthy}'}}}}",
+            "service web interpolates a depends_on condition ($)",
+        ),
+        (
+            'services: {web: {image: x, restart: "${R:-no}"}}',
+            "service web interpolates restart ($)",
         ),
         ('services: {web: {image: x, restart: "no"}}', "service web is a one-shot (restart no)"),
         ("services: {web: {image: x, restart: no}}", "service web is a one-shot (restart no)"),

@@ -24,7 +24,6 @@ FLEET_FILE = "fleet.yaml"
 _RUN_KEYS = {"enabled", "setup"}
 _APP_RUN_KEYS = {"enabled"}
 _REPO_KEYS = {"default_branch"}
-EDGE_PROJECT = "edge"  # the compose project of this repository's own stack
 _BOOL_TAG = "tag:yaml.org,2002:bool"
 _TRUE_OR_FALSE = re.compile(r"^(?:true|false)$")
 _FLOAT_TAG = "tag:yaml.org,2002:float"
@@ -47,7 +46,7 @@ _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _APP_KEY = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _GITHUB_ORGANISATION = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 # What `git check-ref-format --branch` accepts, narrowed to what never needs quoting.
-_BRANCH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*")
+_BRANCH = re.compile(r"\w[\w.-]*(/\w[\w.-]*)*", re.ASCII)
 _LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost"}
 APEX = "@"
 WILDCARD = "*"
@@ -149,11 +148,14 @@ def _is_app(entry: Any) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" in entry
 
 
-def apps(document: Any, profile_services: Mapping[str, tuple[str, ...]]) -> tuple[App, ...]:
+def apps(
+    document: Any, profile_services: Mapping[str, tuple[str, ...]], edge_project: str
+) -> tuple[App, ...]:
     """The apps of the catalog: the entries with `repo` and `run`. A `repo` entry without `run` is
-    a library and stays ignored."""
+    a library and stays ignored. No app takes a profile or the project name `edge_project` of
+    edge's own stack."""
     return tuple(
-        _app(key, entry, profile_services)
+        _app(key, entry, profile_services, edge_project)
         for key, entry in _entries(document).items()
         if _is_app(entry)
     )
@@ -168,8 +170,10 @@ def github_org(document: Any) -> str:
     return organisation
 
 
-def _app(key: str, entry: dict, profile_services: Mapping[str, tuple[str, ...]]) -> App:
-    if key in profile_services or key == EDGE_PROJECT:
+def _app(
+    key: str, entry: dict, profile_services: Mapping[str, tuple[str, ...]], edge_project: str
+) -> App:
+    if key in profile_services or key == edge_project:
         raise CatalogError(f"services.{key}: an app's key is no compose profile or project of edge")
     if not _APP_KEY.fullmatch(key):
         raise CatalogError(f"services.{key}: an app's key must be a compose project name")

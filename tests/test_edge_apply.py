@@ -185,7 +185,7 @@ class ScriptedCompose:
     crash_loops: set[str] = field(default_factory=set)
     just_started: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
-    config: dict = field(default_factory=resolved_configuration)
+    config: dict = field(default_factory=lambda: {"name": "edge", **resolved_configuration()})
     realm_checksums: dict = field(default_factory=lambda: {"master": {}, "hallucinai": {}})
     realm_applies: int = 0  # how often config-cli ran
     config_cli_fails: bool = False

@@ -33,6 +33,7 @@ def test_the_newest_release_is_greatest_by_date_then_by_number_as_a_number(older
         "v2026.02.30.1",
         "v2026.10.22.1\n",
         "v\uff12026.10.22.1",
+        "v2026.10.22.\u0661",
         "V2026.10.22.1",
         "v2026.10.22",
     ],

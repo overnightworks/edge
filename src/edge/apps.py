@@ -140,12 +140,15 @@ class AppsPlan:
 
 
 def plan_apps(
-    repository: Path, profile_services: Mapping[str, tuple[str, ...]], runtime: AppRuntime
+    repository: Path,
+    profile_services: Mapping[str, tuple[str, ...]],
+    edge_project: str,
+    runtime: AppRuntime,
 ) -> AppsPlan:
     """The plan of every enabled app: it fetches each app's origin and writes only `.git`. An
     app that is on as it should be is left out; one that cannot be planned raises AppError."""
     document = catalog.read(repository / catalog.FLEET_FILE)
-    enabled = [app for app in catalog.apps(document, profile_services) if app.enabled]
+    enabled = [app for app in catalog.apps(document, profile_services, edge_project) if app.enabled]
     if not enabled:
         return AppsPlan(runtime)
     organisation = catalog.github_org(document)
@@ -169,6 +172,8 @@ def _plan_one(
         app_checkout.prepare()
     except deploy_checkout.CheckoutRefused as error:
         raise AppError(f"services.{app.key}: ~/srv/{app.key} {error}") from error
+    except checkout.GitError as error:
+        raise AppError(f"services.{app.key}: {error}") from error
     try:
         app_checkout.fetch()
         tags = app_checkout.tags()
@@ -228,7 +233,7 @@ def _describe(
             f"into ~/srv/{key}{replacing}"
         )
     if recorded.sha == sha:
-        return f"{key}: start again at {tag} (recorded){now}"
+        return f"{key}: start again at {tag} ({sha}, recorded){now}"
     unfinished = ""
     if head is not None and head != recorded.sha:
         unfinished = f"; the update to {tag if head == sha else head} did not finish"
@@ -284,16 +289,22 @@ def _service_refusal(definition: Any) -> str | None:
     if isinstance(extends, dict) and "file" in extends:
         return "extends a file (extends.file); an app is self-contained"
     conditions = definition.get("depends_on")
-    if isinstance(conditions, dict) and any(
-        isinstance(dependency, dict) and dependency.get("condition") in _ONE_SHOT_CONDITIONS
-        for dependency in conditions.values()
-    ):
-        return "waits for health or completion (depends_on condition); not yet supported"
-    if "restart" in definition and (
-        definition["restart"] is False or definition["restart"] == "no"
-    ):
+    if isinstance(conditions, dict):
+        waits = [d.get("condition") for d in conditions.values() if isinstance(d, dict)]
+        if any(_interpolates(value) for value in waits):
+            return "interpolates a depends_on condition ($); not yet supported"
+        if any(value in _ONE_SHOT_CONDITIONS for value in waits):
+            return "waits for health or completion (depends_on condition); not yet supported"
+    restart = definition.get("restart")
+    if _interpolates(restart):
+        return "interpolates restart ($); not yet supported"
+    if restart is False or restart == "no":
         return "is a one-shot (restart no); not yet supported"
     return None
+
+
+def _interpolates(value: Any) -> bool:
+    return isinstance(value, str) and "$" in value
 
 
 def _run(

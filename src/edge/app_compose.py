@@ -13,7 +13,7 @@ never` makes the containers from what was built, and `start` starts them.
 from dataclasses import dataclass
 from pathlib import Path
 
-from edge import compose
+from edge import compose, deploy_checkout
 
 BUILD_SECONDS = 1800
 PULL_SECONDS = 600
@@ -75,7 +75,7 @@ class AppCompose:
         """`tag` set: the call is bound to the checkout's compose.yaml, which is that tag's."""
         command = ["docker", "compose", "-p", self.key]
         if tag is not None:
-            file = self.directory / "compose.yaml"
+            file = self.directory / deploy_checkout.COMPOSE_FILE
             command += ["--project-directory", str(self.directory), "--file", str(file)]
         result = self.run([*command, verb, *arguments], timeout)
         if result.returncode != 0:

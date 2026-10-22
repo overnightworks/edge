@@ -13,8 +13,8 @@ from datetime import date
 
 from edge import compose
 
-# Not `\d` and not `$`: those accept other scripts' digits and a trailing newline.
-_RELEASE = re.compile(r"v([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([1-9][0-9]*)")
+# ASCII digits only (`re.ASCII`) and `fullmatch`, not `$`: a trailing newline is no release.
+_RELEASE = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})\.([1-9]\d*)", re.ASCII)
 GRAMMAR = "vYYYY.MM.DD.N"
 
 

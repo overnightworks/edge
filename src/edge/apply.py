@@ -1,4 +1,5 @@
-"""`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml`.
+"""`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml` and its
+apps on at their newest release (`apps.py`).
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
 2 cannot plan. The core (socket-proxy and traefik) comes first: a core service whose compose
@@ -167,7 +168,7 @@ def _plan(
         gates.get(reconcile.REALM_UNIT),
         starts_keycloak,
     )
-    app_plans = plan_apps(repository, fleet.profile_services, app_runtime)
+    app_plans = plan_apps(repository, fleet.profile_services, fleet.config["name"], app_runtime)
     return Plan(fleet, read, core_plans, follower_plans, plans, images, realm, app_plans)
 
 
