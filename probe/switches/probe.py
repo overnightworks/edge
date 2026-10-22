@@ -57,6 +57,7 @@ import grp
 import http.client
 import json
 import os
+import re
 import secrets
 import signal
 import socket
@@ -106,9 +107,7 @@ SYSTEMCTL_SECONDS = 60
 BOOT_DROP_IN_SOURCE = REPO / "tunnel" / f"{tunnel.CLOUDFLARED_UNIT}.d" / tunnel.BOOT_DROP_IN
 TUNNEL_UNIT_TEXT = "[Service]\nExecStart=/usr/bin/sleep infinity\n"
 PROBE_SERVICES = ("hello", "hello-mcp")
-WHOAMI_IMAGE = (
-    "traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"
-)
+[WHOAMI_IMAGE] = re.findall(r"image: &whoami (\S+)", (REPO / "compose.yaml").read_text())
 WHOAMI_ANCHOR = f"image: &whoami {WHOAMI_IMAGE}"
 WHOAMI_ALIAS = "image: *whoami"
 RESPELLED_WHOAMI = f"docker.io/{WHOAMI_IMAGE}"  # the same digest, so nothing is pulled
