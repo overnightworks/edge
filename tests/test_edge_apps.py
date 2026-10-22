@@ -326,18 +326,33 @@ def test_a_container_name_that_compose_interpolates_never_reaches_a_plan_or_a_fa
     resolved = "hal-test-sentinel-value"
     monkeypatch.setenv("SENTINEL", resolved)
     named = COMPOSE + "    container_name: '${SENTINEL}'\n"
-    deploy(world, origin, FIRST, {"compose.yaml": named})
-    world.docker.rows[0]["Name"] = resolved
-    origin.release(SECOND, {"compose.yaml": named})
-    world.docker.health_after_start = "unhealthy"
+    create_unnamed = world.docker.verb_create
 
-    [failure] = world.run()
-    shown = [failure, *world.plan().describe()]
-    world.docker.rows[0]["Name"] = resolved
+    def create_named(arguments: list[str]) -> str:
+        create_unnamed(arguments)
+        for row in world.docker.rows:
+            row["Name"] = resolved
+        return ""
+
+    world.docker.verb_create = create_named
+    sha = deploy(world, origin, FIRST, {"compose.yaml": named})
     world.docker.rows[0]["State"] = "exited"
+    start_again = world.plan().describe()
 
-    assert resolved not in " ".join([*shown, *world.plan().describe()])
+    assert world.docker.rows[0]["Name"] == resolved
+    assert start_again[0].startswith(f"hopin: start again at {FIRST} ({sha}, recorded)")
+
+    origin.release(SECOND, {"compose.yaml": named})
+    update = world.plan().describe()
+
+    assert update[0].startswith(f"hopin: update to {SECOND}")
+
+    world.docker.health_after_start = "unhealthy"
+    [failure] = world.run()
+
+    assert world.docker.rows[0]["Name"] == resolved
     assert "hopin running (unhealthy)" in failure
+    assert resolved not in " ".join([*start_again, *update, failure])
 
 
 @pytest.mark.parametrize(
