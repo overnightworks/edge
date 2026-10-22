@@ -170,7 +170,10 @@ def test_a_shared_section_precedes_songmaker_and_is_in_the_table_of_contents(sec
         "Eine Einwilligung ist dafür nicht nötig",
         "90 Tage lang",
         "1 Jahr lang",
-        "Logs löschen wir nach spätestens 30 Tagen",
+        "Dieses Log wird derzeit ohne feste Höchstdauer gespeichert",
+        "12 Stunden nach dem letzten Fehlversuch",
+        "es bleiben die letzten zehn",
+        "KC_STATE_CHECKER",
         "etwa drei Monate",
     ],
 )
