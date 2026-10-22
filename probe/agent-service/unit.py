@@ -9,9 +9,9 @@ holds a dummy login (never a real token).
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`
 drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
 issuer on the `agent` network, so the tokens verify and the CLI meets the real upstream with the
-dummy login. U16 then runs the cells of `agent-service/live_smoke.py` there, past its sign-in.
-The image
-`edge-agent-service:0.4.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
+dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
+`agent-service/live_smoke.py` there, past its sign-in. The image
+`edge-agent-service:0.6.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
 directory. Exit 0: every cell held, 1: a cell failed.
@@ -60,6 +60,7 @@ from egress import (
 )
 from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
 from live_smoke import egress_cells as live_egress_cells
+from refusals import MEMBER_GROUPS, SMOKE_SERVICE, check_refusals
 from smoke import Tokens
 
 from edge import compose
@@ -600,9 +601,7 @@ ISSUER_ORIGIN = f"https://{ISSUER_SERVICE}:{ISSUER_PORT}"
 REAL_ISSUER_ORIGIN = "https://auth.hallucinai.de"
 KEY_ID = "probe-key"
 WORKLOAD_CLIENT = "songmaker"
-PLAN_GROUP = "/services/agent-service/subscription"
 TOKEN_SECONDS = 240  # the service refuses a workload token that lives longer than 300
-SMOKE_SERVICE = "agent-smoke"
 ISSUER_PROGRAM = (
     f"ISSUER_PORT = {ISSUER_PORT}\n"
     + """\
@@ -732,12 +731,13 @@ class SmokeProbe(Probe):
 
     def drive(self) -> None:
         self.cell_u14()
+        check_refusals(self.run, self.compose_command, self.tokens, self.held)
         self.cell_u16()
 
-    def tokens(self) -> Tokens:
+    def tokens(self, groups: tuple[str, ...] = MEMBER_GROUPS) -> Tokens:
         issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"
         person = self.issuer.token(
-            issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": [PLAN_GROUP]})  # fmt: skip
+            issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": list(groups)})  # fmt: skip
         workload = self.issuer.token(
             issuer,
             {"sub": "workload", "azp": WORKLOAD_CLIENT, "client_id": WORKLOAD_CLIENT,

@@ -14,7 +14,7 @@ first: a second run changes nothing. The token is read without echo and exists o
                                   2 cannot tell. It is the setup contract `edge apply` asks.
 
 The token rules equal the service's reader (agent_providers/secret_file.py, agent-providers
-v0.4.0): a regular file of at most 16 KiB that group and others cannot touch, holding one
+v0.6.0): a regular file of at most 16 KiB that group and others cannot touch, holding one
 printable line without whitespace that is neither JSON nor an API key. A pasted line is judged as
 the exact bytes to be written, with those rules, before anything is created; a refused paste
 leaves the old token as it was. Every write goes through a descriptor of ~/.secrets/agent-service/
