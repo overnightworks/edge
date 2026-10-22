@@ -1,8 +1,0 @@
-claim_id = "79a4f3448d714462b793502867270837"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "1cddfe2a2a6d66ac2622da9b948acc8da6b4b876"
-branch = "claude/issue-312-110-s2b-the-shared-privacy-part-says-wha"
-scope = ["docs/design/legal-pages.html", "docs/keycloak.md", "legal/pages/datenschutz.html", "tests/test_legal_unit.py"]
-opened_commit = "7b914207bccfcb28345ed89b0733b6c172d6c19c"
-whole_reason = "The shared privacy part, its frozen mockup, its test, and the one operator line that makes its pseudonym promise true."
