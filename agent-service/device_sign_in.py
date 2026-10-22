@@ -13,8 +13,10 @@ import hashlib
 import http
 import http.client
 import json
+import os
 import secrets
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -35,10 +37,28 @@ SLOW_DOWN_SECONDS = 5  # RFC 8628, 3.5: the interval grows by at least five seco
 DEFAULT_INTERVAL_SECONDS = 5  # RFC 8628, 3.2: the interval when the server names none
 MAX_LIFETIME_SECONDS = 3600
 MAX_INTERVAL_SECONDS = 60
+READ_CHUNK_BYTES = 4096
+MAX_ANSWER_BYTES = 64 * 1024  # a real answer is a few hundred bytes
 
 
 class SignInFailed(Exception):
     """The sign-in cannot go on; the message is the one line to print, free of any secret."""
+
+
+def read_answer(answer, deadline: float, clock: Callable[[], float]) -> object:
+    """The JSON of a response read within the deadline and the size cap; anything else raises."""
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = answer.read(READ_CHUNK_BYTES)
+        if clock() > deadline:
+            raise TimeoutError("the answer arrived after its deadline")
+        if not chunk:
+            return json.loads(b"".join(chunks))
+        size += len(chunk)
+        if size > MAX_ANSWER_BYTES:
+            raise ValueError("the answer is larger than any real one")
+        chunks.append(chunk)
 
 
 def post_form(
@@ -47,8 +67,10 @@ def post_form(
     client_secret: str,
     urlopen=urllib.request.urlopen,
     timeout: float = TOKEN_TIMEOUT_SECONDS,
-) -> tuple[int, dict]:
-    """The status and the JSON object Keycloak answered, whether it accepted or refused."""
+    clock: Callable[[], float] = time.monotonic,
+) -> tuple[int, object]:
+    """The status and the JSON Keycloak answered, whether it accepted or refused, in `timeout`."""
+    deadline = clock() + timeout
     body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
     request = urllib.request.Request(
         f"{OIDC}/{path}", body.encode(), headers={"User-Agent": USER_AGENT}
@@ -56,9 +78,9 @@ def post_form(
     try:
         try:
             with urlopen(request, timeout=timeout) as answer:
-                status, document = http.HTTPStatus.OK, json.load(answer)
+                status, document = http.HTTPStatus.OK, read_answer(answer, deadline, clock)
         except urllib.error.HTTPError as refusal:
-            status, document = refusal.code, json.load(refusal)
+            status, document = refusal.code, read_answer(refusal, deadline, clock)
     except (OSError, http.client.HTTPException, ValueError):
         raise SignInFailed(f"the {path} endpoint gave no answer to read") from None
     if not isinstance(document, dict):
@@ -67,9 +89,12 @@ def post_form(
 
 
 def access_token(
-    form: Mapping[str, str], client_secret: str, urlopen=urllib.request.urlopen
+    form: Mapping[str, str],
+    client_secret: str,
+    urlopen=urllib.request.urlopen,
+    clock: Callable[[], float] = time.monotonic,
 ) -> str:
-    status, document = post_form("token", form, client_secret, urlopen)
+    status, document = post_form("token", form, client_secret, urlopen, clock=clock)
     if status != 200:
         raise SignInFailed(f"the token endpoint answered {status}")
     token = document.get("access_token")
@@ -98,9 +123,11 @@ def within(value: object, upper_bound: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= upper_bound
 
 
-def device_authorization(client_secret: str, challenge: str, urlopen) -> DeviceAuthorization:
+def device_authorization(
+    client_secret: str, challenge: str, urlopen, clock: Callable[[], float]
+) -> DeviceAuthorization:
     form = {"scope": "openid", "code_challenge": challenge, "code_challenge_method": "S256"}
-    status, document = post_form("auth/device", form, client_secret, urlopen)
+    status, document = post_form("auth/device", form, client_secret, urlopen, clock=clock)
     link = document.get("verification_uri_complete") or document.get("verification_uri")
     interval = document.get("interval", DEFAULT_INTERVAL_SECONDS)
     strings = (document.get("device_code"), document.get("user_code"), link)
@@ -141,6 +168,7 @@ def person_token(
             client_secret,
             urlopen,
             min(TOKEN_TIMEOUT_SECONDS, remaining),
+            clock,
         )
         if status == 200 and isinstance(document.get("access_token"), str):
             return document["access_token"]
@@ -158,36 +186,28 @@ def person_token(
     raise SignInFailed("the code ran out before it was confirmed; run the smoke again")
 
 
-def blocks_until_closed(browser: webbrowser.BaseBrowser) -> bool:
-    """A console browser (lynx, w3m) takes the terminal; `open` returns only when it ends."""
-    return isinstance(browser, webbrowser.GenericBrowser) and not isinstance(
-        browser, webbrowser.BackgroundBrowser
-    )
-
-
-def open_in_graphical_browser(link: str) -> bool:
-    try:
-        browser = webbrowser.get()
-    except webbrowser.Error:
-        return False
-    return not blocks_until_closed(browser) and browser.open(link)
+def open_in_graphical_session(link: str) -> None:
+    """A browser opens only where a display is; a console browser would take the terminal."""
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        webbrowser.open(link)
 
 
 def sign_in(
     client_secret: str,
     urlopen=urllib.request.urlopen,
     pause: Callable[[float], None] = time.sleep,
-    open_link: Callable[[str], object] = open_in_graphical_browser,
+    open_link: Callable[[str], object] = open_in_graphical_session,
     clock: Callable[[], float] = time.monotonic,
 ) -> Tokens:
     verifier, challenge = pkce_pair()
-    authorization = device_authorization(client_secret, challenge, urlopen)
+    authorization = device_authorization(client_secret, challenge, urlopen, clock)
     deadline = clock() + authorization.expires_in
     print(
         f"Open {authorization.link} and confirm the code {authorization.user_code}",
         file=sys.stderr,
     )
-    open_link(authorization.link)  # best effort: over SSH the link opens on any other device
+    # best effort and off the poll loop: no opener can delay the polling or outlast the code
+    threading.Thread(target=open_link, args=(authorization.link,), daemon=True).start()
     person = person_token(authorization, deadline, verifier, client_secret, urlopen, pause, clock)
-    workload = access_token({"grant_type": "client_credentials"}, client_secret, urlopen)
+    workload = access_token({"grant_type": "client_credentials"}, client_secret, urlopen, clock)
     return Tokens(person=person, workload=workload)
