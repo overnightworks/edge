@@ -78,18 +78,18 @@ re-create it.
 
 ## What a turn leaves behind
 
-The CLI's per-run home and work directories live below `/run/agent-service/cli`, and `/tmp` (which
-also holds the CLI's empty `cc-socks-<uid>` directory) is a tmpfs too: both are RAM-only. The
-container's root is read-only and its only mounts are `service.toml` and the login directory, both
-read-only, so nothing of a turn is written to a disk on this PC; a restart or recreate drops the
-tmpfs. The service writes no turn content to its logs and keeps no turn text; its own retention is
-documented in agent-providers#429 (`docs/wire.md`, "What a run keeps"). `compose.yaml` sets no
-`logging` for the service, so its logs stay in Docker's container log under the daemon's default
-driver until the container is removed. The operator's Claude login is a read-only file and reaches
-the CLI only through its environment. The content of a turn leaves this PC for Anthropic, which
-generates the answer.
+The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
+are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
+drops them. The only host binds are `service.toml` and the login directory, both read-only
+([The login](#the-login)); the login reaches the CLI only through its environment. The service sets
+no `logging` override, so its logs follow the Docker daemon's settings; their destination and
+retention are set there, not in this file (log retention: edge#167,
+<https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
+documented by agent-providers, which owns it; that section is being written in
+agent-providers#429 (<https://github.com/overnightworks/agent-providers/issues/429>). The content of
+a turn leaves this PC for Anthropic, which generates the answer.
 
-**Whose account.** Only the operator is a member of `/services/agent-service/subscription`, so his
+**Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
 Claude subscription serves only his own use. Every other person reaches the service only through the
 API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
 enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
