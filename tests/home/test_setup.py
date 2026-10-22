@@ -551,7 +551,7 @@ BY_HAND = secret_entry("by-hand", kind="token")
 
 @pytest.fixture
 def hal_secrets(
-    use_manifest: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> Callable[..., tuple[int, list[str], str]]:
     """`hal setup` in process against a manifest written from the given entries; the wizard's terminal is the one `secrets_terminal` builds."""
 
@@ -660,6 +660,22 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(sandbox: S
     assert "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply" in error
     assert "fehlgeschlagen" not in error
     assert not (sandbox.home / ".secrets" / "live").exists()
+
+
+def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_traceback(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupted(_descriptor: int) -> None:
+        raise KeyboardInterrupt
+
+    use_manifest(LIVE)
+    terminal = secrets_terminal(True)
+    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted))
+    error = capsys.readouterr().err
+
+    assert code == ExitCode.INTERRUPTED
+    assert "abgebrochen; keine Datei halb geschrieben" in error
+    assert "Traceback" not in error
 
 
 def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_read(hal_secrets: Callable[..., tuple[int, list[str], str]]) -> None:
