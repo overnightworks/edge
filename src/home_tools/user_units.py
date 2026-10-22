@@ -35,7 +35,9 @@ class LoadedUnit:
 
     @classmethod
     def parse(cls, shown: str) -> LoadedUnit:
-        properties = dict(line.partition("=")[::2] for line in shown.splitlines())
+        properties = {
+            key: value for key, _, value in (line.partition("=") for line in shown.splitlines())
+        }
         return cls(
             needs_reload=properties.get("NeedDaemonReload") == "yes",
             enabled=properties.get("UnitFileState") == "enabled",
