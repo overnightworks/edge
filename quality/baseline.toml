@@ -10,7 +10,7 @@
 "probe/agent-service/unit.py" = 841
 "probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1054
-"probe/switches/probe.py" = 813
+"probe/switches/probe.py" = 812
 "src/edge/realm/observe.py" = 815
 "src/home_tools/secrets_view.py" = 862
 "src/home_tools/tidy_home.py" = 1071
