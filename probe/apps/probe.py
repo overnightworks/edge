@@ -501,7 +501,7 @@ class Probe:
             out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
             expect(f"the update to {tag} did not finish" in out, out[-400:])
             expect("nothing to change" not in out, out[-400:])
-            expect(all(row["name"] in out for row in self.containers()), "a container is not shown")
+            expect(all(row["service"] in out for row in self.containers()), "a container is not shown")
             self.apply()
             rows = self.containers()
             expect(
