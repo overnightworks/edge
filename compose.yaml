@@ -104,6 +104,11 @@ services:
       keycloak-db:
         condition: service_healthy
     # No read_only: `start` without --optimized rebuilds the server into the image's lib directory at boot.
+    # Keycloak keeps gzip copies of theme files in data/tmp/kc-gzip-cache and never compares them
+    # with the file, so the copies must not outlive the process. uid and mode: Docker remounts a
+    # bare tmpfs root:root 755 on a restart, and Keycloak (uid 1000) then answers 404 for gzip.
+    tmpfs:
+      - /opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700,size=64m,nosuid,nodev,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     networks: [keycloak]
@@ -368,13 +373,13 @@ services:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
 
-  # The agent service (agent-providers v0.4.0; the image is built on the PC, docs/agent-service.md,
+  # The agent service (agent-providers v0.6.0; the image is built on the PC, docs/agent-service.md,
   # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.4.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.6.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"
