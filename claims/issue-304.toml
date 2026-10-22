@@ -1,0 +1,8 @@
+claim_id = "f5fdcbf8424e4b73be05dfcef84d04e7"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "df28d76cea60d46922ca4839cb41c3f3ac5d0b9c"
+branch = "claude/issue-304-255-p2-hal-apply-holds-an-app-to-the-ful"
+scope = ["docs/architecture.md", "probe/apps", "quality/baseline.toml", "src/edge/app_compose.py", "src/edge/app_contract.py", "src/edge/apps.py", "src/edge/catalog.py", "tests/test_edge_app_compose.py", "tests/test_edge_app_contract.py", "tests/test_edge_apps.py", "tests/test_edge_catalog_hosts.py"]
+opened_commit = "1ff39411ebfcc82973a351a2ff1c86fae284ee3a"
+whole_reason = "One owner for the app compose contract: the pure check, its two call sites, the catalog's ready rule, their tests and the probe cells."
