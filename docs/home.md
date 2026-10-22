@@ -80,7 +80,7 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 ```
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
-`home tidy`, die Ansicht von `home secrets` und die Hook-Prüfung — und schreibt einen gemeinsamen
+`home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung und die Log-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`. Eine
 Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
 wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
@@ -148,6 +148,26 @@ Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt
 
 Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
 zerbrochen, nie als sauber.
+
+### Die Prüfung `logs`
+
+Auf diesem PC gilt für jedes Server-Log die Grenze von 30 Tagen
+(`LOG_RETENTION_DAYS` in `system_step.py`). Die Prüfung `logs` berichtet Alter
+und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
+
+- **Container mit `json-file`.** Jeder Container in jedem Zustand, dessen
+  Log-Treiber `json-file` ist, mit Namen und Compose-Projekt. `journald` und
+  `none` sind keine Funde.
+- **Docker-Standardtreiber** (`docker info`) außer `journald`.
+- **Journal zu alt.** Der älteste Eintrag laut `journalctl --list-boots -o json`
+  (Zeiten der Boots, nicht der Meldungen) ist älter als `LOG_RETENTION_DAYS`.
+- **rsyslog-Dateien.** `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err`
+  und `ufw.log` samt Archiven unter `/var/log`, nur nach Name und Dasein.
+
+Lässt sich `docker` oder `journalctl` nicht ausführen oder liefert das Journal
+kein lesbares Ergebnis, ist das ein eigener Fund (`docker-unreadable`,
+`journal-unreadable`), nie ein sauberer Lauf. Der Bericht nennt außerdem je
+Speicher den Stand (Journal-Alter, Standardtreiber, Zahl der Container).
 
 ## home secrets
 

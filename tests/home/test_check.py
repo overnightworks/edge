@@ -4,6 +4,7 @@ import os
 import select
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -11,7 +12,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeProbe, RunnerWithRealGitAndQuality, Sandbox
 
-from home_tools import cli
+from home_tools import check, cli
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
 from home_tools.tidy_home import Layout
 
@@ -24,9 +25,29 @@ def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> 
     return furnish_clean_home(sandbox.home)
 
 
+class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
+    """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
+
+    container_listing = ""
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        if argv[0] == "journalctl":
+            return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
+        if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
+            self.calls.append(list(argv))
+            return {"ps": "id0\n" if self.container_listing else "", "info": "journald\n", "inspect": self.container_listing}[argv[1]]
+        return super().__call__(argv)
+
+
 @pytest.fixture
-def runner() -> RunnerWithRealGitAndQuality:
-    return RunnerWithRealGitAndQuality()
+def runner() -> RunnerWithCleanLogs:
+    return RunnerWithCleanLogs()
+
+
+@pytest.fixture(autouse=True)
+def empty_log_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The logs check looks at /var/log, which this machine fills; the tests look at an empty directory."""
+    monkeypatch.setattr(check, "LOG_DIRECTORY", tmp_path / "var-log")
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +73,15 @@ def test_a_first_run_with_findings_writes_one_report_and_sends_one_notification(
     assert runner.notifications[0] == report.splitlines()[0].removeprefix("# ")
     assert report.splitlines()[0].endswith("| 2 Funde")  # the image is also unknown to ~/README.md
     assert runner.notification_bodies[0] == f"2 neu, 0 weg. Bericht: {Layout(clean_home).check_report_file}"
+
+
+def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(clean_home, runner) -> None:
+    runner.container_listing = "/songmaker-api-1\tjson-file\tsongmaker\n"
+
+    code = home_check(clean_home, runner)
+
+    assert code == 1
+    assert "container-json-file | songmaker-api-1" in (clean_home / ".local/state/home/check-report.md").read_text()
 
 
 def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean_home, leave_pasted_image, runner) -> None:
