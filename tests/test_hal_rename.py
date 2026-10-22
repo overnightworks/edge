@@ -26,7 +26,7 @@ class Fakes:
     known: set[str] = field(default_factory=lambda: {"fresh"})
     running: list[RunningProcess] = field(default_factory=list)
     tools: str = ""
-    synced: list[Path] = field(default_factory=list)
+    uv_calls: list[tuple[Path, tuple[str, ...]]] = field(default_factory=list)
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def world(home: Path, fakes: Fakes) -> World:
         home=home,
         github_knows=lambda name: name in fakes.known,
         running_in=lambda roots: fakes.running,
-        uv_sync=fakes.synced.append,
+        uv=lambda project, arguments: fakes.uv_calls.append((project, arguments)),
         uv_tools=lambda: fakes.tools,
     )
 
@@ -300,31 +300,6 @@ def test_a_uv_tool_installed_from_a_moved_clone_is_reported(world, repository, f
     assert "ansible-core" not in out
 
 
-def test_a_moved_venv_is_synced_again(home, world, repository, fakes):
-    (repository / "uv.lock").write_text("")
-    (repository / ".venv").mkdir()
-    (repository / ".gitignore").write_text(".venv/\n")
-
-    rename(world)
-
-    assert fakes.synced == [home / "git" / "fresh"]
-
-
-def test_a_failing_step_ends_with_failure_and_says_it_stopped_halfway(world, repository, capsys):
-    (repository / "uv.lock").write_text("")
-    (repository / ".venv").mkdir()
-
-    def broken(path):
-        raise subprocess.CalledProcessError(1, "uv")
-
-    world.uv_sync = broken
-
-    code = rename(world)
-
-    assert code == ExitCode.FAILURE
-    assert "stopped halfway at `uv sync in" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize("name", ["../up", "a/b", "", "-x", "Upper"])
 def test_a_name_that_is_not_a_repository_name_is_a_usage_error(name, capsys):
     parser = cli.build_parser(cli.COMMANDS)
@@ -373,7 +348,7 @@ def test_the_real_boundaries_call_gh_and_uv(tmp_path, monkeypatch):
 
     assert world.github_knows("known")
     assert not world.github_knows("missing")
-    world.uv_sync(project)
+    world.uv(project, ("sync", "--locked"))
     assert (tmp_path / "log").read_text().strip() == f"sync --locked in {project}"
     assert world.uv_tools() == "tool listing\n"
 
@@ -671,12 +646,20 @@ def locked(repository):
     return repository
 
 
-def failing_sync(project: Path) -> None:
+def failing_uv(project: Path, arguments: tuple[str, ...]) -> None:
     raise subprocess.CalledProcessError(1, "uv")
 
 
+def rewrites(project: Path) -> list[tuple[Path, tuple[str, ...]]]:
+    """What a run asks uv for in a project whose `.venv` is a directory."""
+    return [
+        (project, ("venv", "--allow-existing")),
+        (project, ("sync", "--locked", "--reinstall")),
+    ]
+
+
 def test_a_failed_sync_exits_with_failure_and_names_the_project(home, world, locked, capsys):
-    world.uv_sync = failing_sync
+    world.uv = failing_uv
 
     code = rename(world)
 
@@ -685,14 +668,14 @@ def test_a_failed_sync_exits_with_failure_and_names_the_project(home, world, loc
 
 
 def test_a_rerun_after_a_failed_sync_runs_the_sync_again_and_succeeds(home, world, locked, fakes):
-    world.uv_sync = failing_sync
+    world.uv = failing_uv
     rename(world)
-    world.uv_sync = fakes.synced.append
+    world.uv = lambda project, arguments: fakes.uv_calls.append((project, arguments))
 
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert fakes.synced == [home / "git" / "fresh"]
+    assert fakes.uv_calls == rewrites(home / "git" / "fresh")
 
 
 def test_a_dry_run_lists_the_syncs_and_runs_none(home, world, locked, fakes, capsys):
@@ -700,7 +683,7 @@ def test_a_dry_run_lists_the_syncs_and_runs_none(home, world, locked, fakes, cap
 
     assert code == ExitCode.OK
     assert f"uv sync in {home / 'git' / 'fresh'}" in capsys.readouterr().out
-    assert fakes.synced == []
+    assert fakes.uv_calls == []
 
 
 def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
@@ -713,7 +696,7 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
 
     out = capsys.readouterr().out
     assert code == ExitCode.OK
-    assert fakes.synced == [home / "git" / "fresh"] * 2
+    assert fakes.uv_calls == rewrites(home / "git" / "fresh") * 2
     assert out.splitlines()[-1] == "nothing to move; ran 1 uv syncs"
     assert "nothing to do" not in out
 
@@ -736,46 +719,66 @@ def test_a_session_in_a_worktree_under_another_clones_directory_refuses_the_run(
     assert (home / "git" / "old").is_dir()
 
 
-def with_activate_script(project: Path) -> None:
-    (project / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
-    (project / ".venv" / "bin" / "activate").write_text(f"VIRTUAL_ENV='{project}/.venv'\n")
-
-
-def test_a_moved_venv_is_built_fresh_so_its_activate_script_names_the_new_path(home, world, locked):
-    with_activate_script(locked)
-    (locked / ".venv" / "bin" / "leftover").write_text("old")
-    seen = []
-
-    def sync(project: Path) -> None:
-        seen.append((project / ".venv").exists())
-        with_activate_script(project)
-
-    world.uv_sync = sync
+def test_a_moved_clone_gets_a_venv_rewrite_and_a_reinstall_and_nothing_is_deleted(
+    home, world, locked, fakes
+):
+    (locked / ".venv" / "bin").mkdir()
+    (locked / ".venv" / "bin" / "marker").write_text("kept")
 
     rename(world)
 
     fresh = home / "git" / "fresh"
-    assert seen == [False]
-    assert str(fresh) in (fresh / ".venv" / "bin" / "activate").read_text()
-    assert not (fresh / ".venv" / "bin" / "leftover").exists()
+    assert fakes.uv_calls == rewrites(fresh)
+    assert (fresh / ".venv" / "bin" / "marker").read_text() == "kept"
 
 
-def test_a_rerun_after_a_failed_sync_builds_the_venv_and_keeps_a_current_one(
+def test_a_venv_that_is_a_link_is_only_synced_and_the_venv_outside_is_untouched(
     home, world, locked, fakes
 ):
-    with_activate_script(locked)
-    world.uv_sync = failing_sync
-    rename(world)
-    with_activate_script(home / "git" / "fresh")
-    current = home / "git" / "fresh" / ".venv" / "bin" / "marker"
-    current.write_text("kept")
-    world.uv_sync = fakes.synced.append
+    outside = home.parent / "outside-venv"
+    (outside / "bin").mkdir(parents=True)
+    (outside / "bin" / "marker").write_text("kept")
+    (locked / ".venv").rmdir()
+    (locked / ".venv").symlink_to(outside)
 
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert current.read_text() == "kept"
-    assert fakes.synced == [home / "git" / "fresh"]
+    assert fakes.uv_calls == [(home / "git" / "fresh", ("sync", "--locked"))]
+    assert (outside / "bin" / "marker").read_text() == "kept"
+
+
+def test_a_recovered_worktree_that_is_a_link_refuses_and_changes_nothing(
+    home, world, repository, capsys
+):
+    """A halfway stop left `fresh-worktrees` moved, and its `lane` is a link."""
+    old_worktrees = home / "git" / "old-worktrees"
+    elsewhere = home.parent / "elsewhere"
+    old_worktrees.rename(home / "git" / "fresh-worktrees")
+    (home / "git" / "fresh-worktrees" / "lane").rename(elsewhere)
+    (home / "git" / "fresh-worktrees" / "lane").symlink_to(elsewhere)
+    before = sorted(str(path) for path in home.parent.rglob("*") if ".git/" not in str(path))
+
+    code = rename(world)
+
+    assert code == ExitCode.REFUSED
+    assert (
+        f"{home / 'git' / 'fresh-worktrees' / 'lane'} is a symbolic link" in capsys.readouterr().err
+    )
+    assert before == sorted(
+        str(path) for path in home.parent.rglob("*") if ".git/" not in str(path)
+    )
+
+
+def test_a_failed_uv_step_exits_with_failure_and_the_rerun_succeeds(home, world, locked, fakes):
+    world.uv = failing_uv
+    assert rename(world) == ExitCode.FAILURE
+    world.uv = lambda project, arguments: fakes.uv_calls.append((project, arguments))
+
+    code = rename(world)
+
+    assert code == ExitCode.OK
+    assert fakes.uv_calls == rewrites(home / "git" / "fresh")
 
 
 def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home, world, capsys):

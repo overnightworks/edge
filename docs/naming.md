@@ -96,11 +96,13 @@ Rulings of overnightworks/edge#24 recorded in the table:
    `refs/aco/state` and its fetch refspec must survive; aco reads the identity
    from the remote URL first and uses `gh repo view` only as a fallback),
    carries the Claude project memory, sets the `origin` of a deploy checkout
-   outside `~/git` and runs `uv sync --locked` in every clone and worktree
-   with a `uv.lock` on every run, so a rerun finishes a half-built venv; a
-   `.venv` built at another path is removed and built fresh. It refuses, changing
-   nothing, while a process runs inside a clone, a target exists, a link is in
-   the way or GitHub does not know the new name. `hal rename NEW OLD` undoes it.
+   outside `~/git` and, in every clone and worktree with a `uv.lock`, runs
+   `uv venv --allow-existing` and `uv sync --locked --reinstall` on every run,
+   so a moved `.venv` names its new path and a rerun finishes a half-built one;
+   a `.venv` that is a link only gets `uv sync --locked`. It deletes nothing.
+   It refuses, changing nothing, while a process runs inside a clone, a target
+   exists, a symbolic link is in any clone, worktree or target path or GitHub
+   does not know the new name. `hal rename NEW OLD` undoes it.
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.
 4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that

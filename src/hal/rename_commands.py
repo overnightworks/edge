@@ -10,7 +10,6 @@ were moved but not completed."""
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
@@ -47,7 +46,7 @@ class World:
     home: Path
     github_knows: Callable[[str], bool]
     running_in: Callable[[Sequence[Path]], list[RunningProcess]]
-    uv_sync: Callable[[Path], None]
+    uv: Callable[[Path, tuple[str, ...]], None]
     uv_tools: Callable[[], str]
 
 
@@ -157,9 +156,9 @@ def _github_knows(name: str) -> bool:
     ).returncode == 0  # fmt: skip
 
 
-def _uv_sync(project: Path) -> None:
+def _uv(project: Path, arguments: tuple[str, ...]) -> None:
     subprocess.run(
-        ["uv", "sync", "--locked"],
+        ["uv", *arguments],
         cwd=project, check=True, stdin=subprocess.DEVNULL,
     )  # fmt: skip
 
@@ -175,7 +174,7 @@ def _uv_tools() -> str:
 
 
 def real_world(home: Path) -> World:
-    return World(home, _github_knows, processes_inside, _uv_sync, _uv_tools)
+    return World(home, _github_knows, processes_inside, _uv, _uv_tools)
 
 
 def _remote_pattern(name: str) -> re.Pattern[str]:
@@ -369,14 +368,27 @@ def _both_exist(move: Move) -> bool:
     return not move.is_noop and os.path.lexists(move.source) and os.path.lexists(move.target)
 
 
+def _links_within(path: Path, git_directory: Path) -> list[Path]:
+    """The symbolic links among `path` and its parents below `~/git`."""
+    return [
+        part
+        for part in (path, *path.parents)
+        if part.is_relative_to(git_directory) and part != git_directory and part.is_symlink()
+    ]
+
+
 def _links_in_the_way(
-    world: World, sites: Sequence[Site], deploy: Sequence[DeployCheckout]
+    world: World, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
 ) -> list[Path]:
     git_directory = Layout(world.home).git
     links = [git_directory] if git_directory.is_symlink() else []
-    for site in sites:
-        for move in (site.clone, site.worktrees):
-            links += [path for path in (move.source, move.target) if path.is_symlink()]
+    for relocation in relocations:
+        site = relocation.site
+        for move in (site.clone, site.worktrees, *relocation.linked):
+            for path in (move.source, move.target):
+                links += _links_within(path, git_directory)
+        for directory in (site.worktrees.source, site.worktrees.target):
+            links += [entry for entry in _entries(directory) if entry.is_symlink()]
         if (site.here / ".git").is_symlink():
             links.append(site.here / ".git")
     for checkout in deploy:
@@ -385,7 +397,7 @@ def _links_in_the_way(
             for path in (checkout.path, checkout.path / ".git", checkout.path.parent)
             if path.is_symlink()
         ]
-    return links
+    return list(dict.fromkeys(links))
 
 
 def _refusals(
@@ -402,7 +414,7 @@ def _refusals(
         for move in (site.clone, site.worktrees, site.memory)
         if _both_exist(move)
     ]
-    links = _links_in_the_way(world, sites, deploy)
+    links = _links_in_the_way(world, relocations, deploy)
     refusals += [f"{path} is a symbolic link, which is never followed" for path in links]
     if has_work and not world.github_knows(new):
         refusals.append(f"GitHub does not know {OWNER}/{new}")
@@ -463,19 +475,17 @@ def _repair_step(relocation: Relocation) -> Step:
     )
 
 
-def _recreate_stale_venv(project: Path) -> None:
-    """A venv built at another path keeps that path in `bin/activate*` and its scripts, so it is
-    removed and built fresh; the `.venv` is derived. A current one is left to an idempotent sync."""
-    venv = project / ".venv"
-    activate = venv / "bin" / "activate"
-    if activate.is_file() and not _mentions(activate.read_text(errors="replace"), [venv]):
-        shutil.rmtree(venv)
-
-
 def _sync_step(world: World, project: Path) -> Step:
+    """Every run rewrites the venv in place: `uv venv --allow-existing` and a reinstall make a
+    moved `.venv` name its new path in `bin/activate*` and in its scripts, and nothing is
+    deleted. A `.venv` that is a link did not move and is only synced."""
+
     def sync() -> None:
-        _recreate_stale_venv(project)
-        world.uv_sync(project)
+        if (project / ".venv").is_symlink():
+            world.uv(project, ("sync", "--locked"))
+        else:
+            world.uv(project, ("venv", "--allow-existing"))
+            world.uv(project, ("sync", "--locked", "--reinstall"))
 
     return Step(f"uv sync in {project}", sync, is_sync=True)
 
