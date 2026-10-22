@@ -45,10 +45,11 @@ RUN mkdir -p /etc/cloudflared \
         > /etc/systemd/system/proof-other.service \
     && systemctl enable proof-other.service
 
-# The wheel of this checkout and edge's tunnel/ files, both staged by run.sh.
+# The wheel of this checkout and edge's tunnel/ and systemd/ files, all staged by run.sh.
 COPY context/ /proof/
 RUN install -d -o tester -g tester /home/tester/git/edge \
     && cp -r /proof/tunnel /home/tester/git/edge/tunnel \
+    && cp -r /proof/systemd /home/tester/git/edge/systemd \
     && chown -R tester:tester /home/tester/git \
     && chmod +x /proof/drive.sh /proof/terminal.exp
 
