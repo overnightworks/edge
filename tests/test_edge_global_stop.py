@@ -18,7 +18,7 @@ from test_edge_apply import (
     switch_off,
 )
 
-from edge import barrier, cli, compose, emergency, switches, tunnel
+from edge import barrier, catalog, cli, compose, emergency, switches, tunnel
 
 PROBE_FLEET = "services:\n  probe:\n    run: {enabled: true}\n"
 FIRST_STOP = "2026-10-17T22:10:04+02:00"
@@ -153,7 +153,23 @@ def switch_off_probe(marks: switches.Switches, ingress: Ingress, repository: Pat
     """Unit `probe` switched off the way `edge stop probe` leaves it: marker and barrier file."""
     switch_off(marks.directory, unit="probe")
     config = ScriptedCompose().config
-    barrier.Barrier.of_unit(config, ("hello",), repository, "probe", ingress.verifier).close()
+    unit = catalog.Unit("probe", enabled=True, setup=None)
+    barrier.Barrier.of_unit(config, ("hello",), repository, unit, ingress.verifier).close()
+
+
+@pytest.fixture
+def hosts_asked(ingress: Ingress, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The Host of every request Traefik is asked; a test names this fixture before the ones that
+    build the verifier, so the verifier asks through it."""
+    asked: list[str] = []
+    answer = ingress.fetch
+
+    def fetch(address: str, host: str, seconds: float, clock: Callable[[], float]):
+        asked.append(host)
+        return answer(address, host, seconds, clock)
+
+    monkeypatch.setattr(ingress, "fetch", fetch)
+    return asked
 
 
 # --- edge stop --all -----------------------------------------------------------------------
@@ -444,6 +460,55 @@ def test_start_all_proves_each_standing_barrier_before_it_reopens(
     assert "the barrier of probe is proven" in output
     assert "host check not built yet (#50 SW3)" in output
     assert (repository / "dynamic" / "switch-probe.yml").exists()
+
+
+APEX_FLEET = (
+    "cloudflare: {zone: probe.test}\n"
+    "services:\n  probe:\n    run: {enabled: false}\n"
+    "    hosts: [{name: '@', exposure: public, reason: a public page}]\n"
+)
+
+
+def test_start_all_proves_the_apex_barrier_of_a_disabled_unit_before_it_reopens(
+    hosts_asked, start_all, stopped_tunnel, marks, ingress, repository
+):
+    """#325 B7: the unit is switched off and disabled; the apex it declares is proven."""
+    (repository / "fleet.yaml").write_text(APEX_FLEET)
+    switch_off(marks.directory, unit="probe")
+
+    exit_code, output = start_all()
+
+    assert exit_code == 0
+    assert "the barrier of probe is proven" in output
+    assert "probe.test" in hosts_asked
+    assert (
+        'Host(`{{ env "EDGE_DOMAIN" }}`)'
+        in (repository / "dynamic" / "switch-probe.yml").read_text()
+    )
+
+
+def test_an_unproven_apex_barrier_keeps_the_tunnel_closed_and_names_the_unit(
+    hosts_asked, start_all, stopped_tunnel, marks, ingress, repository, systemd
+):
+    """#325 B7: when the apex proof fails the tunnel stays closed and the line names the unit."""
+    (repository / "fleet.yaml").write_text(APEX_FLEET)
+    switch_off(marks.directory, unit="probe")
+    ingress.rejecting = True
+
+    exit_code, output = start_all()
+
+    assert exit_code == 1
+    assert "the tunnel stays closed: the barrier of probe is not proven" in output
+    assert not systemd.active
+
+
+def test_stop_all_reads_no_catalog(stop_all, repository):
+    """#325 B10: a malformed host in the catalog does not stop the global brake."""
+    (repository / "fleet.yaml").write_text("services: {probe: {hosts: [{name: Bad}]}}\n")
+
+    exit_code, _ = stop_all()
+
+    assert exit_code == 0
 
 
 def test_a_barrier_that_cannot_be_proven_keeps_the_tunnel_closed(

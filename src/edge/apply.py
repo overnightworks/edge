@@ -196,7 +196,7 @@ def _switched_off(
     for unit in fleet.units:
         mark = read[unit.key]
         services = fleet.profile_services[unit.key]
-        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit.key)
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit)
         if barrier.switched_off(mark, ingress):
             switched_off[unit.key] = mark.since if mark else None
     return switched_off
