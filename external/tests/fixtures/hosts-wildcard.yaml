@@ -10,7 +10,7 @@ services:
       - {name: "*", exposure: protected}
   songmaker:
     hosts:
-      - {name: "@", exposure: public, reason: "the apex is not covered by the wildcard", target: "http://localhost:8080"}
+      - {name: "@", exposure: public, reason: "the apex is not covered by the wildcard"}
   hopin:
     run:
       enabled: true
