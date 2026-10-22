@@ -1,0 +1,7 @@
+claim_id = "4709706e526a4c79a3c5c4b435a1ad42"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "8c1b82f8ccd603987b8e35c4c6ec1da7e3ec610b"
+branch = "fix/host-check-size"
+scope = ["quality/baseline.toml", "tests/test_edge_host_check.py"]
+opened_commit = "b44f78698c1eb8a1bbf1a9f262828577f7abcaf5"
