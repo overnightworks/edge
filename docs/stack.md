@@ -65,7 +65,7 @@ Keycloak user, credential and session and survives the rollback. Never run `down
 socket directory volume is tmpfs and holds nothing; remove its definition alone with
 `docker volume rm edge_socket-proxy-run`. Then revert the commit.
 
-## Exception E: where the five stack commands deviate
+## Exception E: where the five stack commands and `hal setup` deviate
 
 `hal`'s exit codes and error form are in `src/hal/grammar.py` and `hal --help`. Until slice H5a2 of
 overnightworks/edge#207 (after H5e) classifies the stack's outcomes in their owners, `hal apply`,
@@ -86,6 +86,11 @@ not "applied or nothing to do". They deviate in exactly three ways:
   `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
   `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c, so run it as
   `~/git/edge/bin/edge external check --hosts`.
+
+`hal setup` deviates in one way:
+
+- **E4:** `hal setup` prints `hal setup:` lines, not `error:`/`next:`, and ends with 0 when nothing
+  failed and with 3 for a failed step or a refused system step (`home setup` keeps 1).
 
 ## Dienste an und aus
 

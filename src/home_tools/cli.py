@@ -48,16 +48,22 @@ Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository ho
 
 def build_layout_and_ports(
     home: Path | None = None,
-    run: CommandRunner = run_command,
-    probe: ExitCodeProbe = probe_exit_code,
+    run: CommandRunner | None = None,
+    probe: ExitCodeProbe | None = None,
     now: datetime | None = None,
-    secrets_setup_boundaries: Boundaries = TERMINAL_BOUNDARIES,
+    secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
     # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
     system = system_boundaries or system_step.TERMINAL_BOUNDARIES
-    return Layout(home or Path.home()), Ports(run, probe, secrets_setup_boundaries, now or datetime.now(), system)
+    return Layout(home or Path.home()), Ports(
+        run or run_command,
+        probe or probe_exit_code,
+        secrets_setup_boundaries or TERMINAL_BOUNDARIES,
+        now or datetime.now(),
+        system,
+    )
 
 
 def _with_german_help(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -92,10 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(
     argv: Sequence[str] | None = None,
     home: Path | None = None,
-    run: CommandRunner = run_command,
-    probe: ExitCodeProbe = probe_exit_code,
+    run: CommandRunner | None = None,
+    probe: ExitCodeProbe | None = None,
     now: datetime | None = None,
-    secrets_setup_boundaries: Boundaries = TERMINAL_BOUNDARIES,
+    secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)

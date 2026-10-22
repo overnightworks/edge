@@ -34,8 +34,9 @@ hal online
 `error: <what>` with, where there is a way on, one `next: <command>` line; the shared grammar is
 `src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
-([docs/architecture.md](docs/architecture.md), section 9). The five stack commands deviate from the
-grammar until overnightworks/edge#207 H5a2 (Exception E in [docs/stack.md](docs/stack.md)).
+([docs/architecture.md](docs/architecture.md), section 9). The five stack commands and `hal setup`
+deviate from the grammar until overnightworks/edge#207 H5a2 (Exception E in
+[docs/stack.md](docs/stack.md)); `hal setup` prints `hal setup:` lines and ends 0 or 3.
 
 ## Adding a tool: the label rule
 

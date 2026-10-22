@@ -518,7 +518,6 @@ They survive a dead PC because they live at the provider.
 
 | # | Gap | Evidence | Owner item |
 |---|---|---|---|
-| 11 | No `hal setup` | home-tools#9 is an uncut item | home-tools#9 |
 | 12 | Docker loopback default not set | `/etc/docker/daemon.json` has only the nvidia runtime | home-tools#9, slice 1 (step A7) |
 | 13 | `tofu` and Tailscale not installed | `which` finds neither | home-tools#9 |
 | 14 | No catalog, no `edge apply`, no `edge check` | — | **new item in edge**: "catalog and `edge apply`" (with `--closed` and the publish phase). Its caller is this concept; it depends on E3 X1; E3's X1a creates `fleet.yaml` at the root, and this item owns the `run` blocks |

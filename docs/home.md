@@ -406,6 +406,7 @@ installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it runs the system step.
+Exit: 0 when nothing failed, 3 for a failed step (`home setup` keeps 1).
 `hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
 Reihe nach aus und hält beim ersten Fehler an, mit dem Namen des Schritts.
 The activation comes before the system step, so a wrong sudo password never
