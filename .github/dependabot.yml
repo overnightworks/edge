@@ -17,6 +17,9 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+    # A local tag built on the PC, never on a registry.
+    ignore:
+      - dependency-name: edge-agent-service
   - package-ecosystem: docker
     directories:
       - /agent-service/image
