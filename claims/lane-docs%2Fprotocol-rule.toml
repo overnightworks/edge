@@ -1,0 +1,7 @@
+claim_id = "ef3e6ef83d1c420e8ef8972e3e90c05b"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ce1f0781b22f39eb7509309307e7ae78e37522c7"
+branch = "docs/protocol-rule"
+scope = ["docs/architecture.md"]
+opened_commit = "e57ce02a011c2514d3a1a8ac1d465a1f6a996ff2"
