@@ -172,6 +172,8 @@ def test_a_shared_section_precedes_songmaker_and_is_in_the_table_of_contents(sec
         "1 Jahr lang",
         "Dieses Log wird derzeit ohne feste Höchstdauer gespeichert",
         "12 Stunden nach dem letzten Fehlversuch",
+        "es bleibt bestehen, bis der Container neu erstellt wird",
+        "den Zeitpunkt des letzten Fehlversuchs",
         "es bleiben die letzten zehn",
         "KC_STATE_CHECKER",
         "etwa drei Monate",
