@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from app_support import FLEET, KEY, ScriptedDocker, origin_at, runtime_of
 from git_support import (
     advance,
     checkout_state,
@@ -36,6 +37,7 @@ from test_edge_core import bind, bind_core_files, sha256
 
 from edge import (
     apply,
+    apps,
     barrier,
     catalog,
     checkout,
@@ -56,6 +58,7 @@ PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
 STEP_CA_SERVICES = ("step-ca", "traefik-mcp-acme-owner", "traefik-mcp")
 ENABLED = "services:\n  step-ca:\n    run: {enabled: true, setup: step-ca/init}\n"
 DISABLED = "services:\n  step-ca:\n    run: {enabled: false, setup: step-ca/init}\n"
+APP = "github: {{org: overnightworks}}\nservices:\n  hopin:\n    repo: {repo}\n    run: {run}\n"
 SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
 LATER_SWITCH_AT = "2026-10-17T23:30:00+02:00"
 PROBE_ENABLED = ENABLED + "  probe:\n    run: {enabled: true}\n"
@@ -603,6 +606,7 @@ def switch(
         at_a_terminal: bool = True,
         ensure_environment: apply.EnsureEnvironment = trusted_environment,
         installed_backup: bool = False,
+        app_runtime: apps.AppRuntime | None = None,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -620,6 +624,7 @@ def switch(
             git or scripted_git,
             ensure_environment,
             None if installed_backup else realm_backup,
+            app_runtime,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1969,6 +1974,49 @@ def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_
         (
             "services:\n  step-ca:\n    run: {enabled: true, setup: fleet.yaml}\n",
             "services.step-ca.run.setup",
+        ),
+        (APP.format(repo="{}", run="{enabled: true}"), "services.hopin.repo.default_branch"),
+        (
+            APP.format(repo="{default_branch: 'a b'}", run="{enabled: true}"),
+            "services.hopin.repo.default_branch",
+        ),
+        (
+            APP.format(repo="{default_branch: main, visibility: public}", run="{enabled: true}"),
+            "services.hopin.repo.visibility",
+        ),
+        (
+            APP.format(repo="{default_branch: main}", run="{enabled: true, setup: step-ca/init}"),
+            "services.hopin.run.setup",
+        ),
+        (APP.format(repo="{default_branch: main}", run="{}"), "services.hopin.run.enabled"),
+        (APP.format(repo="[main]", run="{enabled: true}"), "services.hopin.repo: must be a map"),
+        (
+            APP.format(repo="{default_branch: main}", run="[enabled]"),
+            "services.hopin.run: must be a map",
+        ),
+        (
+            APP.format(repo="{default_branch: main}", run="{enabled: true}").replace(
+                "hopin", "Hop.in"
+            ),
+            "services.Hop.in: an app's key must be a compose project name",
+        ),
+        (
+            APP.format(repo="{default_branch: main}", run="{enabled: true}").replace(
+                "hopin", "step-ca"
+            ),
+            "services.step-ca: an app's key is no compose profile or project of edge",
+        ),
+        (
+            APP.format(repo="{default_branch: main}", run="{enabled: true}").replace(
+                "hopin", "edge"
+            ),
+            "services.edge: an app's key is no compose profile or project of edge",
+        ),
+        (
+            APP.format(repo="{default_branch: main}", run="{enabled: true}").replace(
+                "github: {org: overnightworks}\n", ""
+            ),
+            "github.org",
         ),
     ],
 )
@@ -4621,3 +4669,92 @@ def test_keycloak_that_starts_in_this_run_is_not_checked_and_one_line_says_so(
     assert exit_code == 0
     assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
     assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
+
+
+# --- apps (#255 P1): one plan, one `yes`, the app step after the units and the realm -----------
+
+
+@pytest.fixture
+def app_world(repository, state, home, tmp_path):
+    """An app `hopin` enabled in the catalog, a real origin it is checked out from and a scripted
+    Docker; the units of the catalog are none, so only the app has anything to change."""
+    write_fleet(repository, f"cloudflare:\n  zone: {ZONE}\n{FLEET}")
+    origin = origin_at(tmp_path, home)
+    docker = ScriptedDocker(state, home / "srv" / KEY)
+    return SimpleNamespace(
+        origin=origin, docker=docker, runtime=runtime_of(home, state, docker), state=state
+    )
+
+
+def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_nothing(
+    switch, app_world
+):
+    sha = app_world.origin.release("v2026.10.22.1")
+
+    exit_code, out, err = switch(app_runtime=app_world.runtime)
+
+    assert exit_code == 0, err
+    assert f"hopin: on at v2026.10.22.1 ({sha}) from origin master, into ~/srv/hopin" in out
+    assert "edge apply --closed: hopin is on at v2026.10.22.1" in out
+    again = switch(app_runtime=app_world.runtime)
+    assert again[0] == 0
+    assert "nothing to change" in again[1]
+    assert app_world.docker.verbs.count("create") == 1
+
+
+def test_declining_the_plan_leaves_the_checkout_the_containers_and_the_record_alone(
+    switch, app_world, home
+):
+    app_world.origin.release("v2026.10.22.1")
+
+    exit_code, _, err = switch("no", app_runtime=app_world.runtime)
+
+    assert exit_code == 1
+    assert "aborted, nothing changed" in err
+    assert set(app_world.docker.verbs) == {"ps"}
+    assert not (app_world.state / "deployed").exists()
+    assert not checkout.Git(home / "srv" / KEY).has_commit()
+
+
+def test_an_app_that_is_not_healthy_ends_partial_with_exit_1_and_no_record(switch, app_world):
+    app_world.origin.release("v2026.10.22.1")
+    app_world.docker.health_after_start = "unhealthy"
+
+    exit_code, _, err = switch(app_runtime=app_world.runtime)
+
+    assert exit_code == 1
+    assert "partial, hopin is not healthy at v2026.10.22.1 after 300s" in err
+    assert not (app_world.state / "deployed").exists()
+
+
+def test_a_ctrl_c_during_the_create_names_the_app_and_says_the_containers_may_be_partly_replaced(
+    switch, app_world
+):
+    app_world.origin.release("v2026.10.22.1")
+    app_world.docker.interrupted_verb = "create"
+
+    exit_code, _, err = switch(app_runtime=app_world.runtime)
+
+    assert exit_code == 1
+    assert "interrupted while changing hopin (create the containers at v2026.10.22.1" in err
+    assert "partly replaced" in err
+    assert not (app_world.state / "deployed").exists()
+
+
+def test_an_app_without_a_release_is_cannot_plan_and_nothing_is_asked(switch, app_world):
+    exit_code, out, err = switch(app_runtime=app_world.runtime)
+
+    assert exit_code == 2
+    assert "cannot plan, services.hopin: no vYYYY.MM.DD.N release on origin master" in err
+    assert "the plan" not in out
+    assert app_world.docker.verbs == []
+
+
+def test_a_disabled_app_is_neither_fetched_nor_run(switch, app_world, repository):
+    write_fleet(repository, f"cloudflare:\n  zone: {ZONE}\n" + FLEET.replace("true", "false"))
+
+    exit_code, out, _ = switch(app_runtime=app_world.runtime)
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert app_world.docker.verbs == []

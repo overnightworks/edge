@@ -3,46 +3,14 @@
 origin is a bare repository reached through `url.<bare>.insteadOf` in the test's own global git
 config, as the probe reaches it; nothing leaves `tmp_path`."""
 
-from dataclasses import dataclass
+import subprocess
 from pathlib import Path
 
 import pytest
+from app_support import COMPOSE, URL, Origin, origin_at
 from git_support import plain_git
 
 from edge import checkout, deploy_checkout
-
-URL = "https://github.com/overnightworks/hopin.git"
-COMPOSE = "services:\n  hopin:\n    build: .\n"
-
-
-@dataclass
-class Origin:
-    """A bare `master` plus the work tree a test builds its history in."""
-
-    bare: Path
-    work: Path
-
-    def commit(self, files: dict[str, str], message: str = "change") -> str:
-        for name, content in files.items():
-            path = self.work / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        plain_git(self.work, "add", "--all")
-        if files:
-            plain_git(self.work, "add", "--force", "--", *files)  # also what .gitignore ignores
-        plain_git(
-            self.work, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty",
-            "-m", message,
-        )  # fmt: skip
-        return plain_git(self.work, "rev-parse", "HEAD").stdout.strip()
-
-    def push(self, *references: str) -> None:
-        plain_git(self.work, "push", "--quiet", "--force", "origin", *references)
-
-    def tag(self, name: str, *, annotated: bool = False) -> None:
-        arguments = ["-a", "-m", name] if annotated else []
-        plain_git(self.work, "tag", "--force", *arguments, name)
-        self.push(f"refs/tags/{name}")
 
 
 @pytest.fixture(autouse=True)
@@ -57,19 +25,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def origin(tmp_path: Path, home: Path) -> Origin:
-    bare, work = tmp_path / "origin.git", tmp_path / "work"
-    plain_git(tmp_path, "init", "--quiet", "--bare", "--initial-branch", "master", str(bare))
-    plain_git(tmp_path, "init", "--quiet", "--initial-branch", "master", str(work))
-    for key, value in (("user.name", "edge test"), ("user.email", "test@edge.invalid")):
-        plain_git(work, "config", key, value)
-    plain_git(work, "remote", "add", "origin", bare.as_uri())
-    (home / ".gitconfig").write_text(
-        f'[url "{bare.as_uri()}"]\n\tinsteadOf = https://github.com/overnightworks/hopin.git\n'
-    )
-    started = Origin(bare, work)
-    started.commit({"compose.yaml": COMPOSE})
-    started.push("master")
-    return started
+    return origin_at(tmp_path, home)
 
 
 @pytest.fixture
@@ -284,3 +240,25 @@ def test_a_commit_without_a_regular_compose_file_has_none(origin, fetched):
     fetched.fetch()
 
     assert fetched.compose_file(fetched.commit_of("v2026.10.22.1")) is None
+
+
+def test_a_compose_file_that_is_no_utf8_is_refused(origin, fetched):
+    (origin.work / "compose.yaml").write_bytes(b"services: \xff\xfe\n")
+    plain_git(origin.work, "add", "--all")
+    origin.commit({})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match=r"compose\.yaml is not UTF-8"):
+        fetched.compose_file(fetched.commit_of("v2026.10.22.1"))
+
+
+def test_a_tag_listing_that_git_does_not_give_in_three_fields_is_an_error(app):
+    def odd_listing(_tree, _arguments, _profile):
+        return subprocess.CompletedProcess([], 0, b"refs/edge/releases/v1 only-two\n", b"")
+
+    odd = deploy_checkout.AppCheckout(checkout.Git(app.git.tree, odd_listing), URL, "master")
+
+    with pytest.raises(checkout.GitError, match="`git for-each-ref` answered"):
+        odd.tags()

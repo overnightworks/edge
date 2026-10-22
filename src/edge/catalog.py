@@ -120,34 +120,38 @@ def units(
     document: Any, profile_services: Mapping[str, tuple[str, ...]], repository: Path
 ) -> tuple[Unit, ...]:
     """The units of the repository's catalog, each checked against the compose profiles."""
+    return tuple(
+        _unit(key, entry["run"], profile_services, repository)
+        for key, entry in _entries(document).items()
+        if _is_unit(entry)
+    )
+
+
+def _entries(document: Any) -> dict:
+    """The `services` map of the catalog's document."""
     if not isinstance(document, dict):
         raise CatalogError(f"{FLEET_FILE}: must be a map")
     entries = document.get("services", {})
     if not isinstance(entries, dict):
         raise CatalogError("services: must be a map of entries")
-    return tuple(
-        _unit(key, entry["run"], profile_services, repository)
-        for key, entry in entries.items()
-        if _is_unit(entry)
-    )
+    return entries
 
 
 def _is_unit(entry: Any) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" not in entry
 
 
+def _is_app(entry: Any) -> bool:
+    return isinstance(entry, dict) and "run" in entry and "repo" in entry
+
+
 def apps(document: Any, profile_services: Mapping[str, tuple[str, ...]]) -> tuple[App, ...]:
     """The apps of the catalog: the entries with `repo` and `run`. A `repo` entry without `run` is
     a library and stays ignored."""
-    if not isinstance(document, dict):
-        raise CatalogError(f"{FLEET_FILE}: must be a map")
-    entries = document.get("services", {})
-    if not isinstance(entries, dict):
-        raise CatalogError("services: must be a map of entries")
     return tuple(
         _app(key, entry, profile_services)
-        for key, entry in entries.items()
-        if isinstance(entry, dict) and "run" in entry and "repo" in entry
+        for key, entry in _entries(document).items()
+        if _is_app(entry)
     )
 
 

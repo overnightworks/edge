@@ -27,6 +27,14 @@ hal apply
 hal online
 ```
 
+An entry of `fleet.yaml` with `repo` and `run` is an app. `hal apply` fetches the repository into
+`~/srv/<key>`, shows its newest release tag (`vYYYY.MM.DD.N` on origin's default branch) with the full
+sha, and after `yes` checks it out, builds, starts it and waits for its health; the last successful
+deployment is recorded in `~/.local/state/edge/deployed/<key>`. A newer tag is taken at the next
+`hal apply`; there is no watcher. Your `yes` is the gate: whoever can put a tag on a merged commit
+offers code to run here. No output of Compose is printed; run the failed step in `~/srv/<key>` to
+read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
+
 ## The commands
 
 `hal` is the daily door of the workstation (`bin/hal`); `hal --help` lists its commands and
