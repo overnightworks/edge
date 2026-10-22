@@ -16,6 +16,11 @@ from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
 
 
+# The checkout this code runs from: `bin/hal` and `bin/home` run the `.venv` of the checkout they live in.
+# Looked up per call, so the test sandbox can keep every test away from the real units.
+CHECKOUT_UNIT_DIRECTORY = Path(__file__).resolve().parents[2] / "systemd"
+
+
 @dataclass(frozen=True)
 class Ports:
     """Every boundary a subcommand handler may cross; `main` builds the real ones, tests hand in fakes."""
@@ -25,6 +30,7 @@ class Ports:
     secrets_setup: Boundaries
     now: datetime
     system: system_step.Boundaries
+    unit_directory: Path
 
 
 SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
@@ -53,6 +59,7 @@ def build_layout_and_ports(
     now: datetime | None = None,
     secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
+    unit_directory: Path | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
     # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
@@ -63,6 +70,7 @@ def build_layout_and_ports(
         secrets_setup_boundaries or TERMINAL_BOUNDARIES,
         now or datetime.now(),
         system,
+        unit_directory or CHECKOUT_UNIT_DIRECTORY,
     )
 
 

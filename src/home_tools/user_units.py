@@ -64,8 +64,8 @@ class LoadedUnit:
 
 
 class UserUnits:
-    def __init__(self, layout: Layout, run: CommandRunner) -> None:
-        self.checkout_units = layout.edge_tunnel_dir.parent / "systemd"
+    def __init__(self, layout: Layout, checkout_units: Path, run: CommandRunner) -> None:
+        self.checkout_units = checkout_units
         self.user_units = layout.home / ".config" / "systemd" / "user"
         self.run = run
 

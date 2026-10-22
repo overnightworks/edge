@@ -127,7 +127,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     hook_content = render_hook(layout)
     hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
     system = SystemStep(layout, ports.system)
-    units = UserUnits(layout, run)
+    units = UserUnits(layout, ports.unit_directory, run)
 
     def quality_current() -> bool:
         return _recorded_quality_source_matches(layout) and _is_executable(layout.quality_executable)

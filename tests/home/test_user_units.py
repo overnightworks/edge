@@ -112,16 +112,16 @@ class FakeSystemctl:
 class Machine:
     """A home whose checkout holds one service and its timer, with a fake systemd."""
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, checkout_units: Path) -> None:
         self.layout = Layout(home)
-        self.checkout_units = self.layout.git / "edge" / "systemd"
+        self.checkout_units = checkout_units
         self.user_units = home / ".config" / "systemd" / "user"
         self.user_units.mkdir(parents=True)
         self.checkout_units.mkdir(parents=True)
         self.write_unit(SERVICE, "ExecStart=/checkout/bin/backup\n")
         self.write_unit(TIMER, "OnCalendar=weekly\n")
         self.systemctl = FakeSystemctl(self.user_units)
-        self.step = UserUnits(self.layout, self.systemctl)
+        self.step = UserUnits(self.layout, self.checkout_units, self.systemctl)
 
     def write_unit(self, name: str, content: str) -> None:
         (self.checkout_units / name).write_text(content)
@@ -129,7 +129,7 @@ class Machine:
 
 @pytest.fixture
 def machine(tmp_path: Path) -> Machine:
-    return Machine(tmp_path / "home")
+    return Machine(tmp_path / "home", tmp_path / "checkout" / "systemd")
 
 
 def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:
@@ -184,7 +184,9 @@ def test_hal_setup_gets_the_loaded_commands_as_the_details_of_its_step(machine: 
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
-    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
+    layout, ports = build_layout_and_ports(
+        machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
+    )
     units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
 
     assert units.apply() is Applied.CHANGED
@@ -342,7 +344,9 @@ def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
-    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
+    layout, ports = build_layout_and_ports(
+        machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
+    )
 
     assert USER_UNITS_STEP in [step.name for step in setup.pending(layout, ports)]
     machine.step.apply()

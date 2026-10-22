@@ -20,7 +20,7 @@ from home_tools.system_step import CheckState, PlaybookRun, SystemStep
 
 USER_UNITS = "User units"
 STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", USER_UNITS, "Ansible", "System"]
-# The sandbox checkout has no `systemd/` directory: the user-units step has nothing to change.
+# The sandbox's unit directory is empty: the user-units step has nothing to change.
 CHANGED_STEPS = [f"{name}: {'unchanged' if name == USER_UNITS else 'changed'}" for name in STEP_NAMES]
 UNCHANGED_STEPS = [f"{name}: unchanged" for name in STEP_NAMES]
 NOT_CHECKED = "System: not checked (needs sudo at a terminal)"
