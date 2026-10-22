@@ -69,7 +69,8 @@ def run(
 
 @contextmanager
 def exclusive_lock(path: Path) -> Iterator[None]:
-    """Blocks until no other edge-backup run holds the lock; the kernel frees it on any exit."""
+    """Blocks until no other `hal backup` or `hal restore` holds the lock; the kernel frees it on
+    any exit."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with path.open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)

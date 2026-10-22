@@ -42,9 +42,11 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 `error: <what>` with, where there is a way on, one `next: <command>` line; the shared grammar is
 `src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
-([docs/architecture.md](docs/architecture.md), section 9). The five stack commands and `hal setup`
-deviate from the grammar until overnightworks/edge#207 H5a2 (Exception E in
-[docs/stack.md](docs/stack.md)); `hal setup` prints `hal setup:` lines and ends 0 or 3.
+([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--apply]` moves a
+renamed repository's clones on this PC ([docs/naming.md](docs/naming.md), P1).
+The five stack commands and `hal setup` deviate from the grammar until overnightworks/edge#207
+H5a2 (Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints `hal setup:` lines and
+ends 0 or 3.
 
 ## Adding a tool: the label rule
 
@@ -78,9 +80,10 @@ container environment values; review evidence must not dump those payloads.
 OpenTofu inputs) hold the stack; `dynamic/` holds routes for host processes and the emergency
 barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
-`legal/` the imprint unit's pages, stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
-their timers. The commands are Python under `src/` (`edge`, `hal`, `home`, `edge-check`,
-`edge-backup`; `bin/edge` is the one launcher that `bin/hal` and `bin/home` link to), the OpenTofu
+`legal/` the legal unit's pages (imprint, privacy notice, terms), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
+their timers. The commands are Python under `src/` (`edge`, `hal`, `home`, `edge-check`;
+`hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
+`bin/hal` and `bin/home` link to), the OpenTofu
 root is `external/`, the probes that prove each service on a throwaway stack are under `probe/`, and
 `tests/` holds the rest.
 
@@ -92,7 +95,7 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 | [docs/stack.md](docs/stack.md) | run, apply, stop, catalog on and off, the emergency switch, rollback |
 | [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
-| [docs/backup.md](docs/backup.md) | `edge-check`, `edge-backup`, what a backup holds, restore |
+| [docs/backup.md](docs/backup.md) | `edge-check`, `hal backup`, `hal restore`, what a backup holds, restore |
 | [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |
 | [docs/internal-ca.md](docs/internal-ca.md) | `step-ca`, `traefik-mcp`, `agent-egress` |
 | [docs/agent-service.md](docs/agent-service.md) | the agent service: image, login, an app's side, proofs |

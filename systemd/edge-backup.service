@@ -5,5 +5,5 @@ Documentation=file://%h/git/edge/docs/backup.md
 [Service]
 Type=oneshot
 # The checkout lives at ~/git/edge and `uv sync` has built its .venv (docs/backup.md: setup).
-ExecStart=%h/git/edge/.venv/bin/edge-backup backup
+ExecStart=%h/git/edge/.venv/bin/hal backup
 TimeoutStartSec=6h

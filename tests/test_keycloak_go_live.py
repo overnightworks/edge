@@ -383,7 +383,7 @@ def marks(tmp_path: Path) -> switches.Switches:
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The operator's HOME, empty: edge-backup is not set up in it."""
+    """The operator's HOME, empty: hal backup is not set up in it."""
     monkeypatch.setenv("HOME", str(tmp_path))
     return tmp_path
 
@@ -679,7 +679,7 @@ def test_the_backup_is_asked_even_when_the_secret_files_were_made_by_hand(
 
     go_live.run()
 
-    assert session.asked[0].startswith("edge-backup is not set up on this PC")
+    assert session.asked[0].startswith("hal backup is not set up on this PC")
 
 
 def test_existing_secret_files_are_never_overwritten(go_live, secrets_dir, session):
@@ -1158,7 +1158,7 @@ def test_an_unclear_edge_backup_reads_as_not_set_up(go_live, session, home, spoi
     finally:
         (home / ".secrets/restic").chmod(0o700)
 
-    assert session.asked[0].startswith("edge-backup is not set up on this PC")
+    assert session.asked[0].startswith("hal backup is not set up on this PC")
 
 
 def test_a_set_up_edge_backup_never_fails_the_backup_step_on_a_down_docker(
@@ -1171,7 +1171,7 @@ def test_a_set_up_edge_backup_never_fails_the_backup_step_on_a_down_docker(
     go_live.run()
 
     assert "FAILED at backup" not in session.output
-    assert not any(prompt.startswith("edge-backup is not set up") for prompt in session.asked)
+    assert not any(prompt.startswith("hal backup is not set up") for prompt in session.asked)
 
 
 def test_the_backup_question_has_no_default(go_live, session):

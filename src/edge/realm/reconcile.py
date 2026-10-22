@@ -9,8 +9,8 @@ import-checksum attributes differ from the ones the entry saw after the last app
 client secret alone does not trigger it: Compose's definition hash ignores the content of a
 secret file.
 
-An apply that runs takes `edge-backup backup keycloak --pre-apply`, proves that snapshot with
-`restore-test keycloak --snapshot`, observes both realms, runs config-cli, observes again and
+An apply that runs takes `hal backup keycloak --pre-apply --json`, proves that snapshot with
+`hal restore --test keycloak --snapshot`, observes both realms, runs config-cli, observes again and
 lists what changed, then what exists only in Keycloak: the objects of the kinds the operator
 creates that the files do not declare, which the step never deletes. The entry is emptied before
 config-cli and filled only after the observe, so a step that did not finish is planned again.
@@ -53,10 +53,10 @@ CONFIG_CLI = "keycloak-config-cli"
 REALM_FILES = ("keycloak/master.yaml", "keycloak/realm.yaml")
 DEFINITION_KEY = "definition"  # the entry's key for config-cli's `compose config --hash`
 BACKUP_SECONDS = 1800
-STOP_GRACE_SECONDS = 120  # what edge-backup gets to remove its staging and restore container
-COLLECT_SECONDS = 5  # what the output of a killed edge-backup gets before its pipes are closed
+STOP_GRACE_SECONDS = 120  # what hal backup gets to remove its staging and restore container
+COLLECT_SECONDS = 5  # what the output of a killed hal backup gets before its pipes are closed
 RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
-_SNAPSHOT_LINE = re.compile(r"^edge-backup: pre-apply-Snapshot (\S+)$", re.MULTILINE)
+_ERROR_LINE = re.compile(r"^error: (.+)$", re.MULTILINE)
 
 type Checksums = dict[str, dict[str, str]]  # realm -> import-checksum attribute -> value
 _LISTED_KINDS = [
@@ -221,10 +221,10 @@ def _why(reading: core.Reading, inputs: Inputs, observed: Checksums | None) -> s
 def run_edge_backup(
     command: list[str], timeout: int, stdin: str | None = None, *, say: Say
 ) -> subprocess.CompletedProcess[str]:
-    """Run edge-backup to its end, in a session of its own, so the terminal's Ctrl-C reaches only
-    this step. On the timeout or the first Ctrl-C it is stopped as the `edge-backup` systemd unit
-    is (`KillMode=control-group` default): SIGTERM to its whole group, then `STOP_GRACE_SECONDS`
-    to remove its staging and restore container."""
+    """Run hal backup or hal restore to its end, in a session of its own, so the terminal's Ctrl-C
+    reaches only this step. On the timeout or the first Ctrl-C it is stopped as the `edge-backup`
+    systemd unit is (`KillMode=control-group` default): SIGTERM to its whole group, then
+    `STOP_GRACE_SECONDS` to remove its staging and restore container."""
     try:
         with subprocess.Popen(
             command,
@@ -253,7 +253,7 @@ def run_edge_backup(
 def _stop(process: subprocess.Popen[str], say: Say) -> None:
     """SIGTERM to the group and a grace that no further Ctrl-C shortens; then the group is killed
     and the output collected for a bounded time, so a grandchild holding a pipe cannot hang."""
-    say(f"realm: waiting up to {STOP_GRACE_SECONDS:g}s for edge-backup to clean up")
+    say(f"realm: waiting up to {STOP_GRACE_SECONDS:g}s for hal to clean up")
     _signal_group(process, signal.SIGTERM)
     deadline = time.monotonic() + STOP_GRACE_SECONDS
     while (remaining := deadline - time.monotonic()) > 0:
@@ -263,7 +263,7 @@ def _stop(process: subprocess.Popen[str], say: Say) -> None:
         except subprocess.TimeoutExpired:
             break
         except KeyboardInterrupt:
-            continue  # edge-backup was told once; only its exit or the grace ends the wait
+            continue  # hal was told once; only its exit or the grace ends the wait
     _signal_group(process, signal.SIGKILL)
     with contextlib.suppress(subprocess.TimeoutExpired, KeyboardInterrupt):
         process.communicate(timeout=COLLECT_SECONDS)  # leaving the `with` closes the pipes
@@ -276,29 +276,34 @@ def _signal_group(process: subprocess.Popen[str], sent: signal.Signals) -> None:
 
 @dataclass(frozen=True)
 class Backup:
-    """edge-backup as the timers run it, for Keycloak alone."""
+    """`hal backup` and `hal restore` as the timers run them, for Keycloak alone."""
 
     command: tuple[str, ...]
     run: compose.Runner
 
     @classmethod
     def installed(cls, repository: Path, say: Say) -> "Backup":
-        """`say` carries the step's lines while a stopped edge-backup is waited for."""
+        """`say` carries the step's lines while a stopped hal is waited for."""
         return cls(
-            (str(repository / ".venv" / "bin" / "edge-backup"),),
+            (str(repository / ".venv" / "bin" / "hal"),),
             partial(run_edge_backup, say=say),
         )
 
     def pre_apply(self) -> str:
         """The new snapshot's ID."""
-        result = self._run(["backup", REALM_UNIT, "--pre-apply"], "the Keycloak backup failed")
-        if not (named := _SNAPSHOT_LINE.search(result.stdout)):
-            raise RealmError("edge-backup named no pre-apply snapshot")
-        return named[1]
+        arguments = ["backup", REALM_UNIT, "--pre-apply", "--json"]
+        result = self._run(arguments, "the Keycloak backup failed")
+        try:
+            snapshot = json.loads(result.stdout)["snapshot"]
+        except (ValueError, KeyError, TypeError):
+            snapshot = None
+        if not isinstance(snapshot, str):
+            raise RealmError("hal backup named no pre-apply snapshot")
+        return snapshot
 
     def restore_test(self, snapshot: str) -> None:
         """Proves the snapshot just made, whatever a timer backs up in between."""
-        arguments = ["restore-test", REALM_UNIT, "--snapshot", snapshot]
+        arguments = ["restore", "--test", REALM_UNIT, "--snapshot", snapshot]
         self._run(arguments, "the restore test failed")
 
     def _run(self, arguments: list[str], failure: str) -> subprocess.CompletedProcess[str]:
@@ -307,8 +312,16 @@ class Backup:
         except compose.ComposeError as error:
             raise RealmError(f"{failure} ({error})") from error
         if result.returncode != 0:
-            raise RealmError(f"{failure} ({compose.last_line(result.stderr + result.stdout)})")
+            raise RealmError(f"{failure} ({_cause(result)})")
         return result
+
+
+def _cause(result: subprocess.CompletedProcess[str]) -> str:
+    """The `error:` line hal wrote, never its `next:` line; the last line of a failure that is not
+    hal's own."""
+    output = result.stderr + result.stdout
+    errors = _ERROR_LINE.findall(output)
+    return compose.printable(errors[-1].strip()) if errors else compose.last_line(output)
 
 
 class Stage(StrEnum):

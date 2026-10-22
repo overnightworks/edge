@@ -1,4 +1,4 @@
-"""Where edge-backup keeps things on this PC, and the pinned images it runs."""
+"""Where `hal backup` keeps things on this PC, and the pinned images it runs."""
 
 from dataclasses import dataclass
 from datetime import timedelta

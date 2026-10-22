@@ -730,7 +730,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             paths=(PurePosixPath(".secrets/restic/password"),),
             read_by=("edge-backup.service", "edge-backup-restore-test.service"),
             recreate=RESTIC_RECREATE,
-            purpose="edge-backup verschlüsselt damit die restic-Backups; ohne es sind sie unlesbar.",
+            purpose="hal backup verschlüsselt damit die restic-Backups; ohne es sind sie unlesbar.",
         ),
         SecretEntry(
             name="cloudflared/tunnel",

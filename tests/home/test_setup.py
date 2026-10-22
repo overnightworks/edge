@@ -18,8 +18,10 @@ from home_tools.cli import main
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE
 from home_tools.system_step import CheckState, PlaybookRun, SystemStep
 
-STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", "Ansible", "System"]
-CHANGED_STEPS = [f"{name}: changed" for name in STEP_NAMES]
+USER_UNITS = "User units"
+STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", USER_UNITS, "Ansible", "System"]
+# The sandbox's unit directory is empty: the user-units step has nothing to change.
+CHANGED_STEPS = [f"{name}: {'unchanged' if name == USER_UNITS else 'changed'}" for name in STEP_NAMES]
 UNCHANGED_STEPS = [f"{name}: unchanged" for name in STEP_NAMES]
 NOT_CHECKED = "System: not checked (needs sudo at a terminal)"
 NOT_CHECKED_WITHOUT_ANSIBLE = "System: not checked (needs Ansible, which `hal setup --apply` installs first)"
@@ -45,7 +47,7 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
     """Rule 4 and E1: `home setup` prints what it would change; before Ansible is installed the system step is not checked."""
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines) == (0, [*(f"{step}: would change" for step in STEP_NAMES[:-1]), NOT_CHECKED_WITHOUT_ANSIBLE])
+    assert (code, lines) == (0, [*(f"{step}: {'unchanged' if step == USER_UNITS else 'would change'}" for step in STEP_NAMES[:-1]), NOT_CHECKED_WITHOUT_ANSIBLE])
     assert uv_installs(sandbox) == []
     assert sandbox.system.playbook.calls == []
     assert global_hooks_path(sandbox) == ""
@@ -227,7 +229,7 @@ def test_the_system_step_comes_after_the_activation_and_asks_for_sudo_once(sandb
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
-    assert (code, lines[-3:]) == (0, ["Aktivierung: changed", "Ansible: changed", "System: changed"])
+    assert (code, lines[-4:]) == (0, ["Aktivierung: changed", "User units: unchanged", "Ansible: changed", "System: changed"])
     assert argv[:2] == [str(sandbox.layout.ansible_playbook_executable), str(system_step.PLAYBOOK)]
     assert (argv.count("--ask-become-pass"), "--diff" in argv, "--check" in argv) == (1, True, False)
 

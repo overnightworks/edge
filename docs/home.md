@@ -80,7 +80,7 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 ```
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
-`home tidy`, die Ansicht von `home secrets` und die Hook-Prüfung — und schreibt einen gemeinsamen
+`home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung und die Log-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`. Eine
 Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
 wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
@@ -148,6 +148,31 @@ Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt
 
 Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
 zerbrochen, nie als sauber.
+
+### Die Prüfung `logs`
+
+Auf diesem PC gilt für jedes Server-Log die Grenze von 30 Tagen
+(`LOG_RETENTION_DAYS` in `system_step.py`). Die Prüfung `logs` berichtet Alter
+und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
+
+- **Container mit `json-file`.** Jeder Container in jedem Zustand, dessen
+  Log-Treiber `json-file` ist, mit Namen und Compose-Projekt. `journald` und
+  `none` sind keine Funde.
+- **Docker-Standardtreiber** (`docker info`) außer `journald`.
+- **Journal zu alt.** Der älteste Eintrag laut `journalctl --list-boots -o json`
+  (Zeiten der Boots, nicht der Meldungen) ist älter als `LOG_RETENTION_DAYS`.
+- **rsyslog-Dateien.** `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err`
+  und `ufw.log` samt Archiven unter `/var/log`, nur nach Name und Dasein.
+
+Lässt sich `docker` oder `journalctl` nicht ausführen oder liefert das Journal
+kein lesbares Ergebnis, ist das ein eigener Fund (`docker-unreadable`,
+`journal-unreadable`), nie ein sauberer Lauf. Das gilt auch für eine
+Teilansicht: Ohne Leserecht auf das Systemjournal (`journalctl --system`) sähe
+`journalctl` nur das Journal des Benutzers und meldete dennoch Erfolg; die
+Prüfung liest deshalb beide Ansichten und nennt die fehlende als Fund. Ein
+Container, der zwischen `docker ps` und `docker inspect` verschwindet, gilt als
+weg, nicht als Fehler. Der Bericht nennt außerdem je
+Speicher den Stand (Journal-Alter, Standardtreiber, Zahl der Container).
 
 ## home secrets
 
@@ -405,12 +430,13 @@ installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
 ## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
-Then it runs the system step.
+Then it links the checkout's user units and runs the system step.
 Exit: 0 when nothing failed, 3 for a failed step (`home setup` keeps 1).
 `hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
 Reihe nach aus und hält beim ersten Fehler an, mit dem Namen des Schritts.
-The activation comes before the system step, so a wrong sudo password never
-keeps the commit hook from being active:
+The activation comes before the user units and the system step, so a wrong
+sudo password never keeps the commit hook from being active; the user units
+come before the system step, which is the one that asks for sudo:
 
 1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
    `src/home_tools/setup.py`, einem Commit-SHA von overnightworks/quality (ein
@@ -426,11 +452,26 @@ keeps the commit hook from being active:
 4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
    Verzeichnis. It comes after the three steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
-5. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
+5. **User units.** Every unit file in `~/git/edge/systemd/` is linked into
+   `~/.config/systemd/user/`, systemd reloads once after a change (also when only a
+   unit file changed after a pull), and each timer is enabled and started. A link
+   into `systemd/` whose file is gone (a renamed or removed unit) is stopped while
+   systemd still has it loaded and unlinked, at the top level and in the
+   `*.wants/` and `*.requires/` directories; timers stop before services. A same-name
+   entry that is not this checkout's link (a link elsewhere, a mask to `/dev/null`, a
+   file) is never replaced, and a retired link whose name the top level now gives to
+   such an entry is never stopped: the step fails before it changes anything, names
+   the file and leaves the decision to you. A timer that is not active after
+   enabling fails the step too. A
+   missing `systemd/` directory fails the step as well. `--apply` then prints, per
+   service, the loaded `ExecStart` and the `Result` of its last run. The step is
+   verified when every unit is linked, nothing needs a reload, every timer is
+   enabled and active, and no link dangles.
+6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
    `src/home_tools/setup.py`, a pinned `ansible-core`; like quality, it runs
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
-6. **System.** The playbook `src/home_tools/system/playbook.yml` installs
+7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It asks once for sudo.
 
@@ -587,9 +628,12 @@ enabled = true
 cd ~/git/edge
 uv sync --locked
 ln -s ~/git/edge/bin/home ~/.local/bin/home
-systemctl --user link --force ~/git/edge/systemd/home-check.service ~/git/edge/systemd/home-check.timer
-systemctl --user enable --now home-check.timer
+~/git/edge/bin/hal setup --apply
 ```
+
+Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
+`systemd/` und startet die Timer, darunter `home-check.timer`. `hal` liegt nicht im PATH; der
+Starter des Checkouts ruft es auf.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf
 den Starter `bin/edge`, der `.venv/bin/home` des Checkouts ausführt; der Link

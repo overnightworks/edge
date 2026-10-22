@@ -633,9 +633,9 @@ def git_root_litter(layout: Layout) -> list[Finding]:
     return findings
 
 
-def registered_worktrees(repo: Path, run: CommandRunner) -> set[Path]:
+def registered_worktrees(repo: Path, run: CommandRunner, resolve_links: bool = True) -> set[Path]:
     listing = run(["git", "-C", str(repo), "worktree", "list", "--porcelain", "-z"]) or ""
-    return {Path(field.removeprefix("worktree ")).resolve() for field in listing.split("\0") if field.startswith("worktree ")}
+    return {(Path.resolve if resolve_links else Path)(Path(field.removeprefix("worktree "))) for field in listing.split("\0") if field.startswith("worktree ")}
 
 
 def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandRunner) -> list[Finding]:
