@@ -1,7 +1,0 @@
-claim_id = "f4a26f6e77b44214b626e2ea8485eefb"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "9f90f800dd993c08417ef877226933b70845b5c3"
-branch = "docs/people-admin-subgroups"
-scope = ["docs/people.md"]
-opened_commit = "d80455d862da10f5655af60ea867b97044bc1c73"
