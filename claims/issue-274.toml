@@ -1,0 +1,8 @@
+claim_id = "0368420028ef4d738b20297fad2a34ef"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "7b9b5633b86d173457ea950dbf0a95b2ef54229a"
+branch = "claude/issue-274-hal-rename"
+scope = ["README.md", "docs/naming.md", "quality/baseline.toml", "src/hal/cli.py", "src/hal/rename_commands.py", "tests/test_hal_cli.py", "tests/test_hal_rename.py"]
+opened_commit = "6759652b6eaa115318b86b8d6d20dabbf8c2604e"
+whole_reason = "One new hal verb with its registration, its tests and the two documents that list it."
