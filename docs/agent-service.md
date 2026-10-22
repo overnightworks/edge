@@ -85,7 +85,9 @@ drops them. The only host binds are `service.toml` and the login directory, both
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
-agent-providers' to state and is not specified here. The content of
+stated in agent-providers' section
+[What a run keeps](https://github.com/overnightworks/agent-providers/blob/main/docs/wire.md#what-a-run-keeps).
+The content of
 a turn leaves this PC for Anthropic, which generates the answer.
 
 **Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his

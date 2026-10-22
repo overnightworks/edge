@@ -2209,7 +2209,7 @@ class Probe:
     def app_client_refuses_what_it_does_not_use(
         self, client: AppClient, client_secret: str
     ) -> None:
-        """Cells T3 to T5: PKCE is required, the callback is exact, no other grant works."""
+        """Cells T3-T5, DG1: PKCE required, exact callback, only songmaker's device grant."""
         without_challenge = self.through_tunnel(
             "GET", f"{PUBLIC_AUTH_PATH}?{self.app_client_authorization_query(client)}"
         )

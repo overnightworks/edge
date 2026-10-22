@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 from smoke import Tokens
 
@@ -31,6 +32,9 @@ TOKEN_TIMEOUT_SECONDS = 30
 USER_AGENT = "edge-live-smoke/1"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 SLOW_DOWN_SECONDS = 5  # RFC 8628, 3.5: the interval grows by at least five seconds
+DEFAULT_INTERVAL_SECONDS = 5  # RFC 8628, 3.2: the interval when the server names none
+MAX_LIFETIME_SECONDS = 3600
+MAX_INTERVAL_SECONDS = 60
 
 
 class SignInFailed(Exception):
@@ -38,7 +42,11 @@ class SignInFailed(Exception):
 
 
 def post_form(
-    path: str, form: Mapping[str, str], client_secret: str, urlopen=urllib.request.urlopen
+    path: str,
+    form: Mapping[str, str],
+    client_secret: str,
+    urlopen=urllib.request.urlopen,
+    timeout: float = TOKEN_TIMEOUT_SECONDS,
 ) -> tuple[int, dict]:
     """The status and the JSON object Keycloak answered, whether it accepted or refused."""
     body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
@@ -47,7 +55,7 @@ def post_form(
     )
     try:
         try:
-            with urlopen(request, timeout=TOKEN_TIMEOUT_SECONDS) as answer:
+            with urlopen(request, timeout=timeout) as answer:
                 status, document = http.HTTPStatus.OK, json.load(answer)
         except urllib.error.HTTPError as refusal:
             status, document = refusal.code, json.load(refusal)
@@ -77,36 +85,62 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
-def device_authorization(client_secret: str, challenge: str, urlopen) -> dict:
+@dataclass(frozen=True)
+class DeviceAuthorization:
+    device_code: str
+    user_code: str
+    link: str
+    expires_in: int
+    interval: int
+
+
+def within(value: object, upper_bound: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= upper_bound
+
+
+def device_authorization(client_secret: str, challenge: str, urlopen) -> DeviceAuthorization:
     form = {"scope": "openid", "code_challenge": challenge, "code_challenge_method": "S256"}
     status, document = post_form("auth/device", form, client_secret, urlopen)
-    keys = ("device_code", "user_code", "verification_uri_complete", "expires_in", "interval")
-    if status != 200 or not all(key in document for key in keys):
+    link = document.get("verification_uri_complete") or document.get("verification_uri")
+    interval = document.get("interval", DEFAULT_INTERVAL_SECONDS)
+    strings = (document.get("device_code"), document.get("user_code"), link)
+    if (
+        status != 200
+        or not all(isinstance(text, str) and text for text in strings)
+        or not within(document.get("expires_in"), MAX_LIFETIME_SECONDS)
+        or not within(interval, MAX_INTERVAL_SECONDS)
+    ):
         raise SignInFailed(f"the device endpoint answered {status} and started no sign-in")
-    return document
+    return DeviceAuthorization(
+        document["device_code"], document["user_code"], link, document["expires_in"], interval
+    )
 
 
 def person_token(
-    authorization: Mapping,
+    authorization: DeviceAuthorization,
+    deadline: float,
     verifier: str,
     client_secret: str,
     urlopen,
     pause: Callable[[float], None],
+    clock: Callable[[], float],
 ) -> str:
-    interval = authorization["interval"]
-    waited = 0
-    while waited <= authorization["expires_in"]:
-        pause(interval)
-        waited += interval
+    """Polls until the person confirms; no wait and no request outlasts the code's lifetime."""
+    interval = authorization.interval
+    while (remaining := deadline - clock()) > 0:
+        pause(min(interval, remaining))
+        if (remaining := deadline - clock()) <= 0:
+            break
         status, document = post_form(
             "token",
             {
                 "grant_type": DEVICE_GRANT,
-                "device_code": authorization["device_code"],
+                "device_code": authorization.device_code,
                 "code_verifier": verifier,
             },
             client_secret,
             urlopen,
+            min(TOKEN_TIMEOUT_SECONDS, remaining),
         )
         if status == 200 and isinstance(document.get("access_token"), str):
             return document["access_token"]
@@ -124,17 +158,36 @@ def person_token(
     raise SignInFailed("the code ran out before it was confirmed; run the smoke again")
 
 
+def blocks_until_closed(browser: webbrowser.BaseBrowser) -> bool:
+    """A console browser (lynx, w3m) takes the terminal; `open` returns only when it ends."""
+    return isinstance(browser, webbrowser.GenericBrowser) and not isinstance(
+        browser, webbrowser.BackgroundBrowser
+    )
+
+
+def open_in_graphical_browser(link: str) -> bool:
+    try:
+        browser = webbrowser.get()
+    except webbrowser.Error:
+        return False
+    return not blocks_until_closed(browser) and browser.open(link)
+
+
 def sign_in(
     client_secret: str,
     urlopen=urllib.request.urlopen,
     pause: Callable[[float], None] = time.sleep,
-    open_link: Callable[[str], object] = webbrowser.open,
+    open_link: Callable[[str], object] = open_in_graphical_browser,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Tokens:
     verifier, challenge = pkce_pair()
     authorization = device_authorization(client_secret, challenge, urlopen)
-    link = authorization["verification_uri_complete"]
-    print(f"Open {link} and confirm the code {authorization['user_code']}", file=sys.stderr)
-    open_link(link)  # best effort: over SSH the link opens on any other device
-    person = person_token(authorization, verifier, client_secret, urlopen, pause)
+    deadline = clock() + authorization.expires_in
+    print(
+        f"Open {authorization.link} and confirm the code {authorization.user_code}",
+        file=sys.stderr,
+    )
+    open_link(authorization.link)  # best effort: over SSH the link opens on any other device
+    person = person_token(authorization, deadline, verifier, client_secret, urlopen, pause, clock)
     workload = access_token({"grant_type": "client_credentials"}, client_secret, urlopen)
     return Tokens(person=person, workload=workload)

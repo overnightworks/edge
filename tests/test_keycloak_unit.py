@@ -297,6 +297,33 @@ def test_the_device_grant_cell_accepts_only_songmaker_with_its_secret(
     assert failures
 
 
+def test_the_device_grant_cell_names_no_part_of_an_answer_that_lacks_the_user_code(monkeypatch):
+    """#297: a device_code in a malformed answer must not reach the probe's output."""
+    monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
+    import device_grant_cell
+
+    body = {"device_code": "SECRET-DEVICE-CODE"}
+    started = SimpleNamespace(status=200, text=json.dumps(body), json=lambda: body)
+
+    class FakeProbe:
+        def through_tunnel(self, _method, _path, form):
+            return started
+
+        def held(self, proof, detail):
+            pass
+
+    messages = []
+    device_grant_cell.prove(
+        FakeProbe(), "songmaker", "s3", lambda held, message: held or messages.append(message)
+    )
+
+    assert (
+        messages[0]
+        == "a device request for songmaker with its secret answered 200 without user_code"
+    )
+    assert "SECRET-DEVICE-CODE" not in "".join(messages)
+
+
 def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments(monkeypatch):
     """#293: process arguments are visible to the host; the secret goes through stdin."""
     monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))

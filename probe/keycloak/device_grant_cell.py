@@ -47,10 +47,11 @@ def prove(
         probe.held("DG1", f"{client_id} refuses a device request even with its secret")
         return
     started = accepted.json() if accepted.status == 200 else {}
+    missing = [key for key in ("device_code", "user_code") if not started.get(key)]
     expect(
-        bool(started.get("device_code")) and bool(started.get("user_code")),
-        f"a device request for {client_id} with its secret answered {accepted.status}: "
-        f"{accepted.text[:200]}",
+        not missing,
+        f"a device request for {client_id} with its secret answered {accepted.status} "
+        f"without {' and '.join(missing)}",
     )
     refused(ask(), "without its secret")
     refused(ask(client_secret="not-the-secret"), "with a wrong secret")
