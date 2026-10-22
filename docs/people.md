@@ -15,14 +15,23 @@ contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's pro
 - **Target.** `{subject}` is the target person's Keycloak `sub`, compared exactly. hal must resolve a
   name to the `sub` with an exact match before calling any app. A lookup by `{subject}` never creates
   an account in the app.
-- **Caller.** A separate identity: the operator, with his own access token, from the login hal must offer
-  (#256); no such login exists yet. The app admits it only if the token comes from the realm's issuer,
-  its audience names the app's own client, and its `groups` contain `/apps/<app>/admin`. A missing or
-  invalid token answers `401`; a valid token without `/apps/<app>/admin`, or whose audience does not
-  name the app's client, answers `403`. The token authenticates the caller;
-  it never names the target. There is no hal service account and no standing secret for these routes.
+- **Caller.** A separate identity: the operator, with his own access token, from the login hal
+  must offer (#256); no such login exists yet. The app checks the token in this order:
+  1. the signature verifies with the realm's keys and the token is within its lifetime (`exp`,
+     and `nbf` when present);
+  2. the issuer is the realm's;
+  3. the JWT header `typ` is `at+jwt` or `application/at+jwt` (RFC 9068);
+  4. `aud` names exactly the app's own client, and no other app or Keycloak's `account`;
+  5. `azp` is a client id the app's configuration allows, in practice hal's client.
+
+  A missing token or any failure among these makes the token invalid and answers `401`. A valid
+  token whose `groups` hold neither `/apps/<app>/admin` nor a group below it (subgroups count, as
+  in the browser login) answers `403`. The token
+  authenticates the caller; it never names the target. There is no hal service account and no
+  standing secret for these routes.
 - A request to these routes never creates or provisions an account, neither the caller's nor the
-  target's; a caller without an account in the app is authorised by the token alone or refused with `403`.
+  target's. Given a valid token, a caller without an account in the app is authorised by the
+  token alone or refused with `403`.
 - An app that admits only browser sessions today says so, and hal cannot call it until it admits the
   token.
 - Every answer carries `Cache-Control: no-store`.
@@ -57,9 +66,11 @@ answers what the erasure would do. Both answer one body:
  "affects_others": [{"kind": "playlist_entry", "count": 3, "action": "delete"}]}
 ```
 
-`kinds` counts what belongs to the person (`bytes` where files are involved); `affects_others` counts
-what the erasure changes for other people. In a real erasure `dry_run` is `false` and the counts are
-what was removed. `people_erasure` is the integer `1`.
+`kinds` counts what belongs to the person. `bytes` is optional: an app gives it where files are
+involved and can measure it cheaply, and hal shows it when present. hal's order, step 4, judges
+completion by the counts. `affects_others` counts what the erasure changes for other people. In a
+real erasure `dry_run` is `false` and the counts are what was removed. `people_erasure` is the
+integer `1`.
 
 - `kinds[].kind` and `withheld[].kind` are the app's own lowercase words; hal only shows them.
 - `affects_others[].action` is `delete` (others lose an object that is deleted, a shared one included)
@@ -95,8 +106,8 @@ hal must, in this order:
 3. Run the dry run in every app, then the erasure in every app. "Every app" is every app that offers
    these routes (architecture §5), whatever the person's groups: group membership is no inventory of
    data.
-4. Run a second dry run in every app. Only when all answers are zero, untraceable copies excluded, delete
-   the Keycloak user, again with his admin login.
+4. Run a second dry run in every app. Only when every count is zero (`bytes` is not considered),
+   untraceable copies excluded, delete the Keycloak user, again with his admin login.
 5. Retry a failed step by running the whole command again; idempotency makes that safe.
 
 Recovery after a crash works from the register, without the Keycloak user.

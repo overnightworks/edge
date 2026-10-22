@@ -67,6 +67,19 @@ run "c18_the_zone_sends_hsts_with_preload_for_every_subdomain" {
   }
 }
 
+run "c22_the_zone_turns_network_error_logging_off" {
+  command = plan
+
+  assert {
+    condition = (
+      cloudflare_zone_setting.nel.zone_id == "0123456789abcdef0123456789abcdef"
+      && cloudflare_zone_setting.nel.setting_id == "nel"
+      && cloudflare_zone_setting.nel.value == { enabled = false }
+    )
+    error_message = "the zone's Network Error Logging is not switched off"
+  }
+}
+
 run "c19_the_zone_overwrites_forwarded_with_the_address_cloudflare_saw" {
   command = plan
 
