@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from app_support import (
+    COMPOSE,
     FLEET,
     KEY,
     NOW,
@@ -150,7 +151,7 @@ def test_a_newer_release_is_an_update_that_names_the_last_successful_deployment(
 
     assert plan.describe() == [
         f"hopin: update to {SECOND} ({sha}); last successful deployment {FIRST}; "
-        "now: hopin-hopin-1 running (healthy)"
+        "now: hopin running (healthy)"
     ]
     assert world.run(plan) == [None]
     assert world.deployed()["tag"] == SECOND
@@ -195,13 +196,13 @@ def test_a_new_tag_that_fails_health_stays_partial_with_the_record_on_the_old_on
     [failure] = world.run()
 
     assert failure == (
-        f"hopin is not healthy at {THIRD} after 300s (hopin-hopin-2 running (unhealthy)); "
+        f"hopin is not healthy at {THIRD} after 300s (hopin running (unhealthy)); "
         "the record stays, the fix is a newer tag"
     )
     assert world.deployed()["tag"] == SECOND
     assert world.plan().describe() == [
         f"hopin: update to {THIRD} ({sha}); last successful deployment {SECOND}; "
-        f"the update to {THIRD} did not finish; now: hopin-hopin-2 running (unhealthy)"
+        f"the update to {THIRD} did not finish; now: hopin running (unhealthy)"
     ]
 
 
@@ -223,7 +224,7 @@ def test_a_build_that_fails_leaves_the_old_containers_and_the_next_plan_says_unf
     assert world.docker.rows[0]["Name"] == "hopin-hopin-1"
     assert world.plan().describe() == [
         f"hopin: update to {SECOND} ({sha}); last successful deployment {FIRST}; "
-        f"the update to {SECOND} did not finish; now: hopin-hopin-1 running (healthy)"
+        f"the update to {SECOND} did not finish; now: hopin running (healthy)"
     ]
 
 
@@ -315,8 +316,28 @@ def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts
     break_it(world.docker)
 
     assert world.plan().describe() == [
-        f"hopin: start again at {FIRST} ({sha}, recorded); now: hopin-hopin-1 {now}"
+        f"hopin: start again at {FIRST} ({sha}, recorded); now: hopin {now}"
     ]
+
+
+def test_a_container_name_that_compose_interpolates_never_reaches_a_plan_or_a_failure(
+    world, origin, monkeypatch
+):
+    resolved = "hal-test-sentinel-value"
+    monkeypatch.setenv("SENTINEL", resolved)
+    named = COMPOSE + "    container_name: '${SENTINEL}'\n"
+    deploy(world, origin, FIRST, {"compose.yaml": named})
+    world.docker.rows[0]["Name"] = resolved
+    origin.release(SECOND, {"compose.yaml": named})
+    world.docker.health_after_start = "unhealthy"
+
+    [failure] = world.run()
+    shown = [failure, *world.plan().describe()]
+    world.docker.rows[0]["Name"] = resolved
+    world.docker.rows[0]["State"] = "exited"
+
+    assert resolved not in " ".join([*shown, *world.plan().describe()])
+    assert "hopin running (unhealthy)" in failure
 
 
 @pytest.mark.parametrize(
@@ -441,7 +462,7 @@ def test_an_update_interrupted_after_part_of_the_containers_was_replaced_is_repa
     [line] = world.plan().describe()
 
     assert f"last successful deployment {FIRST}; the update to {SECOND} did not finish" in line
-    assert all(row["Name"] in line for row in docker.rows)
+    assert all(row["Service"] in line for row in docker.rows)
     assert world.run() == [None]
     assert sorted(row["Service"] for row in docker.rows) == ["web", "worker"]
     assert world.deployed()["tag"] == SECOND

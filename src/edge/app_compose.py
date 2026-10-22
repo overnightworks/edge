@@ -35,7 +35,7 @@ class AppContainer:
         return self.state == _RUNNING and self.health == _HEALTHY
 
     def describe(self) -> str:
-        shown = f"{self.name} {self.state}"
+        shown = f"{self.service} {self.state}"
         return f"{shown} ({self.health})" if self.health else shown
 
 

@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -279,7 +278,7 @@ def contract_services(text: str | None, key: str, tag: str) -> tuple[str, ...]:
     return tuple(str(name) for name in services)
 
 
-def _service_refusal(definition: Any) -> str | None:
+def _service_refusal(definition: object) -> str | None:
     """Why a service definition breaks the contract; None when it keeps it."""
     if not isinstance(definition, dict):
         return "must be a map"
@@ -303,7 +302,7 @@ def _service_refusal(definition: Any) -> str | None:
     return None
 
 
-def _interpolates(value: Any) -> bool:
+def _interpolates(value: object) -> bool:
     return isinstance(value, str) and "$" in value
 
 

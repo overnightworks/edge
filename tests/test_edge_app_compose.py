@@ -66,9 +66,9 @@ def test_the_containers_carry_their_state_and_health():
     containers = engine_over(docker).containers()
 
     assert [container.describe() for container in containers] == [
-        "hopin-hopin-1 running (healthy)",
-        "hopin-db-1 created",
-        "hopin-old-1 exited (healthy)",
+        "hopin running (healthy)",
+        "db created",
+        "old exited (healthy)",
     ]
     assert [container.healthy for container in containers] == [True, False, False]
 

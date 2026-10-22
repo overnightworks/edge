@@ -118,6 +118,17 @@ def test_an_invalid_app_entry_is_cannot_plan_with_one_line_naming_the_key(app_wo
     assert app_world.scripted.changing_verbs() == []
 
 
+def test_an_app_key_is_held_against_the_name_of_the_checkouts_own_compose_project(app_world):
+    app_world.scripted.config["name"] = "mainline"
+    fleet = f"cloudflare:\n  zone: {ZONE}\n{FLEET}".replace("hopin", "mainline")
+    write_fleet(app_world.repository, fleet)
+
+    exit_code, _, err = app_world.run()
+
+    assert exit_code == 2
+    assert "services.mainline: an app's key is no compose profile or project of edge" in err
+
+
 def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_nothing(app_world):
     sha = app_world.origin.release("v2026.10.22.1")
 
