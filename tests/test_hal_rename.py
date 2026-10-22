@@ -239,6 +239,8 @@ REFERENCES = [
     (".config/systemd/user/default.target.wants/old.service", "link", "{clone}/systemd/a"),
     (".local/bin/tool", "link", "{clone}/bin/tool"),
     (".local/bin/tool", "link", "../../git/old/bin/tool"),
+    ("old-current", "link", "{clone}"),
+    ("srv/old-current", "link", "{clone}/bin"),
 ]
 
 
@@ -459,9 +461,22 @@ def symlinked(home: Path, case: str) -> None:
     if case == "parent":
         (home / "git").rename(elsewhere)
         (home / "git").symlink_to(elsewhere)
+    if case == "deploy":
+        make_clone(elsewhere, HTTPS.format("old"))
+        (home / "old-live").symlink_to(elsewhere)
+    if case == "deploy-metadata":
+        make_clone(home / "old-live", HTTPS.format("old"))
+        (home / "old-live" / ".git").rename(elsewhere)
+        (home / "old-live" / ".git").symlink_to(elsewhere)
+    if case == "deploy-parent":
+        make_clone(elsewhere / "old", HTTPS.format("old"))
+        (home / "srv").symlink_to(elsewhere)
 
 
-@pytest.mark.parametrize("case", ["clone", "metadata", "worktrees", "parent"])
+@pytest.mark.parametrize(
+    "case",
+    ["clone", "metadata", "worktrees", "parent", "deploy", "deploy-metadata", "deploy-parent"],
+)
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     home, world, repository, case, capsys
 ):
@@ -640,3 +655,95 @@ def test_a_worktree_whose_directory_is_gone_is_left_for_git_to_prune(
 
     assert code == ExitCode.OK
     assert "repair 1 worktrees of" in capsys.readouterr().out
+
+
+def test_a_rerun_refuses_a_session_inside_a_clone_that_is_already_moved(
+    home, world, repository, failing_origin, capsys
+):
+    rename(world)
+    (home / "git" / "fresh" / ".git").chmod(0o755)
+    session = RunningProcess(4242, "claude", home / "git" / "fresh" / "src")
+    world.running_in = lambda roots: (
+        [session] if any(session.directory.is_relative_to(root) for root in roots) else []
+    )
+
+    code = rename(world)
+
+    assert code == ExitCode.REFUSED
+    assert f"pid 4242 (claude) runs in {session.directory}" in capsys.readouterr().err
+    assert origin_of(home / "git" / "fresh") == SSH.format("old")
+
+
+def test_a_clone_whose_memory_directory_is_the_same_for_both_names_keeps_it(
+    home, world, fakes, capsys
+):
+    fakes.known = {"a-b"}
+    clone = make_clone(home / "git" / "a.b", SSH.format("a.b"))
+    memory = memory_of(home, clone)
+    memory.mkdir(parents=True)
+    (memory / "note.md").write_text("remembered")
+
+    code = rename(world, old="a.b", new="a-b")
+
+    assert code == ExitCode.OK
+    assert origin_of(home / "git" / "a-b") == SSH.format("a-b")
+    assert (memory / "note.md").read_text() == "remembered"
+
+
+@pytest.fixture
+def two_scripts_naming_the_old_clone(repository):
+    scripts = repository / ".venv" / "bin"
+    scripts.mkdir(parents=True)
+    (repository / "uv.lock").write_text("")
+    (repository / ".gitignore").write_text(".venv/\n")
+    for name in ("first", "second"):
+        (scripts / name).write_text(f"#!{repository}/.venv/bin/python\n")
+    return scripts
+
+
+def failing_sync(project: Path) -> None:
+    raise subprocess.CalledProcessError(1, "uv")
+
+
+def test_a_rerun_syncs_a_venv_whose_failed_sync_rewrote_only_some_scripts(
+    home, world, two_scripts_naming_the_old_clone
+):
+    def rewrites_one_script_and_fails(project: Path) -> None:
+        (project / ".venv" / "bin" / "first").write_text(f"#!{project}/.venv/bin/python\n")
+        failing_sync(project)
+
+    synced = []
+    world.uv_sync = rewrites_one_script_and_fails
+    rename(world)
+    world.uv_sync = synced.append
+
+    code = rename(world)
+
+    assert code == ExitCode.OK
+    assert synced == [home / "git" / "fresh"]
+
+
+@pytest.mark.parametrize("failed", [True, False])
+def test_a_venv_with_no_script_naming_a_path_is_reported_as_needing_a_sync(
+    home, world, two_scripts_naming_the_old_clone, failed, capsys
+):
+    def removes_the_scripts(project: Path) -> None:
+        for script in (project / ".venv" / "bin").glob("*"):
+            script.unlink()
+        if failed:
+            failing_sync(project)
+
+    world.uv_sync = removes_the_scripts
+    rename(world)
+    synced = []
+    world.uv_sync = synced.append
+    capsys.readouterr()
+
+    code = rename(world)
+
+    assert code == ExitCode.FINDINGS
+    out = capsys.readouterr().out
+    assert "cannot be proven rebuilt" in out
+    assert f"run `uv sync --locked` in {home / 'git' / 'fresh'}" in out
+    assert "nothing to do" not in out
+    assert synced == []

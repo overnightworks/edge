@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
 
 from edge import compose
@@ -55,6 +56,11 @@ class Move:
     source: Path
     target: Path
 
+    @property
+    def is_noop(self) -> bool:
+        """Two spellings that name the same place, such as the memory of `a.b` and `a-b`."""
+        return self.source == self.target
+
 
 @dataclass(frozen=True)
 class Step:
@@ -80,7 +86,29 @@ class Relocation:
     new_url: str | None  # None when `origin` already names the new repository
     linked: tuple[Move, ...]
     outside: tuple[Path, ...]
-    venvs: tuple[Path, ...]
+    venvs: tuple[Path, ...]  # to sync again
+    unproven_venvs: tuple[Path, ...]  # nothing in them says whether the sync finished
+
+    @property
+    def clone_moves(self) -> tuple[Move, ...]:
+        return tuple(
+            move for move in (self.site.clone, self.site.worktrees) if os.path.lexists(move.source)
+        )
+
+    @property
+    def needs_repair(self) -> bool:
+        return any(not move.is_noop for move in self.linked)
+
+    @property
+    def memory_move(self) -> Move | None:
+        memory = self.site.memory
+        return memory if memory.source.is_dir() and not memory.is_noop else None
+
+    @property
+    def needs_work(self) -> bool:
+        return bool(
+            self.clone_moves or self.new_url or self.needs_repair or self.memory_move or self.venvs
+        )
 
 
 @dataclass(frozen=True)
@@ -241,23 +269,34 @@ def _current(move: Move) -> Path:
     return move.source if os.path.lexists(move.source) else move.target
 
 
-def _venv_names_a_path_from_before(venv: Path, old_roots: Sequence[Path]) -> bool:
-    """Whether an entry-point script of the venv still starts with a path from before the move."""
-    for script in sorted((venv / "bin").glob("*")):
-        if script.is_file() and not script.is_symlink():
-            with script.open("rb") as stream:
-                if _mentions(stream.readline(512).decode(errors="replace"), old_roots):
-                    return True
-    return False
+class VenvState(Enum):
+    STALE = auto()  # still names a path from before the move, or the project has not moved yet
+    REBUILT = auto()  # names the project's new path and no old one
+    UNPROVEN = auto()  # names no path at all, such as after a sync that failed halfway
 
 
-def _venv_is_stale(project: Move, old_roots: Sequence[Path]) -> bool:
-    """A venv still to rebuild: its project has not moved yet, or its scripts still name a path
-    from before the move."""
+def _venv_evidence(venv: Path) -> list[str]:
+    """The text in a venv that names where it was built: the head of its entry-point scripts
+    and the direct URL of its installed projects."""
+    scripts = [path for path in sorted((venv / "bin").glob("*")) if path.is_file()]
+    heads = [path.read_bytes()[:1024].decode(errors="replace") for path in scripts]
+    urls = sorted(venv.glob("lib/python*/site-packages/*.dist-info/direct_url.json"))
+    return heads + [url.read_text(errors="replace") for url in urls]
+
+
+def _venv_state(project: Move, old_roots: Sequence[Path]) -> VenvState | None:
+    """None when the project has no venv to rebuild."""
     current = _current(project)
     if not ((current / "uv.lock").is_file() and (current / ".venv").is_dir()):
-        return False
-    return current != project.target or _venv_names_a_path_from_before(current / ".venv", old_roots)
+        return None
+    if current != project.target:
+        return VenvState.STALE
+    evidence = _venv_evidence(current / ".venv")
+    if any(_mentions(text, old_roots) for text in evidence):
+        return VenvState.STALE
+    if any(_mentions(text, [project.target]) for text in evidence):
+        return VenvState.REBUILT
+    return VenvState.UNPROVEN
 
 
 def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Relocation:
@@ -269,35 +308,39 @@ def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Reloca
         elif relocated is not None and (path.exists() or relocated.exists()):
             linked.append(Move(path, relocated))
     old_roots = [move.source for move in moves]
+    states = {project.target: _venv_state(project, old_roots) for project in (site.clone, *linked)}
     return Relocation(
         site=site,
         new_url=_renamed_url(_origin(site.here), old, new),
         linked=tuple(linked),
         outside=tuple(outside),
-        venvs=tuple(
-            project.target
-            for project in (site.clone, *linked)
-            if _venv_is_stale(project, old_roots)
-        ),
+        venvs=tuple(path for path, state in states.items() if state is VenvState.STALE),
+        unproven_venvs=tuple(path for path, state in states.items() if state is VenvState.UNPROVEN),
     )
 
 
-def _deploy_checkouts(world: World, old: str, new: str) -> tuple[DeployCheckout, ...]:
+def _deploy_checkouts(
+    world: World, old: str, new: str, moved: Sequence[Path]
+) -> tuple[DeployCheckout, ...]:
     found = []
     for parent in DEPLOY_PARENTS:
         directory = world.home / parent
         for path in sorted(directory.iterdir()) if directory.is_dir() else []:
-            if _is_deploy_candidate(world, path) and (url := _renamed_url(_origin(path), old, new)):
+            if _is_deploy_candidate(world, path, moved) and (
+                url := _renamed_url(_origin(path), old, new)
+            ):
                 found.append(DeployCheckout(path, url))
     return tuple(found)
 
 
-def _is_deploy_candidate(world: World, path: Path) -> bool:
+def _is_deploy_candidate(world: World, path: Path, moved: Sequence[Path]) -> bool:
+    """A link into a moved clone is a finding, not a checkout."""
     return (
         not path.name.startswith(".")
         and path != Layout(world.home).git
         and path.is_dir()
         and (path / ".git").is_dir()
+        and not (path.is_symlink() and _points_into(path, moved))
     )
 
 
@@ -332,7 +375,8 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
     found = _unit_findings(world.home / ".config" / "systemd" / "user", roots, world.home)
     found += [
         f"link {link} points into a moved clone"
-        for link in _entries(world.home / ".local" / "bin")
+        for directory in (world.home / ".local" / "bin", world.home, world.home / "srv")
+        for link in _entries(directory)
         if link.is_symlink() and _points_into(link, roots)
     ]
     found += [
@@ -341,7 +385,7 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
         if _mentions(line, roots)
     ]
     found += [
-        f"worktree {path} lies outside the moved trees and still points at the old clone: "
+        f"worktree {path} lies outside the moved trees and may still point at the old clone: "
         f"git -C {relocation.site.clone.target} worktree repair {path}"
         for relocation in relocations
         for path in relocation.outside
@@ -349,14 +393,44 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
     return found
 
 
+def _unproven_venv_findings(relocations: Sequence[Relocation]) -> list[str]:
+    return [
+        f"venv of {path} cannot be proven rebuilt after the move: run `uv sync --locked` in {path}"
+        for relocation in relocations
+        for path in relocation.unproven_venvs
+    ]
+
+
 def _both_exist(move: Move) -> bool:
-    return os.path.lexists(move.source) and os.path.lexists(move.target)
+    return not move.is_noop and os.path.lexists(move.source) and os.path.lexists(move.target)
+
+
+def _links_in_the_way(
+    world: World, sites: Sequence[Site], deploy: Sequence[DeployCheckout]
+) -> list[Path]:
+    git_directory = Layout(world.home).git
+    links = [git_directory] if git_directory.is_symlink() else []
+    for site in sites:
+        for move in (site.clone, site.worktrees):
+            links += [path for path in (move.source, move.target) if path.is_symlink()]
+        if (site.here / ".git").is_symlink():
+            links.append(site.here / ".git")
+    for checkout in deploy:
+        links += [
+            path
+            for path in (checkout.path, checkout.path / ".git", checkout.path.parent)
+            if path.is_symlink()
+        ]
+    return links
 
 
 def _refusals(
-    world: World, relocations: Sequence[Relocation], has_work: bool, new: str
+    world: World,
+    relocations: Sequence[Relocation],
+    deploy: Sequence[DeployCheckout],
+    has_work: bool,
+    new: str,
 ) -> list[str]:
-    git_directory = Layout(world.home).git
     sites = [relocation.site for relocation in relocations]
     refusals = [
         f"{move.target} already exists"
@@ -364,24 +438,21 @@ def _refusals(
         for move in (site.clone, site.worktrees, site.memory)
         if _both_exist(move)
     ]
-    links = [git_directory] if git_directory.is_symlink() else []
-    for site in sites:
-        for move in (site.clone, site.worktrees):
-            links += [path for path in (move.source, move.target) if path.is_symlink()]
-        if (site.here / ".git").is_symlink():
-            links.append(site.here / ".git")
+    links = _links_in_the_way(world, sites, deploy)
     refusals += [f"{path} is a symbolic link, which is never followed" for path in links]
     if has_work and not world.github_knows(new):
         refusals.append(f"GitHub does not know {OWNER}/{new}")
     return refusals
 
 
-def _process_refusals(world: World, sites: Sequence[Site]) -> list[str]:
+def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[str]:
+    """A session counts wherever the clone is now: a rerun can find it already moved."""
     roots = [
-        move.source
-        for site in sites
-        for move in (site.clone, site.worktrees)
-        if os.path.lexists(move.source)
+        current
+        for relocation in relocations
+        if relocation.needs_work
+        for move in (relocation.site.clone, relocation.site.worktrees)
+        if os.path.lexists(current := _current(move))
     ]
     running = world.running_in(roots) if roots else []
     return [
@@ -414,24 +485,16 @@ def _steps(
 ) -> tuple[Step, ...]:
     """The work still to do, in the order that is safe: every move first, because a worktree
     of one clone can lie inside another clone's `-worktrees`."""
-    sites = [relocation.site for relocation in relocations]
-    steps = [
-        _move_step(move)
-        for site in sites
-        for move in (site.clone, site.worktrees)
-        if os.path.lexists(move.source)
-    ]
+    steps = [_move_step(move) for relocation in relocations for move in relocation.clone_moves]
     steps += [
         _origin_step(relocation.site.clone.target, relocation.new_url)
         for relocation in relocations
         if relocation.new_url
     ]
+    steps += [_repair_step(relocation) for relocation in relocations if relocation.needs_repair]
     steps += [
-        _repair_step(relocation)
-        for relocation in relocations
-        if any(move.source != move.target for move in relocation.linked)
+        _move_step(relocation.memory_move) for relocation in relocations if relocation.memory_move
     ]
-    steps += [_move_step(site.memory) for site in sites if site.memory.source.is_dir()]
     steps += [_origin_step(checkout.path, checkout.new_url) for checkout in deploy]
     steps += [
         Step(f"uv sync in {venv}", lambda venv=venv: world.uv_sync(venv))
@@ -445,11 +508,13 @@ def make_plan(world: World, old: str, new: str) -> Plan:
     sites = _sites(world, old, new)
     moves = [move for site in sites for move in (site.clone, site.worktrees)]
     relocations = [_relocation(site, moves, old, new) for site in sites]
-    steps = _steps(world, relocations, _deploy_checkouts(world, old, new))
-    refusals = _refusals(world, relocations, bool(steps), new)
-    refusals += _process_refusals(world, sites)
     roots = [move.source for move in moves]
+    deploy = _deploy_checkouts(world, old, new, roots)
+    steps = _steps(world, relocations, deploy)
+    refusals = _refusals(world, relocations, deploy, bool(steps), new)
+    refusals += _process_refusals(world, relocations)
     findings = _findings(world, roots, relocations) if steps else []
+    findings += _unproven_venv_findings(relocations)
     return Plan(steps, tuple(findings), tuple(refusals))
 
 
@@ -488,13 +553,13 @@ def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
         for reason in plan.refusals:
             write_error(f"refusing, nothing changed: {reason}")
         return ExitCode.REFUSED
-    if not plan.steps:
+    if not (plan.steps or plan.findings):
         _say(f"nothing to do: no clone of {old} to move")
         return ExitCode.OK
     for step in plan.steps:
         _say(step.description)
     halfway = _execute(plan.steps) if apply else None
-    if not apply:
+    if plan.steps and not apply:
         _say("nothing changed; --apply does the above")
     for finding in plan.findings:
         _say(f"finding: {finding}")
