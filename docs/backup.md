@@ -172,7 +172,7 @@ path or file name.
   `unattributed` entry and `restore` asks for `--snapshot`. `restore` never writes the file. A runner
   from before schema 2 refuses a schema-2 file like any unknown one: move the file aside, then restore by
   `--snapshot` or run the next backup.
-- The single-app runs (`backup <app>`, `hal restore --test <app>`) write the same file: `state` reflects
+- The single-app runs (`hal backup <app>`, `hal restore --test <app>`) write the same file: `state` reflects
   the latest run of either form, and the data-reading check belongs only to the full run without an app.
 - `state` describes the latest run of either command: a failed Sunday backup followed by a passing
   restore test reads `ok`, and a timer that never fires leaves the last `ok` standing. A reader judges
