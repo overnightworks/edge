@@ -1,6 +1,7 @@
 #!/bin/bash
-# The container proof of `home setup`'s system step (#40, cells 1-13): a throwaway Ubuntu 24.04 with systemd as
-# PID 1, never the live PC, never the real /etc or ~/.secrets. Cells 14-17 are unit tests (tests/test_next.py).
+# The container proof of `hal setup`'s system step (#40, cells 1-13) and of its secrets step (S1): a throwaway
+# Ubuntu 24.04 with systemd as PID 1, never the live PC, never the real /etc or ~/.secrets. Cells 14-17 are unit
+# tests (tests/test_next.py).
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>
 #
@@ -90,9 +91,9 @@ prepared=$(start_container prepared)
 stage "$prepared" install
 stage "$prepared" prepared
 
-judge() {  # judge <cells file>: every cell 1-13 printed a held line and none printed a failed one
+judge() {  # judge <cells file>: every cell 1-13 and S1 printed a held line and none printed a failed one
     local cells=$1 cell missing=()
-    for cell in {1..13}; do
+    for cell in {1..13} S1; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then

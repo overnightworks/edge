@@ -307,6 +307,10 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         monkeypatch.delenv(name, raising=False)
     # A real ~/git/edge in the sandbox home would be a repository the hook check and tidy report on.
     monkeypatch.setattr(cli, "edge_units_directory", lambda _layout: unit_directory)
+    # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup` looks at none unless a test names some.
+    empty_manifest = tmp_path / "empty-secrets-manifest.toml"
+    empty_manifest.write_text("secret = []\n")
+    monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
     return Sandbox(home, global_git_config, uv_calls, system)

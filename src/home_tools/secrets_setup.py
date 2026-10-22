@@ -68,7 +68,7 @@ NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
 PLAN_READER = "edge external plan"
 NEXT_STEP = "next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
 PLAN_NEEDS = "next: erst {names} anlegen; `uv run edge external plan` in ~/git/edge braucht sie"
-RETRY_STEP = "next: {first}`home secrets --setup` noch einmal"
+RETRY_STEP = "next: {first}`hal setup --apply` noch einmal"
 STILL_OPEN = "noch offen: "
 BY_HAND_STEP = "von Hand offen, siehe oben: "
 UNSENDABLE_PASTE = (
@@ -281,20 +281,21 @@ def _stops_held() -> Iterator[None]:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: DiskSync) -> None:
+def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: DiskSync, mode: int = LOOSEST_FILE_MODE) -> None:
     """Writes a secret that does not exist yet; it never replaces one, and an interruption leaves no file behind.
 
     The value goes to a fresh private file that is linked to its place only once it is complete: the link fails rather
     than replace a file that appeared meanwhile, and the fresh name is removed on every way out. A stop that arrives
-    meanwhile waits until the place holds the whole secret or nothing.
+    meanwhile waits until the place holds the whole secret or nothing. `mode` is the entry's declared loosest mode; the
+    folder stays 0700 whatever it is.
     """
     target = layout.home / place
     _private_directories(layout.home, target.parent)
     fresh = target.with_name(f".{target.name}.{uuid.uuid4().hex}.neu")
     with _stops_held():
         try:
-            with open(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, LOOSEST_FILE_MODE), "wb") as fresh_file:
-                os.fchmod(fresh_file.fileno(), LOOSEST_FILE_MODE)
+            with open(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode), "wb") as fresh_file:
+                os.fchmod(fresh_file.fileno(), mode)
                 fresh_file.write(value.encode())
                 fresh_file.flush()
                 sync(fresh_file.fileno())
@@ -379,12 +380,12 @@ def _say(*lines: str) -> None:
 def stored_line(entry: SecretEntry) -> str:
     """What the walk says once an entry is stored: a token after its provider confirmed it, a service password unseen."""
     done = "geprüft" if entry.source else "erzeugt"
-    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({LOOSEST_FILE_MODE:o})"
+    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
 
 
 def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
     try:
-        store_new_secret(layout, entry.place, value, boundaries.sync)
+        store_new_secret(layout, entry.place, value, boundaries.sync, entry.loosest_mode)
     except StoreRefused as refused:
         _say(f"nicht gespeichert: {refused}")
         return False
@@ -458,11 +459,26 @@ class EntryFailed(Exception):
 
     def report(self) -> str:
         left = WHAT_FAILURE_LEFT[self.left].format(name=self.entry_name)
-        return f"abgebrochen bei {self.entry_name}: unerwarteter Fehler ({self.error_type}); {left}. Weiter mit: home secrets --setup"
+        return f"abgebrochen bei {self.entry_name}: unerwarteter Fehler ({self.error_type}); {left}. Weiter mit: hal setup --apply"
 
 
 def _presence_on_disk(entry: SecretEntry, layout: Layout) -> Presence:
     return presence(entry, {pattern: stat_matches(layout, pattern) for pattern in entry.paths})
+
+
+def live_entries() -> list[SecretEntry]:
+    return [entry for entry in load_manifest(secrets_view.MANIFEST_PATH) if not entry.retired]
+
+
+def is_open(entry: SecretEntry, found: Presence) -> bool:
+    """Whether the walk has work for a live entry: its presence cannot be told, or it is absent and not optional."""
+    return found is Presence.UNKNOWN or (found is Presence.MISSING and entry.expected_present)
+
+
+def open_entries(layout: Layout) -> list[tuple[SecretEntry, Presence]]:
+    """The live entries the walk would not leave alone, with their presence, by `stat` only."""
+    found = ((entry, _presence_on_disk(entry, layout)) for entry in live_entries())
+    return [(entry, presence_on_disk) for entry, presence_on_disk in found if is_open(entry, presence_on_disk)]
 
 
 def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
@@ -517,15 +533,12 @@ def _unblocking(still_open: list[SecretEntry], layout: Layout) -> list[str]:
 def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step | None:
     """One live entry: kept, skipped or set up; None when it is kept or optional."""
     found = _presence_on_disk(entry, layout)
-    if found is Presence.PRESENT:
-        _say(f"{entry.name}: vorhanden, bleibt unverändert")
+    if not is_open(entry, found):
+        _say(f"{entry.name}: vorhanden, bleibt unverändert" if found is Presence.PRESENT else f"{entry.name}: fehlt, ist optional; übersprungen")
         return None
     if found is Presence.UNKNOWN:
         _say(f"{entry.name}: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen")
         return Step.STILL_MISSING
-    if not entry.expected_present:
-        _say(f"{entry.name}: fehlt, ist optional; übersprungen")
-        return None
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
@@ -533,9 +546,7 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     """Every live entry in manifest order; the closing lines name what is still open and the plan step."""
     still_open: list[SecretEntry] = []
     by_hand: list[SecretEntry] = []
-    for entry in load_manifest(secrets_view.MANIFEST_PATH):
-        if entry.retired:
-            continue
+    for entry in live_entries():
         step = _visit(entry, layout, boundaries, now)
         if step is Step.BY_HAND:
             by_hand.append(entry)
@@ -552,7 +563,7 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     try:
         return _walk(layout, boundaries, now)
     except (KeyboardInterrupt, EOFError):
-        print("\nabgebrochen; keine Datei halb geschrieben. Weiter mit: home secrets --setup", file=sys.stderr)
+        print("\nabgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply", file=sys.stderr)
         return ABORTED_EXIT
     except getpass.GetPassWarning:
         print(f"\n{EXPOSED_INPUT_REFUSAL}", file=sys.stderr)
