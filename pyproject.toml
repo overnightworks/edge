@@ -57,3 +57,29 @@ exclude_also = ['if __name__ == "__main__":']
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
 pythonpath = ["src", "scripts"]
+
+# hal is the door above the tools it drives; edge_check is the lowest shared piece.
+[tool.importlinter]
+root_packages = ["edge", "edge_check", "edge_backup", "home_tools", "hal"]
+
+[[tool.importlinter.contracts]]
+name = "hal sits above edge, which sits above edge_check"
+type = "layers"
+layers = ["hal", "edge", "edge_check"]
+
+[[tool.importlinter.contracts]]
+name = "edge_backup, edge_check and home_tools stand apart"
+type = "independence"
+modules = ["edge_backup", "edge_check", "home_tools"]
+
+[[tool.importlinter.contracts]]
+name = "edge_backup and home_tools never reach up into edge or hal"
+type = "forbidden"
+source_modules = ["edge_backup", "home_tools"]
+forbidden_modules = ["edge", "hal"]
+
+[[tool.importlinter.contracts]]
+name = "edge never imports the workstation tool or the backup runner"
+type = "forbidden"
+source_modules = ["edge"]
+forbidden_modules = ["home_tools", "edge_backup"]
