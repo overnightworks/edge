@@ -3,5 +3,5 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "34908c37a75db279dc38d28401a87c972e1e4ff6"
 branch = "claude/issue-258-the-shared-people-contract-how-every-app"
-scope = ["docs/architecture.md", "docs/people.md"]
+scope = ["README.md", "docs/architecture.md", "docs/people.md"]
 opened_commit = "6076d307af371dac2e3e2df5568181f4005917a5"
