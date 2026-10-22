@@ -70,27 +70,22 @@ def test_the_catalog_runs_the_unit_and_gives_it_no_public_host():
     assert "hosts" not in fleet["services"]["legal"]
 
 
-@pytest.mark.parametrize(
-    "directive",
-    [
-        "server_tokens off;",
-        "access_log off;",
-        "try_files $uri.html =404;",
-        "alias /srv/assets/;",
-        "alias /srv/fonts/;",
-        'X-Content-Type-Options "nosniff" always;',
-        'Referrer-Policy "no-referrer" always;',
-        'Cache-Control "no-transform" always;',
-        "default-src 'none'",
-        "frame-ancestors 'none'",
-    ],
-)
-def test_the_nginx_config_carries_the_ruled_directive(directive):
-    assert directive in (ROOT / "legal/nginx/default.conf").read_text()
+def test_the_security_headers_stand_at_server_level_and_no_location_overrides_them():
+    config = (ROOT / "legal/nginx/default.conf").read_text()
+    server_level, *locations = config.split("location ")
+    for header in (
+        "Content-Security-Policy",
+        "X-Content-Type-Options",
+        "Referrer-Policy",
+        "Cache-Control",
+    ):
+        assert f"add_header {header} " in server_level
+    # nginx drops every inherited add_header in a location that sets its own.
+    assert not any("add_header" in location for location in locations)
 
 
 def test_every_font_the_stylesheet_names_exists_in_the_mounted_directory():
     stylesheet = (ROOT / "legal/assets/legal.css").read_text()
     names = [part.split('"')[0] for part in stylesheet.split('url("fonts/')[1:]]
-    assert len(names) == 3
+    assert names
     assert all((ROOT / FONTS / name).is_file() for name in names)

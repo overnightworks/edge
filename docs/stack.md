@@ -31,7 +31,9 @@ and `edge apply --closed` writes it again.
 - **The legal unit.** `legal` (nginx, profile `legal`, switched by `services.legal.run.enabled`) serves
   the imprint from `legal/pages/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and the login
   theme's fonts (one copy) answer under `/_rechtliches/`, every other path with 404. The catalog gives
-  it no host, so the tunnel does not reach it.
+  it no host, so the tunnel does not reach it. Pages and the stylesheet go live once the live checkout is
+  pulled; a changed `legal/nginx/default.conf` needs the container restarted with `hal stop legal` and
+  `hal start legal`.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
   gets 404 on 8081, and Keycloak answers the master realm on 8090; Keycloak's start takes
   longest. No command checks these four facts together (a named gap on overnightworks/edge#222).
@@ -140,7 +142,7 @@ ist er daneben gewachsen, endet es mit Exit 2 und aendert nichts. Wartende Commi
 und Betreff und ihre Dateien nach Wirkung: live sobald aktualisiert (`dynamic/`, `mcp/dynamic/`),
 von `edge apply` neu erstellt (`traefik.yml`, `traefik-mcp.yml`, `compose.yaml`), Halt fuer `uv sync`
 (`pyproject.toml`, `uv.lock`), von `edge apply` nicht angewendet (Binds der Einheiten: `keycloak/`,
-`step-ca/ca.json`), sonstige. Der Plan wendet HEAD an, nie die wartenden Commits; die bringt der
+`legal/`, `step-ca/ca.json`), sonstige. Der Plan wendet HEAD an, nie die wartenden Commits; die bringt der
 Betreiber bis S2.4c mit `git -C ~/git/edge merge --ff-only <Hash>` selbst herein und ruft den Apply
 noch einmal auf.
 
