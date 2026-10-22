@@ -1,6 +1,7 @@
 """The catalog's host shape (#131): one reader, one decision about `run.enabled`."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -100,7 +101,8 @@ def test_every_songmaker_host_refuses_the_back_channel_route_publicly():
 def test_every_dns_record_waits_for_the_public_deny_ruleset():
     """A deny that fails to apply must publish no record; `depends_on` says so."""
     source = (PROJECT_ROOT / "external" / "cloudflare.tf").read_text()
-    record = source.split('resource "cloudflare_dns_record" "host" {')[1].split("\n}\n")[0]
+    block = source.split('resource "cloudflare_dns_record" "host" {')[1].split("\n}\n")[0]
+    record = re.sub(r"(?m)^\s*(#|//).*$", "", block)
     assert "cloudflare_ruleset.deny_public" in record.split("depends_on", 1)[1]
 
 

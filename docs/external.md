@@ -139,8 +139,12 @@ wird `/*`: abgewiesen wird jeder dekodierte Pfad mit `auth/` und spaeter `backch
 Custom-Regeln, also fuenf Pfade, nicht fuenf Hosts. Der DNS-Eintrag jedes Hosts wartet auf dieses Regelwerk: ein
 fehlgeschlagener Ausschluss veroeffentlicht nichts. Gibt es den Einstiegspunkt
 `http_request_firewall_custom` der Zone schon (Dashboard-Regeln), schlaegt das Anlegen fehl: dann
-vor dem ersten `hal apply` importieren (`cloudflare_ruleset.deny_public[0]`, ID `<zone_id>/<ruleset_id>`),
-die vorhandenen Regeln bleiben im Regelwerk stehen oder werden bewusst verworfen. Das Token-Recht
+vor dem ersten `hal apply` importieren (`cloudflare_ruleset.deny_public[0]`, ID `zones/<zone_id>/<ruleset_id>`,
+[Import beim Provider 5.28.0](https://github.com/cloudflare/terraform-provider-cloudflare/blob/v5.28.0/docs/resources/ruleset.md#import)).
+Der Import behaelt die vorhandenen Regeln der Zone nicht: die Regeln der Ressource kommen ganz aus dem
+Katalog, der naechste Plan zeigt also jede vorhandene Dashboard-Regel als entfernt. Der Betreiber bricht
+vor dem `yes` bei jeder solchen Entfernung ab: soll die Regel bleiben, schreibt er sie zuerst ueber ein
+Item in den Katalog, sonst entfernt er sie bewusst. Nichts verschwindet ungesehen. Das Token-Recht
 `Zone › Zone WAF` (Lesen fuer `fleet-read`, Edit fuer `fleet-write`) ist nicht gemessen: es kommt vor `hal apply` dazu, wenn ein 403 es nennt.
 
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer

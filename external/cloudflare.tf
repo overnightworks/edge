@@ -222,7 +222,10 @@ locals {
 
 # A host's record waits for this ruleset (below), so a deny that fails publishes nothing. Without
 # a denied path no ruleset exists: Cloudflare keeps one entry point per phase, which the zone may
-# already hold (dashboard rules); then import it before the first apply and keep its rules.
+# already hold (dashboard rules); then import it before the first apply (ID
+# `zones/<zone_id>/<ruleset_id>`). The import does not keep those rules: this resource's rules come
+# whole from the catalog, so the plan shows each existing rule as removed, and the operator stops
+# there until it is written into the catalog or removed on purpose.
 resource "cloudflare_ruleset" "deny_public" {
   count   = length(local.denied_paths) > 0 ? 1 : 0
   zone_id = local.zone_id
