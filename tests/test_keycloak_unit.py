@@ -253,7 +253,8 @@ def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments
     class FakeStack:
         def compose(self, *arguments, stdin=None):
             calls.append((arguments, stdin))
-            return SimpleNamespace(returncode=1, stderr="", stdout="")
+            seen = {"token": "400", "address": "10.0.0.2", "admin": "404", "management": "-"}
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(seen))
 
     class FakeProbe:
         stack = FakeStack()
@@ -265,18 +266,14 @@ def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments
         def create_user(self, *_arguments):
             return "user-id"
 
-    with pytest.raises(AssertionError):
-        backchannel_cell.prove(
-            FakeProbe(), FakeAdmin(), secret, lambda held, message: _require(held, message)
-        )
+        def get(self, _path):
+            return [{"type": "LOGIN_ERROR", "ipAddress": "10.0.0.2"}]
+
+    backchannel_cell.prove(FakeProbe(), FakeAdmin(), secret, lambda _held, _message: None)
 
     ((arguments, stdin),) = calls
     assert secret not in " ".join(arguments)
     assert json.loads(stdin)["client_secret"] == secret
-
-
-def _require(held, message):
-    assert held, message
 
 
 # An SVG's xmlns names a namespace; no browser fetches it.
