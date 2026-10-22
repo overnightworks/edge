@@ -2,10 +2,11 @@
 temporary HOME with real git repositories; `gh`, the process scan and `uv` are fakes."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -99,7 +100,10 @@ def repository(home: Path) -> Path:
     return clone
 
 
-def test_a_dry_run_prints_the_moves_and_changes_nothing(home, world, repository, capsys):
+def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
+    home, world, locked, fakes, capsys
+):
+    repository = locked
     before = tree_state(home)
 
     code = rename(world, apply=False)
@@ -110,6 +114,8 @@ def test_a_dry_run_prints_the_moves_and_changes_nothing(home, world, repository,
     output = capsys.readouterr().out
     assert f"move {repository} -> {home / 'git' / 'fresh'}" in output
     assert "--apply" in output
+    assert f"uv sync in {home / 'git' / 'fresh'}" in output
+    assert fakes.uv_calls == []
 
 
 def test_apply_moves_the_clone_its_worktrees_its_url_and_its_memory(home, world, repository):
@@ -139,21 +145,17 @@ def test_apply_moves_the_clone_its_worktrees_its_url_and_its_memory(home, world,
     assert memory_of(home, git / "fresh-land").is_dir()
 
 
-def test_a_second_apply_has_nothing_to_do(home, world, repository, capsys):
+def test_a_second_apply_has_nothing_to_do_and_the_way_back_moves_everything_home(
+    home, world, repository, fakes, capsys
+):
+    fakes.known.add("old")
     rename(world)
     after_first = tree_state(home)
     capsys.readouterr()
 
-    code = rename(world)
-
-    assert code == ExitCode.OK
+    assert rename(world) == ExitCode.OK
     assert tree_state(home) == after_first
     assert "nothing to do" in capsys.readouterr().out
-
-
-def test_the_way_back_moves_everything_home_again(home, world, repository, fakes):
-    fakes.known.add("old")
-    rename(world)
 
     code = rename(world, old="fresh", new="old")
 
@@ -164,10 +166,14 @@ def test_the_way_back_moves_everything_home_again(home, world, repository, fakes
     assert plain_git(home / "git" / "old-worktrees" / "lane", "status").returncode == 0
 
 
-@pytest.mark.parametrize("case", [
-    "target-exists", "worktrees-target-exists", "memory-target-exists", "dangling-target",
-    "dangling-worktrees-target", "dangling-memory-target", "process-inside", "unknown-new-name",
-])  # fmt: skip
+REFUSED_CASES = (
+    "target-exists worktrees-target-exists memory-target-exists dangling-target "
+    "dangling-worktrees-target dangling-memory-target process-inside unknown-new-name "
+    "process-in-foreign-worktree"
+)
+
+
+@pytest.mark.parametrize("case", REFUSED_CASES.split())
 def test_a_refusal_changes_nothing_and_exits_four(home, world, repository, fakes, case, capsys):
     targets = {
         "target": home / "git" / "fresh",
@@ -180,6 +186,11 @@ def test_a_refusal_changes_nothing_and_exits_four(home, world, repository, fakes
         targets[case.removeprefix("dangling-")].symlink_to(home / "nowhere")
     if case == "process-inside":
         fakes.running = [RunningProcess(4242, "claude", repository)]
+    if case == "process-in-foreign-worktree":
+        land = make_clone(home / "git" / "old-land", HTTPS.format("old"))
+        stray = home / "git" / "old-worktrees" / "stray"
+        plain_git(land, "worktree", "add", "-b", "stray", str(stray))
+        fakes.running = [RunningProcess(4242, "claude", stray / "src")]
     if case == "unknown-new-name":
         fakes.known.clear()
     before = tree_state(home)
@@ -226,6 +237,7 @@ REFERENCES = [
     (".config/systemd/user/old.service", "link", "{clone}/systemd/old.service"),
     (".config/systemd/user/old.service", "text", "[Service]\nExecStart=%h/git/old/bin/serve\n"),
     (".config/systemd/user/old.service", "text", "WorkingDirectory={clone}\n"),
+    (".config/systemd/user/old.service", "linked-text", "ExecStart=%h/git/old/bin/serve\n"),
     (".config/systemd/user/old.service.d/override.conf", "text", "ExecStart=%h/git/old/x\n"),
     (".config/systemd/user/default.target.wants/old.service", "link", "{clone}/systemd/a"),
     (".local/bin/tool", "link", "{clone}/bin/tool"),
@@ -244,13 +256,16 @@ def test_a_unit_or_link_into_a_moved_clone_is_reported_and_left_alone(
     content = content.format(clone=repository)
     if kind == "link":
         reference.symlink_to(content)
+    elif kind == "linked-text":
+        (home / "unit-elsewhere").write_text(content)
+        reference.symlink_to(home / "unit-elsewhere")
     else:
         reference.write_text(content)
 
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
-    assert f" {reference} points into a moved clone" in capsys.readouterr().out
+    assert re.search(f" {reference} (points into|names) a moved clone", capsys.readouterr().out)
     assert (str(reference.readlink()) if kind == "link" else reference.read_text()) == content
     assert (home / "git" / "fresh").is_dir()
 
@@ -263,6 +278,9 @@ def test_what_does_not_point_into_a_moved_clone_is_not_reported(home, world, rep
     )
     (units / "other.service").write_text("ExecStart=%h/git/another/run\n")
     (units / "linked.service").symlink_to(home / "somewhere")
+    (home / "unreadable").write_text("%h/git/old\n")
+    (home / "unreadable").chmod(0)
+    (units / "unreadable.service").symlink_to(home / "unreadable")
     links = home / ".local" / "bin"
     links.mkdir(parents=True)
     (links / "elsewhere").symlink_to(home / "somewhere")
@@ -321,7 +339,7 @@ def test_the_process_scan_finds_a_process_running_inside_a_clone(tmp_path):
         sleeper.wait()
 
 
-def test_the_real_boundaries_call_gh_and_uv(tmp_path, monkeypatch):
+def test_the_real_boundaries_call_gh_and_uv_and_list_no_tools_without_uv(tmp_path, monkeypatch):
     bin_directory = tmp_path / "bin"
     bin_directory.mkdir()
     for name, body in (
@@ -343,12 +361,8 @@ def test_the_real_boundaries_call_gh_and_uv(tmp_path, monkeypatch):
     world.uv(project, ("sync", "--locked"))
     assert (tmp_path / "log").read_text().strip() == f"sync --locked in {project}"
     assert world.uv_tools() == "tool listing\n"
-
-
-def test_without_uv_there_are_no_uv_tools(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
-
-    assert rename_commands.real_world(tmp_path).uv_tools() == ""
+    assert world.uv_tools() == ""
 
 
 def test_a_clone_without_origin_or_with_another_repository_stays_put(home, world):
@@ -374,7 +388,9 @@ def test_a_clone_that_already_names_the_new_repository_is_moved_without_a_url_ch
     assert not clone.exists()
 
 
-def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree(home, world, repository):
+def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree_but_not_a_gone_one(
+    home, world, repository, capsys
+):
     nested = repository / ".claude" / "worktrees" / "agent-1"
     deeper = home / "git" / "old-worktrees" / "feature" / "topic"
     land = make_clone(home / "git" / "old-land", HTTPS.format("old"))
@@ -382,11 +398,13 @@ def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree(home, w
     plain_git(repository, "worktree", "add", "-b", "agent-1", str(nested))
     plain_git(repository, "worktree", "add", "-b", "topic", str(deeper))
     plain_git(land, "worktree", "add", "-b", "across", str(across))
+    shutil.rmtree(home / "git" / "old-worktrees" / "other")
 
     code = rename(world)
 
     git = home / "git"
     assert code == ExitCode.OK
+    assert "repair 3 worktrees of" in capsys.readouterr().out
     for worktree in (
         git / "fresh" / ".claude" / "worktrees" / "agent-1",
         git / "fresh-worktrees" / "feature" / "topic",
@@ -424,12 +442,12 @@ def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it_unt
     assert ("finding" in capsys.readouterr().out) == (registration == "ghost")
 
 
-def symlinked(home: Path, case: str) -> None:
+def symlinked(home: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
     elsewhere = home.parent / "elsewhere"
     old = home / "git" / "old"
-    if case in ("venv", "lock", "pyvenv"):
+    if case in ("venv", "lock", "pyvenv", "unreadable-pyvenv"):
         (old / "uv.lock").write_text("")
-    if case == "pyvenv":
+    if case in ("pyvenv", "unreadable-pyvenv"):
         (old / ".venv").mkdir()
         (old / ".venv" / "pyvenv.cfg").write_text("version_info = 3.12.1\n")
     if case == "outside-gitfile":
@@ -445,6 +463,7 @@ def symlinked(home: Path, case: str) -> None:
         "memory-parent": home / ".claude" / "projects",
         "lock": old / "uv.lock",
         "pyvenv": old / ".venv" / "pyvenv.cfg",
+        "unreadable-pyvenv": old / ".venv" / "pyvenv.cfg",
         "outside-gitfile": home.parent / "outer" / "probe" / ".git",
         "units-ancestor": home / ".config",
         "bin-ancestor": home / ".local",
@@ -452,6 +471,11 @@ def symlinked(home: Path, case: str) -> None:
     if case in moved_away:
         moved_away[case].rename(elsewhere)
         moved_away[case].symlink_to(elsewhere)
+    if case == "unreadable-pyvenv":
+        elsewhere.chmod(0)
+    if case == "home":
+        (home.parent / "shortcut").symlink_to(home)
+        monkeypatch.setenv("HOME", str(home.parent / "shortcut"))
     if case == "venv":
         (old / ".venv").symlink_to(elsewhere)
     if case == "nested-worktree":
@@ -469,8 +493,12 @@ def symlinked(home: Path, case: str) -> None:
         (home.parent / "shortcut").symlink_to(scratch)
         listed = home / "git" / "old" / ".git" / "worktrees" / "probe" / "gitdir"
         listed.write_text(str(home.parent / "shortcut" / "probe" / ".git") + "\n")
-    if case == "deploy":
-        make_clone(elsewhere, HTTPS.format("old"))
+    linked_deploy(home, elsewhere, case)
+
+
+def linked_deploy(home: Path, elsewhere: Path, case: str) -> None:
+    if case in ("deploy", "deploy-renamed"):
+        make_clone(elsewhere, HTTPS.format("fresh" if case == "deploy-renamed" else "old"))
         (home / "old-live").symlink_to(elsewhere)
     if case == "deploy-metadata":
         make_clone(home / "old-live", HTTPS.format("old"))
@@ -481,25 +509,55 @@ def symlinked(home: Path, case: str) -> None:
         (home / "srv").symlink_to(elsewhere)
 
 
-@pytest.mark.parametrize("case", [
-    "clone", "metadata", "worktrees", "parent", "venv", "lock", "pyvenv", "nested-worktree",
-    "recovered-worktree", "outside-ancestor", "outside-gitfile", "memory", "memory-parent",
-    "units-ancestor", "bin-ancestor", "deploy", "deploy-metadata", "deploy-parent",
-])  # fmt: skip
+LINKED_CASES = (
+    "clone metadata worktrees parent venv lock pyvenv unreadable-pyvenv nested-worktree "
+    "recovered-worktree outside-ancestor outside-gitfile memory memory-parent units-ancestor "
+    "bin-ancestor home deploy deploy-renamed deploy-metadata deploy-parent"
+)
+
+
+@pytest.mark.parametrize("case", LINKED_CASES.split())
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
-    home, world, repository, fakes, case, capsys
+    home, world, repository, fakes, case, capsys, monkeypatch
 ):
-    symlinked(home, case)
+    symlinked(home, monkeypatch, case)
+    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
     fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "probe")]
     before = tree_state(home.parent)
 
-    code = rename(world)
+    code = cli.main(["rename", "old", "fresh", "--apply"])
 
     assert code == ExitCode.REFUSED
     error = capsys.readouterr().err
     assert "symbolic link" in error
     assert ("pid 4242" in error) == (case == "outside-ancestor")
     assert tree_state(home.parent) == before
+
+
+@pytest.mark.parametrize("behind", ["linked-path", "no-origin", "another-repository", "git-link"])
+def test_an_entry_of_home_that_is_not_a_checkout_of_this_repository_is_left_alone(
+    home, world, repository, capsys, behind
+):
+    elsewhere = home.parent / "elsewhere"
+    if behind == "linked-path":
+        (home.parent / "var").symlink_to(home.parent)
+        (home.parent / "run").mkdir()
+        (home / "run").symlink_to(home.parent / "var" / "run")
+    elif behind == "no-origin":
+        (home / "no-origin").symlink_to(committed_main(elsewhere))
+    elif behind == "another-repository":
+        (home / "another").symlink_to(make_clone(elsewhere, HTTPS.format("another")))
+    else:
+        (home / "other").mkdir()
+        (home / "other" / ".git").symlink_to(
+            make_clone(elsewhere, HTTPS.format("another")) / ".git"
+        )
+
+    code = rename(world)
+
+    assert code == ExitCode.OK
+    assert "symbolic link" not in capsys.readouterr().err
+    assert (home / "git" / "fresh").is_dir()
 
 
 @pytest.mark.parametrize(
@@ -629,17 +687,6 @@ def test_a_rerun_finishes_a_clone_that_a_halfway_stop_left_moved_but_not_complet
     assert not memory_of(home, repository).exists()
 
 
-def test_a_worktree_whose_directory_is_gone_is_left_for_git_to_prune(
-    home, world, repository, capsys
-):
-    shutil.rmtree(home / "git" / "old-worktrees" / "other")
-
-    code = rename(world)
-
-    assert code == ExitCode.OK
-    assert "repair 1 worktrees of" in capsys.readouterr().out
-
-
 def test_a_rerun_refuses_a_session_inside_a_clone_that_is_already_moved(
     home, world, repository, failing_origin, fakes, capsys
 ):
@@ -691,32 +738,19 @@ def rewrites(project: Path) -> list[tuple[Path, tuple[str, ...]]]:
     ]
 
 
-def test_a_failed_sync_exits_with_failure_and_names_the_project(home, world, locked, capsys):
+def test_a_failed_sync_names_the_project_and_the_rerun_syncs_again_and_succeeds(
+    home, world, locked, fakes, capsys
+):
     world.uv = failing_uv
-
-    code = rename(world)
-
-    assert code == ExitCode.FAILURE
-    assert f"stopped halfway at `uv sync in {home / 'git' / 'fresh'}`" in capsys.readouterr().err
-
-
-def test_a_rerun_after_a_failed_sync_runs_the_sync_again_and_succeeds(home, world, locked, fakes):
-    world.uv = failing_uv
-    rename(world)
+    failed = rename(world)
     world.uv = lambda project, arguments: fakes.uv_calls.append((project, arguments))
 
     code = rename(world)
 
+    assert failed == ExitCode.FAILURE
+    assert f"stopped halfway at `uv sync in {home / 'git' / 'fresh'}`" in capsys.readouterr().err
     assert code == ExitCode.OK
     assert fakes.uv_calls == rewrites(home / "git" / "fresh")
-
-
-def test_a_dry_run_lists_the_syncs_and_runs_none(home, world, locked, fakes, capsys):
-    code = rename(world, apply=False)
-
-    assert code == ExitCode.OK
-    assert f"uv sync in {home / 'git' / 'fresh'}" in capsys.readouterr().out
-    assert fakes.uv_calls == []
 
 
 def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
@@ -734,58 +768,24 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
     assert "nothing to do" not in out
 
 
-def test_a_session_in_a_worktree_under_another_clones_directory_refuses_the_run(
-    home, world, repository, fakes, capsys
-):
-    land = make_clone(home / "git" / "old-land", HTTPS.format("old"))
-    stray = home / "git" / "old-worktrees" / "stray"
-    plain_git(land, "worktree", "add", "-b", "stray", str(stray))
-    session = RunningProcess(4242, "claude", stray / "src")
-    fakes.running = [session]
-
-    code = rename(world)
-
-    assert code == ExitCode.REFUSED
-    assert f"pid 4242 (claude) runs in {session.directory}" in capsys.readouterr().err
-    assert (home / "git" / "old").is_dir()
-
-
-def test_a_moved_clone_gets_a_venv_rewrite_and_a_reinstall_and_nothing_is_deleted(
-    home, world, locked, fakes
-):
-    (locked / ".venv" / "bin").mkdir()
-    (locked / ".venv" / "bin" / "marker").write_text("kept")
-
-    rename(world)
-
-    fresh = home / "git" / "fresh"
-    assert fakes.uv_calls == rewrites(fresh)
-    assert (fresh / ".venv" / "bin" / "marker").read_text() == "kept"
-
-
 @pytest.mark.parametrize(
     ("config", "python"),
     [("version_info = 3.12.13\n", ("--python", "3.12")), ("home = /uv/python/bin\n", ())],
 )
-def test_uv_is_told_the_python_version_the_venv_was_made_with(
+def test_uv_rewrites_the_venv_in_place_with_the_python_version_it_was_made_with(
     home, world, locked, fakes, config, python
 ):
     (locked / ".venv" / "pyvenv.cfg").write_text(config)
+    (locked / ".venv" / "marker").write_text("kept")
 
     rename(world)
 
-    assert fakes.uv_calls[0] == (home / "git" / "fresh", ("venv", "--allow-existing", *python))
-
-
-def test_a_failed_uv_step_exits_with_failure_and_the_rerun_succeeds(home, world, locked, fakes):
-    world.uv = failing_uv
-    assert rename(world) == ExitCode.FAILURE
-    world.uv = lambda project, arguments: fakes.uv_calls.append((project, arguments))
-
-    code = rename(world)
-
-    assert code == ExitCode.OK
-    assert fakes.uv_calls == rewrites(home / "git" / "fresh")
+    fresh = home / "git" / "fresh"
+    assert fakes.uv_calls == [
+        (fresh, ("venv", "--allow-existing", *python)),
+        (fresh, ("sync", "--locked", "--reinstall")),
+    ]
+    assert (fresh / ".venv" / "marker").read_text() == "kept"
 
 
 def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home, world, capsys):

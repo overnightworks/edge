@@ -177,18 +177,25 @@ class Disk:
     """Every filesystem access of one plan: the reads that find the work and the actions its
     steps run. Each access first looks for symbolic links in its path and the path's parents,
     both where the path will be and where a planned move takes it from, and remembers them; the
-    plan refuses them all before any change. An action touches only the paths it was built with,
-    so nothing a run reads or changes escapes the check. `is_link` and `link_target` are the one
-    exception: they look at a scanned leaf link itself and read its target without following."""
+    plan refuses them all before any change; a read of a path with a link in it comes back empty,
+    so planning goes on to that refusal. An action touches only the paths it was built with, so
+    nothing a run reads or changes escapes the check. `is_link`, `link_target`, `target_text` and
+    `unfollowed_origin` are the one exception: they look at a scanned link or at a checkout behind
+    one without following it into the checked set, and only to report."""
 
     moves: tuple[Move, ...] = ()
     links: dict[Path, None] = field(default_factory=dict)  # an ordered set
 
-    def _check(self, path: Path) -> None:
-        for place in (path, *self._sources_of(path)):
-            self.links.update(
-                dict.fromkeys(part for part in (place, *place.parents) if part.is_symlink())
-            )
+    def _check(self, path: Path) -> bool:
+        """Remembers the links in `path`; whether there are any."""
+        found = [
+            part
+            for place in (path, *self._sources_of(path))
+            for part in (place, *place.parents)
+            if part.is_symlink()
+        ]
+        self.links.update(dict.fromkeys(found))
+        return bool(found)
 
     def _sources_of(self, path: Path) -> list[Path]:
         return [
@@ -210,12 +217,12 @@ class Disk:
         return path.is_file()
 
     def read_text(self, path: Path) -> str:
-        self._check(path)
-        return path.read_text(errors="replace")
+        return "" if self._check(path) else path.read_text(errors="replace")
 
     def entries(self, directory: Path) -> list[Path]:
-        self._check(directory)
-        return sorted(directory.iterdir()) if directory.is_dir() else []
+        if self._check(directory) or not directory.is_dir():
+            return []
+        return sorted(directory.iterdir())
 
     def walk(self, directory: Path) -> list[Path]:
         """Everything below `directory`; a linked directory is listed, never entered."""
@@ -233,6 +240,26 @@ class Disk:
     def link_target(self, link: Path) -> Path:
         self._check(link.parent)
         return Path(os.path.normpath(link.parent / os.readlink(link)))
+
+    def target_text(self, link: Path) -> str:
+        """The text of the regular file a link points at; empty for anything else."""
+        try:
+            target = self.link_target(link)
+            return target.read_text(errors="replace") if target.is_file() else ""
+        except OSError:  # a file this user cannot read has nothing to report
+            return ""
+
+    def unfollowed_origin(self, checkout: Path) -> str | None:
+        """`origin` of the checkout at `checkout`, None when there is none to read."""
+        if not (checkout / ".git").exists():
+            return None
+        try:
+            return _git(checkout, "config", "--get", "remote.origin.url")
+        except subprocess.CalledProcessError:
+            return None
+
+    def refuse(self, link: Path) -> None:
+        self._check(link)
 
     def git(self, directory: Path, *arguments: str) -> str:
         self._check(directory / ".git")
@@ -409,24 +436,27 @@ def _deploy_checkouts(
     found = []
     for parent in DEPLOY_PARENTS:
         for path in disk.entries(world.home / parent):
-            place = _checkout_place(world, disk, path, moved)
-            if place and (url := _renamed_url(_origin(disk, place), old, new)):
-                found.append(DeployCheckout(path, url))
+            hidden_or_clones = path.name.startswith(".") or path == Layout(world.home).git
+            if not hidden_or_clones and (checkout := _deploy_checkout(disk, path, old, new, moved)):
+                found.append(checkout)
     return tuple(found)
 
 
-def _checkout_place(world: World, disk: Disk, path: Path, moved: Sequence[Path]) -> Path | None:
-    """Where a deploy checkout at `path` keeps its files: there, or where a link there points.
-    A link into a moved clone is a finding, not a checkout; a link elsewhere is read through
-    here, and the checkout's step refuses it."""
-    if (
-        path.name.startswith(".")
-        or path == Layout(world.home).git
-        or _points_into(disk, path, moved)
-    ):
+def _deploy_checkout(
+    disk: Disk, path: Path, old: str, new: str, moved: Sequence[Path]
+) -> DeployCheckout | None:
+    """A link, or a `.git` that is one, is never followed: a checkout of this repository behind
+    it is refused at the link, and what lies behind it otherwise is not hal's to judge."""
+    link = next((place for place in (path, path / ".git") if disk.is_link(place)), None)
+    if link is None:
+        url = _renamed_url(_origin(disk, path), old, new) if disk.is_dir(path / ".git") else None
+        return DeployCheckout(path, url) if url else None
+    if link == path and _points_into(disk, path, moved):
         return None
-    place = disk.link_target(path) if disk.is_link(path) else path
-    return place if disk.is_dir(place / ".git") else None
+    behind = disk.link_target(path) if link == path else path
+    if _names(disk.unfollowed_origin(behind), old, new):
+        disk.refuse(link)
+    return None
 
 
 def _mentions(text: str, roots: Iterable[Path], home: Path | None = None) -> bool:
@@ -445,17 +475,15 @@ def _points_into(disk: Disk, link: Path, roots: Iterable[Path]) -> bool:
 
 
 def _unit_findings(disk: Disk, directory: Path, roots: Sequence[Path], home: Path) -> list[str]:
-    """A unit link is read, never followed: the file it names is either scanned here or not
-    hal's to judge."""
+    """A unit link is read, never followed: its target is only read for what it names."""
     found = []
     for entry in disk.walk(directory):
         if _points_into(disk, entry, roots):
             found.append(f"unit link {entry} points into a moved clone")
-        elif (
-            not disk.is_link(entry)
-            and disk.is_file(entry)
-            and _mentions(disk.read_text(entry), roots, home)
-        ):
+        elif disk.is_link(entry):
+            if _mentions(disk.target_text(entry), roots, home):
+                found.append(f"unit link {entry} names a moved clone")
+        elif disk.is_file(entry) and _mentions(disk.read_text(entry), roots, home):
             found.append(f"unit {entry} points into a moved clone")
     return found
 
@@ -728,7 +756,7 @@ def _configure(parser: argparse.ArgumentParser) -> None:
 
 
 def _run(arguments: argparse.Namespace) -> ExitCode:
-    return rename(real_world(Path.home().resolve()), arguments.old, arguments.new, arguments.apply)
+    return rename(real_world(Path.home()), arguments.old, arguments.new, arguments.apply)
 
 
 COMMANDS = (
