@@ -498,7 +498,7 @@ They survive a dead PC because they live at the provider.
 - `home check`, `home tidy`, `home secrets` (view only);
 - edge: Traefik, socket proxy, Keycloak as code with its probe, edge-check, edge-backup with weekly and monthly timers. The edge stack is **not running** on this PC (no `edge/.env`, no edge containers);
 - songmaker's auto-deploy, alerts and monitoring stack;
-- the tunnel with songmaker's host only;
+- the tunnel with songmaker's host and auth, then the terminal 404 rule;
 - org rulesets 25224011 and 25224012.
 
 ### Duplicates: the same fact in two places
