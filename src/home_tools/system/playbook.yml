@@ -1,11 +1,14 @@
-# The system step of `home setup`: edge's cloudflared unit, its two drop-ins and the stop-only polkit rule.
+# The system step of `home setup`: edge's cloudflared unit, its two drop-ins and the stop-only polkit
+# rule, and the daily timer that deletes journal entries before they are 30 days old.
 #
 # home_tools.system_step runs it with `--ask-become-pass`, so sudo asks once, and passes `home`,
-# `operator_user` and `edge_tunnel_dir` as extra vars from home's Layout and the running user; nothing
-# here is taken from facts gathered under become. It never starts, stops or restarts cloudflared: a
-# change ends in one daemon-reload. What it replaces is copied to `backup_dir` first, outside
-# /etc/systemd/system, so systemd never loads a backup as a unit or a drop-in.
-- name: Install edge's cloudflared files and the stop-only polkit rule
+# `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and
+# the running user; nothing here is taken from facts gathered under become. It never starts, stops or
+# restarts cloudflared. Every `--apply` reloads systemd; a dry run does not. An extra reload at the end
+# follows only when an edge file or the retired drop-in changed. What it replaces of edge's files is
+# copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
+# or a drop-in; the retention units are home's own and are not backed up.
+- name: Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer
   hosts: localhost
   connection: local
   gather_facts: false
@@ -16,6 +19,26 @@
     drop_in_dir: "{{ unit_dir }}/cloudflared.service.d"
     retired_drop_in: "{{ drop_in_dir }}/10-root-binary.conf"
     backup_dir: /var/backups/home-setup
+    retention_units:
+      - dest: "{{ unit_dir }}/hal-journal-retention.service"
+        content: |
+          [Unit]
+          Description=Delete old journal entries
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/journalctl --rotate --vacuum-time={{ journal_vacuum_days }}d
+      - dest: "{{ unit_dir }}/hal-journal-retention.timer"
+        content: |
+          [Unit]
+          Description=Delete old journal entries daily, and after an outage
+
+          [Timer]
+          OnCalendar=daily
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
     # The base unit comes first, so the retired drop-in is only deleted once the unit that replaces it is in place.
     system_files:
       - { src: cloudflared.service, dest: "{{ unit_dir }}/cloudflared.service" }
@@ -103,11 +126,34 @@
         label: "{{ item.dest }}"
       notify: Reload systemd
 
+    - name: Write the journal retention service and timer, root-owned, mode 644
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"  # NOSONAR ansible:S2612 systemd reads these as its own user; the ruled mode is root-owned 644
+      loop: "{{ retention_units }}"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: retention_written
+
     - name: Delete the retired root drop-in, now that the new base unit is in place
       ansible.builtin.file:
         path: "{{ retired_drop_in }}"
         state: absent
       notify: Reload systemd
+
+    # `daemon_reload` on every run, so a run interrupted after the files were written converges on the
+    # next. Nothing restarts journald: the timer's own service rotates and vacuums it. A check run that
+    # would still write the units skips this task, because systemd cannot enable a unit not on disk yet.
+    - name: Enable and start the daily journal retention timer
+      ansible.builtin.systemd_service:
+        name: hal-journal-retention.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and retention_written.changed)
 
   handlers:
     - name: Reload systemd
