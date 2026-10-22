@@ -304,7 +304,7 @@ def test_a_same_name_entry_the_checkout_does_not_own_is_never_replaced(
         with pytest.raises(StepFailed, match=f"{entry}.*does not own it.*you decide"):
             action()
 
-    assert (entry.is_symlink(), entry.is_symlink() and entry.readlink()) == before
+    assert before == (entry.is_symlink(), entry.is_symlink() and entry.readlink())
     assert machine.systemctl.changes == []
     assert not machine.step.is_verified()
 
