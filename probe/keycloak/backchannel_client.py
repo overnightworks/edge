@@ -1,6 +1,7 @@
 """Runs inside the probe container on the back-channel network (backchannel_cell.py, cell BC1): a
 wrong password with a forged Forwarded header, then a plain GET of the admin console and of
-Keycloak's management port. Prints what it saw as one JSON line."""
+Keycloak's management port. Reads the token form as JSON from stdin; prints what it saw as one
+JSON line."""
 
 import json
 import socket
@@ -12,7 +13,8 @@ import urllib.request
 KEYCLOAK = "http://keycloak"  # NOSONAR(S5332) the probe network's own address of Keycloak
 TOKEN_URL = f"{KEYCLOAK}:8080/realms/hallucinai/protocol/openid-connect/token"
 
-form_json, forged = sys.argv[1:3]
+forged = sys.argv[1]
+form_json = sys.stdin.read()  # the client secret travels on stdin, never in the process arguments
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

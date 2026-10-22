@@ -155,8 +155,8 @@ clients:
       - groups
       - agent-service-audience
     optionalClientScopes: []
-  # hopin signs people in the same way as songmaker, back-channel logout left out for the same reason
-  # (hopin#25, K3c #50). Its URLs are hopin's proposal; hopin mounts none of them yet.
+  # hopin signs people in the same way as songmaker, back-channel logout left out until hopin decides
+  # its back-channel address (#254). Its URLs are hopin's proposal; hopin mounts none of them yet.
   - clientId: hopin
     name: hopin
     enabled: true

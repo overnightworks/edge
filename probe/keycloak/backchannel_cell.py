@@ -24,7 +24,7 @@ SONGMAKER_LOGOUT_URL = (
 
 
 class Stack(Protocol):
-    def compose(self, *args: str) -> Any: ...
+    def compose(self, *args: str, stdin: str | None = None) -> Any: ...
 
 
 class Admin(Protocol):
@@ -64,7 +64,13 @@ def prove(
         "password": "not-the-password",
     }
     ran = probe.stack.compose(
-        "exec", "-T", CLIENT_SERVICE, "python", CLIENT_SCRIPT, json.dumps(form), FORGED_ADDRESS
+        "exec",
+        "-T",
+        CLIENT_SERVICE,
+        "python",
+        CLIENT_SCRIPT,
+        FORGED_ADDRESS,
+        stdin=json.dumps(form),
     )
     expect(ran.returncode == 0, f"the back-channel client failed:\n{ran.stderr[-1000:]}")
     seen = json.loads(ran.stdout)

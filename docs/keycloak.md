@@ -73,9 +73,11 @@ gives its web service) over the internal network `hal_backchannel_songmaker`, wh
 external network. songmaker ignores the session id and ends every session of the person, so the
 client does not require one. The public tunnel denies the path, matched on the recursively decoded
 path and on the host with any port. Until songmaker has joined the network, the call fails and a
-sign-out ends no songmaker session. A change to the network's definition recreates it and detaches
-songmaker's web service until its next deploy; in that gap Keycloak resolves the public name and
-the public deny refuses its call, so a recreate means songmaker redeploys.
+sign-out ends no songmaker session. A later change to the network's definition needs an order: Docker refuses to recreate a network
+with active endpoints, so `up` stops Keycloak and fails while songmaker's web service is attached,
+and edge's apply does not notice a network-only change (the service's config hash is unchanged,
+named on #50). So songmaker's web service leaves the network, edge applies, and songmaker
+redeploys.
 
 ### Theme and language
 

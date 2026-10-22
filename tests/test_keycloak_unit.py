@@ -5,6 +5,7 @@ import dataclasses
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -239,6 +240,43 @@ def test_songmaker_is_logged_out_by_a_back_channel_call_that_needs_no_session_id
         == "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
     )
     assert songmaker["attributes"]["backchannel.logout.session.required"] == "false"
+
+
+def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments(monkeypatch):
+    """#293: process arguments are visible to the host; the secret goes through stdin."""
+    monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
+    import backchannel_cell
+
+    secret = "probe-client-secret-value"
+    calls = []
+
+    class FakeStack:
+        def compose(self, *arguments, stdin=None):
+            calls.append((arguments, stdin))
+            return SimpleNamespace(returncode=1, stderr="", stdout="")
+
+    class FakeProbe:
+        stack = FakeStack()
+
+        def keep_secret(self, _name, value):
+            return value
+
+    class FakeAdmin:
+        def create_user(self, *_arguments):
+            return "user-id"
+
+    with pytest.raises(AssertionError):
+        backchannel_cell.prove(
+            FakeProbe(), FakeAdmin(), secret, lambda held, message: _require(held, message)
+        )
+
+    ((arguments, stdin),) = calls
+    assert secret not in " ".join(arguments)
+    assert json.loads(stdin)["client_secret"] == secret
+
+
+def _require(held, message):
+    assert held, message
 
 
 # An SVG's xmlns names a namespace; no browser fetches it.
