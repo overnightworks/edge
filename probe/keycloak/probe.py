@@ -2372,7 +2372,7 @@ class Probe:
                 "serviceAccountsEnabled": client.agent_workload,
                 "frontchannelLogout": False,
                 "baseUrl": f"{client.origin}/",
-                "alwaysDisplayInConsole": True,
+                "alwaysDisplayInConsole": False,
                 "optionalClientScopes": [],
             }.items()
             if found.get(key) != value
