@@ -320,8 +320,10 @@ def test_the_host_domain_is_the_one_compose_gives_traefik():
     """#61 rule 1 / proof a: the domain is the one Compose gives traefik."""
     broken = {"services": {"traefik": {}, **{"hello": config()["services"]["hello"]}}}
 
+    unit = probe_unit()
+
     with pytest.raises(barrier.BarrierError, match="no EDGE_DOMAIN"):
-        barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, probe_unit())
+        barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, unit)
 
 
 def test_the_address_is_read_from_the_real_traefik_yml():
