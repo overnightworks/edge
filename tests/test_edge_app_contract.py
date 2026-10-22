@@ -129,13 +129,37 @@ def test_b3_a_service_without_healthcheck_or_restart_unless_stopped_is_refused(t
     assert refused in refusal(text, hosts=("hopin",))
 
 
-@pytest.mark.parametrize("health", ["{test: [NONE]}", "{test: NONE}", "{disable: true}"])
-def test_a_disabled_healthcheck_is_no_healthcheck(health):
+@pytest.mark.parametrize(
+    ("health", "disabled"),
+    [
+        ("{test: [NONE]}", True),
+        ("{test: NONE}", True),
+        ("{disable: true}", True),
+        ("{disable: yes}", True),
+        ("{disable: on}", True),
+        ("{disable: 'True'}", True),
+        ("{test: [CMD, 'true'], disable: no}", False),
+        ("{test: [CMD, 'true'], disable: off}", False),
+        ("{test: [CMD, 'true'], disable: false}", False),
+        ("{test: [CMD, 'true'], disable: 'false'}", False),
+    ],
+)
+def test_a_healthcheck_is_disabled_as_compose_reads_the_boolean(health, disabled):
+    labels = 'labels: {edge.name: hopin, traefik.enable: "true"}'
+    text = compose(labels, f"healthcheck: {health}")
+
+    if disabled:
+        assert "service web has no healthcheck (healthcheck)" in refusal(text, hosts=("hopin",))
+    else:
+        assert app_contract.check(text, KEY, TAG, ("hopin",)) == ("web",)
+
+
+def test_an_interpolated_healthcheck_test_of_a_labelled_service_is_refused():
     labels = 'labels: {edge.name: hopin, traefik.enable: "true"}'
 
-    message = refusal(compose(labels, f"healthcheck: {health}"), hosts=("hopin",))
+    message = refusal(compose(labels, 'healthcheck: {test: ["${T}"]}'), hosts=("hopin",))
 
-    assert "service web has no healthcheck (healthcheck)" in message
+    assert "service web interpolates the healthcheck test ($)" in message
 
 
 @pytest.mark.parametrize(
@@ -159,12 +183,29 @@ def test_an_interpolated_label_key_or_deciding_value_is_refused_as_the_key(field
     [
         "volumes: [{type: volume, source: '${W}', target: /data}]",
         "volumes: [{type: '${T}', source: d, target: /data}]",
+        "volumes: [{type: bind, source: d, target: '${T}'}]",
+        "volumes: [{type: tmpfs, target: /run, tmpfs: {size: '${S}'}}]",
+        "volumes: ['d:${T}']",
+        "volumes: ['${X}/data:/data']",
         "volumes: ['${W}:/data']",
         "tmpfs: ['${W}']",
     ],
 )
 def test_an_interpolated_volume_entry_is_refused_as_the_key(mount):
     assert "interpolates" in refusal(compose(mount))
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "volumes: [{type: volume, source: d, target: /data, read_only: '${X:-true}'}]",
+        "volumes: [{type: bind, source: '${X}', target: /data}]",
+        "volumes: ['./${X}:/data:ro']",
+        "volumes: ['d:/data:${MODE:-ro}']",
+    ],
+)
+def test_an_interpolation_that_decides_no_rule_in_a_volume_entry_is_allowed(mount):
+    assert app_contract.check(compose(mount), KEY, TAG, ())[0] == "web"
 
 
 def test_yes_is_no_boolean_for_traefik_enable_as_compose_reads_it():

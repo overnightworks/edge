@@ -110,29 +110,68 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
 
 
 class ImageDocker(Docker):
-    """Answers `config --format json` with `services` (each name to its image) and `image
-    inspect` with `inspected`."""
+    """Answers `config --format json` with `services` and `image inspect` with what the image
+    declares in `by_image`, else with `inspected`. The services chain through `depends_on` across
+    the three shapes: image only, build only, build plus image."""
 
-    def __init__(self, inspected: str, inspect_exit_code: int = 0) -> None:
+    def __init__(
+        self,
+        inspected: str = "null",
+        inspect_exit_code: int = 0,
+        by_image: dict[str, str] | None = None,
+    ) -> None:
         super().__init__()
         self.inspected, self.inspect_exit_code = inspected, inspect_exit_code
-        self.services = {"web": {"build": {"context": "."}}, "db": {"image": "postgres:17"}}
+        self.by_image = by_image or {}
+        self.services = {
+            "web": {"build": {"context": "."}, "depends_on": {"app": {"condition": "started"}}},
+            "app": {
+                "build": {"context": "app"},
+                "image": "registry.example/app:1",
+                "depends_on": {"db": {"condition": "started"}},
+            },
+            "db": {"image": "postgres:17"},
+        }
 
     def run(self, command, _timeout, _stdin=None):
         self.commands.append(command)
         if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(command, self.inspect_exit_code, self.inspected, "")
+            answer = self.by_image.get(command[-1], self.inspected)
+            return subprocess.CompletedProcess(command, self.inspect_exit_code, answer, "")
         return subprocess.CompletedProcess(command, 0, json.dumps({"services": self.services}), "")
 
 
-def test_the_volumes_an_image_declares_come_from_the_image_of_that_service_alone():
-    docker = ImageDocker('{"/data":{},"/cache":{}}')
+def test_each_service_of_a_dependency_chain_reports_the_volumes_of_its_own_image():
+    docker = ImageDocker(
+        by_image={
+            f"{KEY}-web": '{"/built":{}}',
+            "registry.example/app:1": '{"/tagged":{}}',
+            "postgres:17": '{"/var/lib/postgresql/data":{}}',
+        }
+    )
 
-    declared = engine_over(docker).image_volumes(["web"], TAG)
+    declared = engine_over(docker).image_volumes(["web", "app", "db"], TAG)
 
-    assert declared == {"web": ["/cache", "/data"]}
-    assert docker.commands[0][-3:] == ["config", "--format", "json"]
-    assert [command[-1] for command in docker.commands[1:]] == ["hopin-web"]
+    assert declared == {
+        "web": ["/built"],
+        "app": ["/tagged"],
+        "db": ["/var/lib/postgresql/data"],
+    }
+    assert [command[-1] for command in docker.commands[1:]] == [
+        f"{KEY}-web",
+        "registry.example/app:1",
+        "postgres:17",
+    ]
+
+
+def test_a_built_image_is_named_as_compose_names_it_without_compatibility_mode(monkeypatch):
+    monkeypatch.setenv("COMPOSE_COMPATIBILITY", "true")
+
+    result = compose.run_docker(
+        ["sh", "-c", 'printf %s "$COMPOSE_COMPATIBILITY"'], compose.READ_SECONDS
+    )
+
+    assert result.stdout == "false"
 
 
 def test_a_service_the_config_names_no_image_for_is_one_line():

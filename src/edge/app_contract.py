@@ -26,6 +26,8 @@ _WAITING_CONDITIONS = {"service_healthy", "service_completed_successfully"}
 _RESTART = "unless-stopped"
 _DISABLED_HEALTHCHECK = "NONE"
 _DECIDING_LABELS = {EDGE_NAME_LABEL, _TRAEFIK_ENABLE}
+_BIND_SOURCE_PREFIXES = ("/", "./", "../", "~")
+_COMPOSE_TRUE = {"true", "yes", "on", "y"}
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -149,18 +151,38 @@ def _restart_refusal(definition: dict) -> str | None:
 
 def _volume_refusal(definition: dict) -> str | None:
     for volume in _mounts(definition):
-        if _interpolates(volume) or (
-            isinstance(volume, dict) and any(_interpolates(part) for part in volume.values())
-        ):
+        if _mount_interpolates(volume):
             return "interpolates a volume entry ($); not yet supported"
         if isinstance(volume, str) and ":" not in volume:
             return "has a volume entry without a source (volumes); give it a named volume"
         if isinstance(volume, dict) and volume.get("type") != "tmpfs" and not volume.get("source"):
             return "has a volume entry without a source (volumes); give it a named volume"
-    tmpfs = definition.get("tmpfs") or ()
-    if any(_interpolates(mount) for mount in ([tmpfs] if isinstance(tmpfs, str) else tmpfs)):
+    if any(_interpolates(mount) for mount in _tmpfs_mounts(definition)):
         return "interpolates a tmpfs mount ($); not yet supported"
     return None
+
+
+def _mount_interpolates(volume: object) -> bool:
+    """A `$` where it decides a rule: the mount's type and target, and the source of a named
+    volume (a bind's source and the other fields change no rule)."""
+    if isinstance(volume, dict):
+        if volume.get("type") == "tmpfs":
+            return _interpolates(str(volume))
+        deciding = [volume.get("type"), volume.get("target")]
+        if volume.get("type") == "volume":
+            deciding.append(volume.get("source"))
+        return any(_interpolates(part) for part in deciding)
+    if not _interpolates(volume):
+        return False
+    source, _, rest = _without_expansions(volume).partition(":")
+    return _interpolates(rest.partition(":")[0]) or (
+        _interpolates(source) and not source.startswith(_BIND_SOURCE_PREFIXES)
+    )
+
+
+def _without_expansions(text: str) -> str:
+    """`${X:-y}` shrunk to `$`, so its colon does not split a short volume entry."""
+    return re.sub(r"\$\{[^}]*\}", "$", text)
 
 
 def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
@@ -183,6 +205,8 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
         health = definition.get("healthcheck")
         if not isinstance(health, dict) or _healthcheck_disabled(health):
             yield f"{service} has no healthcheck (healthcheck); the publish phase asks it for ready"
+        elif _interpolates(str(health.get("test"))):
+            yield f"{service} interpolates the healthcheck test ($); not yet supported"
     for host in hosts:
         if len(holders.get(host, [])) != 1:
             yield (
@@ -194,37 +218,38 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
 def _healthcheck_disabled(health: dict) -> bool:
     test = health.get("test")
     named = test[0] if isinstance(test, list) and test else test
-    return bool(health.get("disable")) or named == _DISABLED_HEALTHCHECK
+    return _compose_true(health.get("disable")) or named == _DISABLED_HEALTHCHECK
+
+
+def _compose_true(value: object) -> bool:
+    """Compose's boolean: `no`, `off` and `false` are false, `yes`, `on`, `y` and `true` are true,
+    quoted or not, in any case."""
+    return value is True or (isinstance(value, str) and value.lower() in _COMPOSE_TRUE)
 
 
 def _label_interpolates(definition: dict) -> bool:
     """A `$` in a label's key, or in the value of a label the contract reads, could resolve to
     another label or host from the `.env` the release tracks."""
-    labels = definition.get("labels")
-    if isinstance(labels, dict):
-        return any(
-            _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
-            for key, value in labels.items()
-        )
-    if isinstance(labels, list):
-        pairs = [str(item).partition("=") for item in labels]
-        return any(
-            "$" in key or (key in _DECIDING_LABELS and "$" in value) for key, _, value in pairs
-        )
-    return False
+    return any(
+        _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
+        for key, value in _label_pairs(definition)
+    )
 
 
 def _labels(definition: dict) -> dict[str, str]:
+    return {
+        str(key): str(value).lower() if isinstance(value, bool) else str(value)
+        for key, value in _label_pairs(definition)
+    }
+
+
+def _label_pairs(definition: dict) -> list[tuple[object, object]]:
     labels = definition.get("labels")
     if isinstance(labels, dict):
-        return {
-            str(key): str(value).lower() if isinstance(value, bool) else str(value)
-            for key, value in labels.items()
-        }
+        return list(labels.items())
     if isinstance(labels, list):
-        pairs = (str(item).partition("=") for item in labels)
-        return {key: value for key, _, value in pairs}
-    return {}
+        return [(key, value) for key, _, value in (str(item).partition("=") for item in labels)]
+    return []
 
 
 def _covered_paths(definition: dict) -> set[str]:
@@ -238,8 +263,7 @@ def _covered_paths(definition: dict) -> set[str]:
             target = parts[1] if len(parts) > 1 else None
         if isinstance(target, str):
             covered.add(target.rstrip("/"))
-    tmpfs = definition.get("tmpfs") or ()
-    for mount in [tmpfs] if isinstance(tmpfs, str) else tmpfs:
+    for mount in _tmpfs_mounts(definition):
         covered.add(str(mount).split(":")[0].rstrip("/"))
     return covered
 
@@ -247,6 +271,11 @@ def _covered_paths(definition: dict) -> set[str]:
 def _mounts(definition: dict) -> list:
     volumes = definition.get("volumes")
     return volumes if isinstance(volumes, list) else []
+
+
+def _tmpfs_mounts(definition: dict) -> list:
+    tmpfs = definition.get("tmpfs") or ()
+    return [tmpfs] if isinstance(tmpfs, str) else list(tmpfs)
 
 
 def _interpolates(value: object) -> bool:
