@@ -4,3 +4,26 @@ updates:
     directory: /
     schedule:
       interval: daily
+  # One group per ecosystem, so co-pinned images (realm-observer and probe-rp) move in one pull.
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /keycloak
+      - /probe/agent-service
+      - /probe/keycloak
+      - /probe/step-ca
+    schedule:
+      interval: daily
+    groups:
+      compose-images:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directories:
+      - /agent-service/image
+      - /scripts/system-proof
+      - /src/edge_backup/images
+    schedule:
+      interval: daily
+    groups:
+      dockerfile-images:
+        patterns: ["*"]
