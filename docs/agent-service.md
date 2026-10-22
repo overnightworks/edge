@@ -78,17 +78,22 @@ re-create it.
 
 ## What a turn leaves behind
 
-The CLI's per-run home and work directories live below `/run/agent-service/cli`, a RAM-only tmpfs.
-The container's root is read-only and its only mounts are `service.toml` and the login directory,
-both read-only, so nothing of a turn is written to a disk on this PC; a restart or recreate drops the
-tmpfs. The service writes no turn content to its logs ([agent-providers
-`docs/host.md`](https://github.com/overnightworks/agent-providers/blob/main/docs/host.md) states its
-retention: no session persisted by the CLI, run records in memory). `compose.yaml` sets no `logging`
-for the service, so its logs stay in Docker's container log under the daemon's default driver until
-the container is removed. The operator's Claude login is a read-only file and reaches the CLI only
-through its environment. The content of a turn leaves this PC for Anthropic, which generates the
-answer under the operator's Claude subscription; its retention and use follow that account's terms
-and privacy settings, which edge does not control.
+The CLI's per-run home and work directories live below `/run/agent-service/cli`, and `/tmp` (which
+also holds the CLI's empty `cc-socks-<uid>` directory) is a tmpfs too: both are RAM-only. The
+container's root is read-only and its only mounts are `service.toml` and the login directory, both
+read-only, so nothing of a turn is written to a disk on this PC; a restart or recreate drops the
+tmpfs. The service writes no turn content to its logs and keeps no turn text; its own retention is
+documented in agent-providers#429 (`docs/wire.md`, "What a run keeps"). `compose.yaml` sets no
+`logging` for the service, so its logs stay in Docker's container log under the daemon's default
+driver until the container is removed. The operator's Claude login is a read-only file and reaches
+the CLI only through its environment. The content of a turn leaves this PC for Anthropic, which
+generates the answer.
+
+**Whose account.** Only the operator is a member of `/services/agent-service/subscription`, so his
+Claude subscription serves only his own use. Every other person reaches the service only through the
+API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
+enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
+gets 403 `not_enabled`. An app's privacy text therefore describes only the API route.
 
 ## An app's side
 
