@@ -1,2 +1,3 @@
 [gate]
 mandatory_jobs = ["check"]
+legacy = "fail"
