@@ -1,36 +1,45 @@
 # The people contract: exporting and erasing one person
 
 Reference for an app's head or agent. Question answered: what must my app's admin API offer so that
-one person can be exported and erased. hal (`hal export person`, `hal delete person`) is the only
-caller; it drives every app through the routes below (operator adoption of "erasure and export are the
-hal contract", 20.10.2026).
+one person can be exported and erased.
 
-## Key and authorisation
+hal is the only caller: `hal export person` and `hal delete person` drive every app through the routes
+below. Those two commands are not built yet (#256), and no app admits a bearer token yet (webauth's
+bearer admission); this document states the app-side contract as current and every rule about hal as a
+requirement on #256 ("hal must …"). Sources: the operator's adoption of "erasure and export are the hal
+contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's proposal (songmaker#1714,
+22.10.2026).
 
-- The person's key is the token's `sub` (the Keycloak user id). hal resolves a name to the `sub` with an
-  exact match before calling any app.
-- Every route requires the caller to be in the group `/apps/<app>/admin`. The caller is the operator
-  at a terminal, holding his own `hal login` token. There is no hal service account and no standing
-  secret for these routes.
-- A bearer request never creates an account in the app.
+## Target and caller
+
+- **Target.** `{subject}` is the target person's Keycloak `sub`, compared exactly. hal must resolve a
+  name to the `sub` with an exact match before calling any app. A lookup by `{subject}` never creates
+  an account in the app.
+- **Caller.** A separate identity: the operator, with his own `hal login` access token. The app admits
+  it only if the token comes from the realm's issuer, its audience names the app's own client, and its
+  `groups` contain `/apps/<app>/admin`; anything else answers `403`. The token authenticates the caller;
+  it never names the target. There is no hal service account and no standing secret for these routes.
+- An app that admits only browser sessions today says so, and hal cannot call it until it admits the
+  token.
 
 ## Export
 
 `GET /api/admin/people/{subject}/export` answers a ZIP with `export.json` at its root and the files under
-`files/`. `export.json` has these shared keys; everything else is the app's own.
+`files/`. The ZIP may stream. `export.json` has these shared keys; everything else is the app's own.
 
 | Key | Content |
 |---|---|
-| `people_export` | the shape version, an integer |
-| `app` | the app's name |
+| `people_export` | the shape version, the integer `1` |
+| `app` | the `<app>` of `/apps/<app>` |
 | `subject` | the `sub` |
-| `exported_at` | timestamp |
+| `exported_at` | RFC 3339 in UTC with `Z`, whole seconds |
 | `data` | the person's data, its structure owned by the app |
-| `files` | list of `{path, kind, bytes}`, one per file under `files/` |
+| `files` | list of `{path, kind, bytes}`, one per file under `files/`; `path` is relative to the ZIP's root (`files/…`); `[]` when the app has no files |
 | `withheld` | list of `{kind, count, reason}`; `reason` is `secret` or `others` |
 
 What the export leaves out (a secret, or data that belongs to other people) is listed in `withheld`, never
-dropped silently.
+dropped silently. An unknown subject answers `200` with empty `data`, `files` and `withheld`, never `404`,
+and is never created.
 
 ## Erase
 
@@ -44,8 +53,12 @@ answers what the erasure would do. Both answer one body:
 ```
 
 `kinds` counts what belongs to the person (`bytes` where files are involved); `affects_others` counts
-what the erasure changes for other people, with the `action` taken. In a real erasure `dry_run` is `false`
-and the counts are what was removed.
+what the erasure changes for other people. In a real erasure `dry_run` is `false` and the counts are
+what was removed. `people_erasure` is the integer `1`.
+
+- `kinds[].kind` and `withheld[].kind` are the app's own lowercase words; hal only shows them.
+- `affects_others[].action` is `delete` (others lose an object that is deleted, a shared one included)
+  or `end` (an activity others take part in ends, such as a hosted call).
 
 Rules:
 
@@ -53,34 +66,49 @@ Rules:
   creates the subject. Running it twice leaves the second run at zero.
 - **Files before rows.** Delete the files before the rows that locate them, or keep them findable
   through a per-person directory, so an interrupted run can be repeated and still finds everything.
-- **Running work.** The erasure first stops the person's running work (jobs) or waits for it; if it
-  can do neither it answers `409` and deletes nothing.
+- **Running work.** The erasure first stops new work for the person from starting, queued and retrying
+  work included, and keeps that block through the verification. Work that ends by itself within 60
+  seconds may be waited for; otherwise the app answers `409` with `Retry-After` and deletes nothing. The
+  `409` body is `{"people_erasure": 1, "app": …, "subject": …, "busy": [{"kind": …, "count": …}]}`. A dry
+  run never waits and never changes anything: it lists running work as a kind.
 - **Sessions.** The app ends the person's sessions itself; it does not rely on Keycloak's logout.
+- **Copies the app cannot trace** (for example lines already delivered to other participants' in-memory
+  buffers) are not counted; the app's own documentation names them.
+- **Audit rows and logs.** Audit rows in the app's database about the person are exported (withheld with
+  reason `others` where they name another person) and erased. Server logs are neither exported nor
+  erased by these routes; they expire by edge's log retention (#167).
+- **An app without durable data** still answers every route: the export lists what it holds in memory,
+  the erasure removes it and answers zeros when nothing is held. A restart is not an erasure.
+- Every answer carries `Cache-Control: no-store`.
 
 ## hal's order
 
-1. Lock the user in Keycloak.
-2. For every app of the user's groups: the dry run, then the erasure.
-3. A dry run that answers zero in every app is required before hal deletes the Keycloak user.
-4. A failed step is retried by running the whole command again; idempotency makes that safe.
+hal must, in this order:
+
+1. Write the target `sub` into the tombstone register and snapshot it, before any destructive step.
+2. Lock the person in Keycloak, with the operator's own admin login and TOTP.
+3. Run the dry run in every app, then the erasure in every app. "Every app" is every app that offers
+   these routes (architecture §5), whatever the person's groups: group membership is no inventory of
+   data.
+4. Run a second dry run in every app. Only when all answers are zero, untraceable copies excluded, delete
+   the Keycloak user, again with his admin login.
+5. Retry a failed step by running the whole command again; idempotency makes that safe.
+
+Recovery after a crash works from the register, without the Keycloak user.
 
 ## The tombstone register
 
-hal keeps a register of the deletions it has made. Backups would otherwise bring a deleted person
-back: the weekly retention keeps four weekly and three monthly snapshots per app (about three months,
-`docs/backup.md` timer table, `KEEP_WEEKLY` and `KEEP_MONTHLY` in `src/edge_backup/restic.py`), and the
-last 10 `pre-apply` snapshots of an app are kept besides, which the weekly retention never deletes
-(`docs/backup.md`, "One app, and the pre-apply snapshot"). A restore, including the one in the
-re-setup, can therefore return a person who was erased after that snapshot.
+Backups and pre-apply snapshots outlive a deletion; their retention is in `docs/backup.md`. A restore,
+including the one in the re-setup, can therefore return a person who was erased after that snapshot.
+The register is hal's record of deletions, and hal must:
 
-The rule:
-
-- Snapshot the register after every deletion.
-- Every restore path restores the register's newest snapshot, never the one that matches the app's
-  restored snapshot.
-- Every restore path replays the register's deletions before the service opens.
+- write the register and snapshot it before destructive work, never only after it;
+- restore the register's newest snapshot on every restore path, never the one that matches the app's
+  restored snapshot;
+- replay the register's deletions before the service opens, through the app's routes on loopback.
 
 ## Versioning
 
-Each shape (`people_export`, `people_erasure`) carries an integer. It changes only when a shared key is
-renamed, removed or changes its meaning; adding a key does not change it.
+Both shapes (`people_export`, `people_erasure`) start at the integer `1`. A new key may be added without a
+version change, and readers ignore keys they do not know. Renaming or removing a key, or changing its
+meaning, bumps the integer.
