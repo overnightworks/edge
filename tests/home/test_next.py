@@ -604,10 +604,17 @@ def test_a_hook_finding_with_its_own_fix_is_any_terminal_and_does_not_say_it_ask
 
 
 @pytest.mark.parametrize("change", ["edited file", "new file", "changed playbook"])
-def test_a_changed_tunnel_file_in_edge_brings_the_system_step_back(
-    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+def test_a_changed_tunnel_file_or_playbook_brings_the_system_step_back(
+    home: Path,
+    sandbox: Sandbox,
+    probe: FakeProbe,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    change: str,
 ) -> None:
-    """Cell 16 and T6: the record holds what was rendered, so a change in edge's `tunnel/` or in the playbook shows the step again, sudo-free."""
+    """Cell 16 and T6: the record holds what was rendered, so a change in edge's `tunnel/` or in the
+    playbook shows the step again, sudo-free."""
     playbook = tmp_path / "playbook.yml"
     playbook.write_text("- hosts: localhost\n")
     monkeypatch.setattr(system_step, "PLAYBOOK", playbook)

@@ -1,11 +1,12 @@
-# The system step of `home setup`: edge's cloudflared unit, its two drop-ins and the stop-only polkit rule, and
-# the daily timer that deletes journal entries before they are 30 days old.
+# The system step of `home setup`: edge's cloudflared unit, its two drop-ins and the stop-only polkit
+# rule, and the daily timer that deletes journal entries before they are 30 days old.
 #
 # home_tools.system_step runs it with `--ask-become-pass`, so sudo asks once, and passes `home`,
-# `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and the running user; nothing
-# here is taken from facts gathered under become. It never starts, stops or restarts cloudflared: a
-# change ends in one daemon-reload. What it replaces is copied to `backup_dir` first, outside
-# /etc/systemd/system, so systemd never loads a backup as a unit or a drop-in.
+# `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and
+# the running user; nothing here is taken from facts gathered under become. It never starts, stops or
+# restarts cloudflared. Every run reloads systemd, and a change reloads it once more at its end. What
+# it replaces of edge's files is copied to `backup_dir` first, outside /etc/systemd/system, so systemd
+# never loads a backup as a unit or a drop-in; the retention units are home's own and are not backed up.
 - name: Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer
   hosts: localhost
   connection: local
@@ -142,9 +143,9 @@
         state: absent
       notify: Reload systemd
 
-    # `daemon_reload` on every run, so a run interrupted after the files were written converges on the next.
-    # Nothing restarts journald: the timer's own service rotates and vacuums it. A check run that would still
-    # write the units skips this task, because systemd cannot enable a unit that is not on disk yet.
+    # `daemon_reload` on every run, so a run interrupted after the files were written converges on the
+    # next. Nothing restarts journald: the timer's own service rotates and vacuums it. A check run that
+    # would still write the units skips this task, because systemd cannot enable a unit not on disk yet.
     - name: Enable and start the daily journal retention timer
       ansible.builtin.systemd_service:
         name: hal-journal-retention.timer

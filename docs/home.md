@@ -431,7 +431,8 @@ keeps the commit hook from being active:
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
 6. **System.** The playbook `src/home_tools/system/playbook.yml` installs
-   edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below. It asks once for sudo.
+   edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
+   It asks once for sudo.
 
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
 `would change` or `unchanged`, and the system step also `not checked (needs
@@ -460,10 +461,11 @@ their placeholders filled, to:
 All four are root-owned, mode 644. `@HOME@` and `@OPERATOR_USER@` are your
 home and your user; `@TUNNEL_ID@` is `tunnel:` in `/etc/cloudflared/config.yml`,
 and without it the step fails before writing anything. Once the new base unit
-is in place, `10-root-binary.conf` is deleted. A change ends in one
-`systemctl daemon-reload`; cloudflared is never started, stopped or restarted.
-Whatever is replaced or deleted is copied first to
-`/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`.
+is in place, `10-root-binary.conf` is deleted. Every run reloads systemd, and a change
+reloads it once more at its end; cloudflared is never started, stopped or restarted.
+Whatever is replaced or deleted of these files is copied first to
+`/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`. The retention units
+below are home's own and are not backed up.
 
 - **Journal retention.** The same run writes `hal-journal-retention.service` and
   `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
@@ -473,19 +475,21 @@ Whatever is replaced or deleted is copied first to
   journald. `LOG_RETENTION_DAYS` (30) in `src/home_tools/system_step.py` is the
   one owner of the value; 28 is two days less, one for the span of a journal
   file and one of slack.
-  - **The bound.** While the PC runs, no journal line is older than 29 days
-    and 1 hour (the autumn clock change makes one gap 25 hours). After an
+  - **The bound.** While the PC runs, no journal line is older than 29 days,
+    1 hour and 1 minute (the autumn clock change makes one gap 25 hours, and the
+    timer's default accuracy is one minute). After an
     outage, `Persistent=true` runs the missed deletion within a minute of
     boot; the lines that came due meanwhile are gone then, which is the ruled
     promise („ok a“, 22.10.2026). Nothing promises a minimum age: the journal's
     own size limits can delete younger lines.
   - **The first run** deletes every journal file older than 28 days.
   - **Rollback.** Reverting the change removes the units from the playbook but
-    deletes nothing: the timer keeps running with 28 days. To retire it, change
-    the two units' tasks to `state: absent` and the timer's to `enabled: false`,
-    `state: stopped`, as `10-root-binary.conf` is retired; `hal setup --apply`
-    then stops the timer and deletes both units. Deleted journal lines do not
-    come back.
+    deletes nothing: the timer keeps running with 28 days. To retire it, make a
+    reviewed change to the playbook, in this order: a `systemd_service` task with
+    `enabled: false` and `state: stopped` for the timer; an `ansible.builtin.file`
+    task with `state: absent` for each of the two units; a reload. Then
+    `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
+    journal lines do not come back.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,
   the dry run says `System: not checked (needs sudo at a terminal)` and
@@ -506,12 +510,12 @@ Whatever is replaced or deleted is copied first to
   `/etc/polkit-1/rules.d/10-edge-cloudflared-stop.rules`.
 - **A failed `--apply`.** Files are copied in the order above, so some may already be in place, and
   `10-root-binary.conf` is deleted only after all four are. The `daemon-reload` handler does not run
-  after a failure, so systemd still runs its old configuration. Two cases:
+  after a failure, so systemd may still run its old configuration. Two cases:
   - A failure while copying leaves some files in place and `10-root-binary.conf` still there. Run
     `hal setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
   - A failure in the reload itself leaves every file in place, `10-root-binary.conf` already deleted
-    and systemd not reloaded. A retry then finds nothing to change, reports unchanged and does not
-    reload. Run `sudo systemctl daemon-reload` once and check that it succeeds.
+    and systemd not reloaded. Run `hal setup --apply` again: it reloads systemd on every run,
+    whatever else it finds to change.
 
   Or roll back as described.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives

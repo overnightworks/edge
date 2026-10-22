@@ -23,10 +23,10 @@ from home_tools import secrets_setup
 from home_tools.tidy_home import Layout
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
-# The ruled bound on every server log on this PC (overnightworks/edge#167, „ja 30 tage für alle“).
+# The ruled bound on every server log on this PC: „ja 30 tage für alle“.
 LOG_RETENTION_DAYS = 30
-# journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span and one day
-# of slack for a PC that is off at midnight keep every line under LOG_RETENTION_DAYS.
+# journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span
+# and one day of slack for a PC that is off at midnight keep every line under LOG_RETENTION_DAYS.
 JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
 # The last line of a play recap names the host and counts each outcome.
 RECAP = re.compile(
@@ -139,7 +139,7 @@ class SystemStep:
         }
 
     def inputs_digest(self) -> str:
-        """What a verified run rendered: the playbook, the content of edge's `tunnel/` files and the values filled in."""
+        """What a verified run rendered: the playbook, edge's `tunnel/` files and the filled-in values."""
         digest = hashlib.sha256(json.dumps(self.extra_vars(), sort_keys=True).encode())
         digest.update(b"\0" + PLAYBOOK.read_bytes())
         tunnel_dir = self.layout.edge_tunnel_dir

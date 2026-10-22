@@ -235,8 +235,8 @@ cell_9() {
     return
 }
 
-# The journal retention cells (#279, #167 T1-T5; T6 is a unit test). They run after the cloudflared cells in the
-# stage that has applied the playbook once, and T3 ends by taking its proof-only override away again.
+# The journal retention cells (T1-T5b; T6 is a unit test). They run after the cloudflared cells in
+# the stage that has applied the playbook once, and T3 ends by taking its proof-only override away again.
 retention_active_journal_survives() {
     local file
     file=$(find /run/log/journal /var/log/journal -name system.journal 2>/dev/null | head -n 1)
@@ -244,8 +244,8 @@ retention_active_journal_survives() {
     return
 }
 
-# A planted file gets a sequence id of its own: journalctl orders two files of one id by sequence number, which would
-# contradict their ages.
+# A planted file gets a sequence id of its own: journalctl orders two files of one id by sequence
+# number, which would contradict their ages.
 plant_archive() {  # plant_archive <directory> <age in seconds> <suffix>: a real archive, named as if its oldest entry were that old
     local directory=$1 age=$2 suffix=$3 microseconds name
     microseconds=$(( ($(date +%s) - age) * 1000000 ))
@@ -290,13 +290,36 @@ cell_t2() {
     return
 }
 
+seconds_since_epoch() {  # seconds_since_epoch <systemd timestamp>: fails on an empty or unparsable one
+    local timestamp=$1
+    [[ -n $timestamp ]] || return 1
+    LC_ALL=C date -d "$timestamp" +%s
+    return
+}
+
+wait_for_new_invocation() {  # wait_for_new_invocation <old id>: the service's new, non-empty id, or failure after 70 s
+    local old=$1 current deadline=$((SECONDS + 70))
+    while ((SECONDS < deadline)); do
+        current=$(systemctl show "$RETENTION_SERVICE" -p InvocationID --value) || return 1
+        if [[ -n $current && $current != "$old" ]]; then
+            echo "$current"
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 cell_t4() {
-    local before
-    before=$(systemctl show "$RETENTION_SERVICE" -p InvocationID --value)
+    local before restarted invocation activated
+    before=$(systemctl show "$RETENTION_SERVICE" -p InvocationID --value) || before=unobserved
     touch -d '2 days ago' "/var/lib/systemd/timers/stamp-$RETENTION_TIMER"
+    restarted=$(date +%s)
     systemctl restart "$RETENTION_TIMER"
+    invocation=$(wait_for_new_invocation "$before")
+    activated=$(seconds_since_epoch "$(systemctl show "$RETENTION_SERVICE" -p InactiveExitTimestamp --value)")
     verdict T4 "two days after its last run the service runs within a minute of the timer's start" \
-        'timeout 70 bash -c "until [[ \$(systemctl show $RETENTION_SERVICE -p InvocationID --value) != \"$before\" ]]; do sleep 1; done"'
+        '[[ $before != unobserved && -n $invocation && -n $activated ]] && ((activated >= restarted && activated - restarted <= 60))'
     return
 }
 
@@ -319,17 +342,55 @@ cell_t5() {
     return
 }
 
+cell_t5b() {  # the timer is enabled and the service unit on disk is newer than the one systemd loaded
+    local first second
+    cp "$UNIT_DIR/$RETENTION_SERVICE" "/proof/t5b-original.service"
+    sed -i 's/--vacuum-time=28d/--vacuum-time=5d/' "$UNIT_DIR/$RETENTION_SERVICE"
+    systemctl daemon-reload
+    cp "/proof/t5b-original.service" "$UNIT_DIR/$RETENTION_SERVICE"
+    verdict T5b "the stale state is set: the timer is enabled, systemd runs 5d and needs a reload" \
+        '[ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl show $RETENTION_SERVICE -p NeedDaemonReload --value)" = yes ] && systemctl show $RETENTION_SERVICE -p ExecStart --value | grep -qF -- "--vacuum-time=5d"'
+    at_terminal t5b-first "$HOME_BIN setup --apply"
+    first=$?
+    verdict T5b "apply reloads without changing a file: systemd needs no reload and runs 28d" \
+        '[ $first -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-first.log" && [ "$(systemctl show $RETENTION_SERVICE -p NeedDaemonReload --value)" = no ] && systemctl show $RETENTION_SERVICE -p ExecStart --value | grep -qF -- "--vacuum-time=28d"'
+    at_terminal t5b-second "$HOME_BIN setup --apply"
+    second=$?
+    verdict T5b "a repeat reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-second.log" && in_log t5b-second "System: unchanged"'
+    return
+}
+
+# Prints present or absent when the journal answered, and fails when the observation itself failed. A keeper
+# line logged just before the query must come back, so a broken journalctl is never read as absence.
+observe_journal_line() {  # observe_journal_line <text>
+    local text=$1 keeper="retention-keeper-$RANDOM$RANDOM" output
+    logger -t proof-keeper "$keeper" || return 1
+    journalctl --sync || return 1
+    output=$(journalctl --no-pager -o cat --grep "$keeper|$text") || return 1
+    grep -qF -- "$keeper" <<<"$output" || return 1
+    if grep -qF -- "$text" <<<"$output"; then echo present; else echo absent; fi
+    return 0
+}
+
+wait_until_journal_line_is_gone() {  # wait_until_journal_line_is_gone <text>: absent within 190 s, by a successful query
+    local text=$1 deadline=$((SECONDS + 190))
+    while ((SECONDS < deadline)); do
+        [[ $(observe_journal_line "$text") == absent ]] && return 0
+        sleep 5
+    done
+    return 1
+}
+
 cell_t3() {
     local marker=retention-marker-$$ override_service="$UNIT_DIR/$RETENTION_SERVICE.d" override_timer="$UNIT_DIR/$RETENTION_TIMER.d"
     mkdir -p "$override_service" "$override_timer"
     printf '%s\n' '[Service]' 'ExecStart=' 'ExecStart=/usr/bin/journalctl --rotate --vacuum-time=2min' >"$override_service/proof.conf"
     printf '%s\n' '[Timer]' 'OnCalendar=' 'OnCalendar=minutely' >"$override_timer/proof.conf"
-    systemctl daemon-reload
-    systemctl restart "$RETENTION_TIMER"
+    systemctl daemon-reload && systemctl restart "$RETENTION_TIMER"
     logger -t proof-marker "$marker"
-    verdict T3 "the marker line is in the journal before the run" 'journalctl --no-pager --grep "$marker" | grep -q "$marker"'
-    verdict T3 "a quiet journal loses the marker within 3 min 10 s" \
-        'timeout 190 bash -c "while journalctl --no-pager --grep \"$marker\" | grep -q \"$marker\"; do sleep 5; done"'
+    verdict T3 "the marker line is in the journal before the run" '[[ $(observe_journal_line "$marker") == present ]]'
+    verdict T3 "a quiet journal loses the marker within 3 min 10 s, seen by a query that succeeded" \
+        'wait_until_journal_line_is_gone "$marker"'
     rm -rf "$override_service" "$override_timer"
     systemctl daemon-reload
     systemctl restart "$RETENTION_TIMER"
@@ -341,6 +402,7 @@ cells_retention() {
     cell_t4
     cell_t2
     cell_t5
+    cell_t5b
     cell_t3
     return
 }

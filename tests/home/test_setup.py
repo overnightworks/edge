@@ -247,8 +247,10 @@ def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running
     }
 
 
-def test_the_playbook_vacuums_two_days_short_of_the_ruled_retention(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """T6: the journal timer's `--vacuum-time` is the ruled 30 days minus the file-span day and the slack day, derived from one owner."""
+def test_the_playbook_vacuums_two_days_short_of_the_ruled_retention(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T6: the timer's `--vacuum-time` is the ruled 30 days minus the file-span and slack days."""
     run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
