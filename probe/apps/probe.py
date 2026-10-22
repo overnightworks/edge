@@ -545,8 +545,8 @@ class Probe:
         record = self.record.read_text()
         out = self.apply(exit_code=HAL_FAILURE)
         expect(
-            f"image of service web at {uncovered} declares volume /vault, "
-            "which no named volume covers" in out,
+            f"image of service web at {uncovered} declares a volume that no named volume "
+            "of the service covers" in out,
             out[-300:],
         )
         expect(
