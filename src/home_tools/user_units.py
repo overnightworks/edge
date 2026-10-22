@@ -2,8 +2,10 @@
 
 Every unit file of the checkout is linked into the user's unit directory, systemd reloads after a
 change, and each timer is enabled and running. A link into the checkout whose file is gone (a
-renamed or removed unit) is disabled and removed. `systemctl --user` runs through the same
-command boundary as the other steps' tools.
+renamed or removed unit) is stopped while systemd still has it loaded, then unlinked, at the top
+level and in the `*.wants/` and `*.requires/` directories. A same-name entry the checkout does not
+own (a link elsewhere, a mask, a file) is never replaced: the step fails and the person decides.
+`systemctl --user` runs through the same command boundary as the other steps' tools.
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ UNIT_SUFFIXES = (SERVICE_SUFFIX, TIMER_SUFFIX)
 SHOWN_PROPERTIES = "NeedDaemonReload,UnitFileState,ActiveState,ExecStart,Result"
 # systemd prints a loaded command as `{ path=… ; argv[]=… ; ignore_errors=… ; … }`.
 EXEC_START_ARGV = re.compile(r"argv\[\]=(.*?) ;")
+DEPENDENCY_DIRECTORY_SUFFIXES = (".wants", ".requires")
+STOPPED_STATES = ("inactive", "failed", "")
 
 
 @dataclass(frozen=True)
@@ -29,22 +33,34 @@ class LoadedUnit:
 
     needs_reload: bool
     enabled: bool
-    active: bool
+    active_state: str
     commands: tuple[str, ...]
     last_result: str
 
     @classmethod
     def parse(cls, shown: str) -> LoadedUnit:
-        properties = {
-            key: value for key, _, value in (line.partition("=") for line in shown.splitlines())
-        }
+        lines = [line.partition("=") for line in shown.splitlines()]
+        properties = {key: value for key, _, value in lines}
         return cls(
             needs_reload=properties.get("NeedDaemonReload") == "yes",
             enabled=properties.get("UnitFileState") == "enabled",
-            active=properties.get("ActiveState") == "active",
-            commands=tuple(EXEC_START_ARGV.findall(properties.get("ExecStart", ""))),
+            active_state=properties.get("ActiveState", ""),
+            commands=tuple(
+                command
+                for key, _, value in lines
+                if key == "ExecStart"
+                for command in EXEC_START_ARGV.findall(value)
+            ),
             last_result=properties.get("Result", ""),
         )
+
+    @property
+    def active(self) -> bool:
+        return self.active_state == "active"
+
+    @property
+    def stopped(self) -> bool:
+        return self.active_state in STOPPED_STATES
 
 
 class UserUnits:
@@ -55,47 +71,59 @@ class UserUnits:
 
     def unit_files(self) -> list[Path]:
         if not self.checkout_units.is_dir():
-            return []
+            raise StepFailed(f"{self.checkout_units} is missing, so there are no units to link")
         return sorted(
             path for path in self.checkout_units.iterdir() if path.suffix in UNIT_SUFFIXES
         )
 
     def is_verified(self) -> bool:
-        """Linked, nothing to reload, every timer enabled and active, no dangling link."""
-        if self.dangling_links() or not all(self.is_linked(path) for path in self.unit_files()):
-            return False
+        """Whether `verify` holds; a failure to ask systemd or to read the checkout counts as no."""
         try:
-            return all(self.is_settled(path) for path in self.unit_files())
+            return self.verify()
         except StepFailed:
             return False
 
+    def verify(self) -> bool:
+        """Linked, nothing to reload, every timer enabled and active, no dangling link.
+
+        Raises when it cannot tell: the checkout's units are missing, a same-name entry is not
+        the checkout's, or systemctl fails.
+        """
+        self.refuse_foreign_entries()
+        if self.dangling_links() or not all(self.is_linked(path) for path in self.unit_files()):
+            return False
+        return all(self.is_settled(path) for path in self.unit_files())
+
     def check(self) -> CheckState:
-        return CheckState.UNCHANGED if self.is_verified() else CheckState.WOULD_CHANGE
+        return CheckState.UNCHANGED if self.verify() else CheckState.WOULD_CHANGE
 
     def apply(self) -> Applied:
+        self.refuse_foreign_entries()
         dangling = self.dangling_links()
+        self.retire(dangling)
         unlinked = [path for path in self.unit_files() if not self.is_linked(path)]
-        for link in dangling:
-            self.remove_dangling_link(link)
         for path in unlinked:
             self.link(path)
-        if dangling or unlinked or any(self.show(path).needs_reload for path in self.unit_files()):
+        reloaded = bool(dangling or unlinked) or any(
+            self.show(path.name).needs_reload for path in self.unit_files()
+        )
+        if reloaded:
             self.systemctl("daemon-reload")
         idle = [path for path in self.timers() if not self.is_running_enabled(path)]
         for path in idle:
             self.systemctl("enable", "--now", path.name)
-        self.print_loaded_commands()
-        return Applied.CHANGED if dangling or unlinked or idle else Applied.UNCHANGED
+        return Applied.CHANGED if reloaded or idle else Applied.UNCHANGED
 
-    def print_loaded_commands(self) -> None:
+    def loaded_command_lines(self) -> list[str]:
         """What systemd has loaded for each service and how its last run ended, so a missed reload
         or a failed timer run shows."""
+        lines = []
         for path in self.unit_files():
             if path.suffix == SERVICE_SUFFIX:
-                unit = self.show(path)
-                for command in unit.commands:
-                    print(f"  {path.name}: ExecStart={command}")
-                print(f"  {path.name}: Result={unit.last_result}")
+                unit = self.show(path.name)
+                lines += [f"  {path.name}: ExecStart={command}" for command in unit.commands]
+                lines.append(f"  {path.name}: Result={unit.last_result}")
+        return lines
 
     def timers(self) -> list[Path]:
         return [path for path in self.unit_files() if path.suffix == TIMER_SUFFIX]
@@ -105,42 +133,65 @@ class UserUnits:
         return link.is_symlink() and link.readlink() == path
 
     def is_running_enabled(self, path: Path) -> bool:
-        unit = self.show(path)
+        unit = self.show(path.name)
         return unit.enabled and unit.active
 
     def is_settled(self, path: Path) -> bool:
-        if self.show(path).needs_reload:
+        if self.show(path.name).needs_reload:
             return False
         return self.is_running_enabled(path) if path.suffix == TIMER_SUFFIX else True
 
-    def dangling_links(self) -> list[Path]:
-        """Links into the checkout's `systemd/` whose file is gone."""
+    def refuse_foreign_entries(self) -> None:
+        """A same-name entry that is not this checkout's link is the person's: never replace it."""
+        for path in self.unit_files():
+            entry = self.user_units / path.name
+            if (entry.is_symlink() or entry.exists()) and not self.is_linked(path):
+                kind = (
+                    f"a link to {entry.readlink()}" if entry.is_symlink() else "a file of its own"
+                )
+                raise StepFailed(
+                    f"{entry} is {kind}, not a link to {path}; this checkout does not own it,"
+                    " so you decide: move it away or delete it, then rerun"
+                )
+
+    def link_directories(self) -> list[Path]:
         if not self.user_units.is_dir():
             return []
+        dependency_directories = sorted(
+            directory
+            for directory in self.user_units.iterdir()
+            if directory.suffix in DEPENDENCY_DIRECTORY_SUFFIXES
+            and directory.is_dir()
+            and not directory.is_symlink()
+        )
+        return [self.user_units, *dependency_directories]
+
+    def dangling_links(self) -> list[Path]:
+        """Links into the checkout's `systemd/` whose file is gone, wherever systemd keeps them."""
         return sorted(
             link
-            for link in self.user_units.iterdir()
+            for directory in self.link_directories()
+            for link in directory.iterdir()
             if link.is_symlink()
             and link.readlink().parent == self.checkout_units
             and not link.exists()
         )
 
-    def remove_dangling_link(self, link: Path) -> None:
-        self.systemctl("disable", link.name)
-        link.unlink()
+    def retire(self, links: list[Path]) -> None:
+        """systemd refuses to disable a unit whose file is gone, so stop it while it is still
+        loaded and unlink its links; the reload after the last link drops it."""
+        for name in sorted({link.name for link in links}):
+            if not self.show(name).stopped:
+                self.systemctl("stop", name)
+        for link in links:
+            link.unlink(missing_ok=True)
 
     def link(self, path: Path) -> None:
-        link = self.user_units / path.name
-        if link.exists() and not link.is_symlink():
-            raise StepFailed(
-                f"{link} is a file of its own, not a link to {path}; move it away, then rerun"
-            )
         self.user_units.mkdir(parents=True, exist_ok=True)
-        link.unlink(missing_ok=True)
-        link.symlink_to(path)
+        (self.user_units / path.name).symlink_to(path)
 
-    def show(self, path: Path) -> LoadedUnit:
-        return LoadedUnit.parse(self.systemctl("show", path.name, f"--property={SHOWN_PROPERTIES}"))
+    def show(self, name: str) -> LoadedUnit:
+        return LoadedUnit.parse(self.systemctl("show", name, f"--property={SHOWN_PROPERTIES}"))
 
     def systemctl(self, *arguments: str) -> str:
         output = self.run(["systemctl", "--user", *arguments])

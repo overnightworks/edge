@@ -1,6 +1,7 @@
-"""`hal setup`: quality, its engines and the global commit hook, then Ansible and the system step.
+"""`hal setup`: quality, its engines and the global commit hook, then the user units, Ansible and the system step.
 
-The activation comes before the system step, so a wrong sudo password never keeps the commit hook from being active.
+The activation comes before the user units and the system step, so a wrong sudo password never keeps the commit hook from being active.
+The user units come before the system step, which is the one that asks for sudo.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ APPLY_ASKS_FOR_SUDO = True
 SETUP_EXAMPLES = """\
 Beispiele:
   home setup           zeigt, welche Schritte etwas ändern würden
-  home setup --apply   führt sie der Reihe nach aus; the activation comes before the system step, which asks once for sudo
+  home setup --apply   führt sie der Reihe nach aus; the activation and the user units come before the system step, which asks once for sudo
 """
 
 
@@ -48,6 +49,7 @@ class Step:
     """`is_verified` is all `home next` asks, so it never needs sudo; `check` is the dry run, `apply` the run.
 
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
+    `details` are the lines printed under the heading of an applied step.
     """
 
     name: str
@@ -56,6 +58,7 @@ class Step:
     apply: Callable[[], Applied]
     why: str
     needs_first: Callable[[], str] = lambda: ""
+    details: Callable[[], list[str]] = lambda: []
 
 
 def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[], bool], why: str) -> Step:
@@ -164,7 +167,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         _local_step("Engines", engines_current, install_engines, HOOK_WHY),
         _local_step("Hook-Dateien", lambda: all(hook_current(path) for path in hook_paths), write_hooks, HOOK_WHY),
         _local_step("Aktivierung", hooks_active, activate_hooks, HOOK_WHY),
-        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY),
+        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY, details=units.loaded_command_lines),
         _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY),
         Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first),
     )
@@ -188,6 +191,8 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     for step in _steps(layout, ports):
         try:
             print(f"{step.name}: {_outcome(step, apply)}")
+            for line in step.details() if apply else ():
+                print(line)
         except (OSError, StepFailed) as error:
             if str(error):
                 print(f"hal setup: {error}", file=sys.stderr)
@@ -203,10 +208,11 @@ def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "setup",
-        help="quality, Engines und den globalen Commit-Hook einrichten, then the system step",
+        help="quality, Engines und den globalen Commit-Hook einrichten, then the user units and the system step",
         description=(
             "Zeigt, was fehlt, oder richtet mit --apply quality, die Engines und den Hook ein."
-            " Then it installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
+            " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
+            " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
         ),
         epilog=SETUP_EXAMPLES,
