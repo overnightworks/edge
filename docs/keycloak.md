@@ -67,6 +67,16 @@ service accounts are the only users `realm.yaml` lists, each holding the realm r
 holds such an app's client secret can therefore get a workload token for that app, which is the
 design; the secret stays the app's own file. hopin has no service account.
 
+A sign-out in Keycloak ends the songmaker session: Keycloak calls songmaker's back-channel logout
+(`http://songmaker.hallucinai.de:8080/auth/backchannel-logout`; the name is an alias songmaker
+gives its web service) over the internal network `hal_backchannel_songmaker`, which only `keycloak` joins on edge's side and songmaker joins as an
+external network. songmaker ignores the session id and ends every session of the person, so the
+client does not require one. The public tunnel denies the path, matched on the recursively decoded
+path and on the host with any port. Until songmaker has joined the network, the call fails and a
+sign-out ends no songmaker session. A change to the network's definition recreates it and detaches
+songmaker's web service until its next deploy; in that gap Keycloak resolves the public name and
+the public deny refuses its call, so a recreate means songmaker redeploys.
+
 ### Theme and language
 
 Keycloak's login and account pages use the realm theme `hallucinai`

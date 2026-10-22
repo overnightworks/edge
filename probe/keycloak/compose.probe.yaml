@@ -34,6 +34,18 @@ services:
     volumes:
       - ./probe/keycloak/test_rp.py:/rp/test_rp.py:ro
 
+  # A stand-in for songmaker's web service: a container on the back-channel network only.
+  probe-backchannel-client:
+    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backchannel-songmaker]
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./probe/keycloak/backchannel_client.py:/cell/backchannel_client.py:ro
+
 secrets:
   keycloak_db_password:
     file: ${PROBE_SECRETS_DIR:?run through probe/keycloak/probe.py}/db-password

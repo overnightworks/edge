@@ -194,6 +194,40 @@ def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_the
     assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
 
 
+def test_the_songmaker_back_channel_is_an_internal_network_only_keycloak_joins():
+    """#293: songmaker joins the fixed name as an external network; only keycloak is on it here."""
+    document = compose_document()
+    network = document["networks"]["backchannel-songmaker"]
+    members = [
+        name
+        for name, service in document["services"].items()
+        if "backchannel-songmaker" in service.get("networks", [])
+    ]
+
+    assert network["name"] == "hal_backchannel_songmaker"
+    assert network["internal"] is True
+    assert members == ["keycloak"]
+
+
+def test_traefik_reaches_keycloak_through_the_keycloak_network_whatever_the_project_is_called():
+    """#293: with a second network on the service, Traefik would otherwise pick either address."""
+    labels = compose_document()["services"]["keycloak"]["labels"]
+
+    assert labels["traefik.docker.network"] == "${COMPOSE_PROJECT_NAME}_keycloak"
+
+
+def test_songmaker_is_logged_out_by_a_back_channel_call_that_needs_no_session_id():
+    """#293: webauth ends every session of the subject and ignores `sid`."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+    songmaker = next(client for client in realm["clients"] if client["clientId"] == "songmaker")
+
+    assert (
+        songmaker["attributes"]["backchannel.logout.url"]
+        == "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
+    )
+    assert songmaker["attributes"]["backchannel.logout.session.required"] == "false"
+
+
 # An SVG's xmlns names a namespace; no browser fetches it.
 XML_NAMESPACE_HOST = "www.w3.org"
 

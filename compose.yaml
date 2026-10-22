@@ -106,7 +106,7 @@ services:
     # No read_only: `start` without --optimized rebuilds the server into the image's lib directory at boot.
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [keycloak]
+    networks: [keycloak, backchannel-songmaker]
     # Secrets reach the process from /run/secrets, never through the container's Config.Env.
     entrypoint: ["/opt/edge/entrypoint.sh", "/opt/keycloak/bin/kc.sh"]
     command: ["start"]
@@ -133,6 +133,9 @@ services:
     labels:
       traefik.enable: "true"
       edge.name: auth
+      # Traefik reaches Keycloak through the keycloak network only: the back-channel network has no
+      # host address, and Keycloak trusts Forwarded from the keycloak network alone.
+      traefik.docker.network: ${COMPOSE_PROJECT_NAME}_keycloak
       traefik.http.services.auth.loadbalancer.server.port: "8080"
       # The tunnel reaches only the hallucinai realm, its localization and the static resources
       # under Keycloak's five-character resources version. Any wider /resources/ prefix admits
@@ -468,6 +471,13 @@ networks:
   # (docs/agent-service.md, "An app's side"). The fixed name survives the project's rename to `hal`.
   agent:
     name: hal_agent
+    internal: true
+    driver_opts: *isolated-bridge
+  # Keycloak's back-channel logout call to songmaker, which joins it as an external network with the
+  # alias songmaker.hallucinai.de.
+  # One network per app, so no app sees another's. The fixed name survives the project's rename to `hal`.
+  backchannel-songmaker:
+    name: hal_backchannel_songmaker
     internal: true
     driver_opts: *isolated-bridge
   # The agent service and agent-egress, the only way out of the service.
