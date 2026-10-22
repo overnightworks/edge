@@ -70,8 +70,9 @@ password file is mounted read-only at `/run/secrets/restic-password` and handed 
 The one-time setup is: `uv sync` (builds the `.venv` the units run); a restic password in
 `~/.secrets/restic/password` (random, mode 0600, directory 0700); `uv run edge-backup init` (creates
 `~/backups/restic` once, mode 700); `loginctl enable-linger "$USER"` so the user timers run without a
-login session; and the units in `systemd/` (`edge-backup{,-restore-test}.{service,timer}`) linked into
-`~/.config/systemd/user/` and enabled as user timers. The units expect the checkout at `~/git/edge`.
+login session; and `~/git/edge/bin/hal setup --apply`, which links the units in `systemd/`
+(`edge-backup{,-restore-test}.{service,timer}`) into `~/.config/systemd/user/`, reloads systemd and
+enables the user timers. The units expect the checkout at `~/git/edge`.
 
 Keep a copy of the password in the password manager or on paper. **Without it the repository cannot be
 read by anyone, ever:** losing the key loses every backup, and restic has no recovery.

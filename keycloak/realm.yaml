@@ -120,11 +120,11 @@ clients:
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     frontchannelLogout: false
-  # songmaker signs people in with the authorization code and PKCE. Back-channel logout is left out
-  # until its address is decided (songmaker#1620, K3c #50), so a block or sign-out in Keycloak ends
-  # an open songmaker session only when that session expires. Its service account is the workload
-  # identity for the agent service (the token's azp must equal the people's); the same holds for
-  # presentator. hopin names no agent use, so it has none.
+  # songmaker signs people in with the authorization code and PKCE. A sign-out in Keycloak calls
+  # songmaker's back-channel logout over the internal network hal_backchannel_songmaker. songmaker
+  # ignores the session id and ends every session of the person, so the call does not require one.
+  # Its service account is the workload identity for the agent service (the token's azp must equal
+  # the people's); the same holds for presentator. hopin names no agent use, so it has none.
   - clientId: songmaker
     name: songmaker
     enabled: true
@@ -142,6 +142,8 @@ clients:
     attributes:
       post.logout.redirect.uris: "https://songmaker.hallucinai.de/login"
       pkce.code.challenge.method: "S256"
+      backchannel.logout.url: "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
+      backchannel.logout.session.required: "false"
     defaultClientScopes: &agent_workload_scopes
       - basic
       - profile
@@ -153,8 +155,8 @@ clients:
       - groups
       - agent-service-audience
     optionalClientScopes: []
-  # hopin signs people in the same way as songmaker, back-channel logout left out for the same reason
-  # (hopin#25, K3c #50). Its URLs are hopin's proposal; hopin mounts none of them yet.
+  # hopin signs people in the same way as songmaker, back-channel logout left out until hopin decides
+  # its back-channel address (#254). Its URLs are hopin's proposal; hopin mounts none of them yet.
   - clientId: hopin
     name: hopin
     enabled: true

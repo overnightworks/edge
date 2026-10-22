@@ -77,7 +77,9 @@ all_exist() {
     return 0
 }
 
-install_home() {
+install_home() {  # the wheel, and the user manager `hal setup`'s user-units step talks to, running without a login
+    loginctl enable-linger tester
+    timeout 60 bash -c 'until systemctl is-active --quiet "user@$(id -u tester).service"; do sleep 1; done'
     su - tester -c "uv tool install /proof/*.whl" >"$EVIDENCE/install.log" 2>&1
     return
 }

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import check, secrets_view, system_step
+from home_tools import check, cli, secrets_view, system_step
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
@@ -290,6 +290,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     global_git_config = tmp_path / "global-gitconfig"
     global_git_config.write_text("[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n")
     uv_calls = tmp_path / "uv-calls"
+    unit_directory = tmp_path / "checkout-units"
+    unit_directory.mkdir()
     for name, value in {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / ".config"),
@@ -303,6 +305,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         monkeypatch.setenv(name, value)
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
+    # A real ~/git/edge in the sandbox home would be a repository the hook check and tidy report on.
+    monkeypatch.setattr(cli, "edge_units_directory", lambda _layout: unit_directory)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
     return Sandbox(home, global_git_config, uv_calls, system)

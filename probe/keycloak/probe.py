@@ -55,6 +55,8 @@ from urllib.request import (
 REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
 sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
+import backchannel_cell  # noqa: E402
+
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
 from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
@@ -2024,6 +2026,7 @@ class Probe:
                             "an admin logout of probe-logout reached probe-rp over the compose "
                             f"network (iss {record['iss']}, sid present: {bool(record['sid'])})",
                         )
+                        self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
                         return
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
@@ -2358,7 +2361,6 @@ class Probe:
     def app_client_representation(admin: Admin, client: AppClient) -> None:
         """Cell T8, #161 SA3-1: flags, callbacks, logout, base URL and console listing."""
         found = admin.find(f"/{REALM}/clients", "clientId", client.client_id)
-        backchannel_url = found["attributes"].get("backchannel.logout.url")
         wrong = {
             key: found.get(key)
             for key, value in {
@@ -2381,11 +2383,8 @@ class Probe:
             }.items()
             if set(found.get(key) or ()) != value
         }
-        expect(
-            not wrong and not backchannel_url,
-            f"{client.client_id}'s representation differs: {wrong}, "
-            f"back-channel url {backchannel_url}",
-        )
+        wrong |= backchannel_cell.wrong_logout_settings(client.client_id, found["attributes"])
+        expect(not wrong, f"{client.client_id}'s representation differs: {wrong}")
 
     def fresh_realm_has_nothing_only_in_keycloak(self) -> RealmStepStand:
         """Proof 3a's end (#248, cell 2): the realms the files just made hold only what they
