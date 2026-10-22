@@ -1,0 +1,7 @@
+claim_id = "3ee9def7ada6401eaacaab5786c07cc3"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "dc3eee4e65e16589c18de24f4cc62e06bfdea0f9"
+branch = "claude/issue-317-110-s2c-sign-in-section"
+scope = ["docs/design/legal-pages.html", "legal/pages/datenschutz.html", "tests/test_legal_unit.py"]
+opened_commit = "96cfcfeaf3120526836ef9e163a386e107bcea14"
