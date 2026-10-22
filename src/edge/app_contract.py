@@ -153,6 +153,11 @@ def _volume_refusal(definition: dict) -> str | None:
     for volume in _mounts(definition):
         if _mount_interpolates(volume):
             return "interpolates a volume entry ($); not yet supported"
+        if isinstance(volume, str) and _is_drive_letter_entry(volume):
+            return (
+                "has a volume entry that starts with one letter (volumes); "
+                "write it in the long form"
+            )
         if isinstance(volume, str) and _short_target(volume) is None:
             return "has a volume entry without a source (volumes); give it a named volume"
         if isinstance(volume, dict) and volume.get("type") != "tmpfs" and not volume.get("source"):
@@ -264,7 +269,13 @@ def _covered_paths(definition: dict) -> set[str]:
 def _short_target(volume: str) -> str | None:
     """The container path of a short volume entry `source:target[:mode]`."""
     parts = volume.split(":")
-    return parts[1] if len(parts) > 1 else None
+    return parts[1] if len(parts) > 1 and not _is_drive_letter_entry(volume) else None
+
+
+def _is_drive_letter_entry(volume: str) -> bool:
+    """Compose reads a first section of one letter as a drive, not as a source; hal does not
+    parse that grammar and refuses the entry."""
+    return len(volume.split(":")[0]) == 1 and ":" in volume
 
 
 def _mounts(definition: dict) -> list:
