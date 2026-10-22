@@ -1,0 +1,36 @@
+"""`hal setup`: `home setup` behind hal's door. It calls the typed function of `home_tools.setup`
+that `home setup` calls too, with the layout and boundaries `home_tools.cli` builds for both, so
+the steps, the prompts and the lines are home's own; only the exit number is hal's."""
+
+import argparse
+
+from hal.grammar import Asks, Command, ExitCode
+from home_tools import cli as home
+from home_tools import setup
+
+# `home setup` ends 0 or 1, and 1 means a step failed. Naming both keeps a new code from
+# passing as 0.
+EXIT_OF_SETUP: dict[int, ExitCode] = {0: ExitCode.OK, 1: ExitCode.FAILURE}
+
+
+def _configure(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--apply", action="store_true", help="run the steps instead of only showing them"
+    )
+
+
+def _setup(arguments: argparse.Namespace) -> ExitCode:
+    layout, ports = home.build_layout_and_ports()
+    return EXIT_OF_SETUP[setup.setup(layout, ports, arguments.apply)]
+
+
+COMMANDS = (
+    Command(
+        "setup",
+        "set up quality, the commit hook and the system step (sudo, terminal)",
+        _setup,
+        _configure,
+        json=False,
+        asks=Asks.YES,
+    ),
+)

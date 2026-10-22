@@ -17,7 +17,7 @@ secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs
 The first `hal apply --closed` writes `.env`, plans, asks to run each setup still missing (for example
 `keycloak/go-live`, which itself starts the socket proxy and Traefik), asks `yes` and switches the
 catalog's units on. Apply never starts a stopped core service, so Traefik and the socket proxy are
-started by hand; `hal apply` then publishes, and `hal online` opens the tunnel, which `home setup`
+started by hand; `hal apply` then publishes, and `hal online` opens the tunnel, which `hal setup`
 installs disabled. Readiness and stop are in [docs/stack.md](docs/stack.md).
 
 ```sh
@@ -34,8 +34,9 @@ hal online
 `error: <what>` with, where there is a way on, one `next: <command>` line; the shared grammar is
 `src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
-([docs/architecture.md](docs/architecture.md), section 9). The five stack commands deviate from the
-grammar until overnightworks/edge#207 H5a2 (Exception E in [docs/stack.md](docs/stack.md)).
+([docs/architecture.md](docs/architecture.md), section 9). The five stack commands and `hal setup`
+deviate from the grammar until overnightworks/edge#207 H5a2 (Exception E in
+[docs/stack.md](docs/stack.md)); `hal setup` prints `hal setup:` lines and ends 0 or 3.
 
 ## Adding a tool: the label rule
 

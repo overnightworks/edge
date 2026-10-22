@@ -59,6 +59,14 @@ def test_hal_alone_shows_the_usage_on_stdout_and_nothing_on_stderr(tmp_path):
     assert "usage: hal" in result.stdout
 
 
+def test_the_help_lists_setup_with_one_sentence(tmp_path):
+    result = run_hal(tmp_path, hal_program(), "--help")
+
+    setup_lines = [line for line in result.stdout.splitlines() if line.strip().startswith("setup ")]
+    assert len(setup_lines) == 1
+    assert "commit hook" in setup_lines[0]
+
+
 @pytest.mark.parametrize("flag", ["-h", "--help"])
 def test_the_help_flags_show_what_hal_alone_shows(tmp_path, flag):
     """G-2"""

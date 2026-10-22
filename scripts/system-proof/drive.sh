@@ -167,7 +167,7 @@ cell_11() {
     without_terminal cell11-apply "$HOME_BIN setup --apply"
     apply=$?
     verdict 11 "--apply without a terminal refuses naming the command, exit 1, no hang" \
-        '[ $apply -eq 1 ] && in_log cell11-apply "\`home setup --apply\` in your own terminal window"'
+        '[ $apply -eq 1 ] && in_log cell11-apply "\`hal setup --apply\` in your own terminal window"'
     return
 }
 

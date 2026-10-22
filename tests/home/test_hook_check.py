@@ -140,14 +140,14 @@ def test_a_hooks_path_from_the_system_file_names_that_file(machine: Machine, tmp
 def test_a_wrong_or_unset_global_hooks_path_is_found_for_every_worktree_and_repaired_by_setup(
     machine: Machine, damage: Callable[[Machine], object]
 ) -> None:
-    """#23 rule 2.1: a wrong or unset global hooksPath is found for every worktree and repaired by `home setup --apply`."""
+    """#23 rule 2.1: a wrong or unset global hooksPath is found for every worktree and repaired by `hal setup --apply`."""
     damage(machine)
 
     findings = machine.findings()
 
     assert {subject: fix for (rule, subject), fix in findings.items() if rule == "hooks-path"} == {
-        str(machine.repo): "`home setup --apply`",
-        str(machine.outside_worktree): "`home setup --apply`",
+        str(machine.repo): "`hal setup --apply`",
+        str(machine.outside_worktree): "`hal setup --apply`",
     }
     machine.apply_setup()
     assert machine.findings() == {}
@@ -215,7 +215,7 @@ def test_a_damaged_installation_is_found_with_the_setup_command_and_clean_after_
     layout = machine.layout
     owners = {"hook-file": layout.git_hooks_dir, "quality": layout.quality_executable, "engines": layout.quality_engines_dir}
     expected_subject = owners[rule] / subject if rule == "hook-file" else owners[rule]
-    assert findings[(rule, str(expected_subject))] == "`home setup --apply`"
+    assert findings[(rule, str(expected_subject))] == "`hal setup --apply`"
     machine.apply_setup()
     assert machine.findings() == {}
 
