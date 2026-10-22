@@ -19,10 +19,18 @@ locals {
   ]
   operator_group_id = length(local.operator_group_ids) == 1 ? local.operator_group_ids[0] : null
 
+  # Every name that answers at the edge: the tunnel's hosts and the redirected names, which have a
+  # record and no tunnel line.
+  redirect = try(local.fleet.cloudflare.redirect, null)
+  redirect_fqdns = [
+    for name in try(local.redirect.hosts, []) : name == "@" ? local.fleet.cloudflare.zone : "${name}.${local.fleet.cloudflare.zone}"
+  ]
+  record_fqdns = toset(concat(keys(local.hosts), local.redirect_fqdns))
+
   # Among these types at a host's name only a single CNAME may exist (D12: no conversion).
   address_record_types = ["A", "AAAA", "CNAME"]
   address_records = {
-    for fqdn in keys(local.hosts) : fqdn => [
+    for fqdn in local.record_fqdns : fqdn => [
       for record in data.cloudflare_dns_records.host[fqdn].result : record
       if contains(local.address_record_types, record.type)
     ]
@@ -49,7 +57,7 @@ data "cloudflare_zero_trust_tunnel_cloudflared" "this" {
 }
 
 data "cloudflare_dns_records" "host" {
-  for_each = local.hosts
+  for_each = local.record_fqdns
   zone_id  = local.zone_id
   name     = { exact = each.key }
 
@@ -125,17 +133,17 @@ resource "cloudflare_zero_trust_access_application" "host" {
   }]
 }
 
-# Protection before reachability: no record exists before the apps and the public deny do (and
-# none outlives them).
+# Protection before reachability: no record exists before the apps, the public deny and the
+# redirect do (and none outlives them).
 resource "cloudflare_dns_record" "host" {
-  for_each   = local.hosts
+  for_each   = local.record_fqdns
   zone_id    = local.zone_id
   name       = each.key
   type       = "CNAME"
   content    = "${local.tunnel_id}.cfargotunnel.com"
   proxied    = true
   ttl        = 1
-  depends_on = [cloudflare_zero_trust_access_application.host, cloudflare_ruleset.deny_public]
+  depends_on = [cloudflare_zero_trust_access_application.host, cloudflare_ruleset.deny_public, cloudflare_ruleset.apex_redirect]
 }
 
 # HSTS at the zone's edge, for the apex and every subdomain: the preload list is a property of the
@@ -237,6 +245,62 @@ resource "cloudflare_ruleset" "deny_public" {
       description = "${path} is never reachable from outside"
       action      = "block"
       expression  = local.deny_rule_expressions[path]
+    }
+  ]
+}
+
+# The catalog's redirected names (cloudflare.redirect) answer 302 at Cloudflare's edge and never
+# reach the tunnel. Single Redirects run in the phase http_request_dynamic_redirect, in order, and a
+# redirect ends the evaluation (https://developers.cloudflare.com/rules/url-forwarding/, which also
+# lists the Free plan's 10 single redirects),
+# so the kept paths come first and the last rule takes the rest. The target is a static URL
+# (`from_value.target_url.value`), so the path and, with preserve_query_string off, the query of
+# the request are dropped
+# (https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-api/). A host
+# matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. A kept path matches exactly,
+# case-insensitively.
+# A record waits for this ruleset, as for the deny. Without `cloudflare.redirect` no ruleset
+# exists; if the zone already holds the entry point of this phase, import it before the first apply
+# (ID `zones/<zone_id>/<ruleset_id>`): its rules are not kept, the plan shows each as removed.
+locals {
+  redirect_host_expression = join(" or ", [
+    for fqdn in sort(local.redirect_fqdns) :
+    "lower(http.host) eq \"${fqdn}\" or starts_with(lower(http.host), \"${fqdn}:\")"
+  ])
+  redirect_rules = local.redirect == null ? [] : concat(
+    [
+      for kept in try(local.redirect.keep, []) : {
+        description = "${kept.path} keeps its path at ${kept.target}"
+        expression  = "( ${local.redirect_host_expression} ) and lower(http.request.uri.path) eq \"${kept.path}\""
+        target_url  = "${kept.target}${kept.path}"
+      }
+    ],
+    [{
+      description = "everything else goes to ${local.redirect.target}"
+      expression  = "( ${local.redirect_host_expression} )"
+      target_url  = local.redirect.target
+    }]
+  )
+}
+
+resource "cloudflare_ruleset" "apex_redirect" {
+  count   = length(local.redirect_rules) > 0 ? 1 : 0
+  zone_id = local.zone_id
+  name    = "apex redirect"
+  kind    = "zone"
+  phase   = "http_request_dynamic_redirect"
+  rules = [
+    for rule in local.redirect_rules : {
+      description = rule.description
+      action      = "redirect"
+      expression  = rule.expression
+      action_parameters = {
+        from_value = {
+          status_code           = 302
+          preserve_query_string = false
+          target_url            = { value = rule.target_url }
+        }
+      }
     }
   ]
 }

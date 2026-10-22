@@ -79,8 +79,6 @@ def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
         ("songmaker.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
-        ("hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
-        ("www.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
         (
             "auth.hallucinai.de",
             catalog.Exposure.PUBLIC,
@@ -90,20 +88,21 @@ def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks
     ]
 
 
-def test_every_songmaker_host_refuses_the_back_channel_route_publicly():
+def test_songmakers_host_refuses_the_back_channel_route_publicly():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
-        fqdn: ("/auth/backchannel-logout",)
-        for fqdn in ("songmaker.hallucinai.de", "hallucinai.de", "www.hallucinai.de")
+        "songmaker.hallucinai.de": ("/auth/backchannel-logout",)
     }
 
 
-def test_every_dns_record_waits_for_the_public_deny_ruleset():
-    """A deny that fails to apply must publish no record; `depends_on` says so."""
+def test_every_dns_record_waits_for_the_public_deny_and_redirect_rulesets():
+    """A deny or redirect that fails to apply must publish no record; `depends_on` says so."""
     source = (PROJECT_ROOT / "external" / "cloudflare.tf").read_text()
     block = source.split('resource "cloudflare_dns_record" "host" {')[1].split("\n}\n")[0]
     record = re.sub(r"(?m)^\s*(#|//).*$", "", block)
-    assert "cloudflare_ruleset.deny_public" in record.split("depends_on", 1)[1]
+    waits_for = record.split("depends_on", 1)[1]
+    assert "cloudflare_ruleset.deny_public" in waits_for
+    assert "cloudflare_ruleset.apex_redirect" in waits_for
 
 
 @pytest.mark.parametrize("denied", [["/a"], ["/auth/backchannel-logout", "/x.y_z~1-2"], []])
@@ -364,3 +363,62 @@ def test_the_zone_is_readable_alone_for_the_other_readers_of_the_catalog():
 def test_a_catalog_without_a_cloudflare_map_has_no_zone(broken):
     with pytest.raises(catalog.CatalogError, match=r"^cloudflare\.zone:"):
         catalog.zone(broken)
+
+
+REDIRECT = {
+    "hosts": ["@", "www"],
+    "target": "https://auth.edge-fixture.invalid/",
+    "keep": [{"path": "/impressum", "target": "https://app.edge-fixture.invalid"}],
+}
+
+
+def with_redirect(redirect) -> dict:
+    return {**document(hosted(host("app"))), "cloudflare": {"zone": ZONE, "redirect": redirect}}
+
+
+def test_a_redirect_of_the_zones_names_is_accepted():
+    assert [one.fqdn for one in catalog.hosts(with_redirect(REDIRECT))] == [f"app.{ZONE}"]
+
+
+@pytest.mark.parametrize(
+    ("redirect", "key"),
+    [
+        ("apex", "cloudflare.redirect"),
+        ({**REDIRECT, "extra": 1}, "cloudflare.redirect.extra"),
+        ({**REDIRECT, "hosts": []}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": ["@", "@"]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": ["*"]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": ["app"]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "target": "http://auth.edge-fixture.invalid/"}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "target": 'https://a.invalid/"'}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "target": "https://a.invalid/?x=1"}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "keep": "/impressum"}, "cloudflare.redirect.keep[0]"),
+        ({**REDIRECT, "keep": [{"path": "/impressum"}]}, "cloudflare.redirect.keep[0]"),
+        (
+            {**REDIRECT, "keep": [{"path": "/Impressum", "target": "https://a.invalid"}]},
+            "cloudflare.redirect.keep[0].path",
+        ),
+        (
+            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a.invalid/x"}]},
+            "cloudflare.redirect.keep[0].target",
+        ),
+        (
+            {**REDIRECT, "keep": REDIRECT["keep"] * 2},
+            "cloudflare.redirect.keep",
+        ),
+    ],
+)
+def test_a_malformed_redirect_is_refused_naming_the_key(redirect, key):
+    assert refusal(with_redirect(redirect)).startswith(f"{key}:")
+
+
+def test_the_repositorys_catalog_redirects_the_apex_and_www_and_keeps_the_legal_pages():
+    redirect = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]
+    assert redirect == {
+        "hosts": ["@", "www"],
+        "target": "https://auth.hallucinai.de/",
+        "keep": [
+            {"path": path, "target": "https://songmaker.hallucinai.de"}
+            for path in ("/impressum", "/datenschutz")
+        ],
+    }
