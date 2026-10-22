@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importabl
 
 from egress import scratch_directory  # noqa: E402
 
+NO_NETWORK = "--network=none"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 PROBE_NAME = f"edge-probe-agent-image-{os.getpid()}"
 IMAGE = f"{PROBE_NAME}:probe"
@@ -186,7 +187,7 @@ def run_in_image(
         [
             "run",
             "--rm",
-            "--network=none",
+            NO_NETWORK,
             f"--user={user}",
             *(["--read-only"] if read_only else []),
             f"--entrypoint={entrypoint}",
@@ -255,7 +256,7 @@ def cell_i8(scratch: Path) -> None:
         )
         started = docker(
             [
-                "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
+                "run", "--rm", NO_NETWORK, "--read-only", "--cap-drop=ALL",
                 f"--mount=type=bind,source={configuration},target=/etc/agent-service/service.toml,readonly",
                 IMAGE,
             ],
@@ -399,7 +400,7 @@ def base_package_versions() -> dict[str, str]:
     expect(base is not None, "I7: the Dockerfile names no digest-pinned python base image")
     frozen = docker(
         [
-            "run", "--rm", "--network=none", "--pull=missing", "--entrypoint=python",
+            "run", "--rm", NO_NETWORK, "--pull=missing", "--entrypoint=python",
             base.group(1), "-m", "pip", "list", "--format=freeze",
         ],
         check=True,
