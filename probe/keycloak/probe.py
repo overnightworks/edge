@@ -2223,9 +2223,8 @@ class Probe:
             f"{client.callback}/x",
             client.callback.replace("https", "http"),
         ):
-            challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
             query = self.app_client_authorization_query(
-                client, redirect_uri=redirect_uri, **challenge
+                client, redirect_uri=redirect_uri, **device_grant_cell.PKCE
             )
             page = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
             expect(
@@ -2311,9 +2310,8 @@ class Probe:
 
     def app_client_refuses_offline_access(self, client: AppClient) -> None:
         """Cell T13: no optional scope is attached, so no offline token can be asked for."""
-        challenge = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}
         query = self.app_client_authorization_query(
-            client, scope="openid offline_access", **challenge
+            client, scope="openid offline_access", **device_grant_cell.PKCE
         )
         refused = self.through_tunnel("GET", f"{PUBLIC_AUTH_PATH}?{query}")
         location = refused.headers.get("Location", "")

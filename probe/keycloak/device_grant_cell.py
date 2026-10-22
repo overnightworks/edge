@@ -10,7 +10,7 @@ from typing import Any, Protocol
 DEVICE_CLIENT = "songmaker"
 DEVICE_PATH = "/realms/hallucinai/protocol/openid-connect/auth/device"
 REFUSED_STATUSES = (400, 401)
-PKCE = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}  # songmaker requires PKCE
+PKCE = {"code_challenge": "x" * 43, "code_challenge_method": "S256"}  # the app clients require PKCE
 
 
 class Answer(Protocol):
