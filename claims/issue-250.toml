@@ -1,0 +1,8 @@
+claim_id = "0c254f31c3114cdd8ca2ba6051696d78"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "1c90e91568dd3ac9f91b05b79885cad62453b5dd"
+branch = "claude/issue-250-hal-setup-home-setup-s-verb-behind-hal-s"
+scope = ["AGENTS.md", "README.md", "docs/architecture.md", "docs/home.md", "scripts/system-proof/drive.sh", "src/hal/cli.py", "src/hal/setup_commands.py", "src/home_tools/cli.py", "src/home_tools/hook_check.py", "src/home_tools/hooks/commit-hook", "src/home_tools/next.py", "src/home_tools/setup.py", "src/home_tools/system_step.py", "tests/home/test_commit_hook.py", "tests/home/test_hook_check.py", "tests/home/test_next.py", "tests/home/test_setup.py", "tests/test_hal_cli.py", "tests/test_hal_setup.py"]
+opened_commit = "e9bfc3369a7f89231a7ffb7c2bca4fd3250bcf6c"
+whole_reason = "One verb behind the door and the one name every printed next step and doc line gives for it; splitting would leave lines naming a command the operator is told not to use."
