@@ -5,6 +5,7 @@ import dataclasses
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -171,6 +172,19 @@ def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_settin
     assert (mounted_on, theme_properties(properties)["parent"]) == (["keycloak"], parent)
 
 
+def test_keycloaks_gzip_cache_is_a_tmpfs_owned_by_its_user_so_a_restart_empties_it():
+    """A bare tmpfs comes back root-owned after a restart and Keycloak then answers 404 for gzip."""
+    tmpfs = compose_document()["services"]["keycloak"]["tmpfs"]
+    target, _, options = tmpfs[0].partition(":")
+    options = options.split(",")
+
+    assert (target, "uid=1000" in options, "mode=0700" in options) == (
+        "/opt/keycloak/data/tmp",
+        True,
+        True,
+    )
+
+
 def theme_properties(path: Path) -> dict[str, str]:
     lines = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
     return dict(line.split("=", 1) for line in lines)
@@ -192,6 +206,74 @@ def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_the
 
     assert apps
     assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
+
+
+def test_the_songmaker_back_channel_is_an_internal_network_only_keycloak_joins():
+    """#293: songmaker joins the fixed name as an external network; only keycloak is on it here."""
+    document = compose_document()
+    network = document["networks"]["backchannel-songmaker"]
+    members = [
+        name
+        for name, service in document["services"].items()
+        if "backchannel-songmaker" in service.get("networks", [])
+    ]
+
+    assert network["name"] == "hal_backchannel_songmaker"
+    assert network["internal"] is True
+    assert members == ["keycloak"]
+
+
+def test_traefik_reaches_keycloak_through_the_keycloak_network_whatever_the_project_is_called():
+    """#293: with a second network on the service, Traefik would otherwise pick either address."""
+    labels = compose_document()["services"]["keycloak"]["labels"]
+
+    assert labels["traefik.docker.network"] == "${COMPOSE_PROJECT_NAME}_keycloak"
+
+
+def test_songmaker_is_logged_out_by_a_back_channel_call_that_needs_no_session_id():
+    """#293: webauth ends every session of the subject and ignores `sid`."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+    songmaker = next(client for client in realm["clients"] if client["clientId"] == "songmaker")
+
+    assert (
+        songmaker["attributes"]["backchannel.logout.url"]
+        == "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
+    )
+    assert songmaker["attributes"]["backchannel.logout.session.required"] == "false"
+
+
+def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments(monkeypatch):
+    """#293: process arguments are visible to the host; the secret goes through stdin."""
+    monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
+    import backchannel_cell
+
+    secret = "probe-client-secret-value"
+    calls = []
+
+    class FakeStack:
+        def compose(self, *arguments, stdin=None):
+            calls.append((arguments, stdin))
+            seen = {"token": "400", "address": "10.0.0.2", "admin": "404", "management": "-"}
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(seen))
+
+    class FakeProbe:
+        stack = FakeStack()
+
+        def keep_secret(self, _name, value):
+            return value
+
+    class FakeAdmin:
+        def create_user(self, *_arguments):
+            return "user-id"
+
+        def get(self, _path):
+            return [{"type": "LOGIN_ERROR", "ipAddress": "10.0.0.2"}]
+
+    backchannel_cell.prove(FakeProbe(), FakeAdmin(), secret, lambda _held, _message: None)
+
+    ((arguments, stdin),) = calls
+    assert secret not in " ".join(arguments)
+    assert json.loads(stdin)["client_secret"] == secret
 
 
 # An SVG's xmlns names a namespace; no browser fetches it.

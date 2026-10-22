@@ -36,6 +36,7 @@ from test_edge_core import bind, bind_core_files, sha256
 
 from edge import (
     apply,
+    apps,
     barrier,
     catalog,
     checkout,
@@ -184,7 +185,7 @@ class ScriptedCompose:
     crash_loops: set[str] = field(default_factory=set)
     just_started: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
-    config: dict = field(default_factory=resolved_configuration)
+    config: dict = field(default_factory=lambda: {"name": "edge", **resolved_configuration()})
     realm_checksums: dict = field(default_factory=lambda: {"master": {}, "hallucinai": {}})
     realm_applies: int = 0  # how often config-cli ran
     config_cli_fails: bool = False
@@ -324,7 +325,7 @@ class ScriptedCompose:
 
 @dataclass
 class RealmBackup:
-    """edge-backup as the realm step calls it: what it was asked, and the part that fails."""
+    """hal as the realm step calls it: what it was asked, and the part that fails."""
 
     asked: list[str] = field(default_factory=list)
     failing: str | None = None
@@ -603,6 +604,7 @@ def switch(
         at_a_terminal: bool = True,
         ensure_environment: apply.EnsureEnvironment = trusted_environment,
         installed_backup: bool = False,
+        app_runtime: apps.AppRuntime | None = None,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -620,6 +622,7 @@ def switch(
             git or scripted_git,
             ensure_environment,
             None if installed_backup else realm_backup,
+            app_runtime,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1969,10 +1972,6 @@ def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_
         (
             "services:\n  step-ca:\n    run: {enabled: true, setup: fleet.yaml}\n",
             "services.step-ca.run.setup",
-        ),
-        (
-            "services:\n  step-ca:\n    repo: overnightworks/x\n    run: {enabled: true}\n",
-            "apps follow with block 6",
         ),
     ],
 )
@@ -4495,21 +4494,21 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
 
 
 @pytest.mark.usefixtures("realm_unit")
-def test_the_waiting_line_of_a_stopped_edge_backup_carries_the_prefix_of_the_steps_lines(
+def test_the_waiting_line_of_a_stopped_hal_carries_the_prefix_of_the_steps_lines(
     switch, repository, monkeypatch
 ):
     """Cell 7, through the wiring `apply` gives the installed backup."""
     monkeypatch.setattr(reconcile, "BACKUP_SECONDS", 1)
     monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.2)
-    edge_backup = repository / ".venv/bin/edge-backup"
-    edge_backup.parent.mkdir(parents=True)
-    edge_backup.write_text("#!/bin/sh\nexec sleep 30\n")
-    edge_backup.chmod(0o755)
+    hal = repository / ".venv/bin/hal"
+    hal.parent.mkdir(parents=True)
+    hal.write_text("#!/bin/sh\nexec sleep 30\n")
+    hal.chmod(0o755)
 
     exit_code, out, _ = switch(installed_backup=True)
 
     assert exit_code == 1
-    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for edge-backup to clean up" in out
+    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for hal to clean up" in out
     assert "\nrealm: waiting" not in out
 
 

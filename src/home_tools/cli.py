@@ -16,6 +16,11 @@ from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
 
 
+def edge_units_directory(layout: Layout) -> Path:
+    """The user units sit beside `tunnel/` in the edge checkout, whose location Layout owns."""
+    return layout.edge_tunnel_dir.parent / "systemd"
+
+
 @dataclass(frozen=True)
 class Ports:
     """Every boundary a subcommand handler may cross; `main` builds the real ones, tests hand in fakes."""
@@ -25,6 +30,7 @@ class Ports:
     secrets_setup: Boundaries
     now: datetime
     system: system_step.Boundaries
+    unit_directory: Path
 
 
 SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
@@ -57,12 +63,14 @@ def build_layout_and_ports(
     """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
     # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
     system = system_boundaries or system_step.TERMINAL_BOUNDARIES
-    return Layout(home or Path.home()), Ports(
+    layout = Layout(home or Path.home())
+    return layout, Ports(
         run or run_command,
         probe or probe_exit_code,
         secrets_setup_boundaries or TERMINAL_BOUNDARIES,
         now or datetime.now(),
         system,
+        edge_units_directory(layout),
     )
 
 

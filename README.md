@@ -27,6 +27,14 @@ hal apply
 hal online
 ```
 
+An entry of `fleet.yaml` with `repo` and `run` is an app. `hal apply` fetches the repository into
+`~/srv/<key>`, shows its newest release tag (`vYYYY.MM.DD.N` on origin's default branch) with the full
+sha, and after `yes` checks it out, builds, starts it and waits for its health; the last successful
+deployment is recorded in `~/.local/state/edge/deployed/<key>`. A newer tag is taken at the next
+`hal apply`; there is no watcher. Your `yes` is the gate: whoever can put a tag on a merged commit
+offers code to run here. No output of Compose is printed; run the failed step in `~/srv/<key>` to
+read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
+
 ## The commands
 
 `hal` is the daily door of the workstation (`bin/hal`); `hal --help` lists its commands and
@@ -72,9 +80,10 @@ container environment values; review evidence must not dump those payloads.
 OpenTofu inputs) hold the stack; `dynamic/` holds routes for host processes and the emergency
 barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
-`legal/` the imprint unit's pages, stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
-their timers. The commands are Python under `src/` (`edge`, `hal`, `home`, `edge-check`,
-`edge-backup`; `bin/edge` is the one launcher that `bin/hal` and `bin/home` link to), the OpenTofu
+`legal/` the legal unit's pages (imprint, privacy notice, terms), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
+their timers. The commands are Python under `src/` (`edge`, `hal`, `home`, `edge-check`;
+`hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
+`bin/hal` and `bin/home` link to), the OpenTofu
 root is `external/`, the probes that prove each service on a throwaway stack are under `probe/`, and
 `tests/` holds the rest.
 
@@ -86,7 +95,7 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 | [docs/stack.md](docs/stack.md) | run, apply, stop, catalog on and off, the emergency switch, rollback |
 | [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
-| [docs/backup.md](docs/backup.md) | `edge-check`, `edge-backup`, what a backup holds, restore |
+| [docs/backup.md](docs/backup.md) | `edge-check`, `hal backup`, `hal restore`, what a backup holds, restore |
 | [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |
 | [docs/internal-ca.md](docs/internal-ca.md) | `step-ca`, `traefik-mcp`, `agent-egress` |
 | [docs/agent-service.md](docs/agent-service.md) | the agent service: image, login, an app's side, proofs |

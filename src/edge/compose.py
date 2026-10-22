@@ -135,7 +135,7 @@ class Compose:
     def containers(self) -> list[Container]:
         """Every container of the project, of every profile."""
         output = self._call("*", "ps", ["--all", "--format", "json"], READ_SECONDS)
-        return [_container(entry) for entry in _containers(output)]
+        return [_container(entry) for entry in ps_entries(output)]
 
     def states(self) -> dict[str, set[str]]:
         """Each service that has a container, with the states of its containers."""
@@ -269,8 +269,9 @@ def is_gone(states: Mapping[str, set[str]], services: tuple[str, ...]) -> bool:
     return not any(name in states for name in services)
 
 
-def _containers(output: str) -> list[dict[str, Any]]:
-    """`ps --format json` is one JSON array or one object per line, by Compose version."""
+def ps_entries(output: str) -> list[dict[str, Any]]:
+    """The entries of `ps --format json`, one JSON array or one object per line by Compose
+    version: the one parser of that answer."""
     text = output.strip()
     try:
         if text.startswith("["):

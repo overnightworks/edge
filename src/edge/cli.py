@@ -27,14 +27,15 @@ def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
     apply_parser = subcommands.add_parser(
         "apply",
         help="switch the units of fleet.yaml on or off, then publish to Cloudflare",
-        description="The local part (`--closed`: the units of this repository, at a terminal, "
-        "after `yes`), then, only if it ended clean, the publish (`edge external apply`, "
-        "after its own `yes`). Each part asks only when it has changes.",
+        description="The local part (`--closed`: the units of this repository and the apps of the "
+        "catalog, at a terminal, after `yes`), then, only if it ended clean, the publish "
+        "(`edge external apply`, after its own `yes`). Each part asks only when it has changes.",
     )
     apply_parser.add_argument(
         "--closed",
         action="store_true",
-        help="the local part alone: units of this repository, at a terminal, after `yes`",
+        help="the local part alone: units of this repository and the apps of the catalog "
+        "(checked out, built and run at their newest release), at a terminal, after `yes`",
     )
     apply_parser.set_defaults(run=apply_command)
 
