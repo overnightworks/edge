@@ -1,7 +1,0 @@
-claim_id = "8792e95e80fc46edbe54f0dddb992a0c"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "14e368d499dd9c4655b9e23a2ba7c6cd1a9752b8"
-branch = "claude/issue-315-quality-v050"
-scope = [".github/workflows/ci.yml", "quality/baseline.toml", "src/home_tools/setup.py"]
-opened_commit = "ae65edaffc6281688f8eedd596ba7a1be6731da2"
