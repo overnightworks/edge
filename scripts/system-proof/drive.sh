@@ -244,11 +244,13 @@ retention_active_journal_survives() {
     return
 }
 
+# A planted file gets a sequence id of its own: journalctl orders two files of one id by sequence number, which would
+# contradict their ages.
 plant_archive() {  # plant_archive <directory> <age in seconds> <suffix>: a real archive, named as if its oldest entry were that old
     local directory=$1 age=$2 suffix=$3 microseconds name
     microseconds=$(( ($(date +%s) - age) * 1000000 ))
     if [[ $suffix == journal ]]; then
-        name=$(printf 'system@%032x-%016x-%016x.journal' 1 1 "$microseconds")
+        name=$(printf 'system@%032x-%016x-%016x.journal' "$microseconds" 1 "$microseconds")
     else
         name=$(printf 'system@%016x-%016x.journal~' "$microseconds" 1)
     fi
