@@ -788,6 +788,25 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 
 **§10 rule 6: logs go to stdout and stderr.** No app writes a log file to a volume or a host path.
 
+**§10 rule 7: our own services speak one shape.** It binds every service edge runs for several apps whose protocol we write ourselves (today the agent service). A seam with a standard keeps it (§10 rule 5); an app's internal workers and its browser-facing API are outside.
+- **Calls:** HTTP with typed JSON. Every request body carries the contract's version `v`; an unknown version answers 400 `unsupported_version`.
+- **Streams:** events from service to app are SSE; media are a chunked HTTP body of their media type; a WebSocket only where both sides stream at once (live audio).
+- **Identity:** the app's workload token, plus the person's token when a person acts, both Keycloak tokens whose audience is the service (§10 rule 3).
+- **Refusals:** an HTTP status and a JSON body with one code from the service's closed list. A refusal that means the same as an agent-service refusal takes its name and status (agent-providers `docs/wire.md`, "The run").
+- **MCP** only where a model calls an app's tools, never for an app calling a service.
+- **One client library per service** owns its wire types; the service and the apps import them, and no app re-implements them.
+
+Health: `run.health` (section 3).
+
+**§10 rule 8: a GPU service holds a declared budget.** It binds every service on a platform machine that runs models on a GPU.
+- Its configuration declares the card it uses and its memory budget in GB; its compose file (or, for a host process, its settings) is the one owner of both, and the catalog repeats neither.
+- Within its budget the service manages its own models, resident or loaded and evicted by its own policy. It never exceeds the budget and never frees memory for another service.
+- At start it loads what it needs to serve. If it cannot have its budget, it exits non-zero and its restart policy retries. While running, a service that can no longer serve answers its health check as not ready, never healthy.
+- The budgets on one card, plus each process's CUDA context, sum to at most that card's memory. A GeForce card enforces no budget, so the budget is declared and each service proves it by measuring its own peak after warm-up.
+- Priority between services is their budget size or their card, ruled by the operator; nothing arbitrates at runtime.
+- **What can be checked:** once two GPU services are compose services edge sees, edge's compose contract check sums the declared budgets per card. Until then each service's own item holds its budget.
+- Moving a GPU service to another card or machine follows §10 rule 4.
+
 **Cited, not restated:**
 - backup and the restore test: section 2, L5, and `backup/apps.toml`;
 - health: `run.health` in the catalog (section 3);
