@@ -290,10 +290,10 @@ def test_a_response_that_trickles_past_its_deadline_is_no_answer_and_is_read_no_
     clock = FakeClock()
     chunks = [b"{"] + [b" "] * 50 + [b"}"]  # a few bytes per read, each read one second
 
+    slow = trickling(clock, chunks, 1)
+
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.post_form(
-            "token", {}, "s", trickling(clock, chunks, 1), clock.now + 5, clock
-        )
+        device_sign_in.post_form("token", {}, "s", slow, clock.now + 5, clock)
 
     assert str(stopped.value) == "the token endpoint gave no answer to read"
     assert len(chunks) > 40  # it stopped at the deadline, not at the end of the stream
@@ -304,9 +304,10 @@ def test_valid_json_over_the_size_cap_is_refused_only_because_of_the_cap(monkeyp
     document = json.dumps({"padding": padding}).encode()
     chunks = [document[at : at + 4096] for at in range(0, len(document), 4096)]
     clock = FakeClock()
+    capped = trickling(clock, list(chunks))
 
     with pytest.raises(device_sign_in.SignInFailed):
-        device_sign_in.post_form("token", {}, "s", trickling(clock, list(chunks)), 2000, clock)
+        device_sign_in.post_form("token", {}, "s", capped, 2000, clock)
 
     monkeypatch.setattr(device_sign_in, "MAX_ANSWER_BYTES", 2 * len(document))
     status, answer = device_sign_in.post_form(
@@ -319,10 +320,11 @@ def test_a_token_that_arrives_after_the_code_expired_is_refused():
     clock = FakeClock()
     expiry = clock.now + 10
     late = trickling(clock, [b'{"access_token": "late"}'], closing=11)
+    authorization = device_sign_in.DeviceAuthorization("code", "user", "link", 10, 5)
 
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
         device_sign_in.person_token(
-            device_sign_in.DeviceAuthorization("code", "user", "link", 10, 5),
+            authorization,
             expiry,
             "verifier",
             "s",
@@ -354,9 +356,11 @@ def test_a_token_after_the_original_expiry_is_refused_though_a_rebuilt_deadline_
         clock.now = arrival
         return answer
 
+    authorization = device_sign_in.DeviceAuthorization("code", "user", "link", 6, 5)
+
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
         device_sign_in.person_token(
-            device_sign_in.DeviceAuthorization("code", "user", "link", 6, 5),
+            authorization,
             expiry,
             "verifier",
             "s",
@@ -371,10 +375,10 @@ def test_a_token_after_the_original_expiry_is_refused_though_a_rebuilt_deadline_
 def test_a_device_request_keycloak_refuses_starts_no_sign_in():
     keycloak = FakeKeycloak({"error": "unauthorized_client"})
 
+    clock = FakeClock()
+
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.sign_in(
-            "wrong", keycloak, lambda _seconds: None, lambda _link: None, FakeClock()
-        )
+        device_sign_in.sign_in("wrong", keycloak, lambda _seconds: None, lambda _link: None, clock)
 
     assert str(stopped.value) == "the device endpoint answered 400 and started no sign-in"
 
@@ -387,8 +391,10 @@ def test_a_broken_answer_ends_as_one_line_without_its_content(answer):
     def broken(_request, timeout):
         raise answer
 
+    clock = FakeClock()
+
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.access_token({}, "the-secret", broken, FakeClock())
+        device_sign_in.access_token({}, "the-secret", broken, clock)
 
     assert str(stopped.value) == "the token endpoint gave no answer to read"
     assert stopped.value.__cause__ is None
@@ -397,5 +403,7 @@ def test_a_broken_answer_ends_as_one_line_without_its_content(answer):
 def test_a_token_answer_without_an_access_token_is_refused():
     keycloak = FakeKeycloak({"other": 1})
 
+    clock = FakeClock()
+
     with pytest.raises(device_sign_in.SignInFailed, match="no access token"):
-        device_sign_in.access_token({}, "the-secret", keycloak, FakeClock())
+        device_sign_in.access_token({}, "the-secret", keycloak, clock)
