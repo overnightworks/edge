@@ -1,6 +1,7 @@
 #!/bin/bash
-# The container proof of `home setup`'s system step (#40, cells 1-13): a throwaway Ubuntu 24.04 with systemd as
-# PID 1, never the live PC, never the real /etc or ~/.secrets. Cells 14-17 are unit tests (tests/test_next.py).
+# The container proof of `hal setup`'s system step (#40, cells 1-13) and of its secrets step (S1): a throwaway
+# Ubuntu 24.04 with systemd as PID 1, never the live PC, never the real /etc or ~/.secrets. Cells 14-17 are unit
+# tests (tests/test_next.py).
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>
 #

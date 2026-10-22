@@ -17,6 +17,7 @@ from shlex import quote
 from typing import TYPE_CHECKING
 
 from home_tools import secrets_setup
+from home_tools.secrets_view import ManifestError, Presence, SecretEntry
 from home_tools.system_step import Applied, CheckState, StepFailed, SystemStep
 from home_tools.tidy_home import Config, Layout
 from home_tools.user_units import UserUnits
@@ -34,7 +35,6 @@ HOOK_MODE = 0o755
 HOOK_WHY = "ohne den Hook prüft kein Commit auf Geheimnisse"
 UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
-NO_TERMINAL_FOR_SECRETS = "the secrets step needs a terminal: run `hal setup --apply` in your own terminal window"
 SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
 SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
 # `--apply` runs every step, a verified one too, and the system step always asks for sudo, which needs a person at a terminal.
@@ -86,11 +86,17 @@ def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[],
 
 
 def _secrets_step(layout: Layout, ports: Ports) -> Step:
-    """The wizard as a step: verified by `stat` when the manifest has no missing secret, applied through the wizard itself."""
+    """The wizard as a step: verified by `stat` when no live secret is open or undeterminable, applied through the wizard itself."""
     boundaries = ports.secrets_setup
 
+    def open_secrets() -> list[tuple[SecretEntry, Presence]]:
+        try:
+            return secrets_setup.open_entries(layout)
+        except ManifestError as error:
+            raise StepFailed(str(error)) from None
+
     def is_verified() -> bool:
-        return not secrets_setup.missing_entries(layout)
+        return not open_secrets()
 
     def check() -> CheckState:
         return CheckState.UNCHANGED if is_verified() else CheckState.WOULD_CHANGE
@@ -98,16 +104,23 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
     def apply() -> Applied:
         if is_verified():
             return Applied.UNCHANGED
-        if not boundaries.terminal.is_interactive():
-            raise StepFailed(NO_TERMINAL_FOR_SECRETS)
-        if secrets_setup.run_setup(layout, boundaries, ports.now) != 0:
+        exit_code = secrets_setup.run_setup(layout, boundaries, ports.now)
+        if exit_code == secrets_setup.ABORTED_EXIT:
+            raise KeyboardInterrupt  # the wizard has said so; the caller's own handling gives the exit code
+        if exit_code != 0:
             raise StepFailed(SECRETS_LEFT_OPEN)
         return Applied.CHANGED
 
-    def missing_lines() -> list[str]:
-        return [f"  fehlt: {entry.name}" for entry in secrets_setup.missing_entries(layout)]
+    def open_lines() -> list[str]:
+        return [f"  {_open_label(entry, found)}: {entry.name}" for entry, found in open_secrets()]
 
-    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=missing_lines, listed_by_next=False)
+    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=open_lines, listed_by_next=False)
+
+
+def _open_label(entry: SecretEntry, found: Presence) -> str:
+    if found is Presence.UNKNOWN:
+        return "nicht feststellbar"
+    return "fehlt" if entry.written_by_setup else "von Hand"
 
 
 def render_hook(layout: Layout) -> str:
@@ -252,7 +265,7 @@ def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "setup",
-        help="quality, Engines und den globalen Commit-Hook einrichten, then the user units and the system step",
+        help="quality, Engines und den globalen Commit-Hook einrichten, then the user units, the system step and the secrets",
         description=(
             "Zeigt, was fehlt, oder richtet mit --apply quality, die Engines und den Hook ein."
             " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"

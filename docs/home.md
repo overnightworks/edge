@@ -31,7 +31,7 @@ Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträg
 ```
 
 Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
-Terminal (`hal setup --apply`, `home tidy --apply`),
+Terminal (`home secrets --setup`, `hal setup --apply`, `home tidy --apply`),
 eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
 Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
 Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.

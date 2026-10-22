@@ -6,7 +6,7 @@ import json
 import os
 import stat
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +16,7 @@ from conftest import Sandbox
 import home_tools
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
+from home_tools import cli as home_cli
 from home_tools import system_step
 from home_tools.cli import main
 from home_tools.secrets_setup import Boundaries, Terminal
@@ -525,17 +526,6 @@ def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_e
     assert "erzeugt und gespeichert: ~/.secrets/hopin/session-secret (644)" in lines
 
 
-def test_apply_without_a_terminal_refuses_the_secrets_step_naming_the_command_and_writes_nothing(
-    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
-) -> None:
-    code, _, error = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply", at_a_terminal=False)
-
-    assert code == 1
-    assert "the secrets step needs a terminal: run `hal setup --apply`" in error
-    assert "„Geheimnisse“" in error
-    assert not sandbox.layout.secrets_dir.exists()
-
-
 def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -547,3 +537,135 @@ def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
     assert code == 1
     assert "not every secret is set up" in error
     assert "„Geheimnisse“" in error
+
+
+def secret_entry(name: str, *, kind: str = "service-password", extra: str = "") -> str:
+    return f'[[secret]]\nname = "{name}"\nkind = "{kind}"\npaths = ["~/.secrets/{name}"]\nread_by = []\nrecreate = "hal setup --apply"\n{extra}\n'
+
+
+LIVE = secret_entry("live")
+OPTIONAL = secret_entry("optional", extra="optional = true")
+RETIRED = secret_entry("retired", extra='retired_on = 2026-10-14\nrevoke_url = "https://example.invalid/revoke"')
+BY_HAND = secret_entry("by-hand", kind="token")
+
+
+@pytest.fixture
+def hal_secrets(
+    use_manifest: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> Callable[..., tuple[int, list[str], str]]:
+    """`hal setup` in process against a manifest written from the given entries; the wizard's terminal is the one `secrets_terminal` builds."""
+
+    def run(entries: str, *flags: str, at_a_terminal: bool = True, boundaries: Boundaries | None = None) -> tuple[int, list[str], str]:
+        use_manifest(entries)
+        monkeypatch.setattr(home_cli, "TERMINAL_BOUNDARIES", boundaries or secrets_terminal(at_a_terminal))
+        return run_hal_setup(capsys, *flags)
+
+    return run
+
+
+def put_secret(sandbox: Sandbox, name: str, mode: int = 0o600) -> Path:
+    path = sandbox.home / ".secrets" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("a value no one may read")
+    path.chmod(mode)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("entries", "present", "expected"),
+    [
+        pytest.param(LIVE, [], [f"{SECRETS}: would change", "  fehlt: live"], id="a live entry that is absent"),
+        pytest.param(LIVE, ["live"], [SECRETS_UNCHANGED], id="a live entry with its file"),
+        pytest.param(OPTIONAL, [], [SECRETS_UNCHANGED], id="an optional entry that is absent"),
+        pytest.param(RETIRED, [], [SECRETS_UNCHANGED], id="a retired entry that is absent"),
+        pytest.param(BY_HAND, [], [f"{SECRETS}: would change", "  von Hand: by-hand"], id="an entry only a person can create"),
+        pytest.param(LIVE + OPTIONAL + RETIRED, ["live"], [SECRETS_UNCHANGED], id="every kind, the live one present"),
+    ],
+)
+def test_hal_setup_dry_run_names_only_the_open_secrets(
+    sandbox: Sandbox, hal_secrets: Callable[..., tuple[int, list[str], str]], entries: str, present: list[str], expected: list[str]
+) -> None:
+    for name in present:
+        put_secret(sandbox, name)
+
+    code, lines, _ = hal_secrets(entries)
+
+    assert (code, lines[-len(expected) :]) == (ExitCode.OK, expected)
+
+
+@pytest.fixture
+def closed_folder(sandbox: Sandbox) -> Iterator[None]:
+    """A folder its owner cannot open, so `stat` cannot tell whether the file inside exists."""
+    put_secret(sandbox, "closed/entry")
+    folder = sandbox.home / ".secrets" / "closed"
+    folder.chmod(0)
+    yield
+    folder.chmod(0o700)
+
+
+@pytest.mark.usefixtures("closed_folder")
+@pytest.mark.parametrize("entries", [secret_entry("closed/entry"), secret_entry("closed/entry", extra="optional = true")], ids=["live", "optional"])
+def test_hal_setup_dry_run_names_an_entry_whose_presence_cannot_be_told_and_does_not_call_it_verified(
+    hal_secrets: Callable[..., tuple[int, list[str], str]], entries: str
+) -> None:
+    code, lines, _ = hal_secrets(entries)
+
+    assert (code, lines[-2:]) == (ExitCode.OK, [f"{SECRETS}: would change", "  nicht feststellbar: closed/entry"])
+
+
+@pytest.mark.usefixtures("closed_folder")
+def test_hal_setup_apply_fails_the_secrets_step_when_an_entry_cannot_be_checked(hal_secrets: Callable[..., tuple[int, list[str], str]]) -> None:
+    code, lines, error = hal_secrets(secret_entry("closed/entry"), "--apply")
+
+    assert (code, "closed/entry: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen" in lines) == (ExitCode.FAILURE, True)
+    assert "Schritt „Geheimnisse“ ist fehlgeschlagen" in error
+
+
+def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(sandbox: Sandbox, hal_secrets: Callable[..., tuple[int, list[str], str]]) -> None:
+    unreadable = put_secret(sandbox, "live", mode=0)  # a read would fail with PermissionError, so the run proves it opened nothing
+    modes_before = {path: stat.S_IMODE(path.stat().st_mode) for path in (unreadable, unreadable.parent)}
+
+    code, lines, _ = hal_secrets(LIVE + secret_entry("absent"))
+
+    assert (code, lines[-2:]) == (ExitCode.OK, [f"{SECRETS}: would change", "  fehlt: absent"])
+    assert {path: stat.S_IMODE(path.stat().st_mode) for path in modes_before} == modes_before
+    assert not (unreadable.parent / "absent").exists()
+    unreadable.chmod(0o600)
+
+
+def test_hal_setup_apply_sets_up_the_missing_secrets_and_a_repeated_apply_changes_nothing(
+    sandbox: Sandbox, hal_secrets: Callable[..., tuple[int, list[str], str]]
+) -> None:
+    entries = LIVE + secret_entry("wide", extra="loosest_mode = 0o644\nloosest_mode_reason = \"the container reads it\"")
+    first_code, first_lines, _ = hal_secrets(entries, "--apply")
+    stored = [sandbox.home / ".secrets" / name for name in ("live", "wide")]
+    after_first = [(path.stat().st_ino, path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode), path.read_bytes()) for path in stored]
+
+    second_code, second_lines, _ = hal_secrets(entries, "--apply")
+
+    assert (first_code, first_lines[-1]) == (ExitCode.OK, f"{SECRETS}: changed")
+    assert [mode for _, _, mode, _ in after_first] == [0o600, 0o644]
+    assert (second_code, second_lines[-1]) == (ExitCode.OK, SECRETS_UNCHANGED)
+    assert [(path.stat().st_ino, path.stat().st_mtime_ns, stat.S_IMODE(path.stat().st_mode), path.read_bytes()) for path in stored] == after_first
+
+
+def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(sandbox: Sandbox, hal_secrets: Callable[..., tuple[int, list[str], str]]) -> None:
+    def interrupted(_descriptor: int) -> None:
+        raise KeyboardInterrupt
+
+    terminal = secrets_terminal(True)
+    code, _, error = hal_secrets(LIVE, "--apply", boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted))
+
+    assert code == ExitCode.INTERRUPTED
+    assert "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply" in error
+    assert "fehlgeschlagen" not in error
+    assert not (sandbox.home / ".secrets" / "live").exists()
+
+
+def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_read(hal_secrets: Callable[..., tuple[int, list[str], str]]) -> None:
+    code, _, error = hal_secrets("secret = 5\n")
+
+    assert code == ExitCode.FAILURE
+    assert "hal setup: " in error
+    assert "Schritt „Geheimnisse“ ist fehlgeschlagen" in error
+    assert "unexpected error" not in error

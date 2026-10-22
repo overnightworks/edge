@@ -294,7 +294,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
     assert code == 2
     assert captured.err.splitlines()[-1] == (
         "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError); für cloudflare/read nichts gespeichert."
-        " Weiter mit: home secrets --setup"
+        " Weiter mit: hal setup --apply"
     )
     for value in (PASTED_VALUE, *PASTED_VALUE_PARTS):
         assert value not in captured.out + captured.err
@@ -321,7 +321,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
     assert code == 2
     assert captured.err.splitlines()[-1] == (
         "abgebrochen bei cloudflare/read: unerwarteter Fehler (PermissionError); cloudflare/read ist gespeichert."
-        " Weiter mit: home secrets --setup"
+        " Weiter mit: hal setup --apply"
     )
     assert PASTED_VALUE not in captured.out + captured.err
     assert (home / TOKEN_FILES[0]).read_text() == PASTED_VALUE
@@ -352,7 +352,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
     assert code == 2
     assert captured.err.splitlines()[-1] == (
         "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError);"
-        " ob cloudflare/read gespeichert ist, ist nicht feststellbar. Weiter mit: home secrets --setup"
+        " ob cloudflare/read gespeichert ist, ist nicht feststellbar. Weiter mit: hal setup --apply"
     )
     assert PASTED_VALUE not in captured.out + captured.err
 
@@ -409,7 +409,7 @@ def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
 
     assert code == 130
     assert files_under(home) == set()
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: home secrets --setup"
+    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
 
 
 @pytest.fixture
@@ -433,7 +433,7 @@ def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 130
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: home secrets --setup"
+    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
 
