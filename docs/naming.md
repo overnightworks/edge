@@ -97,8 +97,10 @@ Rulings of overnightworks/edge#24 recorded in the table:
    from the remote URL first and uses `gh repo view` only as a fallback),
    carries the Claude project memory, sets the `origin` of a deploy checkout
    outside `~/git` and runs `uv sync` in a moved `.venv`. It refuses, changing
-   nothing, while a process runs inside a clone, a target exists or GitHub
-   does not know the new name. `hal rename NEW OLD` undoes it.
+   nothing, while a process runs inside a clone, a target exists, a link is in
+   the way or GitHub does not know the new name. `hal rename NEW OLD` undoes it.
+   A step that fails stops it, names the step and what is done; run the same
+   command again once the cause is fixed and it finishes the half-moved clones.
 4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that
    point into a moved clone; the repository's own head fixes those (reinstall
    uv tools from the new path).
