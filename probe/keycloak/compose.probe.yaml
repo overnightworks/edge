@@ -46,6 +46,11 @@ services:
     volumes:
       - ./probe/keycloak/backchannel_client.py:/cell/backchannel_client.py:ro
 
+networks:
+  # The project's own copy of the back-channel network, not the live one.
+  backchannel-songmaker:
+    name: ${COMPOSE_PROJECT_NAME}_backchannel_songmaker
+
 secrets:
   keycloak_db_password:
     file: ${PROBE_SECRETS_DIR:?run through probe/keycloak/probe.py}/db-password

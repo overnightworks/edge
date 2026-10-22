@@ -54,7 +54,10 @@ from urllib.request import (
 
 REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
-sys.path.insert(0, str(REPO / "src"))
+sys.path[:0] = [str(REPO / "src"), str(REPO / "probe" / "keycloak")]
+# Cell BC1 and the back-channel settings of the app clients live in their own module.
+import backchannel_cell  # noqa: E402
+
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
 from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
@@ -108,7 +111,6 @@ class AppClient:
     callbacks: tuple[str, ...]
     logout_redirect: str
     agent_workload: bool = False  # its service account is a workload of the agent service (#183)
-    backchannel_url: str | None = None  # the app's logout address, when Keycloak calls it (#293)
 
     @property
     def default_scopes(self) -> set[str]:
@@ -133,7 +135,6 @@ SONGMAKER = AppClient(
     (f"https://songmaker.{DOMAIN}/auth/callback",),
     f"https://songmaker.{DOMAIN}/login",
     agent_workload=True,
-    backchannel_url=f"http://songmaker.{DOMAIN}:8080/auth/backchannel-logout",
 )
 HOPIN = AppClient(
     "hopin",
@@ -180,8 +181,6 @@ PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as Cloudflare saw it
 CLIENT_ADDRESS_IPV6 = "2001:db8::23"  # the same, for a person on IPv6
 FORGED_FORWARDED_FOR = "203.0.113.9, 192.0.2.7"  # a forged first value, then a proxy's
-BACKCHANNEL_CLIENT_SERVICE = "probe-backchannel-client"
-BACKCHANNEL_FORGED_ADDRESS = "203.0.113.77"
 CONSOLE_PARENT = "/apps"
 CONSOLE_SUBGROUP_NAME = "probe-console"
 CONSOLE_SUBGROUP = f"{CONSOLE_PARENT}/{CONSOLE_SUBGROUP_NAME}"
@@ -481,15 +480,13 @@ class Stack:
         }
 
     def write_network_overlay(self) -> None:
-        """The keycloak network on this stack's free subnet and the back-channel network under this
-        project's own name, instead of the live ones. A compose
+        """The keycloak network on this stack's free subnet instead of the live one. A compose
         file cannot replace the base file's list of subnets, so the base file's is dropped with
         compose's own `!override` tag here, which the repository's YAML checks never read."""
         self.scratch.mkdir(parents=True, exist_ok=True)
         self.network_overlay.write_text(
             "networks:\n  keycloak:\n    ipam:\n      config: !override\n"
             f"        - subnet: {self.keycloak_subnet}\n"
-            f"  backchannel-songmaker:\n    name: {PROJECT}_backchannel_songmaker\n"
         )
 
     def write_traefik_config(self) -> None:
@@ -1189,7 +1186,6 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
-        self.a_forged_forwarded_from_the_backchannel_network_is_not_believed(admin, rp_secret)
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
@@ -2034,55 +2030,10 @@ class Probe:
                             "an admin logout of probe-logout reached probe-rp over the compose "
                             f"network (iss {record['iss']}, sid present: {bool(record['sid'])})",
                         )
+                        self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
                         return
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
-
-    def a_forged_forwarded_from_the_backchannel_network_is_not_believed(
-        self, admin: Admin, rp_secret: str
-    ) -> None:
-        """#293: Keycloak trusts `Forwarded` only from the keycloak network; what else a container
-        on the back-channel network reaches is recorded, not judged."""
-        password = self.keep_secret("probe-forged password", secrets.token_urlsafe(16))
-        user_id = admin.create_user(REALM, "probe-forged", password)
-        form = {
-            "grant_type": "password",
-            "client_id": "probe-rp",
-            "client_secret": rp_secret,
-            "username": "probe-forged",
-            "password": "not-the-password",
-        }
-        ran = self.stack.compose(
-            "exec",
-            "-T",
-            BACKCHANNEL_CLIENT_SERVICE,
-            "python",
-            "/cell/backchannel_client.py",
-            f"http://keycloak:8080{REALM_PATH}/protocol/openid-connect/token",
-            json.dumps(form),
-            BACKCHANNEL_FORGED_ADDRESS,
-        )
-        expect(ran.returncode == 0, f"the back-channel client failed:\n{tail(ran.stderr)}")
-        seen = json.loads(ran.stdout)
-        expect(seen["token"] == "400", f"the wrong password answered {seen['token']}, not 400")
-        stored = [
-            event
-            for event in admin.get(f"/{REALM}/events?user={user_id}")
-            if event["type"] == "LOGIN_ERROR"
-        ]
-        expect(len(stored) == 1, f"probe-forged has {len(stored)} LOGIN_ERROR events, not one")
-        expect(
-            stored[0].get("ipAddress") == seen["address"],
-            f"the forged address {BACKCHANNEL_FORGED_ADDRESS} was believed: the event carries "
-            f"{stored[0].get('ipAddress')}, not the container's {seen['address']}",
-        )
-        self.held(
-            "BC1",
-            f"a Forwarded {BACKCHANNEL_FORGED_ADDRESS} from {seen['address']} on the back-channel "
-            f"network is not believed (the event keeps {seen['address']}); reach recorded, not "
-            f"judged: /admin/ answers {seen['admin']}, the management port 9000 /health answers "
-            f"{seen['management']}",
-        )
 
     def only_logins_and_failed_logins_are_stored(self, admin: Admin, rp_secret: str) -> None:
         password = self.keep_secret("probe-events password", secrets.token_urlsafe(16))
@@ -2414,15 +2365,6 @@ class Probe:
     def app_client_representation(admin: Admin, client: AppClient) -> None:
         """Cell T8, #161 SA3-1: flags, callbacks, logout, base URL and console listing."""
         found = admin.find(f"/{REALM}/clients", "clientId", client.client_id)
-        attributes = found["attributes"]
-        backchannel = {
-            key: attributes.get(key)
-            for key, value in {
-                "backchannel.logout.url": client.backchannel_url,
-                "backchannel.logout.session.required": "false" if client.backchannel_url else None,
-            }.items()
-            if attributes.get(key) != value
-        }
         wrong = {
             key: found.get(key)
             for key, value in {
@@ -2445,10 +2387,8 @@ class Probe:
             }.items()
             if set(found.get(key) or ()) != value
         }
-        expect(
-            not wrong and not backchannel,
-            f"{client.client_id}'s representation differs: {wrong}, back-channel {backchannel}",
-        )
+        wrong |= backchannel_cell.wrong_logout_settings(client.client_id, found["attributes"])
+        expect(not wrong, f"{client.client_id}'s representation differs: {wrong}")
 
     def fresh_realm_has_nothing_only_in_keycloak(self) -> RealmStepStand:
         """Proof 3a's end (#248, cell 2): the realms the files just made hold only what they

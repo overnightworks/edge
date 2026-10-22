@@ -1,6 +1,6 @@
-"""Runs inside the probe container on the back-channel network (probe.py, cell BC1): a wrong
-password with a forged Forwarded header, then a plain GET of the admin console and of Keycloak's
-management port. Prints what it saw as one JSON line."""
+"""Runs inside the probe container on the back-channel network (backchannel_cell.py, cell BC1): a
+wrong password with a forged Forwarded header, then a plain GET of the admin console and of
+Keycloak's management port. Prints what it saw as one JSON line."""
 
 import json
 import socket
@@ -9,7 +9,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-token_url, form_json, forged = sys.argv[1:4]
+KEYCLOAK = "http://keycloak"  # NOSONAR(S5332) the probe network's own address of Keycloak
+TOKEN_URL = f"{KEYCLOAK}:8080/realms/hallucinai/protocol/openid-connect/token"
+
+form_json, forged = sys.argv[1:3]
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -32,14 +35,14 @@ def status(request):
 
 form = urllib.parse.urlencode(json.loads(form_json)).encode()
 headers = {"Forwarded": "for=" + forged}
-forged_request = urllib.request.Request(token_url, data=form, headers=headers)
+forged_request = urllib.request.Request(TOKEN_URL, data=form, headers=headers)
 print(
     json.dumps(
         {
             "address": socket.gethostbyname(socket.gethostname()),
             "token": status(forged_request),
-            "admin": status("http://keycloak:8080/admin/"),
-            "management": status("http://keycloak:9000/health"),
+            "admin": status(f"{KEYCLOAK}:8080/admin/"),
+            "management": status(f"{KEYCLOAK}:9000/health"),
         }
     )
 )
