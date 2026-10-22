@@ -1,8 +1,0 @@
-claim_id = "b91129e347a74f5e9e6fc8ea55786252"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "23e8bb5941bae06e58f56511e4dac59b12730898"
-branch = "claude/issue-285-legal-unit"
-scope = ["README.md", "compose.yaml", "docs/architecture.md", "docs/stack.md", "fleet.yaml", "legal", "quality/baseline.toml", "scripts/check_root_layout.py", "tests/test_legal_unit.py"]
-opened_commit = "eefe0f0130144671014eb2a677f56423157482bd"
-whole_reason = "One new unit: its compose service, its catalog line, its config and first page, its tests and the two documents that list the stack's services."
