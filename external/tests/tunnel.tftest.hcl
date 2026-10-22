@@ -35,7 +35,7 @@ run "t1_the_plain_catalog_gets_one_line_per_host_and_the_404_rule_last" {
   assert {
     condition = (
       [for rule in cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress : rule.service]
-      == ["http://localhost:8080", "http://localhost:8080", "http_status:404"]
+      == ["http://127.0.0.1:8081", "http://127.0.0.1:8081", "http_status:404"]
     )
     error_message = "the hosts do not point to their targets, or the 404 rule is not last"
   }

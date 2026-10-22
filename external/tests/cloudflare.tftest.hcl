@@ -495,3 +495,54 @@ run "c21_a_catalog_without_a_deny_plans_no_ruleset" {
     error_message = "a ruleset is planned though no host denies a path"
   }
 }
+
+run "x11b_the_redirected_names_get_records_no_tunnel_line_and_one_redirect_ruleset" {
+  command = plan
+
+  variables {
+    catalog_file = "tests/fixtures/cloudflare-redirect.yaml"
+  }
+
+  assert {
+    condition = (
+      toset(keys(cloudflare_dns_record.host)) == toset(["app.edge-fixture.invalid", "edge-fixture.invalid", "www.edge-fixture.invalid"])
+      && alltrue([for record in cloudflare_dns_record.host : record.proxied])
+      && [for rule in cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress : rule.hostname == null ? "" : rule.hostname] == ["app.edge-fixture.invalid", ""]
+    )
+    error_message = "the redirected names do not have proxied records and no tunnel line"
+  }
+
+  assert {
+    condition = (
+      cloudflare_ruleset.apex_redirect[0].phase == "http_request_dynamic_redirect"
+      && cloudflare_ruleset.apex_redirect[0].kind == "zone"
+      && [for rule in cloudflare_ruleset.apex_redirect[0].rules : [rule.action, rule.expression, rule.action_parameters.from_value.target_url.value, rule.action_parameters.from_value.status_code, rule.action_parameters.from_value.preserve_query_string]] == [
+        [
+          "redirect",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/impressum\" \"/impressum/\"}",
+          "https://app.edge-fixture.invalid/impressum", 302, false,
+        ],
+        [
+          "redirect",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/datenschutz\" \"/datenschutz/\"}",
+          "https://app.edge-fixture.invalid/datenschutz", 302, false,
+        ],
+        [
+          "redirect",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") )",
+          "https://auth.edge-fixture.invalid/", 302, false,
+        ],
+      ]
+    )
+    error_message = "the redirect is not the kept paths first, then everything else, each 302 without the query, for both names with and without a port"
+  }
+}
+
+run "x11b_a_catalog_without_a_redirect_plans_no_redirect_ruleset" {
+  command = plan
+
+  assert {
+    condition     = length(cloudflare_ruleset.apex_redirect) == 0
+    error_message = "a redirect ruleset is planned though the catalog has no redirect"
+  }
+}
