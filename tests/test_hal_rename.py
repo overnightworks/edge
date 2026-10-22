@@ -272,8 +272,10 @@ def test_a_failing_step_ends_with_failure_and_says_it_stopped_halfway(world, rep
 
 @pytest.mark.parametrize("name", ["../up", "a/b", "", "-x", "Upper"])
 def test_a_name_that_is_not_a_repository_name_is_a_usage_error(name, capsys):
+    parser = cli.build_parser(cli.COMMANDS)
+
     with pytest.raises(SystemExit) as stop:
-        cli.build_parser(cli.COMMANDS).parse_args(["rename", name, "fresh"])
+        parser.parse_args(["rename", name, "fresh"])
 
     assert stop.value.code == ExitCode.USAGE
 
@@ -314,7 +316,8 @@ def test_the_real_boundaries_call_gh_and_uv(tmp_path, monkeypatch):
 
     world = rename_commands.real_world(tmp_path)
 
-    assert world.github_knows("known") and not world.github_knows("missing")
+    assert world.github_knows("known")
+    assert not world.github_knows("missing")
     world.uv_sync(project)
     assert (tmp_path / "log").read_text().strip() == f"sync --locked --reinstall in {project}"
     assert world.uv_tools() == "tool listing\n"
@@ -334,7 +337,8 @@ def test_a_clone_without_origin_or_with_another_repository_stays_put(home, world
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert (home / "git" / "old").is_dir() and (home / "git" / "old-land").is_dir()
+    assert (home / "git" / "old").is_dir()
+    assert (home / "git" / "old-land").is_dir()
     assert origin_of(home / ".hidden") == HTTPS.format("old")
 
 
