@@ -60,10 +60,11 @@ jobs:
           path: coverage.xml
 
       # The wheel must ship every package, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check, edge-backup, home and hal
+      - name: The wheel installs edge-check, home and hal
         run: |
           uv build --wheel --out-dir dist
-          uv run --isolated --no-project --no-build --with dist/*.whl edge-backup --help
+          uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
+          uv run --isolated --no-project --no-build --with dist/*.whl hal restore --help
           uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"

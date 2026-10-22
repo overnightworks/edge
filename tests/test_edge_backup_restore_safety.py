@@ -62,7 +62,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
 
     outcome = edge_backup("restore", "songmaker", "--target", str(target))
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert refusal in line
     assert f"der neueste Snapshot ist {machine.snapshots[-1]['id'][:8]}" in line
@@ -74,7 +74,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
     [RESTIC_IMAGE, *RESTORE_IMAGES.values()],
     ids=["restic", *(f"postgres-{major}" for major in RESTORE_IMAGES)],
 )
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
     edge_backup, machine, command, image
 ):
@@ -82,7 +82,7 @@ def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
     edge_backup(*shipped, "backup")
     machine.missing_images = {image}
 
-    outcome = edge_backup(*shipped, command)
+    outcome = edge_backup(*shipped, *command.split())
 
     assert outcome.exit_code == 0, outcome.err
     pulls = [argv for label, argv in machine.calls if label == "docker pull"]
@@ -90,16 +90,16 @@ def test_a_pruned_pinned_image_is_pulled_by_its_digest_and_the_run_goes_on(
     assert "@sha256:" in image
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_pinned_image_that_cannot_be_pulled_fails_early_naming_it(
     edge_backup, machine, home, command
 ):
     machine.missing_images = {RESTIC_IMAGE}
     machine.unpullable_images = {RESTIC_IMAGE}
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command.split())
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert RESTIC_IMAGE in line
     assert set(machine.labels()) == {"docker info", "docker image inspect", "docker pull"}
@@ -110,7 +110,7 @@ def test_a_pinned_image_that_cannot_be_pulled_fails_early_naming_it(
     )
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_daemon_that_is_still_starting_is_waited_for_before_the_images_are_checked(
     edge_backup, machine, command
 ):
@@ -118,7 +118,7 @@ def test_a_daemon_that_is_still_starting_is_waited_for_before_the_images_are_che
     polls_before = machine.labels().count("docker info")
     machine.daemon_down_polls = 3
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command.split())
 
     assert outcome.exit_code == 0, outcome.err
     assert outcome.status["state"] == "ok"
@@ -183,7 +183,7 @@ def test_restore_refuses_a_snapshot_that_is_not_one_single_snapshot_of_the_app(
 
     outcome = edge_backup("restore", "songmaker", "--snapshot", snapshot, "--target", str(target))
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert "nennt keinen einzelnen Snapshot" in line
     assert not target.exists()
@@ -198,7 +198,7 @@ def test_restore_refuses_the_snapshot_of_another_app(edge_backup, machine, home)
         "restore", "songmaker", "--snapshot", machine.snapshots[-1]["id"], "--target", str(target)
     )
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert "nennt keinen einzelnen Snapshot" in line
     assert not target.exists()
@@ -210,7 +210,7 @@ def test_restore_test_verifies_the_last_successful_snapshot_not_a_newer_partial_
     edge_backup("backup")
     _leave_a_partial_snapshot(machine)
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
 
@@ -219,9 +219,9 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
     edge_backup("backup")
     _lose_the_status(machine)
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
 
 
@@ -247,7 +247,7 @@ def test_restore_test_verifies_each_app_against_its_own_snapshot(edge_backup, ma
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
 
-    outcome = edge_backup(*two_apps, "restore-test")
+    outcome = edge_backup(*two_apps, "restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
     restored = [argv for label, argv in machine.calls if label == "restic restore"]
@@ -268,9 +268,9 @@ def test_an_app_that_fails_its_restore_test_does_not_cost_the_others_their_time(
     edge_backup(*two_apps, "backup")
     del machine.snapshots[-1]["db"]["db.dump"]
 
-    outcome = edge_backup(*two_apps, "restore-test")
+    outcome = edge_backup(*two_apps, "restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert (outcome.status["failing_app"], outcome.status["failing_phase"]) == ("radio", "verify")
     assert app_history(outcome.status)["last_successful_restore_test"] is not None
     assert app_history(outcome.status, "radio")["last_successful_restore_test"] is None
@@ -282,7 +282,7 @@ def test_a_failed_read_data_check_gives_no_app_a_new_restore_test_time(edge_back
     edge_backup(*two_apps, "backup")
     machine.failing["restic check"] = 1
 
-    outcome = edge_backup(*two_apps, "restore-test")
+    outcome = edge_backup(*two_apps, "restore", "--test")
 
     assert outcome.status["failing_phase"] == "check"
     assert all(
@@ -322,7 +322,7 @@ def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
         assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in restored.err
     assert machine.status_file.read_bytes() == legacy_file
 
-    migrated = edge_backup(*declared, "restore-test")
+    migrated = edge_backup(*declared, "restore", "--test")
 
     assert migrated.status["schema"] == 2
     assert "last_successful_backup" not in migrated.status
