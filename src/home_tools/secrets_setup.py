@@ -281,20 +281,21 @@ def _stops_held() -> Iterator[None]:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: DiskSync) -> None:
+def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: DiskSync, mode: int = LOOSEST_FILE_MODE) -> None:
     """Writes a secret that does not exist yet; it never replaces one, and an interruption leaves no file behind.
 
     The value goes to a fresh private file that is linked to its place only once it is complete: the link fails rather
     than replace a file that appeared meanwhile, and the fresh name is removed on every way out. A stop that arrives
-    meanwhile waits until the place holds the whole secret or nothing.
+    meanwhile waits until the place holds the whole secret or nothing. `mode` is the entry's declared loosest mode; the
+    folder stays 0700 whatever it is.
     """
     target = layout.home / place
     _private_directories(layout.home, target.parent)
     fresh = target.with_name(f".{target.name}.{uuid.uuid4().hex}.neu")
     with _stops_held():
         try:
-            with open(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, LOOSEST_FILE_MODE), "wb") as fresh_file:
-                os.fchmod(fresh_file.fileno(), LOOSEST_FILE_MODE)
+            with open(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode), "wb") as fresh_file:
+                os.fchmod(fresh_file.fileno(), mode)
                 fresh_file.write(value.encode())
                 fresh_file.flush()
                 sync(fresh_file.fileno())
@@ -379,12 +380,12 @@ def _say(*lines: str) -> None:
 def stored_line(entry: SecretEntry) -> str:
     """What the walk says once an entry is stored: a token after its provider confirmed it, a service password unseen."""
     done = "geprüft" if entry.source else "erzeugt"
-    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({LOOSEST_FILE_MODE:o})"
+    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
 
 
 def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
     try:
-        store_new_secret(layout, entry.place, value, boundaries.sync)
+        store_new_secret(layout, entry.place, value, boundaries.sync, entry.loosest_mode)
     except StoreRefused as refused:
         _say(f"nicht gespeichert: {refused}")
         return False
@@ -463,6 +464,15 @@ class EntryFailed(Exception):
 
 def _presence_on_disk(entry: SecretEntry, layout: Layout) -> Presence:
     return presence(entry, {pattern: stat_matches(layout, pattern) for pattern in entry.paths})
+
+
+def missing_entries(layout: Layout) -> list[SecretEntry]:
+    """The entries the walk would set up: live, not optional, and absent on disk, by `stat` only."""
+    return [
+        entry
+        for entry in load_manifest(secrets_view.MANIFEST_PATH)
+        if entry.expected_present and _presence_on_disk(entry, layout) is Presence.MISSING
+    ]
 
 
 def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:

@@ -81,6 +81,38 @@ install_home() {  # the wheel, and the user manager `hal setup`'s user-units ste
     loginctl enable-linger tester
     timeout 60 bash -c 'until systemctl is-active --quiet "user@$(id -u tester).service"; do sleep 1; done'
     su - tester -c "uv tool install /proof/*.whl" >"$EVIDENCE/install.log" 2>&1
+    plant_fake_secrets >>"$EVIDENCE/install.log" 2>&1
+    return
+}
+
+# `hal setup --apply` ends with the secrets step, which would walk the wizard at the cells' terminal for every secret the
+# packaged manifest names. The tester's home therefore holds a fake file for each one, never a real secret, and the
+# secrets cell takes one away and puts it back.
+plant_fake_secrets() {  # plant_fake_secrets [drop]: a fake file for every live entry of the manifest; with `drop`, the first is taken away again and its name printed
+    local python
+    python=$(head -n 1 "$HOME_BIN" | sed 's/^#!//')
+    cat >/proof/plant_secrets.py <<'PYTHON'
+import sys
+from pathlib import Path
+
+from home_tools import secrets_view
+
+home = Path.home()
+live = [entry for entry in secrets_view.load_manifest(secrets_view.MANIFEST_PATH) if not entry.retired]
+places = [home / str(pattern).replace("*", "fake") for entry in live for pattern in entry.paths]
+for path in places:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("proof-fake-secret")
+    path.chmod(0o600)
+for directory in [home / ".secrets", *(home / ".secrets").rglob("*")]:
+    if directory.is_dir():
+        directory.chmod(0o700)
+if sys.argv[1:] == ["drop"]:
+    for pattern in live[0].paths:
+        (home / str(pattern).replace("*", "fake")).unlink()
+    print(live[0].name)
+PYTHON
+    su - tester -c "$python -I /proof/plant_secrets.py $*"
     return
 }
 
@@ -234,6 +266,18 @@ cell_9() {
     verdict 9 "a second apply: Ansible reports changed=0, System unchanged" \
         '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log" && in_log cell9 "System: unchanged"'
     verdict 9 "Ansible left nothing in the home" '[ ! -e /home/tester/.ansible ]'
+    return
+}
+
+cell_s1() {  # the secrets step: verified with every fake secret in place; the dry run names the one taken away and writes nothing
+    local code dropped
+    verdict S1 "every secret in place: the secrets step is unchanged" 'in_log cell9 "Geheimnisse: unchanged"'
+    dropped=$(plant_fake_secrets drop)
+    without_terminal cell-s1 "$HOME_BIN setup"
+    code=$?
+    verdict S1 "a dry run names the missing secret $dropped and exits 0" \
+        '[ $code -eq 0 ] && in_log cell-s1 "Geheimnisse: would change" && in_log cell-s1 "fehlt: $dropped"'
+    plant_fake_secrets >/dev/null
     return
 }
 
@@ -483,7 +527,7 @@ cell_8() {
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_9; cells_retention; cells_polkit; marker_on ;;
+    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_9; cell_s1; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; marker_off ;;
     after-unmarked-reboot) cell_8 ;;
     prepared) prepare_today; cell_2 ;;

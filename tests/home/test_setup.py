@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -15,13 +18,16 @@ from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from home_tools import system_step
 from home_tools.cli import main
+from home_tools.secrets_setup import Boundaries, Terminal
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE
 from home_tools.system_step import CheckState, PlaybookRun, SystemStep
 
 USER_UNITS = "User units"
-STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", USER_UNITS, "Ansible", "System"]
+SECRETS = "Geheimnisse"
+STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", USER_UNITS, "Ansible", "System", SECRETS]
 # The sandbox's unit directory is empty: the user-units step has nothing to change.
-CHANGED_STEPS = [f"{name}: {'unchanged' if name == USER_UNITS else 'changed'}" for name in STEP_NAMES]
+CHANGED_STEPS = [f"{name}: {'unchanged' if name in (USER_UNITS, SECRETS) else 'changed'}" for name in STEP_NAMES]
+SECRETS_UNCHANGED = f"{SECRETS}: unchanged"
 UNCHANGED_STEPS = [f"{name}: unchanged" for name in STEP_NAMES]
 NOT_CHECKED = "System: not checked (needs sudo at a terminal)"
 NOT_CHECKED_WITHOUT_ANSIBLE = "System: not checked (needs Ansible, which `hal setup --apply` installs first)"
@@ -47,7 +53,7 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
     """Rule 4 and E1: `home setup` prints what it would change; before Ansible is installed the system step is not checked."""
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines) == (0, [*(f"{step}: {'unchanged' if step == USER_UNITS else 'would change'}" for step in STEP_NAMES[:-1]), NOT_CHECKED_WITHOUT_ANSIBLE])
+    assert (code, lines) == (0, [*(f"{step}: {'unchanged' if step == USER_UNITS else 'would change'}" for step in STEP_NAMES[:-2]), NOT_CHECKED_WITHOUT_ANSIBLE, SECRETS_UNCHANGED])
     assert uv_installs(sandbox) == []
     assert sandbox.system.playbook.calls == []
     assert global_hooks_path(sandbox) == ""
@@ -229,7 +235,7 @@ def test_the_system_step_comes_after_the_activation_and_asks_for_sudo_once(sandb
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
-    assert (code, lines[-4:]) == (0, ["Aktivierung: changed", "User units: unchanged", "Ansible: changed", "System: changed"])
+    assert (code, lines[-5:]) == (0, ["Aktivierung: changed", "User units: unchanged", "Ansible: changed", "System: changed", SECRETS_UNCHANGED])
     assert argv[:2] == [str(sandbox.layout.ansible_playbook_executable), str(system_step.PLAYBOOK)]
     assert (argv.count("--ask-become-pass"), "--diff" in argv, "--check" in argv) == (1, True, False)
 
@@ -281,7 +287,7 @@ def test_a_dry_run_at_a_terminal_checks_with_ansible_and_only_unchanged_counts_a
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines[-1]) == (0, expected)
+    assert (code, lines[-2]) == (0, expected)
     assert playbook_runs(sandbox) == ["apply", "check"]
     assert sandbox.layout.system_step_record.exists() is recorded
 
@@ -295,7 +301,7 @@ def test_without_a_terminal_the_dry_run_says_not_checked_and_never_starts_ansibl
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines) == (0, [*UNCHANGED_STEPS[:-1], NOT_CHECKED])
+    assert (code, lines) == (0, [*UNCHANGED_STEPS[:-2], NOT_CHECKED, SECRETS_UNCHANGED])
     assert playbook_runs(sandbox) == ["apply"]
 
 
@@ -321,7 +327,7 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
 
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines) == (1, CHANGED_STEPS[:-1])
+    assert (code, lines) == (1, CHANGED_STEPS[:-2])
     assert "`hal setup --apply` in your own terminal window" in error
     assert "„System“" in error
     assert playbook_runs(sandbox) == []
@@ -334,7 +340,7 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
 
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines) == (1, CHANGED_STEPS[:-1])
+    assert (code, lines) == (1, CHANGED_STEPS[:-2])
     assert "„System“" in error
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
     assert not sandbox.layout.system_step_record.exists()
@@ -444,6 +450,87 @@ def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_
 
     code, lines, error = run_hal_setup(capsys, "--apply")
 
-    assert (code, lines) == (ExitCode.FAILURE, CHANGED_STEPS[:-1])
+    assert (code, lines) == (ExitCode.FAILURE, CHANGED_STEPS[:-2])
     assert "`hal setup --apply` in your own terminal window" in error
     assert "hal setup: Schritt „System“ ist fehlgeschlagen" in error
+
+
+SECRETS_MANIFEST = """\
+[[secret]]
+name = "opentofu/passphrase"
+kind = "service-password"
+paths = ["~/.secrets/opentofu/passphrase"]
+read_by = []
+recreate = "hal setup --apply"
+
+[[secret]]
+name = "hopin/session-secret"
+kind = "service-password"
+paths = ["~/.secrets/hopin/session-secret"]
+read_by = []
+recreate = "hal setup --apply"
+loosest_mode = 0o644
+loosest_mode_reason = "der Container liest es als eigener Nutzer"
+"""
+SECRET_FILES = (".secrets/opentofu/passphrase", ".secrets/hopin/session-secret")
+
+
+def secrets_terminal(at_a_terminal: bool) -> Boundaries:
+    """A terminal that must never be asked for a value: the manifest above holds only generated passwords."""
+
+    def never_asked(_prompt: str) -> str:
+        raise AssertionError("the wizard asked a person for a value it generates itself")
+
+    terminal = Terminal(lambda: at_a_terminal, never_asked, never_asked, lambda _page: False)
+    return Boundaries(terminal, lambda _source, _value: pytest.fail("a generated password is never verified"), lambda _descriptor: None)
+
+
+def run_setup_with_secrets(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str], *flags: str, at_a_terminal: bool = True
+) -> tuple[int, list[str], str]:
+    use_manifest(SECRETS_MANIFEST)
+    code = main(["setup", *flags], home=sandbox.home, secrets_setup_boundaries=secrets_terminal(at_a_terminal), now=datetime(2026, 10, 22, 9, 0))
+    captured = capsys.readouterr()
+    return code, captured.out.splitlines(), captured.err
+
+
+def test_the_secrets_step_is_verified_when_the_manifest_has_no_missing_secret(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
+
+    assert (code, lines[-1]) == (0, SECRETS_UNCHANGED)
+
+
+def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
+
+    assert (code, lines[-3:]) == (0, [f"{SECRETS}: would change", "  fehlt: opentofu/passphrase", "  fehlt: hopin/session-secret"])
+    assert not sandbox.layout.secrets_dir.exists()
+
+
+def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_entry_lands_0644_in_a_0700_folder(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
+
+    modes = {name: stat.S_IMODE((sandbox.home / name).stat().st_mode) for name in SECRET_FILES}
+    folder_modes = {name: stat.S_IMODE((sandbox.home / name).parent.stat().st_mode) for name in SECRET_FILES}
+    assert (code, lines[-1]) == (0, f"{SECRETS}: changed")
+    assert modes == {SECRET_FILES[0]: 0o600, SECRET_FILES[1]: 0o644}
+    assert folder_modes == {name: 0o700 for name in SECRET_FILES}
+    assert "erzeugt und gespeichert: ~/.secrets/hopin/session-secret (644)" in lines
+
+
+def test_apply_without_a_terminal_refuses_the_secrets_step_naming_the_command_and_writes_nothing(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, error = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply", at_a_terminal=False)
+
+    assert code == 1
+    assert "the secrets step needs a terminal: run `hal setup --apply`" in error
+    assert "„Geheimnisse“" in error
+    assert not sandbox.layout.secrets_dir.exists()

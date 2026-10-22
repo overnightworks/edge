@@ -90,9 +90,9 @@ prepared=$(start_container prepared)
 stage "$prepared" install
 stage "$prepared" prepared
 
-judge() {  # judge <cells file>: every cell 1-13 printed a held line and none printed a failed one
+judge() {  # judge <cells file>: every cell 1-13 and S1 printed a held line and none printed a failed one
     local cells=$1 cell missing=()
-    for cell in {1..13}; do
+    for cell in {1..13} S1; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then

@@ -31,7 +31,7 @@ Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträg
 ```
 
 Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
-Terminal (`home secrets --setup`, `hal setup --apply`, `home tidy --apply`),
+Terminal (`hal setup --apply`, `home tidy --apply`),
 eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
 Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
 Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.
@@ -242,7 +242,13 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 `--setup` das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
 `chmod` bleibt ein Handgriff.
 
-### Einrichten: `home secrets --setup`
+### Einrichten: `hal setup --apply`
+
+`hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
+auf diesem PC kein fehlendes Geheimnis hat (nur `stat`); ohne `--apply` nennt er die fehlenden
+und ändert nichts; `--apply` führt den Assistenten aus, der ein eigenes Terminal braucht. Der
+Assistent ist derselbe wie `home secrets --setup`, und `--setup` unten meint ihn. Ein Eintrag mit
+`loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
 `--setup` geht die fehlenden Einträge des Manifests der Reihe nach durch,
 zuerst die fünf von `edge external`. Gelesen werden davon drei:

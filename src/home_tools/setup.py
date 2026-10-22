@@ -1,4 +1,4 @@
-"""`hal setup`: quality, its engines and the global commit hook, then the user units, Ansible and the system step.
+"""`hal setup`: quality, its engines and the global commit hook, then the user units, Ansible, the system step and the secrets.
 
 The activation comes before the user units and the system step, so a wrong sudo password never keeps the commit hook from being active.
 The user units come before the system step, which is the one that asks for sudo.
@@ -16,6 +16,7 @@ from pathlib import Path
 from shlex import quote
 from typing import TYPE_CHECKING
 
+from home_tools import secrets_setup
 from home_tools.system_step import Applied, CheckState, StepFailed, SystemStep
 from home_tools.tidy_home import Config, Layout
 from home_tools.user_units import UserUnits
@@ -32,6 +33,9 @@ HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
 HOOK_WHY = "ohne den Hook prüft kein Commit auf Geheimnisse"
 UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
+SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
+NO_TERMINAL_FOR_SECRETS = "the secrets step needs a terminal: run `hal setup --apply` in your own terminal window"
+SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
 SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
 # `--apply` runs every step, a verified one too, and the system step always asks for sudo, which needs a person at a terminal.
 # The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
@@ -50,6 +54,8 @@ class Step:
 
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
     `details` are the lines printed under the heading of an applied step.
+    `would_change` are the lines printed under the heading of a dry run that found something to change.
+    `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     """
 
     name: str
@@ -59,6 +65,8 @@ class Step:
     why: str
     needs_first: Callable[[], str] = lambda: ""
     details: Callable[[], list[str]] = lambda: []
+    would_change: Callable[[], list[str]] = lambda: []
+    listed_by_next: bool = True
 
 
 def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[], bool], why: str) -> Step:
@@ -75,6 +83,31 @@ def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[],
         return Applied.CHANGED
 
     return Step(name, is_current, check, apply, why)
+
+
+def _secrets_step(layout: Layout, ports: Ports) -> Step:
+    """The wizard as a step: verified by `stat` when the manifest has no missing secret, applied through the wizard itself."""
+    boundaries = ports.secrets_setup
+
+    def is_verified() -> bool:
+        return not secrets_setup.missing_entries(layout)
+
+    def check() -> CheckState:
+        return CheckState.UNCHANGED if is_verified() else CheckState.WOULD_CHANGE
+
+    def apply() -> Applied:
+        if is_verified():
+            return Applied.UNCHANGED
+        if not boundaries.terminal.is_interactive():
+            raise StepFailed(NO_TERMINAL_FOR_SECRETS)
+        if secrets_setup.run_setup(layout, boundaries, ports.now) != 0:
+            raise StepFailed(SECRETS_LEFT_OPEN)
+        return Applied.CHANGED
+
+    def missing_lines() -> list[str]:
+        return [f"  fehlt: {entry.name}" for entry in secrets_setup.missing_entries(layout)]
+
+    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=missing_lines, listed_by_next=False)
 
 
 def render_hook(layout: Layout) -> str:
@@ -170,12 +203,16 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY, details=units.loaded_command_lines),
         _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY),
         Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first),
+        _secrets_step(layout, ports),
     )
 
 
 def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    """The steps `hal setup --apply` would run; `home next` reads the plan through this, and it never asks for sudo."""
-    return tuple(step for step in _steps(layout, ports) if not step.is_verified())
+    """The open steps `home next` lists from `hal setup --apply`'s plan; it never asks for sudo.
+
+    The secrets step is left out: `home next` lists the missing secrets from the view, one wizard step each.
+    """
+    return tuple(step for step in _steps(layout, ports) if step.listed_by_next and not step.is_verified())
 
 
 def _outcome(step: Step, apply: bool) -> str:
@@ -186,12 +223,19 @@ def _outcome(step: Step, apply: bool) -> str:
     return f"{state.value} (needs {needs})" if needs else state.value
 
 
+def _lines_under_heading(step: Step, apply: bool, outcome: str) -> list[str]:
+    if apply:
+        return step.details()
+    return step.would_change() if outcome == CheckState.WOULD_CHANGE.value else []
+
+
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     """Stops at the first failed step, so a missing scanner never gets a hook activated."""
     for step in _steps(layout, ports):
         try:
-            print(f"{step.name}: {_outcome(step, apply)}")
-            for line in step.details() if apply else ():
+            outcome = _outcome(step, apply)
+            print(f"{step.name}: {outcome}")
+            for line in _lines_under_heading(step, apply, outcome):
                 print(line)
         except (OSError, StepFailed) as error:
             if str(error):
@@ -214,6 +258,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
             " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
+            " Last it walks you through every missing secret at the terminal, never showing a value."
         ),
         epilog=SETUP_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
