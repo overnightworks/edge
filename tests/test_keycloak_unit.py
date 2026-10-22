@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import apply, catalog, compose
+from edge import catalog, compose, unit_plans
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 KEYCLOAK_SERVICES = ("keycloak-db", "keycloak")
@@ -62,10 +62,10 @@ def test_switching_keycloak_off_names_its_database_volume_as_staying(keycloak_un
     profiles = compose.profile_services(document)
     running = {name: {"running"} for name in KEYCLOAK_SERVICES}
 
-    plans = apply.plan_switches([keycloak_unit_off], profiles, document, running, {})
+    plans = unit_plans.plan_switches([keycloak_unit_off], profiles, document, running, {})
 
     assert [(plan.action, plan.services, plan.volumes) for plan in plans] == [
-        (apply.Action.OFF, KEYCLOAK_SERVICES, ("keycloak-db",))
+        (unit_plans.Action.OFF, KEYCLOAK_SERVICES, ("keycloak-db",))
     ]
 
 
@@ -74,7 +74,7 @@ def test_keycloak_that_is_off_and_gone_needs_no_change(keycloak_unit_off):
     document = resolved_like_compose(compose_document())
     profiles = compose.profile_services(document)
 
-    assert apply.plan_switches([keycloak_unit_off], profiles, document, {}, {}) == []
+    assert unit_plans.plan_switches([keycloak_unit_off], profiles, document, {}, {}) == []
 
 
 def client_secret_problems(realm: dict, compose_file: dict, overlay: dict) -> list[str]:
