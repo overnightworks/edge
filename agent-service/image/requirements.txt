@@ -1,4 +1,4 @@
-# agent-providers v0.4.0, commit 6cf415bd87bf9f9ca740b3d432774cfebf558452
+# agent-providers v0.6.0, commit 3ca75b72622e18c5bb0bbb959645f826acc2fdda
 # uv export --no-header --frozen --no-dev --no-emit-workspace --package overnightworks-agent-service, then the release's wheels.
 # Written only by scripts/agent_service_lock.py; do not edit.
 annotated-doc==0.0.5 \
@@ -18,9 +18,9 @@ anyio==4.15.1 \
     #   overnightworks-agent-service
     #   overnightworks-webauth
     #   starlette
-certifi==2026.7.22 \
-    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
-    --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
+certifi==2026.10.19 \
+    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
     #   httpcore
     #   httpx
@@ -163,9 +163,9 @@ cryptography==50.0.2 \
     #   overnightworks-agent-service
     #   overnightworks-webauth
     #   pyjwt
-fastapi==0.143.2 \
-    --hash=sha256:da2fe9893b7392ebce76d8c8511e3fa43e5a25f5852103aa2eee7cff3ab80b75 \
-    --hash=sha256:e9e6d97018dcfd748da7d9e7c61cedefbe9eb91b1a3288e45b13fbae76df2d54
+fastapi==0.143.3 \
+    --hash=sha256:75e8bd68e2f52f77d29b2879749c257d64de2d85282d25270caf2bfccce5efe5 \
+    --hash=sha256:b9ab567ee57afb4454004ce04c889f8f0160ac47946b99795887cd6e88484848
     # via
     #   overnightworks-agent-service
     #   overnightworks-webauth
@@ -196,8 +196,8 @@ opentelemetry-api==1.45.1 \
     --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
     --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
     # via fastapi
-overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.15.0/overnightworks_webauth-0.15.0-py3-none-any.whl \
-    --hash=sha256:e715edf1ca65440522ae11e0c87d25344ce06eb185e919acade4f342ec6da6d8
+overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.20.1/overnightworks_webauth-0.20.1-py3-none-any.whl \
+    --hash=sha256:8826d20b033a0443963719b1261a466072be1ddf0a18e823640c1571742c6fd3
     # via overnightworks-agent-service
 pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
     --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80 \
@@ -316,6 +316,10 @@ pyjwt==2.15.1 \
     # via
     #   overnightworks-agent-service
     #   overnightworks-webauth
+ruamel-yaml==0.19.1 \
+    --hash=sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93 \
+    --hash=sha256:53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993
+    # via overnightworks-agent-client
 starlette==1.8.0 \
     --hash=sha256:1565dc0b35d5737a271ed1e0e04e949f4e81198799f216d2667b0a0fb9cf9522 \
     --hash=sha256:dfdd6b29c26483288088d990eee59631dedadd66ce20d203402a7ca8e3c4656f
@@ -348,9 +352,9 @@ uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
     --hash=sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620
     # via overnightworks-agent-service
-overnightworks-agent-client @ https://github.com/overnightworks/agent-providers/releases/download/v0.4.0/overnightworks_agent_client-0.4.0-py3-none-any.whl \
-    --hash=sha256:69695c3b7b9f1222a7276afd4de7cf86e0384bd02ccb85ed6c98e3888fcf1080
-overnightworks-agent-providers @ https://github.com/overnightworks/agent-providers/releases/download/v0.4.0/overnightworks_agent_providers-0.4.0-py3-none-any.whl \
-    --hash=sha256:a7feb6ec18d8415960057f46ba71ae7258347c69117f0a1f35e429f0043e3684
-overnightworks-agent-service @ https://github.com/overnightworks/agent-providers/releases/download/v0.4.0/overnightworks_agent_service-0.4.0-py3-none-any.whl \
-    --hash=sha256:e8e46c42f470f45994816b07d1d9a5b78f65245496879a70119125b437eb570f
+overnightworks-agent-client @ https://github.com/overnightworks/agent-providers/releases/download/v0.6.0/overnightworks_agent_client-0.6.0-py3-none-any.whl \
+    --hash=sha256:c402d87f5569b47f8a34b8205e33ca2011b003acb13ba89ec784004e5891df4e
+overnightworks-agent-providers @ https://github.com/overnightworks/agent-providers/releases/download/v0.6.0/overnightworks_agent_providers-0.6.0-py3-none-any.whl \
+    --hash=sha256:5ca4d01e1a0c29186759dd9872e8bc69e2355cc82b3965f50c02b73fadc45478
+overnightworks-agent-service @ https://github.com/overnightworks/agent-providers/releases/download/v0.6.0/overnightworks_agent_service-0.6.0-py3-none-any.whl \
+    --hash=sha256:2e9594e7c75999a899254720fb4daeff28b88cfc344f0b1b3612a0f2eda05c44

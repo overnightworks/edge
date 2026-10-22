@@ -1,6 +1,6 @@
 """Writes `agent-service/image/requirements.txt`, the one hashed lock of the agent service image.
 
-`scripts/agent_service_lock.py <tag>` takes agent-providers' release tag (for example `v0.4.0`),
+`scripts/agent_service_lock.py <tag>` takes agent-providers' release tag (for example `v0.6.0`),
 exports the service's runtime closure from that tag's `uv.lock`, and adds the release's three
 wheels by URL and sha256, computed from the downloaded bytes. The file's header names the tag and
 its commit. A release bump runs this script again; nothing else writes the file.
@@ -46,7 +46,7 @@ DOWNLOAD_SECONDS: Final = 120
 def release_tag(text: str) -> str:
     """The only shape of tag that reaches `git clone` and the release URLs."""
     if not RELEASE_TAG.fullmatch(text):
-        raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.4.0")
+        raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.6.0")
     return text
 
 
@@ -111,7 +111,7 @@ def built_lock(tag: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent_service_lock", description=__doc__)
-    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.4.0")
+    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.6.0")
     arguments = parser.parse_args(argv)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOCK_PATH.write_text(built_lock(arguments.tag), encoding="utf-8")
