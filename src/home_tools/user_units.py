@@ -165,7 +165,11 @@ class UserUnits:
                     f"{entry} is {kind}, not a link to {path}; this checkout does not own it,"
                     " so you decide: move it away or delete it, then rerun"
                 )
-        retiring = set(self.dangling_links())
+        self.refuse_unowned_retirements(set(self.dangling_links()))
+
+    def refuse_unowned_retirements(self, retiring: set[Path]) -> None:
+        """A retired link is only retired when its unit is this checkout's: a stopped one needs
+        no foreign name or loading, a running one needs positive proof before it is stopped."""
         for link in retiring:
             entry = self.user_units / link.name
             if (entry.is_symlink() or entry.exists()) and entry not in retiring:
