@@ -455,3 +455,43 @@ run "c17_the_removed_host_leaves_the_plan" {
     error_message = "the removed host's objects are still planned"
   }
 }
+
+run "c20_one_rule_per_denied_path_covers_every_host_listing_it" {
+  command = plan
+
+  variables {
+    catalog_file = "tests/fixtures/cloudflare-deny.yaml"
+  }
+
+  assert {
+    condition = (
+      cloudflare_ruleset.deny_public[0].zone_id == "0123456789abcdef0123456789abcdef"
+      && cloudflare_ruleset.deny_public[0].kind == "zone"
+      && cloudflare_ruleset.deny_public[0].phase == "http_request_firewall_custom"
+    )
+    error_message = "the deny is not the zone's custom rules entry point"
+  }
+
+  assert {
+    condition = [for rule in cloudflare_ruleset.deny_public[0].rules : [rule.action, rule.expression]] == [
+      [
+        "block",
+        "( lower(http.host) eq \"guarded.edge-fixture.invalid\" or starts_with(lower(http.host), \"guarded.edge-fixture.invalid:\") or lower(http.host) eq \"twin.edge-fixture.invalid\" or starts_with(lower(http.host), \"twin.edge-fixture.invalid:\") ) and url_decode(http.request.uri.path, \"r\") wildcard \"/*auth/*backchannel-logout*\"",
+      ],
+      [
+        "block",
+        "( lower(http.host) eq \"guarded.edge-fixture.invalid\" or starts_with(lower(http.host), \"guarded.edge-fixture.invalid:\") ) and url_decode(http.request.uri.path, \"r\") wildcard \"/*hook*\"",
+      ],
+    ]
+    error_message = "the rendered rules are not one block rule per path, testing each listing host with and without a port and decoding the path"
+  }
+}
+
+run "c21_a_catalog_without_a_deny_plans_no_ruleset" {
+  command = plan
+
+  assert {
+    condition     = length(cloudflare_ruleset.deny_public) == 0
+    error_message = "a ruleset is planned though no host denies a path"
+  }
+}
