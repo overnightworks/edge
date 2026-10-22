@@ -446,3 +446,21 @@ def test_a_running_retired_unit_without_a_top_level_entry_is_never_stopped(
 
     assert machine.systemctl.changes == []
     assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+
+
+def test_a_unit_that_turns_active_after_the_preflight_is_not_stopped_without_proof(
+    machine: Machine,
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    machine.systemctl.active.discard(TIMER)
+    machine.step.refuse_foreign_entries()
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"systemctl --user stop {TIMER}"):
+        machine.step.retire(machine.step.dangling_links())
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()

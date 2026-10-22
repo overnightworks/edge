@@ -185,14 +185,20 @@ class UserUnits:
                     f" from {loaded.fragment_path}; this checkout does not own that unit, so you"
                     " decide: move it away or delete the retired link, then rerun"
                 )
-            if not loaded.stopped and not (
-                entry in retiring and loaded.fragment_path == str(entry)
-            ):
-                raise StepFailed(
-                    f"{link.name} is running, but nothing proves it is this checkout's: {entry} is"
-                    f" not a link into {self.checkout_units} that systemd loaded it from;"
-                    f" you stop it yourself with `systemctl --user stop {link.name}`, then rerun"
-                )
+            if not loaded.stopped:
+                self.refuse_unproven_stop(link.name, retiring, loaded)
+
+    def refuse_unproven_stop(self, name: str, retiring: set[Path], loaded: LoadedUnit) -> None:
+        """Positive ownership evidence a running unit needs right before it is stopped: its
+        top-level entry is a retiring link into this checkout and systemd loaded it from there."""
+        entry = self.user_units / name
+        if entry in retiring and loaded.fragment_path == str(entry):
+            return
+        raise StepFailed(
+            f"{name} is running, but nothing proves it is this checkout's: {entry} is"
+            f" not a link into {self.checkout_units} that systemd loaded it from;"
+            f" you stop it yourself with `systemctl --user stop {name}`, then rerun"
+        )
 
     def link_directories(self) -> list[Path]:
         if not self.user_units.is_dir():
@@ -221,8 +227,11 @@ class UserUnits:
         """systemd refuses to disable a unit whose file is gone, so stop it while it is still
         loaded and unlink its links; the reload after the last link drops it. Timers stop first, so
         none starts its service again meanwhile."""
+        retiring = set(links)
         for name in sorted({link.name for link in links}, key=self.timers_first):
-            if not self.show(name).stopped:
+            loaded = self.show(name)
+            if not loaded.stopped:
+                self.refuse_unproven_stop(name, retiring, loaded)
                 self.systemctl("stop", name)
         for link in links:
             link.unlink(missing_ok=True)
