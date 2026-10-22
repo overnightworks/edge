@@ -561,9 +561,14 @@ enabled = true
 cd ~/git/edge
 uv sync --locked
 ln -s ~/git/edge/bin/home ~/.local/bin/home
-systemctl --user link --force ~/git/edge/systemd/home-check.service ~/git/edge/systemd/home-check.timer
-systemctl --user enable --now home-check.timer
+hal setup --apply
 ```
+
+`hal setup --apply` verlinkt jede Unit aus `systemd/` nach `~/.config/systemd/user/`, lädt
+systemd neu, aktiviert und startet die Timer (darunter `home-check.timer`), entfernt Links auf
+nicht mehr vorhandene Units und zeigt je Service den geladenen `ExecStart` und das `Result`
+des letzten Laufs. Nach einem Pull, der eine Unit ändert, nennt `hal setup` den Schritt
+„User units“; `hal setup --apply` lädt neu.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf
 den Starter `bin/edge`, der `.venv/bin/home` des Checkouts ausführt; der Link

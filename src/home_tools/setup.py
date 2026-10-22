@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from home_tools.system_step import Applied, CheckState, StepFailed, SystemStep
 from home_tools.tidy_home import Config, Layout
+from home_tools.user_units import UserUnits
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
@@ -29,6 +30,7 @@ HOOK_NAMES = ("pre-commit", "pre-merge-commit")
 HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
 HOOK_WHY = "ohne den Hook prüft kein Commit auf Geheimnisse"
+UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
 SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
 # `--apply` runs every step, a verified one too, and the system step always asks for sudo, which needs a person at a terminal.
 # The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
@@ -122,6 +124,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     hook_content = render_hook(layout)
     hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
     system = SystemStep(layout, ports.system)
+    units = UserUnits(layout, run)
 
     def quality_current() -> bool:
         return _recorded_quality_source_matches(layout) and _is_executable(layout.quality_executable)
@@ -161,6 +164,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         _local_step("Engines", engines_current, install_engines, HOOK_WHY),
         _local_step("Hook-Dateien", lambda: all(hook_current(path) for path in hook_paths), write_hooks, HOOK_WHY),
         _local_step("Aktivierung", hooks_active, activate_hooks, HOOK_WHY),
+        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY),
         _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY),
         Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first),
     )
