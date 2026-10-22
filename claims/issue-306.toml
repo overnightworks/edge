@@ -1,8 +1,0 @@
-claim_id = "74bd690b62b44bdaac9109e8210850e7"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "ce1f0781b22f39eb7509309307e7ae78e37522c7"
-branch = "claude/issue-306-167-s5-home-check-reports-the-age-and-th"
-scope = ["docs/home.md", "quality/baseline.toml", "src/home_tools/check.py", "src/home_tools/logs_check.py", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_logs_check.py"]
-opened_commit = "6ef83ce4902b2fc90b12612673819faf4f217cd4"
-whole_reason = "One new check with its registration, its tests, the shared test fixture that isolates the log directory, and the docs section."
