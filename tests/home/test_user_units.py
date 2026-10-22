@@ -180,7 +180,9 @@ def test_every_command_of_a_unit_with_several_is_kept() -> None:
     assert LoadedUnit.parse(shown).commands == ("/bin/first", "/bin/second --flag")
 
 
-def test_hal_setup_gets_the_loaded_commands_as_the_details_of_its_step(machine: Machine) -> None:
+def test_hal_setup_prints_the_loaded_commands_under_the_heading_of_its_step(
+    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
@@ -188,9 +190,11 @@ def test_hal_setup_gets_the_loaded_commands_as_the_details_of_its_step(machine: 
         machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
     )
     units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
+    monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (units,))
 
-    assert units.apply() is Applied.CHANGED
-    assert units.details() == LOADED_BACKUP
+    assert setup.setup(layout, ports, apply=True) == 0
+
+    assert capsys.readouterr().out.splitlines() == [f"{USER_UNITS_STEP}: changed", *LOADED_BACKUP]
 
 
 def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: Machine) -> None:
@@ -243,6 +247,16 @@ def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> No
     assert sorted(path.name for path in machine.user_units.rglob("*") if path.is_symlink()) == [
         SERVICE
     ]
+    assert machine.step.is_verified()
+
+
+def test_a_retired_unit_that_is_not_running_is_not_stopped(machine: Machine) -> None:
+    machine.step.apply()
+    (machine.checkout_units / SERVICE).unlink()
+
+    machine.step.apply()
+
+    assert ["stop", SERVICE] not in machine.systemctl.changes
     assert machine.step.is_verified()
 
 
