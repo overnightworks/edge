@@ -178,18 +178,15 @@ def test_the_way_back_moves_everything_home_again(home, world, repository, fakes
     ],
 )
 def test_a_refusal_changes_nothing_and_exits_four(home, world, repository, fakes, case, capsys):
-    if case == "target-exists":
-        (home / "git" / "fresh").mkdir()
-    if case == "worktrees-target-exists":
-        (home / "git" / "fresh-worktrees").mkdir()
-    if case == "memory-target-exists":
-        memory_of(home, home / "git" / "fresh").mkdir(parents=True)
-    if case == "dangling-target":
-        (home / "git" / "fresh").symlink_to(home / "nowhere")
-    if case == "dangling-worktrees-target":
-        (home / "git" / "fresh-worktrees").symlink_to(home / "nowhere")
-    if case == "dangling-memory-target":
-        memory_of(home, home / "git" / "fresh").symlink_to(home / "nowhere")
+    targets = {
+        "target": home / "git" / "fresh",
+        "worktrees-target": home / "git" / "fresh-worktrees",
+        "memory-target": memory_of(home, home / "git" / "fresh"),
+    }
+    if case.endswith("-exists"):
+        targets[case.removesuffix("-exists")].mkdir(parents=True)
+    if case.startswith("dangling-"):
+        targets[case.removeprefix("dangling-")].symlink_to(home / "nowhere")
     if case == "process-inside":
         fakes.running = [RunningProcess(4242, "claude", repository)]
     if case == "unknown-new-name":
@@ -417,28 +414,31 @@ def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it(
             repository, "worktree", "remove", "--force", str(home / "git" / "old-worktrees" / lane)
         )
 
+    (repository / "uv.lock").write_text("")
+
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
     assert f"finding: worktree {outside} lies outside the moved trees" in capsys.readouterr().out
     assert plain_git(home / "git" / "fresh", "worktree", "repair", str(outside)).returncode == 0
     assert plain_git(outside, "status", "--porcelain").stdout == ""
+    assert rename(world) == ExitCode.OK
+    assert "finding" not in capsys.readouterr().out
 
 
 def symlinked(home: Path, case: str) -> None:
     elsewhere = home.parent / "elsewhere"
-    if case == "clone":
-        (home / "git" / "old").rename(elsewhere)
-        (home / "git" / "old").symlink_to(elsewhere)
-    if case == "metadata":
-        (home / "git" / "old" / ".git").rename(elsewhere)
-        (home / "git" / "old" / ".git").symlink_to(elsewhere)
-    if case == "worktrees":
-        (home / "git" / "old-worktrees").rename(elsewhere)
-        (home / "git" / "old-worktrees").symlink_to(elsewhere)
-    if case == "parent":
-        (home / "git").rename(elsewhere)
-        (home / "git").symlink_to(elsewhere)
+    moved_away = {
+        "clone": home / "git" / "old",
+        "metadata": home / "git" / "old" / ".git",
+        "worktrees": home / "git" / "old-worktrees",
+        "parent": home / "git",
+        "memory": memory_of(home, home / "git" / "old"),
+        "memory-parent": home / ".claude" / "projects",
+    }
+    if case in moved_away:
+        moved_away[case].rename(elsewhere)
+        moved_away[case].symlink_to(elsewhere)
     if case == "venv":
         (home / "git" / "old" / ".venv").symlink_to(elsewhere)
     if case == "nested-worktree":
@@ -452,10 +452,10 @@ def symlinked(home: Path, case: str) -> None:
         (home / "git" / "fresh-worktrees" / "lane").symlink_to(elsewhere)
     if case == "outside-ancestor":
         scratch = home.parent / "scratch"
-        plain_git(home / "git" / "old", "worktree", "add", "-b", "scratch", str(scratch / "lane"))
+        plain_git(home / "git" / "old", "worktree", "add", "-b", "scratch", str(scratch / "probe"))
         (home.parent / "shortcut").symlink_to(scratch)
-        listed = home / "git" / "old" / ".git" / "worktrees" / "lane" / "gitdir"
-        listed.write_text(str(home.parent / "shortcut" / "lane" / ".git") + "\n")
+        listed = home / "git" / "old" / ".git" / "worktrees" / "probe" / "gitdir"
+        listed.write_text(str(home.parent / "shortcut" / "probe" / ".git") + "\n")
     if case == "deploy":
         make_clone(elsewhere, HTTPS.format("old"))
         (home / "old-live").symlink_to(elsewhere)
@@ -479,6 +479,8 @@ def symlinked(home: Path, case: str) -> None:
         "nested-worktree",
         "recovered-worktree",
         "outside-ancestor",
+        "memory",
+        "memory-parent",
         "deploy",
         "deploy-metadata",
         "deploy-parent",
@@ -488,8 +490,8 @@ def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     home, world, repository, fakes, case, capsys
 ):
     symlinked(home, case)
-    fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "lane")]
-    before = sorted(str(path) for path in home.parent.rglob("*") if ".git/" not in str(path))
+    fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "probe")]
+    before = tree_state(home.parent)
 
     code = rename(world)
 
@@ -497,9 +499,7 @@ def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     error = capsys.readouterr().err
     assert "symbolic link" in error
     assert ("pid 4242" in error) == (case == "outside-ancestor")
-    assert before == sorted(
-        str(path) for path in home.parent.rglob("*") if ".git/" not in str(path)
-    )
+    assert tree_state(home.parent) == before
 
 
 @pytest.mark.parametrize(

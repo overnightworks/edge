@@ -363,8 +363,18 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
         f"git -C {relocation.site.clone.target} worktree repair {path}"
         for relocation in relocations
         for path in relocation.outside
+        if not _names_clone(path, relocation.site.clone.target)
     ]
     return found
+
+
+def _names_clone(worktree: Path, clone: Path) -> bool:
+    """Whether the worktree's `.git` file already names a registration inside the clone."""
+    gitfile = worktree / ".git"
+    if not gitfile.is_file():
+        return False
+    registration = Path(gitfile.read_text().removeprefix("gitdir:").strip())
+    return registration.parent == clone / ".git" / "worktrees"
 
 
 def _both_exist(move: Move) -> bool:
@@ -383,7 +393,7 @@ def _venv_links(path: Path) -> list[Path]:
 def _relocation_links(relocation: Relocation) -> list[Path]:
     site = relocation.site
     links = []
-    for move in (site.clone, site.worktrees, *relocation.linked):
+    for move in (site.clone, site.worktrees, site.memory, *relocation.linked):
         for path in (move.source, move.target):
             links += _links_within(path) + _venv_links(path)
     for path in relocation.outside:
