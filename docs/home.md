@@ -25,13 +25,13 @@ Schlusszeile:
 ```
 1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
-3. home setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
+3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
    warum: ohne den Hook prüft kein Commit auf Geheimnisse; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
 Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. Das macht ein Agent: sag „räum home auf“.
 ```
 
 Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
-Terminal (`home secrets --setup`, `home setup --apply`, `home tidy --apply`),
+Terminal (`home secrets --setup`, `hal setup --apply`, `home tidy --apply`),
 eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
 Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
 Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.
@@ -51,7 +51,7 @@ beiseite legt). Dann fehlende Geheimnisse aus der Ansicht von `home secrets`
 übrigen), ein fehlgeschlagener Login, ein unbestätigter Widerruf und jeder
 übrige Fund von `home secrets`, den nur du klären kannst, mit Ort und Empfehlung
 von Hand (etwa „~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann
-offene Schritte von `home setup` (dann `home setup --apply`), die Korrekturen
+offene Schritte von `hal setup` (dann `hal setup --apply`), die Korrekturen
 der Hook-Prüfung und die clean-Funde von `home tidy` (dann `home tidy --apply`).
 Jeder Befehl steht nur einmal da.
 
@@ -128,12 +128,12 @@ Korrektur:
   nicht der Scope: lokale Config, Worktree-Config, System-Datei, `include` und
   `includeIf` sind Funde, ebenso ein ungesetzter Wert. Die Korrektur nennt den
   passenden Weg (`git config --local --unset`, `--worktree --unset`, die
-  genannte Datei bearbeiten oder `home setup --apply`).
+  genannte Datei bearbeiten oder `hal setup --apply`).
 - **Hook-Datei falsch.** `pre-commit` oder `pre-merge-commit` fehlt, hat nicht den Modus 755
-  oder weicht vom gerenderten Text ab (`home setup --apply`).
+  oder weicht vom gerenderten Text ab (`hal setup --apply`).
 - **quality nicht wie festgelegt.** `~/.local/bin/quality` fehlt, ist nicht ausführbar oder uv hat
-  nicht `QUALITY_SOURCE` aufgezeichnet (`home setup --apply`).
-- **Engines.** `quality engines verify` scheitert (`home setup --apply`).
+  nicht `QUALITY_SOURCE` aufgezeichnet (`hal setup --apply`).
+- **Engines.** `quality engines verify` scheitert (`hal setup --apply`).
 - **Verdeckter Repository-Hook.** `.git/hooks` enthält eine Datei außer
   `*.sample`, `pre-commit` und `pre-merge-commit`; der globale Pfad verdeckt sie.
 
@@ -402,11 +402,11 @@ Der Bericht listet außerdem, welche Regeln liefen und nichts fanden
 weil `docker` fehlt oder `du` fehlschlug („Nicht geprüft: docker (nicht
 installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
 
-## home setup
+## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it runs the system step.
-`home setup` zeigt nur, was es ändern würde; `home setup --apply` führt es der
+`hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
 Reihe nach aus und hält beim ersten Fehler an, mit dem Namen des Schritts.
 The activation comes before the system step, so a wrong sudo password never
 keeps the commit hook from being active:
@@ -441,7 +441,7 @@ step has installed it. A second `--apply` changes nothing and downloads nothing.
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
 Dateien stagen kann. Exit `0` heißt sauber, `1` ein Geheimnis gefunden, `2` nicht
 beurteilbar; jeder Wert ungleich `0` bricht den Commit ab. Fehlt `quality`,
-bleibt der Commit gesperrt, bis `home setup --apply` es wieder einrichtet. Das
+bleibt der Commit gesperrt, bis `hal setup --apply` es wieder einrichtet. Das
 ist gewollt.
 
 ### The system step
@@ -464,8 +464,8 @@ is in place, `10-root-binary.conf` is deleted. A change ends in one
 Whatever is replaced or deleted is copied first to
 `/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`.
 
-- **sudo.** At a terminal, both `home setup` (Ansible's `--check --diff`) and
-  `home setup --apply` ask once for the sudo password. Without a terminal,
+- **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
+  `hal setup --apply` ask once for the sudo password. Without a terminal,
   the dry run says `System: not checked (needs sudo at a terminal)` and
   `--apply` refuses the step and names the command; neither waits for a prompt.
 - **home next.** After a verified run (an `--apply`, or a dry run at a
@@ -473,7 +473,7 @@ Whatever is replaced or deleted is copied first to
   and the filled-in values in `~/.local/state/home/system-step.sha256`.
   `home next` compares only that record, so it never asks for sudo: it shows
   the step until a verified run, and again when edge's files or the values
-  change. A hand edit in `/etc`, or a new tunnel id, only `home setup` at a
+  change. A hand edit in `/etc`, or a new tunnel id, only `hal setup` at a
   terminal sees.
 - **Rollback.** Restore the previous `cloudflared.service`,
   `10-root-binary.conf` and `20-nonroot.conf` from the backup (their content
@@ -486,7 +486,7 @@ Whatever is replaced or deleted is copied first to
   `10-root-binary.conf` is deleted only after all four are. The `daemon-reload` handler does not run
   after a failure, so systemd still runs its old configuration. Two cases:
   - A failure while copying leaves some files in place and `10-root-binary.conf` still there. Run
-    `home setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
+    `hal setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
   - A failure in the reload itself leaves every file in place, `10-root-binary.conf` already deleted
     and systemd not reloaded. A retry then finds nothing to change, reports unchanged and does not
     reload. Run `sudo systemctl daemon-reload` once and check that it succeeds.

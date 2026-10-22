@@ -1,4 +1,4 @@
-"""`home setup`: quality, its engines and the global commit hook, then Ansible and the system step.
+"""`hal setup`: quality, its engines and the global commit hook, then Ansible and the system step.
 
 The activation comes before the system step, so a wrong sudo password never keeps the commit hook from being active.
 """
@@ -167,7 +167,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 
 def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    """The steps `home setup --apply` would run; `home next` reads the plan through this, and it never asks for sudo."""
+    """The steps `hal setup --apply` would run; `home next` reads the plan through this, and it never asks for sudo."""
     return tuple(step for step in _steps(layout, ports) if not step.is_verified())
 
 
@@ -186,8 +186,8 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
             print(f"{step.name}: {_outcome(step, apply)}")
         except (OSError, StepFailed) as error:
             if str(error):
-                print(f"home setup: {error}", file=sys.stderr)
-            print(f"home setup: Schritt „{step.name}“ ist fehlgeschlagen; die späteren Schritte sind nicht gelaufen", file=sys.stderr)
+                print(f"hal setup: {error}", file=sys.stderr)
+            print(f"hal setup: Schritt „{step.name}“ ist fehlgeschlagen; die späteren Schritte sind nicht gelaufen", file=sys.stderr)
             return 1
     return 0
 

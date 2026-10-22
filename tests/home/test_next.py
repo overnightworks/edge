@@ -60,20 +60,20 @@ UNREADABLE_SECRETS = "1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: h
 AGENT_SORTS_IT_IN = "Das macht ein Agent: sag „räum home auf“."
 
 SETUP_PENDING = (
-    "1. home setup --apply (eigenes Terminalfenster) — erwartet: quality, Engines, Hook-Dateien, Aktivierung, Ansible, System: changed;"
+    "1. hal setup --apply (eigenes Terminalfenster) — erwartet: quality, Engines, Hook-Dateien, Aktivierung, Ansible, System: changed;"
     " it asks once for sudo",
     "   warum: ohne den Hook prüft kein Commit auf Geheimnisse;"
     " without it the tunnel ignores edge's global stop after a reboot, and only root may stop it",
 )
 SYSTEM_PENDING = (
-    "1. home setup --apply (eigenes Terminalfenster) — erwartet: System: changed; it asks once for sudo",
+    "1. hal setup --apply (eigenes Terminalfenster) — erwartet: System: changed; it asks once for sudo",
     "   warum: without it the tunnel ignores edge's global stop after a reboot, and only root may stop it",
 )
 
 
 @pytest.fixture
 def home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
-    """The conftest's clean home inside the sandbox's HOME, so that `home setup` could install the hook there."""
+    """The conftest's clean home inside the sandbox's HOME, so that `hal setup` could install the hook there."""
     return furnish_clean_home(sandbox.home)
 
 
@@ -337,7 +337,7 @@ def test_folder_states_and_missing_secrets_come_before_a_pending_setup(home: Pat
         "1. chmod 700 ~/.secrets",
         "2. home secrets --setup",
         "3. https://github.com/settings/tokens",
-        "4. home setup --apply",
+        "4. hal setup --apply",
     ]
 
 
@@ -523,8 +523,8 @@ def edge_tunnel_file(home: Path) -> Path:
 
 
 def setup_step(lines: list[str]) -> list[str]:
-    """The `home setup --apply` step and its why, without its number."""
-    index = next(index for index, line in enumerate(lines) if ". home setup --apply" in line)
+    """The `hal setup --apply` step and its why, without its number."""
+    index = next(index for index, line in enumerate(lines) if ". hal setup --apply" in line)
     return [lines[index].split(". ", 1)[1], lines[index + 1]]
 
 
@@ -556,7 +556,7 @@ def test_with_only_a_local_step_open_after_a_verified_system_run_the_step_still_
     assert home_next(home, probe, capsys) == (
         0,
         [
-            "1. home setup --apply (eigenes Terminalfenster) — erwartet: Hook-Dateien: changed; it asks once for sudo",
+            "1. hal setup --apply (eigenes Terminalfenster) — erwartet: Hook-Dateien: changed; it asks once for sudo",
             "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
         ],
     )
@@ -566,7 +566,7 @@ def test_with_only_a_local_step_open_after_a_verified_system_run_the_step_still_
 def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_window_when_setup_is_unreadable(
     home: Path, probe: FakeProbe, capsys
 ) -> None:
-    """E2 'its line says that the step asks once for sudo': the hook check's `home setup --apply` says so on its own too."""
+    """E2 'its line says that the step asks once for sudo': the hook check's `hal setup --apply` says so on its own too."""
     hook = Layout(home).git_hooks_dir / "pre-commit"
     hook.write_text("#!/bin/sh\n")
 
@@ -579,8 +579,8 @@ def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_wind
     assert (code, capsys.readouterr().out.splitlines()) == (
         0,
         [
-            "1. konnte den Stand von home setup nicht lesen; den Fehler zeigt: home setup",
-            f"2. home setup --apply (eigenes Terminalfenster) — erwartet: home check meldet hook-file für {hook} nicht mehr; "
+            "1. konnte den Stand von hal setup nicht lesen; den Fehler zeigt: hal setup",
+            f"2. hal setup --apply (eigenes Terminalfenster) — erwartet: home check meldet hook-file für {hook} nicht mehr; "
             "it asks once for sudo",
         ],
     )
@@ -590,7 +590,7 @@ def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_wind
 def test_a_hook_finding_with_its_own_fix_is_any_terminal_and_does_not_say_it_asks_for_sudo(
     home: Path, sandbox: Sandbox, probe: FakeProbe, capsys
 ) -> None:
-    """E2 'its line says that the step asks once for sudo': only `home setup --apply` does, not a hook finding's other fix."""
+    """E2 'its line says that the step asks once for sudo': only `hal setup --apply` does, not a hook finding's other fix."""
     repository = home / "git" / "project"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
 

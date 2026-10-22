@@ -1,5 +1,5 @@
 #!/bin/sh
-# Template for the global pre-commit and pre-merge-commit hooks; `home setup`
+# Template for the global pre-commit and pre-merge-commit hooks; `hal setup`
 # renders it with the two absolute paths below. Edit the template, not a copy.
 quality=@QUALITY@
 engines=@ENGINES@
@@ -10,7 +10,7 @@ scan_staged() {
 }
 
 if [ ! -x "$quality" ]; then
-    echo "$hook: quality fehlt ($quality), Commit gesperrt. Einrichten: home setup --apply" >&2
+    echo "$hook: quality fehlt ($quality), Commit gesperrt. Einrichten: hal setup --apply" >&2
     exit 2
 fi
 

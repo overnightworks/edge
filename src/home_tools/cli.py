@@ -46,6 +46,20 @@ Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository ho
 """
 
 
+def build_layout_and_ports(
+    home: Path | None = None,
+    run: CommandRunner = run_command,
+    probe: ExitCodeProbe = probe_exit_code,
+    now: datetime | None = None,
+    secrets_setup_boundaries: Boundaries = TERMINAL_BOUNDARIES,
+    system_boundaries: system_step.Boundaries | None = None,
+) -> tuple[Layout, Ports]:
+    """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
+    # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
+    system = system_boundaries or system_step.TERMINAL_BOUNDARIES
+    return Layout(home or Path.home()), Ports(run, probe, secrets_setup_boundaries, now or datetime.now(), system)
+
+
 def _with_german_help(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("-h", "--help", action="help", help="zeigt diese Hilfe und beendet sich")
     return parser
@@ -85,7 +99,7 @@ def main(
     system_boundaries: system_step.Boundaries | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
-    layout = Layout(home or Path.home())
+    layout, ports = build_layout_and_ports(home, run, probe, now, secrets_setup_boundaries, system_boundaries)
     try:
         # A subcommand that reads the config as one of its sources turns an invalid one into its own line, never exit 2.
         config = Config() if args.reads_config_as_a_source else load_config(layout)
@@ -94,9 +108,7 @@ def main(
         return 2
     # Exit 1 means "findings" and the timer counts it as success, so a crash must end with its own code.
     try:
-        # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
-        system = system_boundaries or system_step.TERMINAL_BOUNDARIES
-        return args.handler(args, layout, config, Ports(run, probe, secrets_setup_boundaries, now or datetime.now(), system))
+        return args.handler(args, layout, config, ports)
     except secrets_view.ManifestError as error:
         print(f"home: {error}", file=sys.stderr)
         return 2

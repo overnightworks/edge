@@ -219,7 +219,7 @@ def test_missing_quality_gives_exit_2_and_the_setup_hint(repo: Path, hooked: San
     refused = git(repo, "commit", "-m", "x")
 
     assert checked.returncode == 2
-    missing_line = f"pre-commit: quality fehlt ({hooked.layout.quality_executable}), Commit gesperrt. Einrichten: home setup --apply"
+    missing_line = f"pre-commit: quality fehlt ({hooked.layout.quality_executable}), Commit gesperrt. Einrichten: hal setup --apply"
     assert missing_line in refused.stderr
     assert refused.returncode != 0
     assert head(repo) == before

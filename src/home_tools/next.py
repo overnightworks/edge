@@ -1,6 +1,6 @@
 """`home next`: what only the operator can do right now, one numbered step each, with its exact command.
 
-It only reads, through the owners that decide each fact: the plan of `home setup`, the view of `home secrets`
+It only reads, through the owners that decide each fact: the plan of `hal setup`, the view of `home secrets`
 (presence by `stat`, never a value), the hook check and the dry run of `home tidy`. Each rule's owner says who
 closes its findings: a step for the operator, or bookkeeping an agent sorts in, which one closing line counts.
 It changes nothing, asks for no password and needs no terminal, so agents may run it. A source it cannot read
@@ -63,7 +63,7 @@ def _as_command(text: str) -> str:
 
 
 def _setup_apply_step(expected: str, why: str = "") -> OperatorStep:
-    """`home setup --apply` runs every step, so whichever is open, the command asks for sudo in the operator's own window."""
+    """`hal setup --apply` runs every step, so whichever is open, the command asks for sudo in the operator's own window."""
     asks_for_sudo = setup.APPLY_ASKS_FOR_SUDO
     return OperatorStep(
         _as_command(hook_check.SETUP_APPLY),
@@ -74,7 +74,7 @@ def _setup_apply_step(expected: str, why: str = "") -> OperatorStep:
 
 
 def _setup_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
-    """One `home setup --apply` for every open step."""
+    """One `hal setup --apply` for every open step."""
     if pending := setup.pending(layout, ports):
         changed = f"{', '.join(step.name for step in pending)}: changed"
         yield _setup_apply_step(changed, "; ".join(dict.fromkeys(step.why for step in pending)))
@@ -174,7 +174,7 @@ def _tidy_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkee
 # Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit, tidying only frees space.
 SOURCES = (
     Source("die Geheimnisse", _secrets_steps, "home secrets"),
-    Source("den Stand von home setup", _setup_steps, "home setup"),
+    Source("den Stand von hal setup", _setup_steps, "hal setup"),
     Source("die Hook-Prüfung", _hook_steps, "home check"),
     Source("das Home (home tidy)", _tidy_steps, "home tidy"),
 )
@@ -252,7 +252,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         "next",
         help="was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl",
         description=(
-            "Zeigt die Schritte, die nur du tun kannst, aus home setup, home secrets, der Hook-Prüfung und home tidy,"
+            "Zeigt die Schritte, die nur du tun kannst, aus hal setup, home secrets, der Hook-Prüfung und home tidy,"
             " und zählt in einer Zeile, was ein Agent einsortiert; ändert nichts."
         ),
         epilog=NEXT_EXAMPLES,

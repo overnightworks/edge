@@ -1,4 +1,4 @@
-"""The system step of `home setup`: edge's cloudflared files and the stop-only polkit rule, written by Ansible under one sudo prompt.
+"""The system step of `hal setup`: edge's cloudflared files and the stop-only polkit rule, written by Ansible under one sudo prompt.
 
 The root work is `system/playbook.yml`. This module runs it with the terminal passed through, says what its check found in one
 of three states, and keeps the record of the last verified run, which lets `home next` see the step without Ansible or sudo.
@@ -28,7 +28,7 @@ RECAP = re.compile(
     r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
     re.MULTILINE,
 )
-NEEDS_SUDO_AT_A_TERMINAL = "the system step needs sudo at a terminal: run `home setup --apply` in your own terminal window"
+NEEDS_SUDO_AT_A_TERMINAL = "the system step needs sudo at a terminal: run `hal setup --apply` in your own terminal window"
 
 
 class CheckState(Enum):
@@ -40,7 +40,7 @@ class CheckState(Enum):
 
 
 NEEDS_A_TERMINAL = "sudo at a terminal"
-NEEDS_ANSIBLE = "Ansible, which `home setup --apply` installs first"
+NEEDS_ANSIBLE = "Ansible, which `hal setup --apply` installs first"
 
 
 class Applied(Enum):
@@ -141,7 +141,7 @@ class SystemStep:
         return digest.hexdigest()
 
     def is_verified(self) -> bool:
-        """`home next` reads this: a verified run rendered today's inputs. A hand edit in /etc only `home setup` sees."""
+        """`home next` reads this: a verified run rendered today's inputs. A hand edit in /etc only `hal setup` sees."""
         try:
             return self.layout.system_step_record.read_text() == self.inputs_digest()
         except OSError:
