@@ -8,8 +8,8 @@ services:
   songmaker:
     hosts:
       - {name: songmaker, exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
-      - {name: "@", exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080"}
-      - {name: www, exposure: public, reason: "the apex's alias", target: "http://localhost:8080"}
+      - {name: "@", exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
+      - {name: www, exposure: public, reason: "the apex's alias", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
   step-ca:
     run:
       enabled: true

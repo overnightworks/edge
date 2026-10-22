@@ -89,11 +89,19 @@ def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks
     ]
 
 
-def test_songmakers_host_refuses_the_back_channel_route_publicly():
+def test_every_songmaker_host_refuses_the_back_channel_route_publicly():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
-        "songmaker.hallucinai.de": ("/auth/backchannel-logout",)
+        fqdn: ("/auth/backchannel-logout",)
+        for fqdn in ("songmaker.hallucinai.de", "hallucinai.de", "www.hallucinai.de")
     }
+
+
+def test_every_dns_record_waits_for_the_public_deny_ruleset():
+    """A deny that fails to apply must publish no record; `depends_on` says so."""
+    source = (PROJECT_ROOT / "external" / "cloudflare.tf").read_text()
+    record = source.split('resource "cloudflare_dns_record" "host" {')[1].split("\n}\n")[0]
+    assert "cloudflare_ruleset.deny_public" in record.split("depends_on", 1)[1]
 
 
 @pytest.mark.parametrize("denied", [["/a"], ["/auth/backchannel-logout", "/x.y_z~1-2"], []])

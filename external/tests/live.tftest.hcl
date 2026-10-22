@@ -40,10 +40,13 @@ run "the_live_catalog_adds_songmakers_host_with_its_deny" {
     condition = (
       length(cloudflare_ruleset.deny_public) == 1
       && length(cloudflare_ruleset.deny_public[0].rules) == 1
-      && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "\"songmaker.${local.fleet.cloudflare.zone}\"")
+      && alltrue([
+        for fqdn in ["songmaker.${local.fleet.cloudflare.zone}", local.fleet.cloudflare.zone, "www.${local.fleet.cloudflare.zone}"] :
+        strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "starts_with(lower(http.host), \"${fqdn}:\")")
+      ])
       && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "/*auth/*backchannel-logout*")
     )
-    error_message = "the deny is not one rule for songmaker's host and /auth/backchannel-logout"
+    error_message = "the deny is not one rule for /auth/backchannel-logout on songmaker's host, the apex and www, each with and without a port"
   }
 
   assert {
@@ -52,6 +55,6 @@ run "the_live_catalog_adds_songmakers_host_with_its_deny" {
       && length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 5
       && !can(cloudflare_zero_trust_access_application.host["songmaker.${local.fleet.cloudflare.zone}"])
     )
-    error_message = "the plan changes more than the songmaker record, its tunnel line and the deny"
+    error_message = "the rendered plan does not have 4 records, 5 tunnel lines and no Access app for songmaker's host"
   }
 }

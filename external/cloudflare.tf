@@ -125,7 +125,8 @@ resource "cloudflare_zero_trust_access_application" "host" {
   }]
 }
 
-# Protection before reachability: no record exists before the apps do (and none outlives them).
+# Protection before reachability: no record exists before the apps and the public deny do (and
+# none outlives them).
 resource "cloudflare_dns_record" "host" {
   for_each   = local.hosts
   zone_id    = local.zone_id
@@ -134,7 +135,7 @@ resource "cloudflare_dns_record" "host" {
   content    = "${local.tunnel_id}.cfargotunnel.com"
   proxied    = true
   ttl        = 1
-  depends_on = [cloudflare_zero_trust_access_application.host]
+  depends_on = [cloudflare_zero_trust_access_application.host, cloudflare_ruleset.deny_public]
 }
 
 # HSTS at the zone's edge, for the apex and every subdomain: the preload list is a property of the
@@ -199,33 +200,40 @@ resource "cloudflare_ruleset" "client_address" {
 # `%252F`) and matches it with `wildcard` (https://developers.cloudflare.com/ruleset-engine/rules-language/operators/),
 # which is case-insensitive and works on the Free plan; `matches` needs Business. Each `/` of the
 # denied path becomes `/*`, so extra or encoded slashes, dot segments, a trailing slash and a longer
-# tail are refused too. That also refuses a longer path that merely contains the same segments:
-# the deny fails closed. Free allows 5 custom rules; this one rule per host stays within it.
+# tail are refused too: any decoded path with `auth/` followed later by `backchannel-logout`, for
+# example `/oauth/backchannel-logout`, so the deny fails closed. The documentation of `http.host`
+# (https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/http.host/)
+# does not promise a port-free value, so a host matches as `<fqdn>` or `<fqdn>:<port>`.
+# One rule per distinct path covers every host that lists it, so Free's 5 custom rules serve five
+# paths, not five hosts.
 locals {
-  denied_hosts = { for fqdn, host in local.hosts : fqdn => host.deny_public if length(host.deny_public) > 0 }
+  denied_paths = distinct(sort(flatten([for host in local.hosts : host.deny_public])))
   deny_rule_expressions = {
-    for fqdn, paths in local.denied_hosts : fqdn => join(" ", [
-      "lower(http.host) eq \"${fqdn}\" and (",
+    for path in local.denied_paths : path => join(" ", [
+      "(",
       join(" or ", [
-        for path in paths :
-        "url_decode(http.request.uri.path, \"r\") wildcard \"/*${join("/*", split("/", trimprefix(path, "/")))}*\""
+        for fqdn in sort([for name, host in local.hosts : name if contains(host.deny_public, path)]) :
+        "lower(http.host) eq \"${fqdn}\" or starts_with(lower(http.host), \"${fqdn}:\")"
       ]),
-      ")",
+      ") and url_decode(http.request.uri.path, \"r\") wildcard \"/*${join("/*", split("/", trimprefix(path, "/")))}*\"",
     ])
   }
 }
 
+# A host's record waits for this ruleset (below), so a deny that fails publishes nothing. Without
+# a denied path no ruleset exists: Cloudflare keeps one entry point per phase, which the zone may
+# already hold (dashboard rules); then import it before the first apply and keep its rules.
 resource "cloudflare_ruleset" "deny_public" {
-  count   = length(local.denied_hosts) > 0 ? 1 : 0
+  count   = length(local.denied_paths) > 0 ? 1 : 0
   zone_id = local.zone_id
   name    = "public deny"
   kind    = "zone"
   phase   = "http_request_firewall_custom"
   rules = [
-    for fqdn in sort(keys(local.denied_hosts)) : {
-      description = "${fqdn} refuses the paths of its deny_public list"
+    for path in local.denied_paths : {
+      description = "${path} is never reachable from outside"
       action      = "block"
-      expression  = local.deny_rule_expressions[fqdn]
+      expression  = local.deny_rule_expressions[path]
     }
   ]
 }
