@@ -1,7 +1,0 @@
-claim_id = "1a7494f40f944296967f27498e062fc6"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "23e8bb5941bae06e58f56511e4dac59b12730898"
-branch = "claude/issue-284-nel-off"
-scope = ["docs/external.md", "external/cloudflare.tf", "external/tests/cloudflare.tftest.hcl"]
-opened_commit = "86602754db3eef89be68f377edd244d6b3e09fcb"
