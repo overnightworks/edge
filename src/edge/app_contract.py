@@ -2,8 +2,9 @@
 
 The one owner of that decision, pure over the text of `git show <sha>:compose.yaml`. It parses with
 SafeLoader and does not interpolate, so a `$` in a value that decides a rule (a label key, a restart
-policy, a volume's source, type or target) is refused: Compose would resolve it from the `.env`
-the release tracks. Scalars stay strings as Compose reads them (`yes` is no boolean).
+policy, a short-form volume entry, a long form's type or target, a tmpfs mount, a labelled service's
+healthcheck `test` and `disable`) is refused: Compose would resolve it from the `.env` the release
+tracks. Scalars stay strings as Compose reads them (`yes` is no boolean).
 `check` runs before the operator's `yes`: a refusal means the app cannot be planned. The image half
 of the volume rule needs the built image and runs after build and pull, before `create`:
 `check_image_volumes`.
@@ -26,7 +27,6 @@ _WAITING_CONDITIONS = {"service_healthy", "service_completed_successfully"}
 _RESTART = "unless-stopped"
 _DISABLED_HEALTHCHECK = "NONE"
 _DECIDING_LABELS = {EDGE_NAME_LABEL, _TRAEFIK_ENABLE}
-_BIND_SOURCE_PREFIXES = ("/", "./", "../", "~")
 _COMPOSE_TRUE = {"true", "yes", "on", "y"}
 
 
@@ -153,7 +153,7 @@ def _volume_refusal(definition: dict) -> str | None:
     for volume in _mounts(definition):
         if _mount_interpolates(volume):
             return "interpolates a volume entry ($); not yet supported"
-        if isinstance(volume, str) and ":" not in volume:
+        if isinstance(volume, str) and _short_target(volume) is None:
             return "has a volume entry without a source (volumes); give it a named volume"
         if isinstance(volume, dict) and volume.get("type") != "tmpfs" and not volume.get("source"):
             return "has a volume entry without a source (volumes); give it a named volume"
@@ -163,26 +163,17 @@ def _volume_refusal(definition: dict) -> str | None:
 
 
 def _mount_interpolates(volume: object) -> bool:
-    """A `$` where it decides a rule: the mount's type and target, and the source of a named
+    """A `$` where it decides a rule. A short entry is read without interpolation, so any `$` in
+    it is refused; a long entry is refused in its type, its target and the source of a named
     volume (a bind's source and the other fields change no rule)."""
-    if isinstance(volume, dict):
-        if volume.get("type") == "tmpfs":
-            return _interpolates(str(volume))
-        deciding = [volume.get("type"), volume.get("target")]
-        if volume.get("type") == "volume":
-            deciding.append(volume.get("source"))
-        return any(_interpolates(part) for part in deciding)
-    if not _interpolates(volume):
-        return False
-    source, _, rest = _without_expansions(volume).partition(":")
-    return _interpolates(rest.partition(":")[0]) or (
-        _interpolates(source) and not source.startswith(_BIND_SOURCE_PREFIXES)
-    )
-
-
-def _without_expansions(text: str) -> str:
-    """`${X:-y}` shrunk to `$`, so its colon does not split a short volume entry."""
-    return re.sub(r"\$\{[^}]*\}", "$", text)
+    if not isinstance(volume, dict):
+        return _interpolates(volume)
+    if volume.get("type") == "tmpfs":
+        return _interpolates(str(volume))
+    deciding = [volume.get("type"), volume.get("target")]
+    if volume.get("type") == "volume":
+        deciding.append(volume.get("source"))
+    return any(_interpolates(part) for part in deciding)
 
 
 def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
@@ -262,16 +253,18 @@ def _covered_paths(definition: dict) -> set[str]:
     """The container paths that a named volume, a bind or a tmpfs of the service mounts."""
     covered = set()
     for volume in _mounts(definition):
-        if isinstance(volume, dict):
-            target = volume.get("target")
-        else:
-            parts = str(volume).split(":")
-            target = parts[1] if len(parts) > 1 else None
+        target = volume.get("target") if isinstance(volume, dict) else _short_target(str(volume))
         if isinstance(target, str):
             covered.add(target.rstrip("/"))
     for mount in _tmpfs_mounts(definition):
         covered.add(str(mount).split(":")[0].rstrip("/"))
     return covered
+
+
+def _short_target(volume: str) -> str | None:
+    """The container path of a short volume entry `source:target[:mode]`."""
+    parts = volume.split(":")
+    return parts[1] if len(parts) > 1 else None
 
 
 def _mounts(definition: dict) -> list:

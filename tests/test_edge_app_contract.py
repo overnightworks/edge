@@ -195,6 +195,12 @@ def test_an_interpolated_label_key_or_deciding_value_is_refused_as_the_key(field
         "volumes: ['d:${T}']",
         "volumes: ['${X}/data:/data']",
         "volumes: ['${W}:/data']",
+        "volumes: ['./${X}:/data']",
+        "volumes: ['/data${S:-foo}']",
+        "volumes: ['./${ROOT:-data}:/data']",
+        "volumes: ['~${X}:/data']",
+        "volumes: ['./${X}:/data:ro']",
+        "volumes: ['d:/data:${MODE:-ro}']",
         "tmpfs: ['${W}']",
     ],
 )
@@ -207,8 +213,6 @@ def test_an_interpolated_volume_entry_is_refused_as_the_key(mount):
     [
         "volumes: [{type: volume, source: d, target: /data, read_only: '${X:-true}'}]",
         "volumes: [{type: bind, source: '${X}', target: /data}]",
-        "volumes: ['./${X}:/data:ro']",
-        "volumes: ['d:/data:${MODE:-ro}']",
     ],
 )
 def test_an_interpolation_that_decides_no_rule_in_a_volume_entry_is_allowed(mount):
@@ -258,7 +262,8 @@ def test_a_compose_file_inside_the_contract_names_its_services(text):
         ("tmpfs: /data", ["/data"], None),
         ("volumes: ['data:/other']", ["/data"], "/data"),
         ("volumes: ['data:/data/sub']", ["/data"], "/data"),
-        ("volumes: ['${D}:/data']", ["/data", "/var/lib/x"], "/var/lib/x"),
+        ("volumes: [{type: bind, source: '${X}', target: /data}]", ["/data"], None),
+        ("volumes: [{type: volume, source: d, target: /data}]", ["/data", "/x"], "/x"),
     ],
 )
 def test_b5_an_image_volume_is_covered_only_by_a_mount_of_the_same_path(
