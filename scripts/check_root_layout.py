@@ -52,6 +52,7 @@ ROOT_DIRECTORIES = frozenset(
         "dynamic",
         "external",
         "keycloak",
+        "legal",
         "mcp",
         "probe",
         "quality",

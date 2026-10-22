@@ -28,13 +28,17 @@ and `edge apply --closed` writes it again.
   by `services.keycloak.run.enabled` in `fleet.yaml`. `fleet.yaml` changes by pull request and reaches
   the live checkout by `git -C ~/git/edge pull --ff-only` (until S2.4c); a local edit leaves the tree
   dirty and the apply refuses it, naming the path.
+- **The legal unit.** `legal` (nginx, profile `legal`, switched by `services.legal.run.enabled`) serves
+  the imprint from `legal/pages/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and the login
+  theme's fonts (one copy) answer under `/_rechtliches/`, every other path with 404. The catalog gives
+  it no host, so the tunnel does not reach it.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
   gets 404 on 8081, and Keycloak answers the master realm on 8090; Keycloak's start takes
   longest. No command checks these four facts together (a named gap on overnightworks/edge#222).
   What proves what today: `hal apply` observes the containers running; `docker compose ps` shows
   their health; the publish phase asks each declared host's `ready` path, only for a plan with
   changes; `keycloak/go-live` probes 8081 and 8090.
-- **Stop.** `docker compose --profile keycloak --profile probe down`. Without `--profile keycloak`
+- **Stop.** `docker compose --profile keycloak --profile legal --profile probe down`. Without `--profile keycloak`
   Keycloak and its database keep running, without `--profile probe` a running probe `hello` stays. It
   removes no volume; never add `--volumes`, because that deletes the Keycloak database.
 - **After a reboot** socket-proxy, traefik, keycloak-db and keycloak come back on their own
