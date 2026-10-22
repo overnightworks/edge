@@ -169,10 +169,10 @@ path or file name.
   replaced by nulls; repair or remove the file by hand to go on.
 - A schema-1 file is read into this shape: its id and times go to the declared app only when exactly one
   app is declared and restic confirms the id in that app's tag scope; otherwise they stay in an
-  `unattributed` entry and `restore` asks for `--snapshot`. `restore` never writes the file. An older
-  `hal backup` refuses a schema-2 file like any unknown one: move the file aside, then restore by
+  `unattributed` entry and `restore` asks for `--snapshot`. `restore` never writes the file. A runner
+  from before schema 2 refuses a schema-2 file like any unknown one: move the file aside, then restore by
   `--snapshot` or run the next backup.
-- The single-app runs (`backup <app>`, `restore-test <app>`) write the same file: `state` reflects
+- The single-app runs (`backup <app>`, `hal restore --test <app>`) write the same file: `state` reflects
   the latest run of either form, and the data-reading check belongs only to the full run without an app.
 - `state` describes the latest run of either command: a failed Sunday backup followed by a passing
   restore test reads `ok`, and a timer that never fires leaves the last `ok` standing. A reader judges
@@ -181,7 +181,7 @@ path or file name.
 
 Exit 0: every phase succeeded. Exit 3: a run failed; `error: hal backup: fehlgeschlagen: …` (or
 `hal restore`) names why. Exit 2: the flags do not fit together (`--pre-apply` without an app, for
-example); nothing ran. Exit 130: Ctrl-C or SIGTERM, recorded in the status file as interrupted.
+example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 
 ### Restore one app
 

@@ -539,7 +539,7 @@ They survive a dead PC because they live at the provider.
 | 26 | hopin cannot run beside songmaker | default port 8080, no container | hopin#25 or a new hopin item "container with `edge.name`" |
 | 27 | No release step | no service repo has tags; only webauth releases | `edge release` in the new deploy item (row 7) |
 | 28 | Dead unit link | `agent-telegram.service` points to a moved file | claudebot#19 (the bot stays off) |
-| 29 | No emergency commands | `edge status/stop/start/lock`, the markers, their boot guard and its drift finding do not exist | **new item in edge**: "edge as one operator CLI with emergency switches" (section 8). It also folds `edge-check` and `edge-backup` into subcommands. The section 8 state table becomes this item's test table: one parametrised test per cell |
+| 29 | No emergency commands | `edge status/stop/start/lock`, the markers, their boot guard and its drift finding do not exist | **new item in edge**: "edge as one operator CLI with emergency switches" (section 8). It also folds `edge-check` into a subcommand; backup and restore are the ruled `hal backup` and `hal restore`. The section 8 state table becomes this item's test table: one parametrised test per cell |
 | 30 | No polkit rule for cloudflared | stopping the tunnel needs `sudo` today | home-tools#9 (`hal setup` installs the stop-only rule `tunnel/polkit/10-edge-cloudflared-stop.rules` from edge, section 8) |
 | 31 | **Agents run as the operator's user** | he is in the `docker` group (root on the PC) and `sudo`; `~/.secrets` is his; after go-live, `~/.secrets/keycloak/config-cli-secret` signs in as Keycloak master `admin` (`master.yaml`: `service-account-config-cli`, realm role `admin`), without TOTP | **new home-tools item** "secure the agents" (D14), aco as neighbour for starting sessions as the agent user |
 | 32 | songmaker has no single-login cutover | its own password login; the app clients are in `realm.yaml` (#108, #161), only the songmaker cutover is still open | **new songmaker item** (section 3), after edge#19 |
@@ -640,7 +640,7 @@ Each command exists in exactly one tool. What it does in each state is the state
 
 **No `edge revoke`:** revoking is about secrets, so it lives once, in `home secrets --emergency`. `edge status` prints "secrets: run `home secrets --emergency`" as a hint, nothing more.
 
-**One tool name per owner.** `edge` gets subcommands, the way `home` did: `edge check` (today `edge-check`), `edge backup` (today `edge-backup`), `edge external` (E3's separate external script, not built yet), `edge apply`, `edge release`, `edge status`, `edge stop/start`, `edge restore`, `edge rollback`, `edge unskip`, `edge lock`, `edge people`. One command to remember (D11).
+**One tool name per owner.** `edge` gets subcommands, the way `home` did: `edge check` (today `edge-check`), `edge external` (E3's separate external script, not built yet), `edge apply`, `edge release`, `edge status`, `edge stop/start`, `edge restore`, `edge rollback`, `edge unskip`, `edge lock`, `edge people`. One command to remember (D11).
 
 ### LOOK and Grafana: two pages, two questions (ruled 16.10.2026)
 

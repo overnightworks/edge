@@ -280,7 +280,8 @@ def restore(
     """
     if target.resolve().is_relative_to(settings.work_dir.resolve()):
         raise StepFailed(
-            ExitCategory.CONFIGURATION, "das Ziel liegt im Arbeitsverzeichnis von edge-backup"
+            ExitCategory.CONFIGURATION,
+            "das Ziel liegt im Arbeitsverzeichnis (~/.cache/edge-backup)",
         )
     if target.exists():
         raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")

@@ -89,6 +89,8 @@ STANDALONE = "--init and --unlock stand alone, without an app, --pre-apply or --
         ),
         (("restore", "--list", "radio"), "--list stands alone"),
         (("restore", "--list", "--test"), "--list stands alone"),
+        (("restore", "--list", "--snapshot", ""), "--list stands alone"),
+        (("restore", "--list", "--target", ""), "--list stands alone"),
         (("restore",), "restore needs the name of an app and --target"),
         (("restore", "radio"), "restore needs the name of an app and --target"),
         (("restore", "--target", "somewhere"), "restore needs the name of an app and --target"),

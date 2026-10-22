@@ -76,7 +76,8 @@ def _backup_step(arguments: argparse.Namespace) -> Step | str:
 
 def _restore_step(arguments: argparse.Namespace) -> Step | str:
     if arguments.list:
-        if arguments.test or arguments.app is not None or arguments.snapshot or arguments.target:
+        given = (arguments.app, arguments.snapshot, arguments.target)
+        if arguments.test or any(value is not None for value in given):
             return "--list stands alone"
         return steps.snapshots
     if arguments.test:
