@@ -1,8 +1,0 @@
-claim_id = "b53e034a202249608fafe2a69d8e37fc"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "2a0eac009e0ac236f6427b97aec5f7c5040f5141"
-branch = "claude/issue-266-hal-apply-switches-an-app-on-at-its-newe"
-scope = ["README.md", "docs/architecture.md", "docs/naming.md", "probe/apps", "quality/baseline.toml", "src/edge/app_compose.py", "src/edge/apply.py", "src/edge/apps.py", "src/edge/catalog.py", "src/edge/checkout.py", "src/edge/cli.py", "src/edge/compose.py", "src/edge/deploy_checkout.py", "src/edge/releases.py", "src/hal/stack_commands.py", "tests/app_support.py", "tests/test_edge_app_compose.py", "tests/test_edge_apply.py", "tests/test_edge_apply_apps.py", "tests/test_edge_apply_publish.py", "tests/test_edge_apps.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_deploy_checkout.py", "tests/test_edge_releases.py", "tests/test_hal_stack_commands.py"]
-opened_commit = "0bbb4509cd4ec52323c81ad5412f5e6b260c3a24"
-whole_reason = "The thinnest end-to-end proof of deploy by tag: catalog entry, tag choice, checkout, start and record together; neither half has a caller alone."
