@@ -4,7 +4,7 @@
     "exposure": "public",
     "reason": "own login",
     "ready": null,
-    "target": "http://localhost:8080",
+    "target": "http://127.0.0.1:8081",
     "deny_public": []
   },
   "www.edge-fixture.invalid": {
@@ -12,7 +12,7 @@
     "exposure": "public",
     "reason": "the apex's alias",
     "ready": null,
-    "target": "http://localhost:8080",
+    "target": "http://127.0.0.1:8081",
     "deny_public": []
   }
 }

@@ -519,17 +519,17 @@ run "x11b_the_redirected_names_get_records_no_tunnel_line_and_one_redirect_rules
       && [for rule in cloudflare_ruleset.apex_redirect[0].rules : [rule.action, rule.expression, rule.action_parameters.from_value.target_url.value, rule.action_parameters.from_value.status_code, rule.action_parameters.from_value.preserve_query_string]] == [
         [
           "redirect",
-          "( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) eq \"/impressum\"",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/impressum\" \"/impressum/\"}",
           "https://app.edge-fixture.invalid/impressum", 302, false,
         ],
         [
           "redirect",
-          "( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) eq \"/datenschutz\"",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/datenschutz\" \"/datenschutz/\"}",
           "https://app.edge-fixture.invalid/datenschutz", 302, false,
         ],
         [
           "redirect",
-          "( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") )",
+          "ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") )",
           "https://auth.edge-fixture.invalid/", 302, false,
         ],
       ]

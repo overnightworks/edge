@@ -257,8 +257,10 @@ resource "cloudflare_ruleset" "deny_public" {
 # (`from_value.target_url.value`), so the path and, with preserve_query_string off, the query of
 # the request are dropped
 # (https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-api/). A host
-# matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. A kept path matches exactly,
-# case-insensitively.
+# matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. A kept path matches exactly, with
+# or without a trailing slash, case-insensitively, and goes on without the slash. Only https is
+# redirected (`ssl`): `http://` first goes to https on the same host (Always Use HTTPS), as the
+# HSTS preload requires.
 # A record waits for this ruleset, as for the deny. Without `cloudflare.redirect` no ruleset
 # exists; if the zone already holds the entry point of this phase, import it before the first apply
 # (ID `zones/<zone_id>/<ruleset_id>`): its rules are not kept, the plan shows each as removed.
@@ -271,13 +273,13 @@ locals {
     [
       for kept in try(local.redirect.keep, []) : {
         description = "${kept.path} keeps its path at ${kept.target}"
-        expression  = "( ${local.redirect_host_expression} ) and lower(http.request.uri.path) eq \"${kept.path}\""
+        expression  = "ssl and ( ${local.redirect_host_expression} ) and lower(http.request.uri.path) in {\"${kept.path}\" \"${kept.path}/\"}"
         target_url  = "${kept.target}${kept.path}"
       }
     ],
     [{
       description = "everything else goes to ${local.redirect.target}"
-      expression  = "( ${local.redirect_host_expression} )"
+      expression  = "ssl and ( ${local.redirect_host_expression} )"
       target_url  = local.redirect.target
     }]
   )

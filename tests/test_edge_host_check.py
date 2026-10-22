@@ -455,6 +455,36 @@ def test_the_records_of_redirected_names_are_declared_and_other_names_still_are_
 
 
 @pytest.mark.parametrize(
+    ("records", "expected"),
+    [
+        pytest.param([], [Problem.RECORD_MISSING], id="missing"),
+        pytest.param([tunnel_record("www", proxied=False)], [Problem.RECORD_WRONG], id="unproxied"),
+        pytest.param(
+            [tunnel_record("www", "t-2.cfargotunnel.com")],
+            [Problem.RECORD_WRONG],
+            id="wrong-target",
+        ),
+        pytest.param([tunnel_record("www")], [], id="the-right-tunnel"),
+    ],
+)
+def test_a_redirected_name_needs_the_same_proxied_cname_without_being_asked(records, expected):
+    document = catalog_document(host_entry("app", "public"))
+    document["cloudflare"]["redirect"] = {
+        "hosts": ["www"],
+        "target": "https://auth.example.test/",
+        "keep": [],
+    }
+    prober = CountingProber()
+    check = host_check.check_hosts(
+        document, FakeCloudflare(snapshot(tunnel_record("app"), *records)), prober
+    )
+    assert [(f.problem.value, f.subject) for f in check.findings] == [
+        (problem.value, fqdn("www")) for problem in expected
+    ]
+    assert prober.asked == [fqdn("app")]
+
+
+@pytest.mark.parametrize(
     ("stray_app", "expected"),
     [
         pytest.param(

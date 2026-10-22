@@ -156,7 +156,7 @@ Query entfallen (`preserve_query_string = false`); alte Links behalten keinen Pf
 Single Redirects laufen der Reihe nach, und ein Redirect beendet die Auswertung
 ([Doku](https://developers.cloudflare.com/rules/url-forwarding/), dort auch die 10 Regeln des Free-Plans):
 die bleibenden Pfade stehen vor der letzten Regel. Der Host gilt mit und ohne `:<port>`, ein bleibender Pfad
-genau und ohne Beachtung der Grossschreibung (`/impressum/` geht zum Ziel). Die Namen behalten proxied
+genau, mit und ohne abschliessenden Schraegstrich und ohne Beachtung der Grossschreibung; er geht ohne Schraegstrich weiter. Nur https wird weitergeleitet (`ssl`): `http://` geht zuerst auf demselben Host nach https (Always Use HTTPS), wie es der HSTS-Preload verlangt. Die Namen behalten proxied
 DNS-Eintraege, haben aber keine Tunnelzeile und keinen Ausschluss; ihr Eintrag wartet auf dieses Regelwerk,
 wie auf den Ausschluss. Die Felder `action_parameters.from_value` des Providers 5.28.0:
 [ruleset.md](https://github.com/cloudflare/terraform-provider-cloudflare/blob/v5.28.0/docs/resources/ruleset.md).
@@ -167,7 +167,7 @@ der naechste Plan zeigt jede als entfernt, und der Betreiber bricht vor dem `yes
 Katalog steht oder bewusst entfaellt. Erwartet nach dem Anwenden: `https://hallucinai.de/x?y=1` und
 `https://www.hallucinai.de/` antworten 302 nach `https://auth.hallucinai.de/`; `/impressum` und
 `/datenschutz` 302 nach `https://songmaker.hallucinai.de/impressum` und `/datenschutz`. Das Token-Recht
-`Zone › Dynamic Redirect` ist nicht gemessen: es kommt vor `hal apply` dazu, wenn ein 403 es nennt.
+`Zone › Single Redirect` (Lesen fuer `fleet-read`, Edit fuer `fleet-write`) ist nicht gemessen: es kommt vor `hal apply` dazu, wenn ein 403 es nennt.
 
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer
 geaenderten Umgebung nie neu; der Betreiber startet es erst, wenn die Regel bei Cloudflare steht

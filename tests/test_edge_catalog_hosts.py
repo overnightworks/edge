@@ -155,18 +155,22 @@ def test_a_host_without_target_is_asked_on_traefik():
     "service,name,target,accepted",
     [
         pytest.param("app", "app", "http://localhost:8080", False, id="not-a-declared-pair"),
-        pytest.param("songmaker", "@", "http://localhost:8080", True, id="declared-apex"),
+        pytest.param("songmaker", "@", "http://localhost:8080", False, id="apex-left-the-tunnel"),
         pytest.param("songmaker", "songmaker", "http://localhost:8080", True, id="declared-host"),
-        pytest.param("songmaker", "www", "http://127.0.0.1:8080", True, id="declared-www"),
-        pytest.param("songmaker", "www", "http://localhost:8090", False, id="admin-port"),
+        pytest.param("songmaker", "www", "http://127.0.0.1:8080", False, id="www-left-the-tunnel"),
+        pytest.param("songmaker", "songmaker", "http://localhost:8090", False, id="admin-port"),
         pytest.param("app", "app", "http://127.0.0.1:8090", False, id="admin-port-anywhere"),
-        pytest.param("songmaker", "@", "http://example.com:8080", False, id="not-loopback"),
-        pytest.param("songmaker", "@", "https://localhost:8080", False, id="not-http"),
-        pytest.param("songmaker", "@", "http://localhost", False, id="no-port"),
-        pytest.param("songmaker", "@", "http://localhost:8080/x", False, id="with-path"),
-        pytest.param("songmaker", "@", "http://localhost:8080?x", False, id="with-query"),
-        pytest.param("songmaker", "@", "http://me@localhost:8080", False, id="with-user-info"),
-        pytest.param("songmaker", "@", "http://localhost:99999", False, id="port-out-of-range"),
+        pytest.param("songmaker", "songmaker", "http://example.com:8080", False, id="not-loopback"),
+        pytest.param("songmaker", "songmaker", "https://localhost:8080", False, id="not-http"),
+        pytest.param("songmaker", "songmaker", "http://localhost", False, id="no-port"),
+        pytest.param("songmaker", "songmaker", "http://localhost:8080/x", False, id="with-path"),
+        pytest.param("songmaker", "songmaker", "http://localhost:8080?x", False, id="with-query"),
+        pytest.param(
+            "songmaker", "songmaker", "http://me@localhost:8080", False, id="with-user-info"
+        ),
+        pytest.param(
+            "songmaker", "songmaker", "http://localhost:99999", False, id="port-out-of-range"
+        ),
         pytest.param("app", "app", "http://127.0.0.1:8081", True, id="the-default-anywhere"),
     ],
 )
@@ -395,6 +399,13 @@ def test_the_redirected_names_are_the_zones_apex_and_labels_and_none_without_a_r
         ({**REDIRECT, "hosts": ["@", "@"]}, "cloudflare.redirect.hosts"),
         ({**REDIRECT, "hosts": ["*"]}, "cloudflare.redirect.hosts"),
         ({**REDIRECT, "hosts": ["app"]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": [{}]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": [[]]}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "hosts": "www"}, "cloudflare.redirect.hosts"),
+        ({**REDIRECT, "target": "https://a.invalid:99999/"}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "target": "https://a.invalid:0/"}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "target": "https://-a..invalid/"}, "cloudflare.redirect.target"),
+        ({**REDIRECT, "target": "https:///"}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": "http://auth.edge-fixture.invalid/"}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": 'https://a.invalid/"'}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": "https://a.invalid/?x=1"}, "cloudflare.redirect.target"),
@@ -403,6 +414,14 @@ def test_the_redirected_names_are_the_zones_apex_and_labels_and_none_without_a_r
         (
             {**REDIRECT, "keep": [{"path": "/Impressum", "target": "https://a.invalid"}]},
             "cloudflare.redirect.keep[0].path",
+        ),
+        (
+            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a.invalid:70000"}]},
+            "cloudflare.redirect.keep[0].target",
+        ),
+        (
+            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a_b.invalid"}]},
+            "cloudflare.redirect.keep[0].target",
         ),
         (
             {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a.invalid/x"}]},

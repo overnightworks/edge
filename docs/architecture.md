@@ -67,7 +67,7 @@ flowchart TB
             DEP["Deploy watcher per service<br/>follows the newest v* tag"]
         end
         subgraph l4["L4 Services: each repo owns its compose.yaml"]
-            SONG["songmaker<br/>hallucinai.de, own login until its cutover"]
+            SONG["songmaker<br/>songmaker.hallucinai.de, own login until its cutover"]
             PRES["presentator<br/>offline until its legal pages"]
             HOP["hopin<br/>video calls"]
         end
@@ -198,9 +198,9 @@ services:
 | `reason` | string | none | required and non-blank for `public` and `bypass` |
 | `ready` | path | none | starts with one `/`; the publish guard of X8a |
 | `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker's `songmaker`) |
-| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's three hosts list `/auth/backchannel-logout` (#213) |
+| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's one host lists `/auth/backchannel-logout` (#213) |
 
-The apex and `www` are no hosts but the catalog's `cloudflare.redirect` (validated next to the hosts by `src/edge/catalog.py`): `hosts` (`@` or labels, none of them a service host), `target` (an https URL) and `keep` (each a lowercase `path` with an https origin as `target`). Cloudflare answers 302 at its edge: a kept path goes to its origin with the path kept, everything else to `target`, path and query dropped; old links keep no path (operator ruling of 18.10.2026). The names keep proxied records and have no tunnel line (`docs/external.md`). Keycloak's bare address already redirects to the account console, so `target` is `https://auth.hallucinai.de/`; `/impressum` and `/datenschutz` go to songmaker's pages until #110 serves them.
+The apex and `www` are no hosts but the catalog's `cloudflare.redirect` (validated next to the hosts by `src/edge/catalog.py`): `hosts` (`@` or labels, none of them a service host), `target` (an https URL) and `keep` (each a lowercase `path` with an https origin as `target`). Cloudflare answers 302 at its edge, for https only (`http://` first goes to https on the same host): a kept path, with or without a trailing slash, goes to its origin with the path kept, everything else to `target`, path and query dropped; old links keep no path (operator ruling of 18.10.2026). The names keep proxied records and have no tunnel line (`docs/external.md`). Keycloak's bare address already redirects to the account console, so `target` is `https://auth.hallucinai.de/`; `/impressum` and `/datenschutz` go to songmaker's pages until #110 serves them.
 
 `run.enabled` decides both the units and the hosts: only `true` and `false` count: OpenTofu's `yamldecode` also reads YAML 1.1 words (`yes`, `no`, `on`, `off`, `y`, `n`, `True`) as booleans and PyYAML disagrees on some of them, so every other spelling, `no` and `"false"` included, is refused. A disabled entry's hosts are validated but not published.
 
@@ -498,7 +498,7 @@ They survive a dead PC because they live at the provider.
 - `home check`, `home tidy`, `home secrets` (view only);
 - edge: Traefik, socket proxy, Keycloak as code with its probe, edge-check, edge-backup with weekly and monthly timers. The edge stack is **not running** on this PC (no `edge/.env`, no edge containers);
 - songmaker's auto-deploy, alerts and monitoring stack;
-- the tunnel with apex and `www` only;
+- the tunnel with songmaker's host only;
 - org rulesets 25224011 and 25224012.
 
 ### Duplicates: the same fact in two places

@@ -146,7 +146,11 @@ def compare(
     redirected: frozenset[str] = frozenset(),
 ) -> HostCheck:
     declared = {host.fqdn: host for host in hosts}
-    findings = [finding for host in hosts for finding in _record_findings(host, snapshot)]
+    findings = [
+        finding
+        for fqdn in [host.fqdn for host in hosts] + sorted(redirected)
+        for finding in _record_findings(fqdn, snapshot)
+    ]
     hosts_without_record = {f.subject for f in findings if f.problem is Problem.RECORD_MISSING}
     findings += _undeclared_records(declared.keys() | redirected, snapshot.records)
     access_unused = False
@@ -174,18 +178,16 @@ def compare(
     return HostCheck(tuple(ordered), len(hosts), access_unused)
 
 
-def _record_findings(host: catalog.Host, snapshot: Snapshot) -> list[Finding]:
-    records = [record for record in _address_records(snapshot.records) if record.name == host.fqdn]
+def _record_findings(fqdn: str, snapshot: Snapshot) -> list[Finding]:
+    records = [record for record in _address_records(snapshot.records) if record.name == fqdn]
     if not records:
-        return [Finding(Problem.RECORD_MISSING, host.fqdn, "no A, AAAA or CNAME record")]
+        return [Finding(Problem.RECORD_MISSING, fqdn, "no A, AAAA or CNAME record")]
     target = f"{snapshot.tunnel_id}{TUNNEL_TARGET_SUFFIX}"
     if len(records) == 1 and _is_proxied_cname_to(records[0], target):
         return []
     held = ", ".join(_describe_record(record) for record in sorted(records, key=_describe_record))
     return [
-        Finding(
-            Problem.RECORD_WRONG, host.fqdn, f"holds {held}; expected a proxied CNAME to {target}"
-        )
+        Finding(Problem.RECORD_WRONG, fqdn, f"holds {held}; expected a proxied CNAME to {target}")
     ]
 
 

@@ -71,7 +71,7 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
       ])
       && alltrue([
         for rule in cloudflare_ruleset.apex_redirect[0].rules :
-        strcontains(rule.expression, "lower(http.host) eq \"${local.fleet.cloudflare.zone}\"") && strcontains(rule.expression, "starts_with(lower(http.host), \"www.${local.fleet.cloudflare.zone}:\")")
+        startswith(rule.expression, "ssl and ") && strcontains(rule.expression, "lower(http.host) eq \"${local.fleet.cloudflare.zone}\"") && strcontains(rule.expression, "starts_with(lower(http.host), \"www.${local.fleet.cloudflare.zone}:\")")
       ])
     )
     error_message = "the apex redirect is not /impressum and /datenschutz to songmaker, then everything else to auth, 302 without the query, for the apex and www"
