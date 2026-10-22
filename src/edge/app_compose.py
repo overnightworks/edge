@@ -90,7 +90,13 @@ class AppCompose:
     def _service_images(self, tag: str) -> dict[str, str]:
         output = self._call("config", ["--format", "json"], compose.READ_SECONDS, tag)
         try:
-            return {name: str(one["image"]) for name, one in json.loads(output)["services"].items()}
+            services = json.loads(output)["services"]
+            # Compose leaves `image` out of a service that is built here and names it
+            # `<project>-<service>`.
+            return {
+                name: str(one.get("image") or f"{self.key}-{name}")
+                for name, one in services.items()
+            }
         except (ValueError, KeyError, TypeError, AttributeError):
             raise compose.ComposeError(
                 f"`docker compose config` of {self.key} at {tag} answered no image per service"

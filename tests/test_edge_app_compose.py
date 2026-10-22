@@ -116,7 +116,7 @@ class ImageDocker(Docker):
     def __init__(self, inspected: str, inspect_exit_code: int = 0) -> None:
         super().__init__()
         self.inspected, self.inspect_exit_code = inspected, inspect_exit_code
-        self.services = {"web": {"image": "hopin-web"}, "db": {"image": "postgres:17"}}
+        self.services = {"web": {"build": {"context": "."}}, "db": {"image": "postgres:17"}}
 
     def run(self, command, _timeout, _stdin=None):
         self.commands.append(command)
