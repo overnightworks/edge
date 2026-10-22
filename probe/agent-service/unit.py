@@ -736,7 +736,12 @@ class SmokeProbe(Probe):
     def tokens(self) -> Tokens:
         issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"
         person = self.issuer.token(
-            issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": ["/ki-abo"]}
+            issuer,
+            {
+                "sub": "person",
+                "azp": WORKLOAD_CLIENT,
+                "groups": ["/services/agent-service/subscription"],
+            },
         )
         workload = self.issuer.token(
             issuer,
