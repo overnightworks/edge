@@ -1,4 +1,4 @@
-# The apps edge-backup protects. Each record is validated; there is no hook language.
+# The apps `hal backup` protects. Each record is validated; there is no hook language.
 # Container and volume are found by their compose labels, never by a checkout directory.
 
 [app.songmaker]

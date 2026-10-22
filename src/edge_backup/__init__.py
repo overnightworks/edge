@@ -1,1 +1,2 @@
-"""edge-backup: encrypted local restic backups of the declared apps."""
+"""The backup runner behind `hal backup` and `hal restore`: encrypted restic backups of the
+declared apps."""

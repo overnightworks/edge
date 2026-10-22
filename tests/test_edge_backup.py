@@ -1,9 +1,13 @@
-"""edge-backup driven through its CLI, with a scripted Docker host in place of docker and restic."""
+"""`hal backup` and `hal restore` driven through hal, with a scripted Docker host in place of
+docker and restic."""
 
 import configparser
 import itertools
 import json
+import os
 import re
+import signal
+import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from datetime import timedelta
@@ -37,6 +41,7 @@ from edge_backup.apps import AppsError, Audio, DumpKind, PostgresMajor, parse_ap
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
 from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
+from hal import cli as hal_cli
 
 
 def test_backup_puts_dump_manifest_and_audio_into_one_snapshot(edge_backup, machine, home):
@@ -90,10 +95,10 @@ def test_restore_test_of_one_app_keeps_the_other_apps_status_and_reads_no_data(
     """#238 matrix cell 2."""
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
-    songmaker_before = app_history(edge_backup(*two_apps, "snapshots").status)
+    songmaker_before = app_history(edge_backup(*two_apps, "restore", "--list").status)
     machine.calls.clear()
 
-    outcome = edge_backup(*two_apps, "restore-test", "radio")
+    outcome = edge_backup(*two_apps, "restore", "--test", "radio")
 
     assert outcome.exit_code == 0, outcome.err
     assert machine.labels().count("restic restore") == 1
@@ -113,7 +118,7 @@ def test_restore_test_with_a_snapshot_tests_that_one_not_the_one_the_status_name
     edge_backup(*two_apps, "backup", "radio")
     machine.calls.clear()
 
-    outcome = edge_backup(*two_apps, "restore-test", "radio", "--snapshot", chosen)
+    outcome = edge_backup(*two_apps, "restore", "--test", "radio", "--snapshot", chosen)
 
     assert outcome.exit_code == 0, outcome.err
     assert machine.argv_of("restic restore")[-3].split(":")[0] == chosen
@@ -127,7 +132,7 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
     outcome = edge_backup(*declare_two_apps(home), "backup", "radio", "--pre-apply")
 
     assert outcome.exit_code == 0, outcome.err
-    assert outcome.out == f"edge-backup: pre-apply-Snapshot {machine.snapshots[-1]['id']}\n"
+    assert outcome.out == f"hal backup: pre-apply-Snapshot {machine.snapshots[-1]['id']}\n"
     backup = machine.argv_of("restic backup")
     assert backup[backup.index("--tag") + 1] == "radio,pre-apply"
     forget = machine.argv_of("restic forget")
@@ -138,22 +143,97 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
 
 
 @pytest.mark.parametrize(
-    ("arguments", "complaint"),
+    "command",
+    [("backup",), ("restore", "--test"), ("backup", "--unlock"), ("restore", "--list")],
+    ids=" ".join,
+)
+def test_no_backup_command_reads_stdin(edge_backup, monkeypatch, command):
+    class Forbidden:
+        def __getattr__(self, name):
+            raise AssertionError(f"read stdin ({name})")
+
+    edge_backup("backup")
+    monkeypatch.setattr(sys, "stdin", Forbidden())
+
+    assert edge_backup(*command).exit_code == 0
+
+
+def test_pre_apply_json_answers_one_object_naming_the_snapshot(edge_backup, machine, home):
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio", "--pre-apply", "--json")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert json.loads(outcome.out) == {"snapshot": machine.snapshots[-1]["id"]}
+    assert outcome.out.count("\n") == 1
+
+
+@pytest.mark.parametrize(
+    ("arguments", "program"),
     [
-        (("backup", "nobody"), "nobody ist nicht deklariert"),
-        (("restore-test", "nobody"), "nobody ist nicht deklariert"),
-        (("backup", "--pre-apply"), "--pre-apply braucht den Namen einer App"),
-        (("restore-test", "--snapshot", "0" * 12), "--snapshot braucht den Namen einer App"),
-        (("restore-test", "--snapshot", ""), "--snapshot braucht den Namen einer App"),
+        (("backup", "nobody"), "hal backup"),
+        (("restore", "--test", "nobody"), "hal restore"),
     ],
 )
-def test_a_refused_app_argument_runs_nothing_and_writes_no_status(
-    edge_backup, machine, arguments, complaint
+def test_an_undeclared_app_runs_nothing_and_writes_no_status(
+    edge_backup, machine, arguments, program
 ):
     """#238 matrix cell 7."""
     outcome = edge_backup(*arguments)
 
-    assert (outcome.exit_code, outcome.err) == (1, f"edge-backup: fehlgeschlagen: {complaint}\n")
+    assert (outcome.exit_code, outcome.err) == (
+        3,
+        f"error: {program}: fehlgeschlagen: nobody ist nicht deklariert\n",
+    )
+    assert machine.calls == []
+    assert outcome.status is None
+
+
+TARGETLESS = "--test restores to a throwaway, so --target does not apply"
+STANDALONE = "--init and --unlock stand alone, without an app, --pre-apply or --json"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "complaint"),
+    [
+        (("backup", "--pre-apply"), "--pre-apply needs the name of an app"),
+        (("backup", "--json"), "--json needs --pre-apply"),
+        (("backup", "radio", "--json"), "--json needs --pre-apply"),
+        (
+            ("backup", "--init", "radio"),
+            STANDALONE,
+        ),
+        (
+            ("backup", "--init", "--unlock"),
+            STANDALONE,
+        ),
+        (
+            ("backup", "--unlock", "--pre-apply", "radio"),
+            STANDALONE,
+        ),
+        (
+            ("backup", "--init", "--json"),
+            STANDALONE,
+        ),
+        (("restore", "--test", "--snapshot", "0" * 12), "--snapshot needs the name of an app"),
+        (("restore", "--test", "--snapshot", ""), "--snapshot needs the name of an app"),
+        (
+            ("restore", "--test", "--target", "somewhere"),
+            TARGETLESS,
+        ),
+        (("restore", "--list", "radio"), "--list stands alone"),
+        (("restore", "--list", "--test"), "--list stands alone"),
+        (("restore",), "restore needs the name of an app and --target"),
+        (("restore", "radio"), "restore needs the name of an app and --target"),
+        (("restore", "--target", "somewhere"), "restore needs the name of an app and --target"),
+    ],
+)
+def test_a_wrong_flag_combination_is_a_usage_error_that_runs_nothing(
+    edge_backup, machine, arguments, complaint
+):
+    outcome = edge_backup(*arguments)
+
+    program = f"hal {arguments[0]}"
+    assert outcome.exit_code == 2
+    assert outcome.err.splitlines() == [f"error: {complaint}", f"next: {program} --help"]
     assert machine.calls == []
     assert outcome.status is None
 
@@ -166,7 +246,7 @@ def test_an_app_named_like_the_pre_apply_tag_is_refused_before_anything_runs(
 
     outcome = edge_backup(*declare_apps(home, pre_apply_app), "backup", "pre-apply")
 
-    assert (outcome.exit_code, machine.calls) == (1, [])
+    assert (outcome.exit_code, machine.calls) == (3, [])
     assert "als restic-Tag pre-apply belegt" in outcome.err
     assert outcome.status is None
 
@@ -189,7 +269,7 @@ def test_dump_runs_fixed_pg_dump_in_the_container_found_by_compose_labels(edge_b
 def test_every_container_runs_a_digest_pinned_image(edge_backup, machine):
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
-    edge_backup(*shipped, "restore-test")
+    edge_backup(*shipped, "restore", "--test")
 
     images = {argument for _, argv in machine.calls for argument in argv if "@sha256:" in argument}
     docker_runs = [argv for _, argv in machine.calls if argv[:2] == ["docker", "run"]]
@@ -208,7 +288,7 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
     edge_backup("backup")
     backed_up = app_history(edge_backup("backup").status)["last_successful_backup"]
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
     assert outcome.status["state"] == "ok"
@@ -232,7 +312,7 @@ def test_restore_test_restores_loads_and_verifies_the_latest_snapshot(edge_backu
 
 def test_the_restored_audio_is_counted_by_the_manifests_own_rule(edge_backup, machine):
     edge_backup("backup")
-    edge_backup("restore-test")
+    edge_backup("restore", "--test")
 
     scans = [argv for label, argv in machine.calls if label == "Zählen der Audiodateien"]
     assert [mount_of(argv, "/audio")["type"] for argv in scans] == ["volume", "bind"]
@@ -244,7 +324,7 @@ def test_restore_test_removes_only_throwaway_servers_it_owns_by_id(edge_backup, 
     machine.leftover_servers = ["1eft0ver"]
     edge_backup("backup")
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
     assert removed_servers(machine) == ["1eft0ver", RESTORE_SERVER_ID]
@@ -256,9 +336,9 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
     machine.foreign_server_name = True
     edge_backup("backup")
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "Start der Wegwerf-Datenbank endete mit Exit 125" in outcome.err
     assert removed_servers(machine) == []
 
@@ -278,16 +358,16 @@ def test_a_started_throwaway_server_is_removed_even_when_its_id_is_unreadable(
     machine.server_start_output = output
     edge_backup("backup")
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert complaint in outcome.err
     assert removed_servers(machine) == [RESTORE_SERVER_ID]
 
 
 def test_monthly_check_reads_a_tenth_of_the_data(edge_backup, machine):
     edge_backup("backup")
-    edge_backup("restore-test")
+    edge_backup("restore", "--test")
 
     checks = [argv for label, argv in machine.calls if label == "restic check"]
     assert [argv[argv.index("check") + 1 :] for argv in checks] == [
@@ -298,7 +378,7 @@ def test_monthly_check_reads_a_tenth_of_the_data(edge_backup, machine):
 
 def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_backup, machine):
     edge_backup("backup")
-    edge_backup("restore-test")
+    edge_backup("restore", "--test")
 
     start = machine.argv_of("Start der Wegwerf-Datenbank")
     assert start[start.index("--network") + 1] == "none"
@@ -331,7 +411,7 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
 
     outcome = edge_backup("backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert outcome.err.count("\n") == 1
     assert f"{failing_label} endete mit Exit {exit_code}" in outcome.err
     assert outcome.status["state"] == "failed"
@@ -346,14 +426,14 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
 @pytest.mark.parametrize(
     "command",
     [
-        ("init",),
+        ("backup", "--init"),
         ("backup",),
-        ("restore-test",),
-        ("snapshots",),
-        ("unlock",),
+        ("restore", "--test"),
+        ("restore", "--list"),
+        ("backup", "--unlock"),
         ("restore", "songmaker", "--target", "restored"),
     ],
-    ids=lambda command: command[0],
+    ids=" ".join,
 )
 def test_every_repository_command_holds_the_host_lock(
     edge_backup, machine, home, monkeypatch, command
@@ -371,7 +451,7 @@ def test_every_repository_command_holds_the_host_lock(
 
 def test_staging_and_restore_directories_and_their_files_are_private(edge_backup, machine):
     edge_backup("backup")
-    edge_backup("restore-test")
+    edge_backup("restore", "--test")
 
     assert machine.private_modes == {
         "staging": 0o700,
@@ -435,7 +515,7 @@ def test_an_app_that_fails_to_back_up_keeps_the_others_and_every_earlier_success
 
     outcome = edge_backup(*two_apps, "backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert (outcome.status["failing_app"], outcome.status["failing_phase"]) == (
         "radio",
         "readiness",
@@ -468,7 +548,7 @@ def test_a_repository_failure_stops_the_run_before_the_next_app(
 
     outcome = edge_backup(*declare_two_apps(home), "backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert (outcome.status["state"], outcome.status["failing_app"]) == ("failed", None)
     assert machine.labels().count("pg_dump") == 1
     assert "restic forget" not in machine.labels()
@@ -483,7 +563,7 @@ def test_an_app_command_that_exits_like_restic_fails_only_its_app(
 
     outcome = edge_backup(*declare_two_apps(home), "backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert (outcome.status["state"], outcome.status["failing_app"]) == ("failed", "songmaker")
     assert machine.labels().count("pg_dump") == 2
 
@@ -493,8 +573,9 @@ def test_a_status_write_failure_stops_the_run_before_the_next_app(edge_backup, m
     arguments = declare_two_apps(home)
     machine.status_unwritable_after_backup = True
 
-    with pytest.raises(PermissionError):
-        edge_backup(*arguments, "backup")
+    outcome = edge_backup(*arguments, "backup")
+
+    assert outcome.err == "error: unexpected error (PermissionError)\n"
 
     assert machine.labels().count("pg_dump") == 1
     assert "restic forget" not in machine.labels()
@@ -548,16 +629,16 @@ def _hang(label: str) -> Callable[[Machine], None]:
         ("backup", _never_start_the_database),
         ("backup", _set_the_wall_clock_back_while_waiting),
         ("backup", _hang("docker ps")),
-        ("restore-test", _hang("docker info")),
+        ("restore --test", _hang("docker info")),
     ],
     ids=["database-absent", "wall-clock-set-back", "docker-ps-hangs", "docker-info-hangs"],
 )
 def test_readiness_gives_up_after_ten_minutes(edge_backup, machine, command, stall):
     stall(machine)
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command.split())
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "nach 10 Minuten nicht bereit" in outcome.err
     assert outcome.status["failing_phase"] == "readiness"
     assert outcome.status["exit_category"] == "not-ready"
@@ -580,7 +661,7 @@ def test_backup_refuses_when_labels_name_more_or_less_than_one_target(
 
     outcome = edge_backup("backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert message in outcome.err
     assert outcome.status["exit_category"] == "configuration"
     assert "pg_dump" not in machine.labels()
@@ -633,9 +714,9 @@ def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
     break_backup(machine)
     edge_backup("backup")
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert message in outcome.err
     assert outcome.status["state"] == "failed"
     assert outcome.status["failing_phase"] == "verify"
@@ -655,18 +736,18 @@ def test_restore_test_counts_a_container_that_will_not_run_as_a_failed_command(
     edge_backup("backup")
     machine.failing[failing_label] = 125
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert f"{failing_label} endete mit Exit 125" in outcome.err
     assert outcome.status["failing_phase"] == "verify"
     assert outcome.status["exit_category"] == "command-failed"
 
 
 def test_restore_test_without_a_snapshot_fails(edge_backup):
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
     assert outcome.status["failing_phase"] == "restore"
 
@@ -675,13 +756,87 @@ def test_an_interrupted_run_is_failed_and_cleans_up(edge_backup, machine, home):
     edge_backup("backup")
     machine.failing["pg_restore"] = KeyboardInterrupt
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 130
+    assert outcome.err == "error: hal restore: fehlgeschlagen: abgebrochen\n"
     assert outcome.status["state"] == "failed"
     assert outcome.status["exit_category"] == "interrupted"
     assert no_restore_server_left(machine)
     assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+def _terminated_by_systemd():
+    """What `systemctl stop` does to the run: SIGTERM, which must reach the run as Ctrl-C."""
+    assert signal.getsignal(signal.SIGTERM) is signal.default_int_handler, "SIGTERM would kill"
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+@pytest.mark.parametrize(
+    ("command", "label"),
+    [
+        (("backup",), "pg_dump"),
+        (("backup", "radio", "--pre-apply", "--json"), "restic backup"),
+        (("restore", "--test"), "pg_restore"),
+        (("restore", "--test", "radio", "--snapshot", "latest"), "pg_restore"),
+        (("backup", "--init"), "restic init"),
+        (("backup", "--unlock"), "restic unlock"),
+        (("restore", "--list"), "restic snapshots"),
+        (("restore", "radio", "--target", "restored"), "restic restore"),
+    ],
+    ids=" ".join,
+)
+def test_a_failed_step_of_any_verb_exits_3_with_one_error_line_and_frees_the_lock(
+    edge_backup, machine, home, monkeypatch, command, label
+):
+    monkeypatch.chdir(home)
+    edge_backup(*declare_two_apps(home), "backup")
+    machine.failing[label] = 1
+    snapshot = machine.snapshots[-1]["id"]
+    command = [snapshot if part == "latest" else part for part in command]
+
+    outcome = edge_backup(*declare_two_apps(home), *command)
+
+    program = f"hal {command[0]}"
+    assert outcome.exit_code == 3
+    [line] = outcome.err.splitlines()
+    assert line.startswith(f"error: {program}: fehlgeschlagen: ")
+    assert outcome.out == ""
+    assert machine._host_lock_is_free()
+
+
+@pytest.mark.parametrize(
+    ("command", "label"),
+    [
+        (("backup",), "pg_dump"),
+        (("backup", "radio", "--pre-apply", "--json"), "pg_dump"),
+        (("restore", "--test"), "pg_restore"),
+        (("backup", "--init"), "restic init"),
+        (("backup", "--unlock"), "restic unlock"),
+        (("restore", "--list"), "restic snapshots"),
+        (("restore", "songmaker", "--target", "restored"), "restic restore"),
+    ],
+    ids=" ".join,
+)
+def test_sigterm_ends_a_run_as_an_interruption_that_cleans_up_and_frees_the_lock(
+    edge_backup, machine, home, monkeypatch, command, label
+):
+    monkeypatch.chdir(home)
+    edge_backup(*declare_two_apps(home), "backup")
+    sigterm_before = signal.getsignal(signal.SIGTERM)
+    machine.failing[label] = _terminated_by_systemd
+
+    outcome = edge_backup(*declare_two_apps(home), *command)
+
+    assert outcome.exit_code == 130
+    assert signal.getsignal(signal.SIGTERM) is sigterm_before
+    assert machine._host_lock_is_free()
+    assert no_restore_server_left(machine)
+    assert list((home / ".cache/edge-backup").iterdir()) == []
+    if label in {"pg_dump", "pg_restore"}:  # the verbs that record their outcome
+        assert outcome.status["state"] == "failed"
+        assert outcome.status["exit_category"] == "interrupted"
+        assert outcome.err.endswith("fehlgeschlagen: abgebrochen\n")
 
 
 def _back_up_once(edge_backup, machine) -> None:
@@ -716,14 +871,14 @@ def _write_undecodable_status(edge_backup, machine) -> None:
     ("arguments", "arrange", "exit_code"),
     [
         (("backup",), _back_up_once, 0),
-        (("restore-test",), _back_up_once, 0),
-        (("backup",), _make_the_database_ambiguous, 1),
-        (("restore-test",), _arrange_nothing, 1),
-        (("--apps", "/nonexistent/apps.toml", "backup"), _arrange_nothing, 1),
-        (("--apps", "/nonexistent/apps.toml", "restore-test"), _arrange_nothing, 1),
-        (("backup",), _corrupt_the_status_file, 1),
-        (("backup",), _forbid_reading_the_status_file, 1),
-        (("backup",), _write_undecodable_status, 1),
+        (("restore", "--test"), _back_up_once, 0),
+        (("backup",), _make_the_database_ambiguous, 3),
+        (("restore", "--test"), _arrange_nothing, 3),
+        (("--apps", "/nonexistent/apps.toml", "backup"), _arrange_nothing, 3),
+        (("--apps", "/nonexistent/apps.toml", "restore", "--test"), _arrange_nothing, 3),
+        (("backup",), _corrupt_the_status_file, 3),
+        (("backup",), _forbid_reading_the_status_file, 3),
+        (("backup",), _write_undecodable_status, 3),
     ],
     ids=[
         "backup-succeeds",
@@ -762,7 +917,7 @@ def _leave_killed_run_staging(work_dir: Path) -> Path:
     return staging
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_run_whose_staging_name_is_taken_leaves_that_directory_alone(
     edge_backup, machine, home, monkeypatch, command
 ):
@@ -777,7 +932,7 @@ def test_a_run_whose_staging_name_is_taken_leaves_that_directory_alone(
         tempfile, "_get_candidate_names", lambda: itertools.chain(["taken"], random_names())
     )
 
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command.split())
 
     assert outcome.exit_code == 0, outcome.err
     assert (taken / "db/db.dump").read_bytes() == DUMP
@@ -787,9 +942,9 @@ def test_a_run_whose_staging_name_is_taken_leaves_that_directory_alone(
 def test_an_unexpected_error_marks_the_run_failed_and_surfaces(edge_backup, machine):
     machine.failing["restic backup"] = RuntimeError
 
-    with pytest.raises(RuntimeError):
-        edge_backup("backup")
+    outcome = edge_backup("backup")
 
+    assert (outcome.exit_code, outcome.err) == (3, "error: unexpected error (RuntimeError)\n")
     status = json.loads(machine.status_file.read_text())
     assert (status["state"], status["exit_category"]) == ("failed", "internal")
 
@@ -805,15 +960,18 @@ def undeletable_leftover(home) -> Iterator[Path]:
     locked.chmod(0o700)
 
 
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_sweep_that_cannot_remove_a_leftover_fails_the_run_with_one_line(
     edge_backup, machine, undeletable_leftover, command
 ):
-    outcome = edge_backup(command)
+    outcome = edge_backup(*command.split())
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
-    assert line.startswith("edge-backup: fehlgeschlagen: der Klartext eines abgebrochenen Laufs")
+    program = "hal restore" if "restore" in command else "hal backup"
+    assert line.startswith(
+        f"error: {program}: fehlgeschlagen: der Klartext eines abgebrochenen Laufs"
+    )
     assert (outcome.status["state"], outcome.status["exit_category"]) == ("failed", "internal")
     assert machine.calls == []
 
@@ -843,16 +1001,16 @@ def _corrupt_apps_toml(home: Path) -> None:
         (_corrupt_apps_toml, "apps.toml [app.songmaker]"),
     ],
 )
-@pytest.mark.parametrize("command", ["backup", "restore-test"])
+@pytest.mark.parametrize("command", ["backup", "restore --test"])
 def test_a_broken_setup_fails_before_touching_docker(
     edge_backup, machine, home, break_setup, message, command
 ):
     (home / "apps.toml").write_text(cli.DEFAULT_APPS.read_text())
     break_setup(home)
 
-    outcome = edge_backup("--apps", str(home / "apps.toml"), command)
+    outcome = edge_backup("--apps", str(home / "apps.toml"), *command.split())
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert message in outcome.err
     assert outcome.status["state"] == "failed"
     assert outcome.status["exit_category"] == "configuration"
@@ -881,8 +1039,8 @@ def _identity_of(path: Path) -> tuple[int, int, int, int]:
 )
 @pytest.mark.parametrize(
     "command",
-    [("backup",), ("restore-test",), ("restore", "songmaker", "--target", "restored")],
-    ids=lambda command: command[0],
+    [("backup",), ("restore", "--test"), ("restore", "songmaker", "--target", "restored")],
+    ids=" ".join,
 )
 def test_an_unreadable_status_file_is_never_overwritten(
     edge_backup, machine, home, monkeypatch, command, break_status
@@ -893,7 +1051,7 @@ def test_an_unreadable_status_file_is_never_overwritten(
 
     outcome = edge_backup(*command)
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert "Statusdatei ist unlesbar" in line
     assert _identity_of(machine.status_file) == before
@@ -917,7 +1075,7 @@ def test_status_holds_the_contract_keys_and_no_paths_or_output(edge_backup, mach
 def test_the_password_never_appears_in_argv_output_status_or_errors(edge_backup, machine, home):
     two_apps = declare_two_apps(home)
     edge_backup(*two_apps, "backup")
-    edge_backup(*two_apps, "restore-test")
+    edge_backup(*two_apps, "restore", "--test")
     machine.failing["restic backup"] = 3
     failed = edge_backup(*two_apps, "backup")
 
@@ -957,7 +1115,7 @@ def test_restore_puts_the_last_successful_snapshot_into_a_new_directory(edge_bac
     assert outcome.exit_code == 0, outcome.err
     assert (target / "db/db.dump").read_bytes() == DUMP
     assert (target / "audio/u1/one.mp3").read_bytes() == AUDIO["u1/one.mp3"]
-    assert edge_backup("restore", "songmaker", "--target", str(target)).exit_code == 1
+    assert edge_backup("restore", "songmaker", "--target", str(target)).exit_code == 3
 
 
 @pytest.mark.parametrize("target", [f"{STAGING_PREFIX}manual", "manual"])
@@ -967,7 +1125,7 @@ def test_restore_refuses_a_target_in_the_directory_runs_sweep(edge_backup, machi
 
     outcome = edge_backup("restore", "songmaker", "--target", str(work_dir / target))
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "Arbeitsverzeichnis" in outcome.err
     assert list(work_dir.iterdir()) == []
 
@@ -976,7 +1134,7 @@ def test_init_creates_a_private_repository_directory(edge_backup, machine, home)
     (home / "backups/restic/config").unlink()
     (home / "backups/restic").rmdir()
 
-    outcome = edge_backup("init")
+    outcome = edge_backup("backup", "--init")
 
     assert outcome.exit_code == 0, outcome.err
     assert (home / "backups/restic").stat().st_mode & 0o777 == 0o700
@@ -1080,7 +1238,7 @@ def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
 
-    outcome = edge_backup(*shipped, "restore-test")
+    outcome = edge_backup(*shipped, "restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
     servers = [argv[-5] for label, argv in machine.calls if label == "Start der Wegwerf-Datenbank"]
@@ -1096,9 +1254,9 @@ def test_a_restored_table_without_rows_fails_the_restore_test(edge_backup, machi
     edge_backup(*shipped, "backup")
     machine.table_rows["realm"] = 0
 
-    outcome = edge_backup(*shipped, "restore-test")
+    outcome = edge_backup(*shipped, "restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "die wiederhergestellte Tabelle realm ist leer" in outcome.err
     assert outcome.status["failing_app"] == "keycloak"
     assert outcome.status["exit_category"] == "verification-failed"
@@ -1109,7 +1267,7 @@ def test_songmaker_without_songs_still_passes_the_restore_test(edge_backup, mach
     machine.table_rows["songs"] = 0
     edge_backup("backup")
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
     assert app_history(outcome.status)["last_successful_restore_test"] is not None
@@ -1129,9 +1287,9 @@ def test_a_failing_restore_shows_no_row_value_of_the_dump(edge_backup, machine, 
     edge_backup("backup")
     machine.restore_diagnostic = f'COPY credential, line 1: "{marker}"'
 
-    outcome = edge_backup("restore-test")
+    outcome = edge_backup("restore", "--test")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "pg_restore endete mit Exit 1" in outcome.err
     shown = outcome.out + outcome.err + machine.status_file.read_text()
     assert marker not in shown
@@ -1145,7 +1303,7 @@ def test_an_app_never_backed_up_is_named_so_by_restore_and_restore_test(edge_bac
     shipped = declare_shipped_apps()
 
     restored = edge_backup(*shipped, "restore", "keycloak", "--target", str(home / "restored"))
-    tested = edge_backup(*shipped, "restore-test")
+    tested = edge_backup(*shipped, "restore", "--test")
 
     expected = "kein erfolgreiches Backup von keycloak aufgezeichnet"
     assert expected in restored.err
@@ -1161,7 +1319,7 @@ def test_keycloak_reported_failed_while_songmaker_is_still_backed_up_when_keyclo
 
     outcome = edge_backup(*declare_shipped_apps(), "backup")
 
-    assert outcome.exit_code == 1
+    assert outcome.exit_code == 3
     assert "kein Datenbank-Container für keycloak" in outcome.err
     assert (outcome.status["failing_app"], outcome.status["exit_category"]) == (
         "keycloak",
@@ -1175,7 +1333,7 @@ def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine):
     """#107 T8: no run stops or starts an edge service."""
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
-    edge_backup(*shipped, "restore-test")
+    edge_backup(*shipped, "restore", "--test")
 
     docker_verbs = {argv[1] for _, argv in machine.calls if argv[0] == "docker"}
     assert docker_verbs.isdisjoint({"stop", "start", "restart", "kill", "pause", "compose", "up"})
@@ -1184,7 +1342,7 @@ def test_no_run_stops_or_starts_an_edge_service(edge_backup, machine):
 def test_no_output_or_status_holds_the_dump(edge_backup, machine):
     """#107 T10: no output or status holds dump content."""
     shipped = declare_shipped_apps()
-    runs = [edge_backup(*shipped, "backup"), edge_backup(*shipped, "restore-test")]
+    runs = [edge_backup(*shipped, "backup"), edge_backup(*shipped, "restore", "--test")]
 
     shown = "".join(run.out + run.err for run in runs) + machine.status_file.read_text()
     assert DUMP.decode() not in shown
@@ -1230,8 +1388,8 @@ def _unit(name: str) -> configparser.ConfigParser:
 @pytest.mark.parametrize(
     ("unit", "calendar", "command"),
     [
-        ("edge-backup", "Sun *-*-* 03:00:00", "backup"),
-        ("edge-backup-restore-test", "Sun *-*-01..07 05:00:00", "restore-test"),
+        ("edge-backup", "Sun *-*-* 03:00:00", ["backup"]),
+        ("edge-backup-restore-test", "Sun *-*-01..07 05:00:00", ["restore", "--test"]),
     ],
 )
 def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
@@ -1243,7 +1401,7 @@ def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
     assert timer["Install"]["WantedBy"] == "timers.target"
     assert service["Service"]["Type"] == "oneshot"
     program, *arguments = service["Service"]["ExecStart"].split()
-    assert (program, arguments) == ("%h/git/edge/.venv/bin/edge-backup", [command])
+    assert (program, arguments) == ("%h/git/edge/.venv/bin/hal", command)
     with pytest.raises(SystemExit) as help_shown:
-        cli.main([command, "--help"])
+        hal_cli.main([*command, "--help"])
     assert help_shown.value.code == 0

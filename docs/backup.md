@@ -1,7 +1,7 @@
-# edge-check and edge-backup
+# edge-check, hal backup and hal restore
 
-Reference for the operator. It says what the two commands guarantee and what they do not; `edge-check
---help`, `edge-backup --help`, `backup/apps.toml`, `src/edge_check/`, `src/edge_backup/` and `systemd/`
+Reference for the operator. It says what the commands guarantee and what they do not; `edge-check
+--help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/edge_check/`, `src/edge_backup/` and `systemd/`
 hold the mechanics. The data layer and the re-setup path they serve: [architecture.md](architecture.md)
 (L5, section 6).
 
@@ -43,7 +43,7 @@ allow-listed. Each `[[allow]]` entry needs a `reason` and a `port`, an `owner` (
 system unit under `system.slice`), or both, plus `protocol` (`tcp` or `udp`); any other key is an error.
 Allow by `owner` alone only when the service opens random ports.
 
-## edge-backup
+## hal backup and hal restore
 
 A weekly encrypted backup of the declared apps (Songmaker and Keycloak) into a local restic repository,
 and a monthly test that restores the last successful backup's snapshot and proves it is good.
@@ -63,12 +63,12 @@ network, no capabilities and a read-only root, as your own user. Backup and rest
 the pinned restic image and each app's Postgres restore image are present; `docker image prune -a`
 removes them and the next run pulls them again by digest, failing early, before staging anything. The
 password file is mounted read-only at `/run/secrets/restic-password` and handed to restic only as
-`--password-file`; edge-backup never reads, prints or logs it.
+`--password-file`; neither command ever reads, prints or logs it.
 
 ### Setup
 
 The one-time setup is: `uv sync` (builds the `.venv` the units run); a restic password in
-`~/.secrets/restic/password` (random, mode 0600, directory 0700); `uv run edge-backup init` (creates
+`~/.secrets/restic/password` (random, mode 0600, directory 0700); `hal backup --init` (creates
 `~/backups/restic` once, mode 700); `loginctl enable-linger "$USER"` so the user timers run without a
 login session; and the units in `systemd/` (`edge-backup{,-restore-test}.{service,timer}`) linked into
 `~/.config/systemd/user/` and enabled as user timers. The units expect the checkout at `~/git/edge`.
@@ -85,31 +85,32 @@ read by anyone, ever:** losing the key loses every backup, and restic has no rec
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database is not up yet, the backup
 waits up to 10 minutes, then fails. One host lock (`~/.local/state/edge/backup.lock`) serialises every
-edge-backup command: run by hand during a backup or restore test, `snapshots`, `restore` or any other
-command waits silently until that run ends.
+`hal backup` or `hal restore` run: run by hand during a backup or restore test, `hal restore --list`,
+`hal restore` or any other verb waits silently until that run ends.
 
 To run now, start the same units the timers take (`systemctl --user start edge-backup.service` and
 `edge-backup-restore-test.service`); the last journal line of the unit is the verdict.
-`uv run edge-backup snapshots` lists the repository.
+`hal restore --list` lists the repository.
 
 ### One app, and the pre-apply snapshot
 
-`edge-backup backup <app>` and `edge-backup restore-test <app>` work on that app alone: its dump, its
+`hal backup <app>` and `hal restore --test <app>` work on that app alone: its dump, its
 snapshot, its retention and its restore test. On a stand-in repository of a few MiB this took seconds; the structure check
 and the prune (from the 11th pre-apply snapshot on) on the live repository are not measured. The
 other apps' entries in the status file stay as they are, and a name `apps.toml` does not declare is refused before anything runs. The one-app
-`restore-test` checks the repository's structure but does not read data (`check` without
+`hal restore --test` checks the repository's structure but does not read data (`check` without
 `--read-data-subset`); the monthly run keeps that. Without a name both commands do what the timers do.
-`edge-backup restore-test <app> --snapshot <ID>` restores and verifies that snapshot of the app instead of
+`hal restore --test <app> --snapshot <ID>` restores and verifies that snapshot of the app instead of
 the one the status file names (it needs the app's name); `hal apply` uses it on the snapshot its own backup
 just made, so a timer backup in between cannot swap the snapshot under test.
 
-`edge-backup backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, prints its ID and
+`hal backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, prints its ID (with
+`--json` one object, `{"snapshot": "<ID>"}`, which `hal apply` reads) and
 keeps the last 10 pre-apply snapshots of that app (`forget --keep-last 10`, scoped to both tags),
 without touching the app's other snapshots. The 10 apply per complete tag set: a snapshot with a
 third tag forms another group and keeps its own ten. An app cannot be named `pre-apply`; `apps.toml`
 refuses it. The weekly retention never deletes a `pre-apply`
-snapshot (`--keep-tag pre-apply`). Restore one with `edge-backup restore <app> --snapshot <ID> --target <dir>`.
+snapshot (`--keep-tag pre-apply`). Restore one with `hal restore <app> --snapshot <ID> --target <dir>`.
 
 ### What a backup holds, and its limit
 
@@ -122,7 +123,7 @@ exactly that, so such a backup never counts as good.
 Keycloak's dump holds its realm signing keys, the credential hashes and the client secrets. In the
 repository it exists only encrypted. In plain text it exists in exactly three places, each mode 0700:
 the staging directory during a backup, the restore test's directory during a restore test (both removed
-when the run ends), and the target of `edge-backup restore keycloak --target`, which you delete yourself.
+when the run ends), and the target of `hal restore keycloak --target`, which you delete yourself.
 If Keycloak is off or its database is down, the weekly run waits 10 minutes, reports keycloak as failed
 and still backs up Songmaker. A failed run skips retention and the repository check for every app.
 
@@ -164,12 +165,12 @@ path or file name.
   `restic backup` exits 0, so earlier successes stay. A run with any failure prunes nothing. An app
   removed from `apps.toml` keeps its entry; renaming an app makes it a new app.
 - A status file that cannot be read (mode 000, corrupt JSON, an unknown `schema`) is never overwritten:
-  backup, restore test and restore fail with one German line and exit 1. Past successes are never
+  backup, restore test and restore fail with one German line and exit 3. Past successes are never
   replaced by nulls; repair or remove the file by hand to go on.
 - A schema-1 file is read into this shape: its id and times go to the declared app only when exactly one
   app is declared and restic confirms the id in that app's tag scope; otherwise they stay in an
   `unattributed` entry and `restore` asks for `--snapshot`. `restore` never writes the file. An older
-  edge-backup refuses a schema-2 file like any unknown one: move the file aside, then restore by
+  `hal backup` refuses a schema-2 file like any unknown one: move the file aside, then restore by
   `--snapshot` or run the next backup.
 - The single-app runs (`backup <app>`, `restore-test <app>`) write the same file: `state` reflects
   the latest run of either form, and the data-reading check belongs only to the full run without an app.
@@ -178,7 +179,9 @@ path or file name.
   freshness per app: `last_successful_backup` no older than about 8 days,
   `last_successful_restore_test` no older than about 5 weeks.
 
-Exit 0: every phase succeeded. Exit 1: a run failed; one German line names why.
+Exit 0: every phase succeeded. Exit 3: a run failed; `error: hal backup: fehlgeschlagen: …` (or
+`hal restore`) names why. Exit 2: the flags do not fit together (`--pre-apply` without an app, for
+example); nothing ran. Exit 130: Ctrl-C or SIGTERM, recorded in the status file as interrupted.
 
 ### Restore one app
 
@@ -186,24 +189,24 @@ The two blocks below stay until `restore <app> --live` exists (`docs/architectur
 follow-up on overnightworks/edge#222).
 
 ```sh
-uv run edge-backup restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
+hal restore songmaker --target ~/restore-songmaker   # a new directory, not under ~/.cache/edge-backup
 ```
 
 It restores the snapshot of that app's **last successful backup**
 (`apps.<app>.last_snapshot_id` in the status) and prints its short ID, never a
 newer snapshot that a failed run left behind (restic exit 3 leaves a partial
-one). `restore` refuses with one German line and exit 1, names the newest
+one). `hal restore` refuses with one German line and exit 3, names the newest
 snapshot and says how to choose it, in two cases: no successful backup of that
 app is recorded yet, or the recorded snapshot is missing in the repository.
 The restore test verifies each app against its own last good snapshot and
 refuses the same way; a failed `check --read-data` gives no app a new time.
 
 Disaster recovery on a machine without the status file: list the repository
-with `uv run edge-backup snapshots`, then choose a snapshot of that app by the
+with `hal restore --list`, then choose a snapshot of that app by the
 first 8 or more characters of its ID:
 
 ```sh
-uv run edge-backup restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
+hal restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
 ```
 
 An ID that is unknown, ambiguous or another app's is refused with one German
@@ -218,7 +221,7 @@ so a failed load or copy never goes on to the other half or restarts the app:
 (
 set -euo pipefail
 restored=~/restore-songmaker
-# The copy runs in edge-backup's own restic image, pinned by version and digest: no
+# The copy runs in the backup runner's own restic image, pinned by version and digest: no
 # unpinned image ever gets write access to the live audio volume.
 image=$(cd ~/git/edge && .venv/bin/python -c \
   'from edge_backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
@@ -255,7 +258,7 @@ volume. The copied files keep the owner restic restored them with (your user).
 Only you restore Keycloak, and the block below overwrites only Keycloak's
 database. It stops `keycloak` only (Traefik and every other service keep
 running), loads the dump into `keycloak-db`, and starts `keycloak` again. First
-restore the snapshot as above, `uv run edge-backup restore keycloak --target
+restore the snapshot as above, `hal restore keycloak --target
 ~/restore-keycloak`; the dump holds keys, so the block deletes that directory
 after a successful `docker start`. Paste the block as a whole: it stops at the
 first failing command and never starts Keycloak after a failed load. If the
@@ -265,7 +268,7 @@ image's superuser, which may set that); only the exit code is printed. Delete
 `~/restore-keycloak` once you are done. The block acts on the compose project `edge`;
 `EDGE_COMPOSE_PROJECT` names another, which is how it was driven against a throwaway stack.
 A failed realm step of `hal apply` names its pre-apply snapshot; restore that one with
-`uv run edge-backup restore keycloak --snapshot <ID> --target ~/restore-keycloak`.
+`hal restore keycloak --snapshot <ID> --target ~/restore-keycloak`.
 
 ```sh
 (
@@ -299,8 +302,8 @@ printed ID brings the old Keycloak back.
 
 ### Stale locks
 
-edge-backup's host lock frees itself when the process ends. A restic lock left by a killed run is removed
-with `uv run edge-backup unlock`, but only once it is stale: every container is host `edge-backup` with
+The host lock frees itself when the process ends. A restic lock left by a killed run is removed
+with `hal backup --unlock`, but only once it is stale: every container is host `edge-backup` with
 restic as PID 1, so restic counts the lock stale only after 30 minutes. Until then `unlock` leaves it,
 and a new run waits up to 5 minutes for it, then fails. No command ever runs with `--no-lock`.
 

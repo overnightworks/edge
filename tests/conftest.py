@@ -14,7 +14,8 @@ from edge_backup_support import (
 )
 from live_stack import LIVE_STACK_PORTS
 
-from edge_backup import cli, host
+from edge_backup import host
+from hal import cli
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 
@@ -76,9 +77,16 @@ def edge_backup(machine, home, capsys):
     songmaker_only = ("--apps", str(home / "songmaker-only.toml"))
 
     def run(*arguments: str) -> Outcome:
-        """Songmaker alone unless the test declares its apps: most cases are about one app."""
-        declared = () if "--apps" in arguments else songmaker_only
-        exit_code = cli.main([*declared, *arguments])
+        """Songmaker alone unless the test declares its apps: most cases are about one app.
+        hal has no global option, so a test's `--apps FILE` is moved behind the verb."""
+        arguments_list = list(arguments)
+        if "--apps" in arguments_list:
+            at = arguments_list.index("--apps")
+            declared = arguments_list[at : at + 2]
+            del arguments_list[at : at + 2]
+        else:
+            declared = list(songmaker_only)
+        exit_code = cli.main([*arguments_list, *declared])
         captured = capsys.readouterr()
         status_file = home / ".local/state/edge/backup-status.json"
         status = _status_if_readable(status_file)

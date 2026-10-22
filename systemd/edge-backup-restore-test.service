@@ -4,5 +4,5 @@ Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]
 Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/edge-backup restore-test
+ExecStart=%h/git/edge/.venv/bin/hal restore --test
 TimeoutStartSec=6h

@@ -161,7 +161,7 @@ The plan names the step in one line. After your yes it takes a Keycloak-only bac
 config-cli, observes again and prints one line per change, with the seconds the backup and the
 restore test took. A failed backup or restore test applies nothing and ends the run partial with
 exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
-not checked"). edge-backup runs in a process group of its own, so Ctrl-C does not reach it. A step
+not checked"). `hal backup` runs in a process group of its own, so Ctrl-C does not reach it. A step
 that outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
 minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A
 failure after config-cli started ends the run with exit 1 and names the snapshot; the way back is
@@ -205,8 +205,8 @@ trace, not Keycloak, and it is also the setup check of `edge apply --closed` for
 
 ## Patch upgrade
 
-1. **Back up the database** with `uv run edge-backup backup` (the dump holds signing keys and
-   credential hashes; edge-backup keeps it encrypted, see [backup.md](backup.md)). It must end
+1. **Back up the database** with `hal backup` (the dump holds signing keys and
+   credential hashes; the backup keeps it encrypted, see [backup.md](backup.md)). It must end
    with exit 0.
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version and digest), and of
    keycloak-config-cli if a build for the new version exists.

@@ -196,8 +196,8 @@ CONSOLE_CLIENT_ROLE = f"{CONSOLE_NAME}-client-role"
 SCOPED_CLIENT = "songmaker"  # lists its default scopes, as do hopin and presentator
 SERVICE_ACCOUNT_CLIENT = "songmaker"  # a listed service account
 ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # declared with serviceAccountsEnabled: false
-BACKUP_ASKED = ["backup", "keycloak", "--pre-apply"]  # what edge-backup was asked, after --apps
-RESTORE_TEST_ASKED = ["restore-test", "keycloak", "--snapshot"]  # then the snapshot just made
+BACKUP_ASKED = ["backup", "keycloak", "--pre-apply", "--json"]  # what hal was asked first
+RESTORE_TEST_ASKED = ["restore", "--test", "keycloak", "--snapshot"]  # then the snapshot just made
 LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
 CHANGED_LIFESPAN_SETTING = f"accessTokenLifespan: {CHANGED_ACCESS_TOKEN_LIFESPAN} "
 STEP_GROUP = "probe-realm-step"  # a group proof 12 adds to realm.yaml
@@ -960,12 +960,13 @@ def within_keycloak(
 @dataclass
 class RealmStepStand:
     """What proof 12 drives `edge.realm.reconcile` with: this stack's Compose (its project and
-    overlays), a repository of the realm files the stack's config-cli mounts, and edge-backup
+    overlays), a repository of the realm files the stack's config-cli mounts, and hal
     under a scratch HOME that backs up this stack's Keycloak database and no other."""
 
     stack: Stack
     root: Path
     backup_command: tuple[str, ...]
+    apps: Path
     asked: list[list[str]] = field(default_factory=list)
 
     @classmethod
@@ -986,10 +987,10 @@ class RealmStepStand:
             '[app.keycloak.restore_test]\ncount_table = "realm"\nrequire_rows = true\n'
         )
         executable = shutil.which(
-            "edge-backup", path=f"{REPO / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"
+            "hal", path=f"{REPO / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"
         )
-        expect(executable is not None, "no edge-backup in the checkout's .venv or on the PATH")
-        return cls(stack, root, (executable, "--apps", str(apps)))
+        expect(executable is not None, "no hal in the checkout's .venv or on the PATH")
+        return cls(stack, root, (executable,), apps)
 
     @property
     def repository(self) -> Path:
@@ -1007,8 +1008,9 @@ class RealmStepStand:
         # The file lies in the probe's own --scratch directory, which only the operator names.
         self.realm_file.write_text(text + append)  # NOSONAR(S2083)
 
-    def edge_backup(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        command = [*self.backup_command, *arguments]
+    def hal(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """The realm step never passes `--apps`; the stand names its own behind the verb."""
+        command = [*self.backup_command, *arguments, "--apps", str(self.apps)]
         result = subprocess.run(
             command,
             env={**os.environ, "HOME": str(self.root / "home")},
@@ -1022,7 +1024,7 @@ class RealmStepStand:
 
     def run_backup(self, command: list[str], _timeout: int, _stdin: str | None = None):
         self.asked.append(command[len(self.backup_command) :])
-        return self.edge_backup(*command[len(self.backup_command) :])
+        return self.hal(*command[len(self.backup_command) :])
 
     def run_compose(self, command: list[str], _timeout: int, stdin: str | None = None):
         return self.stack.compose(
@@ -2413,14 +2415,14 @@ class Probe:
         return stand
 
     def the_realm_step(self, stand: RealmStepStand) -> None:
-        """Proof 12 (#242): the realm step of `edge apply` against this stack, with edge-backup
+        """Proof 12 (#242): the realm step of `edge apply` against this stack, with hal
         under a scratch HOME and its own apps.toml. The same Keycloak, its database and its
         config-cli answer; only the repository, the HOME and the project are the probe's."""
-        expect(stand.edge_backup("init").returncode == 0, "edge-backup init failed")
+        expect(stand.hal("backup", "--init").returncode == 0, "hal backup --init failed")
 
         baseline = stand.apply()
         expect(baseline.failure is None, f"the first realm step failed: {baseline.failure}")
-        snapshots = stand.edge_backup("snapshots").stdout
+        snapshots = stand.hal("restore", "--list").stdout
         expect(
             [call[: len(BACKUP_ASKED)] for call in stand.asked]
             == [BACKUP_ASKED, RESTORE_TEST_ASKED],
@@ -2436,8 +2438,8 @@ class Probe:
         expect(stand.plan().lines == [], "a settled realm still says something")
         asked = len(stand.asked)
         expect(stand.apply() == reconcile.StepResult(), "a settled realm's step did something")
-        expect(stand.asked == stand.asked[:asked], "a settled realm's step called edge-backup")
-        expect(stand.edge_backup("snapshots").stdout == snapshots, "a quiet step made a snapshot")
+        expect(stand.asked == stand.asked[:asked], "a settled realm's step called hal")
+        expect(stand.hal("restore", "--list").stdout == snapshots, "a quiet step made a snapshot")
         self.held(
             "12a",
             "a first step backs up, proves that snapshot's restore and applies; a second "
@@ -2534,7 +2536,7 @@ class Probe:
         )
         expect(
             stand.asked[asked:] == [BACKUP_ASKED, [*RESTORE_TEST_ASKED, named[1]]],
-            f"the failed step asked edge-backup {stand.asked[asked:]}",
+            f"the failed step asked hal {stand.asked[asked:]}",
         )
         expect(
             stand.plan().action is reconcile.RealmAction.RUN, "the failed step is not planned again"

@@ -324,7 +324,7 @@ class ScriptedCompose:
 
 @dataclass
 class RealmBackup:
-    """edge-backup as the realm step calls it: what it was asked, and the part that fails."""
+    """hal as the realm step calls it: what it was asked, and the part that fails."""
 
     asked: list[str] = field(default_factory=list)
     failing: str | None = None
@@ -4495,21 +4495,21 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
 
 
 @pytest.mark.usefixtures("realm_unit")
-def test_the_waiting_line_of_a_stopped_edge_backup_carries_the_prefix_of_the_steps_lines(
+def test_the_waiting_line_of_a_stopped_hal_carries_the_prefix_of_the_steps_lines(
     switch, repository, monkeypatch
 ):
     """Cell 7, through the wiring `apply` gives the installed backup."""
     monkeypatch.setattr(reconcile, "BACKUP_SECONDS", 1)
     monkeypatch.setattr(reconcile, "STOP_GRACE_SECONDS", 0.2)
-    edge_backup = repository / ".venv/bin/edge-backup"
-    edge_backup.parent.mkdir(parents=True)
-    edge_backup.write_text("#!/bin/sh\nexec sleep 30\n")
-    edge_backup.chmod(0o755)
+    hal = repository / ".venv/bin/hal"
+    hal.parent.mkdir(parents=True)
+    hal.write_text("#!/bin/sh\nexec sleep 30\n")
+    hal.chmod(0o755)
 
     exit_code, out, _ = switch(installed_backup=True)
 
     assert exit_code == 1
-    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for edge-backup to clean up" in out
+    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for hal to clean up" in out
     assert "\nrealm: waiting" not in out
 
 

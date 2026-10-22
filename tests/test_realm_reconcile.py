@@ -1,5 +1,5 @@
 """The realm step of `edge apply --closed` (#242): when it runs (the plan) and what it does (the
-step), with Compose, the observer and edge-backup faked. Each test names its cell of the item's
+step), with Compose, the observer and hal backup faked. Each test names its cell of the item's
 scenario matrix."""
 
 import contextlib
@@ -449,7 +449,7 @@ def test_the_record_is_emptied_before_config_cli_and_filled_after_the_observe(
     assert entry[f"hallucinai {ATTRIBUTE}"] == "checksum one"
 
 
-# --- The observer and edge-backup as the step calls them ---------------------------------------
+# --- The observer and hal as the step calls them ---------------------------------------
 
 
 @dataclass
@@ -508,9 +508,9 @@ def test_an_observer_that_fails_or_answers_nonsense_is_one_line(
 
 @dataclass
 class Commands:
-    """edge-backup as a fake process: the commands asked, and what it answers."""
+    """hal as a fake process: the commands asked, and what it answers."""
 
-    stdout: str = f"edge-backup: pre-apply-Snapshot {SNAPSHOT}\n"
+    stdout: str = f'{{"snapshot": "{SNAPSHOT}"}}\n'
     stderr: str = ""
     code: int = 0
     asked: list[list[str]] = field(default_factory=list)
@@ -524,42 +524,62 @@ class Commands:
 
 def test_the_backup_asks_for_keycloak_alone_and_reads_the_snapshot_id() -> None:
     commands = Commands()
-    backup = reconcile.Backup(("edge-backup", "--apps", "apps.toml"), commands)
+    backup = reconcile.Backup(("hal",), commands)
 
     snapshot = backup.pre_apply()
     backup.restore_test(snapshot)
 
     assert snapshot == SNAPSHOT
     assert commands.asked == [
-        ["edge-backup", "--apps", "apps.toml", "backup", "keycloak", "--pre-apply"],
-        ["edge-backup", "--apps", "apps.toml", "restore-test", "keycloak", "--snapshot", SNAPSHOT],
+        ["hal", "backup", "keycloak", "--pre-apply", "--json"],
+        ["hal", "restore", "--test", "keycloak", "--snapshot", SNAPSHOT],
     ]
 
 
-def test_a_failing_backup_says_the_last_line_edge_backup_wrote() -> None:
-    commands = Commands(stdout="", stderr="edge-backup: fehlgeschlagen: kein Passwort\n", code=1)
-
-    backup = reconcile.Backup(("edge-backup",), commands)
+@pytest.mark.parametrize(
+    ("stderr", "cause"),
+    [
+        pytest.param(
+            "error: hal backup: fehlgeschlagen: kein Passwort\n",
+            "hal backup: fehlgeschlagen: kein Passwort",
+            id="a runtime failure",
+        ),
+        pytest.param(
+            "error: --pre-apply needs the name of an app\nnext: hal backup --help\n",
+            "--pre-apply needs the name of an app",
+            id="a usage failure with its next line",
+        ),
+        pytest.param(
+            "error: hal backup: fehlgeschlagen: kein Passwort\nnext: hal backup --help\n",
+            "hal backup: fehlgeschlagen: kein Passwort",
+            id="a runtime failure with a next line",
+        ),
+        pytest.param("Traceback ... boom\n", "Traceback ... boom", id="a failure not hal's own"),
+    ],
+)
+def test_a_failing_backup_names_the_cause_hal_wrote_never_its_next_line(
+    stderr: str, cause: str
+) -> None:
+    backup = reconcile.Backup(("hal",), Commands(stdout="", stderr=stderr, code=3))
 
     with pytest.raises(reconcile.RealmError) as raised:
         backup.pre_apply()
 
-    assert str(raised.value) == (
-        "the Keycloak backup failed (edge-backup: fehlgeschlagen: kein Passwort)"
-    )
+    assert str(raised.value) == f"the Keycloak backup failed ({cause})"
 
 
-def test_a_backup_that_names_no_snapshot_is_a_failure() -> None:
-    backup = reconcile.Backup(("edge-backup",), Commands(stdout="edge-backup: fertig\n"))
+@pytest.mark.parametrize("stdout", ["hal backup: fertig\n", "{}\n", "[]\n", '{"snapshot": null}'])
+def test_a_backup_that_names_no_snapshot_is_a_failure(stdout: str) -> None:
+    backup = reconcile.Backup(("hal",), Commands(stdout=stdout))
 
     with pytest.raises(reconcile.RealmError, match="named no pre-apply snapshot"):
         backup.pre_apply()
 
 
-def test_the_installed_backup_is_the_checkouts_own_edge_backup(tmp_path: Path) -> None:
+def test_the_installed_backup_is_the_checkouts_own_hal(tmp_path: Path) -> None:
     backup = reconcile.Backup.installed(tmp_path, lambda _line: None)
 
-    assert backup.command == (str(tmp_path / ".venv" / "bin" / "edge-backup"),)
+    assert backup.command == (str(tmp_path / ".venv" / "bin" / "hal"),)
 
 
 def test_the_installed_backup_says_the_waiting_line_through_the_line_it_was_given(
@@ -573,7 +593,7 @@ def test_the_installed_backup_says_the_waiting_line_through_the_line_it_was_give
     with pytest.raises(compose.ComposeError, match="took longer than 1s"):
         backup.run(["sh", "-c", WAITS], 1)
 
-    assert said == ["realm: waiting up to 0.2s for edge-backup to clean up"]
+    assert said == ["realm: waiting up to 0.2s for hal to clean up"]
 
 
 def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -> None:
@@ -830,7 +850,7 @@ def test_a_failed_step_lists_nothing_only_in_keycloak(world: World) -> None:
     assert not [line for line in result.lines if "only in Keycloak" in line]
 
 
-# --- edge-backup is stopped, not killed --------------------------------------------------------
+# --- hal backup is stopped, not killed --------------------------------------------------------
 
 WAITS = "while :; do sleep 0.1; done"
 # A Python child, as the CI shell may have SIGTERM ignored on entry, which a shell cannot trap.
@@ -938,7 +958,7 @@ def kill_group(process_group: int) -> None:
 
 
 def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path) -> None:
-    """The terminal's Ctrl-C goes to the step's group alone: edge-backup runs in its own."""
+    """The terminal's Ctrl-C goes to the step's group alone: hal backup runs in its own."""
     marker = tmp_path / "cleaned"
     release = tmp_path / "release"
     interrupts = tmp_path / "interrupts"
@@ -958,7 +978,7 @@ def test_ctrl_c_during_the_grace_does_not_cut_the_clean_up_short(tmp_path: Path)
     )
     try:
         wait_for(Path(f"{marker}.ready").exists, "the backup was ready", step)
-        os.killpg(step.pid, signal.SIGINT)  # stops edge-backup
+        os.killpg(step.pid, signal.SIGINT)  # stops hal backup
         wait_for(Path(f"{marker}.cleaning").exists, "the backup began its clean-up", step)
         os.killpg(step.pid, signal.SIGINT)  # comes while the clean-up is held
         wait_for(

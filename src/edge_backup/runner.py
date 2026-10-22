@@ -46,7 +46,7 @@ from edge_backup.verify import (
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
 STAGING_PREFIX = "staging-"
 RUN_MARK_SUFFIX = ".run"
-# restic's own short ID length, as `edge-backup snapshots` lists it.
+# restic's own short ID length, as `hal restore --list` lists it.
 MIN_SNAPSHOT_PREFIX = 8
 
 
@@ -400,7 +400,7 @@ def _newest_snapshot_hint(settings: Settings, app: App) -> str:
         return ""
     return (
         f"; der neueste Snapshot ist {newest[:8]}; wählbar mit: "
-        f"edge-backup restore {app.name} --snapshot <ID> --target <Ordner>"
+        f"hal restore {app.name} --snapshot <ID> --target <Ordner>"
     )
 
 
@@ -415,7 +415,7 @@ def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
             f"{prefix} nennt keinen einzelnen Snapshot von {app.name} "
-            f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `edge-backup snapshots`)",
+            f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `hal restore --list`)",
         )
     return matches[0]
 
