@@ -13,8 +13,8 @@ searches for a leaked secret (L6) and the egress cells of the running container 
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
-A refusal `unauthorized` means expired tokens, `forbidden` a missing
-`/services/agent-service/subscription` or tokens that do not share an `azp`.
+A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
+that do not bind one app to one person, `not_enabled` no subscription group; the report names them.
 `agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
 `apply`).
 
@@ -33,12 +33,14 @@ import http.client
 import inspect
 import ipaddress
 import json
+import re
 import secrets
 import socket
 import subprocess
 import sys
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -49,6 +51,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
+from typing import Final
 
 import egress_observe
 from egress_observe import PUBLIC_RESOLVER, lan_address
@@ -298,12 +301,31 @@ def other_lines(output: str) -> str:
     return " | ".join(kept)[:300]
 
 
+REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MULTILINE)
+
+
+def subscription_groups() -> list[str]:
+    service = tomllib.loads((REPOSITORY / "agent-service/service.toml").read_text(encoding="utf-8"))
+    return service["identity"]["subscription_groups"]
+
+
+def missing_group_hint(output: str, events: list[str]) -> str:
+    """The causes of a rights refusal, which comes before any event; an answer never earns one."""
+    refusal = None if events else REFUSAL_LINE.search(output)
+    code = refusal and refusal["code"]
+    if code == "forbidden":
+        return f"; forbidden: no member of /apps/{CLIENT}, another azp, or a bad workload token"
+    if code == "not_enabled":
+        return f"; not_enabled: the operator is in none of {' or '.join(subscription_groups())}"
+    return ""
+
+
 def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     """The secrets go out of the output before it is cut, so that none leaves its beginning."""
     output = known.redact(output)
     events = event_names(output)
     text = other_lines(output)
-    said = f"exit {returncode}; events {events}; {text}"
+    said = f"exit {returncode}; events {events}; {text}{missing_group_hint(output, events)}"
     answered = bool(text)  # an answer needs text of its own, not only the event that carries it
     paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
     admitted = "run_started" in events

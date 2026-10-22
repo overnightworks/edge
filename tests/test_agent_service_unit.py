@@ -20,6 +20,7 @@ from edge.realm import observe
 from edge.realm.declared import declared_realm
 
 ROOT = Path(__file__).resolve().parents[1]
+
 SERVICE = "agent-service"
 OPERATOR_UID_GID = "1000:1000"
 LOGIN_SOURCE = "${HOME}/.secrets/agent-service/claude"
@@ -146,10 +147,11 @@ def test_the_service_listens_on_every_interface_and_pins_the_cli_it_runs(configu
     assert configuration["cli"]["claude"]["version"] == pinned
 
 
-def test_the_identity_names_the_realms_issuer_audience_and_subscription_group(configuration, realm):
+def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
+    configuration, realm
+):
     """The issuer is the realm's public one, the keys come from it over https, the audience is
-    the realm's bearer-only client and the subscription group is the realm's
-    `/services/agent-service/subscription`."""
+    the realm's bearer-only client and the subscription group is the realm's."""
     identity = configuration["identity"]
     issuer, jwks = urlsplit(identity["issuer"]), urlsplit(identity["jwks_url"])
     clients = {client["clientId"] for client in realm["clients"]}
@@ -160,7 +162,10 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_group(co
     assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
-    assert identity["subscription_group"] in groups
+    assert (
+        set(identity["subscription_groups"]) == {"/services/agent-service/subscription"} <= groups
+    )
+    assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
 def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_no_tools(
@@ -174,8 +179,15 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_n
     assert configuration["apps"]
     for app in configuration["apps"].values():
         assert app["workload_client"] in service_accounts
-        assert not {"tools", "mcp_origin"} & app.keys()
-        assert set(app["purposes"]) <= set(configuration["purposes"])
+        assert not {"tools", "mcp_origin", "purposes", "models"} & app.keys()
+
+
+def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
+    configuration,
+):
+    """Edge holds no API provider key, so there is no `[route]` and no `api_groups`."""
+    assert not {"purposes", "route"} & configuration.keys()
+    assert configuration["cli"]["claude"]["models"] == ["opus", "sonnet", "haiku"]
 
 
 def test_the_one_profile_is_claude_with_its_token_file(configuration):

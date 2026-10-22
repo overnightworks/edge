@@ -18,6 +18,9 @@ services:
     run:
       enabled: true
       setup: step-ca/init
+  legal:
+    run:
+      enabled: true
   agent-service:
     run:
       enabled: true

@@ -1,6 +1,6 @@
 """agent-service/setup against a scripted Docker and a throwaway home: no containers, no real token.
 
-The token rules are the service's reader's (agent-providers v0.4.0, secret_file.py); the
+The token rules are the service's reader's (agent-providers v0.6.0, secret_file.py); the
 refused cases below are the ones its docstring names.
 """
 
