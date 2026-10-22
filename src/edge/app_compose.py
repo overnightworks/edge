@@ -4,7 +4,8 @@ An app's compose project is its key. Compose echoes interpolated values in its e
 output of a build, pull, create, start or ps is ever read into a message: a failure names the
 call, the app, the tag and the exit code and says the output is withheld; the operator reads it
 by running the step himself in `~/srv/<key>` (E7). What is observed is the project's containers,
-asked file-free (`-p <key>` alone), so it holds whatever compose.yaml the checkout carries.
+asked file-free (`-p <key>` alone), so it holds whatever compose.yaml the checkout carries; so are
+`stop` and `rm -f`, with which an app is switched off.
 
 The start never builds or pulls: `build` and `pull` come first, then `create --no-build --pull
 never` makes the containers from what was built, and `start` starts them.
@@ -86,6 +87,28 @@ class AppCompose:
 
     def start(self, tag: str) -> None:
         self._call("start", [], compose.CHANGE_SECONDS, tag)
+
+    def stop(self) -> None:
+        """Stops every container of project `<key>`; file-free, so it holds whatever the
+        checkout carries."""
+        self._call("stop", [], compose.CHANGE_SECONDS)
+
+    def remove(self) -> None:
+        """Removes every stopped container of project `<key>`, file-free. No `-v`: the volumes
+        stay, named and anonymous alike."""
+        self._call("rm", ["-f"], compose.CHANGE_SECONDS)
+
+    def volumes(self) -> list[str]:
+        """The names of the volumes that Compose labelled with project `<key>`."""
+        label = f"label=com.docker.compose.project={self.key}"
+        command = ["docker", "volume", "ls", "--filter", label, "--format", "{{.Name}}"]
+        result = self.run(command, compose.READ_SECONDS)
+        if result.returncode != 0:
+            raise compose.ComposeError(
+                f"`docker volume ls` of {self.key} exited {result.returncode}; "
+                "its output is withheld, run the step to read it"
+            )
+        return [line for line in result.stdout.splitlines() if line.strip()]
 
     def _service_images(self, tag: str) -> dict[str, str]:
         output = self._call("config", ["--format", "json"], compose.READ_SECONDS, tag)

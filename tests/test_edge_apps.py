@@ -5,6 +5,7 @@ the containers are a table."""
 import dataclasses
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -444,7 +445,102 @@ def test_a_disabled_app_is_not_fetched_and_has_nothing_to_change(world, reposito
 
     assert plan.changes_nothing
     assert asked == []
+    assert world.docker.verbs == ["ps"]
     assert not world.srv.exists()
+
+
+class OffDocker:
+    """What the off step asks of Docker: the project's `ps` from the scripted table, its volume
+    listing, and the file-free `stop` and `rm -f`, which empty the table. Every other call goes to
+    the scripted Docker, which fails the test on a `down`, a `-v` or a file-bound call."""
+
+    def __init__(self, scripted: ScriptedDocker, volumes: list[str]) -> None:
+        self.scripted, self.volumes = scripted, volumes
+        self.commands: list[list[str]] = []
+        self.failing: str | None = None
+
+    def run(self, command, timeout, stdin=None):
+        self.commands.append(command)
+        if command[:3] == ["docker", "volume", "ls"]:
+            return subprocess.CompletedProcess(command, 0, "\n".join(self.volumes), "")
+        if command[4:5] in (["stop"], ["rm"]):
+            assert command[4:] in (["stop"], ["rm", "-f"]), command
+            if self.failing == command[4]:
+                return subprocess.CompletedProcess(command, 3, SENTINEL, SENTINEL)
+            if command[4] == "rm":
+                self.scripted.rows.clear()
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return self.scripted.run(command, timeout, stdin)
+
+    def compose_calls(self) -> list[list[str]]:
+        return [command[4:] for command in self.commands if command[:2] == ["docker", "compose"]]
+
+
+def switch_off(world: World) -> OffDocker:
+    """The app disabled in the catalog while its project holds a healthy container, a leftover of
+    a service the file does not name, and the named volume `hopin_data`."""
+    (world.repository / "fleet.yaml").write_text(FLEET.replace("enabled: true", "enabled: false"))
+    if not world.docker.rows:
+        world.docker.put(KEY, "running", "healthy")
+    world.docker.put("leftover", "exited")
+    fake = OffDocker(world.docker, [f"{KEY}_data"])
+    world.runtime = dataclasses.replace(world.runtime, docker=fake.run)
+    return fake
+
+
+def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(world):
+    switch_off(world)
+
+    plan = world.plan()
+
+    assert not plan.changes_nothing
+    assert plan.describe() == [
+        f"{KEY}: off (containers {KEY} running (healthy), leftover exited; "
+        f"named volumes {KEY}_data stay; ~/srv/{KEY} stays)"
+    ]
+
+
+def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(world):
+    off = switch_off(world)
+    plan = world.plan()
+    off.commands.clear()
+
+    assert world.run(plan) == []
+
+    assert off.commands == [
+        ["docker", "compose", "-p", KEY, "stop"],
+        ["docker", "compose", "-p", KEY, "rm", "-f"],
+    ]
+    assert world.docker.rows == []
+    assert world.plan().changes_nothing
+
+
+def test_off_never_fetches_and_leaves_the_checkout_and_the_record(world, origin):
+    sha = deploy(world, origin, FIRST)
+    record = world.deployed()
+    off = switch_off(world)
+    world.runtime = dataclasses.replace(
+        world.runtime, git=lambda *call: pytest.fail("git was asked")
+    )
+
+    assert world.run() == []
+
+    assert off.compose_calls()[-2:] == [["stop"], ["rm", "-f"]]
+    assert head_of(world.srv) == sha
+    assert world.deployed() == record
+
+
+@pytest.mark.parametrize("verb", ["stop", "rm"])
+def test_a_failing_off_is_one_line_without_composes_output_and_stops_there(world, verb):
+    off = switch_off(world)
+    plan = world.plan()
+    off.failing = verb
+
+    [failure] = world.run(plan)
+
+    assert f"`docker compose {verb}` of {KEY}" in failure
+    assert SENTINEL not in failure
+    assert ("rm" in {c[0] for c in off.compose_calls()}) == (verb == "rm")
 
 
 @pytest.mark.parametrize(

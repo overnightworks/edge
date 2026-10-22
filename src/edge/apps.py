@@ -17,6 +17,11 @@ built, and the images' volumes are checked after build and pull, before `create`
 and a `depends_on` that waits for health or completion are refused, so `create` and `start` run
 together under the switch lock like the units', and only the health wait runs outside it. A new
 tag that fails stays: the run is partial and the fix is a newer tag.
+
+An app the catalog disables while containers of its project exist is switched off: file-free
+`stop` and `rm -f` of project `<key>`, which reaches every container, whatever the checkout's
+compose file says. The plan names the named volumes that stay; they, the checkout and the record
+are never touched (E4).
 """
 
 import json
@@ -123,22 +128,35 @@ class AppPlan:
 
 
 @dataclass(frozen=True)
+class OffPlan:
+    """An app the catalog disables while containers of its project exist."""
+
+    app: catalog.App
+    line: str
+
+
+@dataclass(frozen=True)
 class AppsPlan:
     runtime: AppRuntime
     plans: tuple[AppPlan, ...] = ()
     notes: tuple[str, ...] = ()
+    offs: tuple[OffPlan, ...] = ()
 
     @property
     def changes_nothing(self) -> bool:
-        return not self.plans
+        return not self.plans and not self.offs
 
     def describe(self) -> list[str]:
-        return [*self.notes, *(plan.line for plan in self.plans)]
+        return [*self.notes, *(off.line for off in self.offs), *(plan.line for plan in self.plans)]
 
     def run(
         self, marks: switches.Switches, progress: Progress
-    ) -> Iterator[tuple[AppPlan, str | None]]:
-        """Each plan in turn with the failure line of its run, None when it is on and recorded."""
+    ) -> Iterator[tuple[AppPlan | OffPlan, str | None]]:
+        """Each app in turn, the ones switched off first, with the failure line of its run. An
+        app that is on and recorded yields None; one switched off yields only a failure."""
+        for off in self.offs:
+            if failure := _switch_off(off, self.runtime, progress):
+                yield off, failure
         for plan in self.plans:
             yield plan, _run(plan, self.runtime, marks, progress)
 
@@ -150,11 +168,14 @@ def plan_apps(
     runtime: AppRuntime,
 ) -> AppsPlan:
     """The plan of every enabled app: it fetches each app's origin and writes only `.git`. An
-    app that is on as it should be is left out; one that cannot be planned raises AppError."""
+    app that is on as it should be is left out; one that cannot be planned raises AppError. A
+    disabled app is asked file-free for its containers and fetches nothing."""
     document = catalog.read(repository / catalog.FLEET_FILE)
-    enabled = [app for app in catalog.apps(document, profile_services, edge_project) if app.enabled]
+    every = catalog.apps(document, profile_services, edge_project)
+    offs = [off for app in every if not app.enabled if (off := _plan_off(app, runtime))]
+    enabled = [app for app in every if app.enabled]
     if not enabled:
-        return AppsPlan(runtime)
+        return AppsPlan(runtime, offs=tuple(offs))
     organisation = catalog.github_org(document)
     plans, notes = [], []
     for app in enabled:
@@ -162,7 +183,22 @@ def plan_apps(
         notes += [f"{app.key}: {line}" for line in skipped]
         if planned:
             plans.append(planned)
-    return AppsPlan(runtime, tuple(plans), tuple(notes))
+    return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs))
+
+
+def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
+    """None when no container of the project exists. The line names the containers as `ps` shows
+    them (service and state, never a container name that Compose interpolated) and the named
+    volumes that stay."""
+    engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
+    if not (containers := engine.containers()):
+        return None
+    volumes = ", ".join(engine.volumes()) or "none"
+    shown = ", ".join(container.describe() for container in containers)
+    return OffPlan(
+        app,
+        f"{app.key}: off (containers {shown}; named volumes {volumes} stay; ~/srv/{app.key} stays)",
+    )
 
 
 def _plan_one(
@@ -310,6 +346,22 @@ def _run(
         return f"{key}: could not {progress.step}, {error}"
     except OSError as error:
         return f"{key}: could not {progress.step} ({error.strerror})"
+    return None
+
+
+def _switch_off(off: OffPlan, runtime: AppRuntime, progress: Progress) -> str | None:
+    """Stop, then remove, every container of the app's project: the failure line of the step that
+    fails, None when none is left. The checkout, the record and every volume stay."""
+    key = off.app.key
+    progress.unit = key
+    engine = app_compose.AppCompose(key, runtime.srv / key, runtime.docker)
+    try:
+        progress.step = f"stop the containers of {key}"
+        engine.stop()
+        progress.step = f"remove the containers of {key}"
+        engine.remove()
+    except compose.ComposeError as error:
+        return f"{key}: could not {progress.step}, {error}"
     return None
 
 

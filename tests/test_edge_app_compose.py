@@ -44,10 +44,15 @@ FILE_BOUND = ["--project-directory", str(DIRECTORY), "--file", str(DIRECTORY / "
         ),
         (lambda engine: engine.start(TAG), [*FILE_BOUND, "start"]),
         (lambda engine: engine.containers(), ["ps", "--all", "--format", "json"]),
+        (lambda engine: engine.stop(), ["stop"]),
+        (lambda engine: engine.remove(), ["rm", "-f"]),
     ],
-    ids=["build", "pull", "create never builds or pulls", "start", "ps is file-free"],
-)
-def test_each_step_is_one_call_of_project_key_and_only_ps_is_file_free(step, expected):
+    ids=[
+        "build", "pull", "create never builds or pulls", "start", "ps is file-free",
+        "stop is file-free", "rm -f is file-free, never down and never -v",
+    ],
+)  # fmt: skip
+def test_each_step_is_one_call_of_project_key_and_only_ps_and_off_are_file_free(step, expected):
     docker = Docker(stdout="[]")
 
     step(engine_over(docker))
@@ -92,8 +97,11 @@ def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(an
         lambda engine: engine.start(TAG),
         lambda engine: engine.containers(),
         lambda engine: engine.image_volumes(["web"], TAG),
+        lambda engine: engine.stop(),
+        lambda engine: engine.remove(),
+        lambda engine: engine.volumes(),
     ],
-    ids=["build", "pull", "create", "start", "ps", "config"],
+    ids=["build", "pull", "create", "start", "ps", "config", "stop", "rm", "volume ls"],
 )
 def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     docker = Docker(exit_code=17, stdout=SENTINEL)
@@ -107,6 +115,16 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     assert f"of {KEY}" in line
     assert "exited 17" in line
     assert "output is withheld" in line
+
+
+def test_the_volumes_are_the_names_docker_lists_for_the_project_label():
+    docker = Docker(stdout=f"{KEY}_data\n\n{KEY}_cache\n")
+
+    assert engine_over(docker).volumes() == [f"{KEY}_data", f"{KEY}_cache"]
+    assert docker.commands == [
+        ["docker", "volume", "ls", "--filter", f"label=com.docker.compose.project={KEY}",
+         "--format", "{{.Name}}"]
+    ]  # fmt: skip
 
 
 class ImageDocker(Docker):
