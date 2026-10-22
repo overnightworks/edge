@@ -371,38 +371,39 @@ def _both_exist(move: Move) -> bool:
     return not move.is_noop and os.path.lexists(move.source) and os.path.lexists(move.target)
 
 
-def _links_within(path: Path, git_directory: Path) -> list[Path]:
-    """The symbolic links among `path` and its parents below `~/git`."""
-    return [
-        part
-        for part in (path, *path.parents)
-        if part.is_relative_to(git_directory) and part != git_directory and part.is_symlink()
-    ]
+def _links_within(path: Path) -> list[Path]:
+    """The symbolic links among `path` and all its parents, wherever they lie."""
+    return [part for part in (path, *path.parents) if part.is_symlink()]
+
+
+def _venv_links(path: Path) -> list[Path]:
+    return [venv for venv in (path / ".venv",) if venv.is_symlink()]
+
+
+def _relocation_links(relocation: Relocation) -> list[Path]:
+    site = relocation.site
+    links = []
+    for move in (site.clone, site.worktrees, *relocation.linked):
+        for path in (move.source, move.target):
+            links += _links_within(path) + _venv_links(path)
+    for path in relocation.outside:
+        links += _links_within(path) + _venv_links(path)
+    for directory in (site.worktrees.source, site.worktrees.target):
+        links += [entry for entry in _entries(directory) if entry.is_symlink()]
+    if (site.here / ".git").is_symlink():
+        links.append(site.here / ".git")
+    return links
 
 
 def _links_in_the_way(
     world: World, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
 ) -> list[Path]:
-    git_directory = Layout(world.home).git
-    links = [git_directory] if git_directory.is_symlink() else []
+    links = _links_within(Layout(world.home).git)
     for relocation in relocations:
-        site = relocation.site
-        for move in (site.clone, site.worktrees, *relocation.linked):
-            for path in (move.source, move.target):
-                links += _links_within(path, git_directory)
-                links += [venv for venv in (path / ".venv",) if venv.is_symlink()]
-        for path in relocation.outside:
-            links += _links_within(path, git_directory)
-        for directory in (site.worktrees.source, site.worktrees.target):
-            links += [entry for entry in _entries(directory) if entry.is_symlink()]
-        if (site.here / ".git").is_symlink():
-            links.append(site.here / ".git")
+        links += _relocation_links(relocation)
     for checkout in deploy:
-        links += [
-            path
-            for path in (checkout.path, checkout.path / ".git", checkout.path.parent)
-            if path.is_symlink()
-        ]
+        links += _links_within(checkout.path)
+        links += [git for git in (checkout.path / ".git",) if git.is_symlink()]
     return list(dict.fromkeys(links))
 
 
@@ -449,8 +450,8 @@ def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[s
         {
             path
             for relocation in relocations
-            for path in _trees_of(relocation)
-            if os.path.lexists(path)
+            for path in map(Path.resolve, _trees_of(relocation))
+            if path.exists()
         }
         if any(relocation.needs_work for relocation in relocations)
         else set()
@@ -486,11 +487,15 @@ def _venv_python_version(venv: Path) -> str | None:
     config = venv / "pyvenv.cfg"
     if not config.is_file():
         return None
-    for line in config.read_text().splitlines():
-        key, _, value = line.partition("=")
-        if key.strip() in ("version_info", "version"):
-            return ".".join(value.strip().split(".")[:2])
-    return None
+    entries = (line.partition("=") for line in config.read_text().splitlines())
+    return next(
+        (
+            ".".join(value.strip().split(".")[:2])
+            for key, _, value in entries
+            if key.strip() in ("version_info", "version")
+        ),
+        None,
+    )
 
 
 def _sync_step(world: World, project: Path) -> Step:
