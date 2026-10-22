@@ -259,7 +259,11 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
 
 
 def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
-    return setup(layout, ports, args.apply)
+    try:
+        return setup(layout, ports, args.apply)
+    except KeyboardInterrupt:
+        # The wizard has printed its abort line; hal setup maps the same exception to its own code.
+        return secrets_setup.ABORTED_EXIT
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

@@ -126,9 +126,6 @@ def main(
     except secrets_view.ManifestError as error:
         print(f"home: {error}", file=sys.stderr)
         return 2
-    except KeyboardInterrupt:
-        # The step that was interrupted has said so already (`hal setup --apply` runs the wizard, which prints its abort line).
-        return secrets_setup.ABORTED_EXIT
     except Exception as error:
         # A subcommand that handles secrets never has an unexpected error's message shown: it may quote a value.
         message = "" if args.error_may_quote_a_secret else f": {error}"
