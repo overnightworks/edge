@@ -236,9 +236,10 @@ def hallucinai() -> FakeRealm:
         "/apps/presentator",
         "/apps/hopin",
         "/apps/hopin/admin",
-        "/ai-subscription",
-        "/ai-api",
-        "/ki-abo",
+        "/services",
+        "/services/agent-service",
+        "/services/agent-service/subscription",
+        "/services/agent-service/api",
     ):
         realm.groups[path] = Group()
     realm.groups["/apps/hopin"].members = [uid("hallucinai", "anna"), uid("hallucinai", "ben")]

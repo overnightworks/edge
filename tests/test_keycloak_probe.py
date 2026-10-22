@@ -978,7 +978,9 @@ def test_an_app_client_is_accepted_with_its_callbacks_in_another_order(probe: Mo
         pytest.param({"client_id": None}, False, id="client_id missing"),
         pytest.param({"client_id": "hopin"}, False, id="client_id naming the other app"),
         pytest.param({"azp": "hopin"}, False, id="azp naming the other app"),
-        pytest.param({"groups": ["/ki-abo"]}, False, id="a group on the token"),
+        pytest.param(
+            {"groups": ["/services/agent-service/subscription"]}, False, id="a group on the token"
+        ),
         pytest.param({"groups": []}, True, id="empty groups"),
         pytest.param({"aud": ["account"]}, False, id="the agent-service audience missing"),
         pytest.param({"realm_access": {"roles": []}}, False, id="the workload role missing"),
