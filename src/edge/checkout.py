@@ -179,7 +179,7 @@ class Git:
 
     def branch(self) -> str | None:
         """The branch HEAD names, or None when HEAD is detached."""
-        result = self._call(["symbolic-ref", "--quiet", "HEAD"], accepted=(0, 1))
+        result = self.call(["symbolic-ref", "--quiet", "HEAD"], accepted=(0, 1))
         if result.returncode == 1:
             return None
         reference = _text(result.stdout).strip()
@@ -189,42 +189,42 @@ class Git:
 
     def short(self, revision: str = "HEAD") -> str:
         return _sha(
-            _text(self._call(["rev-parse", "--short", revision]).stdout).strip(), "rev-parse"
+            _text(self.call(["rev-parse", "--short", revision]).stdout).strip(), "rev-parse"
         )
 
     def has_commit(self) -> bool:
         """Whether HEAD names a commit; a branch without one is unborn."""
         verified = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]
-        return self._call(verified, accepted=(0, 1)).returncode == 0
+        return self.call(verified, accepted=(0, 1)).returncode == 0
 
     def has_fetched_main(self) -> bool:
         """Whether origin's `main` was ever fetched, so `ORIGIN_MAIN` names a commit."""
         verified = ["rev-parse", "--verify", "--quiet", f"{ORIGIN_MAIN}^{{commit}}"]
-        return self._call(verified, accepted=(0, 1)).returncode == 0
+        return self.call(verified, accepted=(0, 1)).returncode == 0
 
     def changed_paths(self) -> list[str]:
         """Every path that differs from HEAD: modified, staged or untracked, not ignored. The
         index is never refreshed, so the call writes nothing (`--no-optional-locks`)."""
         status = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
-        return _porcelain_paths(self._call(status).stdout)
+        return _porcelain_paths(self.call(status).stdout)
 
     def fetch_url(self) -> str:
         """origin's effective fetch URL, rewritten as the global configuration says, credentials
         redacted (#98 rule 1)."""
-        answer = self._call(["remote", "get-url", _ORIGIN], profile=Profile.TRANSFER)
+        answer = self.call(["remote", "get-url", _ORIGIN], profile=Profile.TRANSFER)
         return without_credentials(compose.printable(_text(answer.stdout).strip()))
 
     def fetch_main(self) -> str:
         """Fetch origin's `main` through the operator's credential helper and pin it: the full sha
         FETCH_HEAD now names (#98 rule 1). Writes only objects, FETCH_HEAD and `origin/main`."""
         fetch = ["fetch", "--no-tags", "--no-recurse-submodules", "--write-fetch-head"]
-        self._call([*fetch, _ORIGIN, MAIN], profile=Profile.TRANSFER)
-        pinned = self._call(["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+        self.call([*fetch, _ORIGIN, MAIN], profile=Profile.TRANSFER)
+        pinned = self.call(["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
         return _sha(_text(pinned.stdout).strip(), "rev-parse")
 
     def divergence(self, sha: str) -> tuple[int, int]:
         """The commits HEAD has that `sha` lacks, and those `sha` has that HEAD lacks."""
-        answer = _text(self._call(["rev-list", "--left-right", "--count", f"HEAD...{sha}"]).stdout)
+        answer = _text(self.call(["rev-list", "--left-right", "--count", f"HEAD...{sha}"]).stdout)
         counts = answer.split()
         if len(counts) != 2 or not all(count.isdigit() for count in counts):
             raise GitError(f"`git rev-list` answered '{compose.printable(answer.strip())}'")
@@ -233,7 +233,7 @@ class Git:
     def waiting_commits(self, sha: str) -> list[Commit]:
         """Every commit `sha` has that HEAD lacks, newest first, subjects escaped (#98 rule 4)."""
         log = ["log", "--no-color", "--no-show-signature", "-z", "--format=%h%x00%s"]
-        fields = _nul_fields(self._call([*log, f"HEAD..{sha}"]).stdout, "log")
+        fields = _nul_fields(self.call([*log, f"HEAD..{sha}"]).stdout, "log")
         return [
             Commit(_sha(_text(short), "log"), compose.printable(_text(subject)))
             for short, subject in zip(fields[::2], fields[1::2], strict=True)
@@ -242,7 +242,7 @@ class Git:
     def waiting_files(self, sha: str) -> list[ChangedFile]:
         """Every file that differs between HEAD and `sha`, with its status (#98 rule 4)."""
         diff = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", "--name-status"]
-        fields = _nul_fields(self._call([*diff, "HEAD", sha]).stdout, "diff")
+        fields = _nul_fields(self.call([*diff, "HEAD", sha]).stdout, "diff")
         changed = []
         for status, path in zip(fields[::2], fields[1::2], strict=True):
             if _text(status) not in _STATUS_LETTERS:
@@ -250,12 +250,14 @@ class Git:
             changed.append(ChangedFile(_text(status), _text(path)))
         return changed
 
-    def _call(
+    def call(
         self,
         arguments: Sequence[str],
         accepted: tuple[int, ...] = (0,),
         profile: Profile = Profile.LOCAL,
     ) -> subprocess.CompletedProcess[bytes]:
+        """One git call on the tree; any exit but `accepted` and every failure to run it is a
+        GitError with git's last error line, credentials redacted."""
         verb = next(argument for argument in arguments if not argument.startswith("-"))
         try:
             result = self.run(self.tree, arguments, profile)
