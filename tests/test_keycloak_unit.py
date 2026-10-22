@@ -171,6 +171,19 @@ def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_settin
     assert (mounted_on, theme_properties(properties)["parent"]) == (["keycloak"], parent)
 
 
+def test_keycloaks_gzip_cache_is_a_tmpfs_owned_by_its_user_so_a_restart_empties_it():
+    """A bare tmpfs comes back root-owned after a restart and Keycloak then answers 404 for gzip."""
+    tmpfs = compose_document()["services"]["keycloak"]["tmpfs"]
+    target, _, options = tmpfs[0].partition(":")
+    options = options.split(",")
+
+    assert (target, "uid=1000" in options, "mode=0700" in options) == (
+        "/opt/keycloak/data/tmp",
+        True,
+        True,
+    )
+
+
 def theme_properties(path: Path) -> dict[str, str]:
     lines = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
     return dict(line.split("=", 1) for line in lines)
