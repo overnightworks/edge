@@ -270,7 +270,10 @@ def _current(move: Move) -> Path:
 
 def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Relocation:
     linked, outside = [], []
-    for path in sorted(registered_worktrees(site.here, _output_of) - {site.here.resolve()}):
+    for path in sorted(
+        registered_worktrees(site.here, _output_of, resolve_links=False)
+        - {site.here, site.here.resolve()}
+    ):
         relocated = _relocated(path, moves)
         if relocated is None and path.exists():
             outside.append(path)
@@ -387,6 +390,9 @@ def _links_in_the_way(
         for move in (site.clone, site.worktrees, *relocation.linked):
             for path in (move.source, move.target):
                 links += _links_within(path, git_directory)
+                links += [venv for venv in (path / ".venv",) if venv.is_symlink()]
+        for path in relocation.outside:
+            links += _links_within(path, git_directory)
         for directory in (site.worktrees.source, site.worktrees.target):
             links += [entry for entry in _entries(directory) if entry.is_symlink()]
         if (site.here / ".git").is_symlink():
@@ -475,17 +481,29 @@ def _repair_step(relocation: Relocation) -> Step:
     )
 
 
+def _venv_python_version(venv: Path) -> str | None:
+    """The `major.minor` Python a venv was made with, None when it has no `pyvenv.cfg`."""
+    config = venv / "pyvenv.cfg"
+    if not config.is_file():
+        return None
+    for line in config.read_text().splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("version_info", "version"):
+            return ".".join(value.strip().split(".")[:2])
+    return None
+
+
 def _sync_step(world: World, project: Path) -> Step:
     """Every run rewrites the venv in place: `uv venv --allow-existing` and a reinstall make a
     moved `.venv` name its new path in `bin/activate*` and in its scripts, and nothing is
-    deleted. A `.venv` that is a link did not move and is only synced."""
+    deleted. `uv venv` is told the venv's own Python version, because it would otherwise pick
+    the newest interpreter it finds."""
 
     def sync() -> None:
-        if (project / ".venv").is_symlink():
-            world.uv(project, ("sync", "--locked"))
-        else:
-            world.uv(project, ("venv", "--allow-existing"))
-            world.uv(project, ("sync", "--locked", "--reinstall"))
+        version = _venv_python_version(project / ".venv")
+        python = ("--python", version) if version else ()
+        world.uv(project, ("venv", "--allow-existing", *python))
+        world.uv(project, ("sync", "--locked", "--reinstall"))
 
     return Step(f"uv sync in {project}", sync, is_sync=True)
 

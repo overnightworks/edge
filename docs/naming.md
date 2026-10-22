@@ -99,9 +99,9 @@ Rulings of overnightworks/edge#24 recorded in the table:
    outside `~/git` and, in every clone and worktree with a `uv.lock`, runs
    `uv venv --allow-existing` and `uv sync --locked --reinstall` on every run,
    so a moved `.venv` names its new path and a rerun finishes a half-built one;
-   a `.venv` that is a link only gets `uv sync --locked`. It deletes nothing.
+   `uv venv` gets the venv's own Python version, so that never changes. It deletes nothing.
    It refuses, changing nothing, while a process runs inside a clone, a target
-   exists, a symbolic link is in any clone, worktree or target path or GitHub
+   exists, a symbolic link is in any clone, worktree (as git lists it), `.venv` or target path or GitHub
    does not know the new name. `hal rename NEW OLD` undoes it.
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.

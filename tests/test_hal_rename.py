@@ -436,6 +436,17 @@ def symlinked(home: Path, case: str) -> None:
     if case == "parent":
         (home / "git").rename(elsewhere)
         (home / "git").symlink_to(elsewhere)
+    if case == "venv":
+        (home / "git" / "old" / ".venv").symlink_to(elsewhere)
+    if case == "nested-worktree":
+        group = home / "git" / "old-worktrees" / "group"
+        plain_git(home / "git" / "old", "worktree", "add", "-b", "deep", str(group / "lane"))
+        group.rename(elsewhere)
+        group.symlink_to(elsewhere)
+    if case == "recovered-worktree":
+        (home / "git" / "old-worktrees").rename(home / "git" / "fresh-worktrees")
+        (home / "git" / "fresh-worktrees" / "lane").rename(elsewhere)
+        (home / "git" / "fresh-worktrees" / "lane").symlink_to(elsewhere)
     if case == "deploy":
         make_clone(elsewhere, HTTPS.format("old"))
         (home / "old-live").symlink_to(elsewhere)
@@ -450,7 +461,18 @@ def symlinked(home: Path, case: str) -> None:
 
 @pytest.mark.parametrize(
     "case",
-    ["clone", "metadata", "worktrees", "parent", "deploy", "deploy-metadata", "deploy-parent"],
+    [
+        "clone",
+        "metadata",
+        "worktrees",
+        "parent",
+        "venv",
+        "nested-worktree",
+        "recovered-worktree",
+        "deploy",
+        "deploy-metadata",
+        "deploy-parent",
+    ],
 )
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     home, world, repository, case, capsys
@@ -732,42 +754,13 @@ def test_a_moved_clone_gets_a_venv_rewrite_and_a_reinstall_and_nothing_is_delete
     assert (fresh / ".venv" / "bin" / "marker").read_text() == "kept"
 
 
-def test_a_venv_that_is_a_link_is_only_synced_and_the_venv_outside_is_untouched(
-    home, world, locked, fakes
-):
-    outside = home.parent / "outside-venv"
-    (outside / "bin").mkdir(parents=True)
-    (outside / "bin" / "marker").write_text("kept")
-    (locked / ".venv").rmdir()
-    (locked / ".venv").symlink_to(outside)
+def test_uv_is_told_the_python_version_the_venv_was_made_with(home, world, locked, fakes):
+    (locked / ".venv" / "pyvenv.cfg").write_text("home = /uv/python/bin\nversion_info = 3.12.13\n")
 
-    code = rename(world)
+    rename(world)
 
-    assert code == ExitCode.OK
-    assert fakes.uv_calls == [(home / "git" / "fresh", ("sync", "--locked"))]
-    assert (outside / "bin" / "marker").read_text() == "kept"
-
-
-def test_a_recovered_worktree_that_is_a_link_refuses_and_changes_nothing(
-    home, world, repository, capsys
-):
-    """A halfway stop left `fresh-worktrees` moved, and its `lane` is a link."""
-    old_worktrees = home / "git" / "old-worktrees"
-    elsewhere = home.parent / "elsewhere"
-    old_worktrees.rename(home / "git" / "fresh-worktrees")
-    (home / "git" / "fresh-worktrees" / "lane").rename(elsewhere)
-    (home / "git" / "fresh-worktrees" / "lane").symlink_to(elsewhere)
-    before = sorted(str(path) for path in home.parent.rglob("*") if ".git/" not in str(path))
-
-    code = rename(world)
-
-    assert code == ExitCode.REFUSED
-    assert (
-        f"{home / 'git' / 'fresh-worktrees' / 'lane'} is a symbolic link" in capsys.readouterr().err
-    )
-    assert before == sorted(
-        str(path) for path in home.parent.rglob("*") if ".git/" not in str(path)
-    )
+    fresh = home / "git" / "fresh"
+    assert fakes.uv_calls[0] == (fresh, ("venv", "--allow-existing", "--python", "3.12"))
 
 
 def test_a_failed_uv_step_exits_with_failure_and_the_rerun_succeeds(home, world, locked, fakes):
