@@ -459,8 +459,10 @@ def test_a_unit_that_turns_active_after_the_preflight_is_not_stopped_without_pro
     machine.systemctl.active.add(TIMER)
     machine.systemctl.calls.clear()
 
+    dangling = machine.step.dangling_links()
+
     with pytest.raises(StepFailed, match=f"systemctl --user stop {TIMER}"):
-        machine.step.retire(machine.step.dangling_links())
+        machine.step.retire(dangling)
 
     assert machine.systemctl.changes == []
     assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
