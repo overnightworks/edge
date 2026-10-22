@@ -81,9 +81,14 @@ def signed_in(*answers: dict, authorization: dict = AUTHORIZATION, latency: floa
     clock = FakeClock()
     keycloak = FakeKeycloak(authorization, *answers, clock=clock, latency=latency)
     opened: list[str] = []
-    outcome = device_sign_in.sign_in(
-        "the-secret", keycloak, clock.pause, lambda link: opened.append(link), clock
-    )
+    opener_ran = threading.Event()
+
+    def opener(link: str) -> None:
+        opened.append(link)
+        opener_ran.set()
+
+    outcome = device_sign_in.sign_in("the-secret", keycloak, clock.pause, opener, clock)
+    assert opener_ran.wait(timeout=10)
     return outcome, keycloak, clock.pauses, opened
 
 
@@ -258,36 +263,98 @@ def test_the_link_opens_only_in_a_graphical_session(monkeypatch, environment, op
 class TrickledAnswer:
     """Hands out a chunk per read and lets the clock move on by `delay` with each."""
 
-    def __init__(self, clock: FakeClock, chunks: list[bytes], delay: float = 0) -> None:
-        self.clock, self.chunks, self.delay = clock, chunks, delay
+    def __init__(
+        self, clock: FakeClock, chunks: list[bytes], delay: float = 0, closing: float = 0
+    ) -> None:
+        self.clock, self.chunks, self.delay, self.closing = clock, chunks, delay, closing
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_exc) -> None:
-        return None
+        self.clock.now += self.closing
 
-    def read(self, _size: int) -> bytes:
+    def read1(self, _size: int) -> bytes:
         self.clock.now += self.delay
         return self.chunks.pop(0) if self.chunks else b""
 
 
-@pytest.mark.parametrize(
-    ("chunks", "delay"),
-    [
-        ([b'{"access_token":', b' "late"}'], 3),
-        ([b" " * (device_sign_in.MAX_ANSWER_BYTES + 1)], 0),
-    ],
-    ids=["trickles-past-the-deadline", "over-the-size-cap"],
-)
-def test_a_response_that_overruns_its_deadline_or_the_cap_is_no_answer(chunks, delay):
-    clock = FakeClock()
+def trickling(clock: FakeClock, chunks: list[bytes], delay: float = 0, closing: float = 0):
+    def urlopen(_request, timeout):
+        return TrickledAnswer(clock, chunks, delay, closing)
 
-    def trickling(_request, timeout):
-        return TrickledAnswer(clock, list(chunks), delay)
+    return urlopen
+
+
+def test_a_response_that_trickles_past_its_deadline_is_no_answer_and_is_read_no_further():
+    clock = FakeClock()
+    chunks = [b"{"] + [b" "] * 50 + [b"}"]  # a few bytes per read, each read one second
 
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.post_form("token", {}, "s", trickling, timeout=5, clock=clock)
+        device_sign_in.post_form(
+            "token", {}, "s", trickling(clock, chunks, 1), clock.now + 5, clock
+        )
+
+    assert str(stopped.value) == "the token endpoint gave no answer to read"
+    assert len(chunks) > 40  # it stopped at the deadline, not at the end of the stream
+
+
+def test_valid_json_over_the_size_cap_is_refused_only_because_of_the_cap(monkeypatch):
+    padding = "a" * (device_sign_in.MAX_ANSWER_BYTES + 1)
+    document = json.dumps({"padding": padding}).encode()
+    chunks = [document[at : at + 4096] for at in range(0, len(document), 4096)]
+    clock = FakeClock()
+
+    with pytest.raises(device_sign_in.SignInFailed):
+        device_sign_in.post_form("token", {}, "s", trickling(clock, list(chunks)), 2000, clock)
+
+    monkeypatch.setattr(device_sign_in, "MAX_ANSWER_BYTES", 2 * len(document))
+    status, answer = device_sign_in.post_form(
+        "token", {}, "s", trickling(clock, list(chunks)), 2000, clock
+    )
+    assert (status, answer) == (200, {"padding": padding})
+
+
+def test_a_token_that_arrives_after_the_code_expired_is_refused():
+    clock = FakeClock()
+    expiry = clock.now + 10
+    late = trickling(clock, [b'{"access_token": "late"}'], closing=11)
+
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        device_sign_in.person_token(
+            device_sign_in.DeviceAuthorization("code", "user", "link", 10, 5),
+            expiry,
+            "verifier",
+            "s",
+            late,
+            clock.pause,
+            clock,
+        )
+
+    assert str(stopped.value) == "the code ran out before it was confirmed; run the smoke again"
+
+
+def test_the_expiry_is_not_extended_by_time_spent_between_calls():
+    class TickingClock(FakeClock):
+        def __call__(self) -> float:
+            self.now += 1  # every look at the clock costs a second
+            return self.now
+
+    clock = TickingClock()
+    expiry = clock.now + 6
+    # answered after 3 ticks past the point where a deadline re-derived at the call would end
+    slow = trickling(clock, [b'{"access_token": "late"}'], delay=2)
+
+    with pytest.raises(device_sign_in.SignInFailed) as stopped:
+        device_sign_in.person_token(
+            device_sign_in.DeviceAuthorization("code", "user", "link", 6, 1),
+            expiry,
+            "verifier",
+            "s",
+            slow,
+            clock.pause,
+            clock,
+        )
 
     assert str(stopped.value) == "the token endpoint gave no answer to read"
 
@@ -296,7 +363,9 @@ def test_a_device_request_keycloak_refuses_starts_no_sign_in():
     keycloak = FakeKeycloak({"error": "unauthorized_client"})
 
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.sign_in("wrong", keycloak, lambda _seconds: None, lambda _link: None)
+        device_sign_in.sign_in(
+            "wrong", keycloak, lambda _seconds: None, lambda _link: None, FakeClock()
+        )
 
     assert str(stopped.value) == "the device endpoint answered 400 and started no sign-in"
 
@@ -310,7 +379,7 @@ def test_a_broken_answer_ends_as_one_line_without_its_content(answer):
         raise answer
 
     with pytest.raises(device_sign_in.SignInFailed) as stopped:
-        device_sign_in.access_token({}, "the-secret", broken)
+        device_sign_in.access_token({}, "the-secret", broken, FakeClock())
 
     assert str(stopped.value) == "the token endpoint gave no answer to read"
     assert stopped.value.__cause__ is None
@@ -320,4 +389,4 @@ def test_a_token_answer_without_an_access_token_is_refused():
     keycloak = FakeKeycloak({"other": 1})
 
     with pytest.raises(device_sign_in.SignInFailed, match="no access token"):
-        device_sign_in.access_token({}, "the-secret", keycloak)
+        device_sign_in.access_token({}, "the-secret", keycloak, FakeClock())

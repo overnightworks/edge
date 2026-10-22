@@ -46,11 +46,14 @@ class SignInFailed(Exception):
 
 
 def read_answer(answer, deadline: float, clock: Callable[[], float]) -> object:
-    """The JSON of a response read within the deadline and the size cap; anything else raises."""
+    """The JSON of a response read within the deadline and the size cap; anything else raises.
+
+    Each `read1` waits on one socket operation, which the request timeout bounds.
+    """
     chunks: list[bytes] = []
     size = 0
     while True:
-        chunk = answer.read(READ_CHUNK_BYTES)
+        chunk = answer.read1(READ_CHUNK_BYTES)
         if clock() > deadline:
             raise TimeoutError("the answer arrived after its deadline")
         if not chunk:
@@ -65,12 +68,14 @@ def post_form(
     path: str,
     form: Mapping[str, str],
     client_secret: str,
-    urlopen=urllib.request.urlopen,
-    timeout: float = TOKEN_TIMEOUT_SECONDS,
-    clock: Callable[[], float] = time.monotonic,
+    urlopen,
+    deadline: float,
+    clock: Callable[[], float],
 ) -> tuple[int, object]:
-    """The status and the JSON Keycloak answered, whether it accepted or refused, in `timeout`."""
-    deadline = clock() + timeout
+    """The status and the JSON Keycloak answered, whether it accepted or refused, by `deadline`."""
+    timeout = min(TOKEN_TIMEOUT_SECONDS, deadline - clock())
+    if timeout <= 0:
+        raise SignInFailed(f"the {path} endpoint gave no answer to read")
     body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
     request = urllib.request.Request(
         f"{OIDC}/{path}", body.encode(), headers={"User-Agent": USER_AGENT}
@@ -91,10 +96,11 @@ def post_form(
 def access_token(
     form: Mapping[str, str],
     client_secret: str,
-    urlopen=urllib.request.urlopen,
-    clock: Callable[[], float] = time.monotonic,
+    urlopen,
+    clock: Callable[[], float],
 ) -> str:
-    status, document = post_form("token", form, client_secret, urlopen, clock=clock)
+    deadline = clock() + TOKEN_TIMEOUT_SECONDS
+    status, document = post_form("token", form, client_secret, urlopen, deadline, clock)
     if status != 200:
         raise SignInFailed(f"the token endpoint answered {status}")
     token = document.get("access_token")
@@ -127,7 +133,8 @@ def device_authorization(
     client_secret: str, challenge: str, urlopen, clock: Callable[[], float]
 ) -> DeviceAuthorization:
     form = {"scope": "openid", "code_challenge": challenge, "code_challenge_method": "S256"}
-    status, document = post_form("auth/device", form, client_secret, urlopen, clock=clock)
+    deadline = clock() + TOKEN_TIMEOUT_SECONDS
+    status, document = post_form("auth/device", form, client_secret, urlopen, deadline, clock)
     link = document.get("verification_uri_complete") or document.get("verification_uri")
     interval = document.get("interval", DEFAULT_INTERVAL_SECONDS)
     strings = (document.get("device_code"), document.get("user_code"), link)
@@ -145,18 +152,18 @@ def device_authorization(
 
 def person_token(
     authorization: DeviceAuthorization,
-    deadline: float,
+    expiry: float,
     verifier: str,
     client_secret: str,
     urlopen,
     pause: Callable[[float], None],
     clock: Callable[[], float],
 ) -> str:
-    """Polls until the person confirms; no wait and no request outlasts the code's lifetime."""
+    """Polls until the person confirms; `expiry` is absolute and no poll or token follows it."""
     interval = authorization.interval
-    while (remaining := deadline - clock()) > 0:
+    while (remaining := expiry - clock()) > 0:
         pause(min(interval, remaining))
-        if (remaining := deadline - clock()) <= 0:
+        if clock() >= expiry:
             break
         status, document = post_form(
             "token",
@@ -167,9 +174,11 @@ def person_token(
             },
             client_secret,
             urlopen,
-            min(TOKEN_TIMEOUT_SECONDS, remaining),
+            expiry,
             clock,
         )
+        if clock() > expiry:
+            break
         if status == 200 and isinstance(document.get("access_token"), str):
             return document["access_token"]
         match document.get("error"):
@@ -201,13 +210,13 @@ def sign_in(
 ) -> Tokens:
     verifier, challenge = pkce_pair()
     authorization = device_authorization(client_secret, challenge, urlopen, clock)
-    deadline = clock() + authorization.expires_in
+    expiry = clock() + authorization.expires_in
     print(
         f"Open {authorization.link} and confirm the code {authorization.user_code}",
         file=sys.stderr,
     )
     # best effort and off the poll loop: no opener can delay the polling or outlast the code
     threading.Thread(target=open_link, args=(authorization.link,), daemon=True).start()
-    person = person_token(authorization, deadline, verifier, client_secret, urlopen, pause, clock)
+    person = person_token(authorization, expiry, verifier, client_secret, urlopen, pause, clock)
     workload = access_token({"grant_type": "client_credentials"}, client_secret, urlopen, clock)
     return Tokens(person=person, workload=workload)
