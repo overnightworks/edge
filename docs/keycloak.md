@@ -111,7 +111,8 @@ would stay stale behind Cloudflare, which always asks with gzip.
 restart keeps the same URL. Cloudflare caches css, js, svg, ico and woff2 for 30
 days under that URL as well, and a browser keeps them as long. A file changed in
 place therefore keeps coming from those caches; a look change names a new file
-(for a stylesheet, `styles=` in `theme.properties`) or is purged at Cloudflare.
+(for a stylesheet, `styles=` in `theme.properties`). A purge at Cloudflare clears
+only Cloudflare's copy; a browser that already holds the old file keeps it.
 
 
 > **The apply adds and changes, and deletes no undeclared top-level object and no person.**
