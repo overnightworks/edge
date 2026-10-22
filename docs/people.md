@@ -22,7 +22,7 @@ contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's pro
   name the app's client, answers `403`. The token authenticates the caller;
   it never names the target. There is no hal service account and no standing secret for these routes.
 - A request to these routes never creates or provisions an account, neither the caller's nor the
-  target's; a caller without an account in the app is authorised by the token alone or refused.
+  target's; a caller without an account in the app is authorised by the token alone or refused with `403`.
 - An app that admits only browser sessions today says so, and hal cannot call it until it admits the
   token.
 - Every answer carries `Cache-Control: no-store`.
@@ -73,7 +73,7 @@ Rules:
   through a per-person directory, so an interrupted run can be repeated and still finds everything.
 - **Running work.** The erasure first stops new work for the person from starting and cancels queued and
   retrying work for the person (cancelled, not paused). The block holds until the erasure has answered;
-  a `409` lifts it. Work that ends by itself within 60
+  a `409` lifts it. After that, hal's Keycloak lock (its step 2) keeps the person from starting new work until hal deletes the Keycloak user, so the app's block only has to bridge the erasure itself. Work that ends by itself within 60
   seconds may be waited for; otherwise the app answers `409` with `Retry-After` and deletes nothing. The
   `409` body is `{"people_erasure": 1, "app": …, "subject": …, "busy": [{"kind": …, "count": …}]}`. A dry
   run never waits and never changes anything: it lists running work as a kind.
