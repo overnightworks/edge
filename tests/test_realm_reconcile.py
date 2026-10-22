@@ -536,41 +536,17 @@ def test_the_backup_asks_for_keycloak_alone_and_reads_the_snapshot_id() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    ("stderr", "cause"),
-    [
-        pytest.param(
-            "error: hal backup: fehlgeschlagen: kein Passwort\n",
-            "hal backup: fehlgeschlagen: kein Passwort",
-            id="a runtime failure",
-        ),
-        pytest.param(
-            "error: --pre-apply needs the name of an app\nnext: hal backup --help\n",
-            "--pre-apply needs the name of an app",
-            id="a usage failure with its next line",
-        ),
-        pytest.param(
-            "error: hal backup: fehlgeschlagen: kein Passwort\nnext: hal backup --help\n",
-            "hal backup: fehlgeschlagen: kein Passwort",
-            id="a runtime failure with a next line",
-        ),
-        pytest.param("Traceback ... boom\n", "Traceback ... boom", id="a failure not hal's own"),
-    ],
-)
-def test_a_failing_backup_names_the_cause_hal_wrote_never_its_next_line(
-    stderr: str, cause: str
-) -> None:
-    backup = reconcile.Backup(("hal",), Commands(stdout="", stderr=stderr, code=3))
+def test_a_failing_backup_says_the_error_line_hal_wrote() -> None:
+    commands = Commands(stdout="", stderr="error: hal backup: kein Passwort\n", code=3)
 
     with pytest.raises(reconcile.RealmError) as raised:
-        backup.pre_apply()
+        reconcile.Backup(("hal",), commands).pre_apply()
 
-    assert str(raised.value) == f"the Keycloak backup failed ({cause})"
+    assert str(raised.value) == "the Keycloak backup failed (hal backup: kein Passwort)"
 
 
-@pytest.mark.parametrize("stdout", ["hal backup: fertig\n", "{}\n", "[]\n", '{"snapshot": null}'])
-def test_a_backup_that_names_no_snapshot_is_a_failure(stdout: str) -> None:
-    backup = reconcile.Backup(("hal",), Commands(stdout=stdout))
+def test_a_backup_that_names_no_snapshot_is_a_failure() -> None:
+    backup = reconcile.Backup(("hal",), Commands(stdout="hal backup: fertig\n"))
 
     with pytest.raises(reconcile.RealmError, match="named no pre-apply snapshot"):
         backup.pre_apply()

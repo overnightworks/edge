@@ -966,7 +966,6 @@ class RealmStepStand:
     stack: Stack
     root: Path
     backup_command: tuple[str, ...]
-    apps: Path
     asked: list[list[str]] = field(default_factory=list)
 
     @classmethod
@@ -990,7 +989,7 @@ class RealmStepStand:
             "hal", path=f"{REPO / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"
         )
         expect(executable is not None, "no hal in the checkout's .venv or on the PATH")
-        return cls(stack, root, (executable,), apps)
+        return cls(stack, root, (executable,))
 
     @property
     def repository(self) -> Path:
@@ -1009,8 +1008,7 @@ class RealmStepStand:
         self.realm_file.write_text(text + append)  # NOSONAR(S2083)
 
     def hal(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        """The realm step never passes `--apps`; the stand names its own behind the verb."""
-        command = [*self.backup_command, *arguments, "--apps", str(self.apps)]
+        command = [*self.backup_command, *arguments, "--apps", str(self.root / "apps.toml")]
         result = subprocess.run(
             command,
             env={**os.environ, "HOME": str(self.root / "home")},
