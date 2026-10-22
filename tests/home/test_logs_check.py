@@ -29,6 +29,7 @@ class FakeMachine:
         self.default_driver: str | None = "journald"
         self.failing_docker_commands: set[str] = set()
         self.removed_containers: set[str] = set()
+        self.uninspectable_containers: set[str] = set()  # still listed, but `docker inspect` fails
         self.listings = 0
         self.boots: str | None = boots_json(NOW - timedelta(days=3))
         self.system_boots: str | None = self.boots
@@ -45,7 +46,7 @@ class FakeMachine:
         if argv[1] == "info":
             return None if self.default_driver is None else self.default_driver + "\n"
         name, driver, project = self.containers[int(argv[-1].removeprefix("id"))]
-        return None if name in self.removed_containers else f"/{name}\t{driver}\t{project}\n"
+        return None if name in self.removed_containers | self.uninspectable_containers else f"/{name}\t{driver}\t{project}\n"
 
 
 @pytest.fixture
@@ -134,6 +135,13 @@ def test_a_container_removed_between_listing_and_inspection_is_gone_not_a_docker
     machine.removed_containers = {"probe-1"}
 
     assert set(findings(machine, log_directory)) == {("container-json-file", "app-web-1")}
+
+
+def test_the_findings_of_inspected_containers_stay_next_to_the_one_that_cannot_be_inspected(machine, log_directory) -> None:
+    machine.containers = [("app-web-1", "json-file", "app"), ("app-db-1", "journald", "app")]
+    machine.uninspectable_containers = {"app-db-1"}
+
+    assert set(findings(machine, log_directory)) == {("container-json-file", "app-web-1"), ("docker-unreadable", "docker")}
 
 
 def test_a_system_journal_that_cannot_be_read_is_named_while_the_merged_age_still_counts(machine, log_directory) -> None:

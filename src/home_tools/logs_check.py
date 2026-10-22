@@ -68,7 +68,8 @@ def _container_findings(run: CommandRunner) -> LogReading:
     if failed_inspections:
         still_listed = run(DOCKER_CONTAINER_IDS)  # an id that is gone from a second listing was removed; any other failure is unread
         if still_listed is None or set(failed_inspections) & set(still_listed.split()):
-            return LogReading([LogFinding("docker-unreadable", "docker", "`docker inspect` lässt sich nicht ausführen")], [])
+            findings.append(LogFinding("docker-unreadable", "docker", "`docker inspect` lässt sich nicht ausführen"))
+            return LogReading(findings, [])
     return LogReading(findings, [f"Container: {inspected}, davon {len(findings)} mit {JSON_FILE_DRIVER}"])
 
 
