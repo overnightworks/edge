@@ -177,6 +177,16 @@ def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
     assert ("unauthorized" in l2.figure) == ("401" in output)
 
 
+@pytest.mark.parametrize(
+    ("refusal", "group"),
+    [("forbidden", "/apps/songmaker"), ("not_enabled", "/ai-subscription")],
+)
+def test_a_refusal_for_rights_names_the_group_the_operator_lacks(refusal, group):
+    l2, _ = live_smoke.turn_cells(1, f"refused with 403 {refusal}: no\n", KNOWN)
+
+    assert group in l2.figure
+
+
 # --- the service, against a scripted docker ---------------------------------------------------
 
 

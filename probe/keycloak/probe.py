@@ -172,8 +172,7 @@ LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
-# the subscription group the agent service reads from agent-providers 0.6.0 on
-# (#218 switches service.toml)
+# the subscription group agent-providers 0.6.0 reads (agent-service/service.toml)
 SUBSCRIPTION_GROUP = "/ai-subscription"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"

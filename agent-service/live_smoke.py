@@ -13,8 +13,9 @@ searches for a leaked secret (L6) and the egress cells of the running container 
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
-A refusal `unauthorized` means expired tokens, `forbidden` a missing `/ki-abo` or tokens
-that do not share an `azp`.
+A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
+that do not share an `azp`, `not_enabled` a missing `/ai-subscription` (or `/ki-abo`); the report
+names the group.
 `agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
 `apply`).
 
@@ -49,6 +50,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
+from typing import Final
 
 import egress_observe
 from egress_observe import PUBLIC_RESOLVER, lan_address
@@ -298,12 +300,26 @@ def other_lines(output: str) -> str:
     return " | ".join(kept)[:300]
 
 
+MISSING_GROUP_BY_REFUSAL: Final = {
+    "forbidden": "the operator needs the group /apps/songmaker",
+    "not_enabled": "the operator needs the group /ai-subscription or /ki-abo",
+}
+
+
+def missing_group_hint(output: str) -> str:
+    """The group a typed refusal in the smoke's output says is missing, or nothing."""
+    for refusal, hint in MISSING_GROUP_BY_REFUSAL.items():
+        if f" {refusal}:" in output:
+            return f"; {hint}"
+    return ""
+
+
 def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     """The secrets go out of the output before it is cut, so that none leaves its beginning."""
     output = known.redact(output)
     events = event_names(output)
     text = other_lines(output)
-    said = f"exit {returncode}; events {events}; {text}"
+    said = f"exit {returncode}; events {events}; {text}{missing_group_hint(output)}"
     answered = bool(text)  # an answer needs text of its own, not only the event that carries it
     paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
     admitted = "run_started" in events

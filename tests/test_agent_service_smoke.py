@@ -132,6 +132,14 @@ def test_the_tokens_go_to_the_service_as_headers_and_nowhere_else():
     assert WORKLOAD_TOKEN.encode() not in body
 
 
+def test_the_run_is_asked_for_in_wire_v2_with_no_tools_and_both_roles():
+    _, _, connection = drive(run_events(*SUCCESS))
+
+    ((_, _, body, _),) = connection.requests
+    document = json.loads(body)
+    assert (document["v"], document["tools"], document["roles"]) == (2, {}, ["admin", "user"])
+
+
 def test_a_failed_run_prints_its_code_and_message_and_exits_1():
     failure = ("failed", {"code": "provider_error", "message": "The provider failed."})
 
@@ -142,7 +150,7 @@ def test_a_failed_run_prints_its_code_and_message_and_exits_1():
 
 
 def test_a_refusal_prints_the_services_code_and_message_and_exits_1():
-    refusal = json.dumps({"v": 1, "code": "unauthorized", "message": "Sign in again."}).encode()
+    refusal = json.dumps({"v": 2, "code": "unauthorized", "message": "Sign in again."}).encode()
 
     exit_code, out, _ = drive(FakeResponse(401, refusal))
 

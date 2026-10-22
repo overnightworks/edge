@@ -1,9 +1,10 @@
-"""The agent service image probe (#192, cells I1 to I7).
+"""The agent service image probe (#192, cells I1 to I8).
 
 Builds the image without cache, then drives it as the PC would: a changed hash fails the build,
 the CLI runs as uid 1000 on a read-only root, the real entrypoint starts with a Claude profile
 and answers an unauthenticated `POST /runs` with 401, the image holds no login, and the installed
-packages are exactly the lock's. Run it from the repository root, in the probe-stack lock:
+packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
+the repository root, in the probe-stack lock:
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3 probe/agent-service/image.py
 
@@ -111,6 +112,11 @@ def build(context: Path, transcript: Path, *extra: str, tag: str = IMAGE, cache:
     return result
 
 
+def normalized_name(name: str) -> str:
+    """A distribution name as pip and the lock may spell it (`ruamel.yaml`, `ruamel-yaml`)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def lock_versions() -> dict[str, str]:
     """The name and version of every package the lock pins, wheels by their file names."""
     versions: dict[str, str] = {}
@@ -118,7 +124,7 @@ def lock_versions() -> dict[str, str]:
         pinned = re.match(r"([A-Za-z0-9._-]+)==([^\s;]+)", line)
         wheel = re.match(r"([A-Za-z0-9._-]+) @ \S+/[^/\s]+?-(\d[^-/\s]*)-py3-none-any\.whl", line)
         if match := pinned or wheel:
-            versions[match.group(1).lower().replace("_", "-")] = match.group(2)
+            versions[normalized_name(match.group(1))] = match.group(2)
     return versions
 
 
@@ -209,7 +215,7 @@ def service_configuration() -> str:
 issuer = "https://issuer.invalid/realms/probe"
 jwks_url = "https://issuer.invalid/realms/probe/protocol/openid-connect/certs"
 audience = "agent-service"
-subscription_group = "subscribers"
+subscription_groups = ["/ai-subscription"]
 group_claim = "groups"
 
 [server]
@@ -222,18 +228,42 @@ working_root = "/run/work"
 [cli.claude]
 binary = "/opt/claude/claude"
 version = "2.1.302"
+models = ["sonnet"]
 
 [profiles.subscription]
 provider = "claude"
 token_file = "/run/secrets/claude-token"
 
-[purposes.chat]
-cli_provider = "claude"
-
 [apps.probe]
 workload_client = "probe-client"
-purposes = ["chat"]
 """
+
+
+LEFTOVER_CONFIGURATION = {
+    "identity.subscription_group": ("[server]", 'subscription_group = "/ki-abo"\n\n[server]'),
+    "purposes": ("[apps.probe]", '[purposes.chat]\ncli_provider = "claude"\n\n[apps.probe]'),
+    "apps.probe.tools": ("[apps.probe]", "[apps.probe.tools]\n\n[apps.probe]"),
+}
+
+
+def cell_i8(scratch: Path) -> None:
+    """A field the 0.6.0 configuration dropped stops the start and the log names it."""
+    for field, (anchor, leftover) in LEFTOVER_CONFIGURATION.items():
+        configuration = scratch / "leftover.toml"
+        configuration.write_text(
+            service_configuration().replace(anchor, leftover), encoding="utf-8"
+        )
+        started = docker(
+            [
+                "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
+                f"--mount=type=bind,source={configuration},target=/etc/agent-service/service.toml,readonly",
+                IMAGE,
+            ],
+            check=False,
+        )  # fmt: skip
+        said = started.stdout + started.stderr
+        expect(started.returncode != 0, f"I8: a leftover {field} did not stop the start")
+        expect(field.rsplit(".", 1)[-1] in said, f"I8: the refusal of {field} says {said[-300:]!r}")
 
 
 def write_dummy_token(path: Path) -> None:
@@ -359,7 +389,7 @@ def cell_i6() -> None:
 
 def package_versions(frozen: str) -> dict[str, str]:
     pairs = (line.split("==") for line in frozen.split())
-    return {name.lower().replace("_", "-"): version for name, version in pairs}
+    return {normalized_name(name): version for name, version in pairs}
 
 
 def base_package_versions() -> dict[str, str]:
@@ -424,6 +454,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("I6 held: no managed settings, no ~/.claude, no token")
             cell_i7()
             print("I7 held: pip freeze is exactly the lock's names and versions")
+            cell_i8(scratch)
+            print("I8 held: a leftover subscription_group, purposes table or tools table stops it")
         except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
             print(f"FAILED {type(failure).__name__}: {failure}", file=sys.stderr)
             return 1
