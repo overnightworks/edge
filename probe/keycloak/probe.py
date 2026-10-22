@@ -1900,10 +1900,7 @@ class Probe:
         # new group and, deleting nothing, keeps the dropped groups and client.
         group_start = text.find(f"  - name: {DROPPED_GROUP}\n")
         group_end = text.find("clientScopes:\n")
-        expect(
-            0 <= group_start < group_end,
-            f"realm.yaml no longer lists the group {DROPPED_GROUP}",
-        )
+        expect(0 <= group_start < group_end, f"realm.yaml no longer lists group {DROPPED_GROUP}")
         text = text[:group_start] + f"  - name: {CHANGED_GROUP}\n" + text[group_end:]
         client_start = text.find(f"  - clientId: {DROPPED_CLIENT}\n")
         client_end = text.find("  # One client for presentator")

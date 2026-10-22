@@ -8,7 +8,7 @@
 
 [file_lines]
 "probe/agent-service/unit.py" = 841
-"probe/keycloak/probe.py" = 2843
+"probe/keycloak/probe.py" = 2842
 "probe/step-ca/probe.py" = 1054
 "probe/switches/probe.py" = 813
 "src/edge/realm/observe.py" = 815
@@ -37,7 +37,7 @@
 "apply_command" = 70
 
 [function_lines."tests/realm_fake.py"]
-"hallucinai" = 106
+"hallucinai" = 105
 
 [function_lines."tests/test_edge_external.py"]
 "terminal" = 72

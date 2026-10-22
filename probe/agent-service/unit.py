@@ -600,6 +600,7 @@ ISSUER_ORIGIN = f"https://{ISSUER_SERVICE}:{ISSUER_PORT}"
 REAL_ISSUER_ORIGIN = "https://auth.hallucinai.de"
 KEY_ID = "probe-key"
 WORKLOAD_CLIENT = "songmaker"
+PLAN_GROUP = "/services/agent-service/subscription"
 TOKEN_SECONDS = 240  # the service refuses a workload token that lives longer than 300
 SMOKE_SERVICE = "agent-smoke"
 ISSUER_PROGRAM = (
@@ -736,13 +737,7 @@ class SmokeProbe(Probe):
     def tokens(self) -> Tokens:
         issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"
         person = self.issuer.token(
-            issuer,
-            {
-                "sub": "person",
-                "azp": WORKLOAD_CLIENT,
-                "groups": ["/services/agent-service/subscription"],
-            },
-        )
+            issuer, {"sub": "person", "azp": WORKLOAD_CLIENT, "groups": [PLAN_GROUP]})  # fmt: skip
         workload = self.issuer.token(
             issuer,
             {"sub": "workload", "azp": WORKLOAD_CLIENT, "client_id": WORKLOAD_CLIENT,

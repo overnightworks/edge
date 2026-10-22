@@ -236,8 +236,6 @@ def hallucinai() -> FakeRealm:
         "/apps/presentator",
         "/apps/hopin",
         "/apps/hopin/admin",
-        "/services",
-        "/services/agent-service",
         "/services/agent-service/subscription",
         "/services/agent-service/api",
     ):
