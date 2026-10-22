@@ -1,7 +1,9 @@
 """What an app's `compose.yaml` may contain (#255, the contract for an app repository).
 
 The one owner of that decision, pure over the text of `git show <sha>:compose.yaml`. It parses with
-SafeLoader and does not interpolate, so a `${...}` in a key that is forbidden is refused as the key.
+SafeLoader and does not interpolate, so a `$` in a value that decides a rule (a label key, a restart
+policy, a volume's source, type or target) is refused: Compose would resolve it from the `.env`
+the release tracks. Scalars stay strings as Compose reads them (`yes` is no boolean).
 `check` runs before the operator's `yes`: a refusal means the app cannot be planned. The image half
 of the volume rule needs the built image and runs after build and pull, before `create`:
 `check_image_volumes`.
@@ -10,6 +12,7 @@ Every refusal is one line that names the entry, the tag, the service and the key
 A one-shot service and a `depends_on` that waits for health or completion are refused for now.
 """
 
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
@@ -21,6 +24,22 @@ from edge_check.docker import EDGE_NAME_LABEL
 _TRAEFIK_ENABLE = "traefik.enable"
 _WAITING_CONDITIONS = {"service_healthy", "service_completed_successfully"}
 _RESTART = "unless-stopped"
+_DISABLED_HEALTHCHECK = "NONE"
+_DECIDING_LABELS = {EDGE_NAME_LABEL, _TRAEFIK_ENABLE}
+
+
+class _ComposeLoader(yaml.SafeLoader):
+    """SafeLoader with YAML 1.2 booleans: only true and false, so `yes`, `no`, `on` and `off` stay
+    strings as in Compose."""
+
+
+_ComposeLoader.yaml_implicit_resolvers = {
+    first: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_ComposeLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF")
+)
 
 
 class ContractError(Exception):
@@ -54,13 +73,13 @@ def check_image_volumes(
     """Raises ContractError for a volume that the image of a service declares (`declared` maps
     each service to its paths) and that no named volume, bind or tmpfs of that service covers:
     Docker would keep its data in an anonymous volume that the next release does not find."""
-    for name, definition in yaml.safe_load(text)["services"].items():
+    for name, definition in yaml.load(text, _ComposeLoader)["services"].items():
         covered = _covered_paths(definition)
         for path in declared.get(str(name), ()):
             if path.rstrip("/") not in covered:
                 raise ContractError(
                     f"services.{entry}: image of service {compose.printable(str(name))} at {tag} "
-                    f"declares volume {compose.printable(path)}, which no named volume covers; "
+                    "declares a volume that no named volume of the service covers (volumes); "
                     "give it a named volume"
                 )
 
@@ -69,7 +88,7 @@ def _document(text: str | None, refuse: Any) -> dict:
     if text is None:
         raise refuse("none at the root of the repository")
     try:
-        document = yaml.safe_load(text)
+        document = yaml.load(text, _ComposeLoader)
     except yaml.YAMLError as error:
         raise refuse(f"cannot be read ({type(error).__name__})") from None
     services = document.get("services") if isinstance(document, dict) else None
@@ -84,9 +103,8 @@ def _service_refusal(definition: object) -> str | None:
         return "must be a map"
     if "profiles" in definition:
         return "uses profiles (profiles); an app's services are all started"
-    extends = definition.get("extends")
-    if isinstance(extends, dict) and "file" in extends:
-        return "extends a file (extends.file); an app is self-contained"
+    if "extends" in definition:
+        return "uses extends (extends); not yet supported"
     return (
         _published_port_refusal(definition)
         or _dependency_refusal(definition)
@@ -131,10 +149,17 @@ def _restart_refusal(definition: dict) -> str | None:
 
 def _volume_refusal(definition: dict) -> str | None:
     for volume in _mounts(definition):
+        if _interpolates(volume) or (
+            isinstance(volume, dict) and any(_interpolates(part) for part in volume.values())
+        ):
+            return "interpolates a volume entry ($); not yet supported"
         if isinstance(volume, str) and ":" not in volume:
             return "has a volume entry without a source (volumes); give it a named volume"
         if isinstance(volume, dict) and volume.get("type") != "tmpfs" and not volume.get("source"):
             return "has a volume entry without a source (volumes); give it a named volume"
+    tmpfs = definition.get("tmpfs") or ()
+    if any(_interpolates(mount) for mount in ([tmpfs] if isinstance(tmpfs, str) else tmpfs)):
+        return "interpolates a tmpfs mount ($); not yet supported"
     return None
 
 
@@ -143,17 +168,20 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
     labelled service names a host of the entry and has a healthcheck."""
     holders: dict[str, list[str]] = {}
     for name, definition in services.items():
+        service = f"service {compose.printable(str(name))}"
+        if _label_interpolates(definition):
+            yield f"{service} interpolates a label ($); not yet supported"
+            continue
         labels = _labels(definition)
         if EDGE_NAME_LABEL not in labels:
             continue
-        service = f"service {compose.printable(str(name))}"
         if labels.get(_TRAEFIK_ENABLE) != "true":
             yield f"{service} has {EDGE_NAME_LABEL} without {_TRAEFIK_ENABLE} true (labels)"
         if labels[EDGE_NAME_LABEL] not in hosts:
             yield f"{service} labels a name the entry does not list ({EDGE_NAME_LABEL})"
         holders.setdefault(labels[EDGE_NAME_LABEL], []).append(str(name))
         health = definition.get("healthcheck")
-        if not isinstance(health, dict) or health.get("disable"):
+        if not isinstance(health, dict) or _healthcheck_disabled(health):
             yield f"{service} has no healthcheck (healthcheck); the publish phase asks it for ready"
     for host in hosts:
         if len(holders.get(host, [])) != 1:
@@ -161,6 +189,29 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
                 f"host {compose.printable(host)} needs exactly one service labelled "
                 f"{EDGE_NAME_LABEL} with its name (labels)"
             )
+
+
+def _healthcheck_disabled(health: dict) -> bool:
+    test = health.get("test")
+    named = test[0] if isinstance(test, list) and test else test
+    return bool(health.get("disable")) or named == _DISABLED_HEALTHCHECK
+
+
+def _label_interpolates(definition: dict) -> bool:
+    """A `$` in a label's key, or in the value of a label the contract reads, could resolve to
+    another label or host from the `.env` the release tracks."""
+    labels = definition.get("labels")
+    if isinstance(labels, dict):
+        return any(
+            _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
+            for key, value in labels.items()
+        )
+    if isinstance(labels, list):
+        pairs = [str(item).partition("=") for item in labels]
+        return any(
+            "$" in key or (key in _DECIDING_LABELS and "$" in value) for key, _, value in pairs
+        )
+    return False
 
 
 def _labels(definition: dict) -> dict[str, str]:

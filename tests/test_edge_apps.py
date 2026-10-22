@@ -522,7 +522,7 @@ def test_the_default_runtime_records_with_the_clock_and_lives_under_home_srv(tmp
     assert runtime.now().utcoffset() is not None
 
 
-UNCOVERED = {"compose.yaml": COMPOSE.replace("build: .", "build: .\n    pull_policy: always")}
+PULL_ALWAYS = {"compose.yaml": COMPOSE.replace("build: .", "build: .\n    pull_policy: always")}
 COVERED = {
     "compose.yaml": COMPOSE.replace("build: .", "build: .\n    volumes: ['data:/data']")
     + "volumes:\n  data: {}\n"
@@ -539,8 +539,8 @@ def test_an_image_volume_no_named_volume_covers_is_partial_before_create_with_th
     [failure] = world.run()
 
     assert failure == (
-        f"services.hopin: image of service hopin at {SECOND} declares volume /data, "
-        "which no named volume covers; give it a named volume"
+        f"services.hopin: image of service hopin at {SECOND} declares a volume that no named "
+        "volume of the service covers (volumes); give it a named volume"
     )
     assert world.docker.verbs[-1] == "image inspect"
     assert world.deployed()["sha"] == first
@@ -555,7 +555,7 @@ def test_an_image_volume_a_named_volume_covers_starts(world, origin):
 
 
 def test_a_service_with_pull_policy_always_is_started_from_the_inspected_image(world, origin):
-    origin.release(FIRST, UNCOVERED)
+    origin.release(FIRST, PULL_ALWAYS)
 
     assert world.run() == [None]
 

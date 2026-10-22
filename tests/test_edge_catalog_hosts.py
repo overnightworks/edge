@@ -468,3 +468,11 @@ def test_an_app_knows_the_names_of_its_hosts():
     [found] = catalog.apps(entry, {}, "edge")
 
     assert found.hosts == ("app", "www")
+
+
+def test_an_app_host_without_ready_is_refused_when_the_apps_are_read():
+    app = {"repo": {"default_branch": "master"}, "run": {"enabled": True}}
+    entry = document(hosted(host("app"), key="app", **app))
+
+    with pytest.raises(catalog.CatalogError, match=r"services\.app\.hosts\[0\]\.ready"):
+        catalog.apps(entry, {}, "edge")

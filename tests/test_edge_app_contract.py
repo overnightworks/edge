@@ -37,8 +37,10 @@ def refusal(text: str | None, hosts: tuple[str, ...] = ()) -> str:
         (compose("profiles: [a]"), "service web uses profiles (profiles)"),
         (
             compose("extends: {file: x.yaml, service: y}"),
-            "service web extends a file (extends.file)",
+            "service web uses extends (extends)",
         ),
+        (compose("extends: {service: y}"), "service web uses extends (extends)"),
+        (compose("extends: y"), "service web uses extends (extends)"),
         (
             compose("depends_on: {db: {condition: service_healthy}}"),
             "service web waits for health or completion (depends_on condition)",
@@ -127,6 +129,52 @@ def test_b3_a_service_without_healthcheck_or_restart_unless_stopped_is_refused(t
     assert refused in refusal(text, hosts=("hopin",))
 
 
+@pytest.mark.parametrize("health", ["{test: [NONE]}", "{test: NONE}", "{disable: true}"])
+def test_a_disabled_healthcheck_is_no_healthcheck(health):
+    labels = 'labels: {edge.name: hopin, traefik.enable: "true"}'
+
+    message = refusal(compose(labels, f"healthcheck: {health}"), hosts=("hopin",))
+
+    assert "service web has no healthcheck (healthcheck)" in message
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        "labels: ['${L}=other', 'edge.name=hopin', 'traefik.enable=true']",
+        "labels: {'${L}': other, edge.name: hopin, traefik.enable: 'true'}",
+        "labels: ['edge.name=${H}', 'traefik.enable=true']",
+        "labels: {edge.name: hopin, traefik.enable: '${T:-true}'}",
+    ],
+)
+def test_an_interpolated_label_key_or_deciding_value_is_refused_as_the_key(fields):
+    message = refusal(compose(fields, HEALTH), hosts=("hopin",))
+
+    assert "service web interpolates a label ($)" in message
+    assert "other" not in message
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "volumes: [{type: volume, source: '${W}', target: /data}]",
+        "volumes: [{type: '${T}', source: d, target: /data}]",
+        "volumes: ['${W}:/data']",
+        "tmpfs: ['${W}']",
+    ],
+)
+def test_an_interpolated_volume_entry_is_refused_as_the_key(mount):
+    assert "interpolates" in refusal(compose(mount))
+
+
+def test_yes_is_no_boolean_for_traefik_enable_as_compose_reads_it():
+    fields = ["labels: {edge.name: hopin, traefik.enable: yes}", HEALTH]
+
+    assert "has edge.name without traefik.enable true" in refusal(
+        compose(*fields), hosts=("hopin",)
+    )
+
+
 @pytest.mark.parametrize(
     "volume",
     ["'/data'", "{type: volume, target: /data}", "{type: bind, target: /data}"],
@@ -176,6 +224,7 @@ def test_b5_an_image_volume_is_covered_only_by_a_mount_of_the_same_path(
     with pytest.raises(app_contract.ContractError) as refused:
         app_contract.check_image_volumes(text, KEY, TAG, {"web": declared})
     assert str(refused.value) == (
-        f"services.hopin: image of service web at {TAG} declares volume {uncovered}, "
-        "which no named volume covers; give it a named volume"
+        f"services.hopin: image of service web at {TAG} declares a volume that no named volume "
+        "of the service covers (volumes); give it a named volume"
     )
+    assert uncovered not in str(refused.value)

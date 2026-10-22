@@ -179,8 +179,9 @@ class ScriptedDocker:
         )
 
     def verb_config(self, arguments: list[str]) -> str:
-        assert arguments[0] == "--images", arguments
-        return f"{KEY}-{arguments[1]}\n"
+        assert arguments == ["--format", "json"], arguments
+        services = yaml.safe_load((self.directory / "compose.yaml").read_text())["services"]
+        return json.dumps({"services": {name: {"image": f"{KEY}-{name}"} for name in services}})
 
     def verb_ps(self, _arguments: list[str]) -> str:
         return "\n".join(json.dumps(row) for row in self.rows)

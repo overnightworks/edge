@@ -156,7 +156,7 @@ def apps(
     a library and stays ignored. No app takes a profile or the project name `edge_project` of
     edge's own stack."""
     return tuple(
-        _app(key, entry, profile_services, edge_project)
+        _app(key, entry, profile_services, edge_project, document)
         for key, entry in _entries(document).items()
         if _is_app(entry)
     )
@@ -172,7 +172,11 @@ def github_org(document: Any) -> str:
 
 
 def _app(
-    key: str, entry: dict, profile_services: Mapping[str, tuple[str, ...]], edge_project: str
+    key: str,
+    entry: dict,
+    profile_services: Mapping[str, tuple[str, ...]],
+    edge_project: str,
+    document: Any,
 ) -> App:
     if key in profile_services or key == edge_project:
         raise CatalogError(f"services.{key}: an app's key is no compose profile or project of edge")
@@ -184,18 +188,18 @@ def _app(
     for run_key in run:
         if run_key not in _APP_RUN_KEYS:
             raise CatalogError(f"services.{key}.run.{run_key}: unknown key for an app")
-    return App(key, _enabled(key, run), _default_branch(key, repo), _host_names(entry))
+    hosts = _app_hosts(key, entry, document)
+    return App(key, _enabled(key, run), _default_branch(key, repo), hosts)
 
 
-def _host_names(entry: dict) -> tuple[str, ...]:
-    """The `name` of each host of an app's entry; `hosts` checks the shape of the entry."""
-    listed = entry.get("hosts")
-    items = listed if isinstance(listed, list) else []
-    return tuple(
-        item["name"]
-        for item in items
-        if isinstance(item, dict) and isinstance(item.get("name"), str)
-    )
+def _app_hosts(key: str, entry: dict, document: Any) -> tuple[str, ...]:
+    """The names of an app's hosts, each one valid and with its `ready` path: the publish phase
+    asks it there, so planning refuses a host without it before anything starts."""
+    if "hosts" not in entry:
+        return ()
+    entered = _entry_hosts(key, entry["hosts"], zone(document))
+    _require_ready(entered)
+    return tuple(one.name for _, one in entered)
 
 
 def _default_branch(key: str, repo: Any) -> str:

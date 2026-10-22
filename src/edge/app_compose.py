@@ -65,12 +65,17 @@ class AppCompose:
         self._call("pull", ["--ignore-buildable"], PULL_SECONDS, tag)
 
     def image_volumes(self, services: Sequence[str], tag: str) -> dict[str, list[str]]:
-        """The paths that the image of each service declares as a VOLUME. The image is what
-        `config --images` names for the service, as built or pulled by now."""
+        """The paths that the image of each service declares as a VOLUME. The images are those
+        that `config` resolves per service, as built or pulled by now; its output is parsed here
+        and never printed."""
+        images = self._service_images(tag)
         declared = {}
         for service in services:
-            image = self._call("config", ["--images", service], compose.READ_SECONDS, tag).strip()
-            declared[service] = self._declared_volumes(image, tag)
+            if service not in images:
+                raise compose.ComposeError(
+                    f"`docker compose config` of {self.key} at {tag} names no image of a service"
+                )
+            declared[service] = self._declared_volumes(images[service], tag)
         return declared
 
     def create(self, tag: str) -> None:
@@ -81,6 +86,15 @@ class AppCompose:
 
     def start(self, tag: str) -> None:
         self._call("start", [], compose.CHANGE_SECONDS, tag)
+
+    def _service_images(self, tag: str) -> dict[str, str]:
+        output = self._call("config", ["--format", "json"], compose.READ_SECONDS, tag)
+        try:
+            return {name: str(one["image"]) for name, one in json.loads(output)["services"].items()}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise compose.ComposeError(
+                f"`docker compose config` of {self.key} at {tag} answered no image per service"
+            ) from None
 
     def _declared_volumes(self, image: str, tag: str) -> list[str]:
         command = ["docker", "image", "inspect", "--format", "{{json .Config.Volumes}}", image]

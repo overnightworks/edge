@@ -110,27 +110,34 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
 
 
 class ImageDocker(Docker):
-    """Answers `config --images` with an image name and `image inspect` with `inspected`."""
+    """Answers `config --format json` with `services` (each name to its image) and `image
+    inspect` with `inspected`."""
 
     def __init__(self, inspected: str, inspect_exit_code: int = 0) -> None:
         super().__init__()
         self.inspected, self.inspect_exit_code = inspected, inspect_exit_code
+        self.services = {"web": {"image": "hopin-web"}, "db": {"image": "postgres:17"}}
 
     def run(self, command, _timeout, _stdin=None):
         self.commands.append(command)
         if command[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(command, self.inspect_exit_code, self.inspected, "")
-        return subprocess.CompletedProcess(command, 0, "hopin-web\n", "")
+        return subprocess.CompletedProcess(command, 0, json.dumps({"services": self.services}), "")
 
 
-def test_the_volumes_an_image_declares_come_from_the_image_config_names_for_the_service():
+def test_the_volumes_an_image_declares_come_from_the_image_of_that_service_alone():
     docker = ImageDocker('{"/data":{},"/cache":{}}')
 
     declared = engine_over(docker).image_volumes(["web"], TAG)
 
     assert declared == {"web": ["/cache", "/data"]}
-    assert docker.commands[0][-3:] == ["config", "--images", "web"]
-    assert docker.commands[1][-1] == "hopin-web"
+    assert docker.commands[0][-3:] == ["config", "--format", "json"]
+    assert [command[-1] for command in docker.commands[1:]] == ["hopin-web"]
+
+
+def test_a_service_the_config_names_no_image_for_is_one_line():
+    with pytest.raises(compose.ComposeError, match="names no image of a service"):
+        engine_over(ImageDocker("null")).image_volumes(["worker"], TAG)
 
 
 def test_an_image_without_volumes_declares_none():
