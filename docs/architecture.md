@@ -411,6 +411,8 @@ Every finding names the subject and a page to fix it, never a value.
 | **presentator** | manual. `~/presentator-live` is a separate checkout at `1f0422c` and runs a locally built image (`presentator-adoption-instance:ap112-e04e837a`) on 127.0.0.1:8100. Two host user units run from that checkout: `presentator-speech` and `presentator-copresenter`; speech is crash-looping (stale socket file, seen 16.10.2026). Offline publicly since 14.10.2026 | its go-public item agent-presentator#197 adds a catalog entry with `deploy: tags` and its first `edge release`. It joins under §10 rule 1: the two host units and their unix sockets (its `compose.yaml:52-53`) and the `docker.sock` mount (`:51`) leave its release, so the watcher deploys the compose release and nothing on the host |
 | **hopin** | not deployed; no container | section 3's example: a compose file, then its first tag |
 
+Every service that holds people's data also offers the export and erase routes of `docs/people.md`.
+
 ### Migrating songmaker off main-deploy
 
 1. **The first tag.** The head tags the commit in songmaker's `deployed.sha` as `v2026.MM.DD.1`, with its `schema:` line, so the switch deploys nothing new.
