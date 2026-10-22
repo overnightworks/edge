@@ -7,7 +7,9 @@ The cells driven here: A1 the first apply, A2 a second apply, A3 an update that 
 volume's data, A4 a tag only on a side branch, A7 a declined `yes`, A8 a new tag that never becomes
 healthy (Traefik routes nothing to it), A9 a build that fails, A12 containers without a record, A18
 an interpolation error that carries a sentinel value, A23 an update interrupted after part of the
-containers were replaced, with a second container of one service. The exits are hal's: 0 or 3.
+containers were replaced, with a second container of one service, B5 an image `VOLUME` that no
+named volume covers (refused after build, before `create`) and the same covered, B8 a service with
+`pull_policy: always`. The exits are hal's: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -76,6 +78,9 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "a23_first": "v2026.10.23.1",
     "a23_a": "v2026.10.23.2",
     "a23_b": "v2026.10.23.3",
+    "b5_uncovered": "v2026.10.24.1",
+    "b5_covered": "v2026.10.24.2",
+    "b8": "v2026.10.24.3",
 }
 FORBIDDEN_VERBS = ("online", "offline", "--all")
 
@@ -198,7 +203,8 @@ class Probe:
 
     def release(
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
-        services: tuple[str, ...] = ("web",), on: str = "master",
+        services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
+        covered: bool = True, pull_always: bool = False,
     ) -> str:  # fmt: skip
         """A commit carrying the app at `tag`, pushed and tagged; its sha."""
         site = self.work / "site"
@@ -211,9 +217,17 @@ class Probe:
             health.unlink(missing_ok=True)
         (self.work / "Dockerfile").write_text(
             f"FROM {BUSYBOX}\n{'' if builds else 'RUN false' + chr(10)}COPY site /www\n"
+            f"{'VOLUME ' + image_volume + chr(10) if image_volume else ''}"
             'CMD ["sh", "-c", "cat /www/version >> /data/starts; exec httpd -f -p 8080 -h /www"]\n'
         )
-        (self.work / "compose.yaml").write_text(self.compose_text(tag, services, interpolates))
+        extra = ("    pull_policy: always\n" if pull_always else "") + (
+            f"    volumes: [data:/data, vault:{image_volume}]\n"
+            if image_volume and covered
+            else "    volumes: [data:/data]\n"
+        )
+        (self.work / "compose.yaml").write_text(
+            self.compose_text(tag, services, interpolates, extra)
+        )
         if on != "master":
             edge_copy.git(self.work, "switch", "--quiet", "--create", on)
         edge_copy.git(self.work, "add", "--all")
@@ -228,7 +242,9 @@ class Probe:
         self.shas[tag] = sha
         return sha
 
-    def compose_text(self, tag: str, services: tuple[str, ...], interpolates: bool) -> str:
+    def compose_text(
+        self, tag: str, services: tuple[str, ...], interpolates: bool, extra: str
+    ) -> str:
         blocks = []
         for name in services:
             routing = (
@@ -242,12 +258,12 @@ class Probe:
             )  # fmt: skip
             blocks.append(
                 f"  {name}:\n    build: .\n    restart: unless-stopped\n{environment}"
-                f"    volumes: [data:/data]\n    labels:\n{routing}      probe.tag: {tag}\n"
+                f"{extra}    labels:\n{routing}      probe.tag: {tag}\n"
                 '    healthcheck:\n      test: ["CMD", "wget", "-q", "-O", "/dev/null", '
                 '"http://127.0.0.1:8080/health"]\n      interval: 2s\n      timeout: 2s\n'
                 "      retries: 3\n      start_period: 1s\n"
             )
-        return "services:\n" + "".join(blocks) + "volumes:\n  data: {}\n"
+        return "services:\n" + "".join(blocks) + "volumes:\n  data: {}\n  vault: {}\n"
 
     # --- the copy, its Traefik and hal -------------------------------------------------------
 
@@ -522,6 +538,36 @@ class Probe:
             "A23 held: an update interrupted after part of the containers is repaired (also 2 webs)"
         )
 
+    def cell_b5_image_volume(self) -> None:
+        uncovered, covered = TAGS["b5_uncovered"], TAGS["b5_covered"]
+        self.release(uncovered, image_volume="/vault", covered=False)
+        before = [(r["id"], r["tag"]) for r in self.containers()]
+        record = self.record.read_text()
+        out = self.apply(exit_code=HAL_FAILURE)
+        expect(
+            f"image of service web at {uncovered} declares volume /vault, "
+            "which no named volume covers" in out,
+            out[-300:],
+        )
+        expect(
+            [(r["id"], r["tag"]) for r in self.containers()] == before, "a container was replaced"
+        )
+        expect(self.record.read_text() == record, "the record moved")
+        self.release(covered, image_volume="/vault")
+        self.apply()
+        expect(self.deployed()["tag"] == covered, "the covered release was not recorded")
+        self.serves(covered)
+        print("B5 held: an uncovered image VOLUME is refused after build, before create (hal 3)")
+
+    def cell_b8_pull_policy_always(self) -> None:
+        tag = TAGS["b8"]
+        self.release(tag, pull_always=True)
+        self.apply()
+        expect(self.deployed()["tag"] == tag, "the record is not the tag")
+        expect(self.only()["tag"] == tag, "the container is not from the tag")
+        self.serves(tag)
+        print("B8 held: pull_policy always starts healthy at the tag from the built image")
+
 
 def prove(probe: Probe) -> int:
     try:
@@ -537,6 +583,8 @@ def prove(probe: Probe) -> int:
         probe.cell_a18_sentinel()
         probe.cell_a12_no_record()
         probe.cell_a23_interrupted_update()
+        probe.cell_b5_image_volume()
+        probe.cell_b8_pull_policy_always()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

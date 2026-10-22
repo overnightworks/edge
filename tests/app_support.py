@@ -127,6 +127,7 @@ class ScriptedDocker:
     interrupted_verb: str | None = None
     calls: list[tuple[str, tuple[str, ...], bool]] = field(default_factory=list)
     created: int = 0
+    image_volumes: dict[str, list[str]] = field(default_factory=dict)  # service -> VOLUME paths
 
     @property
     def verbs(self) -> list[str]:
@@ -143,6 +144,8 @@ class ScriptedDocker:
     def run(
         self, command: list[str], _timeout: int, _stdin: str | None = None
     ) -> subprocess.CompletedProcess[str]:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return self.inspect_image(command)
         assert command[:4] == ["docker", "compose", "-p", KEY], command
         rest = command[4:]
         bound = rest[0] == "--project-directory"
@@ -153,7 +156,9 @@ class ScriptedDocker:
             ]  # fmt: skip
             rest = rest[4:]
         verb, *arguments = rest
-        assert verb in {"ps", "build", "pull", "create", "start"}, f"docker compose {verb}"
+        assert verb in {"ps", "build", "pull", "config", "create", "start"}, (
+            f"docker compose {verb}"
+        )
         assert "-v" not in arguments
         assert bound == (verb != "ps"), f"{verb} is {'file-bound' if bound else 'file-free'}"
         self.calls.append((verb, tuple(arguments), switch_lock_is_held(self.state)))
@@ -162,6 +167,20 @@ class ScriptedDocker:
         if verb == self.failing_verb:
             return subprocess.CompletedProcess(command, 3, SENTINEL, f"{SENTINEL}\n")
         return subprocess.CompletedProcess(command, 0, getattr(self, f"verb_{verb}")(arguments), "")
+
+    def inspect_image(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        """`docker image inspect --format {{json .Config.Volumes}} <image>`: the image of a built
+        service is named `<key>-<service>`."""
+        assert command[3:5] == ["--format", "{{json .Config.Volumes}}"], command
+        self.calls.append(("image inspect", (command[-1],), switch_lock_is_held(self.state)))
+        paths = self.image_volumes.get(command[-1].removeprefix(f"{KEY}-"))
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps({p: {} for p in paths or []} or None), ""
+        )
+
+    def verb_config(self, arguments: list[str]) -> str:
+        assert arguments[0] == "--images", arguments
+        return f"{KEY}-{arguments[1]}\n"
 
     def verb_ps(self, _arguments: list[str]) -> str:
         return "\n".join(json.dumps(row) for row in self.rows)

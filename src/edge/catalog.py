@@ -90,6 +90,7 @@ class App:
     key: str
     enabled: bool
     default_branch: str
+    hosts: tuple[str, ...] = ()
 
 
 def read(catalog_file: Path) -> Any:
@@ -183,7 +184,18 @@ def _app(
     for run_key in run:
         if run_key not in _APP_RUN_KEYS:
             raise CatalogError(f"services.{key}.run.{run_key}: unknown key for an app")
-    return App(key, _enabled(key, run), _default_branch(key, repo))
+    return App(key, _enabled(key, run), _default_branch(key, repo), _host_names(entry))
+
+
+def _host_names(entry: dict) -> tuple[str, ...]:
+    """The `name` of each host of an app's entry; `hosts` checks the shape of the entry."""
+    listed = entry.get("hosts")
+    items = listed if isinstance(listed, list) else []
+    return tuple(
+        item["name"]
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    )
 
 
 def _default_branch(key: str, repo: Any) -> str:
@@ -270,6 +282,8 @@ def hosts(document: Any) -> tuple[Host, ...]:
         if not isinstance(entry, dict) or "hosts" not in entry:
             continue
         entered = _entry_hosts(key, entry["hosts"], zone_name)
+        if _is_app(entry):
+            _require_ready(entered)
         if _entry_enabled(key, entry):
             enabled_hosts += entered
     _check_together(enabled_hosts)
@@ -304,6 +318,13 @@ def zone(document: Any) -> str:
 def _is_dotted_labels(zone: str) -> bool:
     labels = zone.split(".")
     return len(labels) >= 2 and all(_LABEL.fullmatch(label) for label in labels)
+
+
+def _require_ready(entered: list[tuple[str, Host]]) -> None:
+    """The publish phase asks an app's host through Traefik at `ready` before it publishes it."""
+    for path, one in entered:
+        if one.ready is None:
+            raise CatalogError(f"{path}.ready: an app's host needs the path the publish asks")
 
 
 def _entry_enabled(key: str, entry: dict) -> bool:
