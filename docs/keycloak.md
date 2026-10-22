@@ -54,18 +54,34 @@ demands a TOTP code as well, so an administrator without TOTP gets no token
 that way. Remote administration while travelling arrives with the A9 travel
 setup (an SSH or Tailscale forward to 8090), never through the tunnel.
 
-Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`,
-applied by keycloak-config-cli. People and their group memberships are managed
-only in the admin console; no file lists a person. The songmaker, hopin and presentator
-clients are in `realm.yaml`, each secret the file `~/.secrets/keycloak/clients/<clientId>`
-(`keycloak/go-live` makes it; presentator's one client serves `presentator` and
-`presentator-talk`); the other app clients arrive at K13/K14.
+Configuration is code: `keycloak/master.yaml` and `keycloak/realm.yaml`, applied
+by keycloak-config-cli. People and their group memberships are managed only in
+the admin console; no file lists a person. An invited person gets the username
+they ask for, a pseudonym included, and nothing checks the names they enter at
+first sign-in, because the privacy notice promises pseudonymous use (§ 19 Abs. 2
+TDDDG; the operator's ruling of 22.10.2026, edge#312). The songmaker, hopin and
+presentator clients are in `realm.yaml`, each secret the file
+`~/.secrets/keycloak/clients/<clientId>` (`keycloak/go-live` makes it;
+presentator's one client serves `presentator` and `presentator-talk`); the other
+app clients arrive at K13/K14.
 
 songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
 service accounts are the only users `realm.yaml` lists, each holding the realm role
 `agent-workload` and no group, and their default scopes add the `agent-service` audience. Whoever
 holds such an app's client secret can therefore get a workload token for that app, which is the
 design; the secret stays the app's own file. hopin has no service account.
+
+A sign-out in Keycloak ends the songmaker session: Keycloak calls songmaker's back-channel logout
+(`http://songmaker.hallucinai.de:8080/auth/backchannel-logout`; the name is an alias songmaker
+gives its web service) over the internal network `hal_backchannel_songmaker`, which only `keycloak` joins on edge's side and songmaker joins as an
+external network. songmaker ignores the session id and ends every session of the person, so the
+client does not require one. The public tunnel denies the path, matched on the recursively decoded
+path and on the host with any port. Until songmaker has joined the network, the call fails and a
+sign-out ends no songmaker session. A later change to the network's definition needs an order: Docker refuses to recreate a network
+with active endpoints, so `up` stops Keycloak and fails while songmaker's web service is attached,
+and edge's apply does not notice a network-only change (the service's config hash is unchanged,
+named on #50). So songmaker's web service leaves the network, edge applies, and songmaker
+redeploys.
 
 ### Theme and language
 
@@ -183,7 +199,7 @@ The plan names the step in one line. After your yes it takes a Keycloak-only bac
 config-cli, observes again and prints one line per change, with the seconds the backup and the
 restore test took. A failed backup or restore test applies nothing and ends the run partial with
 exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
-not checked"). edge-backup runs in a process group of its own, so Ctrl-C does not reach it. A step
+not checked"). `hal backup` runs in a process group of its own, so Ctrl-C does not reach it. A step
 that outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
 minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A
 failure after config-cli started ends the run with exit 1 and names the snapshot; the way back is
@@ -227,8 +243,8 @@ trace, not Keycloak, and it is also the setup check of `edge apply --closed` for
 
 ## Patch upgrade
 
-1. **Back up the database** with `uv run edge-backup backup` (the dump holds signing keys and
-   credential hashes; edge-backup keeps it encrypted, see [backup.md](backup.md)). It must end
+1. **Back up the database** with `hal backup` (the dump holds signing keys and
+   credential hashes; the backup keeps it encrypted, see [backup.md](backup.md)). It must end
    with exit 0.
 2. **Bump the pin** of `quay.io/keycloak/keycloak` in `compose.yaml` (version and digest), and of
    keycloak-config-cli if a build for the new version exists.

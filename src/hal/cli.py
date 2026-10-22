@@ -5,11 +5,17 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from hal import grammar, setup_commands, stack_commands, version
+from hal import backup_commands, grammar, rename_commands, setup_commands, stack_commands, version
 from hal.grammar import Command, ExitCode
 
 DESCRIPTION = "hal, the daily door of the workstation."
-COMMANDS = (*stack_commands.COMMANDS, *setup_commands.COMMANDS, version.COMMAND)
+COMMANDS = (
+    *stack_commands.COMMANDS,
+    *backup_commands.COMMANDS,
+    *setup_commands.COMMANDS,
+    *rename_commands.COMMANDS,
+    version.COMMAND,
+)
 
 
 class _Parser(argparse.ArgumentParser):

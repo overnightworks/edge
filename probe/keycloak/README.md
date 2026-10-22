@@ -66,7 +66,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
   are off. Passkey registration itself is not driven. Proof 12 (#242) drives the realm step of
   `edge apply` (`edge.realm.reconcile`) against this stack: its Compose, a repository of the realm
-  files, and `edge-backup` (from the checkout's `.venv` or the PATH) under a scratch HOME with its
+  files, and `hal` (from the checkout's `.venv` or the PATH) under a scratch HOME with its
   own `apps.toml` for this stack's Keycloak database. It holds that a first step backs up, proves
   the restore of that snapshot and applies, and a second plan is quiet and its step makes no
   snapshot; that a changed `realm.yaml` applies with lines equal to the YAML diff; that a tampered

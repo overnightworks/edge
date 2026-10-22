@@ -8,7 +8,7 @@
 
 [file_lines]
 "probe/agent-service/unit.py" = 841
-"probe/keycloak/probe.py" = 2842
+"probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1054
 "probe/switches/probe.py" = 813
 "src/edge/realm/observe.py" = 815
@@ -18,13 +18,13 @@
 "tests/home/test_secrets_view.py" = 1089
 "tests/home/test_tidy_home.py" = 817
 "tests/test_edge_apply.py" = 4626
-"tests/test_edge_backup.py" = 1249
+"tests/test_edge_backup.py" = 1235
 "tests/test_edge_cloudflare_read.py" = 906
 "tests/test_edge_external.py" = 2858
 "tests/test_edge_host_check.py" = 818
 "tests/test_keycloak_go_live.py" = 1737
 "tests/test_keycloak_probe.py" = 1040
-"tests/test_realm_reconcile.py" = 1005
+"tests/test_realm_reconcile.py" = 1001
 
 [function_lines."probe/keycloak/probe.py"]
 "Probe.admin_console_only_on_loopback" = 74
