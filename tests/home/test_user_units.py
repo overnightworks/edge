@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from home_tools import setup
-from home_tools.cli import build_layout_and_ports
+from home_tools.cli import build_layout_and_ports, edge_units_directory
 from home_tools.system_step import Applied, CheckState, StepFailed
 from home_tools.tidy_home import Layout
 from home_tools.user_units import LoadedUnit, UserUnits
@@ -132,7 +132,7 @@ class Machine:
 @pytest.fixture
 def machine(tmp_path: Path) -> Machine:
     home = tmp_path / "home"
-    return Machine(home, Layout(home).edge_units_dir)
+    return Machine(home, edge_units_directory(Layout(home)))
 
 
 def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:

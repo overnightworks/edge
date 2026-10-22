@@ -16,6 +16,11 @@ from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
 
 
+def edge_units_directory(layout: Layout) -> Path:
+    """The user units sit beside `tunnel/` in the edge checkout, whose location Layout owns."""
+    return layout.edge_tunnel_dir.parent / "systemd"
+
+
 @dataclass(frozen=True)
 class Ports:
     """Every boundary a subcommand handler may cross; `main` builds the real ones, tests hand in fakes."""
@@ -65,7 +70,7 @@ def build_layout_and_ports(
         secrets_setup_boundaries or TERMINAL_BOUNDARIES,
         now or datetime.now(),
         system,
-        layout.edge_units_dir,
+        edge_units_directory(layout),
     )
 
 

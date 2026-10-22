@@ -300,19 +300,9 @@ class Layout:
         return self.data_dir / "uv" / "tools" / "ansible-core" / "uv-receipt.toml"
 
     @property
-    def edge_checkout(self) -> Path:
-        """The checkout whose paths the installed units name (`%h/git/edge/...`)."""
-        return self.git / "edge"
-
-    @property
     def edge_tunnel_dir(self) -> Path:
         """edge's cloudflared unit, its drop-ins and the polkit rule, which the system step installs."""
-        return self.edge_checkout / "tunnel"
-
-    @property
-    def edge_units_dir(self) -> Path:
-        """edge's user units, which the user-units step links."""
-        return self.edge_checkout / "systemd"
+        return self.git / "edge" / "tunnel"
 
     @property
     def secrets_report_file(self) -> Path:
