@@ -1,0 +1,8 @@
+claim_id = "589536da30cb481b87e35bcc4bdaa427"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "1c90e91568dd3ac9f91b05b79885cad62453b5dd"
+branch = "claude/issue-252-x11-songmaker-on-songmaker-hallucinai-de"
+scope = ["docs/architecture.md", "docs/external.md", "external/cloudflare.tf", "external/hosts.tf", "external/tests", "external/tunnel.tf", "fleet.yaml", "src/edge/catalog.py", "tests/test_edge_catalog_hosts.py"]
+opened_commit = "642787c48d08d181a1482ce51bd34774ea4d2066"
+whole_reason = "One public change songmaker's switch needs whole: its host, the deny that guards it and the apex that stops serving it, in the catalog and its one rendering."
