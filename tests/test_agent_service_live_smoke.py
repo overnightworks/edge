@@ -149,8 +149,10 @@ def test_a_broken_answer_ends_as_one_line_without_its_content(answer):
 
 
 def test_a_token_answer_without_an_access_token_is_refused():
+    keycloak = FakeKeycloak({"other": 1})
+
     with pytest.raises(device_sign_in.SignInFailed, match="no access token"):
-        device_sign_in.access_token({}, "the-secret", FakeKeycloak({"other": 1}))
+        device_sign_in.access_token({}, "the-secret", keycloak)
 
 
 # --- the report -------------------------------------------------------------------------------
