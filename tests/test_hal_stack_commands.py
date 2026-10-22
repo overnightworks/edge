@@ -42,6 +42,7 @@ from test_edge_apply import (
 )
 from test_edge_apply_publish import (
     World,
+    failing_app,  # noqa: F401 the fixture, requested by name below
     fake_tofu,  # noqa: F401 the fixture, requested by name below
     lock_held,
     not_on_main,
@@ -309,6 +310,16 @@ def test_apply_at_a_terminal_applies_the_local_part_then_publishes(hal, applying
     assert result.exit_code == ExitCode.OK
     assert "edge apply: done" in result.err
     assert applying.fake_tofu.call("apply")
+
+
+@pytest.mark.usefixtures("failing_app")
+def test_apply_with_an_app_failing_health_is_exit_3_and_publishes_nothing(hal, applying):
+    """#255 A21: edge's 1 for the partial app step is hal's 3."""
+    result = hal("apply", answers=("yes",))
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert "partial, hopin is not healthy" in result.err
+    assert applying.publish_never_began()
 
 
 def test_apply_while_another_apply_runs_changes_nothing(hal, applying):

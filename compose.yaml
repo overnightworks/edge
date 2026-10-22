@@ -104,6 +104,11 @@ services:
       keycloak-db:
         condition: service_healthy
     # No read_only: `start` without --optimized rebuilds the server into the image's lib directory at boot.
+    # Keycloak keeps gzip copies of theme files in data/tmp/kc-gzip-cache and never compares them
+    # with the file, so the copies must not outlive the process. uid and mode: Docker remounts a
+    # bare tmpfs root:root 755 on a restart, and Keycloak (uid 1000) then answers 404 for gzip.
+    tmpfs:
+      - /opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700,size=64m,nosuid,nodev,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     networks: [keycloak, backchannel-songmaker]

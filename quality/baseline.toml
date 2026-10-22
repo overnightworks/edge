@@ -8,7 +8,7 @@
 
 [file_lines]
 "probe/agent-service/unit.py" = 841
-"probe/keycloak/probe.py" = 2842
+"probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1054
 "probe/switches/probe.py" = 813
 "src/edge/realm/observe.py" = 815
@@ -17,7 +17,7 @@
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089
 "tests/home/test_tidy_home.py" = 817
-"tests/test_edge_apply.py" = 4627
+"tests/test_edge_apply.py" = 4626
 "tests/test_edge_backup.py" = 1249
 "tests/test_edge_cloudflare_read.py" = 906
 "tests/test_edge_external.py" = 2858
@@ -30,7 +30,7 @@
 "Probe.admin_console_only_on_loopback" = 74
 "Probe.go_live_creates_the_admin" = 104
 "Probe.only_logins_and_failed_logins_are_stored" = 65
-"Probe.public_issuer_and_paths" = 89
+"Probe.public_issuer_and_paths" = 86
 "Probe.the_realm_step" = 148
 
 [function_lines."src/edge/external/cli.py"]

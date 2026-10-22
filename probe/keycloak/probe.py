@@ -54,8 +54,7 @@ from urllib.request import (
 
 REPO = Path(__file__).resolve().parents[2]
 # The probe runs from a bare checkout with the system python; edge.realm is standard library only.
-sys.path[:0] = [str(REPO / "src"), str(REPO / "probe" / "keycloak")]
-# Cell BC1 and the back-channel settings of the app clients live in their own module.
+sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
 
 from edge import compose as edge_compose  # noqa: E402
@@ -1535,10 +1534,7 @@ class Probe:
         )
 
         localization = self.through_tunnel("GET", f"/resources/{REALM}/account/en")
-        expect(
-            localization.status == 200,
-            f"the hallucinai account localization answered {localization.status}",
-        )
+        expect(localization.status == 200, f"account localization answered {localization.status}")
 
         refused = [
             (PUBLIC_HOST, "/realms/master/.well-known/openid-configuration"),
@@ -2394,6 +2390,9 @@ class Probe:
         """Proof 3a's end (#248, cell 2): the realms the files just made hold only what they
         declare and Keycloak 26.8.1 brings itself, so a Keycloak upgrade that adds a built-in
         fails here loudly. Returns the stand proof 12 drives."""
+        import gzip_cache
+
+        gzip_cache.prove_survives_a_restart(self, expect, wait_until_ready)
         stand = RealmStepStand.at(self.stack)
         realm = stand.realm
         inventory = realm.observer.inventory()
