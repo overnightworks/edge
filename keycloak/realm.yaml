@@ -120,7 +120,8 @@ clients:
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     frontchannelLogout: false
-  # songmaker signs people in with the authorization code and PKCE. A sign-out in Keycloak calls
+  # songmaker signs people in with the authorization code and PKCE. Only it also allows the device
+  # grant, for the live smoke's sign-in; a device request needs its client secret. A sign-out in Keycloak calls
   # songmaker's back-channel logout over the internal network hal_backchannel_songmaker. songmaker
   # ignores the session id and ends every session of the person, so the call does not require one.
   # Its service account is the workload identity for the agent service (the token's azp must equal
@@ -144,6 +145,7 @@ clients:
       pkce.code.challenge.method: "S256"
       backchannel.logout.url: "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
       backchannel.logout.session.required: "false"
+      oauth2.device.authorization.grant.enabled: "true"
     defaultClientScopes: &agent_workload_scopes
       - basic
       - profile

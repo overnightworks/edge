@@ -162,6 +162,31 @@ def test_a_shared_section_precedes_songmaker_and_is_in_the_table_of_contents(sec
     assert f'id="{section}"' not in songmaker
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Sie endet nach 7 Tagen ohne Aktivität, spätestens nach 30 Tagen",
+        "§ 25 Abs. 2 Nr. 2 TDDDG",
+        "Eine Einwilligung ist dafür nicht nötig",
+        "90 Tage lang",
+        "1 Jahr lang",
+        "Dieses Log wird derzeit ohne feste Höchstdauer gespeichert",
+        "12 Stunden nach dem letzten Fehlversuch",
+        "es bleibt bestehen, bis der Container neu erstellt wird",
+        "den Zeitpunkt des letzten Fehlversuchs",
+        "es bleiben die letzten zehn",
+        "KC_STATE_CHECKER",
+        "etwa drei Monate",
+    ],
+)
+def test_the_shared_sign_in_section_names_what_keycloak_keeps_and_for_how_long(sentence):
+    page = read_page("datenschutz")
+    shared, songmaker = page.split('<section class="app" id="songmaker">')
+    assert '<a href="#anmeldung">Anmeldung (Keycloak)</a>' in shared
+    assert sentence in shared.split('id="anmeldung"')[1]
+    assert 'id="anmeldung"' not in songmaker
+
+
 @pytest.mark.parametrize("name", TEXT_PAGES)
 def test_the_songmaker_section_has_an_anchored_heading_and_subsection_ids(name):
     page = read_page(name)
