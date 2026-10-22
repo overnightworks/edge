@@ -66,9 +66,10 @@ answers what the erasure would do. Both answer one body:
  "affects_others": [{"kind": "playlist_entry", "count": 3, "action": "delete"}]}
 ```
 
-`kinds` counts what belongs to the person (`bytes` where files are involved); `affects_others` counts
-what the erasure changes for other people. In a real erasure `dry_run` is `false` and the counts are
-what was removed. `people_erasure` is the integer `1`.
+`kinds` counts what belongs to the person. `bytes` is optional: an app gives it where files are
+involved and can measure it cheaply, and hal shows it when present. Completion is judged by the
+counts alone. `affects_others` counts what the erasure changes for other people. In a real erasure
+`dry_run` is `false` and the counts are what was removed. `people_erasure` is the integer `1`.
 
 - `kinds[].kind` and `withheld[].kind` are the app's own lowercase words; hal only shows them.
 - `affects_others[].action` is `delete` (others lose an object that is deleted, a shared one included)
