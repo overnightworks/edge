@@ -230,7 +230,7 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
 
     assert changes[0] == ["stop", name]
     assert changes.count(["daemon-reload"]) == 1
-    assert name not in machine.systemctl.active
+    assert machine.systemctl.active.isdisjoint([name])
     assert not (machine.user_units / name).is_symlink()
     assert not (machine.user_units / TIMERS_WANTS / name).is_symlink()
     assert (machine.user_units / new_name).readlink() == machine.checkout_units / new_name
@@ -241,7 +241,7 @@ def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> No
     changes = retire(machine, TIMER, None)
 
     assert changes == [["stop", "backup.timer"], ["daemon-reload"]]
-    assert TIMER not in machine.systemctl.active
+    assert machine.systemctl.active.isdisjoint([TIMER])
     assert sorted(path.name for path in machine.user_units.rglob("*") if path.is_symlink()) == [
         SERVICE
     ]
@@ -254,7 +254,7 @@ def test_a_retired_unit_that_is_not_running_is_not_stopped(machine: Machine) -> 
 
     machine.step.apply()
 
-    assert ["stop", SERVICE] not in machine.systemctl.changes
+    assert machine.systemctl.changes.count(["stop", SERVICE]) == 0
     assert machine.step.is_verified()
 
 
@@ -360,6 +360,6 @@ def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine
         machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
     )
 
-    assert USER_UNITS_STEP in [step.name for step in setup.pending(layout, ports)]
+    assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 1
     machine.step.apply()
-    assert USER_UNITS_STEP not in [step.name for step in setup.pending(layout, ports)]
+    assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 0
