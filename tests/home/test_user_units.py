@@ -137,7 +137,7 @@ def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) ->
 
     assert (machine.user_units / SERVICE).readlink() == machine.checkout_units / SERVICE
     assert (machine.user_units / TIMER).readlink() == machine.checkout_units / TIMER
-    assert machine.systemctl.changes == [["daemon-reload"], ["enable", "--now", TIMER]]
+    assert machine.systemctl.changes == [["daemon-reload"], ["enable", "--now", "backup.timer"]]
     assert machine.step.is_verified()
 
 
@@ -240,7 +240,7 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
 def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> None:
     changes = retire(machine, TIMER, None)
 
-    assert changes == [["stop", TIMER], ["daemon-reload"]]
+    assert changes == [["stop", "backup.timer"], ["daemon-reload"]]
     assert TIMER not in machine.systemctl.active
     assert sorted(path.name for path in machine.user_units.rglob("*") if path.is_symlink()) == [
         SERVICE
