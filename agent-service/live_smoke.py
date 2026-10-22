@@ -309,9 +309,10 @@ def subscription_groups() -> list[str]:
     return service["identity"]["subscription_groups"]
 
 
-def missing_group_hint(output: str) -> str:
-    """The causes of a rights refusal printed as a line of its own, or nothing."""
-    code = (refusal := REFUSAL_LINE.search(output)) and refusal["code"]
+def missing_group_hint(output: str, events: list[str]) -> str:
+    """The causes of a rights refusal, which comes before any event; an answer never earns one."""
+    refusal = None if events else REFUSAL_LINE.search(output)
+    code = refusal and refusal["code"]
     if code == "forbidden":
         return f"; forbidden: no member of /apps/{CLIENT}, another azp, or a bad workload token"
     if code == "not_enabled":
@@ -324,7 +325,7 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     output = known.redact(output)
     events = event_names(output)
     text = other_lines(output)
-    said = f"exit {returncode}; events {events}; {text}{missing_group_hint(output)}"
+    said = f"exit {returncode}; events {events}; {text}{missing_group_hint(output, events)}"
     answered = bool(text)  # an answer needs text of its own, not only the event that carries it
     paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
     admitted = "run_started" in events

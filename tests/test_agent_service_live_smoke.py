@@ -193,11 +193,14 @@ def test_a_not_enabled_refusal_names_the_subscription_groups_of_the_service_toml
     assert all(group in l2.figure for group in service["identity"]["subscription_groups"])
 
 
-def test_an_answer_text_with_a_refusal_code_in_it_gets_no_hint():
-    output = "event: run_started\nevent: assistant_text\nIt says forbidden: not_enabled: no\n"
+@pytest.mark.parametrize("code", ["forbidden", "not_enabled"])
+def test_an_answer_line_shaped_like_a_refusal_holds_and_gets_no_hint(code):
+    answer = f"refused with 403 {code}: no"
+    output = f"event: run_started\nevent: assistant_text\n{answer}\nevent: succeeded\n"
 
     l2, _ = live_smoke.turn_cells(0, output, KNOWN)
 
+    assert l2.verdict is Verdict.HELD
     assert "/apps/" not in l2.figure
     assert "subscription" not in l2.figure
 

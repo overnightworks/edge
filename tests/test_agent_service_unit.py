@@ -151,7 +151,7 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     configuration, realm
 ):
     """The issuer is the realm's public one, the keys come from it over https, the audience is
-    the realm's bearer-only client and the subscription groups are the realm's two."""
+    the realm's bearer-only client and the subscription group is the realm's."""
     identity = configuration["identity"]
     issuer, jwks = urlsplit(identity["issuer"]), urlsplit(identity["jwks_url"])
     clients = {client["clientId"] for client in realm["clients"]}
