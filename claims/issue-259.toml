@@ -1,8 +1,0 @@
-claim_id = "d00a35757f5b4067b3ba895415ca3956"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "b05a7f73a7c7ca4aaba2e876be323f49605b5e21"
-branch = "claude/issue-259-quality-integrated"
-scope = [".github/workflows/codeql.yml", "docs/architecture.md", "pyproject.toml", "quality/baseline.toml"]
-opened_commit = "b73424f0730de10c0ca331d7ff0af4a459d063a5"
-whole_reason = "Three CI-configuration cards of one integration: the baseline, the import contracts and the CodeQL caller."
