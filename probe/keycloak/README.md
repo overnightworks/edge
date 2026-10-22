@@ -58,7 +58,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   overlay mounts. For songmaker and presentator it also drives the agent workload cells of #183
   (W1 to W3: the `client_credentials` token has `agent-workload`, the `agent-service` audience, `azp`
   and the realm's token lifespan, with no client override; a person's token has no `agent-workload`; proof 10 also puts the person in `/services/agent-service/subscription` and requires that group, as a full path, in the access token beside the `agent-service` audience), hopin's refusal of
-  `client_credentials` (W5) and `agent-service` with every flow off (W4). Proof 11 (#129) loads
+  `client_credentials` (W5) and `agent-service` with every flow off (W4); DG1 (#297) shows that only songmaker starts a device sign-in and only with its secret. Proof 11 (#129) loads
   `keycloak/go-live` and runs only its step 6 (never `run()`, whose compose calls would reach the
   operator's project): the admin it creates holds `admin` with `CONFIGURE_TOTP` and
   `webauthn-register` pending (both enabled in master), is refused a password grant without TOTP,

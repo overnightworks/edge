@@ -85,7 +85,9 @@ drops them. The only host binds are `service.toml` and the login directory, both
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
-agent-providers' to state and is not specified here. The content of
+stated in agent-providers' section
+[What a run keeps](https://github.com/overnightworks/agent-providers/blob/main/docs/wire.md#what-a-run-keeps).
+The content of
 a turn leaves this PC for Anthropic, which generates the answer.
 
 **Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
@@ -117,7 +119,12 @@ Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-p
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in as yourself (the
-`songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
+`songmaker` client's device grant, edge#184 D6): it prints a link and a code and opens the link
+where a browser is there; you sign in and confirm on any device, and the run goes on by itself,
+nothing is pasted (it waits as long as the code lives). Keycloak starts a
+device sign-in only for a request with songmaker's client secret, which lives in `~/.secrets` on
+this machine, so no stranger can send you a link to confirm; no other client allows the grant.
+It recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
 `~/.secrets`, and the person in the groups `/apps/songmaker` and `/services/agent-service/subscription`.
