@@ -26,8 +26,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, NoReturn
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 PURPOSE = "chat"
+ROLES = ["admin", "user"]
 WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
 ANSWER_PROMPT = "Reply with the single word: ok"
@@ -81,6 +82,8 @@ def request_body(prompt: str) -> bytes:
     document = {
         "v": PROTOCOL_VERSION,
         "purpose": PURPOSE,
+        "roles": ROLES,
+        "tools": {},
         "turn": {"system": SYSTEM_PROMPT, "messages": [{"role": "user", "text": prompt}]},
     }
     return json.dumps(document).encode("utf-8")
@@ -98,6 +101,8 @@ def frames(response: http.client.HTTPResponse) -> Iterator[Frame]:
             data = json.loads(fields["data"])
             if not isinstance(data, dict):
                 raise ValueError("a frame whose data is no object")
+            if data.get("v") != PROTOCOL_VERSION:
+                raise ValueError(f"a frame of version {data.get('v')}, not {PROTOCOL_VERSION}")
             yield Frame(fields.get("event", ""), data)
             fields = {}
 

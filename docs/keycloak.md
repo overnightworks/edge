@@ -67,6 +67,18 @@ service accounts are the only users `realm.yaml` lists, each holding the realm r
 holds such an app's client secret can therefore get a workload token for that app, which is the
 design; the secret stays the app's own file. hopin has no service account.
 
+A sign-out in Keycloak ends the songmaker session: Keycloak calls songmaker's back-channel logout
+(`http://songmaker.hallucinai.de:8080/auth/backchannel-logout`; the name is an alias songmaker
+gives its web service) over the internal network `hal_backchannel_songmaker`, which only `keycloak` joins on edge's side and songmaker joins as an
+external network. songmaker ignores the session id and ends every session of the person, so the
+client does not require one. The public tunnel denies the path, matched on the recursively decoded
+path and on the host with any port. Until songmaker has joined the network, the call fails and a
+sign-out ends no songmaker session. A later change to the network's definition needs an order: Docker refuses to recreate a network
+with active endpoints, so `up` stops Keycloak and fails while songmaker's web service is attached,
+and edge's apply does not notice a network-only change (the service's config hash is unchanged,
+named on #50). So songmaker's web service leaves the network, edge applies, and songmaker
+redeploys.
+
 ### Theme and language
 
 Keycloak's login and account pages use the realm theme `hallucinai`
@@ -102,13 +114,17 @@ in `realm.yaml`).
 
 Keycloak in `start` mode caches themes, so a changed theme file shows after
 `docker compose --profile keycloak restart keycloak`; that is not a realm
-change. `/resources/<version>/...` is served with `Cache-Control:
-max-age=2592000` (30 days), and the five-character version survives a plain
-restart, so a restart keeps the same URL. A
-CSS-only edit, which needs that restart to load, would still come from browser
-caches for up to 30 days under the same URL; a look change therefore names a
-new stylesheet in `theme.properties` (`styles=`) instead of editing one in
-place.
+change. Keycloak's gzip copies of theme files (`data/tmp/kc-gzip-cache`) are
+never compared with the file, so that folder is a tmpfs in `compose.yaml` and a
+restart starts it empty; without it a file that a parent theme served before
+would stay stale behind Cloudflare, which always asks with gzip.
+`/resources/<version>/...` is served with `Cache-Control: max-age=2592000`
+(30 days), and the five-character version survives a plain restart, so a
+restart keeps the same URL. Cloudflare caches css, js, svg, ico and woff2 for 30
+days under that URL as well, and a browser keeps them as long. A file changed in
+place therefore keeps coming from those caches; a look change names a new file
+(for a stylesheet, `styles=` in `theme.properties`). A purge at Cloudflare clears
+only Cloudflare's copy; a browser that already holds the old file keeps it.
 
 
 > **The apply adds and changes, and deletes no undeclared top-level object and no person.**

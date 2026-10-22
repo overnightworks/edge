@@ -1,4 +1,5 @@
-"""`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml`.
+"""`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml` and its
+apps on at their newest release (`apps.py`).
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
 2 cannot plan. The core (socket-proxy and traefik) comes first: a core service whose compose
@@ -21,6 +22,8 @@ before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a
 left is never started and its switch is never cleared here: only `edge start` ends it. If it is
 enabled in the catalog, declares a setup, and its containers still run while it is not set up,
 the run is refused: nothing is asked or published.
+An app (an entry with `repo`) is planned last, in the same plan and under the same `yes`: its
+newest release tag is checked out, built, started and recorded once healthy (`apps.py`).
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -48,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
+from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps
 from edge.realm import reconcile
 from edge.unit_plans import (
     Action,
@@ -87,6 +91,8 @@ CANNOT_PLAN_ERRORS = (
     core.CoreError,
     setup.SetupUnclear,
     switches.SwitchError,
+    AppError,
+    checkout.GitError,
 )
 
 
@@ -99,6 +105,7 @@ class Plan:
     plans: list[UnitPlan]
     images: list[KeptImage]
     realm: reconcile.RealmPlan
+    app_plans: AppsPlan
 
     @property
     def changes_nothing(self) -> bool:
@@ -107,11 +114,16 @@ class Plan:
             and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
             and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
+            and self.app_plans.changes_nothing
         )
 
     def describe(self) -> list[str]:
         plans = (*self.core, *self.followers, *self.plans, *self.images)
-        return [*(plan.describe() for plan in plans), *self.realm.lines]
+        return [
+            *(plan.describe() for plan in plans),
+            *self.realm.lines,
+            *self.app_plans.describe(),
+        ]
 
 
 @dataclass(frozen=True)
@@ -122,7 +134,11 @@ class MissingSetup:
 
 
 def _plan(
-    engine: compose.Compose, marks: switches.Switches, record: core.Record, repository: Path
+    engine: compose.Compose,
+    marks: switches.Switches,
+    record: core.Record,
+    repository: Path,
+    app_runtime: AppRuntime,
 ) -> Plan:
     fleet = read_fleet(engine, repository)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
@@ -152,7 +168,8 @@ def _plan(
         gates.get(reconcile.REALM_UNIT),
         starts_keycloak,
     )
-    return Plan(fleet, read, core_plans, follower_plans, plans, images, realm)
+    app_plans = plan_apps(repository, fleet.profile_services, fleet.config["name"], app_runtime)
+    return Plan(fleet, read, core_plans, follower_plans, plans, images, realm, app_plans)
 
 
 def _gates(
@@ -197,6 +214,7 @@ def apply_closed(
     git: checkout.Runner = checkout.run_git,
     ensure_environment: EnsureEnvironment = environment.ensure,
     realm_backup: reconcile.Backup | None = None,
+    app_runtime: AppRuntime | None = None,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -227,6 +245,7 @@ def apply_closed(
             watch,
             waiting,
             realm_backup or reconcile.Backup.installed(repository, _tell),
+            app_runtime or AppRuntime.of(home or Path.home(), state_directory),
         )
     finally:
         os.close(lock)
@@ -296,6 +315,7 @@ def _plan_and_apply(
     watch: compose.Watch,
     waiting: Waiting,
     realm_backup: reconcile.Backup,
+    app_runtime: AppRuntime,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -308,7 +328,7 @@ def _plan_and_apply(
             )
             for line in waiting.describe(binds, reconcile.REALM_FILES):
                 print(f"{COMMAND}: {line}")
-        planned = _plan(engine, marks, record, repository)
+        planned = _plan(engine, marks, record, repository, app_runtime)
         missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
         if kept := [m for m in missing if m.kept_stopped]:
@@ -319,7 +339,7 @@ def _plan_and_apply(
             if exit_code is not None:
                 return exit_code
             completed = [m.unit.key for m in missing]
-            planned = _plan(engine, marks, record, repository)
+            planned = _plan(engine, marks, record, repository, app_runtime)
             if unready := _missing_setups(planned, repository, check):
                 _refuse_units_still_not_set_up(unready)
                 return ApplyExit.REFUSED
@@ -684,6 +704,18 @@ def _apply_realm(
     return bool(result.failure)
 
 
+def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> bool:
+    """The app step after the realm step; says its lines and whether it ended partial."""
+    failed = False
+    for plan, failure in planned.app_plans.run(marks, progress):
+        if failure:
+            print(f"{COMMAND}: partial, {failure}; run `{COMMAND}` again", file=sys.stderr)
+            failed = True
+        else:
+            print(f"{COMMAND}: {plan.app.key} is on at {plan.release.tag}")
+    return failed
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
@@ -721,6 +753,7 @@ def _confirm_and_switch(
         mismatched = _observe_and_record(engine, planned, core_phase, started, progress)
         progress.unit, progress.step = reconcile.REALM_UNIT, "apply the realm step"
         realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
+        apps_failed = _apply_apps(planned, marks, progress)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
         print(
             f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
@@ -734,14 +767,14 @@ def _confirm_and_switch(
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
-    return _report_switched(changes, withheld, mismatched, realm_failed)
+    return _report_switched(changes, withheld, mismatched, realm_failed or apps_failed)
 
 
 def _report_switched(
     changes: Sequence[UnitPlan],
     withheld: Mapping[str, str],
     mismatched: Sequence[UnitPlan],
-    realm_failed: bool,
+    later_steps_failed: bool,
 ) -> int:
     for unit, since in withheld.items():
         print(
@@ -754,7 +787,7 @@ def _report_switched(
             f"{COMMAND}: partial, {plan.unit.key} is not {plan.action} after the change",
             file=sys.stderr,
         )
-    if mismatched or withheld or realm_failed:
+    if mismatched or withheld or later_steps_failed:
         return ApplyExit.REFUSED
     for plan in changes:
         print(f"{COMMAND}: {plan.unit.key} is {plan.action}")

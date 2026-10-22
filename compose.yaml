@@ -104,9 +104,14 @@ services:
       keycloak-db:
         condition: service_healthy
     # No read_only: `start` without --optimized rebuilds the server into the image's lib directory at boot.
+    # Keycloak keeps gzip copies of theme files in data/tmp/kc-gzip-cache and never compares them
+    # with the file, so the copies must not outlive the process. uid and mode: Docker remounts a
+    # bare tmpfs root:root 755 on a restart, and Keycloak (uid 1000) then answers 404 for gzip.
+    tmpfs:
+      - /opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700,size=64m,nosuid,nodev,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [keycloak]
+    networks: [keycloak, backchannel-songmaker]
     # Secrets reach the process from /run/secrets, never through the container's Config.Env.
     entrypoint: ["/opt/edge/entrypoint.sh", "/opt/keycloak/bin/kc.sh"]
     command: ["start"]
@@ -133,6 +138,9 @@ services:
     labels:
       traefik.enable: "true"
       edge.name: auth
+      # Traefik reaches Keycloak through the keycloak network only: the back-channel network has no
+      # host address, and Keycloak trusts Forwarded from the keycloak network alone.
+      traefik.docker.network: ${COMPOSE_PROJECT_NAME}_keycloak
       traefik.http.services.auth.loadbalancer.server.port: "8080"
       # The tunnel reaches only the hallucinai realm, its localization and the static resources
       # under Keycloak's five-character resources version. Any wider /resources/ prefix admits
@@ -155,6 +163,32 @@ services:
       traefik.http.routers.auth-admin.entrypoints: admin
       traefik.http.routers.auth-admin.service: auth
       traefik.http.routers.auth-admin.rule: Host(`localhost`)
+
+  # The imprint (and the other legal pages) of every app at hallucinai.de: static files from legal/,
+  # the login theme's fonts as the one copy. The page is not public until the catalog gives it a host.
+  legal:
+    profiles: [legal]
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    networks: [legal]
+    volumes:
+      # A directory, not a file: git replaces files, so a file bind would keep the old inode.
+      - ./legal/nginx:/etc/nginx/conf.d:ro
+      - ./legal/pages:/srv/pages:ro
+      - ./legal/assets:/srv/assets:ro
+      - ./keycloak/themes/hallucinai/login/resources/fonts:/srv/fonts:ro
+    labels:
+      traefik.enable: "true"
+      edge.name: legal
+      traefik.http.services.legal.loadbalancer.server.port: "8080"
+      traefik.http.routers.legal.entrypoints: edge
+      traefik.http.routers.legal.service: legal
+      traefik.http.routers.legal.rule: Host(`${EDGE_DOMAIN}`)
 
   keycloak-config-cli:
     image: adorsys/keycloak-config-cli:6.5.1-26.5.5@sha256:0955d98c8a341898b7aa177477edf8a1e90569ae50bbe7598141c1270b773274
@@ -342,13 +376,13 @@ services:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
 
-  # The agent service (agent-providers v0.4.0; the image is built on the PC, docs/agent-service.md,
+  # The agent service (agent-providers v0.6.0; the image is built on the PC, docs/agent-service.md,
   # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.4.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.6.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"
@@ -470,6 +504,13 @@ networks:
     name: hal_agent
     internal: true
     driver_opts: *isolated-bridge
+  # Keycloak's back-channel logout call to songmaker, which joins it as an external network with the
+  # alias songmaker.hallucinai.de.
+  # One network per app, so no app sees another's. The fixed name survives the project's rename to `hal`.
+  backchannel-songmaker:
+    name: hal_backchannel_songmaker
+    internal: true
+    driver_opts: *isolated-bridge
   # The agent service and agent-egress, the only way out of the service.
   egress:
     internal: true
@@ -481,6 +522,9 @@ networks:
   # agent-egress alone: a plain NAT bridge, the one route to the internet.
   internet:
     driver: bridge
+  # The legal unit's own network: internal, so nginx has no route out; Traefik reaches it from the host.
+  legal:
+    internal: true
   keycloak:
     driver: bridge
     ipam:

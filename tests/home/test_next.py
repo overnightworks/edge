@@ -603,15 +603,27 @@ def test_a_hook_finding_with_its_own_fix_is_any_terminal_and_does_not_say_it_ask
     )
 
 
-@pytest.mark.parametrize("change", ["edited file", "new file"])
-def test_a_changed_tunnel_file_in_edge_brings_the_system_step_back(
-    home: Path, sandbox: Sandbox, probe: FakeProbe, capsys, change: str
+@pytest.mark.parametrize("change", ["edited file", "new file", "changed playbook"])
+def test_a_changed_tunnel_file_or_playbook_brings_the_system_step_back(
+    home: Path,
+    sandbox: Sandbox,
+    probe: FakeProbe,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    change: str,
 ) -> None:
-    """Cell 16: the record holds what was rendered, so a change in edge's `tunnel/` shows the step again, sudo-free."""
+    """Cell 16 and T6: the record holds what was rendered, so a change in edge's `tunnel/` or in the
+    playbook shows the step again, sudo-free."""
+    playbook = tmp_path / "playbook.yml"
+    playbook.write_text("- hosts: localhost\n")
+    monkeypatch.setattr(system_step, "PLAYBOOK", playbook)
     edge_tunnel_file(home).write_text("[Unit]\n")
     assert cli.main(["setup", "--apply"], home=home) == 0
     capsys.readouterr()
-    if change == "edited file":
+    if change == "changed playbook":
+        playbook.write_text("- hosts: localhost\n  gather_facts: false\n")
+    elif change == "edited file":
         edge_tunnel_file(home).write_text("[Unit]\nDescription=cloudflared\n")
     else:
         (edge_tunnel_file(home).parent / "cloudflared.service.d").mkdir()

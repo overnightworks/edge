@@ -8,7 +8,7 @@ and the probes under `probe/agent-service/`. The egress gateway it leaves throug
 
 ## The image
 
-`agent-service/image/` is the recipe of the service's image (agent-providers `v0.4.0`, Claude Code
+`agent-service/image/` is the recipe of the service's image (agent-providers `v0.6.0`, Claude Code
 `2.1.302`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
 pinned: both base images by digest, the Python packages by hash, the Claude CLI by its sha256. A
 changed or vanished artifact fails the build. The image is never pulled from a registry, because its
@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.4.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.6.0-2.1.302 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
@@ -76,6 +76,24 @@ inode, and the rename would never reach the running container. A missing directo
 instead of becoming a root-owned one; the directory itself stays for ever, so never replace or
 re-create it.
 
+## What a turn leaves behind
+
+The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
+are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
+drops them. The only host binds are `service.toml` and the login directory, both read-only
+([The login](#the-login)); the login reaches the CLI only through its environment. The service sets
+no `logging` override, so its logs follow the Docker daemon's settings; their destination and
+retention are set there, not in this file (log retention: edge#167,
+<https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
+agent-providers' to state and is not specified here. The content of
+a turn leaves this PC for Anthropic, which generates the answer.
+
+**Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
+Claude subscription serves only his own use. Every other person reaches the service only through the
+API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
+enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
+gets 403 `not_enabled`. An app's privacy text therefore describes only the API route.
+
 ## An app's side
 
 An app reaches the service by joining the `agent` network, whose name is fixed (`hal_agent`, so the
@@ -102,8 +120,10 @@ built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in a
 `songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
-`~/.secrets`, and the person in the group `/services/agent-service/subscription` (add yourself once in the admin console on port
-8090). Run it at once, as the workload token lives five minutes, and send the head its report.
+`~/.secrets`, and the person in the groups `/apps/songmaker` and `/services/agent-service/subscription`.
+The realm declares these groups but grants no membership: add yourself once in the admin
+console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
+the workload token lives five minutes, and send the head its report.
 
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
@@ -111,6 +131,8 @@ with a dummy login and drives the cells U1 to U11 and U15, which its docstring a
 process, the container hardening, the tmpfs and login mounts, a renewal seen at once, and the
 refusals (bad working-root mode, missing login directory, token at the wrong mode, no token).
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
-`--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, and U16 runs
+`--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
+refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 403 `forbidden`,
+the api group only: 403 `not_enabled`), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.

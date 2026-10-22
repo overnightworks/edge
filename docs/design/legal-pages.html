@@ -1,0 +1,684 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rechtsseiten Bild</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&family=Open+Sans:wght@400;600&display=swap">
+<style>
+:root{color-scheme:dark;--bg:#0b0b0e;--ink:#e6e6e6;--soft:#9a9aa3;--line:#2a2a31}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 'Open Sans',Arial,sans-serif}
+.sheet{max-width:1900px;margin:0 auto;padding:28px 16px 80px}
+h1{font:700 26px 'Oswald',sans-serif;margin:0 0 6px}
+.top p{max-width:78ch;color:var(--soft);margin:0 0 8px}
+.top b{color:var(--ink)}
+.spec{margin-top:56px;border-top:1px solid var(--line);padding-top:20px}
+.spec h2{font:700 22px 'Oswald',sans-serif;margin:0 0 8px}
+.cap{max-width:90ch;margin:0 0 6px}.cap b{font:400 11px 'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#7bd88f;margin-right:8px}
+.pair{display:flex;gap:28px;align-items:flex-start;overflow-x:auto;padding:14px 0}
+figure{margin:0;flex:none}figcaption{font:400 12px 'Oswald',sans-serif;letter-spacing:1px;text-transform:uppercase;color:var(--soft);margin-bottom:6px}
+figcaption span{margin-left:10px;color:#666}
+.chrome{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000}
+iframe{display:block;border:0;max-width:none}
+</style></head><body><div class="sheet">
+<div class="top"><h1>Die drei Rechtsseiten (edge#110)</h1>
+<p>Das gesegnete Bild der öffentlichen Seiten ohne Anmeldung: <code>/impressum</code>, <code>/datenschutz</code>, <code>/nutzungsbedingungen</code>. Aussehen wie hallucinai.de und die Keycloak-Anmeldung (immer dunkel, Wortmarke, Oswald und Open Sans, Raster und Glühen). Jede Seite je einmal bei 390 px und bei 1440 px; die Rahmen scrollen.</p>
+<p>Die Texte sind die von songmaker (<code>LegalContent.svelte</code>, Stand 21.10.2026), Wort für Wort. Gebaut ist es in <code>legal/</code>.</p></div>
+<section class="spec" id="impressum">
+<header><h2>hallucinai.de/impressum</h2>
+<p class="cap"><b>Entschieden</b> ein Impressum für alle Apps, ohne App-Abschnitt (der Betreiber ist für alle derselbe). Kein Inhaltsverzeichnis, die Seite hat zwei Überschriften.</p></header>
+<div class="pair"><figure class="dev w390"><figcaption>Telefon<span>390 px</span></figcaption><div class="chrome"><iframe title="Impressum, 390 px" width="390" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Impressum – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Impressum&lt;/h1&gt;
+&lt;p&gt;Angaben gemäß § 18 Abs. 1 MStV&lt;/p&gt;
+&lt;h2 id=&quot;verantwortlich&quot;&gt;Verantwortlich&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlich&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Felix Hummert&lt;br&gt;Wöhrstr. 6a&lt;br&gt;91054 Erlangen&lt;br&gt;Deutschland&lt;/p&gt;
+&lt;h2 id=&quot;kontakt&quot;&gt;Kontakt&lt;a class=&quot;anchor&quot; href=&quot;#kontakt&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Impressum, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Impressum – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Impressum&lt;/h1&gt;
+&lt;p&gt;Angaben gemäß § 18 Abs. 1 MStV&lt;/p&gt;
+&lt;h2 id=&quot;verantwortlich&quot;&gt;Verantwortlich&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlich&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Felix Hummert&lt;br&gt;Wöhrstr. 6a&lt;br&gt;91054 Erlangen&lt;br&gt;Deutschland&lt;/p&gt;
+&lt;h2 id=&quot;kontakt&quot;&gt;Kontakt&lt;a class=&quot;anchor&quot; href=&quot;#kontakt&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot; aria-current=&quot;page&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure></div></section>
+<section class="spec" id="datenschutz">
+<header><h2>hallucinai.de/datenschutz</h2>
+<p class="cap"><b>Entschieden</b> ein gemeinsamer Teil, danach ein Abschnitt je App mit Anker (#songmaker). Der Text ist songmakers, unverändert, nur an die Stelle des gemeinsamen Teils verschoben. Ein Abschnitt für eine weitere App kommt, wenn sie öffentlich ist und Text hat.</p></header>
+<div class="pair"><figure class="dev w390"><figcaption>Telefon<span>390 px</span></figcaption><div class="chrome"><iframe title="Datenschutzerklärung, 390 px" width="390" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Datenschutzerklärung – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Datenschutzerklärung&lt;/h1&gt;
+&lt;h2 id=&quot;verantwortlicher&quot;&gt;Verantwortlicher&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlicher&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Felix Hummert&lt;br&gt; Wöhrstr. 6a, 91054 Erlangen&lt;br&gt; E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;cloudflare&quot;&gt;Cloudflare&lt;a class=&quot;anchor&quot; href=&quot;#cloudflare&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Diese Website nutzt Cloudflare, Inc. (101 Townsend St, San Francisco, CA 94107, USA) als Infrastrukturanbieter für DDoS-Schutz und verschlüsselte Datenübertragung (TLS). Cloudflare verarbeitet dabei IP-Adressen und HTTP-Header der Besucher.&lt;/p&gt;
+&lt;p&gt;Cloudflare ist unter dem EU-U.S. Data Privacy Framework zertifiziert. Die Datenverarbeitung erfolgt auf Grundlage eines Auftragsverarbeitungsvertrags (Art. 28 DSGVO) und Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an Sicherheit und Verfügbarkeit).&lt;/p&gt;
+&lt;p&gt;Cloudflare kann technisch notwendige Cookies setzen (z.B. &lt;code&gt;__cf_bm&lt;/code&gt; für Bot-Erkennung). Diese dienen ausschließlich der Sicherheit.&lt;/p&gt;
+&lt;h2 id=&quot;rechte&quot;&gt;Ihre Rechte&lt;a class=&quot;anchor&quot; href=&quot;#rechte&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Sie haben gemäß DSGVO folgende Rechte:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;Auskunft über Ihre gespeicherten Daten (Art. 15)&lt;/li&gt;&lt;li&gt;Berichtigung unrichtiger Daten (Art. 16)&lt;/li&gt;&lt;li&gt;Löschung Ihrer Daten (Art. 17)&lt;/li&gt;&lt;li&gt;Einschränkung der Verarbeitung (Art. 18)&lt;/li&gt;&lt;li&gt;Datenübertragbarkeit (Art. 20)&lt;/li&gt;&lt;li&gt;Beschwerde bei der zuständigen Aufsichtsbehörde&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Zur Ausübung Ihrer Rechte kontaktieren Sie uns per E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;a class=&quot;anchor&quot; href=&quot;#widerspruch&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Soweit wir Daten auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO verarbeiten (Server-Logs, Missbrauchsschutz, Audit-Log, Cloudflare), können Sie aus Gründen, die sich aus Ihrer besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO). Wir verarbeiten die Daten dann nicht mehr, es sei denn, wir weisen zwingende schutzwürdige Gründe nach, die Ihre Interessen überwiegen, oder die Verarbeitung dient der Geltendmachung, Ausübung oder Verteidigung von Rechtsansprüchen. Kontakt: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;kein-tracking&quot;&gt;Kein Tracking&lt;a class=&quot;anchor&quot; href=&quot;#kein-tracking&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Diese Website verwendet keine Analyse-Tools, keine Tracking-Cookies, keine Werbung und kein Social-Media-Tracking. Was auf Ihrem Gerät gespeichert wird, steht unter „Speicherung auf Ihrem Gerät“.&lt;/p&gt;
+&lt;section class=&quot;app&quot; id=&quot;songmaker&quot;&gt;&lt;h2&gt;songmaker&lt;span class=&quot;badge&quot;&gt;App&lt;/span&gt;&lt;a class=&quot;anchor&quot; href=&quot;#songmaker&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;h3 id=&quot;songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-daten&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Wir verarbeiten folgende personenbezogene Daten:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Benutzerkonto:&lt;/strong&gt; Benutzername und die Kennung Ihres Keycloak-Kontos. Die Anmeldung läuft über den Keycloak-Dienst des Betreibers (auth.hallucinai.de); Passwörter gibt es dort, songmaker speichert und sieht keine. Zugang und Verwaltungsrechte folgen aus Ihren Keycloak-Gruppen; Konten legt der Betreiber auf Einladung an. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO (Vertragserfüllung).&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Inhalte, die Sie in songmaker anlegen:&lt;/strong&gt; Alben, Songs, Liedtexte, Stilbeschreibungen, Versionen samt Generierungsparametern, Playlists, Bewertungen, Cover und Cover-Vorschläge, generierte Audiodateien sowie automatische Bewertungen samt Transkription des Gesungenen. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Co-Writer:&lt;/strong&gt; Ihre Nachrichten, automatisch erzeugte Gesprächszusammenfassungen sowie dauerhafte Notizen zu Ihnen, Ihren Songs und Alben, die Sie anlegen oder bestätigen. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Hochgeladenes Audio:&lt;/strong&gt; Referenzaufnahmen sowie Trainingsaufnahmen mit Beschreibung und Liedtext für eigene Stimmen und die daraus trainierten Modelle. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Anmeldung und Sicherheit:&lt;/strong&gt; Sitzungskennung und Zeitpunkt der Sitzung; kurzlebige Zähler zur Ratenbegrenzung; ein Audit-Log mit Änderungsereignissen und Verwaltungsaktionen. Anmeldeversuche und Passwörter speichert songmaker nicht. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (Schutz vor Missbrauch).&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Letzte Bearbeitungen und Wiedergaben:&lt;/strong&gt; je Song der Zeitpunkt und die Art Ihrer letzten Bearbeitung sowie der Zeitpunkt Ihrer letzten Wiedergabe, innerhalb oder außerhalb einer Playlist; je Playlist Zeitpunkt und Song der letzten Wiedergabe daraus. Daraus zeigt die Startseite, was Sie zuletzt gehört und bearbeitet haben. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Server-Logs:&lt;/strong&gt; IP-Adresse, Zeitpunkt, aufgerufene Adresse, Statuscode und Dauer jeder Anfrage, bei angemeldeten Anfragen auch Ihre Nutzerkennung; beim Erzeugen von Musik auch Liedtext und Stilbeschreibung der Generierung. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (Sicherheit und Fehlerbehebung).&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Für ein Konto ist die Anmeldung über Keycloak erforderlich; alle weiteren Inhalte geben Sie freiwillig ein. Eine gesetzliche oder vertragliche Pflicht zur Bereitstellung besteht nicht. Eine automatisierte Entscheidungsfindung einschließlich Profiling im Sinne von Art. 22 DSGVO findet nicht statt; die automatischen Bewertungen von Songs dienen nur Ihrer Orientierung.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-server&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Musikerzeugung (ACE-Step), Transkription des Gesungenen (Whisper), Audiobewertung und das Training eigener Stimmen laufen nur auf unserem eigenen Server.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Eigene Stimmen und Referenzaufnahmen:&lt;/strong&gt; Aus hochgeladenen Aufnahmen trainieren wir auf unserem Server ein Stimm- oder Stilmodell für Ihre Songs. Wir nutzen Aufnahmen und Modelle nicht, um Personen zu erkennen oder zu identifizieren, und geben sie nicht weiter.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Daten über andere Personen:&lt;/strong&gt; Gibt ein Nutzer Namen, Texte oder Aufnahmen über Sie ein, erhalten wir diese von ihm; für Zwecke, Empfänger, Speicherdauer und Ihre Rechte gelten diese Hinweise entsprechend. Bitte geben Sie keine Gesundheitsdaten, religiösen oder politischen Überzeugungen realer Personen ein.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-ki&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Drei Funktionen senden Daten an externe KI-Anbieter. Co-Writer und Cover-Vorschläge stoßen Sie selbst an; die Textprüfung läuft automatisch als Teil der Bewertung jeder Generierung. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Co-Writer:&lt;/strong&gt; Wir senden Ihre Nachricht, den bisherigen Gesprächsverlauf (bei langen Gesprächen eine Zusammenfassung und die letzten Nachrichten), Ihre Co-Writer-Notizen sowie Titel, Liedtext, Stilbeschreibung und Parameter der Songs und Alben, die Sie geöffnet oder per @-Erwähnung genannt haben, sowie Transkription und Bewertungen der Generierung des geöffneten Songs, die gerade abgespielt wird, sonst seiner Auswahl oder seiner neuesten abspielbaren Generierung, an den vom Betreiber eingestellten Anbieter: Anthropic (Claude), xAI (Grok) oder OpenAI (Codex). Während des Gesprächs kann das Modell über die Werkzeuge des Co-Writers weitere Ihrer Alben, Songs, Versionen und Generierungen (einschließlich Transkription und Bewertungen) abrufen sowie Ihre Songs ändern oder neue anlegen.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Textprüfung:&lt;/strong&gt; Nach jeder Generierung mit Liedtext, bei der die Transkription Gesang erkannt hat, senden wir den beabsichtigten Liedtext und die auf unserem Server erzeugte Transkription des Gesungenen automatisch an den vom Betreiber eingestellten Anbieter (Anthropic, xAI oder OpenAI). Generierungen, die noch keine Bewertung haben, werden nachträglich bewertet.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Cover-Vorschläge:&lt;/strong&gt; Auf Ihre Anforderung, auch über den Co-Writer, senden wir Albumtitel, Künstlername sowie Auszüge aus Stilbeschreibungen und Liedtexten an OpenAI.&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Rolle der Anbieter:&lt;/strong&gt; Alle drei Funktionen senden die Daten über die Programmierschnittstelle (API) des jeweiligen Anbieters. Der Anbieter verarbeitet sie nach seinen veröffentlichten Geschäftsbedingungen als Auftragsverarbeiter für uns; Bestandteil dieser Bedingungen ist jeweils ein Auftragsverarbeitungsvertrag (Art. 28 DSGVO), der auch die Schutzmaßnahmen des Anbieters beschreibt: bei Anthropic die Commercial Terms of Service mit dem &lt;a href=&quot;https://www.anthropic.com/legal/data-processing-addendum&quot;&gt;Data Processing Addendum&lt;/a&gt; (Vertragspartner im EWR: Anthropic Ireland, Limited), bei OpenAI das Services Agreement mit dem &lt;a href=&quot;https://openai.com/policies/data-processing-addendum/&quot;&gt;Data Processing Addendum&lt;/a&gt; (im EWR: OpenAI Ireland Ltd.), bei xAI (SpaceXAI LLC), das wir über seine API mit Zero Data Retention nutzen, die Terms of Service – Enterprise mit dem &lt;a href=&quot;https://x.ai/legal/data-processing-addendum&quot;&gt;Data Processing Addendum&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Training:&lt;/strong&gt; Nach diesen Bedingungen trainiert Anthropic keine Modelle mit Ihren Inhalten (Commercial Terms, Abschnitt B); OpenAI verwendet Ihre Inhalte nicht, um seine Dienste zu entwickeln oder zu verbessern, es sei denn, wir als Kunde stimmen dem ausdrücklich zu (Services Agreement, Abschnitt 4.2); xAI verwendet Ihre Inhalte nicht, um KI-Modelle zu trainieren oder neue Produkte zu entwickeln, vorbehaltlich der Hinweise von xAI an uns und der von uns als Kunde gesteuerten Einstellungen (Terms of Service – Enterprise, Abschnitt 3.1).&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Übermittlung in die USA:&lt;/strong&gt; Je nach genutzter Funktion verarbeiten Anthropic, OpenAI und xAI Daten auch in den USA. Die drei Anbieter stützen die Übermittlung nach ihren oben verlinkten Auftragsverarbeitungsverträgen auf die Standardvertragsklauseln der EU-Kommission (Art. 46 Abs. 2 lit. c DSGVO), OpenAI daneben auf Angemessenheitsbeschlüsse (Art. 45 DSGVO).&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-freigaben&quot;&gt;Freigaben&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-freigaben&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Wenn Sie ein Album, einen Song, eine Generierung oder eine Playlist freigeben, kann jede Person mit dem Link ohne Anmeldung Titel, Künstlername, Liedtext, Audio, Cover sowie die zeitgenaue Transkription des Gesungenen abrufen und den Link weitergeben. Sie können die Freigabe jederzeit beenden; bereits heruntergeladene Kopien lassen sich nicht zurückholen. Von Besuchern verarbeiten wir die IP-Adresse wie unter Server-Logs beschrieben und zur Ratenbegrenzung.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-geraet&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;songmaker speichert auf Ihrem Gerät nur, was für den von Ihnen gewünschten Dienst erforderlich ist (§ 25 Abs. 2 Nr. 2 TDDDG); eine Einwilligung ist dafür nicht erforderlich:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;ein Sitzungs-Cookie für die Anmeldung (HttpOnly) und ein Sicherheits-Cookie gegen Fremdanfragen (CSRF), beide nur für songmaker.hallucinai.de, Laufzeit bis 30 Tage; während der Anmeldung bei Keycloak kurzlebige Cookies für den Ablauf der Anmeldung und für das Abmelden;&lt;/li&gt;&lt;li&gt;im Browser-Speicher die von Ihnen gewählten Anzeige- und Wiedergabeeinstellungen, Ihre letzte Wiedergabeposition und den Navigationsverlauf des Tabs;&lt;/li&gt;&lt;li&gt;im Browser-Cache die App selbst und Audiodateien, die Sie für die Offline-Wiedergabe gespeichert haben.&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Browser-Speicher und Browser-Cache liest nur die App auf Ihrem Gerät, um Ihre Einstellungen, die letzte Wiedergabe, den Navigationsverlauf und gespeicherte Audiodateien wiederherzustellen und die App selbst zu laden; beim Wiederherstellen der letzten Wiedergabe ruft sie den dort gemerkten Song oder die Playlist von unserem Server ab. Beim Abspielen meldet die App dem Server die Wiedergabe, je Generierung und Playlist einmal seit dem Öffnen der App; der Server vermerkt sie wie unter „Letzte Bearbeitungen und Wiedergaben“ beschrieben. Wiedergaben über einen Freigabe-Link meldet die App nicht. Cloudflare kann eigene Sicherheits-Cookies setzen (siehe Cloudflare).&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-speicherdauer&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Benutzerkonten:&lt;/strong&gt; bis zur Löschung. Konten löscht der Betreiber auf Ihre Anfrage an legal@hallucinai.de.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Inhalte und Audiodateien:&lt;/strong&gt; bis Sie sie löschen. Gelöschte Alben und Songs sind 30 Tage wiederherstellbar und werden dann endgültig entfernt. Generierungen, die weder als Auswahl noch als behalten markiert sind, werden nach 7 Tagen archiviert und 30 Tage später samt Datei endgültig gelöscht, sofern keine andere Generierung auf sie als Ausgangspunkt verweist.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Was die Löschung heute noch nicht entfernt:&lt;/strong&gt; Eine gelöschte Stimme wird nur als gelöscht markiert; ihre Trainingsaufnahmen und das Modell bleiben gespeichert. Referenzaufnahmen lassen sich derzeit nicht in der App löschen. Bei der Löschung eines Kontos bleiben Referenzaufnahmen und Stimmdateien erhalten, und Einträge im Audit-Log bleiben mit Benutzername und IP-Adressen bestehen. Liedtext und Stilbeschreibung einer Generierung bleiben in den Container-Logs, bis diese rotiert werden, und im Protokoll des Musikerzeugungs-Prozesses ohne feste Frist. Wenn Sie die Löschung dieser Daten wünschen, schreiben Sie an legal@hallucinai.de.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Letzte Bearbeitungen und Wiedergaben:&lt;/strong&gt; bis zur Löschung des Songs, der Playlist oder Ihres Kontos; eine frühere Löschung gibt es derzeit nicht.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Sitzungen:&lt;/strong&gt; Das Anmelde-Cookie im Browser gilt bis zu 30 Tage nach dem Einloggen; Anmeldeversuche und Passwörter werden nicht gespeichert.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Audit-Log:&lt;/strong&gt; wird derzeit ohne feste Frist gespeichert.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Server-Logs:&lt;/strong&gt; Die Container-Logs der Dienste werden nach Speichermenge rotiert (höchstens 50 MB je Dienst). Das Protokoll des Musikerzeugungs-Prozesses (ACE-Step) wird zusätzlich in eine Datei geschrieben, die nicht rotiert wird. Eine feste Höchstdauer besteht in beiden Fällen derzeit nicht.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Sicherungskopien:&lt;/strong&gt; Sicherungskopien von Datenbank und Audiodateien werden wöchentlich verschlüsselt auf unserem Server erstellt und in der Regel höchstens etwa drei Monate aufbewahrt; gelöschte Daten können bis dahin in einer Sicherung enthalten sein. Vor Updates legt der Betreiber zusätzlich Sicherungen an, für die derzeit keine feste Löschfrist besteht.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-empfaenger&quot;&gt;Empfänger&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-empfaenger&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Ihre Daten werden nicht verkauft und nicht zu Werbezwecken weitergegeben. Empfänger sind (a) Cloudflare für Transport und Schutz der Website, (b) die KI-Anbieter Anthropic, xAI und OpenAI für die oben beschriebenen KI-Funktionen und (c) Personen, denen Sie einen Freigabelink geben.&lt;/p&gt;
+&lt;/section&gt;
+&lt;p class=&quot;stand&quot;&gt;Stand: 21. Oktober 2026&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Datenschutzerklärung, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Datenschutzerklärung – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#verantwortlicher&quot;&gt;Verantwortlicher&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#cloudflare&quot;&gt;Cloudflare&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#rechte&quot;&gt;Ihre Rechte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#kein-tracking&quot;&gt;Kein Tracking&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-freigaben&quot;&gt;Freigaben&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-empfaenger&quot;&gt;Empfänger&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Datenschutzerklärung&lt;/h1&gt;
+&lt;h2 id=&quot;verantwortlicher&quot;&gt;Verantwortlicher&lt;a class=&quot;anchor&quot; href=&quot;#verantwortlicher&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Felix Hummert&lt;br&gt; Wöhrstr. 6a, 91054 Erlangen&lt;br&gt; E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;cloudflare&quot;&gt;Cloudflare&lt;a class=&quot;anchor&quot; href=&quot;#cloudflare&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Diese Website nutzt Cloudflare, Inc. (101 Townsend St, San Francisco, CA 94107, USA) als Infrastrukturanbieter für DDoS-Schutz und verschlüsselte Datenübertragung (TLS). Cloudflare verarbeitet dabei IP-Adressen und HTTP-Header der Besucher.&lt;/p&gt;
+&lt;p&gt;Cloudflare ist unter dem EU-U.S. Data Privacy Framework zertifiziert. Die Datenverarbeitung erfolgt auf Grundlage eines Auftragsverarbeitungsvertrags (Art. 28 DSGVO) und Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an Sicherheit und Verfügbarkeit).&lt;/p&gt;
+&lt;p&gt;Cloudflare kann technisch notwendige Cookies setzen (z.B. &lt;code&gt;__cf_bm&lt;/code&gt; für Bot-Erkennung). Diese dienen ausschließlich der Sicherheit.&lt;/p&gt;
+&lt;h2 id=&quot;rechte&quot;&gt;Ihre Rechte&lt;a class=&quot;anchor&quot; href=&quot;#rechte&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Sie haben gemäß DSGVO folgende Rechte:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;Auskunft über Ihre gespeicherten Daten (Art. 15)&lt;/li&gt;&lt;li&gt;Berichtigung unrichtiger Daten (Art. 16)&lt;/li&gt;&lt;li&gt;Löschung Ihrer Daten (Art. 17)&lt;/li&gt;&lt;li&gt;Einschränkung der Verarbeitung (Art. 18)&lt;/li&gt;&lt;li&gt;Datenübertragbarkeit (Art. 20)&lt;/li&gt;&lt;li&gt;Beschwerde bei der zuständigen Aufsichtsbehörde&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Zur Ausübung Ihrer Rechte kontaktieren Sie uns per E-Mail: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;widerspruch&quot;&gt;Ihr Widerspruchsrecht&lt;a class=&quot;anchor&quot; href=&quot;#widerspruch&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Soweit wir Daten auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO verarbeiten (Server-Logs, Missbrauchsschutz, Audit-Log, Cloudflare), können Sie aus Gründen, die sich aus Ihrer besonderen Situation ergeben, jederzeit widersprechen (Art. 21 DSGVO). Wir verarbeiten die Daten dann nicht mehr, es sei denn, wir weisen zwingende schutzwürdige Gründe nach, die Ihre Interessen überwiegen, oder die Verarbeitung dient der Geltendmachung, Ausübung oder Verteidigung von Rechtsansprüchen. Kontakt: legal@hallucinai.de&lt;/p&gt;
+&lt;h2 id=&quot;kein-tracking&quot;&gt;Kein Tracking&lt;a class=&quot;anchor&quot; href=&quot;#kein-tracking&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Diese Website verwendet keine Analyse-Tools, keine Tracking-Cookies, keine Werbung und kein Social-Media-Tracking. Was auf Ihrem Gerät gespeichert wird, steht unter „Speicherung auf Ihrem Gerät“.&lt;/p&gt;
+&lt;section class=&quot;app&quot; id=&quot;songmaker&quot;&gt;&lt;h2&gt;songmaker&lt;span class=&quot;badge&quot;&gt;App&lt;/span&gt;&lt;a class=&quot;anchor&quot; href=&quot;#songmaker&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;h3 id=&quot;songmaker-daten&quot;&gt;Welche Daten wir verarbeiten&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-daten&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Wir verarbeiten folgende personenbezogene Daten:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Benutzerkonto:&lt;/strong&gt; Benutzername und die Kennung Ihres Keycloak-Kontos. Die Anmeldung läuft über den Keycloak-Dienst des Betreibers (auth.hallucinai.de); Passwörter gibt es dort, songmaker speichert und sieht keine. Zugang und Verwaltungsrechte folgen aus Ihren Keycloak-Gruppen; Konten legt der Betreiber auf Einladung an. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO (Vertragserfüllung).&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Inhalte, die Sie in songmaker anlegen:&lt;/strong&gt; Alben, Songs, Liedtexte, Stilbeschreibungen, Versionen samt Generierungsparametern, Playlists, Bewertungen, Cover und Cover-Vorschläge, generierte Audiodateien sowie automatische Bewertungen samt Transkription des Gesungenen. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Co-Writer:&lt;/strong&gt; Ihre Nachrichten, automatisch erzeugte Gesprächszusammenfassungen sowie dauerhafte Notizen zu Ihnen, Ihren Songs und Alben, die Sie anlegen oder bestätigen. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Hochgeladenes Audio:&lt;/strong&gt; Referenzaufnahmen sowie Trainingsaufnahmen mit Beschreibung und Liedtext für eigene Stimmen und die daraus trainierten Modelle. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Anmeldung und Sicherheit:&lt;/strong&gt; Sitzungskennung und Zeitpunkt der Sitzung; kurzlebige Zähler zur Ratenbegrenzung; ein Audit-Log mit Änderungsereignissen und Verwaltungsaktionen. Anmeldeversuche und Passwörter speichert songmaker nicht. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (Schutz vor Missbrauch).&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Letzte Bearbeitungen und Wiedergaben:&lt;/strong&gt; je Song der Zeitpunkt und die Art Ihrer letzten Bearbeitung sowie der Zeitpunkt Ihrer letzten Wiedergabe, innerhalb oder außerhalb einer Playlist; je Playlist Zeitpunkt und Song der letzten Wiedergabe daraus. Daraus zeigt die Startseite, was Sie zuletzt gehört und bearbeitet haben. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Server-Logs:&lt;/strong&gt; IP-Adresse, Zeitpunkt, aufgerufene Adresse, Statuscode und Dauer jeder Anfrage, bei angemeldeten Anfragen auch Ihre Nutzerkennung; beim Erzeugen von Musik auch Liedtext und Stilbeschreibung der Generierung. Rechtsgrundlage: Art. 6 Abs. 1 lit. f DSGVO (Sicherheit und Fehlerbehebung).&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Für ein Konto ist die Anmeldung über Keycloak erforderlich; alle weiteren Inhalte geben Sie freiwillig ein. Eine gesetzliche oder vertragliche Pflicht zur Bereitstellung besteht nicht. Eine automatisierte Entscheidungsfindung einschließlich Profiling im Sinne von Art. 22 DSGVO findet nicht statt; die automatischen Bewertungen von Songs dienen nur Ihrer Orientierung.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-server&quot;&gt;Verarbeitung auf unserem Server&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-server&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Musikerzeugung (ACE-Step), Transkription des Gesungenen (Whisper), Audiobewertung und das Training eigener Stimmen laufen nur auf unserem eigenen Server.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Eigene Stimmen und Referenzaufnahmen:&lt;/strong&gt; Aus hochgeladenen Aufnahmen trainieren wir auf unserem Server ein Stimm- oder Stilmodell für Ihre Songs. Wir nutzen Aufnahmen und Modelle nicht, um Personen zu erkennen oder zu identifizieren, und geben sie nicht weiter.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Daten über andere Personen:&lt;/strong&gt; Gibt ein Nutzer Namen, Texte oder Aufnahmen über Sie ein, erhalten wir diese von ihm; für Zwecke, Empfänger, Speicherdauer und Ihre Rechte gelten diese Hinweise entsprechend. Bitte geben Sie keine Gesundheitsdaten, religiösen oder politischen Überzeugungen realer Personen ein.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-ki&quot;&gt;KI-Funktionen mit externen Anbietern&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-ki&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Drei Funktionen senden Daten an externe KI-Anbieter. Co-Writer und Cover-Vorschläge stoßen Sie selbst an; die Textprüfung läuft automatisch als Teil der Bewertung jeder Generierung. Rechtsgrundlage: Art. 6 Abs. 1 lit. b DSGVO.&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Co-Writer:&lt;/strong&gt; Wir senden Ihre Nachricht, den bisherigen Gesprächsverlauf (bei langen Gesprächen eine Zusammenfassung und die letzten Nachrichten), Ihre Co-Writer-Notizen sowie Titel, Liedtext, Stilbeschreibung und Parameter der Songs und Alben, die Sie geöffnet oder per @-Erwähnung genannt haben, sowie Transkription und Bewertungen der Generierung des geöffneten Songs, die gerade abgespielt wird, sonst seiner Auswahl oder seiner neuesten abspielbaren Generierung, an den vom Betreiber eingestellten Anbieter: Anthropic (Claude), xAI (Grok) oder OpenAI (Codex). Während des Gesprächs kann das Modell über die Werkzeuge des Co-Writers weitere Ihrer Alben, Songs, Versionen und Generierungen (einschließlich Transkription und Bewertungen) abrufen sowie Ihre Songs ändern oder neue anlegen.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Textprüfung:&lt;/strong&gt; Nach jeder Generierung mit Liedtext, bei der die Transkription Gesang erkannt hat, senden wir den beabsichtigten Liedtext und die auf unserem Server erzeugte Transkription des Gesungenen automatisch an den vom Betreiber eingestellten Anbieter (Anthropic, xAI oder OpenAI). Generierungen, die noch keine Bewertung haben, werden nachträglich bewertet.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Cover-Vorschläge:&lt;/strong&gt; Auf Ihre Anforderung, auch über den Co-Writer, senden wir Albumtitel, Künstlername sowie Auszüge aus Stilbeschreibungen und Liedtexten an OpenAI.&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;Rolle der Anbieter:&lt;/strong&gt; Alle drei Funktionen senden die Daten über die Programmierschnittstelle (API) des jeweiligen Anbieters. Der Anbieter verarbeitet sie nach seinen veröffentlichten Geschäftsbedingungen als Auftragsverarbeiter für uns; Bestandteil dieser Bedingungen ist jeweils ein Auftragsverarbeitungsvertrag (Art. 28 DSGVO), der auch die Schutzmaßnahmen des Anbieters beschreibt: bei Anthropic die Commercial Terms of Service mit dem &lt;a href=&quot;https://www.anthropic.com/legal/data-processing-addendum&quot;&gt;Data Processing Addendum&lt;/a&gt; (Vertragspartner im EWR: Anthropic Ireland, Limited), bei OpenAI das Services Agreement mit dem &lt;a href=&quot;https://openai.com/policies/data-processing-addendum/&quot;&gt;Data Processing Addendum&lt;/a&gt; (im EWR: OpenAI Ireland Ltd.), bei xAI (SpaceXAI LLC), das wir über seine API mit Zero Data Retention nutzen, die Terms of Service – Enterprise mit dem &lt;a href=&quot;https://x.ai/legal/data-processing-addendum&quot;&gt;Data Processing Addendum&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Training:&lt;/strong&gt; Nach diesen Bedingungen trainiert Anthropic keine Modelle mit Ihren Inhalten (Commercial Terms, Abschnitt B); OpenAI verwendet Ihre Inhalte nicht, um seine Dienste zu entwickeln oder zu verbessern, es sei denn, wir als Kunde stimmen dem ausdrücklich zu (Services Agreement, Abschnitt 4.2); xAI verwendet Ihre Inhalte nicht, um KI-Modelle zu trainieren oder neue Produkte zu entwickeln, vorbehaltlich der Hinweise von xAI an uns und der von uns als Kunde gesteuerten Einstellungen (Terms of Service – Enterprise, Abschnitt 3.1).&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Übermittlung in die USA:&lt;/strong&gt; Je nach genutzter Funktion verarbeiten Anthropic, OpenAI und xAI Daten auch in den USA. Die drei Anbieter stützen die Übermittlung nach ihren oben verlinkten Auftragsverarbeitungsverträgen auf die Standardvertragsklauseln der EU-Kommission (Art. 46 Abs. 2 lit. c DSGVO), OpenAI daneben auf Angemessenheitsbeschlüsse (Art. 45 DSGVO).&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-freigaben&quot;&gt;Freigaben&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-freigaben&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Wenn Sie ein Album, einen Song, eine Generierung oder eine Playlist freigeben, kann jede Person mit dem Link ohne Anmeldung Titel, Künstlername, Liedtext, Audio, Cover sowie die zeitgenaue Transkription des Gesungenen abrufen und den Link weitergeben. Sie können die Freigabe jederzeit beenden; bereits heruntergeladene Kopien lassen sich nicht zurückholen. Von Besuchern verarbeiten wir die IP-Adresse wie unter Server-Logs beschrieben und zur Ratenbegrenzung.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-geraet&quot;&gt;Speicherung auf Ihrem Gerät&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-geraet&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;songmaker speichert auf Ihrem Gerät nur, was für den von Ihnen gewünschten Dienst erforderlich ist (§ 25 Abs. 2 Nr. 2 TDDDG); eine Einwilligung ist dafür nicht erforderlich:&lt;/p&gt;
+&lt;ul&gt;&lt;li&gt;ein Sitzungs-Cookie für die Anmeldung (HttpOnly) und ein Sicherheits-Cookie gegen Fremdanfragen (CSRF), beide nur für songmaker.hallucinai.de, Laufzeit bis 30 Tage; während der Anmeldung bei Keycloak kurzlebige Cookies für den Ablauf der Anmeldung und für das Abmelden;&lt;/li&gt;&lt;li&gt;im Browser-Speicher die von Ihnen gewählten Anzeige- und Wiedergabeeinstellungen, Ihre letzte Wiedergabeposition und den Navigationsverlauf des Tabs;&lt;/li&gt;&lt;li&gt;im Browser-Cache die App selbst und Audiodateien, die Sie für die Offline-Wiedergabe gespeichert haben.&lt;/li&gt;&lt;/ul&gt;
+&lt;p&gt;Browser-Speicher und Browser-Cache liest nur die App auf Ihrem Gerät, um Ihre Einstellungen, die letzte Wiedergabe, den Navigationsverlauf und gespeicherte Audiodateien wiederherzustellen und die App selbst zu laden; beim Wiederherstellen der letzten Wiedergabe ruft sie den dort gemerkten Song oder die Playlist von unserem Server ab. Beim Abspielen meldet die App dem Server die Wiedergabe, je Generierung und Playlist einmal seit dem Öffnen der App; der Server vermerkt sie wie unter „Letzte Bearbeitungen und Wiedergaben“ beschrieben. Wiedergaben über einen Freigabe-Link meldet die App nicht. Cloudflare kann eigene Sicherheits-Cookies setzen (siehe Cloudflare).&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-speicherdauer&quot;&gt;Speicherdauer&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-speicherdauer&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;&lt;strong&gt;Benutzerkonten:&lt;/strong&gt; bis zur Löschung. Konten löscht der Betreiber auf Ihre Anfrage an legal@hallucinai.de.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Inhalte und Audiodateien:&lt;/strong&gt; bis Sie sie löschen. Gelöschte Alben und Songs sind 30 Tage wiederherstellbar und werden dann endgültig entfernt. Generierungen, die weder als Auswahl noch als behalten markiert sind, werden nach 7 Tagen archiviert und 30 Tage später samt Datei endgültig gelöscht, sofern keine andere Generierung auf sie als Ausgangspunkt verweist.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Was die Löschung heute noch nicht entfernt:&lt;/strong&gt; Eine gelöschte Stimme wird nur als gelöscht markiert; ihre Trainingsaufnahmen und das Modell bleiben gespeichert. Referenzaufnahmen lassen sich derzeit nicht in der App löschen. Bei der Löschung eines Kontos bleiben Referenzaufnahmen und Stimmdateien erhalten, und Einträge im Audit-Log bleiben mit Benutzername und IP-Adressen bestehen. Liedtext und Stilbeschreibung einer Generierung bleiben in den Container-Logs, bis diese rotiert werden, und im Protokoll des Musikerzeugungs-Prozesses ohne feste Frist. Wenn Sie die Löschung dieser Daten wünschen, schreiben Sie an legal@hallucinai.de.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Letzte Bearbeitungen und Wiedergaben:&lt;/strong&gt; bis zur Löschung des Songs, der Playlist oder Ihres Kontos; eine frühere Löschung gibt es derzeit nicht.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Sitzungen:&lt;/strong&gt; Das Anmelde-Cookie im Browser gilt bis zu 30 Tage nach dem Einloggen; Anmeldeversuche und Passwörter werden nicht gespeichert.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Audit-Log:&lt;/strong&gt; wird derzeit ohne feste Frist gespeichert.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Server-Logs:&lt;/strong&gt; Die Container-Logs der Dienste werden nach Speichermenge rotiert (höchstens 50 MB je Dienst). Das Protokoll des Musikerzeugungs-Prozesses (ACE-Step) wird zusätzlich in eine Datei geschrieben, die nicht rotiert wird. Eine feste Höchstdauer besteht in beiden Fällen derzeit nicht.&lt;/li&gt;&lt;li&gt;&lt;strong&gt;Sicherungskopien:&lt;/strong&gt; Sicherungskopien von Datenbank und Audiodateien werden wöchentlich verschlüsselt auf unserem Server erstellt und in der Regel höchstens etwa drei Monate aufbewahrt; gelöschte Daten können bis dahin in einer Sicherung enthalten sein. Vor Updates legt der Betreiber zusätzlich Sicherungen an, für die derzeit keine feste Löschfrist besteht.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-empfaenger&quot;&gt;Empfänger&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-empfaenger&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Ihre Daten werden nicht verkauft und nicht zu Werbezwecken weitergegeben. Empfänger sind (a) Cloudflare für Transport und Schutz der Website, (b) die KI-Anbieter Anthropic, xAI und OpenAI für die oben beschriebenen KI-Funktionen und (c) Personen, denen Sie einen Freigabelink geben.&lt;/p&gt;
+&lt;/section&gt;
+&lt;p class=&quot;stand&quot;&gt;Stand: 21. Oktober 2026&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot; aria-current=&quot;page&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure></div></section>
+<section class="spec" id="nutzungsbedingungen">
+<header><h2>hallucinai.de/nutzungsbedingungen</h2>
+<p class="cap"><b>Vorschlag des Heads unter U4, nicht vom Betreiber entschieden:</b> gleiche Form wie die Datenschutzerklärung; gemeinsam ist nur das anwendbare Recht, alles andere ist songmakers Abschnitt.</p></header>
+<div class="pair"><figure class="dev w390"><figcaption>Telefon<span>390 px</span></figcaption><div class="chrome"><iframe title="Nutzungsbedingungen, 390 px" width="390" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Nutzungsbedingungen – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Nutzungsbedingungen&lt;/h1&gt;
+&lt;h2 id=&quot;recht&quot;&gt;Anwendbares Recht&lt;a class=&quot;anchor&quot; href=&quot;#recht&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Es gilt deutsches Recht.&lt;/p&gt;
+&lt;section class=&quot;app&quot; id=&quot;songmaker&quot;&gt;&lt;h2&gt;songmaker&lt;span class=&quot;badge&quot;&gt;App&lt;/span&gt;&lt;a class=&quot;anchor&quot; href=&quot;#songmaker&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;h3 id=&quot;songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-leistung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;songmaker (unter songmaker.hallucinai.de) ist ein privat betriebener, kostenloser Dienst, der nur auf Einladung nutzbar ist. Er wandelt Liedtexte und Stilbeschreibungen auf dem Server des Betreibers mit ACE-Step in Musik um. Der Co-Writer, die Textprüfung und Cover-Vorschläge nutzen externe KI-Anbieter (siehe Datenschutzerklärung). Eine Verfügbarkeit wird nicht garantiert.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-ki&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;songmaker erzeugt Musik und Cover mithilfe künstlicher Intelligenz; Liedtexte, Referenzaufnahmen und Stilbeschreibungen können von Menschen stammen.&lt;/li&gt;&lt;li&gt;Rein maschinell erzeugte Musik ist mangels menschlicher Schöpfung in der Regel kein urheberrechtlich geschütztes Werk (§ 2 Abs. 2 UrhG). Von Ihnen geschriebene Liedtexte und andere menschliche Beiträge sind geschützt, soweit sie die gesetzlichen Schutzvoraussetzungen erfüllen; ob an generierten Aufnahmen Leistungsschutzrechte entstehen und ob Verwertungsgesellschaften wie die GEMA Ansprüche haben, ist nicht abschließend geklärt.&lt;/li&gt;&lt;li&gt;Der Betreiber übernimmt keine Gewähr für die Originalität oder Qualität der generierten Inhalte und sichert nicht zu, dass Ergebnisse frei von Rechten Dritter sind.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-pflichten&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;Verwenden Sie nur Texte, Bilder und Aufnahmen, die Sie nutzen dürfen, auch für Bearbeitung, Stimmtraining und Veröffentlichung.&lt;/li&gt;&lt;li&gt;Stimmen anderer Personen laden Sie nur mit deren ausdrücklicher Einwilligung hoch.&lt;/li&gt;&lt;li&gt;Geben Sie synthetische Aufnahmen nicht als echte Äußerungen einer realen Person aus. Wer Inhalte veröffentlicht, die einer realen Person ähneln, macht nach diesen Bedingungen kenntlich, dass sie KI-generiert sind; soweit Art. 50 Abs. 4 KI-VO auf eine Veröffentlichung anwendbar ist, gilt dessen Offenlegungspflicht daneben.&lt;/li&gt;&lt;li&gt;Nutzer dürfen keine rechtswidrigen, beleidigenden oder diskriminierenden Inhalte erstellen.&lt;/li&gt;&lt;li&gt;Nutzer sind für die Sicherheit ihres Kontos (Passwort) selbst verantwortlich.&lt;/li&gt;&lt;li&gt;Die Nutzung ist ausschließlich für private, nicht-kommerzielle Zwecke gestattet.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-haftung&quot;&gt;Haftung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-haftung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Der Betreiber haftet unbeschränkt für Vorsatz und grobe Fahrlässigkeit sowie für Schäden an Leben, Körper und Gesundheit. Für einfache Fahrlässigkeit haftet der Betreiber nur bei Verletzung wesentlicher Vertragspflichten, begrenzt auf den vorhersehbaren, vertragstypischen Schaden. Dies gilt nicht für Ansprüche nach dem Produkthaftungsgesetz.&lt;/p&gt;
+&lt;p&gt;Für Inhalte, die Nutzer eingeben oder speichern, haftet der Betreiber nach § 7 DDG in Verbindung mit Art. 6 der Verordnung (EU) 2022/2065 nur unter den dort genannten Voraussetzungen: wenn er tatsächliche Kenntnis von einer rechtswidrigen Tätigkeit oder Information hat oder sich, soweit es um Schadensersatz geht, Tatsachen oder Umstände bewusst ist, aus denen die Rechtswidrigkeit offensichtlich wird, und er nicht zügig tätig wird, um die Information zu entfernen oder den Zugang zu ihr zu sperren. Anordnungen von Gerichten und Behörden bleiben unberührt. KI-Ergebnisse können geschützten Werken ähneln; eine Gewähr für ihre rechtliche Verwertbarkeit übernimmt der Betreiber nicht. Im Übrigen gilt die Haftungsregelung in Absatz 1.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-loeschung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Sie können die Nutzung jederzeit beenden und die Löschung Ihres Kontos per E-Mail an legal@hallucinai.de verlangen; Ihr Konto und Ihre Inhalte werden dann gelöscht. Was die Löschung heute noch nicht entfernt, steht in der Datenschutzerklärung. Der Betreiber kann Inhalte oder Konten bei Rechtsverletzungen, erheblichen Verstößen gegen diese Bedingungen oder Sicherheitsgefahren sperren. Eine Sperre ist keine Löschung.&lt;/p&gt;
+&lt;/section&gt;
+&lt;p class=&quot;stand&quot;&gt;Stand: 21. Oktober 2026&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure><figure class="dev w1440"><figcaption>Rechner<span>1440 px</span></figcaption><div class="chrome"><iframe title="Nutzungsbedingungen, 1440 px" width="1440" height="900" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;de&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Nutzungsbedingungen – HALLUCINAI&lt;/title&gt;
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
+--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
+--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
+body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
+background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
+.glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
+a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
+.mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
+-webkit-text-fill-color:transparent;background-image:linear-gradient(to bottom,color-mix(in srgb,var(--primary) 80%,var(--text)) 0 35%,var(--text) 35% 65%,color-mix(in srgb,var(--accent) 80%,var(--text)) 65% 100%);
+-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 20px color-mix(in srgb,var(--primary) 30%,transparent))}
+.mark a{text-decoration:none;-webkit-text-fill-color:transparent}
+nav.tabs{display:flex;flex-wrap:wrap;gap:4px 18px;justify-content:center;margin:0 0 22px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+nav.tabs a{font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-decoration:none;padding:8px 0;border-bottom:2px solid transparent;min-height:40px}
+nav.tabs a:hover{color:var(--text)}
+nav.tabs a[aria-current]{color:var(--primary);border-image:linear-gradient(90deg,var(--primary),var(--accent)) 1}
+.layout{display:block}
+aside.toc{margin:0 0 18px}
+aside.toc details{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+aside.toc summary{font:400 12px var(--display);text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:12px 14px;cursor:pointer;min-height:44px}
+aside.toc ol{margin:0;padding:0 14px 12px 34px;font-size:14px;line-height:1.9}
+aside.toc ol ol{padding:0 0 0 18px;list-style:circle}
+aside.toc a{text-decoration:none;color:var(--text)}
+aside.toc a:hover{text-decoration:underline}
+article{background:var(--card);border:1px solid color-mix(in srgb,var(--primary) 15%,transparent);border-radius:12px;
+box-shadow:0 0 60px color-mix(in srgb,var(--primary) 5%,transparent);backdrop-filter:blur(20px);padding:22px 18px 18px;min-width:0}
+article&gt;.measure{max-width:70ch}
+h1{font:700 28px/1.2 var(--display);margin:0 0 6px}
+h2{font:700 20px/1.3 var(--display);margin:34px 0 8px;letter-spacing:.2px}
+h3{font:700 17px/1.3 var(--display);margin:26px 0 6px}
+h2 .anchor,h3 .anchor{color:var(--muted);text-decoration:none;margin-left:8px;opacity:0;font-weight:400}
+h2:hover .anchor,h3:hover .anchor,.anchor:focus-visible{opacity:1}
+@media (hover:none){h2 .anchor,h3 .anchor{opacity:.45}}
+p,ul{margin:0 0 12px}
+ul{padding-left:20px}li{margin-bottom:8px}
+code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
+section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
+section.app&gt;h2{margin-top:6px}
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
+.stand{margin-top:26px;color:var(--muted);font-size:14px}
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
+footer a{color:var(--muted);text-decoration:none;padding:8px 0;min-height:40px}
+footer a:hover{color:var(--text)}
+footer a[aria-current]{color:var(--primary)}
+@media (min-width:900px){
+.wrap{padding:44px 24px 40px}
+.mark{font-size:40px}
+.layout:has(&gt;aside.toc){display:grid;grid-template-columns:230px minmax(0,1fr);gap:28px;align-items:start}
+aside.toc{position:sticky;top:16px;margin:0}
+aside.toc details{border:0;background:none}
+aside.toc summary{padding-left:0}
+@supports selector(::details-content){
+aside.toc details::details-content{content-visibility:visible}
+aside.toc summary{pointer-events:none;list-style:none}
+aside.toc summary::-webkit-details-marker{display:none}
+}
+article{padding:34px 40px 28px}
+h1{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class=&quot;glow2&quot;&gt;&lt;/div&gt;
+&lt;div class=&quot;wrap&quot;&gt;
+&lt;p class=&quot;mark&quot;&gt;&lt;a href=&quot;https://hallucinai.de/&quot;&gt;Hallucinai&lt;/a&gt;&lt;/p&gt;
+&lt;nav class=&quot;tabs&quot; aria-label=&quot;Rechtliches&quot;&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/nav&gt;
+&lt;div class=&quot;layout&quot;&gt;&lt;aside class=&quot;toc&quot; aria-label=&quot;Inhalt&quot;&gt;&lt;details&gt;&lt;summary&gt;Inhalt&lt;/summary&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#recht&quot;&gt;Anwendbares Recht&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker&quot;&gt;songmaker&lt;/a&gt;&lt;ol&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-haftung&quot;&gt;Haftung&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;#songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;/a&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/li&gt;&lt;/ol&gt;&lt;/details&gt;&lt;/aside&gt;&lt;article&gt;&lt;div class=&quot;measure&quot;&gt;
+&lt;h1&gt;Nutzungsbedingungen&lt;/h1&gt;
+&lt;h2 id=&quot;recht&quot;&gt;Anwendbares Recht&lt;a class=&quot;anchor&quot; href=&quot;#recht&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;p&gt;Es gilt deutsches Recht.&lt;/p&gt;
+&lt;section class=&quot;app&quot; id=&quot;songmaker&quot;&gt;&lt;h2&gt;songmaker&lt;span class=&quot;badge&quot;&gt;App&lt;/span&gt;&lt;a class=&quot;anchor&quot; href=&quot;#songmaker&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h2&gt;
+&lt;h3 id=&quot;songmaker-leistung&quot;&gt;Leistungsbeschreibung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-leistung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;songmaker (unter songmaker.hallucinai.de) ist ein privat betriebener, kostenloser Dienst, der nur auf Einladung nutzbar ist. Er wandelt Liedtexte und Stilbeschreibungen auf dem Server des Betreibers mit ACE-Step in Musik um. Der Co-Writer, die Textprüfung und Cover-Vorschläge nutzen externe KI-Anbieter (siehe Datenschutzerklärung). Eine Verfügbarkeit wird nicht garantiert.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-ki&quot;&gt;KI-generierte Inhalte&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-ki&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;songmaker erzeugt Musik und Cover mithilfe künstlicher Intelligenz; Liedtexte, Referenzaufnahmen und Stilbeschreibungen können von Menschen stammen.&lt;/li&gt;&lt;li&gt;Rein maschinell erzeugte Musik ist mangels menschlicher Schöpfung in der Regel kein urheberrechtlich geschütztes Werk (§ 2 Abs. 2 UrhG). Von Ihnen geschriebene Liedtexte und andere menschliche Beiträge sind geschützt, soweit sie die gesetzlichen Schutzvoraussetzungen erfüllen; ob an generierten Aufnahmen Leistungsschutzrechte entstehen und ob Verwertungsgesellschaften wie die GEMA Ansprüche haben, ist nicht abschließend geklärt.&lt;/li&gt;&lt;li&gt;Der Betreiber übernimmt keine Gewähr für die Originalität oder Qualität der generierten Inhalte und sichert nicht zu, dass Ergebnisse frei von Rechten Dritter sind.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-pflichten&quot;&gt;Pflichten der Nutzer&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-pflichten&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;ul&gt;&lt;li&gt;Verwenden Sie nur Texte, Bilder und Aufnahmen, die Sie nutzen dürfen, auch für Bearbeitung, Stimmtraining und Veröffentlichung.&lt;/li&gt;&lt;li&gt;Stimmen anderer Personen laden Sie nur mit deren ausdrücklicher Einwilligung hoch.&lt;/li&gt;&lt;li&gt;Geben Sie synthetische Aufnahmen nicht als echte Äußerungen einer realen Person aus. Wer Inhalte veröffentlicht, die einer realen Person ähneln, macht nach diesen Bedingungen kenntlich, dass sie KI-generiert sind; soweit Art. 50 Abs. 4 KI-VO auf eine Veröffentlichung anwendbar ist, gilt dessen Offenlegungspflicht daneben.&lt;/li&gt;&lt;li&gt;Nutzer dürfen keine rechtswidrigen, beleidigenden oder diskriminierenden Inhalte erstellen.&lt;/li&gt;&lt;li&gt;Nutzer sind für die Sicherheit ihres Kontos (Passwort) selbst verantwortlich.&lt;/li&gt;&lt;li&gt;Die Nutzung ist ausschließlich für private, nicht-kommerzielle Zwecke gestattet.&lt;/li&gt;&lt;/ul&gt;
+&lt;h3 id=&quot;songmaker-haftung&quot;&gt;Haftung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-haftung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Der Betreiber haftet unbeschränkt für Vorsatz und grobe Fahrlässigkeit sowie für Schäden an Leben, Körper und Gesundheit. Für einfache Fahrlässigkeit haftet der Betreiber nur bei Verletzung wesentlicher Vertragspflichten, begrenzt auf den vorhersehbaren, vertragstypischen Schaden. Dies gilt nicht für Ansprüche nach dem Produkthaftungsgesetz.&lt;/p&gt;
+&lt;p&gt;Für Inhalte, die Nutzer eingeben oder speichern, haftet der Betreiber nach § 7 DDG in Verbindung mit Art. 6 der Verordnung (EU) 2022/2065 nur unter den dort genannten Voraussetzungen: wenn er tatsächliche Kenntnis von einer rechtswidrigen Tätigkeit oder Information hat oder sich, soweit es um Schadensersatz geht, Tatsachen oder Umstände bewusst ist, aus denen die Rechtswidrigkeit offensichtlich wird, und er nicht zügig tätig wird, um die Information zu entfernen oder den Zugang zu ihr zu sperren. Anordnungen von Gerichten und Behörden bleiben unberührt. KI-Ergebnisse können geschützten Werken ähneln; eine Gewähr für ihre rechtliche Verwertbarkeit übernimmt der Betreiber nicht. Im Übrigen gilt die Haftungsregelung in Absatz 1.&lt;/p&gt;
+&lt;h3 id=&quot;songmaker-loeschung&quot;&gt;Löschung und Kündigung&lt;a class=&quot;anchor&quot; href=&quot;#songmaker-loeschung&quot; aria-label=&quot;Link zu diesem Abschnitt&quot;&gt;#&lt;/a&gt;&lt;/h3&gt;
+&lt;p&gt;Sie können die Nutzung jederzeit beenden und die Löschung Ihres Kontos per E-Mail an legal@hallucinai.de verlangen; Ihr Konto und Ihre Inhalte werden dann gelöscht. Was die Löschung heute noch nicht entfernt, steht in der Datenschutzerklärung. Der Betreiber kann Inhalte oder Konten bei Rechtsverletzungen, erheblichen Verstößen gegen diese Bedingungen oder Sicherheitsgefahren sperren. Eine Sperre ist keine Löschung.&lt;/p&gt;
+&lt;/section&gt;
+&lt;p class=&quot;stand&quot;&gt;Stand: 21. Oktober 2026&lt;/p&gt;
+&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+&lt;footer&gt;&lt;a href=&quot;/impressum&quot;&gt;Impressum&lt;/a&gt;&lt;a href=&quot;/datenschutz&quot;&gt;Datenschutz&lt;/a&gt;&lt;a href=&quot;/nutzungsbedingungen&quot; aria-current=&quot;page&quot;&gt;Nutzungsbedingungen&lt;/a&gt;&lt;/footer&gt;
+&lt;/div&gt;
+&lt;script&gt;document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest(&#x27;a[href^=&quot;/&quot;]&#x27;);if(a)e.preventDefault()});&lt;/script&gt;&lt;/body&gt;
+&lt;/html&gt;
+"></iframe></div></figure></div></section>
+</div>
+<script>
+function fit(f){try{const d=f.contentDocument;f.style.height=Math.min(d.documentElement.scrollHeight,1400)+'px'}catch(e){}}
+document.querySelectorAll('iframe').forEach(f=>{f.addEventListener('load',()=>{fit(f);setTimeout(()=>fit(f),1200)})});
+</script></body></html>

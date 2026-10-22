@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import threading
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -175,6 +176,33 @@ def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
 
     assert (l2.verdict is Verdict.HELD, l3.verdict is Verdict.HELD) == (paid, admitted)
     assert ("unauthorized" in l2.figure) == ("401" in output)
+
+
+def test_a_forbidden_refusal_names_the_membership_and_the_token_binding():
+    l2, _ = live_smoke.turn_cells(1, "refused with 403 forbidden: no\n", KNOWN)
+
+    assert f"/apps/{live_smoke.CLIENT}" in l2.figure
+    assert "azp" in l2.figure
+
+
+def test_a_not_enabled_refusal_names_the_subscription_groups_of_the_service_toml():
+    l2, _ = live_smoke.turn_cells(1, "refused with 403 not_enabled: no\n", KNOWN)
+
+    service = tomllib.loads((ROOT / "agent-service/service.toml").read_text(encoding="utf-8"))
+    assert service["identity"]["subscription_groups"]
+    assert all(group in l2.figure for group in service["identity"]["subscription_groups"])
+
+
+@pytest.mark.parametrize("code", ["forbidden", "not_enabled"])
+def test_an_answer_line_shaped_like_a_refusal_holds_and_gets_no_hint(code):
+    answer = f"refused with 403 {code}: no"
+    output = f"event: run_started\nevent: assistant_text\n{answer}\nevent: succeeded\n"
+
+    l2, _ = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l2.verdict is Verdict.HELD
+    assert "/apps/" not in l2.figure
+    assert "subscription" not in l2.figure
 
 
 # --- the service, against a scripted docker ---------------------------------------------------

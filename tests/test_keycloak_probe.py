@@ -909,7 +909,7 @@ def imported_client(client: object, **changes: object) -> dict[str, object]:
         "frontchannelLogout": False,
         "redirectUris": list(client.callbacks),
         "baseUrl": f"{client.origin}/",
-        "alwaysDisplayInConsole": True,
+        "alwaysDisplayInConsole": False,
         "optionalClientScopes": [],
         "defaultClientScopes": WORKLOAD_SCOPES if client.agent_workload else LOGIN_SCOPES,
         "attributes": {},
