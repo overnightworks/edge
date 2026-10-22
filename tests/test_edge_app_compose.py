@@ -136,8 +136,10 @@ def test_the_volumes_an_image_declares_come_from_the_image_of_that_service_alone
 
 
 def test_a_service_the_config_names_no_image_for_is_one_line():
+    engine = engine_over(ImageDocker("null"))
+
     with pytest.raises(compose.ComposeError, match="names no image of a service"):
-        engine_over(ImageDocker("null")).image_volumes(["worker"], TAG)
+        engine.image_volumes(["worker"], TAG)
 
 
 def test_an_image_without_volumes_declares_none():
@@ -148,8 +150,10 @@ def test_an_image_without_volumes_declares_none():
 def test_an_image_inspection_that_fails_or_answers_no_json_is_one_line_without_its_content(
     inspected, exit_code
 ):
+    engine = engine_over(ImageDocker(inspected, exit_code))
+
     with pytest.raises(compose.ComposeError) as failed:
-        engine_over(ImageDocker(inspected, exit_code)).image_volumes(["web"], TAG)
+        engine.image_volumes(["web"], TAG)
 
     assert inspected not in str(failed.value)
     assert f"for {KEY} at {TAG}" in str(failed.value)
