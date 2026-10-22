@@ -11,6 +11,8 @@ import pytest
 from conftest import Sandbox
 
 import home_tools
+from hal import cli as hal_cli
+from hal.grammar import ExitCode
 from home_tools import system_step
 from home_tools.cli import main
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE
@@ -20,7 +22,7 @@ STEP_NAMES = ["quality", "Engines", "Hook-Dateien", "Aktivierung", "Ansible", "S
 CHANGED_STEPS = [f"{name}: changed" for name in STEP_NAMES]
 UNCHANGED_STEPS = [f"{name}: unchanged" for name in STEP_NAMES]
 NOT_CHECKED = "System: not checked (needs sudo at a terminal)"
-NOT_CHECKED_WITHOUT_ANSIBLE = "System: not checked (needs Ansible, which `home setup --apply` installs first)"
+NOT_CHECKED_WITHOUT_ANSIBLE = "System: not checked (needs Ansible, which `hal setup --apply` installs first)"
 QUALITY_URL = "https://github.com/overnightworks/quality"
 
 
@@ -307,7 +309,7 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (1, CHANGED_STEPS[:-1])
-    assert "`home setup --apply` in your own terminal window" in error
+    assert "`hal setup --apply` in your own terminal window" in error
     assert "„System“" in error
     assert playbook_runs(sandbox) == []
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
@@ -399,3 +401,36 @@ def test_a_run_leaves_no_ansible_state_in_home(tmp_path: Path, monkeypatch: pyte
     assert list(home.iterdir()) == []
     assert not Path(ansible_home).exists()
     assert (nocolor, callback) == ("1", "default")
+
+
+def run_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
+    """`hal setup` in process; the sandbox's HOME is the process's HOME, so hal finds the same world `home` was handed."""
+    code = hal_cli.main(["setup", *flags])
+    captured = capsys.readouterr()
+    return code, captured.out.splitlines(), captured.err
+
+
+def test_hal_setup_shows_what_home_setup_shows(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    home_result = run_setup(sandbox, capsys)
+
+    assert run_hal_setup(capsys) == (ExitCode.OK, home_result[1], "")
+
+
+def test_hal_setup_apply_runs_what_home_setup_apply_runs(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    code, lines, _ = run_hal_setup(capsys, "--apply")
+
+    assert (code, lines) == (ExitCode.OK, CHANGED_STEPS)
+    assert uv_installs(sandbox) == [f"tool install --force {QUALITY_SOURCE}", f"tool install --force {ANSIBLE_SOURCE}"]
+    assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
+
+
+def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_exits_3(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox.system.terminal = False
+
+    code, lines, error = run_hal_setup(capsys, "--apply")
+
+    assert (code, lines) == (ExitCode.FAILURE, CHANGED_STEPS[:-1])
+    assert "`hal setup --apply` in your own terminal window" in error
+    assert "hal setup: Schritt „System“ ist fehlgeschlagen" in error

@@ -18,7 +18,7 @@ from home_tools.report import findings_count, markdown_table
 from home_tools.setup import HOOK_NAMES, _has_hook_mode, _is_executable, _recorded_quality_source_matches, render_hook
 from home_tools.tidy_home import CommandRunner, Layout, is_git_repo, registered_worktrees
 
-SETUP_APPLY = "`home setup --apply`"
+SETUP_APPLY = "`hal setup --apply`"
 HOOKS_PATH_KEY = "core.hookspath"
 SAMPLE_SUFFIX = ".sample"
 
