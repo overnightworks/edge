@@ -215,8 +215,9 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
 def _healthcheck_refusal(health: object) -> str | None:
     if not isinstance(health, dict) or _healthcheck_disabled(health):
         return "has no healthcheck (healthcheck); the publish phase asks it for ready"
-    if _interpolates(str(health.get("test"))):
-        return "interpolates the healthcheck test ($); not yet supported"
+    for key in ("test", "disable"):
+        if _interpolates(str(health.get(key))):
+            return f"interpolates the healthcheck {key} ($); not yet supported"
     return None
 
 

@@ -154,12 +154,19 @@ def test_a_healthcheck_is_disabled_as_compose_reads_the_boolean(health, disabled
         assert app_contract.check(text, KEY, TAG, ("hopin",)) == ("web",)
 
 
-def test_an_interpolated_healthcheck_test_of_a_labelled_service_is_refused():
+@pytest.mark.parametrize(
+    ("health", "key"),
+    [
+        ('{test: ["${T}"]}', "test"),
+        ("{test: [CMD, 'true'], disable: '${X}'}", "disable"),
+    ],
+)
+def test_an_interpolated_healthcheck_key_of_a_labelled_service_is_refused(health, key):
     labels = 'labels: {edge.name: hopin, traefik.enable: "true"}'
 
-    message = refusal(compose(labels, 'healthcheck: {test: ["${T}"]}'), hosts=("hopin",))
+    message = refusal(compose(labels, f"healthcheck: {health}"), hosts=("hopin",))
 
-    assert "service web interpolates the healthcheck test ($)" in message
+    assert f"service web interpolates the healthcheck {key} ($)" in message
 
 
 @pytest.mark.parametrize(
