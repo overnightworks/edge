@@ -71,7 +71,7 @@ always the stem.
 | `redphone` (claudebot) | `overnightworks-redphone` | `redphone` | none | `redphone` (was `agent-telegram`) | `overnightworks_redphone` | none |
 | `gmail-cleanup` ✓ | `overnightworks-gmail-cleanup` | ✓ | none | none | ✓ | none |
 | `kiln` ✓ | unpublished Rust crates `kiln-<component>` ✓ | none | none | none | none | none |
-| `songmaker`, `hopin`, `ACE-Step-1.5` | unchanged (fixed point, upstream): `songmaker`, `hopin` | | | songmaker: see Fixed points | `overnightworks_songmaker`, `overnightworks_hopin` (already conform) | apex, `www`, `/apps/songmaker`, `/apps/hopin` |
+| `songmaker`, `hopin`, `ACE-Step-1.5` | unchanged (fixed point, upstream): `songmaker`, `hopin` | | | songmaker: see Fixed points | `overnightworks_songmaker`, `overnightworks_hopin` (already conform) | `songmaker`, `/apps/songmaker`, `/apps/hopin` |
 | `atelier-1` (the archived former atelier) | archived, renamed so marketplace can take `atelier` | none | none | none | none | none |
 | `atelier-2`, `foreman` (archived) | unchanged | none | none | none | none | none |
 

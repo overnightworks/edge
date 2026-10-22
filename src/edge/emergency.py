@@ -13,7 +13,7 @@ from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
-from edge import apply, barrier, catalog, compose, setup, switches, terminal, tunnel
+from edge import apply, barrier, catalog, compose, setup, switches, terminal, tunnel, unit_plans
 from edge.apply import ApplyExit
 
 STOP = "edge stop"
@@ -28,10 +28,10 @@ def _complain(command: str, line: str) -> None:
     print(f"{command}: {line}", file=sys.stderr)
 
 
-def _read_fleet(command: str, engine: compose.Compose, repository: Path) -> apply.Fleet | None:
+def _read_fleet(command: str, engine: compose.Compose, repository: Path) -> unit_plans.Fleet | None:
     """The fleet; None, after saying why, when it cannot be planned."""
     try:
-        return apply.read_fleet(engine, repository)
+        return unit_plans.read_fleet(engine, repository)
     except (compose.ComposeError, catalog.CatalogError) as error:
         _complain(command, f"cannot plan, {error}")
         return None
@@ -39,7 +39,7 @@ def _read_fleet(command: str, engine: compose.Compose, repository: Path) -> appl
 
 def _read_unit(
     command: str, engine: compose.Compose, repository: Path, key: str
-) -> tuple[apply.Fleet, catalog.Unit] | None:
+) -> tuple[unit_plans.Fleet, catalog.Unit] | None:
     """The fleet and the named unit; None, after saying why, when the unit cannot be planned."""
     fleet = _read_fleet(command, engine, repository)
     if fleet is None:
