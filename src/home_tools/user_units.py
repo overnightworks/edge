@@ -20,7 +20,7 @@ from home_tools.tidy_home import CommandRunner, Layout
 SERVICE_SUFFIX = ".service"
 TIMER_SUFFIX = ".timer"
 UNIT_SUFFIXES = (SERVICE_SUFFIX, TIMER_SUFFIX)
-SHOWN_PROPERTIES = "NeedDaemonReload,UnitFileState,ActiveState,ExecStart,Result"
+SHOWN_PROPERTIES = "NeedDaemonReload,UnitFileState,ActiveState,ExecStart,Result,FragmentPath"
 # systemd prints a loaded command as `{ path=… ; argv[]=… ; ignore_errors=… ; … }`.
 EXEC_START_ARGV = re.compile(r"argv\[\]=(.*?) ;")
 DEPENDENCY_DIRECTORY_SUFFIXES = (".wants", ".requires")
@@ -36,6 +36,7 @@ class LoadedUnit:
     active_state: str
     commands: tuple[str, ...]
     last_result: str
+    fragment_path: str
 
     @classmethod
     def parse(cls, shown: str) -> LoadedUnit:
@@ -52,6 +53,7 @@ class LoadedUnit:
                 for command in EXEC_START_ARGV.findall(value)
             ),
             last_result=properties.get("Result", ""),
+            fragment_path=properties.get("FragmentPath", ""),
         )
 
     @property
@@ -171,6 +173,13 @@ class UserUnits:
                     f"{link} is a retired link of this checkout, but {entry} is not;"
                     " this checkout does not own that unit, so you decide: move it away"
                     " or delete the retired link, then rerun"
+                )
+            loaded_from = self.show(link.name).fragment_path
+            if loaded_from not in ("", str(entry)):
+                raise StepFailed(
+                    f"{link} is a retired link of this checkout, but systemd loaded {link.name}"
+                    f" from {loaded_from}; this checkout does not own that unit, so you decide:"
+                    " move it away or delete the retired link, then rerun"
                 )
 
     def link_directories(self) -> list[Path]:

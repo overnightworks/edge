@@ -41,6 +41,7 @@ class FakeSystemctl:
         self.active: set[str] = set()
         self.last_result = "success"
         self.starts_nothing = False
+        self.loaded_from: dict[str, Path] = {}
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         assert argv[:2] == ["systemctl", "--user"]
@@ -93,12 +94,14 @@ class FakeSystemctl:
             "",
         )
         command = exec_start.removeprefix("ExecStart=")
+        fragment_path = self.loaded_from.get(name, link if link.exists() else "")
         enabled = (self.user_units / TIMERS_WANTS / name).exists()
         return "\n".join(
             [
                 f"NeedDaemonReload={'yes' if stale else 'no'}",
                 f"UnitFileState={'enabled' if enabled else 'linked'}",
                 f"Result={self.last_result}",
+                f"FragmentPath={fragment_path}",
                 f"ActiveState={'active' if name in self.active else 'inactive'}",
                 f"ExecStart={{ path={command} ; argv[]={command} ; ignore_errors=no ; }}"
                 if command
@@ -407,3 +410,21 @@ def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine
     assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 1
     machine.step.apply()
     assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 0
+
+
+def test_a_retired_link_whose_name_systemd_loaded_from_elsewhere_stops_nothing(
+    machine: Machine, tmp_path: Path
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    elsewhere = tmp_path / ".local" / "share" / "systemd" / "user" / TIMER
+    machine.systemctl.loaded_from[TIMER] = elsewhere
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"{TIMERS_WANTS}/{TIMER}.*{elsewhere}"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()

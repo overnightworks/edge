@@ -21,7 +21,7 @@ repo=$(git -C "$here" rev-parse --show-toplevel)
 image=home-tools-system-proof
 mkdir -p "$evidence"
 
-until awk -v cores="$(nproc)" '{ exit !($1 <= 1.5 * cores) }' /proc/loadavg; do sleep 30; done
+until LC_ALL=C awk -v cores="$(nproc)" '{ exit !($1 <= 1.5 * cores) }' /proc/loadavg; do sleep 30; done
 
 context=$(mktemp -d)
 : >"$evidence/containers.txt"
