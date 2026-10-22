@@ -202,17 +202,22 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
         if labels[EDGE_NAME_LABEL] not in hosts:
             yield f"{service} labels a name the entry does not list ({EDGE_NAME_LABEL})"
         holders.setdefault(labels[EDGE_NAME_LABEL], []).append(str(name))
-        health = definition.get("healthcheck")
-        if not isinstance(health, dict) or _healthcheck_disabled(health):
-            yield f"{service} has no healthcheck (healthcheck); the publish phase asks it for ready"
-        elif _interpolates(str(health.get("test"))):
-            yield f"{service} interpolates the healthcheck test ($); not yet supported"
+        if reason := _healthcheck_refusal(definition.get("healthcheck")):
+            yield f"{service} {reason}"
     for host in hosts:
         if len(holders.get(host, [])) != 1:
             yield (
                 f"host {compose.printable(host)} needs exactly one service labelled "
                 f"{EDGE_NAME_LABEL} with its name (labels)"
             )
+
+
+def _healthcheck_refusal(health: object) -> str | None:
+    if not isinstance(health, dict) or _healthcheck_disabled(health):
+        return "has no healthcheck (healthcheck); the publish phase asks it for ready"
+    if _interpolates(str(health.get("test"))):
+        return "interpolates the healthcheck test ($); not yet supported"
+    return None
 
 
 def _healthcheck_disabled(health: dict) -> bool:
