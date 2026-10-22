@@ -29,6 +29,7 @@ class FakeMachine:
         self.default_driver: str | None = "journald"
         self.failing_docker_commands: set[str] = set()
         self.removed_containers: set[str] = set()
+        self.listings = 0
         self.boots: str | None = boots_json(NOW - timedelta(days=3))
         self.system_boots: str | None = self.boots
 
@@ -38,7 +39,9 @@ class FakeMachine:
         if argv[1] in self.failing_docker_commands:
             return None
         if argv[1] == "ps":
-            return "".join(f"id{i}\n" for i, _ in enumerate(self.containers))
+            self.listings += 1
+            gone = self.removed_containers if self.listings > 1 else set()
+            return "".join(f"id{i}\n" for i, (name, _, _) in enumerate(self.containers) if name not in gone)
         if argv[1] == "info":
             return None if self.default_driver is None else self.default_driver + "\n"
         name, driver, project = self.containers[int(argv[-1].removeprefix("id"))]
@@ -114,7 +117,7 @@ def test_a_journal_that_cannot_be_read_is_a_finding_of_its_own(machine, log_dire
     assert set(findings(machine, log_directory)) == {("journal-unreadable", "journal")}
 
 
-@pytest.mark.parametrize("failing", [{"ps", "inspect", "info"}, {"info"}])
+@pytest.mark.parametrize("failing", [{"ps", "inspect", "info"}, {"info"}, {"inspect"}])
 def test_a_docker_that_cannot_be_run_is_one_finding_not_a_pass(machine, log_directory, failing) -> None:
     machine.containers = [("app-web-1", "journald", "app")]
     machine.failing_docker_commands = failing

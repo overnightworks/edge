@@ -54,15 +54,21 @@ def _container_findings(run: CommandRunner) -> LogReading:
         return LogReading([LogFinding("docker-unreadable", "docker", "`docker ps -a` lässt sich nicht ausführen")], [])
     findings = []
     inspected = 0
+    failed_inspections = []
     for identifier in identifiers.split():
         listing = run(["docker", "inspect", "--format", INSPECT_FORMAT, identifier])
-        if listing is None:  # `docker ps` listed it, so a failing inspect means it was removed since
+        if listing is None:
+            failed_inspections.append(identifier)
             continue
         inspected += 1
         name, driver, project = listing.rstrip("\n").split("\t")
         if driver == JSON_FILE_DRIVER:
             where = f"Projekt {project}" if project else "ohne Compose-Projekt"
             findings.append(LogFinding("container-json-file", name.removeprefix("/"), f"Treiber {JSON_FILE_DRIVER}, {where}"))
+    if failed_inspections:
+        still_listed = run(DOCKER_CONTAINER_IDS)  # an id that is gone from a second listing was removed; any other failure is unread
+        if still_listed is None or set(failed_inspections) & set(still_listed.split()):
+            return LogReading([LogFinding("docker-unreadable", "docker", "`docker inspect` lässt sich nicht ausführen")], [])
     return LogReading(findings, [f"Container: {inspected}, davon {len(findings)} mit {JSON_FILE_DRIVER}"])
 
 
