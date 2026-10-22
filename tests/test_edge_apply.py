@@ -1970,10 +1970,6 @@ def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_
             "services:\n  step-ca:\n    run: {enabled: true, setup: fleet.yaml}\n",
             "services.step-ca.run.setup",
         ),
-        (
-            "services:\n  step-ca:\n    repo: overnightworks/x\n    run: {enabled: true}\n",
-            "apps follow with block 6",
-        ),
     ],
 )
 def test_an_invalid_catalog_is_cannot_plan_with_one_line_naming_the_key(

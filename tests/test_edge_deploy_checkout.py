@@ -1,0 +1,286 @@
+"""The checkout of an app, `~/srv/<key>`, against real git under `tmp_path` (#255 A4, A6, A13-A17).
+
+origin is a bare repository reached through `url.<bare>.insteadOf` in the test's own global git
+config, as the probe reaches it; nothing leaves `tmp_path`."""
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+from git_support import plain_git
+
+from edge import checkout, deploy_checkout
+
+URL = "https://github.com/overnightworks/hopin.git"
+COMPOSE = "services:\n  hopin:\n    build: .\n"
+
+
+@dataclass
+class Origin:
+    """A bare `master` plus the work tree a test builds its history in."""
+
+    bare: Path
+    work: Path
+
+    def commit(self, files: dict[str, str], message: str = "change") -> str:
+        for name, content in files.items():
+            path = self.work / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        plain_git(self.work, "add", "--all")
+        if files:
+            plain_git(self.work, "add", "--force", "--", *files)  # also what .gitignore ignores
+        plain_git(
+            self.work, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--allow-empty",
+            "-m", message,
+        )  # fmt: skip
+        return plain_git(self.work, "rev-parse", "HEAD").stdout.strip()
+
+    def push(self, *references: str) -> None:
+        plain_git(self.work, "push", "--quiet", "--force", "origin", *references)
+
+    def tag(self, name: str, *, annotated: bool = False) -> None:
+        arguments = ["-a", "-m", name] if annotated else []
+        plain_git(self.work, "tag", "--force", *arguments, name)
+        self.push(f"refs/tags/{name}")
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("LC_ALL", "C")
+    return home
+
+
+@pytest.fixture
+def origin(tmp_path: Path, home: Path) -> Origin:
+    bare, work = tmp_path / "origin.git", tmp_path / "work"
+    plain_git(tmp_path, "init", "--quiet", "--bare", "--initial-branch", "master", str(bare))
+    plain_git(tmp_path, "init", "--quiet", "--initial-branch", "master", str(work))
+    for key, value in (("user.name", "edge test"), ("user.email", "test@edge.invalid")):
+        plain_git(work, "config", key, value)
+    plain_git(work, "remote", "add", "origin", bare.as_uri())
+    (home / ".gitconfig").write_text(
+        f'[url "{bare.as_uri()}"]\n\tinsteadOf = https://github.com/overnightworks/hopin.git\n'
+    )
+    started = Origin(bare, work)
+    started.commit({"compose.yaml": COMPOSE})
+    started.push("master")
+    return started
+
+
+@pytest.fixture
+def app(home: Path) -> deploy_checkout.AppCheckout:
+    return deploy_checkout.AppCheckout(checkout.Git(home / "srv" / "hopin"), URL, "master")
+
+
+@pytest.fixture
+def fetched(origin: Origin, app: deploy_checkout.AppCheckout) -> deploy_checkout.AppCheckout:
+    app.prepare()
+    app.fetch()
+    return app
+
+
+def test_a_new_checkout_is_made_with_the_apps_origin_and_nothing_else(app, origin):
+    app.prepare()
+
+    tree = app.git.tree
+    assert plain_git(tree, "config", "--get", "remote.origin.url").stdout.strip() == URL
+    assert sorted(path.name for path in tree.iterdir()) == [".git"]
+    assert app.head() is None
+
+
+def test_the_fetch_mirrors_the_release_tags_and_writes_only_dot_git(origin, app):
+    sha = origin.commit({"a": "1"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1", annotated=True)
+    origin.tag("v2026.10.22.2")
+    app.prepare()
+
+    app.fetch()
+
+    assert app.tags().mirrored == ("v2026.10.22.1", "v2026.10.22.2")
+    assert app.commit_of("v2026.10.22.1") == sha == app.commit_of("v2026.10.22.2")
+    assert sorted(path.name for path in app.git.tree.iterdir()) == [".git"]
+
+
+def test_a_tag_on_a_side_branch_is_mirrored_but_not_on_the_default_branch(origin, app):
+    origin.commit({"a": "1"})
+    origin.push("master")
+    origin.tag("v2026.10.22.2")
+    plain_git(origin.work, "switch", "--quiet", "-c", "side")
+    origin.commit({"side": "1"})
+    origin.tag("v2026.10.22.9")
+    app.prepare()
+
+    app.fetch()
+
+    tags = app.tags()
+    assert tags.mirrored == ("v2026.10.22.2", "v2026.10.22.9")
+    assert tags.on_branch == {"v2026.10.22.2"}
+
+
+def test_a_local_tag_is_never_read_and_a_tag_moved_on_origin_is_seen_as_it_is(origin, fetched):
+    first = origin.commit({"a": "1"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+    plain_git(fetched.git.tree, "tag", "v2026.10.22.7", first)
+    plain_git(fetched.git.tree, "tag", "v2026.10.22.1", first)
+    moved = origin.commit({"a": "2"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+
+    fetched.fetch()
+
+    assert fetched.tags().mirrored == ("v2026.10.22.1",)
+    assert fetched.commit_of("v2026.10.22.1") == moved
+
+
+def test_a_tag_deleted_on_origin_leaves_the_mirror(origin, fetched):
+    origin.commit({"a": "1"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+    plain_git(origin.bare, "tag", "--delete", "v2026.10.22.1")
+
+    fetched.fetch()
+
+    assert fetched.tags().mirrored == ()
+
+
+def test_an_origin_that_cannot_be_reached_is_a_git_error_with_gits_last_line(fetched, origin):
+    (Path.home() / ".gitconfig").write_text(f'[url "file:///nowhere.git"]\n\tinsteadOf = {URL}\n')
+
+    with pytest.raises(checkout.GitError, match=r"`git fetch` exited 128: fatal:"):
+        fetched.fetch()
+
+
+def test_the_checkout_detaches_at_the_tag_and_head_names_it(origin, fetched):
+    sha = origin.commit({"a": "1"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+
+    fetched.check_out(fetched.commit_of("v2026.10.22.1"))
+
+    assert fetched.head() == sha
+    assert fetched.git.branch() is None
+    assert (fetched.git.tree / "a").read_text() == "1"
+
+
+@pytest.mark.parametrize("tracked", ["config.local", "local/config"])
+def test_an_ignored_file_the_new_tag_tracks_refuses_the_checkout_and_stays(
+    origin, fetched, tracked
+):
+    first = origin.commit({".gitignore": "config.local\nlocal/\n"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    second = origin.commit({tracked: "from the tag"})
+    origin.push("master")
+    origin.tag("v2026.10.22.2")
+    fetched.fetch()
+    fetched.check_out(fetched.commit_of("v2026.10.22.1"))
+    kept = fetched.git.tree / tracked
+    kept.parent.mkdir(exist_ok=True)
+    kept.write_text("the operator's own")
+
+    with pytest.raises(checkout.GitError, match="would be overwritten"):
+        fetched.check_out(second)
+
+    assert kept.read_text() == "the operator's own"
+    assert fetched.head() == first
+
+
+def test_an_ignored_file_that_no_tag_tracks_is_allowed_and_kept(origin, fetched):
+    origin.commit({".gitignore": ".env\n"})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+    fetched.check_out(fetched.commit_of("v2026.10.22.1"))
+    (fetched.git.tree / ".env").write_text("SECRET=kept")
+
+    fetched.prepare()
+
+    assert (fetched.git.tree / ".env").read_text() == "SECRET=kept"
+
+
+@pytest.mark.parametrize(
+    ("arrange", "named"),
+    [
+        (lambda tree: (tree / "compose.yaml").write_text("edited"), "compose.yaml"),
+        (lambda tree: (tree / "stray").write_text("new"), "stray"),
+    ],
+)
+def test_a_tracked_edit_or_an_untracked_file_cannot_be_planned_and_nothing_is_reset(
+    origin, fetched, arrange, named
+):
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+    fetched.check_out(fetched.commit_of("v2026.10.22.1"))
+    arrange(fetched.git.tree)
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match=f"local changes.*{named}"):
+        fetched.prepare()
+
+    assert (fetched.git.tree / named).read_text() in {"edited", "new"}
+
+
+def test_an_origin_url_other_than_the_apps_repository_cannot_be_planned(fetched):
+    plain_git(fetched.git.tree, "remote", "set-url", "origin", "https://token@example.org/x.git")
+
+    with pytest.raises(deploy_checkout.CheckoutRefused) as refused:
+        fetched.prepare()
+
+    assert "has origin https://<redacted>@example.org/x.git, not" in str(refused.value)
+
+
+def test_a_head_on_a_born_branch_cannot_be_planned(origin, fetched):
+    plain_git(fetched.git.tree, "fetch", "--quiet", "origin", "master")
+    plain_git(fetched.git.tree, "checkout", "--quiet", "-B", "master", "FETCH_HEAD")
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match="is on branch master, not detached"):
+        fetched.prepare()
+
+
+def test_a_directory_that_is_no_checkout_cannot_be_planned(app):
+    app.git.tree.mkdir(parents=True)
+    (app.git.tree / "notes").write_text("mine")
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match="no git checkout"):
+        app.prepare()
+
+
+def test_a_linked_worktree_is_no_main_worktree(app):
+    app.git.tree.mkdir(parents=True)
+    (app.git.tree / ".git").write_text("gitdir: /elsewhere\n")
+
+    with pytest.raises(deploy_checkout.CheckoutRefused, match="not a main worktree"):
+        app.prepare()
+
+
+def test_the_compose_file_is_read_at_the_commit_not_from_the_tree(origin, fetched):
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+    sha = fetched.commit_of("v2026.10.22.1")
+    fetched.check_out(sha)
+    (fetched.git.tree / "compose.yaml").write_text("edited after the checkout")
+
+    assert fetched.compose_file(sha) == COMPOSE
+
+
+def test_a_commit_without_a_regular_compose_file_has_none(origin, fetched):
+    plain_git(origin.work, "rm", "--quiet", "compose.yaml")
+    (origin.work / "elsewhere").write_text("x")
+    (origin.work / "compose.yaml").symlink_to("elsewhere")
+    origin.commit({})
+    origin.push("master")
+    origin.tag("v2026.10.22.1")
+    fetched.fetch()
+
+    assert fetched.compose_file(fetched.commit_of("v2026.10.22.1")) is None

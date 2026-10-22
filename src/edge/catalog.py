@@ -1,10 +1,12 @@
 """`fleet.yaml`, the service catalog: the one owner of reading it and of its typed schemas.
 
 `edge apply` reads the entries that have a `run` block and no `repo`: the units of this
-repository. A unit's key is a compose profile (docs/naming.md). Entries without `run` are no
-units and `units()` ignores them. `hosts()` is the separate reader of every entry's `hosts` list
-(an entry without `run` is enabled); the top-level `cloudflare:` and `github:` keys belong to
-OpenTofu, which reads the same file and must agree with these readers.
+repository. A unit's key is a compose profile (docs/naming.md). An entry with `repo` and `run` is
+an app: its key is its repository's name under `github.org`, its compose project and its checkout
+`~/srv/<key>`; `apps()` reads them. Entries without `run` are no units and no apps, and `units()`
+and `apps()` ignore them. `hosts()` is the separate reader of every entry's `hosts` list (an entry
+without `run` is enabled); the top-level `cloudflare:` and `github:` keys belong to OpenTofu, which
+reads the same file and must agree with these readers.
 """
 
 import os
@@ -20,6 +22,9 @@ import yaml
 
 FLEET_FILE = "fleet.yaml"
 _RUN_KEYS = {"enabled", "setup"}
+_APP_RUN_KEYS = {"enabled"}
+_REPO_KEYS = {"default_branch"}
+EDGE_PROJECT = "edge"  # the compose project of this repository's own stack
 _BOOL_TAG = "tag:yaml.org,2002:bool"
 _TRUE_OR_FALSE = re.compile(r"^(?:true|false)$")
 _FLOAT_TAG = "tag:yaml.org,2002:float"
@@ -34,6 +39,11 @@ _HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
 # Lowercase unreserved segments, no query or trailing slash: the rendering embeds it in a rule.
 _DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+# A compose project name: it is also the repository and the directory name of an app.
+_APP_KEY = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_GITHUB_ORGANISATION = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+# What `git check-ref-format --branch` accepts, narrowed to what never needs quoting.
+_BRANCH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*")
 _LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost"}
 APEX = "@"
 WILDCARD = "*"
@@ -70,6 +80,13 @@ class Unit:
     key: str
     enabled: bool
     setup: str | None
+
+
+@dataclass(frozen=True)
+class App:
+    key: str
+    enabled: bool
+    default_branch: str
 
 
 def read(catalog_file: Path) -> Any:
@@ -111,16 +128,70 @@ def units(
     return tuple(
         _unit(key, entry["run"], profile_services, repository)
         for key, entry in entries.items()
-        if _is_unit(key, entry)
+        if _is_unit(entry)
     )
 
 
-def _is_unit(key: str, entry: Any) -> bool:
-    if not isinstance(entry, dict) or "run" not in entry:
-        return False
-    if "repo" in entry:
-        raise CatalogError(f"services.{key}: apps follow with block 6")
-    return True
+def _is_unit(entry: Any) -> bool:
+    return isinstance(entry, dict) and "run" in entry and "repo" not in entry
+
+
+def apps(document: Any, profile_services: Mapping[str, tuple[str, ...]]) -> tuple[App, ...]:
+    """The apps of the catalog: the entries with `repo` and `run`. A `repo` entry without `run` is
+    a library and stays ignored."""
+    if not isinstance(document, dict):
+        raise CatalogError(f"{FLEET_FILE}: must be a map")
+    entries = document.get("services", {})
+    if not isinstance(entries, dict):
+        raise CatalogError("services: must be a map of entries")
+    return tuple(
+        _app(key, entry, profile_services)
+        for key, entry in entries.items()
+        if isinstance(entry, dict) and "run" in entry and "repo" in entry
+    )
+
+
+def github_org(document: Any) -> str:
+    """The GitHub organisation that owns the repositories of the apps (`github.org`)."""
+    github = document.get("github") if isinstance(document, dict) else None
+    organisation = github.get("org") if isinstance(github, dict) else None
+    if not isinstance(organisation, str) or not _GITHUB_ORGANISATION.fullmatch(organisation):
+        raise CatalogError("github.org: must be a GitHub organisation name")
+    return organisation
+
+
+def _app(key: str, entry: dict, profile_services: Mapping[str, tuple[str, ...]]) -> App:
+    if key in profile_services or key == EDGE_PROJECT:
+        raise CatalogError(f"services.{key}: an app's key is no compose profile or project of edge")
+    if not _APP_KEY.fullmatch(key):
+        raise CatalogError(f"services.{key}: an app's key must be a compose project name")
+    run, repo = entry["run"], entry["repo"]
+    if not isinstance(run, dict):
+        raise CatalogError(f"services.{key}.run: must be a map")
+    for run_key in run:
+        if run_key not in _APP_RUN_KEYS:
+            raise CatalogError(f"services.{key}.run.{run_key}: unknown key for an app")
+    return App(key, _enabled(key, run), _default_branch(key, repo))
+
+
+def _default_branch(key: str, repo: Any) -> str:
+    if not isinstance(repo, dict):
+        raise CatalogError(f"services.{key}.repo: must be a map")
+    for repo_key in repo:
+        if repo_key not in _REPO_KEYS:
+            raise CatalogError(f"services.{key}.repo.{repo_key}: unknown key")
+    branch = repo.get("default_branch")
+    if not isinstance(branch, str) or not _is_branch_name(branch):
+        raise CatalogError(f"services.{key}.repo.default_branch: must be a branch name")
+    return branch
+
+
+def _is_branch_name(branch: str) -> bool:
+    return (
+        bool(_BRANCH.fullmatch(branch))
+        and ".." not in branch
+        and not branch.endswith((".", ".lock"))
+    )
 
 
 def _unit(
