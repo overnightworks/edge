@@ -133,6 +133,35 @@ def test_every_table_of_contents_entry_targets_an_id_of_the_page(name):
     assert all(f'id="{target}"' in page for target in targets)
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Die verschlüsselte Verbindung Ihres Browsers endet bei Cloudflare",
+        "kann ihren Inhalt technisch einsehen",
+        "dafür ist Cloudflare selbst verantwortlich",
+        "CELEX:32023D1795",
+        "Bayerische Landesamt für Datenschutzaufsicht (BayLDA)",
+    ],
+)
+def test_the_shared_privacy_part_says_what_cloudflare_sees_and_who_hears_complaints(sentence):
+    assert sentence in read_page("datenschutz").split('<section class="app" id="songmaker">')[0]
+
+
+@pytest.mark.parametrize(
+    ("section", "sentence"),
+    [
+        ("automatisierte-entscheidungen", "Art. 22 Abs. 1 und 4 DSGVO"),
+        ("pseudonym", "§ 19 Abs. 2 TDDDG"),
+    ],
+)
+def test_a_shared_section_precedes_songmaker_and_is_in_the_table_of_contents(section, sentence):
+    page = read_page("datenschutz")
+    shared, songmaker = page.split('<section class="app" id="songmaker">')
+    assert f'<a href="#{section}">' in shared
+    assert sentence in shared.split(f'id="{section}"')[1]
+    assert f'id="{section}"' not in songmaker
+
+
 @pytest.mark.parametrize("name", TEXT_PAGES)
 def test_the_songmaker_section_has_an_anchored_heading_and_subsection_ids(name):
     page = read_page(name)
