@@ -192,6 +192,44 @@ resource "cloudflare_ruleset" "client_address" {
   ]
 }
 
+# Paths the public may never reach, refused at Cloudflare's edge before the tunnel. Cloudflare
+# normalizes the incoming URL first (https://developers.cloudflare.com/rules/normalization/how-it-works/),
+# but leaves `%2F` encoded and only merges slashes with the zone's optional "Cloudflare" type, which
+# this catalog does not control. So the rule decodes the path itself (`url_decode` with `r`, also
+# `%252F`) and matches it with `wildcard` (https://developers.cloudflare.com/ruleset-engine/rules-language/operators/),
+# which is case-insensitive and works on the Free plan; `matches` needs Business. Each `/` of the
+# denied path becomes `/*`, so extra or encoded slashes, dot segments, a trailing slash and a longer
+# tail are refused too. That also refuses a longer path that merely contains the same segments:
+# the deny fails closed. Free allows 5 custom rules; this one rule per host stays within it.
+locals {
+  denied_hosts = { for fqdn, host in local.hosts : fqdn => host.deny_public if length(host.deny_public) > 0 }
+  deny_rule_expressions = {
+    for fqdn, paths in local.denied_hosts : fqdn => join(" ", [
+      "lower(http.host) eq \"${fqdn}\" and (",
+      join(" or ", [
+        for path in paths :
+        "url_decode(http.request.uri.path, \"r\") wildcard \"/*${join("/*", split("/", trimprefix(path, "/")))}*\""
+      ]),
+      ")",
+    ])
+  }
+}
+
+resource "cloudflare_ruleset" "deny_public" {
+  count   = length(local.denied_hosts) > 0 ? 1 : 0
+  zone_id = local.zone_id
+  name    = "public deny"
+  kind    = "zone"
+  phase   = "http_request_firewall_custom"
+  rules = [
+    for fqdn in sort(keys(local.denied_hosts)) : {
+      description = "${fqdn} refuses the paths of its deny_public list"
+      action      = "block"
+      expression  = local.deny_rule_expressions[fqdn]
+    }
+  ]
+}
+
 import {
   for_each = local.record_ids_to_import
   to       = cloudflare_dns_record.host[each.key]

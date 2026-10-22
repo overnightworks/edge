@@ -42,6 +42,7 @@ def as_expectation(found: tuple[catalog.Host, ...]) -> dict:
             "reason": one.reason,
             "ready": one.ready,
             "target": one.target,
+            "deny_public": list(one.deny_public),
         }
         for one in found
     }
@@ -68,13 +69,15 @@ def test_a_host_carries_its_service_fqdn_and_all_five_fields():
             reason="own login",
             ready="/health",
             target="http://127.0.0.1:8081",
+            deny_public=(),
         ),
     )
 
 
-def test_the_repositorys_catalog_declares_songmakers_two_hosts_on_8080_and_keycloaks_auth():
+def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks_auth():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
+        ("songmaker.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
         ("hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
         ("www.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
         (
@@ -84,6 +87,40 @@ def test_the_repositorys_catalog_declares_songmakers_two_hosts_on_8080_and_keycl
             "/realms/hallucinai/.well-known/openid-configuration",
         ),
     ]
+
+
+def test_songmakers_host_refuses_the_back_channel_route_publicly():
+    found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
+    assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
+        "songmaker.hallucinai.de": ("/auth/backchannel-logout",)
+    }
+
+
+@pytest.mark.parametrize("denied", [["/a"], ["/auth/backchannel-logout", "/x.y_z~1-2"], []])
+def test_a_host_lists_the_absolute_paths_the_public_may_never_reach(denied):
+    (found,) = catalog.hosts(document(hosted(host(deny_public=denied))))
+    assert found.deny_public == tuple(denied)
+
+
+@pytest.mark.parametrize(
+    "denied",
+    [
+        "/a",
+        [""],
+        ["a"],
+        ["/A"],
+        ["/a?x=1"],
+        ["/a/"],
+        ["//a"],
+        ['/a"b'],
+        ["/a b"],
+        ["/a%2Fb"],
+        [1],
+    ],
+)
+def test_a_malformed_deny_path_is_refused_naming_the_key(denied):
+    message = refusal(document(hosted(host(deny_public=denied))))
+    assert message.startswith("services.app.hosts[0].deny_public:")
 
 
 @pytest.mark.parametrize("unknown", ["port", "ready_path", "record"])
@@ -110,6 +147,7 @@ def test_a_host_without_target_is_asked_on_traefik():
     [
         pytest.param("app", "app", "http://localhost:8080", False, id="not-a-declared-pair"),
         pytest.param("songmaker", "@", "http://localhost:8080", True, id="declared-apex"),
+        pytest.param("songmaker", "songmaker", "http://localhost:8080", True, id="declared-host"),
         pytest.param("songmaker", "www", "http://127.0.0.1:8080", True, id="declared-www"),
         pytest.param("songmaker", "www", "http://localhost:8090", False, id="admin-port"),
         pytest.param("app", "app", "http://127.0.0.1:8090", False, id="admin-port-anywhere"),

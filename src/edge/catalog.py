@@ -30,7 +30,9 @@ _OCTAL_NUMBER = re.compile(r"^0o[0-7]+$")
 
 DEFAULT_TARGET = "http://127.0.0.1:8081"  # Traefik
 ADMIN_PORT = 8090
-_HOST_KEYS = {"name", "exposure", "reason", "ready", "target"}
+_HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
+# Lowercase unreserved segments, no query or trailing slash: the rendering embeds it in a rule.
+_DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost"}
 APEX = "@"
@@ -38,7 +40,7 @@ WILDCARD = "*"
 PROBE_NAME = "edge-host-check"  # the host check asks the wildcard here (#154)
 # Gap 35 (docs/architecture.md section 7): these hosts still bypass Traefik. Their `target` stands
 # once, in fleet.yaml. Deleted when the songmaker cutover (X11) lands.
-GAP_35_HOSTS = frozenset({("songmaker", APEX), ("songmaker", "www")})
+GAP_35_HOSTS = frozenset({("songmaker", APEX), ("songmaker", "www"), ("songmaker", "songmaker")})
 
 
 class CatalogError(Exception):
@@ -169,6 +171,7 @@ class Host:
     reason: str | None
     ready: str | None
     target: str
+    deny_public: tuple[str, ...] = ()
 
 
 def hosts(document: Any) -> tuple[Host, ...]:
@@ -238,6 +241,7 @@ def _host(service: str, path: str, item: Any, zone: str) -> Host:
         reason=_reason(path, item.get("reason"), exposure),
         ready=_ready(path, item),
         target=_target(path, service, name, item.get("target", DEFAULT_TARGET)),
+        deny_public=_deny_public(path, item.get("deny_public", [])),
     )
 
 
@@ -292,6 +296,17 @@ def _is_request_path(ready: str) -> bool:
         and ready.isprintable()
         and " " not in ready
     )
+
+
+def _deny_public(path: str, denied: Any) -> tuple[str, ...]:
+    if not isinstance(denied, list) or not all(
+        isinstance(entry, str) and _DENIED_PATH.fullmatch(entry) for entry in denied
+    ):
+        raise CatalogError(
+            f"{path}.deny_public: must be a list of lowercase absolute paths "
+            "(letters, digits, . _ ~ -), no query, no trailing slash"
+        )
+    return tuple(denied)
 
 
 def _loopback_port(target: Any) -> int | None:

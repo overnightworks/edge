@@ -124,6 +124,19 @@ und fehlgeschlagene Anmeldungen, 90 Tage) deshalb die Adresse des Besuchers, nie
 `X-Forwarded-For`; bei IPv6 mit den Klammern des Headers. Apps, die `X-Forwarded-For` loggen, bleiben
 faelschbar; jede liest `Forwarded` oder `Cf-Connecting-IP` selbst.
 
+**Der oeffentliche Ausschluss** (`cloudflare_ruleset.deny_public`, Phase `http_request_firewall_custom`):
+Pfade aus `deny_public` eines Hosts (songmaker: `/auth/backchannel-logout`) sind von aussen nie
+erreichbar. Eine Block-Regel je Host weist sie bei Cloudflare ab, vor dem Tunnel. Cloudflare
+normalisiert die URL vorher ([Doku](https://developers.cloudflare.com/rules/normalization/how-it-works/)),
+laesst `%2F` aber kodiert und fuehrt Schraegstriche nur im optionalen Typ "Cloudflare" zusammen, den
+die Zone nicht erzwingt. Die Regel dekodiert den Pfad deshalb selbst (`url_decode(..., "r")`) und prueft ihn
+mit `wildcard` ([Operatoren](https://developers.cloudflare.com/ruleset-engine/rules-language/operators/)):
+case-insensitiv und im Free-Plan verfuegbar, anders als `matches` (ab Business). Jeder `/` des Pfads
+wird `/*`: `/auth/`, `//auth/...`, `%2F`, Gross-/Kleinschreibung, `/auth//...`, Punktsegmente und
+ein angehaengter Rest werden abgewiesen, auch ein laengerer Pfad mit denselben Segmenten (der
+Ausschluss schlaegt eher zu viel zu). Der Free-Plan erlaubt 5 Custom-Regeln, eine je Host. Das
+Token-Recht `Zone › Zone WAF` (Lesen fuer `fleet-read`, Edit fuer `fleet-write`) ist nicht gemessen: es kommt vor `hal apply` dazu, wenn ein 403 es nennt.
+
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer
 geaenderten Umgebung nie neu; der Betreiber startet es erst, wenn die Regel bei Cloudflare steht
 (`docker compose --profile keycloak up -d --no-deps keycloak` in `~/git/edge`), und nur wenn

@@ -1,0 +1,13 @@
+cloudflare:
+  zone: edge-fixture.invalid
+
+github:
+  org: edge-fixture.invalid
+
+services:
+  guarded:
+    hosts:
+      - {name: guarded, exposure: public, reason: "own login", deny_public: [/auth/backchannel-logout, /hook]}
+  open:
+    hosts:
+      - {name: open, exposure: public, reason: "own login"}

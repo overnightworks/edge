@@ -4,13 +4,15 @@
     "exposure": "public",
     "reason": "own login",
     "ready": null,
-    "target": "http://localhost:8080"
+    "target": "http://localhost:8080",
+    "deny_public": []
   },
   "www.edge-fixture.invalid": {
     "service": "songmaker",
     "exposure": "public",
     "reason": "the apex's alias",
     "ready": null,
-    "target": "http://localhost:8080"
+    "target": "http://localhost:8080",
+    "deny_public": []
   }
 }

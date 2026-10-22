@@ -455,3 +455,39 @@ run "c17_the_removed_host_leaves_the_plan" {
     error_message = "the removed host's objects are still planned"
   }
 }
+
+run "c18_a_denied_path_is_refused_before_the_tunnel_for_its_host_only" {
+  command = plan
+
+  variables {
+    catalog_file = "tests/fixtures/cloudflare-deny.yaml"
+  }
+
+  assert {
+    condition = (
+      cloudflare_ruleset.deny_public[0].zone_id == "0123456789abcdef0123456789abcdef"
+      && cloudflare_ruleset.deny_public[0].kind == "zone"
+      && cloudflare_ruleset.deny_public[0].phase == "http_request_firewall_custom"
+    )
+    error_message = "the deny is not the zone's custom rules entry point"
+  }
+
+  assert {
+    condition = [for rule in cloudflare_ruleset.deny_public[0].rules : [rule.action, rule.expression]] == [
+      [
+        "block",
+        "lower(http.host) eq \"guarded.edge-fixture.invalid\" and ( url_decode(http.request.uri.path, \"r\") wildcard \"/*auth/*backchannel-logout*\" or url_decode(http.request.uri.path, \"r\") wildcard \"/*hook*\" )",
+      ],
+    ]
+    error_message = "the deny is not one block rule for the guarded host, decoding the path and matching it by wildcard"
+  }
+}
+
+run "c19_a_catalog_without_a_deny_plans_no_ruleset" {
+  command = plan
+
+  assert {
+    condition     = length(cloudflare_ruleset.deny_public) == 0
+    error_message = "a ruleset is planned though no host denies a path"
+  }
+}
