@@ -534,3 +534,16 @@ def test_apply_without_a_terminal_refuses_the_secrets_step_naming_the_command_an
     assert "the secrets step needs a terminal: run `hal setup --apply`" in error
     assert "„Geheimnisse“" in error
     assert not sandbox.layout.secrets_dir.exists()
+
+
+def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    by_hand = '[[secret]]\nname = "gitlab"\nkind = "token"\npaths = ["~/.secrets/gitlab"]\nread_by = []\nrecreate = "von Hand"\n'
+    use_manifest(by_hand)
+    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True))
+    error = capsys.readouterr().err
+
+    assert code == 1
+    assert "not every secret is set up" in error
+    assert "„Geheimnisse“" in error
