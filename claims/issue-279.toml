@@ -1,0 +1,8 @@
+claim_id = "41cfbd41fed542e189a1c1d7311182a4"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "8c1b82f8ccd603987b8e35c4c6ec1da7e3ec610b"
+branch = "claude/issue-279-journal-retention-timer"
+scope = ["docs/home.md", "quality/baseline.toml", "scripts/system-proof/drive.sh", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/test_system_step.py"]
+opened_commit = "3ef0876723e8bb273d2c7c5943e1d2c31c0c9295"
+whole_reason = "One retention timer: the playbook that installs it, the one owner of its value, its proof and its docs."
