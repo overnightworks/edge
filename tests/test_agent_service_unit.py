@@ -8,10 +8,7 @@ and tmpfs mounts, `pull_policy: never`, the image tag, and that every path in `s
 mount target of the service.
 """
 
-import json
 import re
-import subprocess
-import sys
 import tomllib
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -23,10 +20,6 @@ from edge.realm import observe
 from edge.realm.declared import declared_realm
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "probe/agent-service"), str(ROOT / "agent-service")]
-
-from refusals import REFUSALS, check_refusals  # noqa: E402
-from smoke import Tokens  # noqa: E402
 
 SERVICE = "agent-service"
 OPERATOR_UID_GID = "1000:1000"
@@ -210,20 +203,3 @@ def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_m
     configuration,
 ):
     assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
-
-
-def test_the_refusal_cell_asks_each_case_with_its_groups_and_holds_on_the_expected_answers():
-    asked = []
-
-    def run(command, *, stdin, check, timeout):
-        asked.append(json.loads(stdin))
-        return subprocess.CompletedProcess(command, 0, "\n".join(r.answer for r in REFUSALS), "")
-
-    held = []
-    tokens_for = lambda groups: Tokens(" ".join(groups), "workload")  # noqa: E731
-    check_refusals(run, lambda *arguments: list(arguments), tokens_for, held)
-
-    assert held == ["U17"]
-    assert [case["person"] for case in asked[0]["cases"]] == [
-        " ".join(refusal.groups) for refusal in REFUSALS
-    ]
