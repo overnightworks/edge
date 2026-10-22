@@ -6,6 +6,7 @@ names a volume, so a unit switched off loses containers and keeps its data.
 """
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -16,6 +17,7 @@ from typing import Any, Protocol
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 READ_SECONDS = 60
+_COMPATIBILITY_VARIABLE = "COMPOSE_COMPATIBILITY"
 CHANGE_SECONDS = 600
 # A container that cannot load its configuration is running for a moment after `up`, then
 # exits and Docker restarts it with a backoff that starts at 100 ms; seconds of watching see it.
@@ -74,6 +76,8 @@ def named_volumes(service: Mapping[str, Any]) -> tuple[str, ...]:
 def run_docker(
     command: list[str], timeout: int, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
+    """Runs the command with COMPOSE_COMPATIBILITY off: an app's tracked `.env` could turn it on,
+    and Compose would then name a built image `<project>_<service>`, not `<project>-<service>`."""
     try:
         return subprocess.run(
             command,
@@ -83,6 +87,7 @@ def run_docker(
             timeout=timeout,
             cwd=REPOSITORY,
             input=stdin,
+            env={**os.environ, _COMPATIBILITY_VARIABLE: "false"},
         )
     except subprocess.TimeoutExpired as error:
         raise ComposeError(f"`{' '.join(command[:3])}` took longer than {timeout}s") from error

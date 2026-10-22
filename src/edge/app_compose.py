@@ -10,6 +10,8 @@ The start never builds or pulls: `build` and `pull` come first, then `create --n
 never` makes the containers from what was built, and `start` starts them.
 """
 
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +64,20 @@ class AppCompose:
         """The images of the services that are not built here; nothing else is fetched."""
         self._call("pull", ["--ignore-buildable"], PULL_SECONDS, tag)
 
+    def image_volumes(self, services: Sequence[str], tag: str) -> dict[str, list[str]]:
+        """The paths that the image of each service declares as a VOLUME. The images are those
+        that `config` resolves per service, as built or pulled by now; its output is parsed here
+        and never printed."""
+        images = self._service_images(tag)
+        declared = {}
+        for service in services:
+            if service not in images:
+                raise compose.ComposeError(
+                    f"`docker compose config` of {self.key} at {tag} names no image of a service"
+                )
+            declared[service] = self._declared_volumes(images[service], tag)
+        return declared
+
     def create(self, tag: str) -> None:
         """New containers for the services whose definition changed, none started and nothing
         built or pulled; a container of a service the file no longer names is removed."""
@@ -70,6 +86,37 @@ class AppCompose:
 
     def start(self, tag: str) -> None:
         self._call("start", [], compose.CHANGE_SECONDS, tag)
+
+    def _service_images(self, tag: str) -> dict[str, str]:
+        output = self._call("config", ["--format", "json"], compose.READ_SECONDS, tag)
+        try:
+            services = json.loads(output)["services"]
+            # Compose leaves `image` out of a service that is built here and names it
+            # `<project>-<service>`.
+            return {
+                name: str(one.get("image") or f"{self.key}-{name}")
+                for name, one in services.items()
+            }
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise compose.ComposeError(
+                f"`docker compose config` of {self.key} at {tag} answered no image per service"
+            ) from None
+
+    def _declared_volumes(self, image: str, tag: str) -> list[str]:
+        command = ["docker", "image", "inspect", "--format", "{{json .Config.Volumes}}", image]
+        result = self.run(command, compose.READ_SECONDS)
+        if result.returncode != 0:
+            raise compose.ComposeError(
+                f"`docker image inspect` for {self.key} at {tag} exited {result.returncode}; "
+                "its output is withheld, run the step in the app's checkout to read it"
+            )
+        try:
+            volumes = json.loads(result.stdout)
+            return sorted(volumes) if isinstance(volumes, dict) else []
+        except ValueError:
+            raise compose.ComposeError(
+                f"`docker image inspect` for {self.key} at {tag} answered no JSON"
+            ) from None
 
     def _call(self, verb: str, arguments: list[str], timeout: int, tag: str | None = None) -> str:
         """`tag` set: the call is bound to the checkout's compose.yaml, which is that tag's."""

@@ -447,3 +447,32 @@ def test_the_repositorys_catalog_redirects_the_apex_and_www_and_keeps_the_legal_
             for path in ("/impressum", "/datenschutz")
         ],
     }
+
+
+def test_b6_an_app_host_without_ready_is_refused_and_with_ready_is_read():
+    app = {"repo": {"default_branch": "master"}, "run": {"enabled": True}}
+    unready = document(hosted(host("app"), key="app", **app))
+
+    assert (
+        refusal(unready)
+        == "services.app.hosts[0].ready: an app's host needs the path the publish asks"
+    )
+    ready = document(hosted(host("app", ready="/health"), key="app", **app))
+    assert [one.ready for one in catalog.hosts(ready)] == ["/health"]
+
+
+def test_an_app_knows_the_names_of_its_hosts():
+    app = {"repo": {"default_branch": "master"}, "run": {"enabled": True}}
+    entry = document(hosted(host("app", ready="/h"), host("www", ready="/h"), key="app", **app))
+
+    [found] = catalog.apps(entry, {}, "edge")
+
+    assert found.hosts == ("app", "www")
+
+
+def test_an_app_host_without_ready_is_refused_when_the_apps_are_read():
+    app = {"repo": {"default_branch": "master"}, "run": {"enabled": True}}
+    entry = document(hosted(host("app"), key="app", **app))
+
+    with pytest.raises(catalog.CatalogError, match=r"services\.app\.hosts\[0\]\.ready"):
+        catalog.apps(entry, {}, "edge")

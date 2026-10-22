@@ -91,8 +91,9 @@ def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(an
         lambda engine: engine.create(TAG),
         lambda engine: engine.start(TAG),
         lambda engine: engine.containers(),
+        lambda engine: engine.image_volumes(["web"], TAG),
     ],
-    ids=["build", "pull", "create", "start", "ps"],
+    ids=["build", "pull", "create", "start", "ps", "config"],
 )
 def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     docker = Docker(exit_code=17, stdout=SENTINEL)
@@ -106,3 +107,92 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     assert f"of {KEY}" in line
     assert "exited 17" in line
     assert "output is withheld" in line
+
+
+class ImageDocker(Docker):
+    """Answers `config --format json` with `services` and `image inspect` with what the image
+    declares in `by_image`, else with `inspected`. The services chain through `depends_on` across
+    the three shapes: image only, build only, build plus image."""
+
+    def __init__(
+        self,
+        inspected: str = "null",
+        inspect_exit_code: int = 0,
+        by_image: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__()
+        self.inspected, self.inspect_exit_code = inspected, inspect_exit_code
+        self.by_image = by_image or {}
+        self.services = {
+            "web": {"build": {"context": "."}, "depends_on": {"app": {"condition": "started"}}},
+            "app": {
+                "build": {"context": "app"},
+                "image": "registry.example/app:1",
+                "depends_on": {"db": {"condition": "started"}},
+            },
+            "db": {"image": "postgres:17"},
+        }
+
+    def run(self, command, _timeout, _stdin=None):
+        self.commands.append(command)
+        if command[:3] == ["docker", "image", "inspect"]:
+            answer = self.by_image.get(command[-1], self.inspected)
+            return subprocess.CompletedProcess(command, self.inspect_exit_code, answer, "")
+        return subprocess.CompletedProcess(command, 0, json.dumps({"services": self.services}), "")
+
+
+def test_each_service_of_a_dependency_chain_reports_the_volumes_of_its_own_image():
+    docker = ImageDocker(
+        by_image={
+            f"{KEY}-web": '{"/built":{}}',
+            "registry.example/app:1": '{"/tagged":{}}',
+            "postgres:17": '{"/var/lib/postgresql/data":{}}',
+        }
+    )
+
+    declared = engine_over(docker).image_volumes(["web", "app", "db"], TAG)
+
+    assert declared == {
+        "web": ["/built"],
+        "app": ["/tagged"],
+        "db": ["/var/lib/postgresql/data"],
+    }
+    assert [command[-1] for command in docker.commands[1:]] == [
+        f"{KEY}-web",
+        "registry.example/app:1",
+        "postgres:17",
+    ]
+
+
+def test_a_built_image_is_named_as_compose_names_it_without_compatibility_mode(monkeypatch):
+    monkeypatch.setenv("COMPOSE_COMPATIBILITY", "true")
+
+    result = compose.run_docker(
+        ["sh", "-c", 'printf %s "$COMPOSE_COMPATIBILITY"'], compose.READ_SECONDS
+    )
+
+    assert result.stdout == "false"
+
+
+def test_a_service_the_config_names_no_image_for_is_one_line():
+    engine = engine_over(ImageDocker("null"))
+
+    with pytest.raises(compose.ComposeError, match="names no image of a service"):
+        engine.image_volumes(["worker"], TAG)
+
+
+def test_an_image_without_volumes_declares_none():
+    assert engine_over(ImageDocker("null")).image_volumes(["web"], TAG) == {"web": []}
+
+
+@pytest.mark.parametrize(("inspected", "exit_code"), [("not json", 0), (SENTINEL, 1)])
+def test_an_image_inspection_that_fails_or_answers_no_json_is_one_line_without_its_content(
+    inspected, exit_code
+):
+    engine = engine_over(ImageDocker(inspected, exit_code))
+
+    with pytest.raises(compose.ComposeError) as failed:
+        engine.image_volumes(["web"], TAG)
+
+    assert inspected not in str(failed.value)
+    assert f"for {KEY} at {TAG}" in str(failed.value)

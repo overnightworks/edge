@@ -12,12 +12,11 @@ every container is observed healthy. What runs is observed separately, file-free
 project's containers. "Nothing to change" holds only when the record, the newest release and the
 checkout's HEAD agree and every service has exactly one healthy container.
 
-The compose file of the release is held to a minimal contract before anything is built: present at
-the root, self-contained (no `include`, no `extends.file`, no `profiles`), named as the key or not
-at all, with no `depends_on` condition that waits for health or completion and no one-shot service
-(restart `no`). So `create` and `start` run together under the switch lock like the units', and
-only the health wait runs outside it. A new tag that fails stays: the run is partial and the fix is
-a newer tag.
+The compose file of the release is held to the contract of `app_contract.py` before anything is
+built, and the images' volumes are checked after build and pull, before `create`. A one-shot service
+and a `depends_on` that waits for health or completion are refused, so `create` and `start` run
+together under the switch lock like the units', and only the health wait runs outside it. A new
+tag that fails stays: the run is partial and the fix is a newer tag.
 """
 
 import json
@@ -28,15 +27,21 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
-import yaml
-
-from edge import app_compose, catalog, checkout, compose, deploy_checkout, releases, switches
+from edge import (
+    app_compose,
+    app_contract,
+    catalog,
+    checkout,
+    compose,
+    deploy_checkout,
+    releases,
+    switches,
+)
 from edge.unit_plans import Progress
 
 HEALTH_SECONDS = 300.0
 HEALTH_POLL_SECONDS = 2.0
 _SHA = 40
-_ONE_SHOT_CONDITIONS = {"service_healthy", "service_completed_successfully"}
 
 
 class AppError(Exception):
@@ -186,7 +191,7 @@ def _plan_one(
         sha = app_checkout.commit_of(release.tag)
         recorded = runtime.record.read(app.key)
         _refuse_moved_tag(app_checkout, tags.mirrored, app.key, recorded)
-        services = contract_services(app_checkout.compose_file(sha), app.key, release.tag)
+        services = _contract_services(app, release.tag, app_checkout.compose_file(sha))
         engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
         containers = engine.containers()
         head = app_checkout.head()
@@ -252,58 +257,11 @@ def _is_sha(text: str) -> bool:
     return len(text) == _SHA and all(digit in "0123456789abcdef" for digit in text)
 
 
-def contract_services(text: str | None, key: str, tag: str) -> tuple[str, ...]:
-    """The services of a release's compose file when it meets the minimal contract; else AppError
-    naming the entry, the tag and the key that is refused, never a value."""
-
-    def refuse(reason: str) -> AppError:
-        return AppError(f"services.{key}: compose.yaml at {tag}: {reason}")
-
-    if text is None:
-        raise refuse("none at the root of the repository")
+def _contract_services(app: catalog.App, tag: str, text: str | None) -> tuple[str, ...]:
     try:
-        document = yaml.safe_load(text)
-    except yaml.YAMLError as error:
-        raise refuse(f"cannot be read ({type(error).__name__})") from None
-    services = document.get("services") if isinstance(document, dict) else None
-    if not isinstance(services, dict) or not services:
-        raise refuse("must be a map with services")
-    if "include" in document:
-        raise refuse("uses include (include); an app is self-contained")
-    if "name" in document and document["name"] != key:
-        raise refuse(f"names its project other than {key} (name)")
-    for name, definition in services.items():
-        if reason := _service_refusal(definition):
-            raise refuse(f"service {compose.printable(str(name))} {reason}")
-    return tuple(str(name) for name in services)
-
-
-def _service_refusal(definition: object) -> str | None:
-    """Why a service definition breaks the contract; None when it keeps it."""
-    if not isinstance(definition, dict):
-        return "must be a map"
-    if "profiles" in definition:
-        return "uses profiles (profiles); an app's services are all started"
-    extends = definition.get("extends")
-    if isinstance(extends, dict) and "file" in extends:
-        return "extends a file (extends.file); an app is self-contained"
-    conditions = definition.get("depends_on")
-    if isinstance(conditions, dict):
-        waits = [d.get("condition") for d in conditions.values() if isinstance(d, dict)]
-        if any(_interpolates(value) for value in waits):
-            return "interpolates a depends_on condition ($); not yet supported"
-        if any(value in _ONE_SHOT_CONDITIONS for value in waits):
-            return "waits for health or completion (depends_on condition); not yet supported"
-    restart = definition.get("restart")
-    if _interpolates(restart):
-        return "interpolates restart ($); not yet supported"
-    if restart is False or restart == "no":
-        return "is a one-shot (restart no); not yet supported"
-    return None
-
-
-def _interpolates(value: object) -> bool:
-    return isinstance(value, str) and "$" in value
+        return app_contract.check(text, app.key, tag, app.hosts)
+    except app_contract.ContractError as error:
+        raise AppError(str(error)) from error
 
 
 def _run(
@@ -326,6 +284,11 @@ def _run(
         engine.build(tag)
         progress.step = f"pull at {tag}"
         engine.pull(tag)
+        progress.step = f"check the volumes of the images at {tag}"
+        app_contract.check_image_volumes(
+            app_checkout.compose_file(plan.sha) or "", key, tag,
+            engine.image_volumes(plan.services, tag),
+        )  # fmt: skip
         progress.step = f"create the containers at {tag}; they may be partly replaced"
         with marks.lock():
             engine.create(tag)
@@ -341,6 +304,8 @@ def _run(
         runtime.record.write(
             key, Deployment(tag, plan.sha, runtime.now().isoformat(timespec="seconds"))
         )
+    except app_contract.ContractError as error:
+        return str(error)
     except (checkout.GitError, compose.ComposeError, switches.SwitchError) as error:
         return f"{key}: could not {progress.step}, {error}"
     except OSError as error:

@@ -121,7 +121,9 @@ def test_a_first_apply_plans_tag_and_full_sha_then_runs_and_records_after_health
     assert world.deployed() == {"tag": FIRST, "sha": sha, "time": NOW.isoformat()}
     assert stat.S_IMODE((world.state / "deployed" / KEY).stat().st_mode) == 0o600
     assert head_of(world.srv) == sha
-    assert world.docker.verbs == ["ps", "build", "pull", "create", "start", "ps"]
+    assert world.docker.verbs == [
+        "ps", "build", "pull", "config", "image inspect", "create", "start", "ps",
+    ]  # fmt: skip
 
 
 def test_create_and_start_run_under_the_switch_lock_and_nothing_else_does(world, origin):
@@ -483,62 +485,6 @@ def test_an_update_interrupted_after_part_of_the_containers_was_replaced_is_repa
     assert world.deployed()["tag"] == SECOND
 
 
-@pytest.mark.parametrize(
-    ("text", "refused"),
-    [
-        (None, "none at the root of the repository"),
-        ("services: [", "cannot be read (ParserError)"),
-        ("just text", "must be a map with services"),
-        ("services: {}", "must be a map with services"),
-        ("services: {web: {image: x}}\ninclude: [other.yaml]", "uses include (include)"),
-        ("name: other\nservices: {web: {image: x}}", "names its project other than hopin (name)"),
-        ("services: {web: {image: x, profiles: [a]}}", "service web uses profiles (profiles)"),
-        (
-            "services: {web: {extends: {file: x.yaml, service: y}}}",
-            "service web extends a file (extends.file)",
-        ),
-        (
-            "services: {web: {image: x, depends_on: {db: {condition: service_healthy}}}}",
-            "service web waits for health or completion (depends_on condition)",
-        ),
-        (
-            "services: {web: {depends_on: {db: {condition: service_completed_successfully}}}}",
-            "service web waits for health or completion (depends_on condition)",
-        ),
-        (
-            "services: {web: {depends_on: {db: {condition: '${X:-service_healthy}'}}}}",
-            "service web interpolates a depends_on condition ($)",
-        ),
-        (
-            'services: {web: {image: x, restart: "${R:-no}"}}',
-            "service web interpolates restart ($)",
-        ),
-        ('services: {web: {image: x, restart: "no"}}', "service web is a one-shot (restart no)"),
-        ("services: {web: {image: x, restart: no}}", "service web is a one-shot (restart no)"),
-        ("services: {web: image}", "service web must be a map"),
-    ],
-)
-def test_a_compose_file_that_breaks_the_minimal_contract_is_refused_naming_the_key(text, refused):
-    with pytest.raises(apps.AppError) as refusal:
-        apps.contract_services(text, KEY, FIRST)
-
-    assert str(refusal.value).startswith(f"services.hopin: compose.yaml at {FIRST}: {refused}")
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "services: {web: {image: x}}",
-        "name: hopin\nservices: {web: {image: x, restart: unless-stopped}}",
-        "services: {web: {image: x, depends_on: [db]}, db: {image: y}}",
-        "services: {web: {depends_on: {db: {condition: service_started}}}, db: {image: y}}",
-        "services: {web: {extends: {service: other}}, other: {image: y}}",
-    ],
-)
-def test_a_compose_file_inside_the_contract_names_its_services(text):
-    assert apps.contract_services(text, KEY, FIRST)[0] == "web"
-
-
 def test_a_contract_refusal_in_a_release_is_a_plan_refusal_before_anything_is_built(world, origin):
     origin.release(FIRST, {"compose.yaml": "services: {web: {image: x, profiles: [a]}}"})
 
@@ -574,3 +520,46 @@ def test_the_default_runtime_records_with_the_clock_and_lives_under_home_srv(tmp
 
     assert runtime.srv == tmp_path / "home" / "srv"
     assert runtime.now().utcoffset() is not None
+
+
+PULL_ALWAYS = {"compose.yaml": COMPOSE.replace("build: .", "build: .\n    pull_policy: always")}
+COVERED = {
+    "compose.yaml": COMPOSE.replace("build: .", "build: .\n    volumes: ['data:/data']")
+    + "volumes:\n  data: {}\n"
+}
+
+
+def test_an_image_volume_no_named_volume_covers_is_partial_before_create_with_the_record_kept(
+    world, origin
+):
+    first = deploy(world, origin, FIRST)
+    origin.release(SECOND)
+    world.docker.image_volumes[KEY] = ["/data"]
+
+    [failure] = world.run()
+
+    assert failure == (
+        f"services.hopin: image of service hopin at {SECOND} declares a volume that no named "
+        "volume of the service covers (volumes); give it a named volume"
+    )
+    assert world.docker.verbs[-1] == "image inspect"
+    assert world.deployed()["sha"] == first
+
+
+def test_an_image_volume_a_named_volume_covers_starts(world, origin):
+    world.docker.image_volumes[KEY] = ["/data"]
+    origin.release(FIRST, COVERED)
+
+    assert world.run() == [None]
+    assert world.deployed()["tag"] == FIRST
+
+
+def test_a_service_with_pull_policy_always_is_started_from_the_inspected_image(world, origin):
+    origin.release(FIRST, PULL_ALWAYS)
+
+    assert world.run() == [None]
+
+    verbs = world.docker.verbs
+    assert "pull" not in verbs[verbs.index("image inspect") :]
+    create = next(arguments for verb, arguments, _ in world.docker.calls if verb == "create")
+    assert create == ("--no-build", "--pull", "never", "--remove-orphans")
