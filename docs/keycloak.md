@@ -83,7 +83,9 @@ Keycloak's PatternFly, Oswald and Open Sans carried in the theme (songmaker's
 font files and their licences, so no page asks a third party), the favicon,
 and Impressum and Datenschutz in the sign-in card. They are CSS, `footer.ftl`
 and message texts on top of `keycloak.v2` and `keycloak.v3`, never a copy of
-Keycloak's `template.ftl`, so a Keycloak update needs no catching up. The
+Keycloak's `template.ftl`. A Keycloak update re-checks `content.json` (a copy
+of keycloak.v3's navigation list) and the PatternFly selectors at both
+widths. The
 account console hides its "Gruppen" page (its own `content.json`) and the
 sentences under titles and sign-in methods; its "Anwendungen" lists only apps
 a person has used, because the app clients carry `alwaysDisplayInConsole:

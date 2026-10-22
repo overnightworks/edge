@@ -168,9 +168,14 @@ h1[data-testid="page-heading"] {
   background-clip: text;
 }
 
-.pf-v5-c-content > p[data-pf-content],
+[data-testid="page-heading"] + p[data-pf-content],
 span[data-testid$="/help-text"] {
   display: none;
+}
+
+.keycloak__loading-container {
+  background: var(--h-bg);
+  color: var(--h-text);
 }
 
 .pf-v5-c-title.pf-m-xl {

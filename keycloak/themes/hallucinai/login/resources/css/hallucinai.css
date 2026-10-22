@@ -55,9 +55,12 @@
 
 /* ---------- ground: deep black, grid, red and violet glows ---------- */
 
-html.login-pf,
-.login-pf body {
+html.login-pf {
   background: var(--h-bg-deep);
+}
+
+.login-pf body {
+  background: transparent;
   color: var(--h-text);
   font-family: var(--h-font-body);
   min-height: 100%;
@@ -104,6 +107,7 @@ html.login-pf::after {
 
 .pf-v5-c-login {
   background: transparent;
+  padding: 0;
 }
 
 .pf-v5-c-login__container {
@@ -168,7 +172,7 @@ html.login-pf::after {
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px 14px;
+  gap: 10px 8px;
 }
 
 .pf-v5-c-login__main-header .pf-v5-c-title {

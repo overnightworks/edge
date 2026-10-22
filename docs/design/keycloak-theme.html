@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <title>Keycloak im hallucinai-Look</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -113,9 +113,6 @@
     --h-bad: #ff4444;
   }
 
-  /* The red variant of question 1: today's songmaker sign-in button. */
-  :root[data-action="red"] { --h-action: var(--h-primary); }
-
   *, *::before, *::after { box-sizing: border-box; }
 
   html, body { margin: 0; }
@@ -187,53 +184,6 @@
   }
 
   .path { font-family: var(--mono); font-size: .92em; color: var(--ink); overflow-wrap: anywhere; }
-
-  .toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px 28px;
-    align-items: center;
-  }
-
-  .ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-
-  .ctl-lb {
-    font-family: var(--cond);
-    font-size: 12px;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    color: var(--ink-soft);
-  }
-
-  .seg {
-    display: inline-flex;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    overflow: hidden;
-    background: var(--screen);
-  }
-
-  .seg button {
-    appearance: none;
-    border: 0;
-    background: none;
-    color: var(--ink-soft);
-    font: inherit;
-    font-size: 13px;
-    min-height: 36px;
-    padding: 0 14px;
-    cursor: pointer;
-  }
-
-  .seg button + button { border-left: 1px solid var(--line); }
-
-  .seg button[aria-pressed="true"] {
-    background: color-mix(in srgb, var(--mark) 14%, var(--screen));
-    color: var(--ink);
-    font-weight: 600;
-  }
-
-  .seg button:focus-visible { outline: 2px solid var(--mark); outline-offset: -2px; }
 
   .legend {
     margin: 0;
@@ -537,14 +487,6 @@
   .btn.secondary { background: transparent; border-color: var(--h-border); color: var(--h-text); }
   .btn.sm { min-height: 32px; padding: 0 12px; font-size: 13px; }
 
-  :root[data-action="red"] .btn.primary {
-    border: none;
-    border-radius: 16px;
-    font-weight: 600;
-    color: #ffffff;
-    background: linear-gradient(135deg, var(--h-primary), color-mix(in srgb, var(--h-primary) 80%, black));
-  }
-
   .lnk {
     color: var(--h-action);
     text-decoration: underline;
@@ -820,26 +762,9 @@
   <header class="top">
     <div class="title-row">
       <h1>Keycloak im hallucinai-Look</h1>
-      <span class="issue">edge#205 · Entwurf zur Freigabe</span>
+      <span class="issue">edge#205 · freigegeben und gebaut</span>
     </div>
     <p class="lede">Anmeldung und Konto auf <span class="path">auth.hallucinai.de</span>: der Inhalt, den Keycloak&nbsp;26.8.1 mit dem Realm von heute zeigt, im Aussehen von songmakers hallucinai.de.</p>
-    <div class="toolbar">
-      <div class="ctl">
-        <span class="ctl-lb">Farbschema</span>
-        <div class="seg" role="group" aria-label="Farbschema">
-          <button type="button" data-set-theme="auto" aria-pressed="true">Gerät</button>
-          <button type="button" data-set-theme="light" aria-pressed="false">Hell</button>
-          <button type="button" data-set-theme="dark" aria-pressed="false">Dunkel</button>
-        </div>
-      </div>
-      <div class="ctl">
-        <span class="ctl-lb">Hauptknopf</span>
-        <div class="seg" role="group" aria-label="Hauptknopf">
-          <button type="button" data-set-action="violet" aria-pressed="true">Violett</button>
-          <button type="button" data-set-action="red" aria-pressed="false">Rot</button>
-        </div>
-      </div>
-    </div>
     <p class="legend">
       <span class="item"><span class="chg chg--new">neu</span></span>
       <span class="item"><span class="chg chg--chg">ersetzt</span></span>
@@ -979,7 +904,6 @@
                 <div class="navrow sel"><span class="grow">Persönliche Angaben</span></div>
                 <div class="navrow"><span class="grow">Kontosicherheit</span><svg class="ic sm"><use href="#i-right"/></svg></div>
                 <div class="navrow"><span class="grow">Anwendungen</span></div>
-                <div class="navrow"><span class="grow">Gruppen</span></div>
               </nav>
               <div class="content">
                 <h1 class="ptitle">Persönliche Angaben</h1>
@@ -1043,6 +967,7 @@
         <h3>Lässt Keycloak das Theme nicht ändern</h3>
         <ul>
           <li>Der Aufbau aus Kopfzeile, Navigation und Formular: Das Konto ist Keycloaks React-App.</li>
+          <li>Was Keycloaks Konto-Layout dazugibt, bleibt und trägt nur das Aussehen: der Abschnitt „Allgemein“ mit der Seitenleiste „Zu Abschnitt springen“, das Sprachfeld oben im Formular, der Avatar neben dem Namensmenü, der Titel „Anwendung“ der Anwendungsseite. Das Bild oben zeigt sie vereinfacht.</li>
           <li>Persönliche Angaben, Anmeldearten und Anwendungen sind drei Seiten. Alles auf einer Seite ginge nur mit einem eigenen React-Modul; nicht gezeichnet.</li>
           <li>Die Felder kommen aus dem Benutzerprofil des Realms.</li>
           <li>Der kurze Ladebildschirm: Farbe per CSS, der Text „Loading the Account Console“ bleibt englisch.</li>
@@ -1105,8 +1030,6 @@
                 <div class="dl-head"><span></span><span>Name</span><span>Anwendungstyp</span><span>Status</span></div>
                 <div class="dl-row"><svg class="ic sm chev"><use href="#i-right"/></svg><span class="app"><span>songmaker</span><svg class="ic sm"><use href="#i-out"/></svg></span><span>Intern</span><span>In Benutzung</span></div>
                 <div class="dl-row"><svg class="ic sm chev"><use href="#i-right"/></svg><span class="app"><span>Accountkonsole</span><svg class="ic sm"><use href="#i-out"/></svg></span><span>Intern</span><span>In Benutzung</span></div>
-                <div class="dl-row"><svg class="ic sm chev"><use href="#i-right"/></svg><span class="app"><span>hopin</span><svg class="ic sm"><use href="#i-out"/></svg></span><span class="muted">Intern</span><span class="muted">Nicht in Verwendung</span></div>
-                <div class="dl-row"><svg class="ic sm chev"><use href="#i-right"/></svg><span class="app"><span>presentator</span><svg class="ic sm"><use href="#i-out"/></svg></span><span class="muted">Intern</span><span class="muted">Nicht in Verwendung</span></div>
               </div>
             </div>
           </div>
@@ -1127,61 +1050,28 @@
         <ul>
           <li>Welche Anmeldearten dastehen: Passwort, die Authenticator-App als zweiter Schritt, der Passkey, weil der Realm Passkeys anbietet. Das bestimmt der Anmeldeablauf.</li>
           <li>Hilfesätze lassen sich nur ausblenden, nicht hinter ein ⓘ legen.</li>
-          <li class="warn">Anwendungen zeigt songmaker, hopin und presentator jeder Person, auch ohne Zugang, dazu die Accountkonsole selbst. Das stellt der Realm ein (<code>alwaysDisplayInConsole</code>), nicht das Theme.</li>
+          <li>Anwendungen zeigt nur, was die Person schon benutzt hat, dazu die Accountkonsole. Das stellt der Realm ein (<code>alwaysDisplayInConsole: false</code>), nicht das Theme.</li>
           <li>„In Benutzung“ bleibt Text: CSS kann den beiden Zuständen kein eigenes Zeichen geben.</li>
         </ul>
       </div>
     </div>
   </section>
 
-  <!-- ===================== Open ===================== -->
-  <section class="group" id="offen">
+  <!-- ===================== Decided ===================== -->
+  <section class="group" id="entschieden">
     <div class="group-head">
-      <h2>Offen</h2>
-      <span class="lines">drei Fragen, je mit Empfehlung</span>
+      <h2>Entschieden</h2>
+      <span class="lines">drei Fragen, vom Operator beantwortet</span>
     </div>
     <ol class="qs">
-      <li><b>Hauptknopf: Violett oder Rot?</b> <span class="rec">Empfehlung: Violett.</span> songmakers Vokabular (#924) sagt „Violett handelt, Rot beendet“, und weiße Schrift liest sich auf Violett mit 5,3 : 1, auf dem Rot nur mit 3,7 : 1; in Rot sähe auch das gewählte Feld aus wie ein Fehler. Rot wäre der Knopf der heutigen songmaker-Anmeldekarte. Oben umschaltbar.</li>
-      <li><b>Hell, dunkel oder wie das Gerät?</b> <span class="rec">Empfehlung: immer dunkel</span>, wie songmaker für alle startet; eine helle Wahl in songmaker kann Keycloak nicht lesen. Sonst folgt Keycloak dem Gerät. Oben umschaltbar.</li>
-      <li><b>Mail und „Passwort vergessen?“</b> Der Realm hat keinen Mailserver und kein Zurücksetzen; Keycloak verschickt heute keine einzige Mail. <span class="rec">Empfehlung:</span> jetzt kein Mail-Bild. Soll Zurücksetzen per Mail kommen, ist das eine Realm-Änderung mit eigenem Item, und die Mail wird dort gezeichnet. Bis dahin setzt der Operator Passwörter in der Admin-Konsole.</li>
+      <li><b>Hauptknopf: Violett.</b> songmakers Vokabular (#924) sagt „Violett handelt, Rot beendet“; weiße Schrift liest sich auf Violett mit 5,3 : 1, auf Rot nur mit 3,7 : 1. Rot bleibt Fehlern und Pflichtmarken.</li>
+      <li><b>Immer dunkel.</b> Wie songmaker für alle startet; eine helle Wahl in songmaker kann Keycloak nicht lesen. Das Gerät entscheidet nichts, auch nicht für den kurzen Ladebildschirm des Kontos.</li>
+      <li><b>Kein Mail-Bild.</b> Der Realm hat keinen Mailserver und kein Zurücksetzen; Keycloak verschickt keine einzige Mail. Bis dahin setzt der Operator Passwörter in der Admin-Konsole. Kommt Zurücksetzen per Mail, ist das eine Realm-Änderung mit eigenem Item, und die Mail wird dort gezeichnet.</li>
     </ol>
   </section>
 
   <p class="source">Aussehen aus songmaker: <span class="path">frontend/src/app.css</span>, <span class="path">SignInCard.svelte</span>, <span class="path">LegalLinks.svelte</span>, <span class="path">settings/account/+page.svelte</span>, <span class="path">docs/design/vocabulary.html</span> (#924). Inhalt aus edge <span class="path">keycloak/realm.yaml</span> und den Vorlagen und Texten von Keycloak 26.8.1. Alle Personendaten sind erfunden.</p>
 </main>
 
-<script>
-  (function () {
-    var root = document.documentElement;
-
-    function press(button) {
-      var group = button.parentNode.querySelectorAll('button');
-      for (var i = 0; i < group.length; i++) {
-        group[i].setAttribute('aria-pressed', String(group[i] === button));
-      }
-    }
-
-    function bind(attribute, apply) {
-      var buttons = document.querySelectorAll('[' + attribute + ']');
-      for (var i = 0; i < buttons.length; i++) {
-        buttons[i].addEventListener('click', function (event) {
-          var button = event.currentTarget;
-          apply(button.getAttribute(attribute));
-          press(button);
-        });
-      }
-    }
-
-    bind('data-set-theme', function (value) {
-      if (value === 'auto') root.removeAttribute('data-theme');
-      else root.setAttribute('data-theme', value);
-    });
-
-    bind('data-set-action', function (value) {
-      if (value === 'red') root.setAttribute('data-action', 'red');
-      else root.removeAttribute('data-action');
-    });
-  })();
-</script>
 </body>
 </html>

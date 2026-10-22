@@ -194,17 +194,21 @@ def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_the
     assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
 
 
-def test_the_theme_files_reach_no_host_but_hallucinai_de():
-    """#205: fonts and favicon come from the theme itself, so a page asks no third party."""
+# An SVG's xmlns names a namespace; no browser fetches it.
+XML_NAMESPACE_HOST = "www.w3.org"
+
+
+def test_the_theme_sources_name_no_host_but_hallucinai_de():
+    """#205: a source check of the theme, not proof of browser requests; the driven page is that."""
     theme = REPOSITORY / "keycloak/themes/hallucinai"
     texts = [
         path.read_text()
         for path in theme.rglob("*")
-        if path.suffix in {".css", ".ftl", ".js", ".properties"}
+        if path.suffix in {".css", ".ftl", ".js", ".json", ".properties", ".svg"}
     ]
-    hosts = {host for text in texts for host in re.findall(r"https?://([^/\"'\s)]+)", text)}
+    hosts = {host for text in texts for host in re.findall(r"(?:https?:)?//([^/\"'\s)]+)", text)}
 
-    assert hosts <= {"hallucinai.de"}
+    assert hosts <= {"hallucinai.de", XML_NAMESPACE_HOST}
 
 
 def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_opens():
