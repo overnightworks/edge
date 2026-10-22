@@ -38,6 +38,10 @@ ADMIN_PORT = 8090
 _HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
 # Lowercase unreserved segments, no query or trailing slash: the rendering embeds it in a rule.
 _DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
+_HTTPS_URL = re.compile(r"https://[a-z0-9.-]+(:\d+)?(/[a-z0-9._~/-]*)?")
+_HTTPS_ORIGIN = re.compile(r"https://[a-z0-9.-]+(:\d+)?")
+_REDIRECT_KEYS = {"hosts", "target", "keep"}
+_KEPT_PATH_KEYS = {"path", "target"}
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 # A compose project name: it is also the repository and the directory name of an app.
 _APP_KEY = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -50,7 +54,7 @@ WILDCARD = "*"
 PROBE_NAME = "edge-host-check"  # the host check asks the wildcard here (#154)
 # Gap 35 (docs/architecture.md section 7): these hosts still bypass Traefik. Their `target` stands
 # once, in fleet.yaml. Deleted when the songmaker cutover (X11) lands.
-GAP_35_HOSTS = frozenset({("songmaker", APEX), ("songmaker", "www"), ("songmaker", "songmaker")})
+GAP_35_HOSTS = frozenset({("songmaker", "songmaker")})
 
 
 class CatalogError(Exception):
@@ -265,7 +269,23 @@ def hosts(document: Any) -> tuple[Host, ...]:
         if _entry_enabled(key, entry):
             enabled_hosts += entered
     _check_together(enabled_hosts)
+    _check_redirect(document, zone_name, {host.fqdn for _, host in enabled_hosts})
     return tuple(host for _, host in enabled_hosts)
+
+
+def redirected_fqdns(document: Any) -> frozenset[str]:
+    """The names `cloudflare.redirect` answers at the edge; they hold the tunnel record too.
+
+    Valid once `hosts` has accepted the document.
+    """
+    zone_name = zone(document)
+    redirect = document["cloudflare"].get("redirect") or {}
+    return frozenset(fqdn_of(name, zone_name) for name in redirect.get("hosts", []))
+
+
+def fqdn_of(name: str, zone: str) -> str:
+    """The full name of a catalog host name: '@' is the zone's apex."""
+    return zone if name == APEX else f"{name}.{zone}"
 
 
 def zone(document: Any) -> str:
@@ -311,7 +331,7 @@ def _host(service: str, path: str, item: Any, zone: str) -> Host:
     return Host(
         service=service,
         name=name,
-        fqdn=zone if name == APEX else f"{name}.{zone}",
+        fqdn=fqdn_of(name, zone),
         exposure=exposure,
         reason=_reason(path, item.get("reason"), exposure),
         ready=_ready(path, item),
@@ -423,3 +443,70 @@ def _check_together(enabled_hosts: list[tuple[str, Host]]) -> None:
         if host.fqdn in seen:
             raise CatalogError(f"{path}.name: {host.fqdn} is listed twice")
         seen.add(host.fqdn)
+
+
+def _check_redirect(document: dict, zone: str, taken: set[str]) -> None:
+    """`cloudflare.redirect`: the zone's names that leave the tunnel for a redirect at the edge.
+
+    OpenTofu renders it (external/cloudflare.tf); a malformed one is refused before tofu starts.
+    """
+    redirect = document["cloudflare"].get("redirect")
+    if redirect is None:
+        return
+    path = "cloudflare.redirect"
+    if not isinstance(redirect, dict):
+        raise CatalogError(f"{path}: must be a map")
+    for field in redirect:
+        if field not in _REDIRECT_KEYS:
+            raise CatalogError(f"{path}.{field}: unknown key")
+    _check_redirect_hosts(f"{path}.hosts", redirect.get("hosts"), zone, taken)
+    target = redirect.get("target")
+    if not (isinstance(target, str) and _HTTPS_URL.fullmatch(target) and _has_valid_origin(target)):
+        raise CatalogError(f"{path}.target: must be an https URL without query or fragment")
+    _check_kept_paths(f"{path}.keep", redirect.get("keep", []))
+
+
+def _check_redirect_hosts(path: str, names: Any, zone: str, taken: set[str]) -> None:
+    labels_only = (
+        isinstance(names, list)
+        and bool(names)
+        and all(
+            isinstance(name, str) and (name == APEX or _LABEL.fullmatch(name)) for name in names
+        )
+    )
+    if not labels_only or len(set(names)) != len(names):
+        raise CatalogError(f"{path}: must be a list of different names, '@' or one lowercase label")
+    for name in names:
+        fqdn = fqdn_of(name, zone)
+        if fqdn in taken:
+            raise CatalogError(f"{path}: {fqdn} is also a host of a service")
+
+
+def _has_valid_origin(url: str) -> bool:
+    """The hostname is dot-separated lowercase labels and the port, if any, is a real one."""
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    labels = (parts.hostname or "").split(".")
+    return all(_LABEL.fullmatch(label) for label in labels) and port != 0
+
+
+def _check_kept_paths(path: str, kept: Any) -> None:
+    items = kept if isinstance(kept, list) else [None]
+    for index, item in enumerate(items):
+        where = f"{path}[{index}]"
+        if not isinstance(item, dict) or set(item) != _KEPT_PATH_KEYS:
+            raise CatalogError(f"{where}: must be a map of exactly path and target")
+        if not (isinstance(item["path"], str) and _DENIED_PATH.fullmatch(item["path"])):
+            raise CatalogError(f"{where}.path: must be a lowercase absolute path, no query")
+        if not (
+            isinstance(item["target"], str)
+            and _HTTPS_ORIGIN.fullmatch(item["target"])
+            and _has_valid_origin(item["target"])
+        ):
+            raise CatalogError(f"{where}.target: must be an https origin without a path")
+    paths = [item["path"] for item in items]
+    if len(set(paths)) != len(paths):
+        raise CatalogError(f"{path}: a path is listed twice")

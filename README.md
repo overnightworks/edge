@@ -93,6 +93,7 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 | [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
 | [docs/backup.md](docs/backup.md) | `edge-check`, `edge-backup`, what a backup holds, restore |
+| [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |
 | [docs/internal-ca.md](docs/internal-ca.md) | `step-ca`, `traefik-mcp`, `agent-egress` |
 | [docs/agent-service.md](docs/agent-service.md) | the agent service: image, login, an app's side, proofs |
 | [docs/home.md](docs/home.md) | the `home` workstation tool (German) |

@@ -67,7 +67,7 @@ flowchart TB
             DEP["Deploy watcher per service<br/>follows the newest v* tag"]
         end
         subgraph l4["L4 Services: each repo owns its compose.yaml"]
-            SONG["songmaker<br/>hallucinai.de, own login until its cutover"]
+            SONG["songmaker<br/>songmaker.hallucinai.de, own login until its cutover"]
             PRES["presentator<br/>offline until its legal pages"]
             HOP["hopin<br/>video calls"]
         end
@@ -77,7 +77,7 @@ flowchart TB
     VIS --> DNS
     OP --> DNS
     DNS --> ACC --> TUN --> CFD
-    CFD -->|"apex, today straight to :8080"| SONG
+    CFD -->|"songmaker's host, today straight to :8080"| SONG
     CFD -->|"every other name"| TRF
     TRF -->|"container label edge.name"| KC & PRES & HOP & LOOK & MON
     SONG & PRES & HOP -.->|"check the ID themselves: webauth, OIDC, group /apps/name"| KC
@@ -196,8 +196,10 @@ Planned and not accepted by `catalog.py` yet: `run.login_group` (a group of `key
 | `exposure` | `public` \| `bypass` \| `protected`, required | none | `protected` only on `*`, and `*` only `protected`; `public` on a label is refused while `*` exists (it needs its own `bypass`); one FQDN once |
 | `reason` | string | none | required and non-blank for `public` and `bypass` |
 | `ready` | path | none | starts with one `/`; the publish guard of X8a |
-| `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker `songmaker`, `@` and `www`) |
-| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's three hosts list `/auth/backchannel-logout` (#213) |
+| `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker's `songmaker`) |
+| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's one host lists `/auth/backchannel-logout` (#213) |
+
+The apex and `www` are no hosts but the catalog's `cloudflare.redirect` (validated next to the hosts by `src/edge/catalog.py`): `hosts` (`@` or labels, none of them a service host), `target` (an https URL) and `keep` (each a lowercase `path` with an https origin as `target`). Cloudflare answers 302 at its edge, for https only (`http://` first goes to https on the same host): a kept path, with or without a trailing slash, goes to its origin with the path kept, everything else to `target`, path and query dropped; old links keep no path (operator ruling of 18.10.2026). The names keep proxied records and have no tunnel line (`docs/external.md`). Keycloak's bare address already redirects to the account console, so `target` is `https://auth.hallucinai.de/`; `/impressum` and `/datenschutz` go to songmaker's pages until #110 serves them.
 
 `run.enabled` decides both the units and the hosts: only `true` and `false` count: OpenTofu's `yamldecode` also reads YAML 1.1 words (`yes`, `no`, `on`, `off`, `y`, `n`, `True`) as booleans and PyYAML disagrees on some of them, so every other spelling, `no` and `"false"` included, is refused. A disabled entry's hosts are validated but not published.
 
@@ -412,6 +414,8 @@ Every finding names the subject and a page to fix it, never a value.
 | **presentator** | manual. `~/presentator-live` is a separate checkout at `1f0422c` and runs a locally built image (`presentator-adoption-instance:ap112-e04e837a`) on 127.0.0.1:8100. Two host user units run from that checkout: `presentator-speech` and `presentator-copresenter`; speech is crash-looping (stale socket file, seen 16.10.2026). Offline publicly since 14.10.2026 | its go-public item agent-presentator#197 adds a catalog entry with `deploy: tags` and its first `edge release`. It joins under §10 rule 1: the two host units and their unix sockets (its `compose.yaml:52-53`) and the `docker.sock` mount (`:51`) leave its release, so the watcher deploys the compose release and nothing on the host |
 | **hopin** | not deployed; no container | section 3's example: a compose file, then its first tag |
 
+Every service that holds people's data also offers the export and erase routes of `docs/people.md`.
+
 ### Migrating songmaker off main-deploy
 
 1. **The first tag.** The head tags the commit in songmaker's `deployed.sha` as `v2026.MM.DD.1`, with its `schema:` line, so the switch deploys nothing new.
@@ -497,7 +501,7 @@ They survive a dead PC because they live at the provider.
 - `home check`, `home tidy`, `home secrets` (view only);
 - edge: Traefik, socket proxy, Keycloak as code with its probe, edge-check, edge-backup with weekly and monthly timers. The edge stack is **not running** on this PC (no `edge/.env`, no edge containers);
 - songmaker's auto-deploy, alerts and monitoring stack;
-- the tunnel with apex and `www` only;
+- the tunnel with songmaker's host and auth, then the terminal 404 rule;
 - org rulesets 25224011 and 25224012.
 
 ### Duplicates: the same fact in two places
@@ -543,7 +547,7 @@ They survive a dead PC because they live at the provider.
 | 32 | songmaker has no single-login cutover | its own password login; the app clients are in `realm.yaml` (#108, #161), only the songmaker cutover is still open | **new songmaker item** (section 3), after edge#19 |
 | 33 | No `home-tools/bootstrap` | the file does not exist | home-tools#9 |
 | 34 | No way to stop every agent at once | aco runs sessions on its own tmux socket but has no "stop all" command | **new item in agent-coordination** (aco owns agent sessions) |
-| 35 | Songmaker's hosts (`songmaker`, apex, `www`) and presentator bypass Traefik | tunnel ingress sends them to `:8080` and `:8100`; no ingress barrier can hold them (section 8) | the catalog and `edge apply` item (gap 14) routes every hostname through Traefik on 8081 (until then the host's `target` in `fleet.yaml` carries it, `http://localhost:8080` for `songmaker.hallucinai.de`, apex and `www`); for apex and `www` it lands with the songmaker cutover item (section 3), for presentator with presentator#197 |
+| 35 | Songmaker's host (`songmaker`) and presentator bypass Traefik | tunnel ingress sends them to `:8080` and `:8100`; no ingress barrier can hold them (section 8) | the catalog and `edge apply` item (gap 14) routes every hostname through Traefik on 8081 (until then the host's `target` in `fleet.yaml` carries it, `http://localhost:8080` for `songmaker.hallucinai.de`); for presentator it lands with presentator#197. The apex and `www` are no tunnel hosts any more: they redirect at the edge (below) |
 
 ---
 
