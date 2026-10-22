@@ -10,12 +10,14 @@ mount target of the service.
 
 import re
 import tomllib
-from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 import pytest
 import yaml
+
+from edge.realm import observe
+from edge.realm.declared import declared_realm
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = "agent-service"
@@ -144,13 +146,6 @@ def test_the_service_listens_on_every_interface_and_pins_the_cli_it_runs(configu
     assert configuration["cli"]["claude"]["version"] == pinned
 
 
-def _group_paths(groups: list[dict], parent: str = "") -> Iterator[str]:
-    for group in groups:
-        path = f"{parent}/{group['name']}"
-        yield path
-        yield from _group_paths(group.get("subGroups", []), path)
-
-
 def test_the_identity_names_the_realms_issuer_audience_and_subscription_group(configuration, realm):
     """The issuer is the realm's public one, the keys come from it over https, the audience is
     the realm's bearer-only client and the subscription group is the realm's
@@ -158,7 +153,8 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_group(co
     identity = configuration["identity"]
     issuer, jwks = urlsplit(identity["issuer"]), urlsplit(identity["jwks_url"])
     clients = {client["clientId"] for client in realm["clients"]}
-    groups = set(_group_paths(realm["groups"]))
+    declared = declared_realm((ROOT / "keycloak/realm.yaml").read_text())
+    groups = declared.identities[observe.GROUP.name]
 
     assert issuer.path == f"/realms/{realm['realm']}"
     assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)
