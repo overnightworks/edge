@@ -25,13 +25,13 @@ class FakeMachine:
     def __init__(self) -> None:
         self.containers: list[tuple[str, str, str]] = []  # name, log driver, compose project
         self.default_driver: str | None = "journald"
-        self.docker_runs = True
+        self.failing_docker_commands: set[str] = set()
         self.boots: str | None = boots_json(NOW - timedelta(days=3))
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "journalctl":
             return self.boots
-        if not self.docker_runs:
+        if argv[1] in self.failing_docker_commands:
             return None
         if argv[1] == "ps":
             return "".join(f"id{i}\n" for i, _ in enumerate(self.containers))
@@ -109,8 +109,10 @@ def test_a_journal_that_cannot_be_read_is_a_finding_of_its_own(machine, log_dire
     assert set(findings(machine, log_directory)) == {("journal-unreadable", "journal")}
 
 
-def test_a_docker_that_cannot_be_run_is_one_finding_not_a_pass(machine, log_directory) -> None:
-    machine.docker_runs = False
+@pytest.mark.parametrize("failing", [{"ps", "inspect", "info"}, {"inspect"}, {"info"}])
+def test_a_docker_that_cannot_be_run_is_one_finding_not_a_pass(machine, log_directory, failing) -> None:
+    machine.containers = [("app-web-1", "journald", "app")]
+    machine.failing_docker_commands = failing
 
     assert set(findings(machine, log_directory)) == {("docker-unreadable", "docker")}
 
