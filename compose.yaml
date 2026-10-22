@@ -156,6 +156,32 @@ services:
       traefik.http.routers.auth-admin.service: auth
       traefik.http.routers.auth-admin.rule: Host(`localhost`)
 
+  # The imprint (and the other legal pages) of every app at hallucinai.de: static files from legal/,
+  # the login theme's fonts as the one copy. The page is not public until the catalog gives it a host.
+  legal:
+    profiles: [legal]
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    networks: [legal]
+    volumes:
+      # A directory, not a file: git replaces files, so a file bind would keep the old inode.
+      - ./legal/nginx:/etc/nginx/conf.d:ro
+      - ./legal/pages:/srv/pages:ro
+      - ./legal/assets:/srv/assets:ro
+      - ./keycloak/themes/hallucinai/login/resources/fonts:/srv/fonts:ro
+    labels:
+      traefik.enable: "true"
+      edge.name: legal
+      traefik.http.services.legal.loadbalancer.server.port: "8080"
+      traefik.http.routers.legal.entrypoints: edge
+      traefik.http.routers.legal.service: legal
+      traefik.http.routers.legal.rule: Host(`${EDGE_DOMAIN}`)
+
   keycloak-config-cli:
     image: adorsys/keycloak-config-cli:6.5.1-26.5.5@sha256:0955d98c8a341898b7aa177477edf8a1e90569ae50bbe7598141c1270b773274
     profiles: [apply]
@@ -342,13 +368,13 @@ services:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
 
-  # The agent service (agent-providers v0.4.0; the image is built on the PC, docs/agent-service.md,
+  # The agent service (agent-providers v0.6.0; the image is built on the PC, docs/agent-service.md,
   # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.4.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.6.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"
@@ -481,6 +507,9 @@ networks:
   # agent-egress alone: a plain NAT bridge, the one route to the internet.
   internet:
     driver: bridge
+  # The legal unit's own network: internal, so nginx has no route out; Traefik reaches it from the host.
+  legal:
+    internal: true
   keycloak:
     driver: bridge
     ipam:

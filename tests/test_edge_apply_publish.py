@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from app_support import KEY, ScriptedDocker, origin_at, runtime_of
 from test_edge_apply import (
     NOT_SET_UP_LINE,
     apply_lock_held,
@@ -193,6 +194,27 @@ def start_fails(world: World) -> None:
     world.scripted.failing_verb = "up"
 
 
+@pytest.fixture
+def failing_app(world, repository, home, tmp_path, monkeypatch):  # noqa: F811
+    """The catalog also declares the app `hopin`, whose newest release never becomes healthy."""
+    commit_catalog(
+        repository,
+        CATALOG.replace(
+            "services:\n",
+            "github: {org: overnightworks}\nservices:\n  hopin:\n"
+            "    repo: {default_branch: master}\n    run: {enabled: true}\n",
+            1,
+        ),
+    )
+    origin_at(tmp_path, home).release("v2026.10.22.1")
+    docker = ScriptedDocker(world.state, home / "srv" / KEY, health_after_start="unhealthy")
+    monkeypatch.setattr(
+        apply,
+        "apply_closed",
+        functools.partial(apply.apply_closed, app_runtime=runtime_of(home, world.state, docker)),
+    )
+
+
 def nothing(_world: World) -> None:
     """The local part is happy; only the answers decide."""
 
@@ -219,6 +241,17 @@ def test_a_local_part_that_does_not_end_clean_publishes_nothing(
     result = world.run(*answers)
 
     assert result.exit_code == expected_exit
+    assert NOTHING_PUBLISHED in result.err
+    assert world.publish_never_began()
+
+
+@pytest.mark.usefixtures("failing_app")
+def test_an_app_that_fails_its_health_ends_the_local_part_partial_and_publishes_nothing(world):
+    """#255 A21: the app step is part of the local part, whose exit gates the publish."""
+    result = world.run("yes")
+
+    assert result.exit_code == 1
+    assert "partial, hopin is not healthy at v2026.10.22.1" in result.err
     assert NOTHING_PUBLISHED in result.err
     assert world.publish_never_began()
 

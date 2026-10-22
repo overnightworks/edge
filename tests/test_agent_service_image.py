@@ -83,7 +83,7 @@ def test_the_recipe_installs_no_system_package(package_manager):
     assert not re.search(rf"\b{package_manager}\b", DOCKERFILE)
 
 
-@pytest.mark.parametrize("tag", ["v0.4.0", "v10.0.1", "v10.20.30"])
+@pytest.mark.parametrize("tag", ["v0.6.0", "v10.0.1", "v10.20.30"])
 def test_the_lock_script_accepts_a_release_tag(tag):
     assert agent_service_lock.release_tag(tag) == tag
 
@@ -176,7 +176,7 @@ def test_the_image_runs_the_service_as_uid_1000_without_a_login():
 
 
 def test_the_lock_names_its_release_tag_and_commit():
-    assert release_tag() == "v0.4.0"
+    assert release_tag() == "v0.6.0"
 
 
 def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():

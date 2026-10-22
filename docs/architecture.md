@@ -125,7 +125,7 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 |---|---|---|---|---|---|
 | **L0 PC and tools** | Ubuntu packages (Docker with loopback default, cloudflared from apt, gh, uv, restic, the pinned `tofu`, Tailscale); `/etc/docker/daemon.json`; edge's `tunnel/` (the cloudflared unit, its drop-ins, the stop-only polkit rule); linger; auto-login off; the AppArmor profile; the agent user (only with D14); the `home` and `aco` tools; the work clones in `~/git` | home-tools: the setup playbook (home-tools#9; Ansible recommended there; it installs edge's `tunnel/`) | `~/git/home-tools/bootstrap` (new, home-tools#9), then `hal setup --apply` (without `--apply`: dry run) | `home check` (daily timer, today) | OS install and disk encryption (the installer decides it); BIOS "power on after AC loss"; the first `gh auth login --web`, because cloning the private home-tools needs it |
 | **L1 secrets** | every token, password and key; values only in `~/.secrets`; tool logins in their tools' stores. Directories 0700. Files 0600, except a file a container user must read: 0644 inside its 0700 directory (docs/keycloak.md). Today every agent can read all of it (D14) | `home-tools/src/home_tools/secrets_manifest.toml` (names, purpose, reader, scope, bindings, rotation; never a value) | `home secrets --setup`: walks every missing secret page by page (home-tools#10) | `home secrets`, part of `home check` (today: local view; the remote check is section 4) | creating a token at the provider: a human logs in and clicks. The wizard opens the page, takes the value hidden, verifies it, stores it |
-| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins) and `traefik-mcp` (the second Traefik, the only container on the three internal networks `mcp-ca`, `mcp`, `mcp-backends`; no host port), edge-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `traefik-mcp.yml` and `mcp/dynamic/`, `keycloak/*.yaml` (realm as code), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: it creates the permanent admin from a typed name and password; TOTP and passkey in the browser) |
+| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins) and `traefik-mcp` (the second Traefik, the only container on the three internal networks `mcp-ca`, `mcp`, `mcp-backends`; no host port), `legal` (nginx serving the imprint of every app from `legal/`, on its own internal network; no host in the catalog yet, so nothing is public), edge-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `traefik-mcp.yml` and `mcp/dynamic/`, `keycloak/*.yaml` (realm as code), `legal/` (pages, stylesheet, nginx config), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: it creates the permanent admin from a typed name and password; TOTP and passkey in the browser) |
 | **L3 external** | Cloudflare DNS, Access apps and policies, tunnel ingress (D6), the zone's HSTS setting; GitHub repo settings, rulesets, Actions policy, org secret names and reach | edge `fleet.yaml` + OpenTofu (`ext-as-code.md`, epic E3, its slices listed in the epic's body) | the publish phase of `edge apply` (operator, TTY, the word `yes`) | `edge external check` → `home check` | secret values, the tunnel object and its credential, Access identity providers, the Access group's one member, SonarCloud projects, CodeQL default setup, GitHub App installs, the registrar. Each has no provider or would put a secret into state |
 | **L4 services** | songmaker, presentator, hopin, the agent service (its compose service and image recipe live in edge; switched on by its unit in `fleet.yaml`), later the aco board | each service repo's `compose.yaml` (containers) + its entry in `fleet.yaml` (where it runs, who may use it, on or off) | the deploy watcher (newest `v*` tag) after `edge apply` turned the service on | the LOOK page (each service's health URL); Grafana for its metrics | creating a new repo's SonarCloud project (one click) |
 | **L5 data** | Docker volumes (songmaker DB and audio, Keycloak DB; `step-ca` ([internal-ca.md](internal-ca.md) names its backup) and `traefik-mcp-acme`, which is not: its certificates are issued again), the restic repository and its off-disk copy (D3), the encrypted OpenTofu state | edge `backup/apps.toml` | `edge-backup restore …` (section 6) | the restore test (monthly), the clean-machine drill (section 6), and the backup's freshness on the LOOK page | the restic password, the OpenTofu passphrase and the disk's recovery key live in the password manager: without them no backup, no state and no disk can be read |
@@ -174,12 +174,9 @@ The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for Ope
 ```yaml
 services:
   hopin:
-    repo: {visibility: public, default_branch: master}   # GitHub settings (E3, X2)
+    repo: {default_branch: master}   # the release branch; `visibility` (GitHub settings, E3, X2) is planned
     run:
       enabled: true              # Dienst an/aus: the one switch
-      login_group: /apps/hopin   # must exist in keycloak/realm.yaml; CI checks it
-      health: /health            # the LOOK page polls it through Traefik
-      deploy: tags               # follow the newest v* tag (section 5)
       # setup: step-ca/init      # only where a unit needs key material (step-ca, keycloak)
     hosts:
       - name: hopin              # hopin.hallucinai.de → container labelled edge.name=hopin
@@ -188,6 +185,8 @@ services:
         ready: /health           # optional: the path X8a asks before it publishes the host
         # target: http://127.0.0.1:8081   # optional; this is the default (Traefik)
 ```
+
+Planned and not accepted by `catalog.py` yet: `run.login_group` (a group of `keycloak/realm.yaml`, checked by CI), `run.health` (the LOOK page's path) and `run.deploy: tags` (the watcher, section 5). An app's `run` takes only `enabled` (no `setup`), its `repo` only `default_branch`, and `github.org` names the organisation of its repository.
 
 `src/edge/catalog.py` (`hosts()`) owns the host shape. `edge external plan` and `apply` refuse an invalid catalog before any token is read; `external/hosts.tf` reads the valid shape.
 
@@ -231,7 +230,7 @@ The apex and `www` are no hosts but the catalog's `cloudflare.redirect` (validat
 
 **On:**
 1. A PR sets `enabled: true`. He merges and runs `edge apply`.
-2. `edge apply` clones hopin into `~/srv/hopin`, checks out its newest `v*` tag, starts it and waits for `/health`.
+2. `hal apply` fetches hopin into `~/srv/hopin` (`src/edge/deploy_checkout.py`), takes its newest release (`vYYYY.MM.DD.N` on origin's default branch, `src/edge/releases.py`) and shows tag and full sha in the plan. After the operator's `yes` (the gate: whoever can put a tag on a merged commit offers code to run here) it checks the tag out detached, builds, creates and starts the containers under the switch lock, waits for the container's health and only then records the last successful deployment (`~/.local/state/edge/deployed/<key>`: tag, sha, time). A new tag that fails stays: the run is partial and the fix is a newer tag. No output of Compose is ever printed: a failed step names step, tag and exit code (`src/edge/apps.py`, `src/edge/app_compose.py`). Today the app's `compose.yaml` must meet a minimal contract: present at the root, no `include`, no `extends.file`, no `profiles`, `name` absent or the key, no `depends_on` waiting for health or completion and no one-shot (`restart: "no"`). The full contract (routing label, no published port, healthcheck, named volumes) is planned.
 3. The publish phase then publishes the name, behind its `ready` guard (X8's "protection before reachability"). hopin is in A, or in C under a global stop (section 8 state table).
 
 **The realm apply (R3, ruled 16.10.2026; re-cut by the operator's „ja d“ and „ok“ on 21.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50), [edge#219](https://github.com/overnightworks/edge/issues/219))** adds and changes in the realm and deletes no undeclared top-level object and no person:
@@ -351,6 +350,8 @@ Every finding names the subject and a page to fix it, never a value.
 ---
 
 ## 5. Deploy: a version tag triggers it
+
+**Today** there is no watcher: `hal apply` takes the newest release tag on origin's default branch at the next run, after its plan and the operator's `yes` (section 3, "On"). The model below is the target.
 
 ### The model, the same for every service
 

@@ -25,7 +25,8 @@ def _configure_apply(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--closed",
         action="store_true",
-        help="the local part alone: units of this repository, at a terminal, after `yes`",
+        help="the local part alone: units of this repository and the apps of the catalog "
+        "(checked out, built and run at their newest release), at a terminal, after `yes`",
     )
 
 
