@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from test_edge_apply import (
     NOW,
+    PLAIN_NOT_FOUND,
     SWITCHED_OFF_AT,
     Ingress,
     InterruptedWaitForLock,
@@ -469,10 +470,39 @@ APEX_FLEET = (
 )
 
 
+APEX_HOST = "probe.test"
+
+
+@dataclass
+class ApexProof:
+    """What the barrier proof of the apex saw: whether the tunnel was already started when it
+    asked, and whether Traefik is made to leave the apex unmarked while the routed host is fine."""
+
+    unmarked: bool = False
+    tunnel_started_when_asked: list[bool] = field(default_factory=list)
+
+
+@pytest.fixture
+def apex_proof(ingress: Ingress, systemd: FakeSystemd, monkeypatch: pytest.MonkeyPatch):
+    proof = ApexProof()
+    answer = ingress.fetch
+
+    def fetch(address: str, host: str, seconds: float, clock: Callable[[], float]):
+        if host != APEX_HOST:
+            return answer(address, host, seconds, clock)
+        proof.tunnel_started_when_asked.append(systemd.started)
+        if proof.unmarked:
+            return PLAIN_NOT_FOUND
+        return answer(address, host, seconds, clock)
+
+    monkeypatch.setattr(ingress, "fetch", fetch)
+    return proof
+
+
 def test_start_all_proves_the_apex_barrier_of_a_disabled_unit_before_it_reopens(
-    hosts_asked, start_all, stopped_tunnel, marks, ingress, repository
+    apex_proof, start_all, stopped_tunnel, marks, repository, systemd
 ):
-    """#325 B7: the unit is switched off and disabled; the apex it declares is proven."""
+    """#325 B7: the unit is switched off and disabled; the apex it declares is proven first."""
     (repository / "fleet.yaml").write_text(APEX_FLEET)
     switch_off(marks.directory, unit="probe")
 
@@ -480,31 +510,32 @@ def test_start_all_proves_the_apex_barrier_of_a_disabled_unit_before_it_reopens(
 
     assert exit_code == 0
     assert "the barrier of probe is proven" in output
-    assert "probe.test" in hosts_asked
-    assert (
-        'Host(`{{ env "EDGE_DOMAIN" }}`)'
-        in (repository / "dynamic" / "switch-probe.yml").read_text()
-    )
+    assert apex_proof.tunnel_started_when_asked == [False]
+    assert systemd.active
 
 
 def test_an_unproven_apex_barrier_keeps_the_tunnel_closed_and_names_the_unit(
-    hosts_asked, start_all, stopped_tunnel, marks, ingress, repository, systemd
+    apex_proof, start_all, stopped_tunnel, marks, repository, systemd
 ):
-    """#325 B7: when the apex proof fails the tunnel stays closed and the line names the unit."""
+    """#325 B7: only the apex proof fails, the routed host succeeds; the tunnel never starts."""
     (repository / "fleet.yaml").write_text(APEX_FLEET)
     switch_off(marks.directory, unit="probe")
-    ingress.rejecting = True
+    apex_proof.unmarked = True
 
     exit_code, output = start_all()
 
     assert exit_code == 1
     assert "the tunnel stays closed: the barrier of probe is not proven" in output
+    assert not systemd.started
     assert not systemd.active
 
 
 def test_stop_all_reads_no_catalog(stop_all, repository):
     """#325 B10: a malformed host in the catalog does not stop the global brake."""
-    (repository / "fleet.yaml").write_text("services: {probe: {hosts: [{name: Bad}]}}\n")
+    (repository / "fleet.yaml").write_text(
+        "cloudflare: {zone: probe.test}\n"
+        "services: {probe: {run: {enabled: true}, hosts: [{name: Bad}]}}\n"
+    )
 
     exit_code, _ = stop_all()
 

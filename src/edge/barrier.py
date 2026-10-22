@@ -254,7 +254,7 @@ class Barrier:
         return tuple(self._host(name) for name in self.names)
 
     def _host(self, name: str) -> str:
-        return self.domain if name == catalog.APEX else f"{name}.{self.domain}"
+        return catalog.fqdn_of(name, self.domain)
 
     def close(self) -> bool:
         """Write the barrier and prove that every host answers 404 for it.
@@ -316,11 +316,10 @@ class Barrier:
         return text
 
     def _router(self, name: str) -> str:
-        apex = name == catalog.APEX
         return _ROUTER.format(
             unit=self.unit,
-            router=_APEX_ROUTER if apex else name,
-            host=_DOMAIN_TEMPLATE if apex else f"{name}.{_DOMAIN_TEMPLATE}",
+            router=_APEX_ROUTER if name == catalog.APEX else name,
+            host=catalog.fqdn_of(name, _DOMAIN_TEMPLATE),
             priority=_PRIORITY,
         )
 

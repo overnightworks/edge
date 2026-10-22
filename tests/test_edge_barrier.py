@@ -377,24 +377,24 @@ def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
 
 
 KEYCLOAK_BARRIER = (
-    "# Written by `edge stop probe` from ~/.local/state/edge/stopped/probe; "
-    "removed by `edge start probe`. Generated, git-ignored.\n"
+    "# Written by `edge stop keycloak` from ~/.local/state/edge/stopped/keycloak; "
+    "removed by `edge start keycloak`. Generated, git-ignored.\n"
     """\
 http:
   routers:
-    switch-probe-auth:
+    switch-keycloak-auth:
       entryPoints: [edge]
       rule: Host(`auth.{{ env "EDGE_DOMAIN" }}`)
       priority: 1000000
-      middlewares: [switch-probe-mark]
-      service: switch-probe-deny
+      middlewares: [switch-keycloak-mark]
+      service: switch-keycloak-deny
   middlewares:
-    switch-probe-mark:
+    switch-keycloak-mark:
       headers:
         customResponseHeaders:
-          X-Edge-Barrier: probe
+          X-Edge-Barrier: keycloak
   services:
-    switch-probe-deny:
+    switch-keycloak-deny:
       loadBalancer:
         passHostHeader: false
         servers:
@@ -418,12 +418,21 @@ def asked_hosts(checkout: Path, *services: str, hosts: tuple[str, ...]) -> list[
 
 def test_a_declared_host_that_keycloak_also_routes_leaves_its_barrier_byte_identical(checkout):
     """#325 B1: keycloak declares `auth` and routes `edge.name: auth`: one router, today's file."""
-    ingress = barrier_of(checkout, "keycloak", hosts=("auth",))
+    asked = []
 
-    ingress.close()
+    def fetch(
+        _address: str, host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        asked.append(host)
+        return barrier.Answer(404, b"404 page not found\n", "keycloak")
 
-    assert (checkout / "dynamic" / "switch-probe.yml").read_text() == KEYCLOAK_BARRIER
-    assert asked_hosts(checkout, "keycloak", hosts=("auth",)) == ["auth.probe.invalid"]
+    unit = catalog.Unit("keycloak", enabled=True, setup=None, hosts=("auth",))
+    barrier.Barrier.of_unit(
+        config(), ("keycloak", "keycloak-db"), checkout, unit, verifier(fetch)
+    ).close()
+
+    assert (checkout / "dynamic" / "switch-keycloak.yml").read_text() == KEYCLOAK_BARRIER
+    assert asked == ["auth.probe.invalid"]
 
 
 def test_the_apex_gets_a_router_on_the_bare_domain_that_no_label_can_take(checkout):
@@ -477,10 +486,11 @@ def proofs(
     marks: switches.Switches,
     fetch=lambda *_: NOT_FOUND,
     hosts: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
+    enabled: bool = True,
     **units: tuple[str, ...],
 ) -> Iterator[barrier.ActiveProof]:
     return barrier.prove_active(
-        [catalog.Unit(key, enabled=True, setup=None, hosts=hosts.get(key, ())) for key in units],
+        [catalog.Unit(key, enabled=enabled, setup=None, hosts=hosts.get(key, ())) for key in units],
         units,
         config(),
         marks,
@@ -510,7 +520,9 @@ def test_a_switched_off_unit_with_a_disabled_apex_has_the_apex_barrier_proven_ag
         asked.append(host)
         return NOT_FOUND
 
-    outcome = list(proofs(checkout, marks, fetch=fetch, hosts={"probe": ("@",)}, probe=()))
+    outcome = list(
+        proofs(checkout, marks, fetch=fetch, hosts={"probe": ("@",)}, enabled=False, probe=())
+    )
 
     assert outcome == [barrier.Proven("probe")]
     assert asked == ["probe.invalid"]
