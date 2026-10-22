@@ -228,18 +228,22 @@ class FakeRealm:
         return [path for path in self.groups if path.rsplit("/", 1)[0] == parent]
 
 
+HALLUCINAI_GROUPS = (
+    "/apps",
+    "/apps/songmaker",
+    "/apps/presentator",
+    "/apps/hopin",
+    "/apps/hopin/admin",
+    "/services",
+    "/services/agent-service",
+    "/services/agent-service/subscription",
+    "/services/agent-service/api",
+)
+
+
 def hallucinai() -> FakeRealm:
     realm = FakeRealm("hallucinai", realm_rep("hallucinai"))
-    for path in (
-        "/apps",
-        "/apps/songmaker",
-        "/apps/presentator",
-        "/apps/hopin",
-        "/apps/hopin/admin",
-        "/services/agent-service/subscription",
-        "/services/agent-service/api",
-    ):
-        realm.groups[path] = Group()
+    realm.groups = {path: Group() for path in HALLUCINAI_GROUPS}
     realm.groups["/apps/hopin"].members = [uid("hallucinai", "anna"), uid("hallucinai", "ben")]
     realm.roles = [role_rep("hallucinai", "", name) for name in ("offline_access", "uma")]
     agent = client_rep("hallucinai", "agent-service", bearerOnly=True)

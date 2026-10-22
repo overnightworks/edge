@@ -37,7 +37,7 @@
 "apply_command" = 70
 
 [function_lines."tests/realm_fake.py"]
-"hallucinai" = 105
+"hallucinai" = 96
 
 [function_lines."tests/test_edge_external.py"]
 "terminal" = 72

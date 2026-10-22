@@ -291,6 +291,15 @@ def test_the_inventory_holds_no_secret_value_and_no_unlisted_value(
     assert "secret" not in client["fields"]
 
 
+def test_the_nested_service_rights_groups_appear_in_the_inventory(
+    keycloak: FakeKeycloak, run_observer: Callable[[str], Run]
+) -> None:
+    run = run_observer(keycloak.url)
+
+    observed = json.loads(run.stdout)["hallucinai"]["group"]
+    assert {"/services/agent-service/subscription", "/services/agent-service/api"} <= set(observed)
+
+
 def test_a_component_identity_includes_its_sub_type(keycloak: FakeKeycloak) -> None:
     """Rule 5: Keycloak's two `Allowed Client Scopes` policies differ only by their sub-type."""
     components = observe(keycloak)["hallucinai"]["component"]
