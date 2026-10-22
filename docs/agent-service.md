@@ -102,7 +102,7 @@ built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in a
 `songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
-`~/.secrets`, and the person in the group `/ki-abo` (add yourself once in the admin console on port
+`~/.secrets`, and the person in the group `/services/agent-service/subscription` (add yourself once in the admin console on port
 8090). Run it at once, as the workload token lives five minutes, and send the head its report.
 
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command

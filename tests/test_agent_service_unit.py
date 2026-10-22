@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
+from edge.realm import observe
+from edge.realm.declared import declared_realm
+
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = "agent-service"
 OPERATOR_UID_GID = "1000:1000"
@@ -145,11 +148,13 @@ def test_the_service_listens_on_every_interface_and_pins_the_cli_it_runs(configu
 
 def test_the_identity_names_the_realms_issuer_audience_and_subscription_group(configuration, realm):
     """The issuer is the realm's public one, the keys come from it over https, the audience is
-    the realm's bearer-only client and the subscription group is the realm's `ki-abo`."""
+    the realm's bearer-only client and the subscription group is the realm's
+    `/services/agent-service/subscription`."""
     identity = configuration["identity"]
     issuer, jwks = urlsplit(identity["issuer"]), urlsplit(identity["jwks_url"])
     clients = {client["clientId"] for client in realm["clients"]}
-    groups = {f"/{group['name']}" for group in realm["groups"]}
+    declared = declared_realm((ROOT / "keycloak/realm.yaml").read_text())
+    groups = declared.identities[observe.GROUP.name]
 
     assert issuer.path == f"/realms/{realm['realm']}"
     assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)

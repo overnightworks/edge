@@ -7,7 +7,7 @@ issuer = "https://auth.hallucinai.de/realms/hallucinai"
 # passes TLS through by name; agent-service/egress/dynamic/allowed.yml names this host.
 jwks_url = "https://auth.hallucinai.de/realms/hallucinai/protocol/openid-connect/certs"
 audience = "agent-service"
-subscription_group = "/ki-abo"
+subscription_group = "/services/agent-service/subscription"
 group_claim = "groups"
 
 [server]
