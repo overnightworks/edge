@@ -14,8 +14,7 @@ Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
 A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
-that do not bind one app to one person (another `azp`), `not_enabled` no subscription group; the
-report names the possible causes.
+that do not bind one app to one person, `not_enabled` no subscription group; the report names them.
 `agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
 `apply`).
 
@@ -311,14 +310,10 @@ def subscription_groups() -> list[str]:
 
 
 def missing_group_hint(output: str) -> str:
-    """The causes of a rights refusal the smoke printed as a line of its own, or nothing."""
-    refusal = REFUSAL_LINE.search(output)
-    code = refusal["code"] if refusal else ""
+    """The causes of a rights refusal printed as a line of its own, or nothing."""
+    code = (refusal := REFUSAL_LINE.search(output)) and refusal["code"]
     if code == "forbidden":
-        return (
-            f"; forbidden: the operator is no member of /apps/{CLIENT}, or the person's and the"
-            " workload's tokens differ in azp or subject, or the workload token is not valid"
-        )
+        return f"; forbidden: no member of /apps/{CLIENT}, another azp, or a bad workload token"
     if code == "not_enabled":
         return f"; not_enabled: the operator is in none of {' or '.join(subscription_groups())}"
     return ""
