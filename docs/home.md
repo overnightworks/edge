@@ -432,9 +432,12 @@ come before the system step, which is the one that asks for sudo:
    unit file changed after a pull), and each timer is enabled and started. A link
    into `systemd/` whose file is gone (a renamed or removed unit) is stopped while
    systemd still has it loaded and unlinked, at the top level and in the
-   `*.wants/` and `*.requires/` directories. A same-name entry that is not this
-   checkout's link (a link elsewhere, a mask to `/dev/null`, a file) is never
-   replaced: the step fails, names the file and leaves the decision to you. A
+   `*.wants/` and `*.requires/` directories; timers stop before services. A same-name
+   entry that is not this checkout's link (a link elsewhere, a mask to `/dev/null`, a
+   file) is never replaced, and a retired link whose name the top level now gives to
+   such an entry is never stopped: the step fails before it changes anything, names
+   the file and leaves the decision to you. A timer that is not active after
+   enabling fails the step too. A
    missing `systemd/` directory fails the step as well. `--apply` then prints, per
    service, the loaded `ExecStart` and the `Result` of its last run. The step is
    verified when every unit is linked, nothing needs a reload, every timer is

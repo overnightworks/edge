@@ -40,6 +40,7 @@ class FakeSystemctl:
         self.loaded: dict[str, str] = {}
         self.active: set[str] = set()
         self.last_result = "success"
+        self.starts_nothing = False
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         assert argv[:2] == ["systemctl", "--user"]
@@ -65,7 +66,8 @@ class FakeSystemctl:
         wants = self.user_units / TIMERS_WANTS
         wants.mkdir(exist_ok=True)
         (wants / name).symlink_to((self.user_units / name).readlink())
-        self.active.add(name)
+        if not self.starts_nothing:
+            self.active.add(name)
 
     def disable(self, name: str) -> str | None:
         if not (self.user_units / name).exists():
@@ -129,7 +131,8 @@ class Machine:
 
 @pytest.fixture
 def machine(tmp_path: Path) -> Machine:
-    return Machine(tmp_path / "home", tmp_path / "checkout" / "systemd")
+    home = tmp_path / "home"
+    return Machine(home, Layout(home).edge_units_dir)
 
 
 def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:
@@ -185,7 +188,7 @@ def test_hal_setup_prints_the_loaded_commands_under_the_heading_of_its_step(
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
     layout, ports = build_layout_and_ports(
-        machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
+        machine.layout.home, run=only_systemctl
     )
     units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
     monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (units,))
@@ -246,6 +249,47 @@ def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> No
         SERVICE
     ]
     assert machine.step.is_verified()
+
+
+def test_a_removed_pair_stops_its_timer_before_its_service(machine: Machine) -> None:
+    machine.step.apply()
+    machine.systemctl.active.update([SERVICE, TIMER])
+    machine.systemctl.calls.clear()
+    for name in (SERVICE, TIMER):
+        (machine.checkout_units / name).unlink()
+
+    machine.step.apply()
+
+    assert machine.systemctl.changes == [["stop", TIMER], ["stop", SERVICE], ["daemon-reload"]]
+
+
+def test_a_retired_link_sharing_its_name_with_a_foreign_unit_stops_nothing(
+    machine: Machine, tmp_path: Path
+) -> None:
+    machine.step.apply()
+    foreign = tmp_path / "foreign.timer"
+    foreign.write_text("OnCalendar=daily\n")
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    (machine.user_units / TIMER).symlink_to(foreign)
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"{TIMERS_WANTS}/{TIMER}.*does not own that unit"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+    assert not machine.step.is_verified()
+
+
+def test_a_timer_that_does_not_run_after_enabling_fails_the_step_naming_it(
+    machine: Machine,
+) -> None:
+    machine.systemctl.starts_nothing = True
+
+    with pytest.raises(StepFailed, match=f"{TIMER} enabled but not active"):
+        machine.step.apply()
 
 
 def test_a_retired_unit_that_is_not_running_is_not_stopped(machine: Machine) -> None:
@@ -357,7 +401,7 @@ def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
     layout, ports = build_layout_and_ports(
-        machine.layout.home, run=only_systemctl, unit_directory=machine.checkout_units
+        machine.layout.home, run=only_systemctl
     )
 
     assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 1

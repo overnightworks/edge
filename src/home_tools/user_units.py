@@ -109,10 +109,19 @@ class UserUnits:
         )
         if reloaded:
             self.systemctl("daemon-reload")
+        started = self.start_idle_timers()
+        return Applied.CHANGED if reloaded or started else Applied.UNCHANGED
+
+    def start_idle_timers(self) -> list[Path]:
         idle = [path for path in self.timers() if not self.is_running_enabled(path)]
         for path in idle:
             self.systemctl("enable", "--now", path.name)
-        return Applied.CHANGED if reloaded or idle else Applied.UNCHANGED
+        not_running = [path.name for path in idle if not self.show(path.name).active]
+        if not_running:
+            raise StepFailed(
+                f"{', '.join(not_running)} enabled but not active; see `systemctl --user status`"
+            )
+        return idle
 
     def loaded_command_lines(self) -> list[str]:
         """What systemd has loaded for each service and how its last run ended, so a missed reload
@@ -142,7 +151,8 @@ class UserUnits:
         return self.is_running_enabled(path) if path.suffix == TIMER_SUFFIX else True
 
     def refuse_foreign_entries(self) -> None:
-        """A same-name entry that is not this checkout's link is the person's: never replace it."""
+        """A same-name entry that is not this checkout's link is the person's: never replace it,
+        and never stop a unit a retired link of this checkout shares its name with."""
         for path in self.unit_files():
             entry = self.user_units / path.name
             if (entry.is_symlink() or entry.exists()) and not self.is_linked(path):
@@ -152,6 +162,15 @@ class UserUnits:
                 raise StepFailed(
                     f"{entry} is {kind}, not a link to {path}; this checkout does not own it,"
                     " so you decide: move it away or delete it, then rerun"
+                )
+        retiring = set(self.dangling_links())
+        for link in retiring:
+            entry = self.user_units / link.name
+            if (entry.is_symlink() or entry.exists()) and entry not in retiring:
+                raise StepFailed(
+                    f"{link} is a retired link of this checkout, but {entry} is not;"
+                    " this checkout does not own that unit, so you decide: move it away"
+                    " or delete the retired link, then rerun"
                 )
 
     def link_directories(self) -> list[Path]:
@@ -179,12 +198,17 @@ class UserUnits:
 
     def retire(self, links: list[Path]) -> None:
         """systemd refuses to disable a unit whose file is gone, so stop it while it is still
-        loaded and unlink its links; the reload after the last link drops it."""
-        for name in sorted({link.name for link in links}):
+        loaded and unlink its links; the reload after the last link drops it. Timers stop first, so
+        none starts its service again meanwhile."""
+        for name in sorted({link.name for link in links}, key=self.timers_first):
             if not self.show(name).stopped:
                 self.systemctl("stop", name)
         for link in links:
             link.unlink(missing_ok=True)
+
+    @staticmethod
+    def timers_first(name: str) -> tuple[bool, str]:
+        return not name.endswith(TIMER_SUFFIX), name
 
     def link(self, path: Path) -> None:
         self.user_units.mkdir(parents=True, exist_ok=True)
