@@ -14,8 +14,8 @@ Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
 A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
-that do not share an `azp`, `not_enabled` a missing `/ai-subscription` (or `/ki-abo`); the report
-names the group.
+that do not bind one app to one person (another `azp`), `not_enabled` no subscription group; the
+report names the possible causes.
 `agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
 `apply`).
 
@@ -34,12 +34,14 @@ import http.client
 import inspect
 import ipaddress
 import json
+import re
 import secrets
 import socket
 import subprocess
 import sys
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -300,17 +302,25 @@ def other_lines(output: str) -> str:
     return " | ".join(kept)[:300]
 
 
-MISSING_GROUP_BY_REFUSAL: Final = {
-    "forbidden": "the operator needs the group /apps/songmaker",
-    "not_enabled": "the operator needs the group /ai-subscription or /ki-abo",
-}
+REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MULTILINE)
+
+
+def subscription_groups() -> list[str]:
+    service = tomllib.loads((REPOSITORY / "agent-service/service.toml").read_text(encoding="utf-8"))
+    return service["identity"]["subscription_groups"]
 
 
 def missing_group_hint(output: str) -> str:
-    """The group a typed refusal in the smoke's output says is missing, or nothing."""
-    for refusal, hint in MISSING_GROUP_BY_REFUSAL.items():
-        if f" {refusal}:" in output:
-            return f"; {hint}"
+    """The causes of a rights refusal the smoke printed as a line of its own, or nothing."""
+    refusal = REFUSAL_LINE.search(output)
+    code = refusal["code"] if refusal else ""
+    if code == "forbidden":
+        return (
+            f"; forbidden: the operator is no member of /apps/{CLIENT}, or the person's and the"
+            " workload's tokens differ in azp or subject, or the workload token is not valid"
+        )
+    if code == "not_enabled":
+        return f"; not_enabled: the operator is in none of {' or '.join(subscription_groups())}"
     return ""
 
 

@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import threading
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -177,14 +178,28 @@ def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
     assert ("unauthorized" in l2.figure) == ("401" in output)
 
 
-@pytest.mark.parametrize(
-    ("refusal", "group"),
-    [("forbidden", "/apps/songmaker"), ("not_enabled", "/ai-subscription")],
-)
-def test_a_refusal_for_rights_names_the_group_the_operator_lacks(refusal, group):
-    l2, _ = live_smoke.turn_cells(1, f"refused with 403 {refusal}: no\n", KNOWN)
+def test_a_forbidden_refusal_names_the_membership_and_the_token_binding():
+    l2, _ = live_smoke.turn_cells(1, "refused with 403 forbidden: no\n", KNOWN)
 
-    assert group in l2.figure
+    assert f"/apps/{live_smoke.CLIENT}" in l2.figure
+    assert "azp" in l2.figure
+
+
+def test_a_not_enabled_refusal_names_the_subscription_groups_of_the_service_toml():
+    l2, _ = live_smoke.turn_cells(1, "refused with 403 not_enabled: no\n", KNOWN)
+
+    service = tomllib.loads((ROOT / "agent-service/service.toml").read_text(encoding="utf-8"))
+    assert service["identity"]["subscription_groups"]
+    assert all(group in l2.figure for group in service["identity"]["subscription_groups"])
+
+
+def test_an_answer_text_with_a_refusal_code_in_it_gets_no_hint():
+    output = "event: run_started\nevent: assistant_text\nIt says forbidden: not_enabled: no\n"
+
+    l2, _ = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert "/apps/" not in l2.figure
+    assert "subscription" not in l2.figure
 
 
 # --- the service, against a scripted docker ---------------------------------------------------

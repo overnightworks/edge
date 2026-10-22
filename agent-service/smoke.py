@@ -101,6 +101,8 @@ def frames(response: http.client.HTTPResponse) -> Iterator[Frame]:
             data = json.loads(fields["data"])
             if not isinstance(data, dict):
                 raise ValueError("a frame whose data is no object")
+            if data.get("v") != PROTOCOL_VERSION:
+                raise ValueError(f"a frame of version {data.get('v')}, not {PROTOCOL_VERSION}")
             yield Frame(fields.get("event", ""), data)
             fields = {}
 

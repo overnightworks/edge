@@ -102,8 +102,9 @@ built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in a
 `songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
-`~/.secrets`, and the person in the groups `/apps/songmaker` and `/ai-subscription` (or `/ki-abo`), which the
-realm gives (edge#217); the smoke names the group a refusal says is missing. Run it at once, as
+`~/.secrets`, and the person in the groups `/apps/songmaker` and `/ai-subscription` (or `/ki-abo`).
+The realm declares these groups (edge#217) but grants no membership: add yourself once in the admin
+console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
 the workload token lives five minutes, and send the head its report.
 
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command

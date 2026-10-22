@@ -32,9 +32,12 @@ smoke = load_smoke()
 
 
 def stream_of(*events: tuple[str, dict]) -> bytes:
-    return b"".join(
-        f"id: {number}\nevent: {name}\ndata: {json.dumps({'type': name, **data})}\n\n".encode()
+    frames = (
+        (number, name, json.dumps({"v": 2, "type": name, **data}))
         for number, (name, data) in enumerate(events)
+    )
+    return b"".join(
+        f"id: {number}\nevent: {name}\ndata: {data}\n\n".encode() for number, name, data in frames
     )
 
 
@@ -170,8 +173,9 @@ def test_a_refusal_that_is_no_typed_body_prints_the_status_only():
     [
         run_events(("assistant_text", {"text": 5})),
         FakeResponse(200, b'event: assistant_text\ndata: ["ok"]\n\n'),
+        FakeResponse(200, b'event: succeeded\ndata: {"v": 1, "type": "succeeded"}\n\n'),
     ],
-    ids=["text of no text", "data of no object"],
+    ids=["text of no text", "data of no object", "frame of version 1"],
 )
 def test_a_frame_of_the_wrong_shape_ends_the_run_as_broken_off(answer):
     exit_code, out, _ = drive(answer)

@@ -264,7 +264,7 @@ def cell_i8(scratch: Path) -> None:
         )  # fmt: skip
         said = started.stdout + started.stderr
         expect(started.returncode != 0, f"I8: a leftover {field} did not stop the start")
-        expect(field.rsplit(".", 1)[-1] in said, f"I8: the refusal of {field} says {said[-300:]!r}")
+        expect(f"{field}:" in said, f"I8: the refusal of {field} says {said[-300:]!r}")
 
 
 def write_dummy_token(path: Path) -> None:
