@@ -798,6 +798,15 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 
 Health: `run.health` (section 3).
 
+**§10 rule 8: a GPU service holds a declared budget.** It binds every service on a platform machine that runs models on a GPU.
+- Its configuration declares the card it uses and its memory budget in GB; its compose file (or, for a host process, its settings) is the one owner of both, and the catalog repeats neither.
+- Within its budget the service manages its own models, resident or loaded and evicted by its own policy. It never exceeds the budget and never frees memory for another service.
+- At start it loads what it needs to serve. If it cannot have its budget, it exits non-zero and its restart policy retries. While running, a service that can no longer serve answers its health check as not ready, never healthy.
+- The budgets on one card, plus each process's CUDA context, sum to at most that card's memory. A GeForce card enforces no budget, so the budget is declared and each service proves it by measuring its own peak after warm-up.
+- Priority between services is their budget size or their card, ruled by the operator; nothing arbitrates at runtime.
+- **What can be checked:** once two GPU services are compose services edge sees, edge's compose contract check sums the declared budgets per card. Until then each service's own item holds its budget.
+- Moving a GPU service to another card or machine follows §10 rule 4.
+
 **Cited, not restated:**
 - backup and the restore test: section 2, L5, and `backup/apps.toml`;
 - health: `run.health` in the catalog (section 3);
