@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import secrets_view, system_step
+from home_tools import check, secrets_view, system_step
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
@@ -53,6 +53,12 @@ read_by = ["gh"]
 recreate = "`gh auth login --web`"
 verify = "gh auth status"
 """
+
+
+@pytest.fixture(autouse=True)
+def empty_log_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The logs check looks at /var/log, which this machine fills; the tests look at an empty directory."""
+    monkeypatch.setattr(check, "LOG_DIRECTORY", tmp_path / "var-log")
 
 
 @pytest.fixture

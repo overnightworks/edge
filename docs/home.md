@@ -166,7 +166,12 @@ und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
 
 Lässt sich `docker` oder `journalctl` nicht ausführen oder liefert das Journal
 kein lesbares Ergebnis, ist das ein eigener Fund (`docker-unreadable`,
-`journal-unreadable`), nie ein sauberer Lauf. Der Bericht nennt außerdem je
+`journal-unreadable`), nie ein sauberer Lauf. Das gilt auch für eine
+Teilansicht: Ohne Leserecht auf das Systemjournal (`journalctl --system`) sähe
+`journalctl` nur das Journal des Benutzers und meldete dennoch Erfolg; die
+Prüfung liest deshalb beide Ansichten und nennt die fehlende als Fund. Ein
+Container, der zwischen `docker ps` und `docker inspect` verschwindet, gilt als
+weg, nicht als Fehler. Der Bericht nennt außerdem je
 Speicher den Stand (Journal-Alter, Standardtreiber, Zahl der Container).
 
 ## home secrets

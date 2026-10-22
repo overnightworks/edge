@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -26,18 +28,21 @@ class FakeMachine:
         self.containers: list[tuple[str, str, str]] = []  # name, log driver, compose project
         self.default_driver: str | None = "journald"
         self.failing_docker_commands: set[str] = set()
+        self.removed_containers: set[str] = set()
         self.boots: str | None = boots_json(NOW - timedelta(days=3))
+        self.system_boots: str | None = self.boots
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "journalctl":
-            return self.boots
+            return self.system_boots if "--system" in argv else self.boots
         if argv[1] in self.failing_docker_commands:
             return None
         if argv[1] == "ps":
             return "".join(f"id{i}\n" for i, _ in enumerate(self.containers))
         if argv[1] == "info":
             return None if self.default_driver is None else self.default_driver + "\n"
-        return "".join(f"/{name}\t{driver}\t{project}\n" for name, driver, project in self.containers)
+        name, driver, project = self.containers[int(argv[-1].removeprefix("id"))]
+        return None if name in self.removed_containers else f"/{name}\t{driver}\t{project}\n"
 
 
 @pytest.fixture
@@ -104,12 +109,12 @@ def test_an_rsyslog_file_and_its_archives_are_findings_by_name(machine, log_dire
 
 @pytest.mark.parametrize("unreadable", ["no output", "not json", "wrong shape", "no boots"])
 def test_a_journal_that_cannot_be_read_is_a_finding_of_its_own(machine, log_directory, unreadable) -> None:
-    machine.boots = {"no output": None, "not json": "denied", "wrong shape": '[{"index": 0}]', "no boots": "[]"}[unreadable]
+    machine.boots = machine.system_boots = {"no output": None, "not json": "denied", "wrong shape": '[{"index": 0}]', "no boots": "[]"}[unreadable]
 
     assert set(findings(machine, log_directory)) == {("journal-unreadable", "journal")}
 
 
-@pytest.mark.parametrize("failing", [{"ps", "inspect", "info"}, {"inspect"}, {"info"}])
+@pytest.mark.parametrize("failing", [{"ps", "inspect", "info"}, {"info"}])
 def test_a_docker_that_cannot_be_run_is_one_finding_not_a_pass(machine, log_directory, failing) -> None:
     machine.containers = [("app-web-1", "journald", "app")]
     machine.failing_docker_commands = failing
@@ -119,3 +124,39 @@ def test_a_docker_that_cannot_be_run_is_one_finding_not_a_pass(machine, log_dire
 
 def test_a_missing_log_directory_has_no_rsyslog_files(machine, tmp_path) -> None:
     assert findings(machine, tmp_path / "absent") == {}
+
+
+def test_a_container_removed_between_listing_and_inspection_is_gone_not_a_docker_failure(machine, log_directory) -> None:
+    machine.containers = [("probe-1", "json-file", "probe"), ("app-web-1", "json-file", "app")]
+    machine.removed_containers = {"probe-1"}
+
+    assert set(findings(machine, log_directory)) == {("container-json-file", "app-web-1")}
+
+
+def test_a_system_journal_that_cannot_be_read_is_named_while_the_merged_age_still_counts(machine, log_directory) -> None:
+    machine.system_boots = None
+    machine.boots = boots_json(NOW - timedelta(days=LOG_RETENTION_DAYS + 1))
+
+    found = findings(machine, log_directory)
+
+    assert set(found) == {("journal-unreadable", "journal"), ("journal-age", "journal")}
+    assert "Teilansicht" in found[("journal-unreadable", "journal")]
+
+
+@pytest.fixture
+def berlin_time(monkeypatch) -> None:
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_the_age_counts_the_hour_the_autumn_clock_change_adds(machine, log_directory, berlin_time) -> None:
+    berlin = ZoneInfo("Europe/Berlin")
+    oldest = datetime(2026, 9, 26, 12, 30, tzinfo=berlin)  # 29 days 23:30 on the wall clock, 30 days 00:30 in fact
+    machine.boots = machine.system_boots = boots_json(oldest)
+
+    found, _report = logs_check.inspect(machine, datetime(2026, 10, 26, 12, 0), log_directory)
+
+    assert [(f.rule, f.subject) for f in found] == [("journal-age", "journal")]
