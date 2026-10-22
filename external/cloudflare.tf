@@ -162,6 +162,17 @@ resource "cloudflare_zone_setting" "hsts" {
   }
 }
 
+# Network Error Logging off for the zone: with it on, every response carries `nel` and `report-to`
+# headers that make the visitor's browser report its network errors to a.nel.cloudflare.com, a
+# third-party request no page of ours asked for.
+resource "cloudflare_zone_setting" "nel" {
+  zone_id    = local.zone_id
+  setting_id = "nel"
+  value = {
+    enabled = false
+  }
+}
+
 # The visitor's address as Cloudflare saw it, in `Forwarded` (RFC 7239): a header the visitor sent
 # is overwritten, which `X-Forwarded-For` cannot be (Cloudflare appends to it and forbids setting
 # it). Keycloak reads only this header (KC_PROXY_HEADERS=forwarded). RFC 7239 quotes an IPv6

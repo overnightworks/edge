@@ -116,6 +116,12 @@ den Preload-Listen, bis sie entfernt ist: den Header ohne `preload` ausliefern, 
 https://hstspreload.org/removal/ absenden und bis zur Entfernung gueltiges HTTPS auf jeder Subdomain
 halten; Browser, die den Header sahen, behalten ihn bis zum Ablauf seines max-age.
 
+**Network Error Logging aus** (`cloudflare_zone_setting.nel`, `nel`): Ist es an, haengt Cloudflare an
+jede Antwort der Zone `nel` und `report-to`, und der Browser des Besuchers meldet seine Netzfehler an
+`a.nel.cloudflare.com`, eine Anfrage an Dritte, die keine unserer Seiten verlangt hat. Die Einstellung
+schaltet es fuer die ganze Zone ab; nach `edge apply` tragen Antworten von Apex, `www`, `auth` und
+songmaker weder `nel` noch `report-to` noch `reporting-endpoints`.
+
 **Die Client-Adresse** (`cloudflare_ruleset.client_address`, Phase `http_request_late_transform`):
 `Forwarded` ist die Adresse, die Cloudflare sah (`for=<IPv4>;proto=https`, bei IPv6
 `for="[<IPv6>]";proto=https`); ein vom Besucher gesendetes `Forwarded` wird ueberschrieben. Keycloak
