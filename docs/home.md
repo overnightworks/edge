@@ -431,7 +431,7 @@ keeps the commit hook from being active:
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
 6. **System.** The playbook `src/home_tools/system/playbook.yml` installs
-   edge's files from `~/git/edge/tunnel/`, see below. It asks once for sudo.
+   edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below. It asks once for sudo.
 
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
 `would change` or `unchanged`, and the system step also `not checked (needs
@@ -465,15 +465,36 @@ is in place, `10-root-binary.conf` is deleted. A change ends in one
 Whatever is replaced or deleted is copied first to
 `/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`.
 
+- **Journal retention.** The same run writes `hal-journal-retention.service` and
+  `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
+  and starts the timer, and reloads systemd on every run, so an interrupted run
+  converges on the next. The timer is `OnCalendar=daily` with `Persistent=true`;
+  the service runs `journalctl --rotate --vacuum-time=28d`. Nothing restarts
+  journald. `LOG_RETENTION_DAYS` (30) in `src/home_tools/system_step.py` is the
+  one owner of the value; 28 is two days less, one for the span of a journal
+  file and one of slack.
+  - **The bound.** While the PC runs, no journal line is older than 29 days
+    and 1 hour (the autumn clock change makes one gap 25 hours). After an
+    outage, `Persistent=true` runs the missed deletion within a minute of
+    boot; the lines that came due meanwhile are gone then, which is the ruled
+    promise („ok a“, 22.10.2026). Nothing promises a minimum age: the journal's
+    own size limits can delete younger lines.
+  - **The first run** deletes every journal file older than 28 days.
+  - **Rollback.** Reverting the change removes the units from the playbook but
+    deletes nothing: the timer keeps running with 28 days. To retire it, change
+    the two units' tasks to `state: absent` and the timer's to `enabled: false`,
+    `state: stopped`, as `10-root-binary.conf` is retired; `hal setup --apply`
+    then stops the timer and deletes both units. Deleted journal lines do not
+    come back.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,
   the dry run says `System: not checked (needs sudo at a terminal)` and
   `--apply` refuses the step and names the command; neither waits for a prompt.
 - **home next.** After a verified run (an `--apply`, or a dry run at a
-  terminal that says `unchanged`), the step records a digest of edge's files
-  and the filled-in values in `~/.local/state/home/system-step.sha256`.
+  terminal that says `unchanged`), the step records a digest of edge's files,
+  the playbook and the filled-in values in `~/.local/state/home/system-step.sha256`.
   `home next` compares only that record, so it never asks for sudo: it shows
-  the step until a verified run, and again when edge's files or the values
+  the step until a verified run, and again when edge's files, the playbook or the values
   change. A hand edit in `/etc`, or a new tunnel id, only `hal setup` at a
   terminal sees.
 - **Rollback.** Restore the previous `cloudflared.service`,

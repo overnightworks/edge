@@ -23,6 +23,11 @@ from home_tools import secrets_setup
 from home_tools.tidy_home import Layout
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
+# The ruled bound on every server log on this PC (overnightworks/edge#167, „ja 30 tage für alle“).
+LOG_RETENTION_DAYS = 30
+# journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span and one day
+# of slack for a PC that is off at midnight keep every line under LOG_RETENTION_DAYS.
+JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
 # The last line of a play recap names the host and counts each outcome.
 RECAP = re.compile(
     r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
@@ -124,17 +129,19 @@ class SystemStep:
     layout: Layout
     boundaries: Boundaries
 
-    def extra_vars(self) -> dict[str, str]:
+    def extra_vars(self) -> dict[str, str | int]:
         """The values the playbook fills in; the tunnel id it reads itself, as root, from cloudflared's config."""
         return {
             "home": str(self.layout.home),
             "operator_user": self.boundaries.operator_user(),
             "edge_tunnel_dir": str(self.layout.edge_tunnel_dir),
+            "journal_vacuum_days": JOURNAL_VACUUM_DAYS,
         }
 
     def inputs_digest(self) -> str:
-        """What a verified run rendered: the content of edge's `tunnel/` files and the values filled in."""
+        """What a verified run rendered: the playbook, the content of edge's `tunnel/` files and the values filled in."""
         digest = hashlib.sha256(json.dumps(self.extra_vars(), sort_keys=True).encode())
+        digest.update(b"\0" + PLAYBOOK.read_bytes())
         tunnel_dir = self.layout.edge_tunnel_dir
         for path in sorted(path for path in tunnel_dir.rglob("*") if path.is_file()):
             digest.update(b"\0" + str(path.relative_to(tunnel_dir)).encode() + b"\0" + path.read_bytes())
