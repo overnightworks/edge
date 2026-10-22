@@ -311,13 +311,14 @@ wait_for_new_invocation() {  # wait_for_new_invocation <old id>: the service's n
 }
 
 cell_t4() {
-    local before restarted invocation activated
+    local before restarted invocation exit_timestamp activated
     before=$(systemctl show "$RETENTION_SERVICE" -p InvocationID --value) || before=unobserved
     touch -d '2 days ago' "/var/lib/systemd/timers/stamp-$RETENTION_TIMER"
     restarted=$(date +%s)
     systemctl restart "$RETENTION_TIMER"
     invocation=$(wait_for_new_invocation "$before")
-    activated=$(seconds_since_epoch "$(systemctl show "$RETENTION_SERVICE" -p InactiveExitTimestamp --value)")
+    exit_timestamp=$(systemctl show "$RETENTION_SERVICE" -p InactiveExitTimestamp --value) || exit_timestamp=
+    activated=$(seconds_since_epoch "$exit_timestamp")
     verdict T4 "two days after its last run the service runs within a minute of the timer's start" \
         '[[ $before != unobserved && -n $invocation && -n $activated ]] && ((activated >= restarted && activated - restarted <= 60))'
     return
@@ -360,15 +361,21 @@ cell_t5b() {  # the timer is enabled and the service unit on disk is newer than 
     return
 }
 
-# Prints present or absent when the journal answered, and fails when the observation itself failed. A keeper
-# line logged just before the query must come back, so a broken journalctl is never read as absence.
+# Prints present or absent when the journal answered, and fails when the observation itself failed. Reading
+# writes nothing, so the journal stays quiet. systemd 255 exits 1 and prints nothing when no entry matches,
+# so absence is that silent exit 1 with the journal's header and boot list still readable; any other
+# outcome is a failed observation, never absence.
 observe_journal_line() {  # observe_journal_line <text>
-    local text=$1 keeper="retention-keeper-$RANDOM$RANDOM" output
-    logger -t proof-keeper "$keeper" || return 1
-    journalctl --sync || return 1
-    output=$(journalctl --no-pager -o cat --grep "$keeper|$text") || return 1
-    grep -qF -- "$keeper" <<<"$output" || return 1
-    if grep -qF -- "$text" <<<"$output"; then echo present; else echo absent; fi
+    local text=$1 output status=0
+    journalctl --header >/dev/null && journalctl --list-boots >/dev/null || return 1
+    output=$(journalctl --no-pager -o cat --grep "$text" 2>&1) || status=$?
+    if ((status == 0)) && grep -qF -- "$text" <<<"$output"; then
+        echo present
+    elif ((status == 1)) && [[ -z $output ]]; then
+        echo absent
+    else
+        return 1
+    fi
     return 0
 }
 

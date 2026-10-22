@@ -461,15 +461,16 @@ their placeholders filled, to:
 All four are root-owned, mode 644. `@HOME@` and `@OPERATOR_USER@` are your
 home and your user; `@TUNNEL_ID@` is `tunnel:` in `/etc/cloudflared/config.yml`,
 and without it the step fails before writing anything. Once the new base unit
-is in place, `10-root-binary.conf` is deleted. Every run reloads systemd, and a change
-reloads it once more at its end; cloudflared is never started, stopped or restarted.
+is in place, `10-root-binary.conf` is deleted. Every `--apply` reloads systemd; a dry run does not.
+An extra reload at the end follows only when an edge file or the retired drop-in changed;
+cloudflared is never started, stopped or restarted.
 Whatever is replaced or deleted of these files is copied first to
 `/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`. The retention units
 below are home's own and are not backed up.
 
 - **Journal retention.** The same run writes `hal-journal-retention.service` and
   `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
-  and starts the timer, and reloads systemd on every run, so an interrupted run
+  and starts the timer, and reloads systemd on every `--apply`, so an interrupted run
   converges on the next. The timer is `OnCalendar=daily` with `Persistent=true`;
   the service runs `journalctl --rotate --vacuum-time=28d`. Nothing restarts
   journald. `LOG_RETENTION_DAYS` (30) in `src/home_tools/system_step.py` is the
@@ -514,7 +515,7 @@ below are home's own and are not backed up.
   - A failure while copying leaves some files in place and `10-root-binary.conf` still there. Run
     `hal setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
   - A failure in the reload itself leaves every file in place, `10-root-binary.conf` already deleted
-    and systemd not reloaded. Run `hal setup --apply` again: it reloads systemd on every run,
+    and systemd not reloaded. Run `hal setup --apply` again: it reloads systemd on every `--apply`,
     whatever else it finds to change.
 
   Or roll back as described.
