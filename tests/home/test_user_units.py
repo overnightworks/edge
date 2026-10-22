@@ -135,8 +135,8 @@ def machine(tmp_path: Path) -> Machine:
 def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:
     assert machine.step.apply() is Applied.CHANGED
 
-    targets = [(machine.user_units / name).readlink() for name in (SERVICE, TIMER)]
-    assert targets == [machine.checkout_units / SERVICE, machine.checkout_units / TIMER]
+    assert (machine.user_units / SERVICE).readlink() == machine.checkout_units / SERVICE
+    assert (machine.user_units / TIMER).readlink() == machine.checkout_units / TIMER
     assert machine.systemctl.changes == [["daemon-reload"], ["enable", "--now", TIMER]]
     assert machine.step.is_verified()
 
