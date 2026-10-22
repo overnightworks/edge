@@ -33,8 +33,8 @@ ADMIN_PORT = 8090
 _HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
 # Lowercase unreserved segments, no query or trailing slash: the rendering embeds it in a rule.
 _DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
-_HTTPS_URL = re.compile(r"https://[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._~/-]*)?")
-_HTTPS_ORIGIN = re.compile(r"https://[a-z0-9.-]+(:[0-9]+)?")
+_HTTPS_URL = re.compile(r"https://[a-z0-9.-]+(:\d+)?(/[a-z0-9._~/-]*)?")
+_HTTPS_ORIGIN = re.compile(r"https://[a-z0-9.-]+(:\d+)?")
 _REDIRECT_KEYS = {"hosts", "target", "keep"}
 _KEPT_PATH_KEYS = {"path", "target"}
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
