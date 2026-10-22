@@ -121,6 +121,10 @@ jede Antwort der Zone `nel` und `report-to`, und der Browser des Besuchers melde
 `a.nel.cloudflare.com`, eine Anfrage an Dritte, die keine unserer Seiten verlangt hat. Die Einstellung
 schaltet es fuer die ganze Zone ab; nach `edge apply` tragen Antworten von Apex, `www`, `auth` und
 songmaker weder `nel` noch `report-to` noch `reporting-endpoints`.
+Browser, die Cloudflares NEL-Richtlinie schon halten, melden weiter, bis ihr `max_age` ablaeuft: eine
+Antwort ohne den Header loescht eine gemerkte Richtlinie nicht (W3C NEL, 4.2). Zuruecknehmen: `enabled =
+true` setzen und anwenden; den Block zu loeschen laesst NEL aus, weil das `Delete` des Providers nichts
+tut.
 
 **Die Client-Adresse** (`cloudflare_ruleset.client_address`, Phase `http_request_late_transform`):
 `Forwarded` ist die Adresse, die Cloudflare sah (`for=<IPv4>;proto=https`, bei IPv6
