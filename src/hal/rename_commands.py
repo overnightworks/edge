@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from edge import compose
@@ -79,29 +79,28 @@ class Site:
 
 
 @dataclass(frozen=True)
+class Sync:
+    """A project with a lock file, synced on each run where the moves take it."""
+
+    project: Path
+    python: str | None  # the `major.minor` its venv was made with
+
+
+@dataclass(frozen=True)
 class Relocation:
     """What one clone still needs; a worktree's `source` is the path git has recorded for it."""
 
     site: Site
     new_url: str | None  # None when `origin` already names the new repository
+    clone_moves: tuple[Move, ...]  # the clone and its `-worktrees` that still lie at the old name
+    memory_move: Move | None
     linked: tuple[Move, ...]
     outside: tuple[Path, ...]
-    syncs: tuple[Path, ...]  # every project with a lock file, synced on each run
-
-    @property
-    def clone_moves(self) -> tuple[Move, ...]:
-        return tuple(
-            move for move in (self.site.clone, self.site.worktrees) if os.path.lexists(move.source)
-        )
+    syncs: tuple[Sync, ...]
 
     @property
     def needs_repair(self) -> bool:
         return any(not move.is_noop for move in self.linked)
-
-    @property
-    def memory_move(self) -> Move | None:
-        memory = self.site.memory
-        return memory if memory.source.is_dir() and not memory.is_noop else None
 
     @property
     def needs_work(self) -> bool:
@@ -173,6 +172,105 @@ def _uv_tools() -> str:
         return ""
 
 
+@dataclass
+class Disk:
+    """Every filesystem access of one plan: the reads that find the work and the actions its
+    steps run. Each access first looks for symbolic links in its path and the path's parents,
+    both where the path will be and where a planned move takes it from, and remembers them; the
+    plan refuses them all before any change. An action touches only the paths it was built with,
+    so nothing a run reads or changes escapes the check. `is_link` and `link_target` are the one
+    exception: they look at a scanned leaf link itself and read its target without following."""
+
+    moves: tuple[Move, ...] = ()
+    links: dict[Path, None] = field(default_factory=dict)  # an ordered set
+
+    def _check(self, path: Path) -> None:
+        for place in (path, *self._sources_of(path)):
+            self.links.update(
+                dict.fromkeys(part for part in (place, *place.parents) if part.is_symlink())
+            )
+
+    def _sources_of(self, path: Path) -> list[Path]:
+        return [
+            move.source / path.relative_to(move.target)
+            for move in self.moves
+            if path.is_relative_to(move.target)
+        ]
+
+    def exists(self, path: Path) -> bool:
+        self._check(path)
+        return os.path.lexists(path)
+
+    def is_dir(self, path: Path) -> bool:
+        self._check(path)
+        return path.is_dir()
+
+    def is_file(self, path: Path) -> bool:
+        self._check(path)
+        return path.is_file()
+
+    def read_text(self, path: Path) -> str:
+        self._check(path)
+        return path.read_text(errors="replace")
+
+    def entries(self, directory: Path) -> list[Path]:
+        self._check(directory)
+        return sorted(directory.iterdir()) if directory.is_dir() else []
+
+    def walk(self, directory: Path) -> list[Path]:
+        """Everything below `directory`; a linked directory is listed, never entered."""
+        self._check(directory)
+        return sorted(directory.rglob("*"))
+
+    def real_path(self, path: Path) -> Path:
+        self._check(path)
+        return path.resolve()
+
+    def is_link(self, path: Path) -> bool:
+        self._check(path.parent)
+        return path.is_symlink()
+
+    def link_target(self, link: Path) -> Path:
+        self._check(link.parent)
+        return Path(os.path.normpath(link.parent / os.readlink(link)))
+
+    def git(self, directory: Path, *arguments: str) -> str:
+        self._check(directory / ".git")
+        return _git(directory, *arguments)
+
+    def worktrees_of(self, clone: Path) -> set[Path]:
+        self._check(clone / ".git")
+        return registered_worktrees(clone, _output_of, resolve_links=False)
+
+    def move_action(self, move: Move) -> Callable[[], None]:
+        self._check(move.source)
+        self._check(move.target)
+        return lambda: move.source.rename(move.target)
+
+    def git_action(self, directory: Path, *arguments: str | Path) -> Callable[[], None]:
+        """git works in `directory` and in every path among `arguments`, each with its `.git`."""
+        for repository in (directory, *(path for path in arguments if isinstance(path, Path))):
+            self._check(repository / ".git")
+
+        def run() -> None:
+            _git(directory, *map(str, arguments))
+
+        return run
+
+    def uv_action(
+        self, uv: Callable[[Path, tuple[str, ...]], None], project: Path, *calls: tuple[str, ...]
+    ) -> Callable[[], None]:
+        """uv works in `project`: it reads `uv.lock` and rewrites `.venv`."""
+        self._check(project / "uv.lock")
+        self._check(project / ".venv")
+
+        def run() -> None:
+            for arguments in calls:
+                uv(project, arguments)
+
+        return run
+
+
 def real_world(home: Path) -> World:
     return World(home, _github_knows, processes_inside, _uv, _uv_tools)
 
@@ -188,9 +286,9 @@ def _renamed_url(url: str | None, old: str, new: str) -> str | None:
     return f"{match['before']}{new}{match['after']}" if match else None
 
 
-def _origin(path: Path) -> str | None:
+def _origin(disk: Disk, path: Path) -> str | None:
     try:
-        return _git(path, "config", "--get", "remote.origin.url")
+        return disk.git(path, "config", "--get", "remote.origin.url")
     except subprocess.CalledProcessError:
         return None
 
@@ -225,9 +323,9 @@ def _worktrees_of(clone: Path) -> Path:
     return clone.with_name(f"{clone.name}{WORKTREES}")
 
 
-def _sites(world: World, old: str, new: str) -> list[Site]:
+def _sites(world: World, disk: Disk, old: str, new: str) -> list[Site]:
     git_directory = Layout(world.home).git
-    names = [path.name for path in git_directory.iterdir()] if git_directory.is_dir() else []
+    names = [path.name for path in disk.entries(git_directory)]
     suffixes = {_suffix_of(name, old, new) for name in names} - {None}
     sites = []
     for suffix in sorted(suffixes):
@@ -236,7 +334,7 @@ def _sites(world: World, old: str, new: str) -> list[Site]:
             (
                 path
                 for path in (clone.source, clone.target)
-                if (path / ".git").is_dir() and _names(_origin(path), old, new)
+                if disk.is_dir(path / ".git") and _names(_origin(disk, path), old, new)
             ),
             None,
         )
@@ -264,58 +362,71 @@ def _relocated(path: Path, moves: Iterable[Move]) -> Path | None:
     return None
 
 
-def _current(move: Move) -> Path:
-    return move.source if os.path.lexists(move.source) else move.target
+def _current(disk: Disk, move: Move) -> Path:
+    return move.source if disk.exists(move.source) else move.target
 
 
-def _relocation(site: Site, moves: Sequence[Move], old: str, new: str) -> Relocation:
+def _worktrees(disk: Disk, site: Site, moves: Sequence[Move]) -> tuple[list[Move], list[Path]]:
+    """The worktrees git lists for the clone: those under a moved tree, and those outside."""
     linked, outside = [], []
-    for path in sorted(
-        registered_worktrees(site.here, _output_of, resolve_links=False)
-        - {site.here, site.here.resolve()}
-    ):
+    for path in sorted(disk.worktrees_of(site.here) - {site.here, disk.real_path(site.here)}):
         relocated = _relocated(path, moves)
-        if relocated is None and path.exists():
+        if relocated is None and disk.exists(path):
             outside.append(path)
-        elif relocated is not None and (path.exists() or relocated.exists()):
+        elif relocated is not None and (disk.exists(path) or disk.exists(relocated)):
             linked.append(Move(path, relocated))
-    syncs = [
-        project.target
-        for project in (site.clone, *linked)
-        if (_current(project) / "uv.lock").is_file()
-    ]
+    return linked, outside
+
+
+def _syncs(disk: Disk, projects: Iterable[Move]) -> tuple[Sync, ...]:
+    syncs = []
+    for project in projects:
+        here = _current(disk, project)
+        if disk.is_file(here / "uv.lock"):
+            syncs.append(Sync(project.target, _venv_python_version(disk, here / ".venv")))
+    return tuple(syncs)
+
+
+def _relocation(disk: Disk, site: Site, moves: Sequence[Move], old: str, new: str) -> Relocation:
+    linked, outside = _worktrees(disk, site, moves)
+    memory = site.memory
     return Relocation(
         site=site,
-        new_url=_renamed_url(_origin(site.here), old, new),
+        new_url=_renamed_url(_origin(disk, site.here), old, new),
+        clone_moves=tuple(
+            move for move in (site.clone, site.worktrees) if disk.exists(move.source)
+        ),
+        memory_move=memory if disk.is_dir(memory.source) and not memory.is_noop else None,
         linked=tuple(linked),
         outside=tuple(outside),
-        syncs=tuple(syncs),
+        syncs=_syncs(disk, (site.clone, *linked)),
     )
 
 
 def _deploy_checkouts(
-    world: World, old: str, new: str, moved: Sequence[Path]
+    world: World, disk: Disk, old: str, new: str, moved: Sequence[Path]
 ) -> tuple[DeployCheckout, ...]:
     found = []
     for parent in DEPLOY_PARENTS:
-        directory = world.home / parent
-        for path in sorted(directory.iterdir()) if directory.is_dir() else []:
-            if _is_deploy_candidate(world, path, moved) and (
-                url := _renamed_url(_origin(path), old, new)
-            ):
+        for path in disk.entries(world.home / parent):
+            place = _checkout_place(world, disk, path, moved)
+            if place and (url := _renamed_url(_origin(disk, place), old, new)):
                 found.append(DeployCheckout(path, url))
     return tuple(found)
 
 
-def _is_deploy_candidate(world: World, path: Path, moved: Sequence[Path]) -> bool:
-    """A link into a moved clone is a finding, not a checkout."""
-    return (
-        not path.name.startswith(".")
-        and path != Layout(world.home).git
-        and path.is_dir()
-        and (path / ".git").is_dir()
-        and not (path.is_symlink() and _points_into(path, moved))
-    )
+def _checkout_place(world: World, disk: Disk, path: Path, moved: Sequence[Path]) -> Path | None:
+    """Where a deploy checkout at `path` keeps its files: there, or where a link there points.
+    A link into a moved clone is a finding, not a checkout; a link elsewhere is read through
+    here, and the checkout's step refuses it."""
+    if (
+        path.name.startswith(".")
+        or path == Layout(world.home).git
+        or _points_into(disk, path, moved)
+    ):
+        return None
+    place = disk.link_target(path) if disk.is_link(path) else path
+    return place if disk.is_dir(place / ".git") else None
 
 
 def _mentions(text: str, roots: Iterable[Path], home: Path | None = None) -> bool:
@@ -326,32 +437,38 @@ def _mentions(text: str, roots: Iterable[Path], home: Path | None = None) -> boo
     return any(re.search(rf"{re.escape(spelling)}(?![\w.-])", text) for spelling in spellings)
 
 
-def _points_into(link: Path, roots: Iterable[Path]) -> bool:
-    target = Path(os.path.normpath(link.parent / os.readlink(link)))
+def _points_into(disk: Disk, link: Path, roots: Iterable[Path]) -> bool:
+    if not disk.is_link(link):
+        return False
+    target = disk.link_target(link)
     return any(target.is_relative_to(root) for root in roots)
 
 
-def _entries(directory: Path) -> list[Path]:
-    return sorted(directory.glob("*")) if directory.is_dir() else []
-
-
-def _unit_findings(directory: Path, roots: Sequence[Path], home: Path) -> list[str]:
+def _unit_findings(disk: Disk, directory: Path, roots: Sequence[Path], home: Path) -> list[str]:
+    """A unit link is read, never followed: the file it names is either scanned here or not
+    hal's to judge."""
     found = []
-    for entry in sorted(directory.rglob("*")):
-        if entry.is_symlink() and _points_into(entry, roots):
+    for entry in disk.walk(directory):
+        if _points_into(disk, entry, roots):
             found.append(f"unit link {entry} points into a moved clone")
-        elif entry.is_file() and _mentions(entry.read_text(errors="replace"), roots, home):
+        elif (
+            not disk.is_link(entry)
+            and disk.is_file(entry)
+            and _mentions(disk.read_text(entry), roots, home)
+        ):
             found.append(f"unit {entry} points into a moved clone")
     return found
 
 
-def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocation]) -> list[str]:
-    found = _unit_findings(world.home / ".config" / "systemd" / "user", roots, world.home)
+def _findings(
+    world: World, disk: Disk, roots: Sequence[Path], relocations: Sequence[Relocation]
+) -> list[str]:
+    found = _unit_findings(disk, world.home / ".config" / "systemd" / "user", roots, world.home)
     found += [
         f"link {link} points into a moved clone"
         for directory in (world.home / ".local" / "bin", world.home, world.home / "srv")
-        for link in _entries(directory)
-        if link.is_symlink() and _points_into(link, roots)
+        for link in disk.entries(directory)
+        if _points_into(disk, link, roots)
     ]
     found += [
         f"uv tool installed from a moved clone: {line.strip()}"
@@ -363,79 +480,45 @@ def _findings(world: World, roots: Sequence[Path], relocations: Sequence[Relocat
         f"git -C {relocation.site.clone.target} worktree repair {path}"
         for relocation in relocations
         for path in relocation.outside
-        if not _names_clone(path, relocation.site.clone.target)
+        if not _names_clone(disk, path, relocation.site.clone.target)
     ]
     return found
 
 
-def _names_clone(worktree: Path, clone: Path) -> bool:
-    """Whether the worktree's `.git` file already names a registration inside the clone."""
+def _names_clone(disk: Disk, worktree: Path, clone: Path) -> bool:
+    """Whether the worktree's `.git` file names a registration inside the clone that exists and
+    names that `.git` file back."""
     gitfile = worktree / ".git"
-    if not gitfile.is_file():
+    if not disk.is_file(gitfile):
         return False
-    registration = Path(gitfile.read_text().removeprefix("gitdir:").strip())
-    return registration.parent == clone / ".git" / "worktrees"
+    registration = Path(disk.read_text(gitfile).removeprefix("gitdir:").strip())
+    pointer = registration / "gitdir"
+    return (
+        registration.parent == clone / ".git" / "worktrees"
+        and disk.is_file(pointer)
+        and Path(disk.read_text(pointer).strip()) == gitfile
+    )
 
 
-def _both_exist(move: Move) -> bool:
-    return not move.is_noop and os.path.lexists(move.source) and os.path.lexists(move.target)
-
-
-def _links_within(path: Path) -> list[Path]:
-    """The symbolic links among `path` and all its parents, wherever they lie."""
-    return [part for part in (path, *path.parents) if part.is_symlink()]
-
-
-def _venv_links(path: Path) -> list[Path]:
-    return [venv for venv in (path / ".venv",) if venv.is_symlink()]
-
-
-def _relocation_links(relocation: Relocation) -> list[Path]:
-    site = relocation.site
-    links = []
-    for move in (site.clone, site.worktrees, site.memory, *relocation.linked):
-        for path in (move.source, move.target):
-            links += _links_within(path) + _venv_links(path)
-    for path in relocation.outside:
-        links += _links_within(path) + _venv_links(path)
-    for directory in (site.worktrees.source, site.worktrees.target):
-        links += [entry for entry in _entries(directory) if entry.is_symlink()]
-    if (site.here / ".git").is_symlink():
-        links.append(site.here / ".git")
-    return links
-
-
-def _links_in_the_way(
-    world: World, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
-) -> list[Path]:
-    links = _links_within(Layout(world.home).git)
-    for relocation in relocations:
-        links += _relocation_links(relocation)
-    for checkout in deploy:
-        links += _links_within(checkout.path)
-        links += [git for git in (checkout.path / ".git",) if git.is_symlink()]
-    return list(dict.fromkeys(links))
+def _both_exist(disk: Disk, move: Move) -> bool:
+    return not move.is_noop and disk.exists(move.source) and disk.exists(move.target)
 
 
 def _refusals(
-    world: World,
-    relocations: Sequence[Relocation],
-    deploy: Sequence[DeployCheckout],
-    has_work: bool,
-    new: str,
+    world: World, disk: Disk, relocations: Sequence[Relocation], has_work: bool, new: str
 ) -> list[str]:
-    sites = [relocation.site for relocation in relocations]
+    """Runs after every other access of the plan, so the links the disk met are all of them."""
     refusals = [
         f"{move.target} already exists"
-        for site in sites
-        for move in (site.clone, site.worktrees, site.memory)
-        if _both_exist(move)
+        for relocation in relocations
+        for move in (relocation.site.clone, relocation.site.worktrees, relocation.site.memory)
+        if _both_exist(disk, move)
     ]
-    links = _links_in_the_way(world, relocations, deploy)
-    refusals += [f"{path} is a symbolic link, which is never followed" for path in links]
+    sessions = _process_refusals(world, disk, relocations)
+    refusals += [f"{path} is a symbolic link, which is never followed" for path in disk.links]
     if has_work and not world.github_knows(new):
         refusals.append(f"GitHub does not know {OWNER}/{new}")
-    return refusals
+    return refusals + sessions
 
 
 def _trees_of(relocation: Relocation) -> list[Path]:
@@ -453,15 +536,15 @@ def _trees_of(relocation: Relocation) -> list[Path]:
     return [*places, *relocation.outside]
 
 
-def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[str]:
+def _process_refusals(world: World, disk: Disk, relocations: Sequence[Relocation]) -> list[str]:
     """A session counts wherever any tree of any clone is now: a rerun can find it already
     moved, and a worktree can lie under another clone's directory."""
     roots = (
         {
-            path
+            disk.real_path(path)
             for relocation in relocations
-            for path in map(Path.resolve, _trees_of(relocation))
-            if path.exists()
+            for path in _trees_of(relocation)
+            if disk.exists(path)
         }
         if any(relocation.needs_work for relocation in relocations)
         else set()
@@ -473,31 +556,31 @@ def _process_refusals(world: World, relocations: Sequence[Relocation]) -> list[s
     ]
 
 
-def _move_step(move: Move) -> Step:
-    return Step(f"move {move.source} -> {move.target}", lambda: move.source.rename(move.target))
+def _move_step(disk: Disk, move: Move) -> Step:
+    return Step(f"move {move.source} -> {move.target}", disk.move_action(move))
 
 
-def _origin_step(path: Path, url: str) -> Step:
+def _origin_step(disk: Disk, path: Path, url: str) -> Step:
     return Step(
-        f"origin of {path} -> {url}", lambda: _git(path, "remote", "set-url", "origin", url)
+        f"origin of {path} -> {url}", disk.git_action(path, "remote", "set-url", "origin", url)
     )
 
 
-def _repair_step(relocation: Relocation) -> Step:
+def _repair_step(disk: Disk, relocation: Relocation) -> Step:
     clone = relocation.site.clone.target
-    worktrees = [str(move.target) for move in relocation.linked]
+    worktrees = [move.target for move in relocation.linked]
     return Step(
         f"repair {len(worktrees)} worktrees of {clone}",
-        lambda: _git(clone, "worktree", "repair", *worktrees),
+        disk.git_action(clone, "worktree", "repair", *worktrees),
     )
 
 
-def _venv_python_version(venv: Path) -> str | None:
+def _venv_python_version(disk: Disk, venv: Path) -> str | None:
     """The `major.minor` Python a venv was made with, None when it has no `pyvenv.cfg`."""
     config = venv / "pyvenv.cfg"
-    if not config.is_file():
+    if not disk.is_file(config):
         return None
-    entries = (line.partition("=") for line in config.read_text().splitlines())
+    entries = (line.partition("=") for line in disk.read_text(config).splitlines())
     return next(
         (
             ".".join(value.strip().split(".")[:2])
@@ -508,53 +591,64 @@ def _venv_python_version(venv: Path) -> str | None:
     )
 
 
-def _sync_step(world: World, project: Path) -> Step:
+def _sync_step(world: World, disk: Disk, sync: Sync) -> Step:
     """Every run rewrites the venv in place: `uv venv --allow-existing` and a reinstall make a
     moved `.venv` name its new path in `bin/activate*` and in its scripts, and nothing is
     deleted. `uv venv` is told the venv's own Python version, because it would otherwise pick
     the newest interpreter it finds."""
-
-    def sync() -> None:
-        version = _venv_python_version(project / ".venv")
-        python = ("--python", version) if version else ()
-        world.uv(project, ("venv", "--allow-existing", *python))
-        world.uv(project, ("sync", "--locked", "--reinstall"))
-
-    return Step(f"uv sync in {project}", sync, is_sync=True)
+    python = ("--python", sync.python) if sync.python else ()
+    return Step(
+        f"uv sync in {sync.project}",
+        disk.uv_action(
+            world.uv,
+            sync.project,
+            ("venv", "--allow-existing", *python),
+            ("sync", "--locked", "--reinstall"),
+        ),
+        is_sync=True,
+    )
 
 
 def _steps(
-    world: World, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
+    world: World, disk: Disk, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
 ) -> tuple[Step, ...]:
     """The work still to do, in the order that is safe: every move first, because a worktree
     of one clone can lie inside another clone's `-worktrees`."""
-    steps = [_move_step(move) for relocation in relocations for move in relocation.clone_moves]
+    steps = [
+        _move_step(disk, move) for relocation in relocations for move in relocation.clone_moves
+    ]
     steps += [
-        _origin_step(relocation.site.clone.target, relocation.new_url)
+        _origin_step(disk, relocation.site.clone.target, relocation.new_url)
         for relocation in relocations
         if relocation.new_url
     ]
-    steps += [_repair_step(relocation) for relocation in relocations if relocation.needs_repair]
     steps += [
-        _move_step(relocation.memory_move) for relocation in relocations if relocation.memory_move
+        _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
     ]
-    steps += [_origin_step(checkout.path, checkout.new_url) for checkout in deploy]
     steps += [
-        _sync_step(world, project) for relocation in relocations for project in relocation.syncs
+        _move_step(disk, relocation.memory_move)
+        for relocation in relocations
+        if relocation.memory_move
+    ]
+    steps += [_origin_step(disk, checkout.path, checkout.new_url) for checkout in deploy]
+    steps += [
+        _sync_step(world, disk, sync) for relocation in relocations for sync in relocation.syncs
     ]
     return tuple(steps)
 
 
 def make_plan(world: World, old: str, new: str) -> Plan:
-    sites = _sites(world, old, new)
+    """Reads only through one `Disk`, and its steps act only through it."""
+    disk = Disk()
+    sites = _sites(world, disk, old, new)
     moves = [move for site in sites for move in (site.clone, site.worktrees)]
-    relocations = [_relocation(site, moves, old, new) for site in sites]
+    disk.moves = tuple(moves)
+    relocations = [_relocation(disk, site, moves, old, new) for site in sites]
     roots = [move.source for move in moves]
-    deploy = _deploy_checkouts(world, old, new, roots + [move.target for move in moves])
-    steps = _steps(world, relocations, deploy)
-    refusals = _refusals(world, relocations, deploy, bool(steps), new)
-    refusals += _process_refusals(world, relocations)
-    findings = _findings(world, roots, relocations) if steps else []
+    deploy = _deploy_checkouts(world, disk, old, new, roots + [move.target for move in moves])
+    steps = _steps(world, disk, relocations, deploy)
+    findings = _findings(world, disk, roots, relocations) if steps else []
+    refusals = _refusals(world, disk, relocations, bool(steps), new)
     return Plan(steps, tuple(findings), tuple(refusals))
 
 

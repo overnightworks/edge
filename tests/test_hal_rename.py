@@ -164,19 +164,10 @@ def test_the_way_back_moves_everything_home_again(home, world, repository, fakes
     assert plain_git(home / "git" / "old-worktrees" / "lane", "status").returncode == 0
 
 
-@pytest.mark.parametrize(
-    "case",
-    [
-        "target-exists",
-        "worktrees-target-exists",
-        "memory-target-exists",
-        "dangling-target",
-        "dangling-worktrees-target",
-        "dangling-memory-target",
-        "process-inside",
-        "unknown-new-name",
-    ],
-)
+@pytest.mark.parametrize("case", [
+    "target-exists", "worktrees-target-exists", "memory-target-exists", "dangling-target",
+    "dangling-worktrees-target", "dangling-memory-target", "process-inside", "unknown-new-name",
+])  # fmt: skip
 def test_a_refusal_changes_nothing_and_exits_four(home, world, repository, fakes, case, capsys):
     targets = {
         "target": home / "git" / "fresh",
@@ -271,6 +262,7 @@ def test_what_does_not_point_into_a_moved_clone_is_not_reported(home, world, rep
         f"ExecStart=%h/git/old-extra/run {home / 'git' / 'older'}\n"
     )
     (units / "other.service").write_text("ExecStart=%h/git/another/run\n")
+    (units / "linked.service").symlink_to(home / "somewhere")
     links = home / ".local" / "bin"
     links.mkdir(parents=True)
     (links / "elsewhere").symlink_to(home / "somewhere")
@@ -404,8 +396,11 @@ def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree(home, w
     assert (git / "fresh-worktrees" / "issue-2-land" / ".git").read_text().count("fresh-land") == 1
 
 
-def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it(
-    home, world, repository, tmp_path, capsys
+@pytest.mark.parametrize(
+    ("registration", "repeat"), [("repaired", ExitCode.OK), ("ghost", ExitCode.FINDINGS)]
+)
+def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it_until_repaired(
+    home, world, repository, tmp_path, capsys, registration, repeat
 ):
     outside = tmp_path / "scratch" / "lane"
     plain_git(repository, "worktree", "add", "-b", "scratch", str(outside))
@@ -422,25 +417,43 @@ def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it(
     assert f"finding: worktree {outside} lies outside the moved trees" in capsys.readouterr().out
     assert plain_git(home / "git" / "fresh", "worktree", "repair", str(outside)).returncode == 0
     assert plain_git(outside, "status", "--porcelain").stdout == ""
-    assert rename(world) == ExitCode.OK
-    assert "finding" not in capsys.readouterr().out
+    if registration == "ghost":
+        ghost = home / "git" / "fresh" / ".git" / "worktrees" / "ghost"
+        (outside / ".git").write_text(f"gitdir: {ghost}\n")
+    assert rename(world) == repeat
+    assert ("finding" in capsys.readouterr().out) == (registration == "ghost")
 
 
 def symlinked(home: Path, case: str) -> None:
     elsewhere = home.parent / "elsewhere"
+    old = home / "git" / "old"
+    if case in ("venv", "lock", "pyvenv"):
+        (old / "uv.lock").write_text("")
+    if case == "pyvenv":
+        (old / ".venv").mkdir()
+        (old / ".venv" / "pyvenv.cfg").write_text("version_info = 3.12.1\n")
+    if case == "outside-gitfile":
+        plain_git(old, "worktree", "add", "-b", "outer", str(home.parent / "outer" / "probe"))
+    (home / ".config" / "systemd" / "user").mkdir(parents=True)
+    (home / ".local" / "bin").mkdir(parents=True)
     moved_away = {
-        "clone": home / "git" / "old",
-        "metadata": home / "git" / "old" / ".git",
+        "clone": old,
+        "metadata": old / ".git",
         "worktrees": home / "git" / "old-worktrees",
         "parent": home / "git",
-        "memory": memory_of(home, home / "git" / "old"),
+        "memory": memory_of(home, old),
         "memory-parent": home / ".claude" / "projects",
+        "lock": old / "uv.lock",
+        "pyvenv": old / ".venv" / "pyvenv.cfg",
+        "outside-gitfile": home.parent / "outer" / "probe" / ".git",
+        "units-ancestor": home / ".config",
+        "bin-ancestor": home / ".local",
     }
     if case in moved_away:
         moved_away[case].rename(elsewhere)
         moved_away[case].symlink_to(elsewhere)
     if case == "venv":
-        (home / "git" / "old" / ".venv").symlink_to(elsewhere)
+        (old / ".venv").symlink_to(elsewhere)
     if case == "nested-worktree":
         group = home / "git" / "old-worktrees" / "group"
         plain_git(home / "git" / "old", "worktree", "add", "-b", "deep", str(group / "lane"))
@@ -468,24 +481,11 @@ def symlinked(home: Path, case: str) -> None:
         (home / "srv").symlink_to(elsewhere)
 
 
-@pytest.mark.parametrize(
-    "case",
-    [
-        "clone",
-        "metadata",
-        "worktrees",
-        "parent",
-        "venv",
-        "nested-worktree",
-        "recovered-worktree",
-        "outside-ancestor",
-        "memory",
-        "memory-parent",
-        "deploy",
-        "deploy-metadata",
-        "deploy-parent",
-    ],
-)
+@pytest.mark.parametrize("case", [
+    "clone", "metadata", "worktrees", "parent", "venv", "lock", "pyvenv", "nested-worktree",
+    "recovered-worktree", "outside-ancestor", "outside-gitfile", "memory", "memory-parent",
+    "units-ancestor", "bin-ancestor", "deploy", "deploy-metadata", "deploy-parent",
+])  # fmt: skip
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     home, world, repository, fakes, case, capsys
 ):
