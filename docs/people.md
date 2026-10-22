@@ -67,9 +67,10 @@ answers what the erasure would do. Both answer one body:
 ```
 
 `kinds` counts what belongs to the person. `bytes` is optional: an app gives it where files are
-involved and can measure it cheaply, and hal shows it when present. Completion is judged by the
-counts alone. `affects_others` counts what the erasure changes for other people. In a real erasure
-`dry_run` is `false` and the counts are what was removed. `people_erasure` is the integer `1`.
+involved and can measure it cheaply, and hal shows it when present. hal's order, step 4, judges
+completion by the counts. `affects_others` counts what the erasure changes for other people. In a
+real erasure `dry_run` is `false` and the counts are what was removed. `people_erasure` is the
+integer `1`.
 
 - `kinds[].kind` and `withheld[].kind` are the app's own lowercase words; hal only shows them.
 - `affects_others[].action` is `delete` (others lose an object that is deleted, a shared one included)
@@ -105,8 +106,8 @@ hal must, in this order:
 3. Run the dry run in every app, then the erasure in every app. "Every app" is every app that offers
    these routes (architecture §5), whatever the person's groups: group membership is no inventory of
    data.
-4. Run a second dry run in every app. Only when all answers are zero, untraceable copies excluded, delete
-   the Keycloak user, again with his admin login.
+4. Run a second dry run in every app. Only when every count is zero (`bytes` is not considered),
+   untraceable copies excluded, delete the Keycloak user, again with his admin login.
 5. Retry a failed step by running the whole command again; idempotency makes that safe.
 
 Recovery after a crash works from the register, without the Keycloak user.
