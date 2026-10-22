@@ -13,8 +13,8 @@ searches for a leaked secret (L6) and the egress cells of the running container 
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
-A refusal `unauthorized` means expired tokens, `forbidden` a missing `/ki-abo` or tokens
-that do not share an `azp`.
+A refusal `unauthorized` means expired tokens, `forbidden` a missing
+`/services/agent-service/subscription` or tokens that do not share an `azp`.
 `agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
 `apply`).
 
