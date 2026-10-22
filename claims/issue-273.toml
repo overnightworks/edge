@@ -1,7 +1,0 @@
-claim_id = "7b332ada81794042952427ae7cd21a18"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "25409634191684875fa90815f9e51bb94398bea3"
-branch = "claude/issue-273-sonar-legacy-fail"
-scope = ["quality/config.toml"]
-opened_commit = "98928614da67bf2b3d943800735f08bbd285f507"
