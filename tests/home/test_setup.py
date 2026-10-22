@@ -17,6 +17,7 @@ import home_tools
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from home_tools import cli as home_cli
+from home_tools import secrets_setup
 from home_tools import system_step
 from home_tools.cli import main
 from home_tools.secrets_setup import Boundaries, Terminal
@@ -673,7 +674,7 @@ def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_t
     code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted))
     error = capsys.readouterr().err
 
-    assert code == ExitCode.INTERRUPTED
+    assert code == secrets_setup.ABORTED_EXIT
     assert "abgebrochen; keine Datei halb geschrieben" in error
     assert "Traceback" not in error
 

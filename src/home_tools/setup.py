@@ -262,7 +262,7 @@ def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, 
     try:
         return setup(layout, ports, args.apply)
     except KeyboardInterrupt:
-        # The wizard has printed its abort line; hal setup maps the same exception to its own code.
+        # A Ctrl-C in any step ends with 130; only the wizard prints its abort line.
         return secrets_setup.ABORTED_EXIT
 
 
