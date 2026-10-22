@@ -1,0 +1,388 @@
+/* hallucinai's look on Keycloak's sign-in pages: the dark tokens, fonts and shapes of songmaker's
+   hallucinai.de, laid over PatternFly. docs/design/keycloak-theme.html is the picture. */
+
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("../fonts/oswald-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("../fonts/oswald-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("../fonts/open-sans-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url("../fonts/open-sans-latin-600-normal.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --h-primary: #ff3220;
+  --h-accent: #a020f0;
+  --h-on-accent: #ffffff;
+  --h-bg: #0d0d0d;
+  --h-bg-deep: #050508;
+  --h-surface: #111111;
+  --h-surface-hover: #1a1a1a;
+  --h-border: #333333;
+  --h-text: #e0e0e0;
+  --h-text-muted: #888888;
+  --h-card-bg: rgba(13, 13, 13, 0.85);
+  --h-glow-primary: rgba(255, 50, 32, 0.03);
+  --h-bad: #ff4444;
+  --h-font-display: "Oswald", Impact, sans-serif;
+  --h-font-body: "Open Sans", Arial, sans-serif;
+  --h-action: var(--h-accent);
+}
+
+/* ---------- ground: deep black, grid, red and violet glows ---------- */
+
+html.login-pf {
+  background: var(--h-bg-deep);
+}
+
+.login-pf body {
+  background: transparent;
+  color: var(--h-text);
+  font-family: var(--h-font-body);
+  min-height: 100%;
+}
+
+html.login-pf::before,
+html.login-pf::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+html.login-pf::before {
+  width: 400px;
+  height: 400px;
+  top: -100px;
+  right: -100px;
+  background: var(--h-primary);
+}
+
+html.login-pf::after {
+  width: 300px;
+  height: 300px;
+  bottom: -50px;
+  left: -50px;
+  background: var(--h-accent);
+}
+
+.login-pf body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--h-glow-primary) 1px, transparent 1px),
+    linear-gradient(90deg, var(--h-glow-primary) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.pf-v5-c-login {
+  background: transparent;
+  padding: 0;
+}
+
+.pf-v5-c-login__container {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 44px 16px 40px;
+  grid-template-columns: min(400px, 100%);
+  grid-template-areas: "header" "main";
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-content: center;
+  row-gap: 22px;
+}
+
+.pf-v5-c-login__header {
+  padding: 0;
+}
+
+/* ---------- wordmark: the realm name, red above, violet below ---------- */
+
+#kc-header-wrapper {
+  font-family: var(--h-font-display);
+  font-weight: 400;
+  font-size: 36px;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-align: center;
+  -webkit-text-fill-color: transparent;
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--h-primary) 80%, var(--h-text)) 0 35%,
+    var(--h-text) 35% 65%,
+    color-mix(in srgb, var(--h-accent) 80%, var(--h-text)) 65% 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--h-primary) 30%, transparent));
+  padding: 0;
+}
+
+/* ---------- card ---------- */
+
+.pf-v5-c-login__main {
+  background: var(--h-card-bg);
+  border: 1px solid color-mix(in srgb, var(--h-primary) 15%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 0 60px color-mix(in srgb, var(--h-primary) 5%, transparent);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  color: var(--h-text);
+  padding: 30px 30px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pf-v5-c-login__main-header {
+  border-top: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 8px;
+}
+
+.pf-v5-c-login__main-header .pf-v5-c-title {
+  font-family: var(--h-font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--h-text);
+  margin: 0;
+}
+
+.pf-v5-c-login__main-header-utilities {
+  margin: 0;
+}
+
+.pf-v5-c-login__main-header-utilities .pf-v5-c-form-control {
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--h-text-muted);
+}
+
+.pf-v5-c-login__main-header-utilities select {
+  padding-inline: 10px 28px;
+  background: transparent;
+  color: inherit;
+}
+
+.pf-v5-c-login__main-body,
+.pf-v5-c-login__main-footer {
+  padding: 0;
+}
+
+/* ---------- fields ---------- */
+
+.pf-v5-c-form__label-text {
+  font-family: var(--h-font-display);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--h-text-muted);
+}
+
+.pf-v5-c-form-control {
+  min-height: 44px;
+  background: var(--h-surface);
+  border: 1px solid var(--h-border);
+  border-radius: 4px;
+  color: var(--h-text);
+  font-family: var(--h-font-body);
+  font-size: 15px;
+  --pf-v5-c-form-control--BorderColor: transparent;
+  --pf-v5-c-form-control--before--BorderColor: transparent;
+  --pf-v5-c-form-control--after--BorderBottomColor: transparent;
+  --pf-v5-c-form-control--hover--after--BorderBottomColor: transparent;
+}
+
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+  display: none;
+}
+
+.pf-v5-c-form-control:focus-within {
+  border-color: var(--h-action);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--h-action) 30%, transparent);
+}
+
+.pf-v5-c-form-control.pf-m-error {
+  border-color: var(--h-bad);
+}
+
+.pf-v5-c-form-control input,
+.pf-v5-c-form-control input:focus {
+  color: var(--h-text);
+  font-family: var(--h-font-body);
+  outline: none;
+  background: transparent;
+  border: 0;
+}
+
+.pf-v5-c-form-control.pf-m-readonly {
+  background: transparent;
+  color: var(--h-text-muted);
+}
+
+.pf-v5-c-form__helper-text .pf-m-error,
+.pf-v5-c-helper-text__item-text.pf-m-error {
+  color: var(--h-bad);
+  font-size: 13px;
+}
+
+.pf-v5-c-input-group {
+  align-items: center;
+  background: var(--h-surface);
+  border: 1px solid var(--h-border);
+  border-radius: 4px;
+}
+
+.pf-v5-c-input-group:focus-within {
+  border-color: var(--h-action);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--h-action) 30%, transparent);
+}
+
+.pf-v5-c-input-group .pf-v5-c-form-control {
+  border: 0;
+  box-shadow: none;
+}
+
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  min-height: 42px;
+  background: transparent;
+  border: 0;
+  color: var(--h-text-muted);
+}
+
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::before,
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+  display: none;
+}
+
+/* ---------- buttons: violet acts ---------- */
+
+.pf-v5-c-button {
+  min-height: 44px;
+  border-radius: 4px;
+  font-family: var(--h-font-display);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--h-action);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: color-mix(in srgb, var(--h-action) 85%, white);
+  --pf-v5-c-button--m-primary--Color: var(--h-on-accent);
+  --pf-v5-c-button--m-primary--hover--Color: var(--h-on-accent);
+  background: var(--h-action);
+  border: 1px solid var(--h-action);
+  color: var(--h-on-accent);
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+.pf-v5-c-button.pf-m-primary:focus {
+  background: color-mix(in srgb, var(--h-action) 85%, white);
+}
+
+#authenticateWebAuthnButton {
+  margin-top: 16px;
+}
+
+.pf-v5-c-button.pf-m-secondary,
+.pf-v5-c-button.pf-m-tertiary {
+  background: transparent;
+  border: 1px solid var(--h-border);
+  color: var(--h-text);
+}
+
+.pf-v5-c-button.pf-m-secondary::after,
+.pf-v5-c-button.pf-m-tertiary::after,
+.pf-v5-c-button.pf-m-primary::after {
+  display: none;
+}
+
+a {
+  color: var(--h-action);
+}
+
+/* ---------- feedback alerts ---------- */
+
+.pf-v5-c-alert {
+  background: var(--h-surface);
+  border: 1px solid var(--h-border);
+  border-radius: 4px;
+  color: var(--h-text);
+}
+
+/* ---------- legal links ---------- */
+
+.hallucinai-legal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 6px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--h-border);
+  font-size: 11px;
+}
+
+.hallucinai-legal a {
+  color: var(--h-text-muted);
+  text-decoration: none;
+}
+
+.hallucinai-legal a:hover {
+  text-decoration: underline;
+}
+
+.hallucinai-legal a + a::before {
+  content: "·";
+  margin: 0 0.35em;
+  display: inline-block;
+  text-decoration: none;
+}
+
+@media (max-width: 480px) {
+  #kc-header-wrapper {
+    font-size: 27px;
+  }
+
+  .pf-v5-c-login__main {
+    padding: 24px 20px 16px;
+  }
+}

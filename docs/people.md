@@ -18,8 +18,8 @@ contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's pro
 - **Caller.** A separate identity: the operator, with his own access token, from the login hal must offer
   (#256); no such login exists yet. The app admits it only if the token comes from the realm's issuer,
   its audience names the app's own client, and its `groups` contain `/apps/<app>/admin`. A missing or
-  invalid token answers `401`; a valid token without `/apps/<app>/admin`, or whose audience does not
-  name the app's client, answers `403`. The token authenticates the caller;
+  invalid token, including one whose audience does not name the app's own client, answers `401`; a
+  valid token without `/apps/<app>/admin` answers `403`. The token authenticates the caller;
   it never names the target. There is no hal service account and no standing secret for these routes.
 - A request to these routes never creates or provisions an account, neither the caller's nor the
   target's; a caller without an account in the app is authorised by the token alone or refused with `403`.
