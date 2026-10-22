@@ -1,0 +1,7 @@
+claim_id = "4219ba9af46a44dfa50d1bc1c6a55d87"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "bc1a2f57c899f23c3381c544c9505efdbf22334c"
+branch = "docs/people-bytes-optional"
+scope = ["docs/people.md"]
+opened_commit = "2bb2cb3a8e8a9c4afe00aa48a8dd50bef5de4454"
