@@ -174,12 +174,20 @@ class UserUnits:
                     " this checkout does not own that unit, so you decide: move it away"
                     " or delete the retired link, then rerun"
                 )
-            loaded_from = self.show(link.name).fragment_path
-            if loaded_from not in ("", str(entry)):
+            loaded = self.show(link.name)
+            if loaded.fragment_path not in ("", str(entry)):
                 raise StepFailed(
                     f"{link} is a retired link of this checkout, but systemd loaded {link.name}"
-                    f" from {loaded_from}; this checkout does not own that unit, so you decide:"
-                    " move it away or delete the retired link, then rerun"
+                    f" from {loaded.fragment_path}; this checkout does not own that unit, so you"
+                    " decide: move it away or delete the retired link, then rerun"
+                )
+            if not loaded.stopped and not (
+                entry in retiring and loaded.fragment_path == str(entry)
+            ):
+                raise StepFailed(
+                    f"{link.name} is running, but nothing proves it is this checkout's: {entry} is"
+                    f" not a link into {self.checkout_units} that systemd loaded it from;"
+                    f" you stop it yourself with `systemctl --user stop {link.name}`, then rerun"
                 )
 
     def link_directories(self) -> list[Path]:

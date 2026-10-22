@@ -41,7 +41,7 @@ class FakeSystemctl:
         self.active: set[str] = set()
         self.last_result = "success"
         self.starts_nothing = False
-        self.loaded_from: dict[str, Path] = {}
+        self.loaded_from: dict[str, str] = {}
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         assert argv[:2] == ["systemctl", "--user"]
@@ -94,7 +94,7 @@ class FakeSystemctl:
             "",
         )
         command = exec_start.removeprefix("ExecStart=")
-        fragment_path = self.loaded_from.get(name, link if link.exists() else "")
+        fragment_path = self.loaded_from.get(name, str(link) if name in self.loaded else "")
         enabled = (self.user_units / TIMERS_WANTS / name).exists()
         return "\n".join(
             [
@@ -190,9 +190,7 @@ def test_hal_setup_prints_the_loaded_commands_under_the_heading_of_its_step(
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
-    layout, ports = build_layout_and_ports(
-        machine.layout.home, run=only_systemctl
-    )
+    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
     units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
     monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (units,))
 
@@ -309,9 +307,12 @@ def test_a_link_that_is_already_gone_is_not_an_error(machine: Machine) -> None:
     machine.step.apply()
     (machine.checkout_units / TIMER).unlink()
     (machine.user_units / TIMER).unlink()
+    machine.systemctl.active.discard(TIMER)
+    machine.systemctl.calls.clear()
 
     machine.step.apply()
 
+    assert machine.systemctl.changes == [["daemon-reload"]]
     assert not (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
     assert machine.step.is_verified()
 
@@ -403,9 +404,7 @@ def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
-    layout, ports = build_layout_and_ports(
-        machine.layout.home, run=only_systemctl
-    )
+    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
 
     assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 1
     machine.step.apply()
@@ -419,11 +418,30 @@ def test_a_retired_link_whose_name_systemd_loaded_from_elsewhere_stops_nothing(
     (machine.checkout_units / TIMER).unlink()
     (machine.user_units / TIMER).unlink()
     elsewhere = tmp_path / ".local" / "share" / "systemd" / "user" / TIMER
-    machine.systemctl.loaded_from[TIMER] = elsewhere
+    machine.systemctl.loaded_from[TIMER] = str(elsewhere)
     machine.systemctl.active.add(TIMER)
     machine.systemctl.calls.clear()
 
     with pytest.raises(StepFailed, match=f"{TIMERS_WANTS}/{TIMER}.*{elsewhere}"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+
+
+@pytest.mark.parametrize("fragment_path", ["", None])
+def test_a_running_retired_unit_without_a_top_level_entry_is_never_stopped(
+    machine: Machine, fragment_path: str | None
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    if fragment_path is not None:
+        machine.systemctl.loaded_from[TIMER] = fragment_path
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"systemctl --user stop {TIMER}"):
         machine.step.apply()
 
     assert machine.systemctl.changes == []
