@@ -1,7 +1,0 @@
-claim_id = "41f24c75f6924acda01a385d681e7eaa"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "7b9b5633b86d173457ea950dbf0a95b2ef54229a"
-branch = "docs/people-audience-401"
-scope = ["docs/people.md"]
-opened_commit = "4069b57d2a661a1c38978c495edf4ce2a26642f0"
