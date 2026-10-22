@@ -135,7 +135,7 @@ clients:
     serviceAccountsEnabled: true
     frontchannelLogout: false
     baseUrl: "https://songmaker.hallucinai.de/"
-    alwaysDisplayInConsole: true
+    alwaysDisplayInConsole: false
     redirectUris:
       - "https://songmaker.hallucinai.de/auth/callback"
     attributes:
@@ -165,7 +165,7 @@ clients:
     serviceAccountsEnabled: false
     frontchannelLogout: false
     baseUrl: "https://hopin.hallucinai.de/"
-    alwaysDisplayInConsole: true
+    alwaysDisplayInConsole: false
     redirectUris:
       - "https://hopin.hallucinai.de/auth/callback"
     attributes:
@@ -188,7 +188,7 @@ clients:
     serviceAccountsEnabled: true
     frontchannelLogout: false
     baseUrl: "https://presentator.hallucinai.de/"
-    alwaysDisplayInConsole: true
+    alwaysDisplayInConsole: false
     redirectUris:
       - "https://presentator.hallucinai.de/auth/callback"
       - "https://presentator-talk.hallucinai.de/auth/callback"

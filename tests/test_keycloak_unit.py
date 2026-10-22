@@ -2,6 +2,7 @@
 
 import copy
 import dataclasses
+import json
 import re
 from pathlib import Path
 
@@ -167,7 +168,47 @@ def test_each_realm_theme_is_mounted_read_only_and_names_its_parent(realm_settin
     ]
     properties = REPOSITORY / "keycloak" / "themes" / theme / area / "theme.properties"
 
-    assert (mounted_on, properties.read_text().strip()) == (["keycloak"], f"parent={parent}")
+    assert (mounted_on, theme_properties(properties)["parent"]) == (["keycloak"], parent)
+
+
+def theme_properties(path: Path) -> dict[str, str]:
+    lines = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
+    return dict(line.split("=", 1) for line in lines)
+
+
+def test_the_account_console_offers_no_groups_page():
+    """#205 rule 4: the hallucinai account theme's navigation has no groups entry."""
+    content = REPOSITORY / "keycloak/themes/hallucinai/account/resources/content.json"
+    labels = [entry["label"] for entry in json.loads(content.read_text())]
+
+    assert "groups" not in labels
+    assert "applications" in labels
+
+
+def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_them():
+    """#205 rule 5: no app client is shown to everyone; Keycloak lists the apps a person used."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+    apps = [client for client in realm["clients"] if client.get("standardFlowEnabled")]
+
+    assert apps
+    assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
+
+
+# An SVG's xmlns names a namespace; no browser fetches it.
+XML_NAMESPACE_HOST = "www.w3.org"
+
+
+def test_the_theme_sources_name_no_host_but_hallucinai_de():
+    """#205: a source check of the theme, not proof of browser requests; the driven page is that."""
+    theme = REPOSITORY / "keycloak/themes/hallucinai"
+    texts = [
+        path.read_text()
+        for path in theme.rglob("*")
+        if path.suffix in {".css", ".ftl", ".js", ".json", ".properties", ".svg"}
+    ]
+    hosts = {host for text in texts for host in re.findall(r"(?:https?:)?//([^/\"'\s)]+)", text)}
+
+    assert hosts <= {"hallucinai.de", XML_NAMESPACE_HOST}
 
 
 def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_opens():
