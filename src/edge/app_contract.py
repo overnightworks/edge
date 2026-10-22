@@ -4,7 +4,9 @@ The one owner of that decision, pure over the text of `git show <sha>:compose.ya
 SafeLoader and does not interpolate, so a `$` in a value that decides a rule (a label key, a restart
 policy, a short-form volume entry, a long form's type or target, a tmpfs mount, a labelled service's
 healthcheck `test` and `disable`) is refused: Compose would resolve it from the `.env` the release
-tracks. Scalars stay strings as Compose reads them (`yes` is no boolean).
+tracks. A short-form volume entry whose first section is one letter is refused too (Compose reads it
+as a Windows drive): write it in the long form. Scalars stay strings as Compose reads them (`yes` is
+no boolean).
 `check` runs before the operator's `yes`: a refusal means the app cannot be planned. The image half
 of the volume rule needs the built image and runs after build and pull, before `create`:
 `check_image_volumes`.
@@ -267,15 +269,19 @@ def _covered_paths(definition: dict) -> set[str]:
 
 
 def _short_target(volume: str) -> str | None:
-    """The container path of a short volume entry `source:target[:mode]`."""
+    """The container path of a short volume entry `source:target[:mode]`; Compose reads an
+    entry of at most two characters as a bare target, so it has no source."""
     parts = volume.split(":")
-    return parts[1] if len(parts) > 1 and not _is_drive_letter_entry(volume) else None
+    has_source = len(volume) > 2 and len(parts) > 1 and not _is_drive_letter_entry(volume)
+    return parts[1] if has_source else None
 
 
 def _is_drive_letter_entry(volume: str) -> bool:
     """Compose reads a first section of one letter as a drive, not as a source; hal does not
-    parse that grammar and refuses the entry."""
-    return len(volume.split(":")[0]) == 1 and ":" in volume
+    parse that grammar and refuses the entry. Only a letter is a drive (`.`, `~`, `/`, `1` and
+    `_` are sources)."""
+    first_section = volume.split(":")[0]
+    return len(first_section) == 1 and first_section.isalpha() and ":" in volume
 
 
 def _mounts(definition: dict) -> list:

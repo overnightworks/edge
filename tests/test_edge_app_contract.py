@@ -229,7 +229,14 @@ def test_yes_is_no_boolean_for_traefik_enable_as_compose_reads_it():
 
 @pytest.mark.parametrize(
     "volume",
-    ["'/data'", "{type: volume, target: /data}", "{type: bind, target: /data}"],
+    [
+        "'/data'",
+        "{type: volume, target: /data}",
+        "{type: bind, target: /data}",
+        "':d'",
+        "'::'",
+        "':/'",
+    ],
 )
 def test_b4_a_volume_entry_without_a_source_is_refused(volume):
     message = refusal(compose(f"volumes: [{volume}]"))
@@ -237,7 +244,7 @@ def test_b4_a_volume_entry_without_a_source_is_refused(volume):
     assert "service web has a volume entry without a source (volumes)" in message
 
 
-@pytest.mark.parametrize("volume", ["d:/data", "x:/data:ro", "d:", "C:\\data:/data"])
+@pytest.mark.parametrize("volume", ["d:/data", "x:/data:ro", "d:", "C:\\data:/data", "é:/data"])
 def test_a_short_volume_entry_that_starts_with_one_letter_is_refused_for_the_long_form(volume):
     message = refusal(compose(f"volumes: ['{volume}']"))
 
@@ -245,9 +252,24 @@ def test_a_short_volume_entry_that_starts_with_one_letter_is_refused_for_the_lon
     assert "write it in the long form" in message
 
 
-@pytest.mark.parametrize("volume", ["dd:/data", "data:/data", "./x:/data:ro"])
-def test_a_short_volume_entry_with_a_longer_first_section_still_plans(volume):
+@pytest.mark.parametrize(
+    "volume",
+    [
+        "dd:/data",
+        "data:/data",
+        "./x:/data:ro",
+        ".:/data",
+        "~:/data",
+        "/:/data:ro",
+        "1:/data",
+        "_:/data",
+    ],
+)
+def test_a_short_volume_entry_whose_first_section_is_no_letter_still_plans(volume):
     assert app_contract.check(compose(f"volumes: ['{volume}']"), KEY, TAG, ())[0] == "web"
+    app_contract.check_image_volumes(
+        compose(f"volumes: ['{volume}']"), KEY, TAG, {"web": ["/data"]}
+    )
 
 
 @pytest.mark.parametrize(
