@@ -172,8 +172,7 @@ LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
-# the subscription group agent-providers 0.6.0 reads (agent-service/service.toml)
-SUBSCRIPTION_GROUP = "/ai-subscription"
+SUBSCRIPTION_GROUP = "/services/agent-service/subscription"
 PUBLIC_AUTH_PATH = f"{REALM_PATH}/protocol/openid-connect/auth"
 PUBLIC_LOGOUT_PATH = f"{REALM_PATH}/protocol/openid-connect/logout"
 CLIENT_ADDRESS = "198.51.100.23"  # the person signing in, as Cloudflare saw it
@@ -229,7 +228,7 @@ RESIDUE_OF_THE_APPLY = [
     f"master: removal flow step {SUBFLOW_PARENT}/{CONSOLE_SUBFLOW}#1",
 ]
 DROPPED_CLIENT = "hopin"
-DROPPED_GROUP = "ki-abo"
+DROPPED_GROUP = "services"
 DROPPED_ROLE = "agent-workload"  # created by an earlier apply, held by the listed service accounts
 DROPPED_ROLE_BLOCK = (
     f"roles:\n  realm:\n    - name: {DROPPED_ROLE}\n      description: Service-account-only "
@@ -1897,11 +1896,12 @@ class Probe:
         text = realm_file.read_text()
         expect(LIFESPAN_SETTING in text, "realm.yaml no longer sets 300 s as expected")
         text = text.replace(LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING)
-        # The change swaps one group for another and drops a client: the apply adds the new group
-        # and, deleting nothing, keeps the dropped group and client.
-        dropped_group = f"  - name: {DROPPED_GROUP}\n"
-        expect(dropped_group in text, f"realm.yaml no longer lists the group {DROPPED_GROUP}")
-        text = text.replace(dropped_group, f"  - name: {CHANGED_GROUP}\n")
+        # The change swaps one group tree for another group and drops a client: the apply adds the
+        # new group and, deleting nothing, keeps the dropped groups and client.
+        group_start = text.find(f"  - name: {DROPPED_GROUP}\n")
+        group_end = text.find("clientScopes:\n")
+        expect(0 <= group_start < group_end, f"realm.yaml no longer lists group {DROPPED_GROUP}")
+        text = text[:group_start] + f"  - name: {CHANGED_GROUP}\n" + text[group_end:]
         client_start = text.find(f"  - clientId: {DROPPED_CLIENT}\n")
         client_end = text.find("  # One client for presentator")
         expect(
@@ -1923,7 +1923,7 @@ class Probe:
             admin.call("GET", f"/{REALM}/group-by-path/{CHANGED_GROUP}").status == 200,
             f"group {CHANGED_GROUP} was not created",
         )
-        for path in (f"/{DROPPED_GROUP}", CONSOLE_SUBGROUP):
+        for path in (SUBSCRIPTION_GROUP, CONSOLE_SUBGROUP):
             expect(
                 admin.call("GET", f"/{REALM}/group-by-path{path}").status == 200,
                 f"the group {path} did not survive the changed apply",
@@ -1944,7 +1944,7 @@ class Probe:
             "3d",
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
             f"group /{CHANGED_GROUP}) and deletes nothing it dropped: "
-            f"the group /{DROPPED_GROUP} and the client {DROPPED_CLIENT} and the role "
+            f"the group /{DROPPED_GROUP} tree and the client {DROPPED_CLIENT} and the role "
             f"{DROPPED_ROLE} with its two service-account "
             f"holders, all dropped from realm.yaml, and the console-made {CONSOLE_SUBGROUP} stay; "
             f"probe-member is still in {MEMBER_GROUP}",
@@ -2447,7 +2447,7 @@ class Probe:
             (LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING),
             (
                 f"  - name: {DROPPED_GROUP}\n",
-                f"  - name: {DROPPED_GROUP}\n  - name: {STEP_GROUP}\n",
+                f"  - name: {STEP_GROUP}\n  - name: {DROPPED_GROUP}\n",
             ),
         )
         plan = stand.plan()

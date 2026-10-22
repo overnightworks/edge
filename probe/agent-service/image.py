@@ -216,7 +216,7 @@ def service_configuration() -> str:
 issuer = "https://issuer.invalid/realms/probe"
 jwks_url = "https://issuer.invalid/realms/probe/protocol/openid-connect/certs"
 audience = "agent-service"
-subscription_groups = ["/ai-subscription"]
+subscription_groups = ["/services/agent-service/subscription"]
 group_claim = "groups"
 
 [server]
@@ -241,7 +241,10 @@ workload_client = "probe-client"
 
 
 LEFTOVER_CONFIGURATION = {
-    "identity.subscription_group": ("[server]", 'subscription_group = "/ki-abo"\n\n[server]'),
+    "identity.subscription_group": (
+        "[server]",
+        'subscription_group = "/services/agent-service/subscription"\n\n[server]',
+    ),
     "purposes": ("[apps.probe]", '[purposes.chat]\ncli_provider = "claude"\n\n[apps.probe]'),
     "apps.probe.tools": ("[apps.probe]", "[apps.probe.tools]\n\n[apps.probe]"),
 }

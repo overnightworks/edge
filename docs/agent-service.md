@@ -102,8 +102,8 @@ built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in a
 `songmaker` client's code flow, edge#184 D6), recreates the service and runs the live cells L2-L7
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
 probe's `egress.py`. It needs the image, the client's secret file and the login token under
-`~/.secrets`, and the person in the groups `/apps/songmaker` and `/ai-subscription` (or `/ki-abo`).
-The realm declares these groups (edge#217) but grants no membership: add yourself once in the admin
+`~/.secrets`, and the person in the groups `/apps/songmaker` and `/services/agent-service/subscription`.
+The realm declares these groups but grants no membership: add yourself once in the admin
 console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
 the workload token lives five minutes, and send the head its report.
 
@@ -115,6 +115,6 @@ refusals (bad working-root mode, missing login directory, token at the wrong mod
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
 `--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
 refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 403 `forbidden`,
-`/ai-api` only: 403 `not_enabled`), and U16 runs
+the api group only: 403 `not_enabled`), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.

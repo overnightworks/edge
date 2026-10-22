@@ -8,7 +8,10 @@ and tmpfs mounts, `pull_policy: never`, the image tag, and that every path in `s
 mount target of the service.
 """
 
+import json
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -16,7 +19,15 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
+from edge.realm import observe
+from edge.realm.declared import declared_realm
+
 ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / "probe/agent-service"), str(ROOT / "agent-service")]
+
+from refusals import REFUSALS, check_refusals  # noqa: E402
+from smoke import Tokens  # noqa: E402
+
 SERVICE = "agent-service"
 OPERATOR_UID_GID = "1000:1000"
 LOGIN_SOURCE = "${HOME}/.secrets/agent-service/claude"
@@ -151,13 +162,16 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     identity = configuration["identity"]
     issuer, jwks = urlsplit(identity["issuer"]), urlsplit(identity["jwks_url"])
     clients = {client["clientId"] for client in realm["clients"]}
-    groups = {f"/{group['name']}" for group in realm["groups"]}
+    declared = declared_realm((ROOT / "keycloak/realm.yaml").read_text())
+    groups = declared.identities[observe.GROUP.name]
 
     assert issuer.path == f"/realms/{realm['realm']}"
     assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
-    assert set(identity["subscription_groups"]) == {"/ai-subscription", "/ki-abo"} <= groups
+    assert (
+        set(identity["subscription_groups"]) == {"/services/agent-service/subscription"} <= groups
+    )
     assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
@@ -196,3 +210,20 @@ def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_m
     configuration,
 ):
     assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
+
+
+def test_the_refusal_cell_asks_each_case_with_its_groups_and_holds_on_the_expected_answers():
+    asked = []
+
+    def run(command, *, stdin, check, timeout):
+        asked.append(json.loads(stdin))
+        return subprocess.CompletedProcess(command, 0, "\n".join(r.answer for r in REFUSALS), "")
+
+    held = []
+    tokens_for = lambda groups: Tokens(" ".join(groups), "workload")  # noqa: E731
+    check_refusals(run, lambda *arguments: list(arguments), tokens_for, held)
+
+    assert held == ["U17"]
+    assert [case["person"] for case in asked[0]["cases"]] == [
+        " ".join(refusal.groups) for refusal in REFUSALS
+    ]
