@@ -102,13 +102,17 @@ in `realm.yaml`).
 
 Keycloak in `start` mode caches themes, so a changed theme file shows after
 `docker compose --profile keycloak restart keycloak`; that is not a realm
-change. `/resources/<version>/...` is served with `Cache-Control:
-max-age=2592000` (30 days), and the five-character version survives a plain
-restart, so a restart keeps the same URL. A
-CSS-only edit, which needs that restart to load, would still come from browser
-caches for up to 30 days under the same URL; a look change therefore names a
-new stylesheet in `theme.properties` (`styles=`) instead of editing one in
-place.
+change. Keycloak's gzip copies of theme files (`data/tmp/kc-gzip-cache`) are
+never compared with the file, so that folder is a tmpfs in `compose.yaml` and a
+restart starts it empty; without it a file that a parent theme served before
+would stay stale behind Cloudflare, which always asks with gzip.
+`/resources/<version>/...` is served with `Cache-Control: max-age=2592000`
+(30 days), and the five-character version survives a plain restart, so a
+restart keeps the same URL. Cloudflare caches css, js, svg, ico and woff2 for 30
+days under that URL as well, and a browser keeps them as long. A file changed in
+place therefore keeps coming from those caches; a look change names a new file
+(for a stylesheet, `styles=` in `theme.properties`). A purge at Cloudflare clears
+only Cloudflare's copy; a browser that already holds the old file keeps it.
 
 
 > **The apply adds and changes, and deletes no undeclared top-level object and no person.**

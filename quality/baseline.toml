@@ -30,7 +30,7 @@
 "Probe.admin_console_only_on_loopback" = 74
 "Probe.go_live_creates_the_admin" = 104
 "Probe.only_logins_and_failed_logins_are_stored" = 65
-"Probe.public_issuer_and_paths" = 89
+"Probe.public_issuer_and_paths" = 86
 "Probe.the_realm_step" = 148
 
 [function_lines."src/edge/external/cli.py"]
