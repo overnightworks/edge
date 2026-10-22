@@ -3,6 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "2a0eac009e0ac236f6427b97aec5f7c5040f5141"
 branch = "claude/issue-205-keycloak-s-sign-in-and-account-pages-loo"
-scope = ["docs/design/keycloak-theme.html", "docs/keycloak.md", "keycloak/realm.yaml", "keycloak/themes/hallucinai", "tests/test_keycloak_unit.py"]
+scope = ["docs/design/keycloak-theme.html", "docs/keycloak.md", "keycloak/realm.yaml", "keycloak/themes/hallucinai", "quality/baseline.toml", "tests/test_keycloak_unit.py"]
 opened_commit = "ff2ebe30c0b3b886bcfe908592d9c4e25596322b"
 whole_reason = "One look across the login theme, the account theme, the realm's two display lines and the frozen picture they follow."
