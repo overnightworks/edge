@@ -454,7 +454,7 @@ That is the operator's „zumindest durchleiten zu den Seiten“, and edge#19 ru
 
 | # | Step | Kind | First-ever | Re-setup | Done when (the tool verifies) |
 |---|---|---|---|---|---|
-| 1 | Install Ubuntu 24.04, disk encryption per D10, user `felix-hummert` | manual (the installer) | same | same | the desktop runs |
+| 1 | Install Ubuntu 24.04, disk encryption per D10, the operator's user | manual (the installer) | same | same | the desktop runs |
 | 2 | `sudo apt install -y gh && gh auth login --web && gh repo clone overnightworks/home-tools ~/git/home-tools && ~/git/home-tools/bootstrap` | one line, printed on paper and at the top of `docs/architecture.md`; the login is guided by `gh`. **`bootstrap` does not exist today**; home-tools#9 builds it | same | same | `home --help` answers |
 | 3 | `hal setup`, then `hal setup --apply` | one command, asks for `sudo` once | same | same | the dry run shows nothing left to change; `home check` reports L0 clean (Docker loopback default, cloudflared installed and **disabled**, restic, `tofu` pinned, Tailscale, auto-login off; the agent user once D14 is done) |
 | 4 | **Secrets** | guided | `hal setup --apply`: per secret, open the provider page, paste hidden, verify, store. Generated service passwords need no typing | `hal restore secrets --repo <off-disk repository> --target ~/.secrets`: the recovery form below | `home secrets` without findings |

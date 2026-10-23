@@ -33,6 +33,7 @@ from pathlib import Path, PurePosixPath
 
 from home_tools.report import findings_count, markdown_table, write_state_file
 from home_tools.tidy_home import ClosedBy, Layout, Tally
+from home_tools.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
 
@@ -410,13 +411,12 @@ def scan_secrets_tree(layout: Layout) -> tuple[PathFact, ...]:
 
 
 def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...] | None:
-    """The paths a manifest pattern names, by stat; None when the filesystem refuses to say."""
+    """The paths a manifest pattern names, by stat; None when the filesystem or the tunnel config refuses to say."""
     try:
-        if _has_wildcard(pattern.name):
-            names = sorted(name for name in os.listdir(layout.home / pattern.parent) if fnmatch.fnmatchcase(name, pattern.name))
-            matched = [pattern.parent / name for name in names]
-        else:
-            matched = [pattern]
+        pattern = with_tunnel_id(pattern)
+        wildcard = _has_wildcard(pattern.name)
+        names = sorted(os.listdir(layout.home / pattern.parent)) if wildcard else []
+        matched = [pattern.parent / name for name in names if fnmatch.fnmatchcase(name, pattern.name)] if wildcard else [pattern]
         return tuple(PathFact(relative, (layout.home / relative).stat().st_mode) for relative in matched)
     except FileNotFoundError:
         return ()
@@ -624,7 +624,7 @@ def _verification(entry: SecretEntry, probe_codes: Mapping[Verifier, int | None]
 
 
 def _matches_pattern(relative: PurePosixPath, pattern: PurePosixPath) -> bool:
-    return relative.parent == pattern.parent and fnmatch.fnmatchcase(relative.name, pattern.name)
+    return relative.parent == pattern.parent and fnmatch.fnmatchcase(relative.name, as_wildcard(pattern.name))
 
 
 def _is_named(relative: PurePosixPath, patterns: tuple[PurePosixPath, ...]) -> bool:

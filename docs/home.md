@@ -93,7 +93,7 @@ samt Pfad zum Bericht:
 
 ```
 home check 15.10.2026 09:00 | 3 Funde
-1 neu, 2 weg. Bericht: /home/felix/.local/state/home/check-report.md
+1 neu, 2 weg. Bericht: ~/.local/state/home/check-report.md
 ```
 
 Die Benachrichtigung trägt den Knopf „Bericht öffnen“; ein Klick öffnet den

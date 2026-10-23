@@ -735,7 +735,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
         SecretEntry(
             name="cloudflared/tunnel",
             kind=SecretKind.TOOL_LOGIN,
-            paths=(PurePosixPath(".secrets/cloudflared/a903516a-2660-4507-90a5-5a27d20c82c4.json"),),
+            paths=(PurePosixPath(".secrets/cloudflared/{tunnel_id}.json"),),
             read_by=("cloudflared tunnel run (von Hand; credentials-file in /etc/cloudflared/config.yml)",),
             recreate="`cloudflared tunnel create` (neuer Tunnel) oder die Datei aus /etc/cloudflared kopieren",
             elsewhere="/etc/cloudflared (root), die Kopie, die der laufende Tunnel über LoadCredential liest",
