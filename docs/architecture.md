@@ -176,13 +176,14 @@ services:
   hopin:
     repo: {default_branch: master}   # the release branch; `visibility` (GitHub settings, E3, X2) is planned
     run:
-      enabled: true              # Dienst an/aus: the one switch
+      enabled: false             # Dienst an/aus: the one switch; hopin stays off until it goes live
       # setup: step-ca/init      # only where a unit needs key material (step-ca, keycloak)
     hosts:
       - name: hopin              # hopin.hallucinai.de → container labelled edge.name=hopin
-        exposure: bypass         # public, own login; the * Access app would otherwise cover it
-        reason: "video calls; starting a call needs a login (hopin#25)"
+        exposure: public         # own login; the * Access app would otherwise cover it
+        reason: "video calls; every page needs the Keycloak login (hopin#25)"
         ready: /health           # optional: the path X8a asks before it publishes the host
+        deny_public: [/auth/backchannel-logout]   # Cloudflare refuses the route at its edge
         # target: http://127.0.0.1:8081   # optional; this is the default (Traefik)
 ```
 
@@ -197,7 +198,7 @@ Planned and not accepted by `catalog.py` yet: `run.login_group` (a group of `key
 | `reason` | string | none | required and non-blank for `public` and `bypass` |
 | `ready` | path | none | starts with one `/`; the publish guard of X8a |
 | `target` | `http://127.0.0.1:<port>` or `http://localhost:<port>` | `http://127.0.0.1:8081` (Traefik) | never `:8090` (the admin entrypoint); another target only for a gap-35 host (songmaker's `songmaker`) |
-| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's one host lists `/auth/backchannel-logout` (#213) and `/metrics` (#342) |
+| `deny_public` | list of paths | none | each lowercase and absolute (`[a-z0-9._~-]` segments), no query, no trailing slash. Cloudflare refuses these paths at its edge, before the tunnel, one rule per path for every host listing it, with their encoded, cased and multi-slash variants (`docs/external.md`); songmaker's one host lists `/auth/backchannel-logout` (#213) and `/metrics` (#342), hopin's host lists `/auth/backchannel-logout` |
 
 The apex and `www` are no hosts but the catalog's `cloudflare.redirect` (validated next to the hosts by `src/edge/catalog.py`): `hosts` (`@` or labels, none of them a service host), `target` (an https URL) and `keep` (each a lowercase `path` with an https origin as `target`). Cloudflare answers 302 at its edge, for https only (`http://` first goes to https on the same host): a kept path, with or without a trailing slash, goes to its origin with the path kept, everything else to `target`, path and query dropped; old links keep no path (operator ruling of 18.10.2026). The names keep proxied records and have no tunnel line (`docs/external.md`). Keycloak's bare address already redirects to the account console, so `target` is `https://auth.hallucinai.de/`; `/impressum` and `/datenschutz` go to songmaker's pages until #110 serves them.
 
@@ -251,7 +252,7 @@ What the file declares belongs to the file: a console change to a declared objec
 ### Hopin as the worked example: what it needs before its entry works
 
 - **hopin#25 first:** login through webauth (`/apps/hopin`), Impressum and Datenschutz.
-- **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Today hopin has neither and runs `uv run hopin` on port 8080, which songmaker already uses. Traefik reaches the container by its bridge IP, so no host port is needed.
+- **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Hopin runs `uv run hopin` on port 8080, which songmaker already uses. Traefik reaches the container by its bridge IP, so no host port is needed.
 - **Its first release:** `edge release hopin` tags the green tip of `master`.
 - **The catalog entry above;** then `edge apply`.
 - **Its SonarCloud project** already exists: hopin has `sonar-project.properties`.
@@ -758,7 +759,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - The database, Redis, the issuer, other apps and MCP origins come from a URL or DSN in configuration.
 - Names come from compose service names, the catalog host, or `docs/naming.md` (the MCP origin host).
 - Never an IP, and never a vendor DNS name. A code default may point only inside its own container.
-- "Never an IP" is about reaching a peer. A trust list such as webauth's `trusted_proxies` names a network that the compose file owns.
+- "Never an IP" is about reaching a peer. A trust list such as webauth's `trusted_proxies` names a network that the compose file owns. Hopin pins `172.31.255.0/24` in its own `compose.yaml` (hopin#175), which owns that allocation.
 
 **§10 rule 3: each app owns its stores.**
 - No volume, database or Redis is shared across compose projects. The edge networks are the exception.

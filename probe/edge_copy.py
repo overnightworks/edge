@@ -24,7 +24,7 @@ import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from edge import checkout, compose
+from edge import catalog, checkout, compose
 
 APPLY_SECONDS = 600
 DISCARD_OUTPUT = "/dev/null"
@@ -60,6 +60,49 @@ def namespaced_compose(text: str, project: str) -> str:
     remaining = re.findall(rf"name:\s+{LIVE_NETWORK_PREFIX}\S*", namespaced)
     expect(not remaining, f"a hal_ network name remains after the rewrite: {remaining}")
     return namespaced
+
+
+def without_inherited_apps(text: str) -> str:
+    """`text` of fleet.yaml without the entries `catalog.is_app` names (the lane's real apps, whose
+    projects a probe on the shared daemon must never plan or start), every other line byte-identical
+    and in order. Refuses a text that does not parse, has no `services` mapping, still names an
+    app, or names other entries than before."""
+    non_apps = _non_app_keys(text)
+    apps = set(_services(text)) - set(non_apps)
+    kept: list[str] = []
+    in_services, entry_indent, dropping = False, None, False
+    for line in text.splitlines(keepends=True):
+        content = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if line.startswith("services:"):
+            in_services = True
+        elif in_services and content and not content.startswith("#"):
+            if indent == 0:
+                in_services, dropping = False, False
+            else:
+                entry_indent = entry_indent or indent
+                if indent == entry_indent:
+                    dropping = content.split(":")[0].strip("'\"") in apps
+        if not (in_services and dropping):
+            kept.append(line)
+    filtered = "".join(kept)
+    expect(_non_app_keys(filtered) == non_apps, "the filtered fleet.yaml names other entries")
+    expect(set(_services(filtered)) == set(non_apps), "the filtered fleet.yaml still names an app")
+    return filtered
+
+
+def _services(text: str) -> dict:
+    try:
+        document = catalog.parse(text.encode())
+    except catalog.CatalogError as error:
+        raise ProbeFailed(f"fleet.yaml does not parse: {error}") from error
+    services = document.get("services") if isinstance(document, dict) else None
+    expect(isinstance(services, dict), "fleet.yaml has no services mapping")
+    return services
+
+
+def _non_app_keys(text: str) -> list[str]:
+    return [key for key, entry in _services(text).items() if not catalog.is_app(entry)]
 
 
 def expect_project_networks(resolved: dict, project: str) -> None:
@@ -155,7 +198,8 @@ def repository_copy(
     `main` pushed to the bare remote `<scratch>/origin.git`, with its ignored `.env` written by the
     first `edge apply --closed` and its own venv from `uv sync`. With a `project`, the copy's
     compose.yaml names its fixed networks `<project>_...` (namespaced_compose), so the copy's
-    `edge apply` touches no live network.
+    `edge apply` touches no live network. Its fleet.yaml has no app entry (without_inherited_apps),
+    with or without a `project`: a probe adds its own fixture apps.
     Copying again over an existing copy publishes what differs."""
     copy = checkout.live_checkout(home)
     listing = subprocess.run(
@@ -166,6 +210,8 @@ def repository_copy(
         if (repository / name).is_file():
             (copy / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repository / name, copy / name)
+    fleet_file = copy / catalog.FLEET_FILE
+    fleet_file.write_text(without_inherited_apps(fleet_file.read_text()))
     if project:
         compose_file = copy / "compose.yaml"
         compose_file.write_text(namespaced_compose(compose_file.read_text(), project))
