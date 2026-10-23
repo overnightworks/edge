@@ -19,7 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from egress import LABEL, NotDriven, ProbeFailed, expect
-from issuer import SERVICE, IssuerProbe, openssl
+from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe, openssl
 from refusals import SMOKE_SERVICE
 from smoke import Tokens
 
@@ -156,7 +156,7 @@ class ContainmentProbe(IssuerProbe):
         self.overlays.append(overlay)
 
     def services_to_start(self) -> tuple[str, ...]:
-        return (*super().services_to_start(), APP_SERVICE)
+        return ("agent-egress", ISSUER_SERVICE, APP_SERVICE, SERVICE)
 
     def write_mode(self, mode: Mode) -> None:
         (self.mode_directory / "mode").write_text(mode.value, encoding="utf-8")
@@ -207,14 +207,18 @@ class ContainmentProbe(IssuerProbe):
         for cell, (held, evidence) in verdicts.items():
             if held:
                 self.held.append(cell)
+            if not held:
+                evidence += f"; the service log ends {self.service_log()[-2500:]!r}"
             print(f"{cell} {'held' if held else 'FAILED'}: {evidence}", flush=True)
         return [cell for cell, (held, _) in verdicts.items() if not held]
 
-    @staticmethod
-    def expect_driven(cell: str, seen: Observed, lines: list[str]) -> None:
+    def expect_driven(self, cell: str, seen: Observed, lines: list[str]) -> None:
         missing = [line for line in lines if line not in seen.app]
         if missing:
-            raise NotDriven(f"{cell}: the fake app did not log {missing}; it logged {seen.app}")
+            raise NotDriven(
+                f"{cell}: the fake app did not log {missing}; it logged {seen.app}; the smoke "
+                f"printed {seen.smoke}; the service log ends {self.service_log()[-1500:]!r}"
+            )
 
     def cell_s2(self) -> None:
         stray = [line for line in self.app_lines() if not APP_LINE.fullmatch(line)]
