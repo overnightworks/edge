@@ -99,6 +99,7 @@ def prove(probe: Probe, expect: Callable[[bool, str], None], timeout_seconds: in
     client_secret = register_client(probe, admin)
     group_id = admin.get(f"/{REALM}/group-by-path{GROUP_PATH}")["id"]
     actions = {
+        "sign out (control)": ("POST", "/users/{user}/logout", None),
         "disable user": ("PUT", "/users/{user}", {"enabled": False}),
         "delete user": ("DELETE", "/users/{user}", None),
         "remove group membership": ("DELETE", "/users/{user}/groups/" + group_id, None),

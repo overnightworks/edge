@@ -1187,6 +1187,7 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
+        admin = self.admin_now()  # the logout cells outlived the token
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
