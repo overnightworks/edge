@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import cast
 
 Identity = tuple[int, int]  # (st_dev, st_ino)
 
@@ -37,7 +38,7 @@ ALLOWED_NAMES = frozenset(
         "system-prompt",
         "relay-mcp.json",
         ".claude",
-        "/tmp",  # NOSONAR(python:S5443): a name the report shows; nothing is written there
+        "/tmp",  # NOSONAR(S5443) a name the report shows; nothing is written there
         "home",
         "work",
     }
@@ -201,7 +202,7 @@ class WalkRules:
     root_device: int | None = None  # st_dev of the walked mount; another one is a nested mount
 
     def for_mount(self, nested: frozenset[tuple[str, ...]], root_device: int) -> WalkRules:
-        return replace(self, nested=nested, root_device=root_device)
+        return cast(WalkRules, replace(self, nested=nested, root_device=root_device))
 
 
 def kind_letter(mode: int) -> str:
