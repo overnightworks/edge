@@ -4,6 +4,7 @@ origin and scripted Docker of `app_support`."""
 
 import io
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -222,7 +223,7 @@ class Hal:
         self.monkeypatch.setattr(sys, "stdout", io.StringIO())
         self.monkeypatch.setattr(sys, "stdin", io.StringIO())
         exit_code = emergency.stop_unit(
-            switches.Switches(self.world.state), KEY, NOW, self._engine(), self.world.repository,
+            switches.Switches(self.world.state), KEY, NOW, self.engine(), self.world.repository,
             self.verifier, self.world.runtime,
         )  # fmt: skip
         return exit_code, sys.stdout.getvalue(), self.capsys.readouterr().err
@@ -230,12 +231,12 @@ class Hal:
     def start(self, answer: str = "yes", while_prompt_waits=None) -> tuple[int, str, str]:
         self.at_terminal(answer, while_prompt_waits)
         exit_code = emergency.start_unit(
-            switches.Switches(self.world.state), KEY, self._engine(), self.world.repository,
+            switches.Switches(self.world.state), KEY, self.engine(), self.world.repository,
             self.verifier, runtime=self.world.runtime,
         )  # fmt: skip
         return exit_code, sys.stdout.getvalue(), self.capsys.readouterr().err
 
-    def _engine(self) -> compose.Compose:
+    def engine(self) -> compose.Compose:
         return compose.Compose(self.world.scripted.run, self.world.repository)
 
 
@@ -258,6 +259,24 @@ def test_hal_stop_writes_the_marker_and_stops_the_containers_without_a_terminal(
     assert "hopin is switched off (containers of hopin stopped; volumes stay)" in out
     assert switches.Switches(app_world.state).mark(KEY) is not None
     assert {row["State"] for row in app_world.docker.rows} == {"exited"}
+
+
+def test_hal_stop_of_an_app_records_the_marker_before_it_plans_anything(app_world, hal):
+    deployed(app_world)
+    marks = switches.Switches(app_world.state)
+    planned_with_marker: list[bool] = []
+    scripted_run = app_world.scripted.run
+
+    def planner(*call):
+        planned_with_marker.append(marks.mark(KEY) is not None)
+        return scripted_run(*call)
+
+    app_world.scripted.run = planner
+    app_world.docker.during["ps"] = lambda: planned_with_marker.append(marks.mark(KEY) is not None)
+
+    assert hal.stop()[0] == 0
+
+    assert planned_with_marker and all(planned_with_marker)
 
 
 def test_hal_stop_of_a_disabled_app_with_nothing_running_says_so(app_world, hal):
@@ -362,27 +381,44 @@ def test_a_marked_app_with_a_newer_tag_waiting_stays_stopped_and_its_marker_stay
     assert not app_world.srv.exists()
 
 
-def test_a_stop_during_start_completes_while_the_lock_is_free_and_apply_removes_what_started(
+def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops_what_started(
     app_world, hal
 ):
     app_world.origin.release(RELEASE)
-    stopped: list[tuple[int, bool]] = []
+    marks = switches.Switches(app_world.state)
+    stopped: list[int] = []
 
-    def hal_stop_during_the_start() -> None:
-        lock_was_held = switch_lock_is_held(app_world.state)
-        stopped.append((hal.stop()[0], lock_was_held))
+    def stop_the_app() -> None:
+        stopped.append(
+            emergency.stop_unit(
+                marks, KEY, NOW, hal.engine(), app_world.repository, hal.verifier, app_world.runtime
+            )
+        )
 
-    app_world.docker.during["start"] = hal_stop_during_the_start
+    stop = threading.Thread(target=stop_the_app)
+    waited: list[bool] = []
+
+    def hal_stop_while_start_holds_the_lock() -> None:
+        assert switch_lock_is_held(app_world.state)
+        stop.start()
+        while marks.mark(KEY) is None:  # the stop records first, then waits for the lock
+            stop.join(0.01)
+        waited.append(stop.is_alive() and not stopped)
+
+    app_world.docker.during["start"] = hal_stop_while_start_holds_the_lock
 
     exit_code, _, err = app_world.apply()
+    stop.join()
 
-    assert stopped == [(0, False)]
+    assert waited == [True]
+    assert stopped == [0]
     assert exit_code == 1
-    assert "hopin was switched off meanwhile" in err
-    assert "; not started" in err
-    assert app_world.docker.rows == []
+    assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
+    assert "`hal start hopin`" in err
+    assert "`edge apply` again" not in err
+    assert not any(row["State"] == "running" for row in app_world.docker.rows)
     assert not (app_world.state / "deployed").exists()
-    assert switches.Switches(app_world.state).mark(KEY) is not None
+    assert marks.mark(KEY) is not None
 
 
 HOSTED_FLEET = f"cloudflare:\n  zone: {ZONE}\n" + FLEET.replace(

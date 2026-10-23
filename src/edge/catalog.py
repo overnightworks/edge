@@ -164,6 +164,18 @@ def apps(
     )
 
 
+def is_enabled_app(document: Any, key: str) -> bool:
+    """Whether the catalog has an enabled app `key`; a malformed entry is not one, and planning
+    reports it."""
+    entry = document.get("services", {}).get(key) if isinstance(document, dict) else None
+    return (
+        isinstance(entry, dict)
+        and _is_app(entry)
+        and isinstance(entry["run"], dict)
+        and entry["run"].get("enabled") is True
+    )
+
+
 def github_org(document: Any) -> str:
     """The GitHub organisation that owns the repositories of the apps (`github.org`)."""
     github = document.get("github") if isinstance(document, dict) else None

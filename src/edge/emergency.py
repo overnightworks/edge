@@ -145,6 +145,7 @@ def stop_unit(
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     runtime = runtime or apps.AppRuntime.of(Path.home(), marks.directory)
+    _record_app_first(marks, key, now, repository)
     try:
         read = _read_subject(STOP, engine, repository, key)
         if read is None:
@@ -172,6 +173,17 @@ def stop_unit(
         _say(STOP, line)
         return ApplyExit.APPLIED_OR_NOTHING
     return _close(marks, target, now)
+
+
+def _record_app_first(marks: switches.Switches, key: str, now: datetime, repository: Path) -> None:
+    """The marker of an enabled app, before anything is planned, so apply stops fetching and
+    building it within the first moment of the stop (`compose config` and `ps` take seconds). A
+    failure here is not reported: the close records again and reports a record that failed."""
+    try:
+        if catalog.is_enabled_app(catalog.read(repository / catalog.FLEET_FILE), key):
+            marks.record(key, now)
+    except (catalog.CatalogError, OSError, switches.SwitchError):
+        pass
 
 
 def _confirmed_off(
