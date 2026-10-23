@@ -129,12 +129,12 @@ def test_a_first_apply_plans_tag_and_full_sha_then_runs_and_records_after_health
     ]  # fmt: skip
 
 
-def test_only_create_runs_under_the_switch_lock_and_nothing_else_does(world, origin):
+def test_only_create_and_start_run_under_the_switch_lock_and_nothing_else_does(world, origin):
     origin.release(FIRST)
 
     world.run()
 
-    assert world.docker.locked_verbs() == {"create"}
+    assert world.docker.locked_verbs() == {"create", "start"}
 
 
 def test_a_second_apply_changes_nothing_and_builds_creates_and_starts_nothing(world, origin):

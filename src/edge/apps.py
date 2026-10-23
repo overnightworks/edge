@@ -19,9 +19,10 @@ run is partial and the fix is a newer tag.
 
 An app that `hal stop` switched off (its marker, or the barrier a stop left) is never planned: no
 fetch, no checkout, no build. A stop that comes in after the plan wins: the marker and the barrier
-are looked at again before the checkout, under the switch lock around `create` (which starts
-nothing), and under it once more after `start` and the health wait; there, the off step removes
-whatever started. `start` and the health wait run outside the lock, so a stop never waits for them.
+are looked at again before the checkout, under the switch lock around `create` and `start`
+together, and under it once more after the health wait; from `create` on, the off step removes
+whatever started. A stop that comes in while the lock is held waits for it, then stops what
+started. The health wait runs outside the lock, so a stop never waits for it.
 
 An app the catalog disables while containers of its project exist is switched off: file-free
 `stop` and `rm -f` of project `<key>`, which reaches every container, whatever the checkout's
@@ -330,12 +331,24 @@ def _contract_services(app: catalog.App, tag: str, text: str | None) -> tuple[st
         raise AppError(str(error)) from error
 
 
+class SwitchedOffLine(str):
+    """The failure line of a run that a stop won: running apply again would change nothing."""
+
+
+def retry_advice(key: str, failure: str, apply_command: str) -> str:
+    """What to do after a run that failed: apply again, unless a stop won, which only
+    `hal start` ends."""
+    if isinstance(failure, SwitchedOffLine):
+        return f"`hal start {key}` switches it back on"
+    return f"run `{apply_command}` again"
+
+
 class _SwitchedOffMeanwhile(Exception):
     """A stop, or a barrier, came in after the plan; the message is the line to report."""
 
 
 def _require_on(plan: AppPlan, marks: switches.Switches) -> None:
-    """Raises _SwitchedOffMeanwhile when the app's marker or its barrier stands now (RV3)."""
+    """Raises _SwitchedOffMeanwhile when the app's marker or its barrier stands now ."""
     mark = marks.mark(plan.app.key)
     if barrier.switched_off(mark, plan.ingress):
         since = f" (since {switches.describe_since(mark.since)})" if mark else ""
@@ -347,12 +360,13 @@ def _require_on(plan: AppPlan, marks: switches.Switches) -> None:
 def _run(
     plan: AppPlan, runtime: AppRuntime, marks: switches.Switches, progress: Progress
 ) -> str | None:
-    """Check out the release, build, create under the switch lock, start and wait for health
+    """Check out the release, build, create and start under the switch lock, wait for health
     outside it, record: the failure line of the first step that fails, None when the app is on and
     recorded. A stop that comes in meanwhile wins, wherever it comes in: the marker and the
-    barrier are looked at before the checkout, under the lock around `create`, and under it again
-    after the health wait; from `create` on, the off step removes what started. `progress` names
-    the step, so an interrupt can say where the containers may be partly replaced."""
+    barrier are looked at before the checkout, under the lock around `create` and `start`, and
+    under it again after the health wait; from `create` on, the off step removes what started.
+    `progress` names the step, so an interrupt can say where the containers may be partly
+    replaced."""
     key, tag = plan.app.key, plan.release.tag
     progress.unit = key
     engine = app_compose.AppCompose(key, runtime.srv / key, runtime.docker)
@@ -361,12 +375,13 @@ def _run(
         progress.step = f"look whether {key} was switched off"
         _require_on(plan, marks)
         _build(plan, runtime, engine, progress)
-        progress.step = f"create the containers at {tag}; they may be partly replaced"
         with marks.lock():
             _require_on(plan, marks)
+            progress.step = f"create the containers at {tag}; they may be partly replaced"
             engine.create(tag)
-        created = True
-        failure = _start_and_wait(plan, runtime, engine, marks, progress)
+            created = True
+            _start(plan, engine, marks, progress)
+        failure = _wait_until_healthy(plan, runtime, engine, marks, progress)
         progress.step = f"record the deployment of {tag}"
         with marks.lock():
             _require_on(plan, marks)
@@ -406,20 +421,30 @@ def _build(
     )  # fmt: skip
 
 
-def _start_and_wait(
+def _start(
+    plan: AppPlan, engine: app_compose.AppCompose, marks: switches.Switches, progress: Progress
+) -> None:
+    """Start the created containers, under the switch lock; a failure is reported as a stop when
+    one came in meanwhile."""
+    progress.step = f"start at {plan.release.tag}; the containers may be partly replaced"
+    try:
+        engine.start(plan.release.tag)
+    except compose.ComposeError:
+        _require_on(plan, marks)
+        raise
+
+
+def _wait_until_healthy(
     plan: AppPlan,
     runtime: AppRuntime,
     engine: app_compose.AppCompose,
     marks: switches.Switches,
     progress: Progress,
 ) -> str | None:
-    """Start the created containers and wait for them to be healthy, both outside the switch lock
-    (RV3); the failure line, None when all are healthy. Raises _SwitchedOffMeanwhile as soon as a
-    stop is seen."""
+    """Wait for the started containers to be healthy, outside the switch lock; the failure line,
+    None when all are healthy. Raises _SwitchedOffMeanwhile as soon as a stop is seen."""
     key, tag = plan.app.key, plan.release.tag
     try:
-        progress.step = f"start at {tag}; the containers may be partly replaced"
-        engine.start(tag)
         progress.step = f"wait for {key} to be healthy"
         unhealthy = unhealthy_after_waiting(
             engine, plan.services, runtime.health, lambda: _require_on(plan, marks)
@@ -435,13 +460,13 @@ def _start_and_wait(
     return None
 
 
-def _after_stop(key: str, line: str, created: bool, runtime: AppRuntime, progress: Progress) -> str:
+def _after_stop(
+    key: str, line: str, created: bool, runtime: AppRuntime, progress: Progress
+) -> SwitchedOffLine:
     """The line of a stop that won; once containers were created, the off step removes whatever
     started, and its own failure is added."""
-    if not created:
-        return line
-    off_failure = _switch_off(key, runtime, progress)
-    return f"{line}; {off_failure}" if off_failure else line
+    off_failure = _switch_off(key, runtime, progress) if created else None
+    return SwitchedOffLine(f"{line}; {off_failure}" if off_failure else line)
 
 
 def _switch_off(key: str, runtime: AppRuntime, progress: Progress) -> str | None:

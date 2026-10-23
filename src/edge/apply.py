@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
-from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps
+from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.realm import reconcile
 from edge.unit_plans import (
     Action,
@@ -713,7 +713,8 @@ def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> 
     failed = False
     for plan, failure in planned.app_plans.run(marks, progress):
         if failure:
-            print(f"{COMMAND}: partial, {failure}; run `{COMMAND}` again", file=sys.stderr)
+            advice = retry_advice(plan.app.key, failure, COMMAND)
+            print(f"{COMMAND}: partial, {failure}; {advice}", file=sys.stderr)
             failed = True
         else:
             print(f"{COMMAND}: {plan.app.key} is on at {plan.release.tag}")

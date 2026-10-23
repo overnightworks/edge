@@ -1,4 +1,4 @@
-"""What `hal apply` does about an app that `hal stop` switched off (#255 P5, D2-D6, D10, B5, RV3):
+"""What `hal apply` does about an app that `hal stop` switched off (#255 P5, D2-D6, D10, B5):
 the plan names it and fetches nothing, and a stop that comes in during the run wins wherever it
 comes in, against a real origin and a scripted Docker."""
 
@@ -19,6 +19,8 @@ from test_edge_apps import (
     state,  # noqa: F401 the fixture, requested by name below
     world,  # noqa: F401 the fixture, requested by name below
 )
+
+from edge import catalog
 
 
 def switch_off_meanwhile(world: World) -> None:  # noqa: F811
@@ -84,7 +86,7 @@ def test_a_stop_during_the_health_wait_ends_the_wait_without_a_record_and_remove
 
     assert world.deployed() is None
     assert world.docker.rows == []
-    assert world.docker.locked_verbs() == {"create"}
+    assert world.docker.locked_verbs() == {"create", "start"}
     assert world.docker.verbs.count("start") == 1
 
 
@@ -122,3 +124,19 @@ def test_a_stop_is_reported_in_place_of_a_start_that_failed(world, origin):  # n
     [failure] = world.run()
 
     assert failure == STOPPED_LINE
+
+
+@pytest.mark.parametrize(
+    ("document", "named"),
+    [
+        ({"services": {KEY: {"repo": {}, "run": {"enabled": True}}}}, True),
+        ({"services": {KEY: {"repo": {}, "run": {"enabled": False}}}}, False),
+        ({"services": {KEY: {"repo": {}, "run": {}}}}, False),
+        ({"services": {KEY: {"repo": {}, "run": ["enabled"]}}}, False),
+        ({"services": {KEY: {"run": {"enabled": True}}}}, False),
+        ({"services": {"other": {"repo": {}, "run": {"enabled": True}}}}, False),
+        (["services"], False),
+    ],
+)
+def test_only_an_enabled_app_entry_of_the_catalog_is_named_an_enabled_app(document, named):
+    assert catalog.is_enabled_app(document, KEY) is named
