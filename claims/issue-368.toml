@@ -1,0 +1,8 @@
+claim_id = "0cfcd5b4bcaf44bd9298a10456a1e483"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "83ff4afdfeaf484674af8bdb0d81858a1295f43a"
+branch = "claude/issue-368-339-c1-the-fake-app-and-cell-containment"
+scope = ["agent-service/smoke.py", "docs/agent-service.md", "probe/agent-service/app_tools.py", "probe/agent-service/containment.py", "probe/agent-service/issuer.py", "probe/agent-service/unit.py", "sonar-project.properties", "tests/test_agent_service_smoke.py"]
+opened_commit = "5655d1c0dcfe9f73ee8799628687b6885c0d2887"
+whole_reason = "The fake app, its driver and the smoke's --tool are one end-to-end proof, and none has a caller without the others. The motion between issuer.py and unit.py only lifts the listening wait so it is not copied. The docs and the Sonar entry describe and measure the same files."
