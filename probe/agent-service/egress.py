@@ -771,20 +771,25 @@ def interrupt(*_: object) -> None:
     raise KeyboardInterrupt
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=scratch_directory, required=True)
-    parser.add_argument("--target", type=Target, choices=list(Target), default=Target.STAND_IN)
-    arguments = parser.parse_args()
+def run_probe(open_probe: Callable[[], Probe]) -> int:
+    """Drive the probe `open_probe` makes; exit 0 when every cell held, 1 when one failed."""
     signal.signal(signal.SIGTERM, interrupt)
     try:
-        with Probe(arguments.scratch, arguments.target) as probe:
+        with open_probe() as probe:
             probe.drive()
     except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
         print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
         return 1
     print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
+    parser.add_argument("--target", type=Target, choices=list(Target), default=Target.STAND_IN)
+    arguments = parser.parse_args()
+    return run_probe(lambda: Probe(arguments.scratch, arguments.target))
 
 
 if __name__ == "__main__":

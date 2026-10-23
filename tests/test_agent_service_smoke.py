@@ -143,6 +143,15 @@ def test_the_run_is_asked_for_in_wire_v2_with_no_tools_and_both_roles():
     assert (document["v"], document["tools"], document["roles"]) == (2, {}, ["admin", "user"])
 
 
+def test_each_tool_option_names_a_tool_and_its_effect_in_the_request():
+    _, _, connection = drive(
+        run_events(*SUCCESS), "--tool", "step:read_only", "--tool", "bare:read_only"
+    )
+
+    ((_, _, body, _),) = connection.requests
+    assert json.loads(body)["tools"] == {"step": "read_only", "bare": "read_only"}
+
+
 def test_a_failed_run_prints_its_code_and_message_and_exits_1():
     failure = ("failed", {"code": "provider_error", "message": "The provider failed."})
 
@@ -258,8 +267,19 @@ def test_a_token_in_the_environment_is_not_taken(monkeypatch):
         [f"--timeout={PERSON_TOKEN}"],
         ["--timeout", WORKLOAD_TOKEN],
         [f"--can{PERSON_TOKEN}"],
+        ["--tool", PERSON_TOKEN],
+        ["--tool", f":{PERSON_TOKEN}"],
+        ["--tool", f"{PERSON_TOKEN}:read_only", "--tool", f"{PERSON_TOKEN}:mutating"],
     ],
-    ids=["unknown option", "bad timeout", "bad timeout value", "abbreviated option"],
+    ids=[
+        "unknown option",
+        "bad timeout",
+        "bad timeout value",
+        "abbreviated option",
+        "tool without an effect",
+        "tool without a name",
+        "tool named twice",
+    ],
 )
 def test_a_rejected_argument_is_never_printed(argv, capsys):
     stdin = io.StringIO(BOTH_TOKENS)

@@ -197,3 +197,10 @@ refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 40
 the api group only: 403 `not_enabled`), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.
+`--cell containment` adds a throwaway signing key and a fake app that lists tools on
+`agent-songmaker`, and runs `agent-smoke --tool NAME:EFFECT` against it: B1 (the run with the relay
+is accepted and fails at the upstream) and B2 (a capability written into a tool description fails
+the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the runner's failure is
+`CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict
+other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. The cells print counts and event names, never a log line. Its loopback capture (the
+(a) parts) is not driven yet.

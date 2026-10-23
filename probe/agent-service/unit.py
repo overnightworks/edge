@@ -10,7 +10,9 @@ U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. 
 drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
 issuer on the `agent-songmaker` network, so the tokens verify and the CLI meets the real upstream
 with the dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
-`agent-service/live_smoke.py` there, past its sign-in. The image
+`agent-service/live_smoke.py` there, past its sign-in. `--cell containment` (containment.py) adds a
+signing key and a fake app that lists tools (app_tools.py) and drives agent-runtime#440's cells
+B1 and B2 through `agent-smoke --tool`. The image
 `edge-agent-service:0.7.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
@@ -41,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importabl
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))  # edge's own observation
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "agent-service"))  # live_smoke.py
 
+from containment import ContainmentProbe
 from egress import (
     COMPOSE_FILE,
     LABEL,
@@ -51,12 +54,12 @@ from egress import (
     ProbeFailed,
     Target,
     expect,
-    interrupt,
+    run_probe,
     scratch_directory,
     service_configuration,
     write_dummy_token,
 )
-from issuer import ISSUER_SERVICE, IssuerProbe
+from issuer import ISSUER_SERVICE, LISTENING, IssuerProbe, wait_for_listening
 from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
 from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
@@ -64,10 +67,8 @@ from refusals import SMOKE_SERVICE, check_refusals
 from edge import compose
 
 SERVICE = Target.SERVICE.compose_service
-LISTEN_SECONDS = 90
 REFUSAL_SECONDS = 60
 UID = 1000
-LISTENING = f"Uvicorn running on http://0.0.0.0:{SERVICE_PORT}"
 CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path
 SERVICE_COMMAND = "agent-runtime-service"
 INIT_COMMAND = "docker-init"
@@ -296,12 +297,7 @@ class UnitProbe(Probe):
         self.cell_u15()
 
     def wait_until_listening(self) -> None:
-        deadline = time.monotonic() + LISTEN_SECONDS
-        while time.monotonic() < deadline:
-            if LISTENING in self.service_logs():
-                return
-            time.sleep(0.5)
-        raise ProbeFailed("U1: the service did not listen in time")
+        wait_for_listening(self.service_logs, "U1: the service did not listen")
 
     def unauthenticated_status(self) -> int:
         image = json.loads(self.compose("config", "--format", "json").stdout)["services"][SERVICE][
@@ -641,42 +637,33 @@ class SmokeProbe(IssuerProbe):
             ),
             stdin=f"{person}\n{workload}\n", check=False, timeout=240,
         )  # fmt: skip
-        logs = self.run(["docker", "logs", self.container(SERVICE)])
+        logs = self.container_log(SERVICE)
         shown = smoke.stdout + smoke.stderr
         lines = smoke.stdout.splitlines()
         expect(lines[:1] == ["event: run_started"], f"U14: the smoke began with {lines[:2]}")
         expect("event: failed" in lines, f"U14: no failed event for the dummy login: {lines}")
         expect(
-            "CliLoginRefusedError" in logs.stdout + logs.stderr,
+            "CliLoginRefusedError" in logs,
             "U14: the service log does not name the upstream's refusal of the login",
         )
         for secret in (person, workload, dummy):
-            expect(secret not in shown + logs.stdout + logs.stderr, "U14: a token was printed")
+            expect(secret not in shown + logs, "U14: a token was printed")
         self.held.append("U14")
         print(
             f"U14 held: the smoke exited {smoke.returncode}; its output was {lines}; no token "
             "in it or in the service log; the log ends "
-            f"{(logs.stdout + logs.stderr).strip().splitlines()[-3:]}",
+            f"{logs.strip().splitlines()[-3:]}",
             flush=True,
         )
-
-    def wait_until_listening(self) -> None:
-        deadline = time.monotonic() + LISTEN_SECONDS
-        while time.monotonic() < deadline:
-            logs = self.run(["docker", "logs", self.container(SERVICE)])
-            if LISTENING in logs.stdout + logs.stderr:
-                return
-            time.sleep(0.5)
-        raise ProbeFailed("U14: the service did not listen in time")
-
-    @property
-    def token_path(self) -> Path:
-        return Path(self.environment["HOME"]) / LOGIN_DIRECTORY
 
 
 class Cell(StrEnum):
     UNIT = "unit"
     SMOKE = "smoke"
+    CONTAINMENT = "containment"
+
+
+PROBES = {Cell.UNIT: UnitProbe, Cell.SMOKE: SmokeProbe, Cell.CONTAINMENT: ContainmentProbe}
 
 
 def main() -> int:
@@ -684,16 +671,7 @@ def main() -> int:
     parser.add_argument("--scratch", type=scratch_directory, required=True)
     parser.add_argument("--cell", type=Cell, choices=list(Cell), default=Cell.UNIT)
     arguments = parser.parse_args()
-    signal.signal(signal.SIGTERM, interrupt)
-    probe_class = SmokeProbe if arguments.cell is Cell.SMOKE else UnitProbe
-    try:
-        with probe_class(arguments.scratch) as probe:
-            probe.drive()
-    except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
-        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
-        return 1
-    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
-    return 0
+    return run_probe(lambda: PROBES[arguments.cell](arguments.scratch))
 
 
 if __name__ == "__main__":
