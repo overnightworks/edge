@@ -75,8 +75,10 @@ def test_a_failed_log_read_fails_the_probe_instead_of_reading_as_no_logout(
         raising=False,
     )
 
+    probe = keycloak_probe.Probe(stack=stack)
+
     with pytest.raises(keycloak_probe.ProbeFailure, match="compose logs failed"):
-        keycloak_probe.Probe(stack=stack).logout_record("user-1")
+        probe.logout_record("user-1")
 
 
 class ControlProbe:

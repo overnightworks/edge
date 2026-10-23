@@ -41,7 +41,7 @@ from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy, parse_ns_headers
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, ClassVar
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 from urllib.request import (
@@ -1084,7 +1084,7 @@ class Probe:
     secret_values: dict[str, str] = field(default_factory=dict)
     member_password: str = field(default_factory=lambda: secrets.token_urlsafe(16))
     evidence: list[str] = field(default_factory=list)
-    logout_timeout_seconds = 20
+    logout_timeout_seconds: ClassVar[int] = 20
 
     def say(self, line: str) -> None:
         """Prints a line of evidence and keeps it, so proof 7 can check it for secrets."""
