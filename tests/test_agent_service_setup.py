@@ -6,6 +6,7 @@ refused cases below are the ones its docstring names.
 
 import errno
 import fcntl
+import functools
 import getpass
 import importlib.machinery
 import importlib.util
@@ -23,6 +24,7 @@ from types import ModuleType
 import pytest
 
 SETUP = Path(__file__).resolve().parents[1] / "agent-service" / "setup"
+sys.path.insert(0, str(SETUP.parent))  # setup imports its sibling module as a script does
 IMAGE = "edge-agent-service:0.0.0-test"
 DUMMY_TOKEN = "dummy-setup-token-0123456789"
 SECOND_TOKEN = "second-dummy-token-9876543210"
@@ -78,6 +80,8 @@ class Terminal:
     pastes: list[str] = field(default_factory=list)
     said: list[str] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)
+    answers: list[str] = field(default_factory=lambda: ["yes"])
+    interactive: bool = True
 
     def say(self, line: str) -> None:
         self.said.append(line)
@@ -85,6 +89,59 @@ class Terminal:
     def read_secret(self, prompt: str) -> str:
         self.prompts.append(prompt)
         return self.pastes.pop(0)
+
+    def confirm(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.answers.pop(0)
+
+    def has_terminal(self) -> bool:
+        return self.interactive
+
+
+def generate_key(*options: str) -> bytes:
+    """A throwaway RSA key made by host openssl; the tests own every key they use."""
+    command = ["openssl", "genpkey", "-algorithm", "RSA", *options]
+    return subprocess.run(command, capture_output=True, check=True).stdout
+
+
+@functools.cache
+def sample_pair(index: int) -> tuple[bytes, bytes]:
+    """A (private, public) pair of 3072 bits; each index is another key."""
+    private = generate_key("-pkeyopt", "rsa_keygen_bits:3072")
+    public = subprocess.run(
+        ["openssl", "pkey", "-pubout"], input=private, capture_output=True, check=True
+    )
+    return private, public.stdout
+
+
+@dataclass
+class Openssl:
+    """Host openssl, except that `genpkey` hands out the sample keys in turn and named subcommands
+    exit with a code or answer exit 0 with forged output; the argument lists are kept so a test can
+    look for key bytes in them."""
+
+    generated: list[bytes] = field(default_factory=lambda: [sample_pair(i)[0] for i in (1, 2, 3)])
+    failing: dict[str, int] = field(default_factory=dict)
+    forged: dict[str, bytes] = field(default_factory=dict)
+    calls: list[list[str]] = field(default_factory=list)
+
+    def __call__(self, arguments: list[str], stdin: bytes) -> subprocess.CompletedProcess[bytes]:
+        self.calls.append(arguments)
+        for name in (arguments[0], " ".join(arguments[:2])):
+            if name in self.failing:
+                return subprocess.CompletedProcess(arguments, self.failing[name], b"", b"failed")
+            if name in self.forged:
+                return subprocess.CompletedProcess(arguments, 0, self.forged[name], b"")
+        if arguments[0] == "genpkey":
+            return subprocess.CompletedProcess(arguments, 0, self.generated.pop(0), b"")
+        return subprocess.run(
+            ["openssl", *arguments], input=stdin, capture_output=True, check=False
+        )
+
+
+@pytest.fixture
+def openssl() -> Openssl:
+    return Openssl()
 
 
 @pytest.fixture
@@ -104,13 +161,16 @@ def home(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def make_setup(setup_module, docker, terminal, home) -> Callable[..., object]:
+def make_setup(setup_module, docker, terminal, home, openssl) -> Callable[..., object]:
     def build(service_uid: int | None = None, read_secret=None):
         tools = setup_module.Tools(
             run=docker,
             say=terminal.say,
             read_secret=read_secret or terminal.read_secret,
             service_uid=os.getuid() if service_uid is None else service_uid,
+            openssl=openssl,
+            has_terminal=terminal.has_terminal,
+            confirm=terminal.confirm,
         )
         return setup_module.AgentServiceSetup(tools, home)
 
@@ -134,8 +194,24 @@ def make_login_directory(home: Path) -> None:
         directory.mkdir(mode=0o700, exist_ok=True)
 
 
+def signing_directory(home: Path) -> Path:
+    return home / ".secrets" / "agent-service" / "signing"
+
+
+def lay_signing_pair(home: Path, index: int = 0) -> None:
+    directory = signing_directory(home)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    for name, contents, mode in zip(
+        ("private.pem", "public.pem"), sample_pair(index), (0o600, 0o644), strict=True
+    ):
+        (directory / name).write_bytes(contents)
+        (directory / name).chmod(mode)
+
+
 def write_token(home: Path, contents: bytes | str, mode: int = 0o600) -> None:
+    """The login of a set-up host, with the signing pair beside it."""
     make_login_directory(home)
+    lay_signing_pair(home)
     path = token_path(home)
     path.write_bytes(contents if isinstance(contents, bytes) else contents.encode())
     path.chmod(mode)
@@ -179,13 +255,22 @@ def test_a_missing_login_directory_is_not_set_up_and_the_check_changes_nothing(
     assert not (home / ".secrets").exists()
 
 
-def test_a_login_directory_open_to_others_is_narrowed_to_0700(make_setup, home):
+@pytest.mark.parametrize(
+    ("path_of", "open_mode", "mended_mode"),
+    [
+        pytest.param(login_directory, 0o755, 0o700, id="login directory"),
+        pytest.param(lambda h: signing_directory(h) / "public.pem", 0o600, 0o644, id="public half"),
+    ],
+)
+def test_a_folder_or_public_half_with_another_mode_is_set_to_its_mode(
+    make_setup, home, path_of, open_mode, mended_mode
+):
     write_token(home, DUMMY_TOKEN)
-    login_directory(home).chmod(0o755)
+    path_of(home).chmod(open_mode)
     assert make_setup().check() == 1
 
     assert make_setup().run(renew=False) == 0
-    assert mode_of(login_directory(home)) == 0o700
+    assert mode_of(path_of(home)) == mended_mode
 
 
 def test_a_directory_owned_by_another_user_is_reported_not_taken(make_setup, home, terminal):
@@ -403,7 +488,7 @@ def test_a_symlinked_folder_is_refused_before_the_paste_and_nothing_is_written(
         login_directory(home).symlink_to(outside)
 
     assert make_setup().run(renew=renew) == 1
-    assert "symbolic link" in terminal.said[-1]
+    assert ("symbolic link" if linked == "claude" else "not a plain folder") in terminal.said[-1]
     assert terminal.prompts == []
     assert list(outside.rglob("*")) == ([outside / "claude"] if linked == "agent-service" else [])
 
