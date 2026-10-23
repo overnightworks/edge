@@ -1,8 +1,0 @@
-claim_id = "4d25c9f13c3d4fe2a0f752bc0d9cf711"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "35f2749efe4799701313385dbec543e10e0b7ab8"
-branch = "claude/issue-325-110-sb-barrier-declared-hosts"
-scope = ["docs/architecture.md", "src/edge/apply.py", "src/edge/barrier.py", "src/edge/catalog.py", "src/edge/emergency.py", "tests/test_edge_barrier.py", "tests/test_edge_barrier_declared_hosts.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_global_stop.py", "tests/test_hal_stack_commands.py"]
-opened_commit = "3fc79745a7b1ae77328b8c2092941cd49f099ebe"
-whole_reason = "One barrier owner reading the declared hosts, its four callers, the pins that pass a key, and the doc paragraphs."
