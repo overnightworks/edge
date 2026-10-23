@@ -46,7 +46,7 @@ from typing import Final
 
 import egress_observe
 from device_sign_in import CLIENT, SignInFailed, sign_in
-from egress_observe import PUBLIC_RESOLVER, lan_address
+from egress_observe import PUBLIC_RESOLVER, UNREACHABLE, lan_address
 from smoke import HOLDING_MESSAGE, Tokens
 
 SECRETS_DIRECTORY = Path.home() / ".secrets"
@@ -70,7 +70,6 @@ CHILD_END_SECONDS = 10
 RECREATE_REASON_CHARACTERS = 200
 SAMPLE_FAILED = "SAMPLE FAILED"
 TIMED_OUT = 124
-UNREACHABLE = {"ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"}
 EMBEDDED_RESOLVER = "127.0.0.11"
 PROVIDER_HOST = "api.anthropic.com"
 CLI_PROCESS_COUNT = (
@@ -471,6 +470,8 @@ class EgressTargets:
     internet: str
     lan: str
     agent_free: str
+    songmaker_free: str
+    presentator_free: str
     egress_free: str
     agent_gateways: list[str]
     egress_gateways: list[str]
@@ -489,7 +490,10 @@ print(json.dumps({
     "defaults": default_routes()["default_routes"],
     "reach": {
         label: tcp_connect(targets[label], 22)["result"]
-        for label in ("docker0", "internet", "lan", "agent_free", "egress_free")
+        for label in (
+            "docker0", "internet", "lan", "agent_free", "songmaker_free", "presentator_free",
+            "egress_free",
+        )
     },
     "ipv6_interfaces": ipv6_interfaces()["interfaces"],
     "ipv6_tcp": tcp_connect(PUBLIC_RESOLVER_V6, 443)["result"],
@@ -551,15 +555,20 @@ def unused_address(network: dict) -> str:
 
 def egress_targets(stack: Stack) -> EgressTargets:
     """The host looks up the addresses, because the container has no DNS and no Docker."""
-    agent, egress = project_network(stack, "agent"), project_network(stack, "egress")
+    agent = project_network(stack, "agent")
+    songmaker = project_network(stack, "agent-songmaker")
+    presentator = project_network(stack, "agent-presentator")
+    egress = project_network(stack, "egress")
     return EgressTargets(
         provider=socket.gethostbyname(PROVIDER_HOST),
         docker0=gateways_of(inspect_network(stack, "bridge"))[0],
         internet=gateways_of(project_network(stack, "internet"))[0],
         lan=lan_address(),
         agent_free=unused_address(agent),
+        songmaker_free=unused_address(songmaker),
+        presentator_free=unused_address(presentator),
         egress_free=unused_address(egress),
-        agent_gateways=gateways_of(agent),
+        agent_gateways=[*gateways_of(agent), *gateways_of(songmaker), *gateways_of(presentator)],
         egress_gateways=gateways_of(egress),
     )
 

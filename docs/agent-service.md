@@ -1,7 +1,7 @@
 # The agent service
 
 Reference and runbook for the operator and for an engineer changing the agent service. The code is
-the truth: `compose.yaml` (the `agent-service` service, its `agent` and `egress` networks),
+the truth: `compose.yaml` (the `agent-service` service, its `agent`, `agent-songmaker`, `agent-presentator` and `egress` networks),
 `agent-service/service.toml`, `agent-service/image/` (the image recipe), `agent-service/live_smoke.py`
 and the probes under `probe/agent-service/`. The egress gateway it leaves through is in
 [internal-ca.md](internal-ca.md); the platform picture is [architecture.md](architecture.md).
@@ -150,15 +150,17 @@ gets 403 `not_enabled`. An app's privacy text therefore describes only the API r
 
 ## An app's side
 
-An app reaches the service by joining the `agent` network, whose name is fixed (`hal_agent`, so the
-project's rename does not move it), as an external network:
+An app reaches the service by joining its own agent network, `hal_agent_<app>` (`hal_agent_songmaker`,
+`hal_agent_presentator`), as an external network. The names are fixed, so the project's rename does not
+move them, and no app sees another's network (the older shared `hal_agent` stays, with the service and
+`agent-smoke` on it, until each app has moved):
 
 ```yaml
 services:
   app:
     networks: [default, agent]
 networks:
-  agent: {external: true, name: hal_agent}
+  agent: {external: true, name: hal_agent_songmaker}
 ```
 
 and calls `http://agent-service:8080` (the service's own default port; the smoke and the unit probe

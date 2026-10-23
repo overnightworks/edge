@@ -1,5 +1,6 @@
 """The stand-in issuer of a probe run: the realm's side (signing key, certificate, JWKS, tokens)
-and the service of the compose project that serves it on the `agent` network, all throwaway."""
+and the service of the compose project that serves it on the `agent-songmaker` network, all
+throwaway."""
 
 from __future__ import annotations
 
@@ -91,7 +92,7 @@ class StandInIssuer:
 
 
 class IssuerProbe(Probe):
-    """The service with a stand-in issuer on the `agent` network."""
+    """The service with a stand-in issuer on the `agent-songmaker` network."""
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch, Target.SERVICE)
@@ -122,7 +123,7 @@ class IssuerProbe(Probe):
                     "image": self.service_image(),
                     "profiles": ["agent-service"],
                     "user": "65534:65534", "read_only": True, "cap_drop": ["ALL"],
-                    "security_opt": ["no-new-privileges:true"], "networks": ["agent"],
+                    "security_opt": ["no-new-privileges:true"], "networks": ["agent-songmaker"],
                     "entrypoint": ["python", "-I", "-B", "/issuer.py"],
                     "volumes": [
                         {"type": "bind", "source": str(program), "target": "/issuer.py",
@@ -139,11 +140,8 @@ class IssuerProbe(Probe):
     def service_image(self) -> str:
         """The issuer is a python script, and the service image is the python already on the PC;
         compose resolves the image as it does for the service."""
-        resolved = self.run(
-            ["docker", "compose", "--project-directory", str(COMPOSE_FILE.parent),
-             "--file", str(COMPOSE_FILE), "--profile", "agent-service", "config",
-             "--format", "json"],
-        )  # fmt: skip
+        self.write_on_probe_subnet(COMPOSE_FILE, self.compose_file)  # the project's names (P26)
+        resolved = self.compose("config", "--format", "json")
         return json.loads(resolved.stdout)["services"][SERVICE]["image"]
 
     def tokens(self, groups: tuple[str, ...] = MEMBER_GROUPS) -> Tokens:

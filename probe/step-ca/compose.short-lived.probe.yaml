@@ -1,0 +1,6 @@
+# Probe overlay (probe/step-ca/probe.py, proof 9): the CA runs a copy of ca.json with a short
+# certificate lifetime, so a renewal happens inside the probe. Never used live.
+services:
+  step-ca:
+    volumes:
+      - ${PROBE_CA_JSON:?run through probe/step-ca/probe.py}:/etc/step-ca/ca.json:ro
