@@ -95,18 +95,20 @@ link, under one lock on the folder, and nothing is ever written through a link. 
 exclusively (`private.pem.new`, then `link(2)`, which refuses any existing entry). A plain run and
 `--renew` never replace an existing key. A missing public half is derived again, and a public half with
 another mode is set to 0644. Setup refuses, in one line that names the file and the next step, a pair
-it cannot use, and changes nothing:
+it cannot use, and changes nothing, `--renew` and the token included (the key is judged first):
 
-- a private key that is malformed, encrypted, of another size or exponent, missing while `public.pem` is
-  still there, or a public half that is malformed or not its pair: the line names
+- a private key that is malformed, encrypted, of another size or exponent, failing openssl's own key
+  check, or missing while `public.pem` is still there, or a public half that is malformed or not its pair: the line names
   `agent-service/setup --replace-signing-key`;
 - a wrong owner, a mode other than 0600 or a link: the line asks for the operator's own fix, because setup
   never narrows or unlinks those.
 
 `agent-service/setup --check` changes nothing and exits 0 for a sound pair, 1 for the first gap, a
-refusal or a leftover of an interrupted run, and 2 when openssl or the host cannot answer. A leftover
-(`*.new`, `*.next.pem`) beside a sound pair is cleared by the next plain run; beside an unusable pair it
-is left to `--replace-signing-key`. `home secrets` lists both files; a public half at 0644 is no finding.
+refusal or a leftover of an interrupted run, and 2 when openssl or the host cannot answer; an openssl that exits 1 on a key counts as refusing it
+only when it passes the same check on a throwaway key. A leftover (`*.new`, `*.next.pem`) beside a
+sound pair is cleared by the next plain run; beside a missing or unusable pair only the `*.new` of an
+interrupted creation is, and the `*.next.pem` wait for `--replace-signing-key`. A temporary entry that
+is a link, no regular file or not the service's is never unlinked. `home secrets` lists both files; a public half at 0644 is no finding.
 
 **Replacing the key.** `agent-service/setup --replace-signing-key` is the one command for a planned
 rotation, for a key that may have leaked, and for a lost private key (there is no backup: the key protects

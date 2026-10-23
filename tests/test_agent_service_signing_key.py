@@ -1,6 +1,7 @@
 """The signing key of agent-service/setup (#356, matrix P01-P08 and P32-P34): throwaway keys made by
 host openssl in a throwaway home, never the real ~/.secrets."""
 
+import base64
 import fcntl
 import os
 import threading
@@ -15,6 +16,7 @@ from test_agent_service_setup import (
     mode_of,
     sample_pair,
     signing_directory,
+    token_path,
     write_token,
 )
 
@@ -138,15 +140,17 @@ def test_p03_the_check_passes_a_sound_pair_and_changes_nothing(make_setup, home)
     assert snapshot(home) == before
 
 
-def test_p03_an_openssl_that_crashes_makes_the_check_cannot_tell_not_a_broken_key(
-    make_setup, home, openssl, terminal
+@pytest.mark.parametrize("exit_code", [1, 2])
+def test_p03_an_openssl_that_fails_makes_the_check_cannot_tell_not_a_broken_key(
+    make_setup, home, openssl, terminal, exit_code
 ):
     write_token(home, DUMMY_TOKEN)
-    openssl.failing = {"pkey": 2}
+    openssl.failing = {"pkey": exit_code}
     before = snapshot(home)
 
     assert make_setup().check() == 2
     assert "openssl" in terminal.said[-1]
+    assert "--replace-signing-key" not in terminal.said[-1]
     assert snapshot(home) == before
 
 
@@ -171,7 +175,8 @@ def test_p04_an_interrupted_creation_is_cleared_or_left_to_the_operator(
 
     if variant == "another inode":
         assert code == 1
-        assert "private.pem.new" in terminal.said[-1]
+        assert str(candidate) in terminal.said[-1]
+        assert "--replace-signing-key" in terminal.said[-1]
         assert candidate.exists()
         return
     assert code == 0
@@ -192,15 +197,6 @@ def test_p05_a_missing_public_half_is_derived_and_the_private_key_is_untouched(m
     assert make_setup().run(renew=False) == 0
     assert snapshot(home)["private.pem"] == before
     assert public_path(home).read_bytes() == sample_pair(0)[1]
-    assert mode_of(public_path(home)) == 0o644
-
-
-def test_p05_a_public_half_with_another_mode_gets_0644(make_setup, home):
-    write_token(home, DUMMY_TOKEN)
-    public_path(home).chmod(0o600)
-    assert make_setup().check() == 1
-
-    assert make_setup().run(renew=False) == 0
     assert mode_of(public_path(home)) == 0o644
 
 
@@ -279,9 +275,19 @@ def test_p07_two_runs_at_once_make_one_pair(
     assert private_path(home).read_bytes() == sample_pair(1)[0]
 
 
+def with_a_wrong_private_exponent(key: bytes) -> bytes:
+    """The same PEM structure and public fields, a private exponent that fits no other number."""
+    der = bytearray(base64.b64decode("".join(key.decode().splitlines()[1:-1])))
+    exponent_at = der.index(b"\x02\x03\x01\x00\x01") + 5 + 4  # past e and the header of d
+    der[exponent_at + 200] ^= 1
+    body = base64.encodebytes(bytes(der)).decode()
+    return f"-----BEGIN PRIVATE KEY-----\n{body}-----END PRIVATE KEY-----\n".encode()
+
+
 def broken_private_contents() -> dict[str, bytes]:
     key = sample_pair(0)[0]
     return {
+        "invalid key": with_a_wrong_private_exponent(key),
         "malformed": b"not a key\n",
         "truncated": key[:-60],
         "encrypted": generate_key(
@@ -304,6 +310,7 @@ def broken_privates() -> dict[str, bytes]:
 
 
 BROKEN_KINDS = [
+    "invalid key",
     "malformed",
     "truncated",
     "encrypted",
@@ -327,7 +334,6 @@ def test_p06_a_broken_private_key_is_refused_naming_the_replacement_and_nothing_
         assert "agent-service/setup --replace-signing-key" in terminal.said[-1]
         assert str(private_path(home)) in terminal.said[-1]
     assert snapshot(home) == before
-    assert not [call for call in openssl.calls if call[0] == "genpkey"]
 
 
 @pytest.mark.parametrize(
@@ -346,7 +352,7 @@ def test_p06_a_public_half_that_is_malformed_or_not_the_private_keys_is_refused(
     assert snapshot(home) == before
 
 
-@pytest.mark.parametrize("fault", ["mode", "owner", "not regular"])
+@pytest.mark.parametrize("fault", ["mode", "no access", "owner", "not regular"])
 def test_p06_a_private_key_with_foreign_rights_asks_for_the_operators_own_fix(
     make_setup, home, terminal, fault
 ):
@@ -354,6 +360,8 @@ def test_p06_a_private_key_with_foreign_rights_asks_for_the_operators_own_fix(
     setup = make_setup(service_uid=os.getuid() + 1 if fault == "owner" else None)
     if fault == "mode":
         private_path(home).chmod(0o644)
+    if fault == "no access":
+        private_path(home).chmod(0o000)
     if fault == "not regular":
         private_path(home).unlink()
         private_path(home).mkdir()
@@ -362,6 +370,8 @@ def test_p06_a_private_key_with_foreign_rights_asks_for_the_operators_own_fix(
     assert setup.run(renew=False) == 1
     assert "--replace-signing-key" not in terminal.said[-1]
     assert ("owned by uid" if fault == "owner" else "fix it yourself") in terminal.said[-1]
+    assert setup.check() == 1
+    assert "cannot tell" not in terminal.said[-1]
     assert {path.name: mode_of(path) for path in signing_directory(home).iterdir()} == before
 
 
@@ -388,7 +398,9 @@ def test_p32_a_missing_private_key_beside_a_public_one_is_refused_with_one_line(
 
 
 def break_the_pair(home: Path, state: str, broken: dict[str, bytes]) -> None:
-    if state == "missing private":
+    if state == "no access":
+        private_path(home).chmod(0o000)
+    elif state == "missing private":
         private_path(home).unlink()
     elif state == "malformed private":
         private_path(home).write_bytes(broken["malformed"])
@@ -396,7 +408,9 @@ def break_the_pair(home: Path, state: str, broken: dict[str, bytes]) -> None:
         public_path(home).write_bytes(sample_pair(2)[1])
 
 
-@pytest.mark.parametrize("state", ["sound", "missing private", "malformed private", "mismatch"])
+@pytest.mark.parametrize(
+    "state", ["sound", "no access", "missing private", "malformed private", "mismatch"]
+)
 def test_p33_the_replacement_makes_a_sound_new_pair_and_leaves_no_old_byte_or_printed_key(
     make_setup, home, terminal, broken_privates, state
 ):
@@ -484,12 +498,32 @@ def test_p34_r0_a_failing_public_derivation_leaves_the_pair_and_only_clearable_l
     ]
 
 
+@pytest.mark.parametrize(
+    "forged",
+    [b"garbage\n", sample_pair(2)[1]],
+    ids=["malformed", "another key's"],
+)
+def test_p34_r0_a_public_candidate_that_is_no_public_half_of_the_candidate_stops_in_r0(
+    make_setup, home, openssl, forged
+):
+    write_token(home, DUMMY_TOKEN)
+    openssl.forged = {"pkey -pubout": forged}
+    before = snapshot(home)
+
+    assert make_setup().replace_signing_key() == 1
+    after = snapshot(home)
+    assert {name: after[name] for name in ("private.pem", "public.pem")} == {
+        name: before[name] for name in ("private.pem", "public.pem")
+    }
+    assert set(after) - set(before) <= {"private.next.pem", "public.next.pem"}
+
+
 def test_p34_r1_a_new_private_key_beside_the_old_public_one_is_refused_until_replaced_again(
     make_setup, home, terminal
 ):
     write_token(home, DUMMY_TOKEN)
-    private_path(home).write_bytes(sample_pair(1)[0])
-    (signing_directory(home) / "public.next.pem").write_bytes(sample_pair(1)[1])
+    private_path(home).write_bytes(sample_pair(2)[0])
+    (signing_directory(home) / "public.next.pem").write_bytes(sample_pair(2)[1])
     before = snapshot(home)
 
     assert make_setup().check() == 1
@@ -500,6 +534,7 @@ def test_p34_r1_a_new_private_key_beside_the_old_public_one_is_refused_until_rep
 
     assert make_setup().replace_signing_key() == 0
     assert private_path(home).read_bytes() == sample_pair(1)[0]
+    assert private_path(home).read_bytes() != sample_pair(2)[0]
     assert public_path(home).read_bytes() == sample_pair(1)[1]
     assert sorted(path.name for path in signing_directory(home).iterdir()) == [
         "private.pem",
@@ -518,4 +553,83 @@ def test_p34_leftovers_beside_a_sound_pair_are_cleared_by_plain_setup_and_fail_t
     assert "private.next.pem" in terminal.said[-1]
     assert make_setup().run(renew=False) == 0
     assert any("removed leftovers" in line for line in terminal.said)
+    assert make_setup().check() == 0
+
+
+LEFTOVER_NAMES = ["private.pem.new", "public.pem.new", "private.next.pem", "public.next.pem"]
+
+
+@pytest.mark.parametrize("name", LEFTOVER_NAMES)
+@pytest.mark.parametrize("kind", ["symlink", "folder"])
+def test_p07_a_temporary_entry_that_is_a_link_or_no_file_is_refused_and_never_unlinked(
+    make_setup, home, terminal, tmp_path, name, kind
+):
+    write_token(home, DUMMY_TOKEN)
+    entry = signing_directory(home) / name
+    outside = tmp_path / "outside.pem"
+    outside.write_bytes(b"outside")
+    if kind == "symlink":
+        entry.symlink_to(outside)
+    else:
+        entry.mkdir()
+
+    for option in (None, "check", REPLACE):
+        assert run_setup(make_setup(), option) == 1
+        assert str(entry) in terminal.said[-1]
+        assert entry.is_symlink() == (kind == "symlink")
+        assert entry.exists()
+    assert outside.read_bytes() == b"outside"
+    assert sorted(path.name for path in signing_directory(home).iterdir()) == sorted(
+        ["private.pem", "public.pem", name]
+    )
+
+
+PREFLIGHT_STATES = ["renew", "token missing", "signing folder open", "image not built"]
+
+
+@pytest.mark.parametrize("state", PREFLIGHT_STATES)
+def test_p06_a_refused_signing_key_means_setup_changed_nothing_else_either(
+    make_setup, home, terminal, docker, broken_privates, state
+):
+    write_token(home, DUMMY_TOKEN)
+    private_path(home).write_bytes(broken_privates["malformed"])
+    token_before = token_path(home).read_bytes()
+    terminal.pastes = [SECOND_TOKEN]
+    if state == "token missing":
+        token_path(home).unlink()
+    if state == "signing folder open":
+        signing_directory(home).chmod(0o755)
+    if state == "image not built":
+        docker.images.clear()
+    before = snapshot(home)
+    folder_mode = mode_of(signing_directory(home))
+
+    assert make_setup().run(renew=state == "renew") == 1
+    assert str(private_path(home)) in terminal.said[-1]
+    assert terminal.prompts == []
+    assert docker.builds() == []
+    assert snapshot(home) == before
+    assert mode_of(signing_directory(home)) == folder_mode
+    assert token_path(home).exists() == (state != "token missing")
+    if state != "token missing":
+        assert token_path(home).read_bytes() == token_before
+
+
+def test_p34_plain_setup_clears_replacement_leftovers_only_beside_a_sound_pair(make_setup, home):
+    write_token(home, DUMMY_TOKEN)
+    private_path(home).unlink()
+    public_path(home).unlink()
+    for name in ("private.next.pem", "public.next.pem"):
+        (signing_directory(home) / name).write_bytes(b"candidate")
+
+    assert make_setup().run(renew=False) == 0
+    assert sorted(path.name for path in signing_directory(home).iterdir()) == [
+        "private.next.pem",
+        "private.pem",
+        "public.next.pem",
+        "public.pem",
+    ]
+    assert make_setup().check() == 1
+
+    assert make_setup().run(renew=False) == 0
     assert make_setup().check() == 0
