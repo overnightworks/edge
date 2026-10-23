@@ -1,7 +1,0 @@
-claim_id = "1b88071c649e43feacb187dc9a145542"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
-branch = "docs/naming-aco-serve"
-scope = ["docs/naming.md"]
-opened_commit = "55796809b7cc710a6659b12d20fda4e8cc501053"
