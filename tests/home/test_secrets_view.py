@@ -61,7 +61,7 @@ INVENTORY = {
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
     "keycloak/clients/*",
-    "agent-service-claude",
+    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key",
 }
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
@@ -392,14 +392,14 @@ def test_only_the_pending_root_certificate_may_be_0644(
 
 
 def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path: Path, probe: FakeProbe, capsys) -> None:
-    """#195 M5: laid out as keycloak/go-live and step-ca/init write them, `home check` reports nothing for them; #201 the agent service's token with its renewal file beside it."""
+    """#195 M5: laid out as keycloak/go-live and step-ca/init write them, `home check` reports nothing for them; #201 the agent service's token with its renewal file beside it; #356 its signing pair, whose public half at 0644 is no finding."""
     home = tmp_path / "home"
     files = {
         "step-ca": {"password": 0o644, "root_ca_key": 0o600, "root_ca.crt": 0o644},
         "step-ca/.pending-root": {"root_ca_key": 0o600, "root_ca.crt": 0o644},
         "keycloak": {"db-password": 0o644, "config-cli-secret": 0o644, "bootstrap-admin-password": 0o644},
         "keycloak/clients": {"edge": 0o644, "presentator": 0o644},
-        "agent-service/claude": {"token": 0o600, "token.new": 0o600},
+        "agent-service/claude": {"token": 0o600, "token.new": 0o600}, "agent-service/signing": {"private.pem": 0o600, "public.pem": 0o644},
     }
     for folder, modes in files.items():
         (home / ".secrets" / folder).mkdir(parents=True, mode=0o700)
@@ -407,7 +407,7 @@ def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path:
             (home / ".secrets" / folder / name).write_text("x")
             (home / ".secrets" / folder / name).chmod(mode)
     folders = ("keycloak/clients", "keycloak", "step-ca/.pending-root", "step-ca", "")
-    for folder in ("agent-service/claude", "agent-service", *folders):
+    for folder in ("agent-service/signing", "agent-service/claude", "agent-service", *folders):
         (home / ".secrets" / folder).chmod(0o700)
 
     home_secrets(home, probe)
@@ -628,7 +628,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
         "step-ca/root_ca.crt": SecretKind.CONFIGURATION,
-        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION,
+        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION, "agent-service/signing-public-key": SecretKind.CONFIGURATION,
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
     assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
@@ -650,7 +650,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "keycloak/config-cli-secret",
         "keycloak/bootstrap-admin-password",
         "keycloak/clients/*",
-        "agent-service-claude",
+        "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key",
     }
 
 

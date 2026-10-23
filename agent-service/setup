@@ -12,6 +12,11 @@ first: a second run changes nothing. The token is read without echo and exists o
                                   one as token.new and renamed over it
     agent-service/setup --check   change nothing: exit 0 set up, 1 not set up (one line says what),
                                   2 cannot tell. It is the setup contract `edge apply` asks.
+    agent-service/setup --replace-signing-key
+                                  a new signing key pair over the old one: terminal and typed yes
+
+The signing key pair in ~/.secrets/agent-service/signing is made once; a plain run and --renew
+refuse a pair they cannot use and leave it as it is. Key bytes travel only over pipes to openssl.
 
 The token rules equal the service's reader (agent_runtime/secret_file.py, agent-runtime
 v0.7.0): a regular file of at most 16 KiB that group and others cannot touch, holding one
@@ -40,6 +45,16 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from pathlib import Path
 
+from signing_key import (
+    MAX_SECRET_FILE_BYTES,
+    SIGNING_DIRECTORY,
+    CannotTell,
+    SigningKey,
+    StepFailure,
+    read_within_limit,
+    run_openssl,
+)
+
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "agent-service"
 SERVICE_UID = 1000  # compose.yaml runs the service as 1000:1000, so it must own the login files
@@ -47,7 +62,6 @@ DIRECTORY_MODE = 0o700
 TOKEN_MODE = 0o600
 TOKEN_FILE = "token"
 PENDING_FILE = "token.new"
-MAX_TOKEN_FILE_BYTES = 16 * 1024  # reader: MAX_SECRET_FILE_BYTES
 API_KEY_PREFIX = "sk-ant-api"  # reader: API_KEY_PREFIX
 JSON_WHITESPACE = " \t\r\n"  # reader: _JSON_WHITESPACE
 BUILD_SECONDS = 1800
@@ -83,14 +97,6 @@ class Gap:
     kind: GapKind
     line: str
     path: Path | None = None
-
-
-class StepFailure(Exception):
-    """A step cannot finish; the message says why in one line, never a secret."""
-
-
-class CannotTell(StepFailure):
-    """Docker or the host did not answer, so the state of a step is unknown."""
 
 
 def run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -129,6 +135,9 @@ class Tools:
     say: Callable[[str], None] = print
     read_secret: Callable[[str], str] = read_pasted_line
     service_uid: int = SERVICE_UID
+    openssl: Callable[[list[str], bytes], subprocess.CompletedProcess[bytes]] = run_openssl
+    has_terminal: Callable[[], bool] = lambda: sys.stdin.isatty() and sys.stdout.isatty()
+    confirm: Callable[[str], str] = input
 
 
 def refusal_of_token(text: str) -> str | None:
@@ -159,21 +168,10 @@ def line_is_json(line: str) -> bool:
     return True
 
 
-def read_within_limit(descriptor: int) -> bytes:
-    """At most one byte more than the limit, looping on short reads as the reader does
-    (secret_file.py:144-155, _read_within_limit): that many bytes mean the file is too big."""
-    chunks: list[bytes] = []
-    remaining = MAX_TOKEN_FILE_BYTES + 1
-    while remaining and (chunk := os.read(descriptor, remaining)):
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
 def refusal_of_token_bytes(contents: bytes) -> str | None:
     """The reader's verdict on the file's exact bytes, for a file read and for a paste to write."""
-    if len(contents) > MAX_TOKEN_FILE_BYTES:
-        return f"is larger than {MAX_TOKEN_FILE_BYTES} bytes"
+    if len(contents) > MAX_SECRET_FILE_BYTES:
+        return f"is larger than {MAX_SECRET_FILE_BYTES} bytes"
     try:
         return refusal_of_token(contents.decode("utf-8"))
     except UnicodeDecodeError:
@@ -200,6 +198,9 @@ class AgentServiceSetup:
         self.login_directory = self.service_directory / "claude"
         self.token_path = self.login_directory / TOKEN_FILE
         self.login_chain = (self.secrets_root, self.service_directory, self.login_directory)
+        self.signing_directory = self.service_directory / SIGNING_DIRECTORY
+        self.signing_chain = (self.secrets_root, self.service_directory, self.signing_directory)
+        self.signing = SigningKey(self)
         self.pasted = False
 
     # --- what is missing ----------------------------------------------------------------------
@@ -212,6 +213,7 @@ class AgentServiceSetup:
             or self.directory_gap(self.service_directory)
             or self.directory_gap(self.login_directory)
             or self.token_gap()
+            or self.directory_gap(self.signing_directory)
         )
 
     def image_name(self) -> str:
@@ -295,8 +297,10 @@ class AgentServiceSetup:
             return Gap(
                 GapKind.TOKEN_OPEN, f"{path} is open to group or others (mode {mode:04o})", path
             )
-        if status.st_size > MAX_TOKEN_FILE_BYTES:
-            return Gap(GapKind.TOKEN_REFUSED, f"{path} is larger than {MAX_TOKEN_FILE_BYTES} bytes")
+        if status.st_size > MAX_SECRET_FILE_BYTES:
+            return Gap(
+                GapKind.TOKEN_REFUSED, f"{path} is larger than {MAX_SECRET_FILE_BYTES} bytes"
+            )
         contents = read_within_limit(descriptor)
         if reason := refusal_of_token_bytes(contents):
             return Gap(GapKind.TOKEN_REFUSED, f"{path} {reason}")
@@ -338,7 +342,8 @@ class AgentServiceSetup:
         changed is what the check looked at, and a folder swapped for a link in between is not."""
         self.tools.say(f"narrowing {path} to {mode:04o}")
         is_token = path == self.token_path
-        parents = self.login_chain if is_token else self.login_chain[: self.login_chain.index(path)]
+        chain = self.signing_chain if path == self.signing_directory else self.login_chain
+        parents = chain if is_token else chain[: chain.index(path)]
         parent = self.open_verified_directories(parents)
         try:
             flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -408,18 +413,22 @@ class AgentServiceSetup:
             fcntl.flock(directory, fcntl.LOCK_EX)
 
     @staticmethod
-    def write_pending(directory: int, payload: bytes) -> None:
+    def write_pending(
+        directory: int, payload: bytes, name: str = PENDING_FILE, mode: int = TOKEN_MODE
+    ) -> None:
         with contextlib.suppress(FileNotFoundError):
-            os.unlink(PENDING_FILE, dir_fd=directory)
+            os.unlink(name, dir_fd=directory)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-        descriptor = os.open(PENDING_FILE, flags, TOKEN_MODE, dir_fd=directory)
+        descriptor = os.open(name, flags, mode, dir_fd=directory)
         with os.fdopen(descriptor, "wb") as pending_file:
-            os.fchmod(descriptor, TOKEN_MODE)
+            os.fchmod(descriptor, mode)
             pending_file.write(payload)
             pending_file.flush()
             os.fsync(descriptor)
 
-    def open_verified_directories(self, directories: tuple[Path, ...]) -> int:
+    def open_verified_directories(
+        self, directories: tuple[Path, ...], tolerate_open_mode: bool = False
+    ) -> int:
         """A descriptor of the last folder, each folder from home on opened without following a
         link and judged by its own descriptor: what is written lands where the check looked."""
         directory = os.open(self.home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
@@ -428,7 +437,8 @@ class AgentServiceSetup:
                 child = self.open_without_link(directory, path)
                 os.close(directory)
                 directory = child
-                if gap := self.judge_directory(path, os.fstat(directory)):
+                gap = self.judge_directory(path, os.fstat(directory))
+                if gap and not (tolerate_open_mode and gap.kind is GapKind.DIRECTORY_OPEN):
                     raise StepFailure(f"{gap.line}; nothing was written")
         except BaseException:
             os.close(directory)
@@ -449,12 +459,14 @@ class AgentServiceSetup:
 
     def run(self, renew: bool) -> int:
         def fix_everything() -> None:
+            self.signing.preflight()
             for _ in range(len(GapKind) + 1):
                 if (gap := self.first_gap()) is not None:
                     self.fix(gap)
                 elif renew and not self.pasted:
                     self.paste_token()
                 else:
+                    self.signing.ensure()
                     self.tools.say("agent-service/setup: set up")
                     return
             raise StepFailure("still not set up after the fixes")
@@ -465,9 +477,13 @@ class AgentServiceSetup:
         def judge() -> None:
             if (gap := self.first_gap()) is not None:
                 raise StepFailure(gap.line)
+            self.signing.check()
             self.tools.say("agent-service/setup --check: set up")
 
         return self.attempt(judge, read_only=True)
+
+    def replace_signing_key(self) -> int:
+        return self.attempt(self.signing.replace, read_only=False)
 
     def attempt(self, action: Callable[[], None], read_only: bool) -> int:
         """Run `action` as the one boundary: a failure is a line and an exit code, no traceback."""
@@ -512,8 +528,13 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="change nothing: exit 0, 1 or 2")
     mode.add_argument("--renew", action="store_true", help="always take a new token")
+    mode.add_argument(
+        "--replace-signing-key", action="store_true", help="make a new signing key pair"
+    )
     arguments = parser.parse_args()
     setup = AgentServiceSetup(Tools(), Path.home())
+    if arguments.replace_signing_key:
+        return setup.replace_signing_key()
     return setup.check() if arguments.check else setup.run(renew=arguments.renew)
 
 

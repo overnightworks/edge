@@ -3,11 +3,18 @@
 #
 # home_tools.system_step runs it with `--ask-become-pass`, so sudo asks once, and passes `home`,
 # `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and
-# the running user; nothing here is taken from facts gathered under become. It never starts, stops or
+# the running user, and the agents' account name as `agent_user`; nothing here is taken from facts gathered under become. It never starts, stops or
 # restarts cloudflared. Every `--apply` reloads systemd; a dry run does not. An extra reload at the end
 # follows only when an edge file or the retired drop-in changed. What it replaces of edge's files is
 # copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
 # or a drop-in; the retention units are home's own and are not backed up.
+#
+# The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
+# password, the shell nologin, a 0700 home, no subuid or subgid range, no linger, and a line in /etc/cron.deny
+# (every other user keeps today's cron; an existing cron.allow decides alone and must not list it). Its uid and gid
+# are one regular id from 1000 up, so that its logs go to a journal of its own. An account of that name in any other
+# shape (a uid or gid it shares, a group of that name without it), or an id with a subordinate id entry, is refused
+# before anything is written. A revert of this play keeps the user and its home.
 - name: Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer
   hosts: localhost
   connection: local
@@ -19,6 +26,9 @@
     drop_in_dir: "{{ unit_dir }}/cloudflared.service.d"
     retired_drop_in: "{{ drop_in_dir }}/10-root-binary.conf"
     backup_dir: /var/backups/home-setup
+    agent_home: "/home/{{ agent_user }}"
+    agent_nologin: /usr/sbin/nologin
+    cron_deny: /etc/cron.deny
     retention_units:
       - dest: "{{ unit_dir }}/hal-journal-retention.service"
         content: |
@@ -62,6 +72,130 @@
       ansible.builtin.assert:
         that: tunnel_id | length > 0
         fail_msg: "{{ tunnel_config }} names no `tunnel:`; nothing was written"
+        quiet: true
+
+    - name: List every user and group of this PC
+      ansible.builtin.getent:
+        database: "{{ item }}"
+      loop: [passwd, group]
+      register: every_entry
+      check_mode: false
+
+    - name: Look at the agents' account
+      ansible.builtin.getent:
+        database: "{{ item }}"
+        key: "{{ agent_user }}"
+        fail_key: false
+      loop: [passwd, shadow]
+
+    - name: Note whether the agents' account exists, and which ids and group names are taken
+      ansible.builtin.set_fact:
+        agent_account: "{{ getent_passwd[agent_user] }}"
+        agent_exists: "{{ getent_passwd[agent_user] is not none }}"
+        every_user: "{{ every_entry.results[0].ansible_facts.getent_passwd }}"
+        every_group: "{{ every_entry.results[1].ansible_facts.getent_group }}"
+        agent_taken_ids: >-
+          {{ every_entry.results[0].ansible_facts.getent_passwd.values() | map(attribute=1) | map('int') | list
+             + every_entry.results[1].ansible_facts.getent_group.values() | map(attribute=1) | map('int') | list }}
+
+    - name: Look at the subordinate id files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/etc/subuid, /etc/subgid]
+      register: subid_files
+
+    # Both files key an entry on the owner's name or uid, and a granted range is never the agents' to have.
+    - name: Read who owns a subordinate id range
+      ansible.builtin.command:
+        argv: [cut, "--delimiter=:", --fields=1, "{{ item.item }}"]
+      loop: "{{ subid_files.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: subid_owners_read
+      changed_when: false
+      check_mode: false
+
+    - name: Note the owners of the subordinate id ranges
+      ansible.builtin.set_fact:
+        subid_owners: "{{ subid_owners_read.results | map(attribute='stdout_lines') | flatten }}"
+
+    # The lowest regular id from 1000 up that no user or group has and no subordinate id range names, one number
+    # for uid and gid: the group is created with it first, then the user with it as uid and that group as primary.
+    - name: Fix the uid and gid of the agents' account
+      ansible.builtin.set_fact:
+        agent_uid: >-
+          {{ agent_account[1] | int if agent_exists
+             else (range(1000, 60000) | reject('in', agent_taken_ids)
+                   | reject('in', subid_owners | select('match', '^[0-9]+$') | map('int') | list) | first) }}
+        agent_gid: >-
+          {{ agent_account[2] | int if agent_exists
+             else (range(1000, 60000) | reject('in', agent_taken_ids)
+                   | reject('in', subid_owners | select('match', '^[0-9]+$') | map('int') | list) | first) }}
+
+    - name: Name the users and groups that share an id of the agents' account
+      ansible.builtin.set_fact:
+        agent_uid_sharers: "{{ every_user | dict2items | selectattr('value.1', 'equalto', agent_uid | string) | map(attribute='key') | list }}"
+        agent_gid_sharers: >-
+          {{ every_group | dict2items | selectattr('value.1', 'equalto', agent_gid | string)
+             | map(attribute='key') | reject('equalto', agent_user) | list }}
+
+    - name: Read the groups of the agents' account
+      ansible.builtin.command:
+        argv: [id, --groups, --name, "{{ agent_user }}"]
+      register: agent_groups
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: agent_exists
+
+    - name: Look at the agents' lingering
+      ansible.builtin.stat:
+        path: "/var/lib/systemd/linger/{{ agent_user }}"
+      register: agent_linger
+
+    - name: Look at the agents' home without following a link
+      ansible.builtin.stat:
+        path: "{{ agent_home }}"
+        follow: false
+      register: agent_home_stat
+
+    - name: Look at who may use cron
+      ansible.builtin.slurp:
+        src: /etc/cron.allow
+      register: cron_allow
+      failed_when: false
+
+    - name: Name every way the agents' account is not the dormant one
+      ansible.builtin.set_fact:
+        agent_foreign_shape: >-
+          {{ (['a uid shared with ' ~ (agent_uid_sharers | join(', '))] if agent_exists and agent_uid_sharers != [agent_user] else [])
+             + (['a gid shared with ' ~ (agent_gid_sharers | join(', '))] if agent_gid_sharers != [] else [])
+             + (['a primary group other than the group ' ~ agent_user]
+                if agent_exists and (agent_user not in every_group or every_group[agent_user][1] != agent_account[2]) else [])
+             + (['an id that is not one uid and gid from 1000 up'] if agent_exists and (agent_account[1] != agent_account[2] or agent_account[1] | int < 1000) else [])
+             + (['a group ' ~ agent_user ~ ' without the account (sudo groupdel ' ~ agent_user ~ ' removes it)']
+                if not agent_exists and agent_user in every_group else [])
+             + (['groups that could not be read'] if agent_exists and agent_groups.rc != 0 else [])
+             + (['a group beyond its own'] if agent_exists and agent_groups.rc == 0 and agent_groups.stdout.split() != [agent_user] else [])
+             + (['a subuid or subgid entry'] if agent_user in subid_owners or (agent_uid | string) in subid_owners else [])
+             + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
+             + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
+             + (['linger'] if agent_linger.stat.exists else [])
+             + (['a home other than ' ~ agent_home] if agent_exists and agent_account[4] != agent_home else [])
+             + (['a home that is missing'] if agent_exists and not agent_home_stat.stat.exists else [])
+             + (['a home that is a link or not a directory']
+                if agent_exists and agent_home_stat.stat.exists and (agent_home_stat.stat.islnk or not agent_home_stat.stat.isdir) else [])
+             + (['a home not owned by ' ~ agent_user ~ ':' ~ agent_user]
+                if agent_exists and agent_home_stat.stat.exists and agent_home_stat.stat.isdir and not agent_home_stat.stat.islnk
+                   and ((agent_home_stat.stat.pw_name | default('')) != agent_user or (agent_home_stat.stat.gr_name | default('')) != agent_user) else [])
+             + (['a home path that is already taken'] if not agent_exists and agent_home_stat.stat.exists else [])
+             + (['a line in /etc/cron.allow'] if cron_allow.content is defined
+                and agent_user in (cron_allow.content | b64decode).split() else []) }}
+
+    - name: Refuse before writing anything when the agents' account has another shape
+      ansible.builtin.assert:
+        that: agent_foreign_shape | length == 0
+        fail_msg: "{{ agent_user }} exists with {{ agent_foreign_shape | join(', ') }}; nothing was written"
         quiet: true
 
     - name: Fill edge's files with this PC's values
@@ -143,6 +277,100 @@
         path: "{{ retired_drop_in }}"
         state: absent
       notify: Reload systemd
+
+    # useradd with -K because the user module cannot refuse the subordinate id ranges that login.defs grants by
+    # default. The user task after it creates nothing then; in a dry run it is the one that reports the creation.
+    # A failed useradd leaves no group behind, so that the next apply finds the account absent and converges.
+    - name: Create the agents' group and account
+      when: not agent_exists
+      block:
+        - name: Create the agents' group with the id chosen for the account
+          ansible.builtin.command:
+            argv: [groupadd, --gid, "{{ agent_gid }}", "{{ agent_user }}"]
+          changed_when: true
+
+        - name: Create the agents' account without subordinate id ranges
+          ansible.builtin.command:
+            argv:
+              - useradd
+              - --create-home
+              - --home-dir
+              - "{{ agent_home }}"
+              - --gid
+              - "{{ agent_gid }}"
+              - --shell
+              - "{{ agent_nologin }}"
+              - --uid
+              - "{{ agent_uid }}"
+              - -K
+              - SUB_UID_COUNT=0
+              - -K
+              - SUB_GID_COUNT=0
+              - "{{ agent_user }}"
+          changed_when: true
+      rescue:
+        - name: Remove the group that was created without its account
+          ansible.builtin.command:
+            argv: [groupdel, "{{ agent_user }}"]
+          changed_when: true
+
+        - name: Fail again, with the group gone
+          ansible.builtin.fail:
+            msg: "creating {{ agent_user }} failed; its group was removed again"
+
+    - name: Look at the account that was created
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ agent_user }}"
+      when: not agent_exists and not ansible_check_mode
+
+    - name: Fail when the account did not get the ids chosen for it
+      ansible.builtin.assert:
+        that:
+          - getent_passwd[agent_user][1] == agent_uid | string
+          - getent_passwd[agent_user][2] == agent_gid | string
+        fail_msg: "{{ agent_user }} was created with uid {{ getent_passwd[agent_user][1] }} and gid {{ getent_passwd[agent_user][2] }}, not {{ agent_uid }}"
+        quiet: true
+      when: not agent_exists and not ansible_check_mode
+
+    - name: Keep the agents' account locked, shell-less and with a home
+      ansible.builtin.user:
+        name: "{{ agent_user }}"
+        home: "{{ agent_home }}"
+        shell: "{{ agent_nologin }}"
+        password_lock: true
+        create_home: false
+
+    - name: Close the agents' home to everyone else
+      ansible.builtin.file:
+        path: "{{ agent_home }}"
+        state: directory
+        mode: "0700"
+      when: agent_exists or not ansible_check_mode
+
+    # An existing cron.allow decides alone: with `agent` in it the play has refused; without, `agent` is denied
+    # already and cron.deny stays as it is. An existing cron.deny keeps its owner, mode and entries.
+    - name: Look at who is denied cron
+      ansible.builtin.stat:
+        path: "{{ cron_deny }}"
+      register: cron_deny_stat
+
+    - name: Add the agents to the existing cron.deny
+      ansible.builtin.lineinfile:
+        path: "{{ cron_deny }}"
+        line: "{{ agent_user }}"
+        regexp: "^{{ agent_user }}$"
+      when: cron_deny_stat.stat.exists and cron_allow.content is not defined
+
+    - name: Create cron.deny with the agents in it
+      ansible.builtin.lineinfile:
+        path: "{{ cron_deny }}"
+        line: "{{ agent_user }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"  # NOSONAR ansible:S2612 cron reads this as the invoking user; root-owned 644 is the ruled mode
+      when: not cron_deny_stat.stat.exists and cron_allow.content is not defined
 
     # `daemon_reload` on every run, so a run interrupted after the files were written converges on the
     # next. Nothing restarts journald: the timer's own service rotates and vacuums it. A check run that
