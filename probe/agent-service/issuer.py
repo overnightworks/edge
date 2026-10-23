@@ -1,5 +1,6 @@
 """The stand-in issuer of a probe run: the realm's side (signing key, certificate, JWKS, tokens)
-and the service of the compose project that serves it on the `agent-songmaker` network, all throwaway."""
+and the service of the compose project that serves it on the `agent-songmaker` network, all
+throwaway."""
 
 from __future__ import annotations
 
