@@ -678,6 +678,20 @@ lowest_free_id() {  # lowest_free_id [skip]: the lowest id from 1000 up that no 
     return 1
 }
 
+free_system_id() {  # the highest id below 1000 that no user and no group has
+    local id
+    for ((id = 999; id > 100; id--)); do
+        getent passwd "$id" >/dev/null || getent group "$id" >/dev/null || { echo "$id"; return 0; }
+    done
+    return 1
+}
+
+create_account_with_ids() {  # create_account_with_ids <uid> <gid>: the dormant account by hand, with those ids
+    groupadd --gid "$2" agent
+    useradd --create-home --home-dir "$AGENT_HOME" --gid "$2" --shell /usr/sbin/nologin --uid "$1" -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 agent
+    return
+}
+
 cell_a1_3() {
     AGENT_ID=$(id -u agent)
     AGENT_GID=$(id -g agent)
@@ -702,7 +716,7 @@ cell_a1_3_homes() {  # an existing account whose home is not its own; the dry ru
     refuses_foreign_shape "another home" 'usermod --home /srv/agent-elsewhere agent' "usermod --home $AGENT_HOME agent" "a home other than" dry
     refuses_foreign_shape "a home that is a link" "mv $AGENT_HOME $AGENT_HOME.real && ln -s $AGENT_HOME.real $AGENT_HOME" \
         "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
-    refuses_foreign_shape "a home that is a file" "mv $AGENT_HOME $AGENT_HOME.real && touch $AGENT_HOME" \
+    refuses_foreign_shape "a home that is a file of its own" "mv $AGENT_HOME $AGENT_HOME.real && touch $AGENT_HOME && chown agent:agent $AGENT_HOME" \
         "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
     refuses_foreign_shape "a home owned by root" "chown root:root $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home that is a link" dry
     refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
@@ -721,6 +735,10 @@ cell_a1_3_shared_ids() {  # a uid or gid the account shares, with the shared nam
     refuses_foreign_shape "its gid in another group, listed after" 'groupadd --non-unique --gid $AGENT_GID sharer' 'drop_entry /etc/group sharer; drop_entry /etc/gshadow sharer' "a gid shared with sharer"
     refuses_foreign_shape "its gid in another group, listed first" 'groupadd --non-unique --gid $AGENT_GID sharer; move_entry /etc/group sharer first' \
         'drop_entry /etc/group sharer; drop_entry /etc/gshadow sharer' "a gid shared with sharer"
+    refuses_foreign_shape "an id below 1000 for uid and gid" 'remove_account; create_account_with_ids $(free_system_id) $(free_system_id)' \
+        'remove_account; recreate_account' "an id that is not one uid and gid from 1000 up" dry
+    refuses_foreign_shape "a uid and a gid that differ" 'remove_account; create_account_with_ids $(lowest_free_id) $(lowest_free_id $(lowest_free_id))' \
+        'remove_account; recreate_account' "an id that is not one uid and gid from 1000 up" dry
     refuses_foreign_shape "a primary gid that is not the group agent's" 'set_passwd_field agent 4 $(id -g bystander)' 'set_passwd_field agent 4 $AGENT_GID' \
         "a primary group other than"
     return
@@ -731,9 +749,23 @@ cell_a1_3_account_absent() {  # no account yet: what is in its way is refused be
         "a home path that is already taken" dry
     refuses_foreign_shape "a home path already taken by a file" "remove_account; touch $AGENT_HOME" "rm $AGENT_HOME; recreate_account" \
         "a home path that is already taken" dry
-    refuses_foreign_shape "a lone group agent" 'remove_account; groupadd agent' 'groupdel agent; recreate_account' "a group agent without the account"
+    refuses_foreign_shape "a lone group agent" 'remove_account; groupadd agent' 'groupdel agent; recreate_account' "a group agent without the account (sudo groupdel agent removes it)"
+    cell_a1_3_failed_useradd
     cell_a1_3_ids_of_the_new_account
     cell_a1_3_without_subid_files
+    return
+}
+
+cell_a1_3_failed_useradd() {  # useradd cannot lock /etc/passwd: the apply fails, no group of that name is left, the next apply converges
+    local code
+    remove_account
+    echo $$ >/etc/passwd.lock
+    at_terminal a1-3-useradd-fails "$HOME_BIN setup --apply"
+    code=$?
+    rm /etc/passwd.lock
+    verdict A1-3 "useradd fails on a held lock: the apply fails and leaves no group agent" '[ $code -ne 0 ] && ! getent group agent >/dev/null'
+    recreate_account
+    verdict A1-3 "the lock gone, the next apply creates the account" 'agent_is_dormant'
     return
 }
 

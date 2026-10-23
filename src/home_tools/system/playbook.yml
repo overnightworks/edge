@@ -144,6 +144,7 @@
         argv: [id, --groups, --name, "{{ agent_user }}"]
       register: agent_groups
       changed_when: false
+      failed_when: false
       check_mode: false
       when: agent_exists
 
@@ -171,8 +172,10 @@
              + (['a gid shared with ' ~ (agent_gid_sharers | join(', '))] if agent_gid_sharers != [] else [])
              + (['a primary group other than the group ' ~ agent_user]
                 if agent_exists and (agent_user not in every_group or every_group[agent_user][1] != agent_account[2]) else [])
-             + (['a group ' ~ agent_user ~ ' without the account'] if not agent_exists and agent_user in every_group else [])
-             + (['a group beyond its own'] if agent_exists and agent_groups.stdout.split() != [agent_user] else [])
+             + (['an id that is not one uid and gid from 1000 up'] if agent_exists and (agent_account[1] != agent_account[2] or agent_account[1] | int < 1000) else [])
+             + (['a group ' ~ agent_user ~ ' without the account (sudo groupdel ' ~ agent_user ~ ' removes it)']
+                if not agent_exists and agent_user in every_group else [])
+             + (['a group beyond its own'] if agent_exists and agent_groups.rc == 0 and agent_groups.stdout.split() != [agent_user] else [])
              + (['a subuid or subgid entry'] if agent_user in subid_owners or (agent_uid | string) in subid_owners else [])
              + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
              + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
@@ -274,32 +277,43 @@
 
     # useradd with -K because the user module cannot refuse the subordinate id ranges that login.defs grants by
     # default. The user task after it creates nothing then; in a dry run it is the one that reports the creation.
-    - name: Create the agents' group with the id chosen for the account
-      ansible.builtin.command:
-        argv: [groupadd, --gid, "{{ agent_gid }}", "{{ agent_user }}"]
-      changed_when: true
+    # A failed useradd leaves no group behind, so that the next apply finds the account absent and converges.
+    - name: Create the agents' group and account
       when: not agent_exists
+      block:
+        - name: Create the agents' group with the id chosen for the account
+          ansible.builtin.command:
+            argv: [groupadd, --gid, "{{ agent_gid }}", "{{ agent_user }}"]
+          changed_when: true
 
-    - name: Create the agents' account without subordinate id ranges
-      ansible.builtin.command:
-        argv:
-          - useradd
-          - --create-home
-          - --home-dir
-          - "{{ agent_home }}"
-          - --gid
-          - "{{ agent_gid }}"
-          - --shell
-          - "{{ agent_nologin }}"
-          - --uid
-          - "{{ agent_uid }}"
-          - -K
-          - SUB_UID_COUNT=0
-          - -K
-          - SUB_GID_COUNT=0
-          - "{{ agent_user }}"
-      changed_when: true
-      when: not agent_exists
+        - name: Create the agents' account without subordinate id ranges
+          ansible.builtin.command:
+            argv:
+              - useradd
+              - --create-home
+              - --home-dir
+              - "{{ agent_home }}"
+              - --gid
+              - "{{ agent_gid }}"
+              - --shell
+              - "{{ agent_nologin }}"
+              - --uid
+              - "{{ agent_uid }}"
+              - -K
+              - SUB_UID_COUNT=0
+              - -K
+              - SUB_GID_COUNT=0
+              - "{{ agent_user }}"
+          changed_when: true
+      rescue:
+        - name: Remove the group that was created without its account
+          ansible.builtin.command:
+            argv: [groupdel, "{{ agent_user }}"]
+          changed_when: true
+
+        - name: Fail again, with the group gone
+          ansible.builtin.fail:
+            msg: "creating {{ agent_user }} failed; its group was removed again"
 
     - name: Look at the account that was created
       ansible.builtin.getent:

@@ -115,12 +115,14 @@ class UnresolvableRunningUser(ValueError):
 
 def _running_user() -> str:
     uid = os.getuid()
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        raise UnresolvableRunningUser(f"no passwd entry for uid {uid}") from None
     names = [entry.pw_name for entry in pwd.getpwall() if entry.pw_uid == uid]
-    if not names:
-        raise UnresolvableRunningUser(f"no passwd entry for uid {uid}")
     if len(names) > 1 and AGENT_USER in names:
         raise UnresolvableRunningUser(f"uid {uid} has the names {', '.join(names)}; {AGENT_USER} must have a uid of its own")
-    return pwd.getpwuid(uid).pw_name
+    return name
 
 
 @dataclass(frozen=True)

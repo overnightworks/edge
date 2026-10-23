@@ -555,8 +555,9 @@ below are home's own and are not backed up.
   other user keeps today's cron. An `agent` that already exists with an extra group, a subuid or subgid entry
   (by name or by its uid), another shell, a usable password, linger, a home other than `/home/agent`, or a
   home that is a link or not a directory owned by it, a uid another user shares, a gid another group shares or
-  a primary group other than the group `agent`, is refused before anything is written, in the dry run too; so is a
-  group `agent` without the account, a new account's home path that is taken, and an
+  a primary group other than the group `agent`, or ids that are not one uid and gid from 1000 up, is refused before
+  anything is written, in the dry run too; so is a group `agent` without the account (`sudo groupdel agent` removes it;
+  a failed `useradd` removes the group it just made), a new account's home path that is taken, and an
   `agent` listed in `/etc/cron.allow`. A `cron.allow` without it denies it already, and `cron.deny` stays as it is.
   The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
   A revert keeps the user and its home.

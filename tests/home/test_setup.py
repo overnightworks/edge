@@ -297,7 +297,7 @@ def test_setup_fails_loud_instead_of_guessing_the_role_when_agent_shares_the_run
 
 
 @pytest.mark.parametrize("names", [("operator", "bystander"), ("agent",)])
-def test_the_running_user_is_the_first_name_of_its_uid_unless_agent_is_one_of_several(
+def test_the_running_user_is_the_name_of_its_uid_unless_agent_is_one_of_several(
     monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...]
 ) -> None:
     entries = [passwd_entry(name, 1001) for name in names]
@@ -308,8 +308,19 @@ def test_the_running_user_is_the_first_name_of_its_uid_unless_agent_is_one_of_se
     assert system_step._running_user() == names[0]
 
 
-def test_a_running_uid_without_a_passwd_name_is_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_user_that_the_passwd_enumeration_omits_is_resolved_by_its_uid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(system_step.pwd, "getpwall", lambda: [])
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: passwd_entry("lookuponly", 1001))
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    assert system_step._running_user() == "lookuponly"
+
+
+def test_a_running_uid_without_a_passwd_name_is_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(_uid: int) -> pwd.struct_passwd:
+        raise KeyError(_uid)
+
+    monkeypatch.setattr(system_step.pwd, "getpwuid", missing)
     monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
 
     with pytest.raises(system_step.UnresolvableRunningUser, match="no passwd entry for uid 1001"):
