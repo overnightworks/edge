@@ -164,17 +164,10 @@ class McpNetworks:
             expect(code == CERTIFICATE_UNVERIFIED, f"P14: {what}: curl exit {code}")
         self.expect_no_stand_in_request("P14", before, "an untrusted client")
 
-        plain = self.client(
-            "mcp",
-            "--include",
-            f"http://{SONGMAKER_ORIGIN}:443/mcp",  # NOSONAR(S5332) plain HTTP on purpose: P15 proves the gateway refuses it  # noqa: E501
-            root=root,
-        )
-        no_port = self.client(
-            "mcp",
-            f"http://{SONGMAKER_ORIGIN}/mcp",  # NOSONAR(S5332) plain HTTP on purpose: P15 proves the gateway refuses it  # noqa: E501
-            root=root,
-        )
+        plain_url = f"http://{SONGMAKER_ORIGIN}:443/mcp"  # NOSONAR(S5332) P15 sends plain HTTP
+        no_port_url = f"http://{SONGMAKER_ORIGIN}/mcp"  # NOSONAR(S5332) P15 sends plain HTTP
+        plain = self.client("mcp", "--include", plain_url, root=root)
+        no_port = self.client("mcp", no_port_url, root=root)
         expect(
             f"Host: {SONGMAKER_ORIGIN}" not in plain.stdout.decode(errors="replace"),
             "P15: plain http answered",
