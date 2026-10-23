@@ -169,7 +169,7 @@ def is_enabled_app(document: Any, key: str) -> bool:
     catalog or entry is not one, and planning reports it."""
     try:
         entry = _entries(document).get(key)
-        return _is_app(entry) and _enabled(key, _app_run(key, entry))
+        return is_app(entry) and _enabled(key, _app_run(key, entry))
     except CatalogError:
         return False
 
