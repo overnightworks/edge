@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
-#60 proof 11, #69 proof 12, #89 proof 13): a throwaway compose project and a throwaway HOME.
+#60 proof 11, #69 proof 12, #89 proof 13, #346 cells P13-P27): a throwaway compose project and a
+throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
 the proofs and always removes its containers, networks and volumes. It never touches the live
-stack: the project name and HOME are set in the environment of every command.
+stack: the project name and HOME are set in the environment of every command, and its compose
+calls resolve only the project's networks (edge_copy.py, P26).
 
     flock /tmp/probe-stack.lock timeout --kill-after=30 2400 \\
         python3 probe/step-ca/probe.py --scratch DIR
@@ -14,8 +16,9 @@ The CA and the gateway are only reachable on their internal compose networks, so
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
 --scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies, proof 11
 drives the emergency switch, proof 12 runs the setup from `edge apply` and proof 13 lets
-traefik-mcp follow its file and definition through about ten applies: the run takes about 12
-minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
+traefik-mcp follow its file and definition through about ten applies, and proof 14 drives
+songmaker's route (#346 P13-P27, mcp_networks.py): the run takes about 13 minutes, 10 of them
+proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
 proof 8 runs `edge-check` through it, proofs 10 to 13 run `uv sync` in a copy of the repository.
 The copy is a clean `main` with a bare remote under the scratch directory, and every edit a proof
 makes there is published (committed and pushed) before the apply that follows it (#95 P3).
@@ -41,30 +44,37 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # the route cells, likewise
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
-from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect  # noqa: E402
+from edge_copy import DISCARD_OUTPUT, GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
+from mcp_networks import McpNetworks  # noqa: E402
+from step_ca_names import (  # noqa: E402
+    CA_URL,
+    CERTIFICATE_UNVERIFIED,
+    CONTAINER_USER,
+    CONTAINER_USER_ID,
+    ORIGIN,
+    ORIGIN_ANSWER,
+    ORIGIN_URL,
+    PROJECT,
+    READY_SECONDS,
+    ROOT_CERTIFICATE,
+    ROOT_IN_CLIENT,
+)
 
 from edge import core  # noqa: E402
 
-PROJECT = "edge-stepca-probe"
-CA_URL = "https://step-ca:9000"
 NETWORK = f"{PROJECT}_mcp-ca"
-CERTIFICATE_UNVERIFIED = 60  # curl exit codes
-COULD_NOT_RESOLVE = 6
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
-READY_SECONDS = 60
-ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
 COMPOSE_FILE = "compose.yaml"
 INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
 INTERMEDIATE_KEY = "secrets/intermediate_ca_key"
 STEP_HOME = "/home/step"
 INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
-CONTAINER_USER_ID = 1000  # the step user of the smallstep image
-CONTAINER_USER = f"{CONTAINER_USER_ID}:{CONTAINER_USER_ID}"
 WORK_DIRECTORY = "/work"  # private tmpfs for the ACME client, not world-writable
 ALLOWED_FILES = {
     f"certs/{ROOT_CERTIFICATE}",
@@ -75,15 +85,8 @@ ALLOWED_DIRECTORY = "db/"
 OUTSIDE_NAME = "outside.example.com"
 INSIDE_NAME = "probe.mcp.internal"
 REFUSAL = "will not issue certificates for the identifier"  # ACME rejectedIdentifier
-ROOT_IN_CLIENT = "/root.crt"
-ORIGIN = "hello.mcp.internal"
-ORIGIN_URL = f"https://{ORIGIN}/"
 # Plain http is the point: proof 6 sends http to the TLS port and expects a refusal.
 ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"  # NOSONAR(S5332)
-ORIGIN_ANSWER = f"Host: {ORIGIN}"  # the backend (whoami) echoes the request's Host header
-# The backend speaks plain http by design, inside the compose network.
-BACKEND_URL = "http://hello-mcp/"  # NOSONAR(S5332)
-CA_HEALTH_URL = f"{CA_URL}/health"
 TRAEFIK_USER = "65534:65534"
 TRAEFIK_UID = 65534
 ACME_STORAGE = "/acme/acme.json"
@@ -99,7 +102,8 @@ RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
 STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|false)")
 KEYCLOAK_SWITCH = re.compile(r"( {2}keycloak:\n {4}run:\n {6}enabled: )(?:true|false)")
-OVERRIDE = REPO / "probe" / "step-ca" / "compose.probe.yaml"
+STAND_IN_OVERLAY = REPO / "probe" / "step-ca" / "compose.probe.yaml"
+SHORT_LIVED_OVERLAY = REPO / "probe" / "step-ca" / "compose.short-lived.probe.yaml"
 FOLLOWER = "traefik-mcp"
 STEP_CA_PROFILE = "step-ca"
 FOLLOWER_FILE = "traefik-mcp.yml"
@@ -111,7 +115,7 @@ LABEL_AFTER = {  # where the probe label goes in compose.yaml: after each servic
 }
 
 
-class Probe:
+class Probe(McpNetworks):
     def __init__(self, scratch: Path) -> None:
         self.home = scratch / "home"
         self.home.mkdir(parents=True)
@@ -125,7 +129,12 @@ class Probe:
         }
         self.environment.pop("DOCKER_STEPCA_INIT_PASSWORD", None)
         self.scratch = scratch
-        self.compose_files: list[str] = []
+        self.compose_file = scratch / COMPOSE_FILE
+        self.compose_file.write_text(
+            edge_copy.namespaced_compose((REPO / COMPOSE_FILE).read_text(), PROJECT)
+        )
+        self.compose_files = [self.compose_file, STAND_IN_OVERLAY]
+        self.guard = edge_copy.NetworkGuard(PROJECT, lambda command: self.run(command).stdout)
         self.listeners_before: set[str] = set()
         self.edge_check_before: list[dict] = []
         self.intermediate_fingerprint = ""
@@ -144,11 +153,14 @@ class Probe:
         return result
 
     def compose(self, *args: str, check: bool = True, own_session: bool = False):
-        files = [flag for file in self.compose_files for flag in ("--file", file)]
-        return self.run(
-            ["docker", "compose", *files, "--profile", "probe", "--profile", "step-ca", *args],
-            check=check, own_session=own_session,
-        )  # fmt: skip
+        files = [flag for file in self.compose_files for flag in ("--file", str(file))]
+        command = [
+            "docker", "compose", "--project-directory", str(REPO), *files,
+            "--profile", "probe", "--profile", "step-ca",
+        ]  # fmt: skip
+        if args[0] in GUARDED_COMPOSE_VERBS:
+            self.guard.expect(command)
+        return self.run([*command, *args], check=check, own_session=own_session)
 
     def init(self, *, check: bool = True) -> str:
         result = self.run([str(REPO / "step-ca" / "init")], check=check)
@@ -188,15 +200,7 @@ class Probe:
 
     def client(self, network: str, *curl_arguments: str, root: Path | None = None):
         """curl as a throwaway client on one of the project's networks; `root` is the only trust."""
-        image, _ = self.image_and_volume()
-        trust = ["--volume", f"{root}:{ROOT_IN_CLIENT}:ro"] if root else []
-        cacert = ["--cacert", ROOT_IN_CLIENT] if root else []
-        return self.run(
-            ["docker", "run", "--rm", "--network", f"{PROJECT}_{network}", "--read-only",
-             "--user", CONTAINER_USER, *trust, "--entrypoint", "curl", image,
-             "--silent", "--max-time", "5", *cacert, *curl_arguments],
-            check=False,
-        )  # fmt: skip
+        return self.curl(f"{PROJECT}_{network}", curl_arguments, root)
 
     def directory_status(self, cafile: Path | None) -> int:
         """The directory's HTTP status as a throwaway container on the CA's network sees it, or -1
@@ -522,22 +526,6 @@ class Probe:
             f"the same certificate served after a restart with the CA down"
         )
 
-    def proof_7_network_split(self) -> None:
-        reachable = {
-            ("mcp-backends", BACKEND_URL): True,
-            ("mcp-backends", CA_HEALTH_URL): False,
-            ("mcp-backends", ORIGIN_URL): False,
-            ("mcp", BACKEND_URL): False,
-            ("mcp", CA_HEALTH_URL): False,
-            ("mcp-ca", BACKEND_URL): False,
-        }
-        for (network, url), expected in reachable.items():
-            result = self.client(network, "--insecure", "--output", DISCARD_OUTPUT, url)
-            outcome = "answered" if result.returncode == 0 else f"curl exit {result.returncode}"
-            wanted = 0 if expected else COULD_NOT_RESOLVE
-            expect(result.returncode == wanted, f"{network} -> {url}: {outcome}")
-        print(f"proof 7 held: {len(reachable)} network pairs as ruled; only the control answers")
-
     def proof_8_no_host_listener(self) -> None:
         new_listeners = self.host_listeners() - self.listeners_before
         expect(not new_listeners, f"new host listeners: {sorted(new_listeners)}")
@@ -569,7 +557,7 @@ class Probe:
         short_ca = self.scratch / "ca-short-lived.json"
         short_ca.write_text(json.dumps(ca))
         self.environment["PROBE_CA_JSON"] = str(short_ca)
-        self.compose_files = [COMPOSE_FILE, str(OVERRIDE)]
+        self.compose_files = [self.compose_file, STAND_IN_OVERLAY, SHORT_LIVED_OVERLAY]
 
     @property
     def state_directory(self) -> Path:
@@ -611,7 +599,7 @@ class Probe:
     def repository_copy(self) -> Path:
         """The lane's files as the live checkout of the scratch HOME, with its own venv: fleet.yaml
         is flipped there only."""
-        return edge_copy.repository_copy(REPO, self.home, self.scratch)
+        return edge_copy.repository_copy(REPO, self.home, self.scratch, PROJECT)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         """Set step-ca's switch; the copy switches keycloak off, so apply never asks its setup."""
@@ -631,6 +619,8 @@ class Probe:
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
         typed: bytes = b"yes\n",
     ) -> str:  # fmt: skip
+        if arguments[0] in ("apply", "start"):
+            self.guard.expect(edge_copy.copy_compose_command(copy), once=False)
         return edge_copy.run_edge(
             copy, self.environment, *arguments,
             terminal=terminal, exit_code=exit_code, typed=typed,
@@ -787,11 +777,10 @@ class Probe:
     # --- traefik-mcp follows its file and definition while step-ca is on (#89) ----------------
 
     def copy_compose(self, copy: Path, *arguments: str) -> str:
-        """Compose as edge calls it in the copy: its project directory, every profile."""
-        return self.run(
-            ["docker", "compose", "--project-directory", str(copy), "--file",
-             str(copy / COMPOSE_FILE), "--profile", "*", *arguments]
-        ).stdout.decode()  # fmt: skip
+        command = edge_copy.copy_compose_command(copy)
+        if arguments[0] in GUARDED_COMPOSE_VERBS:
+            self.guard.expect(command, once=False)
+        return self.run([*command, *arguments]).stdout.decode()
 
     def container_id(self, service: str) -> str:
         return self.compose("ps", "--all", "-q", service).stdout.decode().strip()
@@ -981,7 +970,8 @@ class Probe:
         expect(
             not (left.strip() or volumes.strip()), f"left behind: {left.split()} {volumes.split()}"
         )
-        print(f"teardown: project {PROJECT} removed (containers and volume)")
+        self.guard.expect_clean_teardown()
+        print(f"teardown: project {PROJECT} removed; the hal_ networks are unchanged (P26)")
 
 
 @contextmanager
@@ -1018,7 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-13, #95 P3 hold")
+        print("PROBE PASSED: proofs 1-14, #95 P3 and #346 P13-P27 hold")
     return exit_code
 
 
@@ -1036,6 +1026,7 @@ def prove(probe: Probe) -> int:
         probe.proof_6_gateway()
         probe.proof_7_network_split()
         probe.proof_8_no_host_listener()
+        probe.proof_14_songmaker_route()
         probe.proof_9_renewal()
         probe.proof_10_apply_cycle()
         probe.proof_11_emergency_switch()

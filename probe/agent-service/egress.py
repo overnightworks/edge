@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe of the agent service's egress (#189 cells E1-E10, E12, E13; #201 E11, E14 and the real
-service): the gateway `agent-egress` and either the stand-in `agent-probe` or the real
-`agent-service` of compose.yaml, in a throwaway compose project of their own.
+service; #346 P26, P36): the gateway `agent-egress` and either the stand-in `agent-probe` or
+the real `agent-service` of compose.yaml, in a throwaway compose project of their own.
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
         python3 probe/agent-service/egress.py --scratch DIR [--target stand-in|service]
@@ -14,7 +14,9 @@ control; a window that dropped a frame, held a frame it could not decode, or in 
 did not show, is NOT DRIVEN and fails the run. The service target runs the image of the pull
 request's compose.yaml with a dummy login in the scratch HOME (never a real token) and adds E11 and
 E14. The probe always removes its containers and networks, and never touches the live stack: the
-project name is its own and is set on every command. Needs an existing, empty, writable --scratch
+project name is its own and is set on every command, its copy of compose.yaml names the fixed
+`hal_*` networks `<project>_...` (edge_copy.py), and every call that starts or removes something
+resolves only the project's networks first (P26). Needs an existing, empty, writable --scratch
 directory. Exit 0: every cell held, 1: a cell failed or was not driven.
 
 The subject runs the `Client` class below: the driver sends its source to `python -I -` inside
@@ -48,14 +50,18 @@ from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # agent_networks.py, likewise
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with live_smoke.py
 
+import edge_copy  # noqa: E402
 import egress_observe  # noqa: E402
-from edge_copy import ProbeFailed, expect  # noqa: E402
+from agent_networks import AGENT_NETWORKS, cell_p36  # noqa: E402
+from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
 from egress_observe import (  # noqa: E402
     PUBLIC_RESOLVER,
     PUBLIC_RESOLVER_V6,
+    UNREACHABLE,
     default_routes,
     ipv6_interfaces,
     lan_address,
@@ -90,7 +96,6 @@ HOST_WINDOW_TRIES = 3  # the host's window also sees the operator's traffic and 
 CONTROL_DELAY_SECONDS = 2
 OUTSIDE_NAME = "example.com"
 NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
-UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
 EMBEDDED_RESOLVER = "127.0.0.11"
 CLIENT_IMPORTS = "import json, selectors, socket, ssl, struct, sys, time\n"
 
@@ -272,15 +277,6 @@ CLIENT_PROGRAM = (
 )
 
 
-def free_subnet(taken: list[str]) -> ipaddress.IPv4Network:
-    """The first candidate /24 that overlaps no network the daemon already has."""
-    used = [ipaddress.ip_network(subnet) for subnet in taken]
-    for candidate in map(ipaddress.IPv4Network, SUBNET_CANDIDATES):
-        if not any(candidate.overlaps(other) for other in used if other.version == 4):
-            return candidate
-    raise ProbeFailed(f"no free /24 among {SUBNET_CANDIDATES[0]} ... {SUBNET_CANDIDATES[-1]}")
-
-
 class Probe:
     def __init__(self, scratch: Path, target: Target = Target.STAND_IN) -> None:
         expect(PROJECT != "edge", "the probe must never run in the live project")
@@ -289,7 +285,7 @@ class Probe:
         home = scratch / "home"
         home.mkdir()
         write_login_directory(home)
-        subnet = free_subnet(self.daemon_subnets())
+        subnet = edge_copy.free_subnet(SUBNET_CANDIDATES)
         self.prefix = str(subnet.network_address).removesuffix("0")
         self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
         self.compose_file = scratch / "compose.yaml"
@@ -303,6 +299,7 @@ class Probe:
             "PROBE_EGRESS_STATIC": str(self.static_file),
         }
         self.overlays = [OVERLAY]
+        self.guard = edge_copy.NetworkGuard(PROJECT, lambda command: self.run(command).stdout)
         self.windows: list[subprocess.Popen] = []
         self.throwaways = 0
         self.held: list[str] = []
@@ -323,29 +320,16 @@ class Probe:
             raise ProbeFailed(f"{' '.join(command[:5])} exited {result.returncode}: {tail[-1:]}")
         return result
 
-    def daemon_subnets(self) -> list[str]:
-        listing = subprocess.run(
-            ["docker", "network", "ls", "-q"], capture_output=True, text=True, check=True
-        ).stdout.split()
-        if not listing:
-            return []
-        inspected = subprocess.run(
-            ["docker", "network", "inspect", *listing], capture_output=True, text=True, check=True
-        ).stdout
-        return [
-            config["Subnet"]
-            for network in json.loads(inspected)
-            for config in (network.get("IPAM") or {}).get("Config") or []
-            if config.get("Subnet")
-        ]
-
     def compose_command(self, *arguments: str) -> list[str]:
-        return [
+        prefix = [
             "docker", "compose", "-p", PROJECT, "--project-directory", str(REPO),
             "--file", str(self.compose_file),
             *(argument for overlay in self.overlays for argument in ("--file", str(overlay))),
-            "--profile", "agent-service", "--profile", "agent-probe", *arguments,
+            "--profile", "agent-service", "--profile", "agent-probe",
         ]  # fmt: skip
+        if arguments and arguments[0] in GUARDED_COMPOSE_VERBS:
+            self.guard.expect(prefix)
+        return [*prefix, *arguments]
 
     def compose(self, *arguments: str, check: bool = True, timeout: int = 300):
         return self.run(self.compose_command(*arguments), check=check, timeout=timeout)
@@ -416,7 +400,10 @@ class Probe:
         # The copy lies in the scratch directory that scratch_directory() resolved and required at
         # the command line, and the text comes from the repository's own files; the route tried
         # was resolving the path once at that boundary, which Sonar does not follow across calls.
-        copy.write_text(text.replace(LIVE_EGRESS_PREFIX, self.prefix))  # NOSONAR(S2083)
+        moved = text.replace(LIVE_EGRESS_PREFIX, self.prefix)
+        copy.write_text(  # NOSONAR(S2083)
+            edge_copy.namespaced_compose(moved, PROJECT) if source == COMPOSE_FILE else moved
+        )
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
@@ -431,11 +418,9 @@ class Probe:
             ["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={PROJECT}"],
             check=False,
         ).stdout.split()
-        networks = self.run(
-            ["docker", "network", "ls", "-q", "--filter", f"name={PROJECT}_"], check=False
-        ).stdout.split()
-        if left or networks:
-            raise ProbeFailed(f"the teardown left containers {left} and networks {networks}")
+        if left:
+            raise ProbeFailed(f"the teardown left containers {left}")
+        self.guard.expect_clean_teardown()
 
     def remove_stack(self) -> None:
         stray = self.run(
@@ -499,6 +484,10 @@ class Probe:
         self.cell_e13()
         if self.target is Target.SERVICE:
             self.cell_e14()
+        cell_p36(
+            self, project=PROJECT, label=LABEL, service_port=SERVICE_PORT,
+            service_listens=self.target is Target.SERVICE,
+        )  # fmt: skip
 
     def hold(self, cell: str, how: str) -> None:
         print(f"{cell} held: {how}", flush=True)
@@ -613,7 +602,7 @@ class Probe:
             result = self.client("connect", target, port)
             expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
             errnos.append(f"{name} {result['result']}")
-        for network in ("agent", "egress"):
+        for network in (*AGENT_NETWORKS, "egress"):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
             expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
             free = self.free_address(network)
@@ -771,7 +760,8 @@ class Probe:
         self.scan_network("E13", "egress")
 
     def cell_e14(self) -> None:
-        self.scan_network("E14", "agent")
+        for network in AGENT_NETWORKS:
+            self.scan_network(f"E14 {network}", network)
 
 
 def interrupt(*_: object) -> None:
