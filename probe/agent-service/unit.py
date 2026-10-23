@@ -54,7 +54,7 @@ from egress import (
     ProbeFailed,
     Target,
     expect,
-    interrupt,
+    run_probe,
     scratch_directory,
     service_configuration,
     write_dummy_token,
@@ -676,16 +676,7 @@ def main() -> int:
     parser.add_argument("--scratch", type=scratch_directory, required=True)
     parser.add_argument("--cell", type=Cell, choices=list(Cell), default=Cell.UNIT)
     arguments = parser.parse_args()
-    signal.signal(signal.SIGTERM, interrupt)
-    probe_class = PROBES[arguments.cell]
-    try:
-        with probe_class(arguments.scratch) as probe:
-            probe.drive()
-    except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
-        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
-        return 1
-    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
-    return 0
+    return run_probe(lambda: PROBES[arguments.cell](arguments.scratch))
 
 
 if __name__ == "__main__":
