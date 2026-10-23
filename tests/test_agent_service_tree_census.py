@@ -239,46 +239,26 @@ def test_a_nested_mount_point_is_skipped_and_counted(
     assert len(result.listings) == 1
 
 
-def test_a_directory_swapped_for_a_symlink_before_it_is_opened_fails_closed(
-    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / "victim").mkdir()
-    elsewhere = tmp_path.parent / (tmp_path.name + "-elsewhere")
-    elsewhere.mkdir()
-    (elsewhere / "outside").write_bytes(b"x")
-    real = census._open_child
-
-    def swap_then_open(name: str, parent_fd: int) -> int:
-        if name != "victim":
-            return real(name, parent_fd)
-        os.rmdir(tmp_path / name)
-        os.symlink(elsewhere, tmp_path / name)
-        return real(name, parent_fd)
-
-    monkeypatch.setattr(census, "_open_child", swap_then_open)
-    result = walk(census, names, tmp_path)
-    assert result.skips == {"replaced": 1}
-    assert [item.kind for item in result.listings] == ["d"]
-
-
-def test_a_directory_replaced_by_another_directory_fails_closed(
-    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("swap", ["symlink", "directory"])
+def test_a_directory_swapped_before_it_is_opened_fails_closed(
+    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
 ) -> None:
     (tmp_path / "victim").mkdir()
     (tmp_path / "victim" / "old").write_bytes(b"x")
     real = census._open_child
 
-    def replace_then_open(name: str, parent_fd: int) -> int:
-        if name != "victim":
-            return real(name, parent_fd)
-        os.rename(tmp_path / name, tmp_path / "moved")
-        os.mkdir(tmp_path / name)
+    def swap_then_open(name: str, parent_fd: int) -> int:
+        if name == "victim":
+            os.rename(tmp_path / name, tmp_path / "moved")
+            if swap == "symlink":
+                os.symlink(tmp_path / "moved", tmp_path / name)
+            else:
+                os.mkdir(tmp_path / name)
         return real(name, parent_fd)
 
-    monkeypatch.setattr(census, "_open_child", replace_then_open)
+    monkeypatch.setattr(census, "_open_child", swap_then_open)
     result = walk(census, names, tmp_path)
-    assert result.skips == {"replaced": 1}
-    assert "old" not in " ".join(item.path for item in result.listings)
+    assert (result.skips, len(result.listings)) == ({"replaced": 1}, 1)
 
 
 def test_an_entry_that_vanishes_after_the_listing_is_counted(
@@ -410,6 +390,30 @@ def test_the_mount_root_is_not_acquired_through_a_symlinked_ancestor(
     result = walk(census, names, tmp_path / "link" / "mount")
     assert result.skips == {"replaced": 1}
     assert result.listings == []
+
+
+def test_a_root_component_replaced_by_a_directory_on_the_same_device_fails_closed(
+    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "up" / "mount").mkdir(parents=True)
+    (tmp_path / "up" / "mount" / "old").write_bytes(b"x")
+    real = census._open_child
+
+    def replace_then_open(name: str, parent_fd: int) -> int:
+        if name == "mount":
+            os.rename(tmp_path / "up" / name, tmp_path / "moved")
+            os.mkdir(tmp_path / "up" / name)
+        return real(name, parent_fd)
+
+    monkeypatch.setattr(census, "_open_child", replace_then_open)
+    result = walk(census, names, tmp_path / "up" / "mount")
+    assert (result.skips, result.listings) == ({"replaced": 1}, [])
+
+
+def test_a_file_mount_is_left_out_and_never_read(census: ModuleType, names, tmp_path: Path) -> None:
+    (tmp_path / "hosts").write_bytes(TOKEN)
+    result = walk(census, names, tmp_path / "hosts", token=TOKEN)
+    assert (result.skips, result.listings, result.token_files) == ({"file mount": 1}, [], 0)
 
 
 def test_a_mount_root_whose_device_is_not_the_mounts_fails_closed(

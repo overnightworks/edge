@@ -48,6 +48,7 @@ DIRECTORY_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_CLOEXEC
 
 class Skip(StrEnum):
     REPLACED = "replaced"
+    FILE_MOUNT = "file mount"
     NESTED_MOUNT = "nested mount skipped"
     LOGIN = "login excluded"
     REFUSED = "refused"
@@ -214,6 +215,15 @@ def _identity(info: os.stat_result) -> Identity:
     return (info.st_dev, info.st_ino)
 
 
+def _open_verified(name: str, parent_fd: int, listed: os.stat_result) -> int:
+    """Open a directory below `parent_fd`; what was opened must be what `listed` saw."""
+    child_fd = _open_child(name, parent_fd)
+    if _identity(os.fstat(child_fd)) != _identity(listed):
+        os.close(child_fd)
+        raise OSError(errno.ESTALE, "replaced between listing and open")
+    return child_fd
+
+
 def _listing_names(directory_fd: int) -> Iterator[str] | None:
     try:
         with os.scandir(directory_fd) as entries:
@@ -288,14 +298,11 @@ def _descend(
     census: Census,
 ) -> None:
     try:
-        child_fd = _open_child(name, parent_fd)
+        child_fd = _open_verified(name, parent_fd, listed)
     except OSError:
         census.skip(Skip.REPLACED)
         return
     try:
-        if _identity(os.fstat(child_fd)) != _identity(listed):
-            census.skip(Skip.REPLACED)
-            return
         _walk(child_fd, (*trail, name), names, rules, census)
     finally:
         os.close(child_fd)
@@ -307,7 +314,8 @@ def _open_root(point: str) -> int:
     try:
         for part in point.split("/"):
             if part:
-                parent, descriptor = descriptor, _open_child(part, descriptor)
+                listed = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
+                parent, descriptor = descriptor, _open_verified(part, descriptor, listed)
                 os.close(parent)
     except OSError:
         os.close(descriptor)
@@ -315,16 +323,26 @@ def _open_root(point: str) -> int:
     return descriptor
 
 
+def _is_directory(point: str) -> bool:
+    """False for a single-file mount such as /etc/hosts; a missing point is left to the open."""
+    try:
+        return stat.S_ISDIR(os.stat(point).st_mode)
+    except OSError:
+        return True
+
+
 def census_mount(mount: WritableMount, names: Names, rules: WalkRules) -> Census:
     """Walk one mount from its mount point. Root and every level below are opened without
     following links; the root must be the mount table's device and not the login directory."""
     census = Census()
+    if not _is_directory(mount.point):
+        census.skip(Skip.FILE_MOUNT)
+        return census
     try:
         root_fd = _open_root(mount.point)
     except OSError as failure:
-        census.skip(
-            Skip.REPLACED if failure.errno in (errno.ELOOP, errno.ENOTDIR) else Skip.REFUSED
-        )
+        replaced = failure.errno in (errno.ELOOP, errno.ENOTDIR, errno.ESTALE)
+        census.skip(Skip.REPLACED if replaced else Skip.REFUSED)
         return census
     try:
         root = os.fstat(root_fd)
