@@ -172,7 +172,6 @@ SECRET_FILES = (
     *(client.secret_file for client in APP_CLIENTS),
 )
 READY_TIMEOUT_SECONDS = 240
-LOGOUT_TIMEOUT_SECONDS = 20
 CHANGED_ACCESS_TOKEN_LIFESPAN = 360
 CHANGED_GROUP = "probe-changed"
 MEMBER_GROUP = "/apps/songmaker"
@@ -615,7 +614,7 @@ class Stack:
             f"the observe stopped by {stop_signal.name} {moment.__name__} exited 0 with "
             f"{len(stdout)} bytes of a cut inventory",
         )
-        deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
+        deadline = time.monotonic() + Probe.logout_timeout_seconds
         while observer_containers() and time.monotonic() < deadline:
             time.sleep(0.5)
         return observer_containers()
@@ -1085,6 +1084,7 @@ class Probe:
     secret_values: dict[str, str] = field(default_factory=dict)
     member_password: str = field(default_factory=lambda: secrets.token_urlsafe(16))
     evidence: list[str] = field(default_factory=list)
+    logout_timeout_seconds = 20
 
     def say(self, line: str) -> None:
         """Prints a line of evidence and keeps it, so proof 7 can check it for secrets."""
@@ -1158,7 +1158,6 @@ class Probe:
         self.stack.must_apply("fresh apply", bootstrap=True)
         # The bootstrap keycloak container and its logs disappear when it is recreated below.
         self.stack.see_running()
-
         self.stack.up("keycloak")
         wait_until_ready(self.stack.admin_url)
         # The config-cli client exists only if the fresh apply created the master configuration.
@@ -1188,13 +1187,14 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
+        logout_actions_cell.prove(self, expect, MEMBER_GROUP)
+        admin = self.admin_now()  # the logout cell outlived the token
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
         self.the_realm_step(stand)
-        logout_actions_cell.prove(self, expect, MEMBER_GROUP, LOGOUT_TIMEOUT_SECONDS)
-        admin = self.admin_now()  # proof 12 and the logout cell outlived the token
+        admin = self.admin_now()  # proof 12 outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -2019,13 +2019,13 @@ class Probe:
         self.password_grant("probe-logout", password, rp_secret)
         admin.must("POST", f"/{REALM}/users/{user_id}/logout")
         record = self.logout_record(user_id)
-        expect(record is not None, f"probe-rp saw no logout within {LOGOUT_TIMEOUT_SECONDS}s")
+        expect(record is not None, f"probe-rp saw no logout within {self.logout_timeout_seconds}s")
         expect((iss := record["iss"]) == PUBLIC_ISSUER, f"logout iss is {iss}")
         self.held("6", f"admin logout reached probe-rp (iss {iss}, sid {bool(record['sid'])})")
         self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
 
     def logout_record(self, user_id: str) -> dict[str, Any] | None:
-        deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
+        deadline = time.monotonic() + self.logout_timeout_seconds
         while time.monotonic() < deadline:
             for line in re.findall(r"^backchannel-logout (.*)$", self.stack.logs("probe-rp"), re.M):
                 if (record := json.loads(line))["sub"] == user_id and time.monotonic() < deadline:

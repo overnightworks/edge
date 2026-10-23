@@ -46,6 +46,8 @@ class Probe(Protocol):
 
     def admin_now(self) -> Admin: ...
 
+    logout_timeout_seconds: int
+
     def logout_record(self, user_id: str) -> dict[str, Any] | None: ...
 
     def held(self, proof: str, detail: str) -> None: ...
@@ -101,7 +103,6 @@ def prove(
     probe: Probe,
     expect: Callable[[bool, str], None],
     member_group: str,
-    timeout_seconds: int,
 ) -> None:
     client_secret = register_client(probe, probe.admin_now())
     control = "control sign out"
@@ -110,7 +111,8 @@ def prove(
     expect(status in ADMIN_SUCCESS, f"the control's admin call answered {status}")
     expect(
         probe.logout_record(user_id) is not None,
-        f"the control's logout did not arrive within {timeout_seconds} s: nothing below measures",
+        f"the control's logout did not arrive within {probe.logout_timeout_seconds} s: "
+        "nothing below measures",
     )
     probe.held("LA1", f"{control}, signed in to {CLIENT_ID}: logout seen")
     group_id = probe.admin_now().get(f"/{REALM}/group-by-path{member_group}")["id"]
@@ -133,5 +135,5 @@ def prove(
         elif probe.logout_record(user_id) is not None:
             outcome = "logout seen"
         else:
-            outcome = f"no matching logout was observed within {timeout_seconds} s"
+            outcome = f"no matching logout was observed within {probe.logout_timeout_seconds} s"
         probe.held("LA1", f"{action}, signed in to {CLIENT_ID}: {outcome}")

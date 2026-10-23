@@ -35,7 +35,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   `backchannel.logout.url` `http://probe-rp:8000/backchannel-logout` and
   `backchannel.logout.session.required` `false`; a sign-out as control runs first and the probe
   fails unless its logout arrives; then disable user, delete user and remove group membership, one
-  line each: logout seen, no matching logout observed within `LOGOUT_TIMEOUT_SECONDS` for a token
+  line each: logout seen, no matching logout observed within `Probe.logout_timeout_seconds` for a token
   whose `sub` is the user's, or action failed when the admin call did not succeed; the answer
   describes Keycloak's behaviour, not HopIn's erasure, which hopin#79 S4 owns); and
   none of the credentials it made or received (secret files, passwords, the TOTP seed, the relying party's secret, every
