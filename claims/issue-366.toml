@@ -1,0 +1,8 @@
+claim_id = "96a3edfde96e4be5b72d857b443094ad"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "83ff4afdfeaf484674af8bdb0d81858a1295f43a"
+branch = "claude/issue-366-254-s1-hopin-s-disabled-catalog-entry-it"
+scope = ["docs/architecture.md", "fleet.yaml", "probe/edge_copy.py", "src/edge/catalog.py", "tests/test_edge_catalog_hosts.py", "tests/test_probe_isolation.py"]
+opened_commit = "1e6576594fb42a8895b7f0c42be8d8e26c2a6165"
+whole_reason = "The catalog entry and the probe-copy guard land together: alone, the entry would let the step-ca probe plan or start hopin on the shared daemon."
