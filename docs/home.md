@@ -488,6 +488,7 @@ Aktivierung run, and User units, Ansible, System and Geheimnisse print `skipped:
 (the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
 apply, and lists no secrets. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
+If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 1 with a line saying so.
 
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
 `would change` or `unchanged`, and the system step also `not checked (needs
@@ -548,12 +549,14 @@ below are home's own and are not backed up.
     journal lines do not come back.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
-  (`useradd --uid <next free system id> -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`), no linger, and a line in
+  (`groupadd --gid N agent`, then `useradd --uid N --gid N -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`, with N the lowest
+  id from 1000 up that no user, group or subordinate id entry has, checked after creation), no linger, and a line in
   `/etc/cron.deny`: an existing one keeps its owner, mode and entries, a new one is `root:root 0644`, and every
   other user keeps today's cron. An `agent` that already exists with an extra group, a subuid or subgid entry
-  (by name or by its uid or gid), another shell, a usable password, linger, a home other than `/home/agent`, or a
-  home that is a link or not a directory owned by it, or whose uid another user shares, is refused before
-  anything is written, in the dry run too; so is a new account whose id has a subordinate id entry, and an
+  (by name or by its uid), another shell, a usable password, linger, a home other than `/home/agent`, or a
+  home that is a link or not a directory owned by it, a uid another user shares, a gid another group shares or
+  a primary group other than the group `agent`, is refused before anything is written, in the dry run too; so is a
+  group `agent` without the account, a new account's home path that is taken, and an
   `agent` listed in `/etc/cron.allow`. A `cron.allow` without it denies it already, and `cron.deny` stays as it is.
   The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
   A revert keeps the user and its home.

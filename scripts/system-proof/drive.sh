@@ -550,6 +550,7 @@ run_as() {  # run_as <user> <log> <command...>: with that user's own HOME and ru
 
 agent_world() {  # everything the play may write about the account, as one comparable text
     getent passwd agent
+    getent group agent
     getent shadow agent
     id -Gn agent
     stat -c '%U:%G %a' "$AGENT_HOME"
@@ -559,8 +560,9 @@ agent_world() {  # everything the play may write about the account, as one compa
     return 0
 }
 
-agent_is_dormant() {  # one account, its own group, locked, nologin, a closed home, no subids, no linger, denied cron and nothing else denied
-    [[ $(getent passwd agent | cut -d: -f7) == /usr/sbin/nologin ]] &&
+agent_is_dormant() {  # one account, one regular id for uid and gid, its own group, locked, nologin, a closed home, no subids, no linger, denied cron and nothing else denied
+    [[ $(id -u agent) -ge 1000 && $(id -u agent) == "$(id -g agent)" && $(getent group agent | cut -d: -f3) == "$(id -g agent)" ]] &&
+        [[ $(getent passwd agent | cut -d: -f7) == /usr/sbin/nologin ]] &&
         [[ $(id -Gn agent) == agent ]] &&
         [[ $(getent shadow agent | cut -d: -f2 | cut -c1) == '!' ]] &&
         [[ $(stat -c '%U:%G %a' "$AGENT_HOME") == 'agent:agent 700' ]] &&
@@ -612,56 +614,163 @@ cell_a1_2() {  # runs after the second apply of cell 9
     return
 }
 
-refuses_foreign_shape() {  # refuses_foreign_shape <name> <make> <undo>: the play fails with exit 1 and nothing, not even cloudflared's files, moves
-    local name=$1 make=$2 undo=$3 before after code
+refuses_foreign_shape() {  # refuses_foreign_shape <name> <make> <undo> [reason] [dry]: the play fails with exit 1 and nothing, not even cloudflared's files, moves
+    local name=$1 make=$2 undo=$3 reason=${4:-nothing was written} before after code dry_code dry_after
     eval "$make"
     before=$(agent_world)
     at_terminal "a1-3-$name" "$HOME_BIN setup --apply"
     code=$?
     after=$(agent_world)
+    if [[ ${5:-} == dry ]]; then
+        at_terminal "a1-3-$name-dry" "$HOME_BIN setup"
+        dry_code=$?
+        dry_after=$(agent_world)
+    fi
     eval "$undo"
-    verdict A1-3 "$name: the play refuses with exit 1 and nothing was written" \
-        '[ $code -eq 1 ] && in_log "a1-3-$name" "nothing was written" && [ "$before" = "$after" ]'
+    verdict A1-3 "$name: the apply refuses with exit 1 and nothing was written" \
+        '[ $code -eq 1 ] && in_log "a1-3-$name" "$reason" && ! in_log "a1-3-$name" "$OPERATORS_SKIP" && [ "$before" = "$after" ]'
+    if [[ ${5:-} == dry ]]; then
+        verdict A1-3 "$name: the dry run refuses with exit 1 and nothing was written" \
+            '[ $dry_code -eq 1 ] && in_log "a1-3-$name-dry" "$reason" && [ "$before" = "$dry_after" ]'
+    fi
     verdict A1-3 "$name: undone, the account is dormant again" agent_is_dormant
     return
 }
 
-cell_a1_3() {
-    refuses_foreign_shape "an extra group" 'usermod --append --groups bystander agent' 'gpasswd --delete agent bystander'
-    refuses_foreign_shape "a subuid entry" 'echo agent:100000:65536 >>/etc/subuid' "sed -i '/^agent:/d' /etc/subuid"
-    refuses_foreign_shape "the shell bash" 'usermod --shell /bin/bash agent' 'usermod --shell /usr/sbin/nologin agent'
-    refuses_foreign_shape "linger" 'loginctl enable-linger agent' 'loginctl disable-linger agent'
-    refuses_foreign_shape "a usable password" 'passwd --delete agent >/dev/null' 'usermod --lock agent'
-    refuses_foreign_shape "a subgid entry" 'echo agent:100000:65536 >>/etc/subgid' "sed -i '/^agent:/d' /etc/subgid"
-    refuses_foreign_shape "another home" 'usermod --home /srv/agent-elsewhere agent' "usermod --home $AGENT_HOME agent"
-    refuses_foreign_shape "a home that is a link" "mv $AGENT_HOME $AGENT_HOME.real && ln -s $AGENT_HOME.real $AGENT_HOME" \
-        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME"
-    refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
-    cell_a1_3_subordinate_ids_of_the_new_account
-    cell_a1_3_cron_files
+move_entry() {  # move_entry <file> <name> <first|last>: the entry of that name to the top or bottom of the file, in place
+    local file=$1 name=$2 where=$3 rest
+    rest=$(grep -v "^$name:" "$file")
+    if [[ $where == first ]]; then { grep "^$name:" "$file"; echo "$rest"; } >"$file.new"; else { echo "$rest"; grep "^$name:" "$file"; } >"$file.new"; fi
+    cat "$file.new" >"$file"
+    rm "$file.new"
     return
 }
 
-next_free_system_id() {  # the id the play gives a new account: the highest below 1000 that no user and no group has
+set_passwd_field() {  # set_passwd_field <name> <field number> <value>
+    awk -F: -v OFS=: -v name="$1" -v field="$2" -v value="$3" '$1 == name { $field = value } 1' /etc/passwd >/etc/passwd.new
+    cat /etc/passwd.new >/etc/passwd
+    rm /etc/passwd.new
+    return
+}
+
+drop_entry() {  # drop_entry <file> <name or id>: the entry keyed by it
+    sed -i "/^$2:/d" "$1"
+    return
+}
+
+remove_account() {  # the account, its group and its home, as a cell that needs the account absent starts
+    userdel --remove agent
+    groupdel agent 2>/dev/null
+    return 0
+}
+
+recreate_account() {
+    at_terminal a1-3-recreate "$HOME_BIN setup --apply"
+    return
+}
+
+lowest_free_id() {  # lowest_free_id [skip]: the lowest id from 1000 up that no user and no group has, other than the one named
     local id
-    for ((id = 999; id >= 100; id--)); do
+    for ((id = 1000; id < 60000; id++)); do
+        [[ $id == "${1:-}" ]] && continue
         getent passwd "$id" >/dev/null || getent group "$id" >/dev/null || { echo "$id"; return 0; }
     done
     return 1
 }
 
-cell_a1_3_subordinate_ids_of_the_new_account() {  # a numeric entry for the id the new account would get
-    local id code
-    userdel --remove agent
-    id=$(next_free_system_id) || return 1
-    echo "$id:100000:65536" | tee -a /etc/subuid >>/etc/subgid
-    at_terminal a1-3-new-ids "$HOME_BIN setup --apply"
+cell_a1_3() {
+    AGENT_ID=$(id -u agent)
+    AGENT_GID=$(id -g agent)
+    refuses_foreign_shape "an extra group" 'usermod --append --groups bystander agent' 'gpasswd --delete agent bystander'
+    refuses_foreign_shape "a subuid entry" 'echo agent:100000:65536 >>/etc/subuid' 'drop_entry /etc/subuid agent'
+    refuses_foreign_shape "the shell bash" 'usermod --shell /bin/bash agent' 'usermod --shell /usr/sbin/nologin agent'
+    refuses_foreign_shape "linger" 'loginctl enable-linger agent' 'loginctl disable-linger agent'
+    refuses_foreign_shape "a usable password" 'passwd --delete agent >/dev/null' 'usermod --lock agent'
+    refuses_foreign_shape "a subgid entry" 'echo agent:100000:65536 >>/etc/subgid' 'drop_entry /etc/subgid agent'
+    refuses_foreign_shape "a numeric subuid entry for its uid" 'echo "$AGENT_ID:100000:65536" >>/etc/subuid' 'drop_entry /etc/subuid $AGENT_ID' \
+        "a subuid or subgid entry"
+    refuses_foreign_shape "a numeric subgid entry for its uid" 'echo "$AGENT_ID:100000:65536" >>/etc/subgid' 'drop_entry /etc/subgid $AGENT_ID' \
+        "a subuid or subgid entry"
+    cell_a1_3_homes
+    cell_a1_3_shared_ids
+    cell_a1_3_account_absent
+    cell_a1_3_cron_files
+    return
+}
+
+cell_a1_3_homes() {  # an existing account whose home is not its own; the dry run refuses too
+    refuses_foreign_shape "another home" 'usermod --home /srv/agent-elsewhere agent' "usermod --home $AGENT_HOME agent" "a home other than" dry
+    refuses_foreign_shape "a home that is a link" "mv $AGENT_HOME $AGENT_HOME.real && ln -s $AGENT_HOME.real $AGENT_HOME" \
+        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
+    refuses_foreign_shape "a home that is a file" "mv $AGENT_HOME $AGENT_HOME.real && touch $AGENT_HOME" \
+        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
+    refuses_foreign_shape "a home owned by root" "chown root:root $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home that is a link" dry
+    refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
+    return
+}
+
+cell_a1_3_shared_ids() {  # a uid or gid the account shares, with the shared name before and after the agent's; `hal setup` itself never guesses the role
+    refuses_foreign_shape "the uid of bystander, agent listed after" 'set_passwd_field agent 3 $(id -u bystander)' 'set_passwd_field agent 3 $AGENT_ID' \
+        "a uid shared with"
+    refuses_foreign_shape "the uid of bystander, agent listed first" 'set_passwd_field agent 3 $(id -u bystander); move_entry /etc/passwd agent first' \
+        'set_passwd_field agent 3 $AGENT_ID; move_entry /etc/passwd agent last' "a uid shared with"
+    refuses_foreign_shape "the uid of the running user, agent listed after" 'set_passwd_field agent 3 $(id -u tester)' 'set_passwd_field agent 3 $AGENT_ID' \
+        "must have a uid of its own"
+    refuses_foreign_shape "the uid of the running user, agent listed first" 'set_passwd_field agent 3 $(id -u tester); move_entry /etc/passwd agent first' \
+        'set_passwd_field agent 3 $AGENT_ID; move_entry /etc/passwd agent last' "must have a uid of its own"
+    refuses_foreign_shape "its gid in another group, listed after" 'groupadd --non-unique --gid $AGENT_GID sharer' 'drop_entry /etc/group sharer; drop_entry /etc/gshadow sharer' "a gid shared with sharer"
+    refuses_foreign_shape "its gid in another group, listed first" 'groupadd --non-unique --gid $AGENT_GID sharer; move_entry /etc/group sharer first' \
+        'drop_entry /etc/group sharer; drop_entry /etc/gshadow sharer' "a gid shared with sharer"
+    refuses_foreign_shape "a primary gid that is not the group agent's" 'set_passwd_field agent 4 $(id -g bystander)' 'set_passwd_field agent 4 $AGENT_GID' \
+        "a primary group other than"
+    return
+}
+
+cell_a1_3_account_absent() {  # no account yet: what is in its way is refused before anything is written; ids and subid files of a new one
+    refuses_foreign_shape "a home path already taken by a directory" "remove_account; mkdir $AGENT_HOME" "rmdir $AGENT_HOME; recreate_account" \
+        "a home path that is already taken" dry
+    refuses_foreign_shape "a home path already taken by a file" "remove_account; touch $AGENT_HOME" "rm $AGENT_HOME; recreate_account" \
+        "a home path that is already taken" dry
+    refuses_foreign_shape "a lone group agent" 'remove_account; groupadd agent' 'groupdel agent; recreate_account' "a group agent without the account"
+    cell_a1_3_ids_of_the_new_account
+    cell_a1_3_without_subid_files
+    return
+}
+
+cell_a1_3_ids_of_the_new_account() {  # a numeric subuid or subgid entry for the lowest free id: the new account takes the next id, one for uid and gid
+    local file skipped expected code
+    for file in /etc/subuid /etc/subgid; do
+        remove_account
+        skipped=$(lowest_free_id)
+        echo "$skipped:100000:65536" >>"$file"
+        expected=$(lowest_free_id "$skipped")
+        at_terminal a1-3-new-ids "$HOME_BIN setup --apply"
+        code=$?
+        verdict A1-3 "a numeric entry in $file for the lowest free id: exit 0, the account gets the next id for uid and gid" \
+            '[ $code -eq 0 ] && [[ $(id -u agent) == "$expected" && $(id -g agent) == "$expected" ]] && agent_is_dormant'
+        drop_entry "$file" "$skipped"
+    done
+    remove_account
+    recreate_account
+    verdict A1-3 "the entries gone, the apply creates the account at the lowest free id again" '[[ $(id -u agent) == "$AGENT_ID" ]] && agent_is_dormant'
+    return
+}
+
+cell_a1_3_without_subid_files() {  # the subordinate id files do not exist: an existing and a new account both converge, and no file appears
+    local code
+    mv /etc/subuid /etc/subuid.proof
+    mv /etc/subgid /etc/subgid.proof
+    at_terminal a1-3-no-subid-existing "$HOME_BIN setup --apply"
     code=$?
-    verdict A1-3 "a subuid and subgid entry for the id the new account would get: exit 1, nothing created" \
-        '[ $code -eq 1 ] && in_log a1-3-new-ids "nothing was written" && ! getent passwd agent >/dev/null && [ ! -e "$AGENT_HOME" ]'
-    sed -i "/^$id:/d" /etc/subuid /etc/subgid
-    at_terminal a1-3-new-ids-undone "$HOME_BIN setup --apply"
-    verdict A1-3 "the entries gone, the apply creates the account again" agent_is_dormant
+    verdict A1-3 "no subuid and subgid file, the account exists: exit 0, changed=0, dormant" \
+        '[ $code -eq 0 ] && in_log a1-3-no-subid-existing "changed=0 " && agent_is_dormant'
+    remove_account
+    at_terminal a1-3-no-subid-new "$HOME_BIN setup --apply"
+    code=$?
+    verdict A1-3 "no subuid and subgid file, a new account: exit 0, dormant, and no file was created" \
+        '[ $code -eq 0 ] && agent_is_dormant && [ ! -e /etc/subuid ] && [ ! -e /etc/subgid ]'
+    mv /etc/subuid.proof /etc/subuid
+    mv /etc/subgid.proof /etc/subgid
     return
 }
 
@@ -700,8 +809,12 @@ install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that 
     return
 }
 
+A1_NEXT_AS_AGENT="1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed
+   warum: ohne den Hook prüft kein Commit auf Geheimnisse
+Außerdem zum Einsortieren: ~/README.md fehlt. Das macht ein Agent: sag „räum home auf“."
+
 cell_a1_4_and_5() {
-    local dry apply
+    local dry apply next
     install_wheel_for agent
     run_as agent a1-4-dry "$AGENT_HOME/.local/bin/home" setup
     dry=$?
@@ -709,9 +822,9 @@ cell_a1_4_and_5() {
         '[ $dry -eq 0 ] && in_log a1-4-dry "quality: would change" && in_log a1-4-dry "Aktivierung: would change" &&
          in_log a1-4-dry "User units: skipped" && in_log a1-4-dry "Ansible: skipped" && in_log a1-4-dry "System: skipped"'
     run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
-    verdict A1-4 "home next lists none of the operator's steps" \
-        'in_log a1-4-next "hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed" &&
-         ! grep -qiE "User units|Ansible|System|sudo|eigenes Terminalfenster|secrets" "$EVIDENCE/a1-4-next.log"'
+    next=$?
+    verdict A1-4 "home next exits 0 and lists exactly the per-user step and the bookkeeping line, none of the operator's steps" \
+        '[ $next -eq 0 ] && [[ $(<"$EVIDENCE/a1-4-next.log") == "$A1_NEXT_AS_AGENT" ]]'
     run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
     apply=$?
     verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \

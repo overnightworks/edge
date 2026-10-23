@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import stat
 import subprocess
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -271,6 +273,47 @@ def test_the_playbook_gets_the_agents_account_name_and_the_digest_covers_it(sand
 )
 def test_only_the_account_named_agent_resolves_to_the_agent_role(user: str, role: ExecutionRole) -> None:
     assert ExecutionRole.of(user) is role
+
+
+def passwd_entry(name: str, uid: int) -> pwd.struct_passwd:
+    return pwd.struct_passwd((name, "x", uid, uid, "", f"/home/{name}", "/bin/sh"))
+
+
+@pytest.mark.parametrize("names", [("agent", "operator"), ("operator", "agent")])
+def test_setup_fails_loud_instead_of_guessing_the_role_when_agent_shares_the_running_uid(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, names: tuple[str, str]
+) -> None:
+    """Whichever name the lookup by uid would pick, `hal setup` says so and runs no step, with either passwd order."""
+    entries = [passwd_entry(name, 1001) for name in names]
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: entries)
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: entries[0])
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", replace(sandbox.system.boundaries, operator_user=system_step._running_user))
+
+    code, lines, error = run_setup(sandbox, capsys, "--apply")
+
+    assert (code, lines, error.splitlines()) == (1, [], [f"hal setup: uid 1001 has the names {names[0]}, {names[1]}; agent must have a uid of its own"])
+    assert sandbox.system.playbook.calls == []
+
+
+@pytest.mark.parametrize("names", [("operator", "bystander"), ("agent",)])
+def test_the_running_user_is_the_first_name_of_its_uid_unless_agent_is_one_of_several(
+    monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...]
+) -> None:
+    entries = [passwd_entry(name, 1001) for name in names]
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: entries)
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: entries[0])
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    assert system_step._running_user() == names[0]
+
+
+def test_a_running_uid_without_a_passwd_name_is_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: [])
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    with pytest.raises(system_step.UnresolvableRunningUser, match="no passwd entry for uid 1001"):
+        system_step._running_user()
 
 
 OPERATORS_STEPS = ["User units", "Ansible", "System", SECRETS]

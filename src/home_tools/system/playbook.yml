@@ -11,8 +11,10 @@
 #
 # The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
 # password, the shell nologin, a 0700 home, no subuid or subgid range, no linger, and a line in /etc/cron.deny
-# (every other user keeps today's cron; an existing cron.allow decides alone and must not list it). An account of
-# that name in any other shape, or a uid with a subordinate id entry, is refused before anything is written. A revert of this play keeps the user and its home.
+# (every other user keeps today's cron; an existing cron.allow decides alone and must not list it). Its uid and gid
+# are one regular id from 1000 up, so that its logs go to a journal of its own. An account of that name in any other
+# shape (a uid or gid it shares, a group of that name without it), or an id with a subordinate id entry, is refused
+# before anything is written. A revert of this play keeps the user and its home.
 - name: Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer
   hosts: localhost
   connection: local
@@ -86,30 +88,56 @@
         fail_key: false
       loop: [passwd, shadow]
 
-    - name: Note whether the agents' account exists, and the uid and gid it has or will get
+    - name: Note whether the agents' account exists, and which ids and group names are taken
       ansible.builtin.set_fact:
         agent_account: "{{ getent_passwd[agent_user] }}"
         agent_exists: "{{ getent_passwd[agent_user] is not none }}"
+        every_user: "{{ every_entry.results[0].ansible_facts.getent_passwd }}"
+        every_group: "{{ every_entry.results[1].ansible_facts.getent_group }}"
         agent_taken_ids: >-
           {{ every_entry.results[0].ansible_facts.getent_passwd.values() | map(attribute=1) | map('int') | list
              + every_entry.results[1].ansible_facts.getent_group.values() | map(attribute=1) | map('int') | list }}
 
-    # The next free system id, counted down from the top of the system range, the same for uid and gid, so that
-    # useradd --user-group gives the account one id for both and the subordinate id check below knows it.
+    - name: Look at the subordinate id files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/etc/subuid, /etc/subgid]
+      register: subid_files
+
+    # Both files key an entry on the owner's name or uid, and a granted range is never the agents' to have.
+    - name: Read who owns a subordinate id range
+      ansible.builtin.command:
+        argv: [cut, "--delimiter=:", --fields=1, "{{ item.item }}"]
+      loop: "{{ subid_files.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: subid_owners_read
+      changed_when: false
+      check_mode: false
+
+    - name: Note the owners of the subordinate id ranges
+      ansible.builtin.set_fact:
+        subid_owners: "{{ subid_owners_read.results | map(attribute='stdout_lines') | flatten }}"
+
+    # The lowest regular id from 1000 up that no user or group has and no subordinate id range names, one number
+    # for uid and gid: the group is created with it first, then the user with it as uid and that group as primary.
     - name: Fix the uid and gid of the agents' account
       ansible.builtin.set_fact:
         agent_uid: >-
           {{ agent_account[1] | int if agent_exists
-             else (range(999, 99, -1) | reject('in', agent_taken_ids) | first) }}
+             else (range(1000, 60000) | reject('in', agent_taken_ids)
+                   | reject('in', subid_owners | select('match', '^[0-9]+$') | map('int') | list) | first) }}
         agent_gid: >-
           {{ agent_account[2] | int if agent_exists
-             else (range(999, 99, -1) | reject('in', agent_taken_ids) | first) }}
+             else (range(1000, 60000) | reject('in', agent_taken_ids)
+                   | reject('in', subid_owners | select('match', '^[0-9]+$') | map('int') | list) | first) }}
 
-    - name: Name the users that share the uid of the agents' account
+    - name: Name the users and groups that share an id of the agents' account
       ansible.builtin.set_fact:
-        agent_uid_sharers: >-
-          {{ every_entry.results[0].ansible_facts.getent_passwd | dict2items
-             | selectattr('value.1', 'equalto', agent_uid | string) | map(attribute='key') | list }}
+        agent_uid_sharers: "{{ every_user | dict2items | selectattr('value.1', 'equalto', agent_uid | string) | map(attribute='key') | list }}"
+        agent_gid_sharers: >-
+          {{ every_group | dict2items | selectattr('value.1', 'equalto', agent_gid | string)
+             | map(attribute='key') | reject('equalto', agent_user) | list }}
 
     - name: Read the groups of the agents' account
       ansible.builtin.command:
@@ -118,27 +146,6 @@
       changed_when: false
       check_mode: false
       when: agent_exists
-
-    - name: Look at the subordinate id files
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop: [/etc/subuid, /etc/subgid]
-      register: subid_files
-
-    - name: Read the subordinate id ranges of the agents' account, by name and by the ids it has or will get
-      ansible.builtin.command:
-        argv:
-          - grep
-          - --extended-regexp
-          - "^({{ agent_user }}|{{ agent_uid }}|{{ agent_gid }}):"
-          - "{{ item.item }}"
-      loop: "{{ subid_files.results | selectattr('stat.exists') | list }}"
-      loop_control:
-        label: "{{ item.item }}"
-      register: agent_subids
-      changed_when: false
-      failed_when: agent_subids.rc not in [0, 1]
-      check_mode: false
 
     - name: Look at the agents' lingering
       ansible.builtin.stat:
@@ -161,15 +168,19 @@
       ansible.builtin.set_fact:
         agent_foreign_shape: >-
           {{ (['a uid shared with ' ~ (agent_uid_sharers | join(', '))] if agent_exists and agent_uid_sharers != [agent_user] else [])
+             + (['a gid shared with ' ~ (agent_gid_sharers | join(', '))] if agent_gid_sharers != [] else [])
+             + (['a primary group other than the group ' ~ agent_user]
+                if agent_exists and (agent_user not in every_group or every_group[agent_user][1] != agent_account[2]) else [])
+             + (['a group ' ~ agent_user ~ ' without the account'] if not agent_exists and agent_user in every_group else [])
              + (['a group beyond its own'] if agent_exists and agent_groups.stdout.split() != [agent_user] else [])
-             + (['a subuid or subgid entry'] if agent_subids.results | map(attribute='stdout') | join('') | length > 0 else [])
+             + (['a subuid or subgid entry'] if agent_user in subid_owners or (agent_uid | string) in subid_owners else [])
              + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
              + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
              + (['linger'] if agent_linger.stat.exists else [])
              + (['a home other than ' ~ agent_home] if agent_exists and agent_account[4] != agent_home else [])
              + (['a home that is a link, not a directory or not its own']
                 if agent_exists and agent_home_stat.stat.exists
-                   and (agent_home_stat.stat.islnk or not agent_home_stat.stat.isdir or agent_home_stat.stat.pw_name != agent_user)
+                   and (agent_home_stat.stat.islnk or not agent_home_stat.stat.isdir or (agent_home_stat.stat.pw_name | default('')) != agent_user)
                 else [])
              + (['a home path that is already taken'] if not agent_exists and agent_home_stat.stat.exists else [])
              + (['a line in /etc/cron.allow'] if cron_allow.content is defined
@@ -263,6 +274,12 @@
 
     # useradd with -K because the user module cannot refuse the subordinate id ranges that login.defs grants by
     # default. The user task after it creates nothing then; in a dry run it is the one that reports the creation.
+    - name: Create the agents' group with the id chosen for the account
+      ansible.builtin.command:
+        argv: [groupadd, --gid, "{{ agent_gid }}", "{{ agent_user }}"]
+      changed_when: true
+      when: not agent_exists
+
     - name: Create the agents' account without subordinate id ranges
       ansible.builtin.command:
         argv:
@@ -270,7 +287,8 @@
           - --create-home
           - --home-dir
           - "{{ agent_home }}"
-          - --user-group
+          - --gid
+          - "{{ agent_gid }}"
           - --shell
           - "{{ agent_nologin }}"
           - --uid
@@ -282,6 +300,21 @@
           - "{{ agent_user }}"
       changed_when: true
       when: not agent_exists
+
+    - name: Look at the account that was created
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ agent_user }}"
+      when: not agent_exists and not ansible_check_mode
+
+    - name: Fail when the account did not get the ids chosen for it
+      ansible.builtin.assert:
+        that:
+          - getent_passwd[agent_user][1] == agent_uid | string
+          - getent_passwd[agent_user][2] == agent_gid | string
+        fail_msg: "{{ agent_user }} was created with uid {{ getent_passwd[agent_user][1] }} and gid {{ getent_passwd[agent_user][2] }}, not {{ agent_uid }}"
+        quiet: true
+      when: not agent_exists and not ansible_check_mode
 
     - name: Keep the agents' account locked, shell-less and with a home
       ansible.builtin.user:

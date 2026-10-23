@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
-from home_tools.system_step import AGENT_USER, Applied, CheckState, StepFailed, SystemStep
+from home_tools.system_step import AGENT_USER, Applied, CheckState, StepFailed, SystemStep, UnresolvableRunningUser
 from home_tools.tidy_home import Config, Layout
 from home_tools.user_units import UserUnits
 
@@ -241,10 +241,10 @@ def _role(ports: Ports) -> ExecutionRole:
 
 
 def runs_as_agent(ports: Ports) -> bool:
-    """A running user that has no passwd entry is not the agent; only setup itself reports that."""
+    """A running user the role cannot be told from (no passwd name, or `agent` sharing its uid) is not the agent; only setup itself reports that."""
     try:
         return _role(ports) is ExecutionRole.AGENT
-    except ValueError:
+    except UnresolvableRunningUser:
         return False
 
 
@@ -280,7 +280,11 @@ def _lines_under_heading(step: Step, apply: bool, outcome: str) -> list[str]:
 
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     """Stops at the first failed step, so a missing scanner never gets a hook activated."""
-    role = _role(ports)
+    try:
+        role = _role(ports)
+    except UnresolvableRunningUser as error:
+        print(f"hal setup: {error}", file=sys.stderr)
+        return 1
     for step in _steps(layout, ports):
         if not step.runs_for(role):
             print(f"{step.name}: {SKIPPED_FOR_THE_AGENT}")

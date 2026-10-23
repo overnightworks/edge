@@ -586,7 +586,7 @@ def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_wind
     hook.write_text("#!/bin/sh\n")
 
     def refusing_operator() -> str:
-        raise ValueError("no passwd entry for the running user")
+        raise system_step.UnresolvableRunningUser("no passwd entry for the running user")
 
     unreadable_setup = system_step.Boundaries(lambda: True, FakePlaybook(), refusing_operator)
     code = cli.main(["next"], home=home, run=RunnerWithRealGitAndQuality(), probe=probe, now=NOW, system_boundaries=unreadable_setup)

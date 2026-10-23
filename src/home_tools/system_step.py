@@ -109,8 +109,18 @@ def _run_scoped_environment(ansible_home: Path) -> dict[str, str]:
     }
 
 
+class UnresolvableRunningUser(ValueError):
+    """The running uid has no passwd name, or `agent` shares it with another name; the role cannot be told from the name."""
+
+
 def _running_user() -> str:
-    return pwd.getpwuid(os.getuid()).pw_name
+    uid = os.getuid()
+    names = [entry.pw_name for entry in pwd.getpwall() if entry.pw_uid == uid]
+    if not names:
+        raise UnresolvableRunningUser(f"no passwd entry for uid {uid}")
+    if len(names) > 1 and AGENT_USER in names:
+        raise UnresolvableRunningUser(f"uid {uid} has the names {', '.join(names)}; {AGENT_USER} must have a uid of its own")
+    return pwd.getpwuid(uid).pw_name
 
 
 @dataclass(frozen=True)
