@@ -218,12 +218,12 @@ class Hal:
     verifier: object
     monkeypatch: pytest.MonkeyPatch
 
-    def stop(self) -> tuple[int, str, str]:
+    def stop(self, key: str = KEY) -> tuple[int, str, str]:
         """With no terminal: stdout is a plain buffer."""
         self.monkeypatch.setattr(sys, "stdout", io.StringIO())
         self.monkeypatch.setattr(sys, "stdin", io.StringIO())
         exit_code = emergency.stop_unit(
-            switches.Switches(self.world.state), KEY, NOW, self.engine(), self.world.repository,
+            switches.Switches(self.world.state), key, NOW, self.engine(), self.world.repository,
             self.verifier, self.world.runtime,
         )  # fmt: skip
         return exit_code, sys.stdout.getvalue(), self.capsys.readouterr().err
@@ -277,6 +277,37 @@ def test_hal_stop_of_an_app_records_the_marker_before_it_plans_anything(app_worl
     assert hal.stop()[0] == 0
 
     assert planned_with_marker and all(planned_with_marker)
+
+
+UNSAFE_APP = "services:\n  '{key}': {{repo: {{default_branch: master}}, run: {{enabled: true}}}}\n"
+
+
+@pytest.mark.parametrize(
+    ("services", "key"),
+    [
+        ("services: null\n", KEY),
+        ("services: [hopin]\n", KEY),
+        (UNSAFE_APP, f"../{switches.GLOBAL_STOP_FILE}"),
+        (UNSAFE_APP, "{outside}"),
+    ],
+)
+def test_hal_stop_on_a_malformed_catalog_or_an_unsafe_app_key_cannot_plan_and_writes_nothing(
+    app_world, hal, tmp_path, services, key
+):
+    outside = tmp_path / "outside"
+    key = key.format(outside=outside)
+    write_fleet(
+        app_world.repository,
+        f"cloudflare:\n  zone: {ZONE}\ngithub: {{org: overnightworks}}\n"
+        + services.format(key=key),
+    )
+
+    exit_code, _, err = hal.stop(key)
+
+    assert exit_code == emergency.ApplyExit.CANNOT_PLAN
+    assert "edge stop: cannot plan" in err
+    assert [path for path in app_world.state.rglob("*") if path.is_file()] == []
+    assert not outside.exists()
 
 
 def test_hal_stop_of_a_disabled_app_with_nothing_running_says_so(app_world, hal):
