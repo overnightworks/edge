@@ -55,7 +55,8 @@ sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable 
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
-from edge_copy import ProbeFailed, expect  # noqa: E402
+from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
+from emergency_switch import EmergencySwitch  # noqa: E402
 
 from edge import checkout  # noqa: E402
 
@@ -71,7 +72,6 @@ READY_SECONDS = 90
 REQUEST_SECONDS = 3
 POLL_SECONDS = 0.5
 NOT_RUNNABLE = 3
-HAL_OK, HAL_FAILURE = 0, 3
 TAGS = {  # by cell, in the order they are cut: each is newer than the one before
     "a1": "v2026.10.22.1",
     "a3": "v2026.10.22.2",
@@ -101,9 +101,6 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
 # A service that no release of the app names
 GHOST = f"services:\n  ghost:\n    image: {BUSYBOX}\n    command: [sleep, '3600']\n"
 FORBIDDEN_VERBS = ("online", "offline", "--all")
-BARRIER_HEADER = "X-Edge-Barrier"
-SLOW_BUILD_SECONDS = 120  # long enough for `hal stop` to record while the build runs
-STOP_SECONDS = 60
 
 
 def free_port() -> int:
@@ -336,59 +333,6 @@ class Probe:
         )
         return output
 
-    def hal_without_terminal(self, *arguments: str, exit_code: int = HAL_OK) -> str:
-        """`hal <arguments>` of the copy with stdin and stdout that are no terminal, as an agent
-        runs it; the whitespace-normalised output of a run that exits `exit_code`."""
-        result = subprocess.run(
-            [str(self.copy / ".venv" / "bin" / "hal"), *arguments], stdin=subprocess.DEVNULL,
-            capture_output=True, env=self.environment, cwd=self.copy, check=False,
-            timeout=STOP_SECONDS,
-        )  # fmt: skip
-        output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
-        expect(
-            result.returncode == exit_code,
-            f"hal {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
-            f"{output[-300:]}",
-        )
-        return output
-
-    def apply_in_background(self) -> subprocess.Popen[bytes]:
-        """`hal apply --closed` at a pty where the operator has typed `yes`; the caller reads its
-        exit with `finished`."""
-        command = shlex.join([str(self.copy / ".venv" / "bin" / "hal"), "apply", "--closed"])
-        running = subprocess.Popen(
-            ["script", "-qec", command, "/dev/null"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=self.environment, cwd=self.copy,
-        )  # fmt: skip
-        running.stdin.write(b"yes\n")
-        running.stdin.close()
-        return running
-
-    def finished(self, running: subprocess.Popen[bytes], exit_code: int) -> str:
-        output = running.stdout.read()
-        running.wait(timeout=HAL_SECONDS)
-        text = " ".join(output.decode(errors="replace").split())
-        expect(
-            running.returncode == exit_code,
-            f"the background apply exited {running.returncode}, wanted {exit_code}: {text[-300:]}",
-        )
-        return text
-
-    def set_hosts(self, listed: bool) -> None:
-        """The app's one host in the catalog (no `edge.name` label stands behind it: the barrier
-        reads only the catalog) or none, published as a merged pull request."""
-        fleet = self.copy / "fleet.yaml"
-        host = (
-            f"    hosts: [{{name: {self.key}, exposure: public, reason: probe, ready: /version}}]\n"
-        )
-        lines = [
-            line for line in fleet.read_text().splitlines(keepends=True) if "hosts:" not in line
-        ]
-        if listed:
-            lines.append(host)
-        fleet.write_text("".join(lines))
-        edge_copy.publish(self.copy, f"probe: {self.key} hosts {listed}")
-
     def set_enabled(self, enabled: bool) -> None:
         """The catalog entry of the app switched on or off, published as a merged pull request
         and its pull would bring it."""
@@ -402,32 +346,25 @@ class Probe:
 
     # --- what a client of the probe's Traefik sees -------------------------------------------
 
-    def ask(self, path: str, host: str | None = None) -> tuple[int, str] | tuple[None, None]:
+    def ask_with_headers(
+        self, path: str, host: str | None = None
+    ) -> tuple[int, str, http.client.HTTPMessage] | None:
+        """(status, body, headers) of the probe's Traefik's answer; None when it gives none."""
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.edge_port, timeout=REQUEST_SECONDS
         )
         try:
             connection.request("GET", path, headers={"Host": host or f"{self.key}.{DOMAIN}"})
             response = connection.getresponse()
-            return response.status, response.read().decode().strip()
-        except OSError:
-            return None, None
-        finally:
-            connection.close()
-
-    def barrier_mark(self) -> str | None:
-        """The `X-Edge-Barrier` of the probe's Traefik's answer for the app's host, with its 404."""
-        connection = http.client.HTTPConnection(
-            "127.0.0.1", self.edge_port, timeout=REQUEST_SECONDS
-        )
-        try:
-            connection.request("GET", "/", headers={"Host": f"{self.key}.{DOMAIN}"})
-            response = connection.getresponse()
-            return response.getheader(BARRIER_HEADER) if response.status == 404 else None
+            return response.status, response.read().decode().strip(), response.msg
         except OSError:
             return None
         finally:
             connection.close()
+
+    def ask(self, path: str, host: str | None = None) -> tuple[int, str] | tuple[None, None]:
+        answer = self.ask_with_headers(path, host)
+        return (answer[0], answer[1]) if answer else (None, None)
 
     def wait_until(self, what: str, reached, seconds: int = READY_SECONDS) -> None:
         deadline = time.monotonic() + seconds
@@ -773,95 +710,13 @@ class Probe:
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
-    # --- the emergency switch (#255 P5) --------------------------------------------------------
-
-    @property
-    def marker(self) -> Path:
-        return self.home / ".local" / "state" / "edge" / "stopped" / self.key
-
-    @property
-    def barrier_file(self) -> Path:
-        return self.copy / "dynamic" / f"switch-{self.key}.yml"
-
-    def cell_d1_stop_without_a_terminal(self) -> None:
-        self.set_hosts(True)
-        before = self.only()["id"]
-        out = self.hal_without_terminal("stop", self.key)
-        expect(f"{self.key} is switched off (containers of {self.key} stopped" in out, out[-300:])
-        expect(self.marker.exists() and self.barrier_file.exists(), "D1: marker or barrier missing")
-        expect(self.barrier_mark() == self.key, "D1: Traefik does not answer the barrier's 404")
-        rows = self.containers()
-        expect([r["id"] for r in rows] == [before] and rows[0]["state"] == "exited", f"D1: {rows}")
-        again = self.hal_without_terminal("stop", self.key)
-        expect(f"{self.key} is already switched off (since" in again, f"D1 again: {again[-300:]}")
-        expect(self.barrier_mark() == self.key, "D1: the repeated stop lost the barrier")
-        print("D1 held: hal stop without a terminal wrote the marker and a proven barrier, stopped")
-
-    def cell_d2_stopped_app_stays_stopped(self) -> None:
-        tag = TAGS["d2"]
-        self.release(tag)
-        marker, barrier_bytes = self.marker.read_bytes(), self.barrier_file.read_bytes()
-        out = self.apply(typed=b"no\n")
-        expect(f"{self.key} stays stopped (switch since" in out, f"D2: {out[-300:]}")
-        expect("nothing to change" in out, f"D2: {out[-300:]}")
-        fetched = checkout.Git(self.srv).call(
-            ["for-each-ref", "--format=%(refname)", f"refs/edge/releases/{tag}"]
-        )
-        expect(fetched.stdout.decode().strip() == "", "D2: the new tag was fetched")
-        expect(
-            self.marker.read_bytes() == marker and self.barrier_file.read_bytes() == barrier_bytes,
-            "D2: the marker or the barrier changed",
-        )
-        print("D2 held: a stopped app with a newer tag waiting stays stopped, nothing fetched")
-
-    def cell_d7_start(self) -> None:
-        self.set_enabled(False)
-        out = self.hal("start", self.key, exit_code=HAL_FAILURE)
-        expect("refused" in out and "disabled in the catalog" in out, f"D7: {out[-300:]}")
-        expect(self.marker.exists(), "D7: the refused start cleared the marker")
-        self.set_enabled(True)
-        out = self.hal("start", self.key)
-        expect(f"{self.key} is on" in out, f"D7: {out[-300:]}")
-        expect(not self.marker.exists() and not self.barrier_file.exists(), "D7: switch remains")
-        expect(self.only()["health"] == "healthy", "D7: not healthy")
-        self.serves(self.deployed()["tag"])
-        self.set_hosts(False)
-        print("D7 held: hal start (yes) started, waited for health, opened; refused while disabled")
-
-    def cell_d4_stop_during_the_build(self) -> None:
-        self.apply()  # the tag of D2 is deployed
-        tag = TAGS["d4"]
-        sha = self.release(tag, slow_build=SLOW_BUILD_SECONDS)
-        before, record = self.only()["id"], self.record.read_text()
-        running = self.apply_in_background()
-        self.wait_until("the checkout is at the new tag", lambda: self.head() == sha)
-        out = self.hal_without_terminal("stop", self.key)
-        expect(f"{self.key} is switched off" in out, f"D4: {out[-300:]}")
-        text = self.finished(running, HAL_FAILURE)
-        expect("switched off meanwhile" in text and "not started" in text, f"D4: {text[-300:]}")
-        rows = self.containers()
-        expect(
-            [r["id"] for r in rows] == [before] and rows[0]["state"] == "exited",
-            f"D4: containers {rows}, before {before}; the apply said: {text[-700:]}",
-        )
-        expect(self.record.read_text() == record, "D4: the record moved")
-        expect(self.marker.exists(), "D4: the marker is gone")
-        out = self.hal("start", self.key)
-        expect(f"{self.key} is on" in out, f"D4: {out[-300:]}")
-        self.apply()
-        expect(self.deployed()["tag"] == tag, "D4: the app was not updated after the start")
-        print("D4 held: a stop during the build ran no create and kept the record (hal 3)")
-
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
         probe.bring_up()
         probe.cell_a1_first_apply()
         if switch_only:
-            probe.cell_d1_stop_without_a_terminal()
-            probe.cell_d2_stopped_app_stays_stopped()
-            probe.cell_d7_start()
-            probe.cell_d4_stop_during_the_build()
+            EmergencySwitch(probe, TAGS).prove()
             return 0
         probe.cell_a2_second_apply()
         probe.cell_a3_update()
@@ -875,10 +730,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_a23_interrupted_update()
         probe.cell_b5_image_volume()
         probe.cell_b8_pull_policy_always()
-        probe.cell_d1_stop_without_a_terminal()
-        probe.cell_d2_stopped_app_stays_stopped()
-        probe.cell_d7_start()
-        probe.cell_d4_stop_during_the_build()
+        EmergencySwitch(probe, TAGS).prove()
         probe.cell_c1_c2_off_and_on_again()
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
@@ -920,7 +772,9 @@ def main(argv: list[str] | None = None) -> int:
     except (ProbeFailed, subprocess.TimeoutExpired) as failure:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
-    if exit_code == 0:
+    if exit_code == 0 and arguments.switch_only:
+        print("PROBE PASSED: #255 A1, D1, D2, D4, D7 hold")
+    elif exit_code == 0:
         print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5, D1, D2, D4, D7 hold")
     return exit_code
 
