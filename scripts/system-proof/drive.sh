@@ -718,8 +718,8 @@ cell_a1_3_homes() {  # an existing account whose home is not its own; the dry ru
         "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link or not a directory" dry
     refuses_foreign_shape "a home that is a file of its own" "mv $AGENT_HOME $AGENT_HOME.real && touch $AGENT_HOME && chown agent:agent $AGENT_HOME" \
         "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link or not a directory" dry
-    refuses_foreign_shape "a home owned by root" "chown root:root $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home not owned by agent:agent" dry
-    refuses_foreign_shape "a home of group root" "chgrp root $AGENT_HOME" "chgrp agent $AGENT_HOME" "a home not owned by agent:agent" dry
+    refuses_foreign_shape "a home owned by root, group agent" "chown root:agent $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home not owned by agent:agent" dry
+    refuses_foreign_shape "a home of group root, owner agent" "chgrp root $AGENT_HOME" "chgrp agent $AGENT_HOME" "a home not owned by agent:agent" dry
     refuses_foreign_shape "a home that is missing" "mv $AGENT_HOME $AGENT_HOME.real" "mv $AGENT_HOME.real $AGENT_HOME" "a home that is missing" dry
     refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
     return
