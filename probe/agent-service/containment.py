@@ -29,7 +29,8 @@ from smoke import Tokens
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
-APP_CERTIFICATE = "/app/cert.pem"
+CERTIFICATE_FILE = "cert.pem"
+APP_CERTIFICATE = f"/app/{CERTIFICATE_FILE}"
 APP_PRIVATE_KEY = "/app/key.pem"
 SIGNING_KEY_BITS = "3072"
 SERVICE_SIGNING_KEY = "/etc/agent-service/signing.key"
@@ -173,7 +174,7 @@ class ContainmentProbe(IssuerProbe):
         self.write_mode(Mode.RELAY)
         openssl(
             "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(app / "key.pem"),
-            "-out", str(app / "cert.pem"), "-days", "1", "-subj", f"/CN={APP_SERVICE}",
+            "-out", str(app / CERTIFICATE_FILE), "-days", "1", "-subj", f"/CN={APP_SERVICE}",
             "-addext", f"subjectAltName=DNS:{APP_SERVICE}",
         )  # fmt: skip
         signing_key = directory / "signing.key"
@@ -181,7 +182,7 @@ class ContainmentProbe(IssuerProbe):
         signing_key.chmod(0o600)
         for readable in (app, self.mode_directory):
             readable.chmod(0o755)
-        for name in ("key.pem", "cert.pem"):
+        for name in ("key.pem", CERTIFICATE_FILE):
             (app / name).chmod(0o644)
         self.configuration.write_text(
             with_containment(
@@ -198,7 +199,7 @@ class ContainmentProbe(IssuerProbe):
                 SERVICE: {"volumes": [
                     {"type": "bind", "source": str(signing_key), "read_only": True,
                      "target": SERVICE_SIGNING_KEY},
-                    {"type": "bind", "source": str(app / "cert.pem"), "read_only": True,
+                    {"type": "bind", "source": str(app / CERTIFICATE_FILE), "read_only": True,
                      "target": SERVICE_APP_CA},
                 ]},
                 APP_SERVICE: {

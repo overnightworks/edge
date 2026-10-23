@@ -25,7 +25,8 @@ CANARY_MODE = "canary"
 PROTOCOL_VERSION = "2025-11-25"
 SESSION_ID = "probe-session"
 SIGNATURE_SEGMENT = 2
-KNOWN_METHODS = {"initialize", "notifications/initialized", "tools/list"}
+LIST_TOOLS_METHOD = "tools/list"
+KNOWN_METHODS = {"initialize", "notifications/initialized", LIST_TOOLS_METHOD}
 OTHER_METHOD = "other"
 PLAIN_DESCRIPTION = "Takes one step."
 NO_SCHEMA = {"type": "object", "properties": {}}
@@ -65,8 +66,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         method = message["method"] if message["method"] in KNOWN_METHODS else OTHER_METHOD
         signature = bearer_signature(self.headers.get("Authorization"))
-        planted = canary_text(signature) if method == "tools/list" else None
-        tools = offered_tools(planted) if method == "tools/list" else []
+        planted = canary_text(signature) if method == LIST_TOOLS_METHOD else None
+        tools = offered_tools(planted) if method == LIST_TOOLS_METHOD else []
         names = ",".join(tool["name"] for tool in tools) or "-"
         print(
             f"method={method} offered={names} canary={int(planted is not None)} "
@@ -85,7 +86,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "agent-app", "version": "1"},
             },
-            "tools/list": {"tools": tools},
+            LIST_TOOLS_METHOD: {"tools": tools},
         }
         document = {"jsonrpc": "2.0", "id": request_id}
         if method in results:
@@ -108,7 +109,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)
+    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)  # NOSONAR(S5332) TLS-wrapped below
     server.socket = context.wrap_socket(server.socket, server_side=True)
     server.serve_forever()
     return 0

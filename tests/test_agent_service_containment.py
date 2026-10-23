@@ -94,7 +94,8 @@ def test_a_failed_log_read_reports_no_output(containment, reader):
         return subprocess.CompletedProcess(command, 1, stdout=marker + "\n", stderr=marker + "\n")
 
     probe.run = failed_run
+    read = getattr(probe, reader)
     with pytest.raises(containment.ProbeFailed) as raised:
-        getattr(probe, reader)()
+        read()
     assert marker not in str(raised.value)
     assert "exited 1" in str(raised.value)
