@@ -341,6 +341,19 @@ def test_hal_stop_on_a_malformed_catalog_or_an_unsafe_app_key_cannot_plan_and_wr
     assert not outside.exists()
 
 
+def test_hal_stop_that_cannot_plan_after_recording_the_switch_says_it_is_recorded(app_world, hal):
+    deployed(app_world)
+    another = "  other: {repo: {default_branch: master}, run: {enabled: maybe}}\n"
+    write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{FLEET}{another}")
+
+    exit_code, _, err = hal.stop()
+
+    assert exit_code == emergency.ApplyExit.CANNOT_PLAN
+    assert "edge stop: cannot plan, services.other.run.enabled: must be true or false" in err
+    assert "the switch is recorded; run `edge stop hopin` again" in err
+    assert switches.Switches(app_world.state).mark(KEY) is not None
+
+
 def test_hal_stop_of_a_disabled_app_with_nothing_running_says_so(app_world, hal):
     write_fleet(
         app_world.repository, f"cloudflare:\n  zone: {ZONE}\n" + FLEET.replace("true", "false")

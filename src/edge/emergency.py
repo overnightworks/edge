@@ -46,12 +46,14 @@ def _complain(command: str, line: str) -> None:
     print(f"{command}: {line}", file=sys.stderr)
 
 
-def _read_fleet(command: str, engine: compose.Compose, repository: Path) -> unit_plans.Fleet | None:
-    """The fleet; None, after saying why, when it cannot be planned."""
+def _read_fleet(
+    command: str, engine: compose.Compose, repository: Path, remedy: str = ""
+) -> unit_plans.Fleet | None:
+    """The fleet; None, after saying why and the `remedy`, when it cannot be planned."""
     try:
         return unit_plans.read_fleet(engine, repository)
     except (compose.ComposeError, catalog.CatalogError) as error:
-        _complain(command, f"cannot plan, {error}")
+        _complain(command, f"cannot plan, {error}{remedy}")
         return None
 
 
@@ -62,10 +64,11 @@ def _apps_of(fleet: unit_plans.Fleet, repository: Path) -> tuple[catalog.App, ..
 
 
 def _read_subject(
-    command: str, engine: compose.Compose, repository: Path, key: str
+    command: str, engine: compose.Compose, repository: Path, key: str, remedy: str = ""
 ) -> tuple[unit_plans.Fleet, catalog.Unit | catalog.App] | None:
-    """The fleet and the unit or app named; None, after saying why, when it cannot be planned."""
-    fleet = _read_fleet(command, engine, repository)
+    """The fleet and the unit or app named; None, after saying why and the `remedy`, when it
+    cannot be planned."""
+    fleet = _read_fleet(command, engine, repository, remedy)
     if fleet is None:
         return None
     unit = next((unit for unit in fleet.units if unit.key == key), None)
@@ -74,7 +77,7 @@ def _read_subject(
     try:
         every = _apps_of(fleet, repository)
     except catalog.CatalogError as error:
-        _complain(command, f"cannot plan, {error}")
+        _complain(command, f"cannot plan, {error}{remedy}")
         return None
     app = next((app for app in every if app.key == key), None)
     if app is None:
@@ -145,16 +148,17 @@ def stop_unit(
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     runtime = runtime or apps.AppRuntime.of(Path.home(), marks.directory)
-    _record_app_first(marks, key, now, repository)
+    recorded = _record_app_first(marks, key, now, repository)
+    remedy = f"; the switch is recorded; run `{STOP} {key}` again" if recorded else ""
     try:
-        read = _read_subject(STOP, engine, repository, key)
+        read = _read_subject(STOP, engine, repository, key, remedy)
         if read is None:
             return ApplyExit.CANNOT_PLAN
         fleet, subject = read
         target = _target_of(subject, fleet, engine, repository, verifier, runtime)
         running = target.running()
     except (compose.ComposeError, barrier.BarrierError) as error:
-        _complain(STOP, f"cannot plan, {error}")
+        _complain(STOP, f"cannot plan, {error}{remedy}")
         return ApplyExit.CANNOT_PLAN
     if not running and not target.enabled:
         _say(STOP, f"{key} is disabled in the catalog and nothing of it runs")
@@ -175,15 +179,18 @@ def stop_unit(
     return _close(marks, target, now)
 
 
-def _record_app_first(marks: switches.Switches, key: str, now: datetime, repository: Path) -> None:
-    """The marker of an enabled app, before anything is planned, so apply stops fetching and
-    building it within the first moment of the stop (`compose config` and `ps` take seconds). A
-    failure here is not reported: the close records again and reports a record that failed."""
+def _record_app_first(marks: switches.Switches, key: str, now: datetime, repository: Path) -> bool:
+    """Whether the marker of an enabled app was recorded before anything is planned, so apply
+    stops fetching and building it within the first moment of the stop (`compose config` and `ps`
+    take seconds). A failure here is not reported: the close records again and reports a record
+    that failed."""
     try:
         if catalog.is_enabled_app(catalog.read(repository / catalog.FLEET_FILE), key):
             marks.record(key, now)
+            return True
     except (catalog.CatalogError, OSError, switches.SwitchError):
         pass
+    return False
 
 
 def _confirmed_off(
