@@ -302,6 +302,12 @@ services:
       - ./step-ca/ca.json:/etc/step-ca/ca.json:ro
       # Intermediate certificate and key, the root certificate and the db; never the root key.
       - step-ca:/home/step
+    # The image's own check lacks --ca-url and always fails. Reads only the public root certificate.
+    healthcheck:
+      test: ["CMD", "step", "ca", "health", "--ca-url", "https://step-ca:9000", "--root", "/home/step/certs/root_ca.crt"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Gives the ACME volume to uid 65534: a new named volume belongs to root, and traefik-mcp is
   # read_only and not root.

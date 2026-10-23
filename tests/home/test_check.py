@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import select
 import shutil
@@ -7,12 +8,13 @@ import subprocess
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 from conftest import FakeProbe, RunnerWithRealGitAndQuality, Sandbox
 
-from home_tools import cli
+from home_tools import check, cli, platform_check
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
 from home_tools.tidy_home import Layout
 
@@ -29,14 +31,39 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
     """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
 
     container_listing = ""
+    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, compose project per line
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "journalctl":
             return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
+        if argv[:2] == ["docker", "inspect"] and argv[3] == platform_check.INSPECT_FORMAT:
+            self.calls.append(list(argv))
+            return self.platform_listing
         if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
             self.calls.append(list(argv))
-            return {"ps": "id0\n" if self.container_listing else "", "info": "journald\n", "inspect": self.container_listing}[argv[1]]
+            return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
         return super().__call__(argv)
+
+
+@pytest.fixture(autouse=True)
+def quiet_platform(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The platform check looks at this machine's reboot flag; the tests look at a path that holds none."""
+    monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
+
+
+def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | None = None) -> None:
+    last_backup = last_backup or datetime.now().astimezone()
+    document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
+    document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
+    status_file = Layout(home).backup_status_file
+    status_file.parent.mkdir(parents=True, exist_ok=True)
+    status_file.write_text(json.dumps(document))
+
+
+@pytest.fixture(autouse=True)
+def good_backup(clean_home: Path) -> None:
+    """These tests are about the check's reporting and news; a backup that ran today keeps its check clean (its own tests: test_backup_check.py)."""
+    write_backup_status(clean_home)
 
 
 @pytest.fixture
@@ -76,6 +103,47 @@ def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(
 
     assert code == 1
     assert "container-json-file | songmaker-api-1" in (clean_home / ".local/state/home/check-report.md").read_text()
+
+
+def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_the_report_when_fixed(clean_home, runner) -> None:
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
+    home_check(clean_home, runner)
+    runner.platform_listing = "/edge-step-ca-1\trunning\thealthy\t0\tedge\n"
+
+    code = home_check(clean_home, runner)
+
+    assert code == 0
+    assert "container-unhealthy" not in Layout(clean_home).check_findings_file.read_text()
+    assert runner.notification_bodies[0].startswith("1 neu, 0 weg.")
+
+
+def test_many_new_findings_give_one_notification_with_their_count(clean_home, runner) -> None:
+    runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tedge\n" for n in range(4))
+
+    home_check(clean_home, runner)
+
+    assert len(runner.notifications) == 1
+    assert runner.notification_bodies[0].startswith("4 neu, 0 weg.")
+
+
+def test_a_stale_backup_is_in_the_daily_report(clean_home, runner) -> None:
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
+
+    code = home_check(clean_home, runner)
+
+    assert code == 1
+    assert "backup-stale | songmaker" in Layout(clean_home).check_report_file.read_text()
+
+
+def test_a_pending_reboot_notifies_once_and_does_not_nag(clean_home, runner, tmp_path) -> None:
+    (tmp_path / "reboot-required").touch()
+    home_check(clean_home, runner)
+    os.utime(tmp_path / "reboot-required", (1.0, 1.0))
+
+    code = home_check(clean_home, runner)
+
+    assert code == 1
+    assert len(runner.notifications) == 1
 
 
 def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean_home, leave_pasted_image, runner) -> None:

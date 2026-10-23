@@ -80,7 +80,7 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 ```
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
-`home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung und die Log-Prüfung — und schreibt einen gemeinsamen
+`home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`. Eine
 Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
 wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
@@ -148,6 +148,25 @@ Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt
 
 Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
 zerbrochen, nie als sauber.
+
+### Die Prüfungen `backup` und `platform`
+
+Beide lesen nur und ändern nichts. Was sie lesen, ist fest: nie ein Container-Log, nie die Umgebung eines Containers, nie
+`~/.secrets` oder `~/backups`. Bericht und Benachrichtigung tragen nur Namen, Zustände und Zeiten. Ein Fund ist Regel
+plus Gegenstand (Containername, Appname); sein Alter gehört nie dazu. Lässt sich die Quelle nicht lesen, ist das ein
+eigener Fund, nie ein sauberer Lauf.
+
+- **`platform`, Container.** Jeder Container mit nicht leerem Compose-Projekt-Label (`docker inspect --format` mit
+  benannten Feldern, ein Aufruf für alle): `container-unhealthy`, `container-restarting`, `container-dead` und
+  `container-exited` mit Code ungleich 0. Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
+  ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein abgeschalteter Dienst, der mit 137 oder 143
+  endete, erscheint; das ist hingenommen. `docker-unreadable`, wenn Docker nicht lesbar ist.
+- **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
+  Datum“). Es meldet einmal und nervt nicht.
+- **`backup`.** `~/.local/state/edge/backup-status.json` (Schema 2, nur die dokumentierten Felder): `backup-failed`,
+  wenn der letzte Lauf `failed` ist; `backup-crashed`, wenn `running` länger als 6 Stunden her ist; `backup-stale` je
+  App, wenn `last_successful_backup` älter als 8 Tage ist oder fehlt; `backup-status-unreadable`, wenn die Datei
+  fehlt, nicht lesbar ist oder ein anderes Schema hat. Die 8 Tage und 6 Stunden sind Konstanten in `backup_check.py`.
 
 ### Die Prüfung `logs`
 
