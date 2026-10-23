@@ -425,6 +425,15 @@ observe_journal_line() {  # observe_journal_line <text>
     return 0
 }
 
+wait_until_journal_line_is_there() {  # wait_until_journal_line_is_there <text>: present within 30 s, by a successful query
+    local text=$1 deadline=$((SECONDS + 30))
+    while ((SECONDS < deadline)); do
+        [[ $(observe_journal_line "$text") == present ]] && return 0
+        sleep 1
+    done
+    return 1
+}
+
 wait_until_journal_line_is_gone() {  # wait_until_journal_line_is_gone <text>: absent within 190 s, by a successful query
     local text=$1 deadline=$((SECONDS + 190))
     while ((SECONDS < deadline)); do
@@ -441,7 +450,7 @@ cell_t3() {
     printf '%s\n' '[Timer]' 'OnCalendar=' 'OnCalendar=minutely' >"$override_timer/proof.conf"
     systemctl daemon-reload && systemctl restart "$RETENTION_TIMER"
     logger -t proof-marker "$marker"
-    verdict T3 "the marker line is in the journal before the run" '[[ $(observe_journal_line "$marker") == present ]]'
+    verdict T3 "the marker line is in the journal before the run" 'wait_until_journal_line_is_there "$marker"'
     verdict T3 "a quiet journal loses the marker within 3 min 10 s, seen by a query that succeeded" \
         'wait_until_journal_line_is_gone "$marker"'
     rm -rf "$override_service" "$override_timer"
@@ -623,6 +632,66 @@ cell_a1_3() {
     refuses_foreign_shape "the shell bash" 'usermod --shell /bin/bash agent' 'usermod --shell /usr/sbin/nologin agent'
     refuses_foreign_shape "linger" 'loginctl enable-linger agent' 'loginctl disable-linger agent'
     refuses_foreign_shape "a usable password" 'passwd --delete agent >/dev/null' 'usermod --lock agent'
+    refuses_foreign_shape "a subgid entry" 'echo agent:100000:65536 >>/etc/subgid' "sed -i '/^agent:/d' /etc/subgid"
+    refuses_foreign_shape "another home" 'usermod --home /srv/agent-elsewhere agent' "usermod --home $AGENT_HOME agent"
+    refuses_foreign_shape "a home that is a link" "mv $AGENT_HOME $AGENT_HOME.real && ln -s $AGENT_HOME.real $AGENT_HOME" \
+        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME"
+    refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
+    cell_a1_3_subordinate_ids_of_the_new_account
+    cell_a1_3_cron_files
+    return
+}
+
+next_free_system_id() {  # the id the play gives a new account: the highest below 1000 that no user and no group has
+    local id
+    for ((id = 999; id >= 100; id--)); do
+        getent passwd "$id" >/dev/null || getent group "$id" >/dev/null || { echo "$id"; return 0; }
+    done
+    return 1
+}
+
+cell_a1_3_subordinate_ids_of_the_new_account() {  # a numeric entry for the id the new account would get
+    local id code
+    userdel --remove agent
+    id=$(next_free_system_id) || return 1
+    echo "$id:100000:65536" | tee -a /etc/subuid >>/etc/subgid
+    at_terminal a1-3-new-ids "$HOME_BIN setup --apply"
+    code=$?
+    verdict A1-3 "a subuid and subgid entry for the id the new account would get: exit 1, nothing created" \
+        '[ $code -eq 1 ] && in_log a1-3-new-ids "nothing was written" && ! getent passwd agent >/dev/null && [ ! -e "$AGENT_HOME" ]'
+    sed -i "/^$id:/d" /etc/subuid /etc/subgid
+    at_terminal a1-3-new-ids-undone "$HOME_BIN setup --apply"
+    verdict A1-3 "the entries gone, the apply creates the account again" agent_is_dormant
+    return
+}
+
+keep_the_cron_deny_of() {  # keep_the_cron_deny_of <entry> <owner:group> <mode>: the file the operator already has
+    printf '%s\n' "$1" >/etc/cron.deny
+    chown "$2" /etc/cron.deny
+    chmod "$3" /etc/cron.deny
+    return
+}
+
+cron_deny_is() {  # cron_deny_is <entries> <owner:group> <mode>
+    [[ $(tr '\n' ' ' </etc/cron.deny) == "$1 " ]] && [[ $(stat -c '%U:%G' /etc/cron.deny) == "$2" ]] && [[ $(stat -c %a /etc/cron.deny) == "$3" ]]
+    return
+}
+
+cell_a1_3_cron_files() {  # the states of the files; the proof image has no cron, so crontab itself is not driven
+    local code
+    keep_the_cron_deny_of bob root:bystander 640
+    at_terminal a1-3-cron-deny "$HOME_BIN setup --apply"
+    code=$?
+    verdict A1-3 "an existing cron.deny keeps owner and mode and gains the agent line" \
+        '[ $code -eq 0 ] && cron_deny_is "bob agent" root:bystander 640'
+    keep_the_cron_deny_of bob root:root 644
+    echo alice >/etc/cron.allow
+    at_terminal a1-3-cron-allow "$HOME_BIN setup --apply"
+    code=$?
+    verdict A1-3 "a cron.allow without the agent denies it already: exit 0, cron.deny left alone" \
+        '[ $code -eq 0 ] && cron_deny_is bob root:root 644 && [[ $(cat /etc/cron.allow) == alice ]]'
+    rm -f /etc/cron.allow
+    keep_the_cron_deny_of agent root:root 644
     return
 }
 
@@ -641,7 +710,8 @@ cell_a1_4_and_5() {
          in_log a1-4-dry "User units: skipped" && in_log a1-4-dry "Ansible: skipped" && in_log a1-4-dry "System: skipped"'
     run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
     verdict A1-4 "home next lists none of the operator's steps" \
-        'in_log a1-4-next "hal setup --apply" && ! grep -qE "User units|Ansible|System" "$EVIDENCE/a1-4-next.log"'
+        'in_log a1-4-next "hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed" &&
+         ! grep -qiE "User units|Ansible|System|sudo|eigenes Terminalfenster|secrets" "$EVIDENCE/a1-4-next.log"'
     run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
     apply=$?
     verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \

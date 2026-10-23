@@ -62,9 +62,9 @@ def _as_command(text: str) -> str:
     return inner if text != inner and "`" not in inner else text
 
 
-def _setup_apply_step(expected: str, why: str = "") -> OperatorStep:
-    """`hal setup --apply` runs every step, so whichever is open, the command asks for sudo in the operator's own window."""
-    asks_for_sudo = setup.APPLY_ASKS_FOR_SUDO
+def _setup_apply_step(ports: Ports, expected: str, why: str = "") -> OperatorStep:
+    """`hal setup --apply` runs every step, so whichever is open, it asks the operator for sudo in the own window; not the agent."""
+    asks_for_sudo = setup.apply_asks_for_sudo(ports)
     return OperatorStep(
         _as_command(hook_check.SETUP_APPLY),
         OWN_TERMINAL if asks_for_sudo else ANY_TERMINAL,
@@ -77,7 +77,7 @@ def _setup_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     """One `hal setup --apply` for every open step."""
     if pending := setup.pending(layout, ports):
         changed = f"{', '.join(step.name for step in pending)}: changed"
-        yield _setup_apply_step(changed, "; ".join(dict.fromkeys(step.why for step in pending)))
+        yield _setup_apply_step(ports, changed, "; ".join(dict.fromkeys(step.why for step in pending)))
 
 
 def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
@@ -119,7 +119,12 @@ def _bookkeeping(kinds_in_order: Iterable[Tally | None], found: Iterable[tuple[T
 
 
 def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkeeping]:
-    """Every operator finding of the view is a step: its fix, the command its rule names, or else by hand; the rest is counted."""
+    """Every operator finding of the view is a step: its fix, the command its rule names, or else by hand; the rest is counted.
+
+    The agent holds no `~/.secrets`, so none of it is its step.
+    """
+    if setup.runs_as_agent(ports):
+        return
     view, _report = secrets_view.inspect(layout, ports.probe, ports.now)
     entries = {status.entry.name: status.entry for status in view.statuses}
     fixable: list[SecretFinding] = []
@@ -151,7 +156,7 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     for finding in hook_check.collect_findings(layout, ports.run):
         cleared = f"home check meldet {finding.rule} für {finding.subject} nicht mehr"
         if finding.fix == hook_check.SETUP_APPLY:
-            yield _setup_apply_step(cleared)
+            yield _setup_apply_step(ports, cleared)
         else:
             yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, cleared)
 

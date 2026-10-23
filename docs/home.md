@@ -485,7 +485,8 @@ come before the system step, which is the one that asks for sudo:
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
 Aktivierung run, and User units, Ansible, System and Geheimnisse print `skipped: the operator's step`
-(the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them. Everyone else, root
+(the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
+apply, and lists no secrets. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
 
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
@@ -547,9 +548,14 @@ below are home's own and are not backed up.
     journal lines do not come back.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
-  (`useradd -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`), no linger, and a line in the new `/etc/cron.deny`, which
-  leaves every other user as before. An `agent` that already exists with an extra group, a subuid or subgid
-  entry, another shell, a usable password or linger is refused before anything is written, in the dry run too.
+  (`useradd --uid <next free system id> -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`), no linger, and a line in
+  `/etc/cron.deny`: an existing one keeps its owner, mode and entries, a new one is `root:root 0644`, and every
+  other user keeps today's cron. An `agent` that already exists with an extra group, a subuid or subgid entry
+  (by name or by its uid or gid), another shell, a usable password, linger, a home other than `/home/agent`, or a
+  home that is a link or not a directory owned by it, or whose uid another user shares, is refused before
+  anything is written, in the dry run too; so is a new account whose id has a subordinate id entry, and an
+  `agent` listed in `/etc/cron.allow`. A `cron.allow` without it denies it already, and `cron.deny` stays as it is.
+  The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
   A revert keeps the user and its home.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,

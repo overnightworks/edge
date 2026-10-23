@@ -38,10 +38,6 @@ UNITS_WHY = "without the links and the reload the timers run no unit of this che
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
 SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
-# `--apply` runs every step, a verified one too, and the system step always asks for sudo, which needs a person at a terminal.
-# The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
-APPLY_ASKS_FOR_SUDO = True
-
 SKIPPED_FOR_THE_AGENT = "skipped: the operator's step"
 
 
@@ -242,6 +238,22 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 def _role(ports: Ports) -> ExecutionRole:
     return ExecutionRole.of(ports.system.operator_user())
+
+
+def runs_as_agent(ports: Ports) -> bool:
+    """A running user that has no passwd entry is not the agent; only setup itself reports that."""
+    try:
+        return _role(ports) is ExecutionRole.AGENT
+    except ValueError:
+        return False
+
+
+def apply_asks_for_sudo(ports: Ports) -> bool:
+    """`--apply` runs every step, a verified one too, and the system step always asks for sudo at a terminal; the agent skips it.
+
+    The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
+    """
+    return not runs_as_agent(ports)
 
 
 def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:

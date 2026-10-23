@@ -540,13 +540,19 @@ def test_before_any_verified_run_the_system_step_shows_and_neither_ansible_nor_s
     assert [call for call in runner.calls if Path(call[0]).name in {"sudo", "ansible-playbook"}] == []
 
 
-def test_as_the_agent_home_next_lists_none_of_the_operators_steps(home: Path, sandbox: Sandbox, probe: FakeProbe, capsys) -> None:
-    """Matrix A1 cell 4: Ansible, the system step and the user units are not the agent's to do."""
+def test_as_the_agent_home_next_lists_none_of_the_operators_steps(
+    home: Path, sandbox: Sandbox, use_manifest, probe: FakeProbe, capsys
+) -> None:
+    """Matrix A1 cell 4: Ansible, the system step, the user units and the secrets are not the agent's; it is never asked for sudo."""
+    use_manifest(TEST_MANIFEST + OPEN_ENTRIES)
     sandbox.system.user = system_step.AGENT_USER
 
     _, lines = home_next(home, probe, capsys)
 
-    assert lines[0].split(" — erwartet: ")[1].split(";")[0] == "quality, Engines, Hook-Dateien, Aktivierung: changed"
+    assert lines == [
+        "1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed",
+        "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+    ]
 
 
 @pytest.mark.usefixtures("hook_installed")
