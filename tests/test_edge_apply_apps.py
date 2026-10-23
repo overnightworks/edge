@@ -577,7 +577,8 @@ def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops
     assert app_world.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
     assert exit_code == 1
     assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
-    assert "`hal start hopin`" in err
+    assert "`edge start hopin` switches it back on" in err
+    assert "hal start" not in err
     assert "`edge apply` again" not in err
     assert not any(row["State"] == "running" for row in app_world.docker.rows)
     assert not (app_world.state / "deployed").exists()

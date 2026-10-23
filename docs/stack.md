@@ -54,10 +54,11 @@ and `edge apply --closed` writes it again.
 - **Switching an app off at once** (`hal stop <app>`, no terminal) records the marker, then writes and
   proves the barrier over the app's catalog hosts, then stops the containers of its Compose project
   (file-free; volumes, checkout and record stay). `hal apply` never starts a stopped app: it names it
-  and fetches nothing, and a stop that arrives during the `yes`, the build, the start or the health wait
-  wins: the app is not started, or what started is removed, and apply ends partial. `hal start <app>`
-  (terminal, `yes`) starts the stopped containers, waits for health, removes the barrier and clears the
-  marker; `hal online` proves the barriers of apps as of units.
+  and fetches nothing, refuses the whole run while a container of it still runs, and a stop that
+  arrives during the `yes`, the build, the start or the health wait wins: the app is not started, or
+  what started is removed, and apply ends partial. `hal start <app>` (terminal, `yes`) starts the
+  stopped containers, waits for health, removes the barrier and clears the marker; `hal online` proves
+  the barriers of apps as of units.
 
 What the entrypoint answers without a route: an unknown host or invalid name gets `404`; an HTTP/1.1
 request without a `Host` header gets `400` (Go's HTTP server rejects it); an HTTP/1.0 one gets `404`.

@@ -2,8 +2,7 @@
 `probe.py`: D1 `hal stop` without a terminal (twice), D2 a stopped app with a newer tag waiting
 stays stopped, D7 `hal start` and its refusal while disabled, D4 a stop during the build.
 
-D10 is not driven: the compose contract still refuses a `depends_on` that waits for health, so the
-probe has no app whose `start` waits.
+D10, a stop while apply holds the switch lock, is a unit test.
 """
 
 from __future__ import annotations

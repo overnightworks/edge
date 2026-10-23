@@ -18,7 +18,8 @@ and a `depends_on` that waits for health or completion are refused. A new tag th
 run is partial and the fix is a newer tag.
 
 An app that `hal stop` switched off (its marker, or the barrier a stop left) is never planned: no
-fetch, no checkout, no build. A stop that comes in after the plan wins: the marker and the barrier
+fetch, no checkout, no build; one file-free `ps` asks whether it still runs, and apply refuses the
+whole run while it does. A stop that comes in after the plan wins: the marker and the barrier
 are looked at again before the checkout, under the switch lock around `create` and `start`
 together, and under it once more after the health wait; from `create` on, the off step removes
 whatever started. A stop that comes in while the lock is held waits for it, then stops what
@@ -350,9 +351,9 @@ class SwitchedOffLine(str):
 
 def retry_advice(key: str, failure: str, apply_command: str) -> str:
     """What to do after a run that failed: apply again, unless a stop won, which only
-    `hal start` ends."""
+    `edge start` ends (E3: the stack's lines name `edge`)."""
     if isinstance(failure, SwitchedOffLine):
-        return f"`hal start {key}` switches it back on"
+        return f"`edge start {key}` switches it back on"
     return f"run `{apply_command}` again"
 
 

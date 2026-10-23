@@ -15,8 +15,8 @@ with `compose.yaml` missing or invalid at HEAD, C5 off with a leftover container
 service after an update dropped one, and the emergency switch (#255 P5): D1 `hal stop` without a
 terminal (marker, barrier answered by the probe's Traefik, containers stopped), D2 a stopped app
 with a newer tag waiting stays stopped, D4 a stop during the build leaves the containers and the
-record, D7 `hal start` and its refusal while disabled. D10 is not driven: the compose contract
-still refuses a `depends_on` that waits for health. The exits are hal's: 0 or 3.
+record, D7 `hal start` and its refusal while disabled; D10, a stop while apply holds the switch
+lock, is a unit test. The exits are hal's: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
