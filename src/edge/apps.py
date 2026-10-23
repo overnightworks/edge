@@ -360,8 +360,15 @@ def _switch_off(off: OffPlan, runtime: AppRuntime, progress: Progress) -> str | 
         engine.stop()
         progress.step = f"remove the containers of {key}"
         engine.remove()
+        progress.step = f"remove the one-off containers of {key}"
+        if left := engine.containers():
+            engine.remove_by_identifier([container.identifier for container in left])
+            left = engine.containers()
     except compose.ComposeError as error:
         return f"{key}: could not {progress.step}, {error}"
+    if left:
+        shown = ", ".join(container.describe() for container in left)
+        return f"{key}: could not remove every container of {key}, left: {shown}"
     return None
 
 

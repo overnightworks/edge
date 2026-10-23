@@ -454,21 +454,34 @@ class OffDocker:
     listing, and the file-free `stop` and `rm -f`, which empty the table. Every other call goes to
     the scripted Docker, which fails the test on a `down`, a `-v` or a file-bound call."""
 
-    def __init__(self, scripted: ScriptedDocker, volumes: list[str]) -> None:
-        self.scripted, self.volumes = scripted, volumes
+    def __init__(self, scripted: ScriptedDocker, volumes: dict[str, str]) -> None:
+        self.scripted, self.volumes = scripted, volumes  # volume name -> its key in the file
         self.commands: list[list[str]] = []
         self.failing: str | None = None
+        self.removal_by_identifier_works = True
+        self.survivors: set[str] = set()  # services whose containers only `docker rm` removes
 
     def run(self, command, timeout, stdin=None):
         self.commands.append(command)
         if command[:3] == ["docker", "volume", "ls"]:
-            return subprocess.CompletedProcess(command, 0, "\n".join(self.volumes), "")
+            shown = self.volumes.values() if "Label" in command[-1] else self.volumes
+            return subprocess.CompletedProcess(command, 0, "\n".join(shown), "")
+        if command[:3] == ["docker", "rm", "-f"]:
+            assert "-v" not in command and "--volumes" not in command, command
+            listed = {row["ID"] for row in self.scripted.rows}
+            assert command[3:] and set(command[3:]) <= listed, command
+            if not self.removal_by_identifier_works:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            self.scripted.rows[:] = [r for r in self.scripted.rows if r["ID"] not in command[3:]]
+            return subprocess.CompletedProcess(command, 0, "", "")
         if command[4:5] in (["stop"], ["rm"]):
             assert command[4:] in (["stop"], ["rm", "-f"]), command
             if self.failing == command[4]:
                 return subprocess.CompletedProcess(command, 3, SENTINEL, SENTINEL)
             if command[4] == "rm":
-                self.scripted.rows.clear()
+                self.scripted.rows[:] = [
+                    r for r in self.scripted.rows if r["Service"] in self.survivors
+                ]
             return subprocess.CompletedProcess(command, 0, "", "")
         return self.scripted.run(command, timeout, stdin)
 
@@ -483,7 +496,7 @@ def switch_off(world: World) -> OffDocker:
     if not world.docker.rows:
         world.docker.put(KEY, "running", "healthy")
     world.docker.put("leftover", "exited")
-    fake = OffDocker(world.docker, [f"{KEY}_data"])
+    fake = OffDocker(world.docker, {f"{KEY}_data": "data"})
     world.runtime = dataclasses.replace(world.runtime, docker=fake.run)
     return fake
 
@@ -496,7 +509,7 @@ def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(worl
     assert not plan.changes_nothing
     assert plan.describe() == [
         f"{KEY}: off (containers {KEY} running (healthy), leftover exited; "
-        f"named volumes {KEY}_data stay; ~/srv/{KEY} stays)"
+        f"named volumes data stay; ~/srv/{KEY} stays)"
     ]
 
 
@@ -510,6 +523,7 @@ def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(
     assert off.commands == [
         ["docker", "compose", "-p", KEY, "stop"],
         ["docker", "compose", "-p", KEY, "rm", "-f"],
+        ["docker", "compose", "-p", KEY, "ps", "--all", "--format", "json"],
     ]
     assert world.docker.rows == []
     assert world.plan().changes_nothing
@@ -525,7 +539,7 @@ def test_off_never_fetches_and_leaves_the_checkout_and_the_record(world, origin)
 
     assert world.run() == []
 
-    assert off.compose_calls()[-2:] == [["stop"], ["rm", "-f"]]
+    assert [call[0] for call in off.compose_calls()[-3:]] == ["stop", "rm", "ps"]
     assert head_of(world.srv) == sha
     assert world.deployed() == record
 
@@ -659,3 +673,40 @@ def test_a_service_with_pull_policy_always_is_started_from_the_inspected_image(w
     assert "pull" not in verbs[verbs.index("image inspect") :]
     create = next(arguments for verb, arguments, _ in world.docker.calls if verb == "create")
     assert create == ("--no-build", "--pull", "never", "--remove-orphans")
+
+
+def test_off_removes_a_one_off_container_that_rm_leaves_by_its_identifier_and_never_a_volume(world):
+    off = switch_off(world)
+    world.docker.put("oneoff", "running")
+    off.survivors.add("oneoff")
+    plan = world.plan()
+    off.commands.clear()
+
+    assert world.run(plan) == []
+
+    assert ["docker", "rm", "-f", "id3"] in off.commands
+    assert world.docker.rows == []
+
+
+def test_a_container_that_survives_even_docker_rm_ends_the_off_partial_naming_service_and_state(
+    world,
+):
+    off = switch_off(world)
+    world.docker.put("stuck", "running")
+    off.survivors.add("stuck")
+    plan = world.plan()
+    off.removal_by_identifier_works = False
+
+    [failure] = world.run(plan)
+
+    assert failure == f"{KEY}: could not remove every container of {KEY}, left: stuck running"
+
+
+def test_a_volume_name_that_compose_interpolates_never_reaches_the_plan(world):
+    off = switch_off(world)
+    off.volumes = {SENTINEL: "data"}
+
+    [line] = world.plan().describe()
+
+    assert SENTINEL not in line
+    assert "named volumes data stay" in line

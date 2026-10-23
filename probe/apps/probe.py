@@ -387,17 +387,27 @@ class Probe:
         listed = self.docker("volume", "ls", "--quiet", "--filter", project).stdout.decode()
         return sorted(listed.split())
 
+    def volume_keys(self) -> list[str]:
+        """The keys in the compose file of those volumes, from the label Compose sets."""
+        project = f"label=com.docker.compose.project={self.key}"
+        key = '{{.Label "com.docker.compose.volume"}}'
+        listed = self.docker("volume", "ls", "--filter", project, "--format", key).stdout.decode()
+        return sorted(listed.split())
+
     def switch_off(self, cell: str) -> str:
         """`enabled: false` applied while containers run: the plan's output, after which no
         container of the project is left, every volume is still there, and the checkout and the
         record stay."""
         volumes, head, record = self.volumes(), self.head(), self.record.read_text()
+        keys = self.volume_keys()
         expect(len(volumes) >= 1 and self.containers() != [], f"{cell}: nothing to switch off")
         self.set_enabled(False)
         out = self.apply()
         expect(f"{self.key}: off (containers" in out, f"{cell}: the plan said: {out[-400:]}")
         expect(
-            all(f"{name}" in out for name in volumes) and "stay" in out,
+            all(key in out for key in keys)
+            and not any(name in out for name in volumes)
+            and "stay" in out,
             f"{cell}: the plan names no volume that stays: {out[-400:]}",
         )
         expect(self.containers() == [], f"{cell}: containers left: {self.containers()}")
@@ -676,9 +686,14 @@ class Probe:
             sorted(r["service"] for r in self.containers()) == ["ghost", "web"],
             f"C5: setup, {self.containers()}",
         )
+        self.docker(
+            "compose", "-p", self.key, "--file", str(side), "run", "--detach",
+            "--name", f"{self.key}-oneoff", "ghost",
+        )  # fmt: skip
+        expect(len(self.containers()) == 3, f"C5: setup, no one-off in {self.containers()}")
         out = self.switch_off("C5")
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
-        print("C5 held: the update removed worker, off removed web and the leftover, volumes stay")
+        print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
 
 def prove(probe: Probe) -> int:

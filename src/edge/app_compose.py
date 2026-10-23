@@ -29,6 +29,7 @@ class AppContainer:
     """One container of the app's project as `ps` lists it; `health` is empty without a check."""
 
     name: str
+    identifier: str
     service: str
     state: str
     health: str
@@ -98,10 +99,22 @@ class AppCompose:
         stay, named and anonymous alike."""
         self._call("rm", ["-f"], compose.CHANGE_SECONDS)
 
+    def remove_by_identifier(self, identifiers: Sequence[str]) -> None:
+        """Removes the given containers of project `<key>`, which `stop` and `rm -f` leave behind
+        (those of `compose run`). Only identifiers that `ps` listed; no `-v`."""
+        result = self.run(["docker", "rm", "-f", *identifiers], compose.CHANGE_SECONDS)
+        if result.returncode != 0:
+            raise compose.ComposeError(
+                f"`docker rm` of {self.key} exited {result.returncode}; "
+                "its output is withheld, run the step to read it"
+            )
+
     def volumes(self) -> list[str]:
-        """The names of the volumes that Compose labelled with project `<key>`."""
+        """The keys, in the compose file, of the volumes that Compose labelled with project
+        `<key>`; never their names, which Compose may have interpolated."""
         label = f"label=com.docker.compose.project={self.key}"
-        command = ["docker", "volume", "ls", "--filter", label, "--format", "{{.Name}}"]
+        key = '{{.Label "com.docker.compose.volume"}}'
+        command = ["docker", "volume", "ls", "--filter", label, "--format", key]
         result = self.run(command, compose.READ_SECONDS)
         if result.returncode != 0:
             raise compose.ComposeError(
@@ -160,5 +173,9 @@ class AppCompose:
 def _container(entry: dict) -> AppContainer:
     """Raises KeyError or TypeError for an entry that is no container."""
     return AppContainer(
-        str(entry["Name"]), str(entry["Service"]), str(entry["State"]), str(entry.get("Health", ""))
+        str(entry["Name"]),
+        str(entry["ID"]),
+        str(entry["Service"]),
+        str(entry["State"]),
+        str(entry.get("Health", "")),
     )

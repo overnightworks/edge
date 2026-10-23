@@ -62,9 +62,21 @@ def test_each_step_is_one_call_of_project_key_and_only_ps_and_off_are_file_free(
 
 def test_the_containers_carry_their_state_and_health():
     entries = [
-        {"Name": "hopin-hopin-1", "Service": "hopin", "State": "running", "Health": "healthy"},
-        {"Name": "hopin-db-1", "Service": "db", "State": "created", "Health": ""},
-        {"Name": "hopin-old-1", "Service": "old", "State": "exited", "Health": "healthy"},
+        {
+            "Name": "hopin-hopin-1",
+            "ID": "a1",
+            "Service": "hopin",
+            "State": "running",
+            "Health": "healthy",
+        },
+        {"Name": "hopin-db-1", "ID": "a2", "Service": "db", "State": "created", "Health": ""},
+        {
+            "Name": "hopin-old-1",
+            "ID": "a3",
+            "Service": "old",
+            "State": "exited",
+            "Health": "healthy",
+        },
     ]
     docker = Docker(stdout="\n".join(json.dumps(entry) for entry in entries))
 
@@ -117,13 +129,13 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     assert "output is withheld" in line
 
 
-def test_the_volumes_are_the_names_docker_lists_for_the_project_label():
-    docker = Docker(stdout=f"{KEY}_data\n\n{KEY}_cache\n")
+def test_the_volumes_are_the_keys_docker_labels_for_the_project():
+    docker = Docker(stdout="data\n\ncache\n")
 
-    assert engine_over(docker).volumes() == [f"{KEY}_data", f"{KEY}_cache"]
+    assert engine_over(docker).volumes() == ["data", "cache"]
     assert docker.commands == [
         ["docker", "volume", "ls", "--filter", f"label=com.docker.compose.project={KEY}",
-         "--format", "{{.Name}}"]
+         "--format", '{{.Label "com.docker.compose.volume"}}']
     ]  # fmt: skip
 
 
