@@ -10,7 +10,16 @@ import subprocess
 import time
 from pathlib import Path
 
-from egress import COMPOSE_FILE, SERVICE_CONFIGURATION, Probe, Target, expect
+from egress import (
+    COMPOSE_FILE,
+    LOGIN_DIRECTORY,
+    SERVICE_CONFIGURATION,
+    SERVICE_PORT,
+    Probe,
+    ProbeFailed,
+    Target,
+    expect,
+)
 from refusals import MEMBER_GROUPS
 from smoke import Tokens
 
@@ -22,6 +31,8 @@ ISSUER_ORIGIN = f"https://{ISSUER_SERVICE}:{ISSUER_PORT}"
 REAL_ISSUER_ORIGIN = "https://auth.hallucinai.de"
 KEY_ID = "probe-key"
 WORKLOAD_CLIENT = "songmaker"
+LISTEN_SECONDS = 90
+LISTENING = f"Uvicorn running on http://0.0.0.0:{SERVICE_PORT}"
 TOKEN_SECONDS = 240  # the service refuses a workload token that lives longer than 300
 ISSUER_PROGRAM = (
     f"ISSUER_PORT = {ISSUER_PORT}\n"
@@ -97,7 +108,8 @@ class IssuerProbe(Probe):
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch, Target.SERVICE)
         self.issuer = StandInIssuer(scratch / "issuer")
-        configuration = scratch / "service.toml"
+        self.image = self.service_image()
+        configuration = self.configuration = scratch / "service.toml"
         configuration.write_text(
             SERVICE_CONFIGURATION.read_text(encoding="utf-8").replace(
                 REAL_ISSUER_ORIGIN, ISSUER_ORIGIN
@@ -120,7 +132,7 @@ class IssuerProbe(Probe):
                     ],
                 },
                 ISSUER_SERVICE: {
-                    "image": self.service_image(),
+                    "image": self.image,
                     "profiles": ["agent-service"],
                     "user": "65534:65534", "read_only": True, "cap_drop": ["ALL"],
                     "security_opt": ["no-new-privileges:true"], "networks": ["agent-songmaker"],
@@ -143,6 +155,19 @@ class IssuerProbe(Probe):
         self.write_on_probe_subnet(COMPOSE_FILE, self.compose_file)  # the project's names (P26)
         resolved = self.compose("config", "--format", "json")
         return json.loads(resolved.stdout)["services"][SERVICE]["image"]
+
+    def wait_until_listening(self) -> None:
+        deadline = time.monotonic() + LISTEN_SECONDS
+        while time.monotonic() < deadline:
+            logs = self.run(["docker", "logs", self.container(SERVICE)])
+            if LISTENING in logs.stdout + logs.stderr:
+                return
+            time.sleep(0.5)
+        raise ProbeFailed("the service did not listen in time")
+
+    @property
+    def token_path(self) -> Path:
+        return Path(self.environment["HOME"]) / LOGIN_DIRECTORY
 
     def tokens(self, groups: tuple[str, ...] = MEMBER_GROUPS) -> Tokens:
         issuer = f"{ISSUER_ORIGIN}/realms/hallucinai"

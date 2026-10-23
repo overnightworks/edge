@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The operator's smoke of the agent service: one run, its event types and its text on stdout.
 
-    docker compose run --rm -T agent-smoke [--cancel]
+    docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...]
 
 Stdin holds exactly two lines, the person's token and then the workload's, and nothing else
 supplies one: there is no option, no environment variable and no file for a token. Both tokens
@@ -9,7 +9,8 @@ are removed from everything the smoke prints, errors included. Without options i
 run and prints each event's type and the text of the answer; exit 0 when the run succeeded.
 `--cancel` starts a long answer, holds the stream open a few seconds after `run_started` so
 the CLI run behind it can be seen, then closes it before any answer, to see that the service
-ends that run; it fails when the run succeeded (docs/agent-service.md, "Proofs").
+ends that run; it fails when the run succeeded (docs/agent-service.md, "Proofs"). Each `--tool`
+lists a tool of the app in the request, with the effect the service judges (the probes' option).
 `live_smoke.py` runs it with the sign-in.
 
 Only the standard library of the service image is used.
@@ -53,7 +54,7 @@ class QuietParser(argparse.ArgumentParser):
     """A rejected argument is never printed: a token typed as an option must not reach a log."""
 
     def error(self, message: str) -> NoReturn:
-        self.exit(2, "smoke: unusable arguments; the options are --timeout and --cancel\n")
+        self.exit(2, "smoke: unusable arguments; the options are --timeout, --cancel and --tool\n")
 
 
 @dataclass(frozen=True)
@@ -78,12 +79,12 @@ def read_tokens(stream: IO[str]) -> Tokens:
     return Tokens(person=lines[0], workload=lines[1])
 
 
-def request_body(prompt: str) -> bytes:
+def request_body(prompt: str, tools: dict[str, str] | None = None) -> bytes:
     document = {
         "v": PROTOCOL_VERSION,
         "purpose": PURPOSE,
         "roles": ROLES,
-        "tools": {},
+        "tools": tools or {},
         "turn": {"system": SYSTEM_PROMPT, "messages": [{"role": "user", "text": prompt}]},
     }
     return json.dumps(document).encode("utf-8")
@@ -126,9 +127,15 @@ def refusal_line(response: http.client.HTTPResponse) -> str:
 
 class Smoke:
     def __init__(
-        self, tokens: Tokens, out: IO[str], connect: Connect, pause: Callable[[float], None]
+        self,
+        tokens: Tokens,
+        out: IO[str],
+        connect: Connect,
+        pause: Callable[[float], None],
+        tools: dict[str, str],
     ) -> None:
         self.tokens = tokens
+        self.tools = tools
         self.out = out
         self.connect = connect
         self.pause = pause
@@ -141,7 +148,7 @@ class Smoke:
     def run(self, timeout_seconds: float, prompt: str, cancel: bool) -> int:
         connection = self.connect(SERVICE_HOST, SERVICE_PORT, timeout_seconds)
         try:
-            connection.request("POST", "/runs", request_body(prompt), self.headers())
+            connection.request("POST", "/runs", request_body(prompt, self.tools), self.headers())
             response = connection.getresponse()
             if response.status != http.HTTPStatus.OK:
                 self.say(refusal_line(response))
@@ -209,6 +216,13 @@ class Smoke:
             self.say(f"{text_of(frame, 'code')}: {text_of(frame, 'message')}")
 
 
+def tool_option(text: str) -> tuple[str, str]:
+    name, separator, effect = text.partition(":")
+    if not (name and separator and effect):
+        raise argparse.ArgumentTypeError("a tool is NAME:EFFECT")
+    return name, effect
+
+
 def main(
     argv: list[str],
     stdin: IO[str] = sys.stdin,
@@ -219,14 +233,20 @@ def main(
     parser = QuietParser(description=__doc__.splitlines()[0], allow_abbrev=False)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--cancel", action="store_true")
+    parser.add_argument("--tool", type=tool_option, action="append", default=[])
     arguments = parser.parse_args(argv)
+    tools = dict(arguments.tool)
+    if len(tools) != len(arguments.tool):
+        parser.error("a tool named twice")
     try:
         tokens = read_tokens(stdin)
     except SmokeFailed as failure:
         print(f"smoke: {failure}", file=sys.stderr)
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
-    return Smoke(tokens, out, connect, pause).run(arguments.timeout, prompt, arguments.cancel)
+    return Smoke(tokens, out, connect, pause, tools).run(
+        arguments.timeout, prompt, arguments.cancel
+    )
 
 
 if __name__ == "__main__":
