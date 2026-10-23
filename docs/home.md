@@ -502,6 +502,14 @@ come before the system step, which is the one that asks for sudo:
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It asks once for sudo.
 
+**Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
+(`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
+Aktivierung run, and User units, Ansible, System and Geheimnisse print `skipped: the operator's step`
+(the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
+apply, and lists no secrets. Everyone else, root
+and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
+If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 1 with a line saying so.
+
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
 `would change` or `unchanged`, and the system step also `not checked (needs
 sudo at a terminal)`, or `not checked (needs Ansible, …)` before the Ansible
@@ -559,6 +567,20 @@ below are home's own and are not backed up.
     task with `state: absent` for each of the two units; a reload. Then
     `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
     journal lines do not come back.
+- **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
+  locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
+  (`groupadd --gid N agent`, then `useradd --uid N --gid N -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`, with N the lowest
+  id from 1000 up that no user, group or subordinate id entry has, checked after creation), no linger, and a line in
+  `/etc/cron.deny`: an existing one keeps its owner, mode and entries, a new one is `root:root 0644`, and every
+  other user keeps today's cron. An `agent` that already exists with an extra group, a subuid or subgid entry
+  (by name or by its uid), another shell, a usable password, linger, a home other than `/home/agent`, or a
+  home that is a link or not a directory owned by it, a uid another user shares, a gid another group shares or
+  a primary group other than the group `agent`, or ids that are not one uid and gid from 1000 up, is refused before
+  anything is written, in the dry run too; so is a group `agent` without the account (`sudo groupdel agent` removes it;
+  a failed `useradd` removes the group it just made), a new account's home path that is taken, and an
+  `agent` listed in `/etc/cron.allow`. A `cron.allow` without it denies it already, and `cron.deny` stays as it is.
+  The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
+  A revert keeps the user and its home.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,
   the dry run says `System: not checked (needs sudo at a terminal)` and

@@ -23,6 +23,8 @@ from home_tools import secrets_setup
 from home_tools.tidy_home import Layout
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
+# The agents' own OS account: the play creates it dormant, and `hal setup` skips the operator's steps for exactly this user.
+AGENT_USER = "agent"
 # The ruled bound on every server log on this PC: „ja 30 tage für alle“.
 LOG_RETENTION_DAYS = 30
 # journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span
@@ -107,8 +109,20 @@ def _run_scoped_environment(ansible_home: Path) -> dict[str, str]:
     }
 
 
+class UnresolvableRunningUser(ValueError):
+    """The running uid has no passwd name, or `agent` shares it with another name; the role cannot be told from the name."""
+
+
 def _running_user() -> str:
-    return pwd.getpwuid(os.getuid()).pw_name
+    uid = os.getuid()
+    try:
+        name = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        raise UnresolvableRunningUser(f"no passwd entry for uid {uid}") from None
+    names = [entry.pw_name for entry in pwd.getpwall() if entry.pw_uid == uid]
+    if len(names) > 1 and AGENT_USER in names:
+        raise UnresolvableRunningUser(f"uid {uid} has the names {', '.join(names)}; {AGENT_USER} must have a uid of its own")
+    return name
 
 
 @dataclass(frozen=True)
@@ -134,6 +148,7 @@ class SystemStep:
         return {
             "home": str(self.layout.home),
             "operator_user": self.boundaries.operator_user(),
+            "agent_user": AGENT_USER,
             "edge_tunnel_dir": str(self.layout.edge_tunnel_dir),
             "journal_vacuum_days": JOURNAL_VACUUM_DAYS,
         }

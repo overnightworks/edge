@@ -540,6 +540,21 @@ def test_before_any_verified_run_the_system_step_shows_and_neither_ansible_nor_s
     assert [call for call in runner.calls if Path(call[0]).name in {"sudo", "ansible-playbook"}] == []
 
 
+def test_as_the_agent_home_next_lists_none_of_the_operators_steps(
+    home: Path, sandbox: Sandbox, use_manifest, probe: FakeProbe, capsys
+) -> None:
+    """Matrix A1 cell 4: Ansible, the system step, the user units and the secrets are not the agent's; it is never asked for sudo."""
+    use_manifest(TEST_MANIFEST + OPEN_ENTRIES)
+    sandbox.system.user = system_step.AGENT_USER
+
+    _, lines = home_next(home, probe, capsys)
+
+    assert lines == [
+        "1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed",
+        "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+    ]
+
+
 @pytest.mark.usefixtures("hook_installed")
 def test_after_a_verified_apply_there_is_no_system_step(home: Path, probe: FakeProbe, capsys) -> None:
     """Cell 15."""
@@ -571,7 +586,7 @@ def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_wind
     hook.write_text("#!/bin/sh\n")
 
     def refusing_operator() -> str:
-        raise ValueError("no passwd entry for the running user")
+        raise system_step.UnresolvableRunningUser("no passwd entry for the running user")
 
     unreadable_setup = system_step.Boundaries(lambda: True, FakePlaybook(), refusing_operator)
     code = cli.main(["next"], home=home, run=RunnerWithRealGitAndQuality(), probe=probe, now=NOW, system_boundaries=unreadable_setup)

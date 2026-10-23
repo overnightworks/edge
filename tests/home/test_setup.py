@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import stat
 import subprocess
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -21,8 +23,8 @@ from home_tools import secrets_setup
 from home_tools import system_step
 from home_tools.cli import main
 from home_tools.secrets_setup import Boundaries, Terminal
-from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE
-from home_tools.system_step import CheckState, PlaybookRun, SystemStep
+from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, ExecutionRole
+from home_tools.system_step import AGENT_USER, CheckState, PlaybookRun, SystemStep
 
 USER_UNITS = "User units"
 SECRETS = "Geheimnisse"
@@ -255,6 +257,106 @@ def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running
         "operator_user": "operator",
         "edge_tunnel_dir": str(sandbox.home / "git" / "edge" / "tunnel"),
     }
+
+
+def test_the_playbook_gets_the_agents_account_name_and_the_digest_covers_it(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    run_setup(sandbox, capsys, "--apply")
+
+    (argv,) = sandbox.system.playbook.calls
+    assert json.loads(argv[argv.index("--extra-vars") + 1])["agent_user"] == AGENT_USER == "agent"
+    assert "agent_user" in SystemStep(sandbox.layout, sandbox.system.boundaries).extra_vars()
+
+
+@pytest.mark.parametrize(
+    ("user", "role"),
+    [("agent", ExecutionRole.AGENT), ("operator", ExecutionRole.OPERATOR), ("root", ExecutionRole.OPERATOR), ("bystander", ExecutionRole.OPERATOR), ("agent2", ExecutionRole.OPERATOR), ("Agent", ExecutionRole.OPERATOR)],
+)
+def test_only_the_account_named_agent_resolves_to_the_agent_role(user: str, role: ExecutionRole) -> None:
+    assert ExecutionRole.of(user) is role
+
+
+def passwd_entry(name: str, uid: int) -> pwd.struct_passwd:
+    return pwd.struct_passwd((name, "x", uid, uid, "", f"/home/{name}", "/bin/sh"))
+
+
+@pytest.mark.parametrize("names", [("agent", "operator"), ("operator", "agent")])
+def test_setup_fails_loud_instead_of_guessing_the_role_when_agent_shares_the_running_uid(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, names: tuple[str, str]
+) -> None:
+    """Whichever name the lookup by uid would pick, `hal setup` says so and runs no step, with either passwd order."""
+    entries = [passwd_entry(name, 1001) for name in names]
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: entries)
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: entries[0])
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+    monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", replace(sandbox.system.boundaries, operator_user=system_step._running_user))
+
+    code, lines, error = run_setup(sandbox, capsys, "--apply")
+
+    assert (code, lines, error.splitlines()) == (1, [], [f"hal setup: uid 1001 has the names {names[0]}, {names[1]}; agent must have a uid of its own"])
+    assert sandbox.system.playbook.calls == []
+
+
+@pytest.mark.parametrize("names", [("operator", "bystander"), ("agent",)])
+def test_the_running_user_is_the_name_of_its_uid_unless_agent_is_one_of_several(
+    monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...]
+) -> None:
+    entries = [passwd_entry(name, 1001) for name in names]
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: entries)
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: entries[0])
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    assert system_step._running_user() == names[0]
+
+
+def test_a_user_that_the_passwd_enumeration_omits_is_resolved_by_its_uid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(system_step.pwd, "getpwall", lambda: [])
+    monkeypatch.setattr(system_step.pwd, "getpwuid", lambda _uid: passwd_entry("lookuponly", 1001))
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    assert system_step._running_user() == "lookuponly"
+
+
+def test_a_running_uid_without_a_passwd_name_is_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(_uid: int) -> pwd.struct_passwd:
+        raise KeyError(_uid)
+
+    monkeypatch.setattr(system_step.pwd, "getpwuid", missing)
+    monkeypatch.setattr(system_step.os, "getuid", lambda: 1001)
+
+    with pytest.raises(system_step.UnresolvableRunningUser, match="no passwd entry for uid 1001"):
+        system_step._running_user()
+
+
+OPERATORS_STEPS = ["User units", "Ansible", "System", SECRETS]
+
+
+@pytest.mark.parametrize("flags", [(), ("--apply",)])
+def test_as_the_agent_the_operators_steps_are_skipped_without_sudo_and_the_exit_is_0(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], flags: tuple[str, ...]
+) -> None:
+    """Cells 4 and 5: the per-user steps behave as for anyone, the operator's are skipped, and neither Ansible nor sudo is started."""
+    sandbox.system.user = AGENT_USER
+    code, lines, _ = run_setup(sandbox, capsys, *flags)
+
+    outcome = "changed" if flags else "would change"
+    assert (code, lines) == (
+        0,
+        [*(f"{name}: {outcome}" for name in STEP_NAMES[:4]), *(f"{name}: skipped: the operator's step" for name in OPERATORS_STEPS)],
+    )
+    assert sandbox.system.playbook.calls == []
+
+
+@pytest.mark.parametrize("user", ["root", "bystander"])
+def test_every_user_but_the_agent_still_fails_the_system_step_without_a_terminal(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], user: str
+) -> None:
+    """Cell 7: no sudo inferred from the user's name or rights; root and a bystander keep today's explicit failure."""
+    sandbox.system.user = user
+    sandbox.system.terminal = False
+    code, _, err = run_setup(sandbox, capsys, "--apply")
+
+    assert code == 1
+    assert "hal setup: Schritt „System“ ist fehlgeschlagen" in err
 
 
 def test_the_playbook_vacuums_two_days_short_of_the_ruled_retention(
