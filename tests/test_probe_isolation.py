@@ -51,3 +51,16 @@ def test_a_resolved_network_outside_the_project_fails_the_guard():
 
 def test_a_resolved_configuration_inside_the_project_passes_the_guard():
     edge_copy.expect_project_networks({"networks": {"a": {"name": f"{PROJECT}_a"}}}, PROJECT)
+
+
+OCCUPIED = ["172.31.250.0/24", "172.31.251.0/24", "10.0.0.0/8"]
+CANDIDATES = ["172.31.250.0/24", "172.31.251.0/24", "172.31.249.0/24"]
+
+
+def test_the_first_candidate_that_overlaps_no_occupied_subnet_is_free():
+    assert str(edge_copy.free_subnet(CANDIDATES, OCCUPIED)) == "172.31.249.0/24"
+
+
+def test_a_candidate_inside_a_wider_occupied_subnet_is_taken():
+    with pytest.raises(edge_copy.ProbeFailed, match="no free /24"):
+        edge_copy.free_subnet(CANDIDATES, ["172.31.0.0/16"])

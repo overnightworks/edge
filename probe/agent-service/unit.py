@@ -609,7 +609,7 @@ class SmokeProbe(IssuerProbe):
         browser: every cell but L2 holds with the dummy login, and L2 must fail, because the
         upstream refuses the dummy login."""
         stack = Stack(
-            compose_prefix=tuple(self.compose_command()), environment=self.environment,
+            compose_prefix=tuple(self.compose_command(guard=True)), environment=self.environment,
             directory=COMPOSE_FILE.parent,
         )  # fmt: skip
         expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")

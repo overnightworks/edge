@@ -15,8 +15,8 @@ L7's figures are the idle `memory.current` of the recreated service and its `mem
 right after the one turn (an upper bound of the answer phase, it includes the start).
 A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
 that do not bind one app to one person, `not_enabled` no subscription group; the report names them.
-`agent-smoke` is the service image running `smoke.py` on the `agent-songmaker` network alone
-(profile `apply`).
+`agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
+`apply`).
 
 The compose project and the egress gateway's address are read from `docker compose config` of the
 repository this file sits in. The in-container smoke is `smoke.py`, used as it is, and the egress
@@ -469,6 +469,7 @@ class EgressTargets:
     docker0: str
     internet: str
     lan: str
+    agent_free: str
     songmaker_free: str
     presentator_free: str
     egress_free: str
@@ -490,7 +491,8 @@ print(json.dumps({
     "reach": {
         label: tcp_connect(targets[label], 22)["result"]
         for label in (
-            "docker0", "internet", "lan", "songmaker_free", "presentator_free", "egress_free"
+            "docker0", "internet", "lan", "agent_free", "songmaker_free", "presentator_free",
+            "egress_free",
         )
     },
     "ipv6_interfaces": ipv6_interfaces()["interfaces"],
@@ -553,6 +555,7 @@ def unused_address(network: dict) -> str:
 
 def egress_targets(stack: Stack) -> EgressTargets:
     """The host looks up the addresses, because the container has no DNS and no Docker."""
+    agent = project_network(stack, "agent")
     songmaker = project_network(stack, "agent-songmaker")
     presentator = project_network(stack, "agent-presentator")
     egress = project_network(stack, "egress")
@@ -561,10 +564,11 @@ def egress_targets(stack: Stack) -> EgressTargets:
         docker0=gateways_of(inspect_network(stack, "bridge"))[0],
         internet=gateways_of(project_network(stack, "internet"))[0],
         lan=lan_address(),
+        agent_free=unused_address(agent),
         songmaker_free=unused_address(songmaker),
         presentator_free=unused_address(presentator),
         egress_free=unused_address(egress),
-        agent_gateways=[*gateways_of(songmaker), *gateways_of(presentator)],
+        agent_gateways=[*gateways_of(agent), *gateways_of(songmaker), *gateways_of(presentator)],
         egress_gateways=gateways_of(egress),
     )
 

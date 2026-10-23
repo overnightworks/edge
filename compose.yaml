@@ -19,7 +19,7 @@ x-mcp-origins: &mcp-origins [hello.mcp.internal, songmaker.mcp.internal]
 # agent-service/egress/dynamic/allowed.yml.
 x-egress-address: &egress-address 172.31.252.10
 x-agent-attachments: &agent-attachments
-  networks: [agent-songmaker, agent-presentator, egress]
+  networks: [agent, agent-songmaker, agent-presentator, egress]
   extra_hosts:
     api.anthropic.com: *egress-address
     auth.hallucinai.de: *egress-address
@@ -428,8 +428,8 @@ services:
   # The operator's smoke of the agent service (agent-service/smoke.py; docs/agent-service.md,
   # "Proofs"): the service image, one run, the answer printed. Run it as
   # `compose run -T --rm agent-smoke [--cancel]` with the person's and the workload's token on
-  # stdin, one per line. No depends_on: a run never starts the service. On `agent-songmaker` alone
-  # (the smoke signs in through songmaker's client) and with no secret, port or published address: the tokens come in on stdin and never leave in output.
+  # stdin, one per line. No depends_on: a run never starts the service. On `agent` alone and with
+  # no secret, port or published address: the tokens come in on stdin and never leave in output.
   agent-smoke:
     image: *agent-service-image
     pull_policy: never
@@ -438,7 +438,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [agent-songmaker]
+    networks: [agent]
     # -I ignores the PYTHON* environment, so -B is what keeps bytecode unwritten.
     entrypoint:
       - python
@@ -512,9 +512,15 @@ networks:
     name: hal_mcp_songmaker
     internal: true
     driver_opts: *isolated-bridge
-  # The agent service's API and one app's callers; each app joins its own network as an external
-  # network (docs/agent-service.md, "An app's side"), so no app sees another's. The fixed names
-  # survive the project's rename to `hal`.
+  # The agent service's API and its callers; from the apps' lanes they join it as an external network
+  # (docs/agent-service.md, "An app's side"). The fixed name survives the project's rename to `hal`.
+  # It stays until each app has moved to its own network below; then it goes.
+  agent:
+    name: hal_agent
+    internal: true
+    driver_opts: *isolated-bridge
+  # One app's callers and the agent service; each app joins its own network as an external network,
+  # so no app sees another's.
   agent-songmaker:
     name: hal_agent_songmaker
     internal: true

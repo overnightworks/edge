@@ -576,7 +576,8 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
         "#!/bin/sh\n"
         'case "$*" in\n'
         f'  *" down "*) kill -{stop_signal} $PPID; touch "{down_finished}" ;;\n'
-        "  ps*|volume*) ;;\n"
+        '  *" config "*) echo "{}" ;;\n'
+        "  ps*|volume*|network*) ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -617,7 +618,9 @@ def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
         "        signal.signal(number, signal.SIG_DFL)  # Go resets SIGTERM like this\n"
         f"    os.killpg(os.getpgid(os.getppid()), {int(stop_signal)})\n"
         f"    open({str(down_finished)!r}, 'w').close()\n"
-        "elif sys.argv[1:2] == ['ps'] or sys.argv[1:3] == ['volume', 'ls']:\n"
+        "elif ' config ' in ' ' + args:\n"
+        "    print('{}')\n"
+        "elif sys.argv[1:2] in (['ps'], ['network']) or sys.argv[1:3] == ['volume', 'ls']:\n"
         "    pass\n"
         "else:\n"
         "    sys.exit(1)\n",

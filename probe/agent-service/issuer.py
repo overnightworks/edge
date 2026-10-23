@@ -140,11 +140,8 @@ class IssuerProbe(Probe):
     def service_image(self) -> str:
         """The issuer is a python script, and the service image is the python already on the PC;
         compose resolves the image as it does for the service."""
-        resolved = self.run(
-            ["docker", "compose", "--project-directory", str(COMPOSE_FILE.parent),
-             "--file", str(COMPOSE_FILE), "--profile", "agent-service", "config",
-             "--format", "json"],
-        )  # fmt: skip
+        self.write_on_probe_subnet(COMPOSE_FILE, self.compose_file)  # the project's names (P26)
+        resolved = self.compose("config", "--format", "json")
         return json.loads(resolved.stdout)["services"][SERVICE]["image"]
 
     def tokens(self, groups: tuple[str, ...] = MEMBER_GROUPS) -> Tokens:

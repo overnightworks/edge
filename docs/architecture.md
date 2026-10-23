@@ -60,7 +60,7 @@ flowchart TB
             KC["Keycloak + its database<br/>auth.hallucinai.de: the login page"]
             CA["step-ca :9000, internal network mcp-ca<br/>internal CA for the MCP origins, *.mcp.internal"]
             TMC["traefik-mcp :443, no host port<br/>the gateway to the MCP origins, certificates from step-ca"]
-            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, later the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp_songmaker (traefik-mcp, songmaker; isolated)<br/>agent_songmaker, agent_presentator, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
+            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, later the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp-songmaker (traefik-mcp, songmaker; isolated)<br/>agent (until each app has its own), agent-songmaker, agent-presentator, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
             BAK["hal backup<br/>restic weekly, restore test monthly<br/>second copy off this disk (D3)"]
             LOOK["Traffic-light page, Gatus<br/>is it OK now?"]
             MON["Prometheus, Grafana, Alertmanager<br/>why, since when? every service"]

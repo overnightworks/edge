@@ -14,12 +14,11 @@ calls resolve only the project's networks (edge_copy.py, P26).
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
---scratch directory. Proof 9 waits for a renewal and proof 10 runs three applies, proof 11
-drives the emergency switch, proof 12 runs the setup from `edge apply` and proof 13 lets
-traefik-mcp follow its file and definition through about ten applies, and proof 14 drives
-songmaker's route (#346 P13-P27, mcp_networks.py): the run takes about 13 minutes, 10 of them
-proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
-proof 8 runs `edge-check` through it, proofs 10 to 13 run `uv sync` in a copy of the repository.
+--scratch directory. Proof 9 waits for a renewal, 10 runs three applies, 11 drives the emergency
+switch, 12 runs the setup from `edge apply`, 13 lets traefik-mcp follow its file and definition
+through about ten applies, and 14 drives songmaker's route (#346 P13-P27, mcp_networks.py): about
+13 minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
+proof 8 runs `edge-check` through it, proofs 10 to 13 `uv sync` in a copy of the repository.
 The copy is a clean `main` with a bare remote under the scratch directory, and every edit a proof
 makes there is published (committed and pushed) before the apply that follows it (#95 P3).
 """
@@ -57,7 +56,7 @@ from edge_copy import (  # noqa: E402
     run_edge,
 )
 from edge_copy import repository_copy as copy_repository  # noqa: E402
-from mcp_networks import McpNetworks  # noqa: E402
+from mcp_networks import McpNetworks, print_verdict  # noqa: E402
 from step_ca_names import (  # noqa: E402
     CA_URL,
     CERTIFICATE_UNVERIFIED,
@@ -127,6 +126,7 @@ class Probe(McpNetworks):
     def __init__(self, scratch: Path) -> None:
         self.home = scratch / "home"
         self.home.mkdir(parents=True)
+        self.not_driven: list[str] = []  # cells that could not run: the verdict is incomplete
         self.secrets_dir = self.home / ".secrets" / "step-ca"
         self.environment = {
             **os.environ,
@@ -1014,7 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"PROBE FAILED: {failure}")
                 exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: proofs 1-14, #95 P3 and #346 P13-P27 hold")
+        exit_code = print_verdict(probe.not_driven)
     return exit_code
 
 

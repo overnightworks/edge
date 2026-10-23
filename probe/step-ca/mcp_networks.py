@@ -30,6 +30,7 @@ from step_ca_names import (
     STAND_IN_URL,
 )
 
+INCOMPLETE_EXIT_CODE = 2  # a cell was not driven: neither a pass nor a failure
 SERVICE_IMAGE_ROOT = "/root.crt"
 # What the service image's own TLS context (cli_runner.mcp_tls_context) makes of the origin.
 SERVICE_IMAGE_CLIENT = """\
@@ -43,6 +44,15 @@ answer = connection.getresponse()
 print(answer.status)
 print(answer.read().decode())
 """
+
+
+def print_verdict(not_driven: list[str]) -> int:
+    """PROBE PASSED only when every cell was driven; a cell that could not run is not held."""
+    if not_driven:
+        print(f"PROBE INCOMPLETE: not driven: {'; '.join(not_driven)}")
+        return INCOMPLETE_EXIT_CODE
+    print("PROBE PASSED: proofs 1-14, #95 P3 and #346 P13-P27 hold")
+    return 0
 
 
 class McpNetworks:
@@ -113,12 +123,14 @@ class McpNetworks:
         image = json.loads(with_service.stdout)["services"]["agent-service"]["image"]
         probed = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], check=False)
         if probed.returncode != 0:
+            self.not_driven.append(f"P13 (the image {image} is absent)")
             return f"route P13 NOT DRIVEN: the image {image} is absent"
         before = self.stand_in_requests()
         result = self.run(
             ["docker", "run", "--rm", "--network", f"{PROJECT}_mcp", "--read-only", "--user",
-             "1000:1000", "--volume", f"{root}:{SERVICE_IMAGE_ROOT}:ro", "--entrypoint", "python",
-             image, "-I", "-c", SERVICE_IMAGE_CLIENT, SONGMAKER_ORIGIN, SERVICE_IMAGE_ROOT],
+             CONTAINER_USER, "--volume", f"{root}:{SERVICE_IMAGE_ROOT}:ro", "--entrypoint",
+             "python", image, "-I", "-c", SERVICE_IMAGE_CLIENT, SONGMAKER_ORIGIN,
+             SERVICE_IMAGE_ROOT],
             check=False,
         )  # fmt: skip
         answer = result.stdout.decode(errors="replace")
@@ -155,7 +167,8 @@ class McpNetworks:
         plain = self.client("mcp", "--include", f"http://{SONGMAKER_ORIGIN}:443/mcp", root=root)
         no_port = self.client("mcp", f"http://{SONGMAKER_ORIGIN}/mcp", root=root)  # NOSONAR(S5332)
         expect(
-            ORIGIN_ANSWER not in plain.stdout.decode(errors="replace"), "P15: plain http answered"
+            f"Host: {SONGMAKER_ORIGIN}" not in plain.stdout.decode(errors="replace"),
+            "P15: plain http answered",
         )
         self.expect_unreachable("P15", no_port, "port 80")
         self.expect_no_stand_in_request("P15", before, "plain http")

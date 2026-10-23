@@ -285,7 +285,7 @@ class Probe:
         home = scratch / "home"
         home.mkdir()
         write_login_directory(home)
-        subnet = edge_copy.free_subnet(SUBNET_CANDIDATES)
+        subnet = edge_copy.free_subnet(SUBNET_CANDIDATES, edge_copy.daemon_subnets())
         self.prefix = str(subnet.network_address).removesuffix("0")
         self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
         self.compose_file = scratch / "compose.yaml"
@@ -320,14 +320,16 @@ class Probe:
             raise ProbeFailed(f"{' '.join(command[:5])} exited {result.returncode}: {tail[-1:]}")
         return result
 
-    def compose_command(self, *arguments: str) -> list[str]:
+    def compose_command(self, *arguments: str, guard: bool = False) -> list[str]:
+        """The compose call; `guard` checks its files and profiles for project-only networks (P26)
+        even with no verb, for a prefix a caller runs the verbs of."""
         prefix = [
             "docker", "compose", "-p", PROJECT, "--project-directory", str(REPO),
             "--file", str(self.compose_file),
             *(argument for overlay in self.overlays for argument in ("--file", str(overlay))),
             "--profile", "agent-service", "--profile", "agent-probe",
         ]  # fmt: skip
-        if arguments and arguments[0] in GUARDED_COMPOSE_VERBS:
+        if guard or (arguments and arguments[0] in GUARDED_COMPOSE_VERBS):
             self.guard.expect(prefix)
         return [*prefix, *arguments]
 

@@ -35,8 +35,10 @@ WORK_CLONE = "work"
 PROBE_IDENTITY = {"user.name": "edge probe", "user.email": "probe@edge.invalid"}
 # The fixed network names of compose.yaml (`name: hal_<suffix>`) that apps join as external
 # networks; they survive the project's rename, so a probe must never create or remove one.
-LIVE_NETWORK_NAME = re.compile(r"^(\s+name:\s+)hal_(\w+)\s*$", re.MULTILINE)
 LIVE_NETWORK_PREFIX = "hal_"
+LIVE_NETWORK_NAME = re.compile(
+    rf"^(\s+name:\s+){re.escape(LIVE_NETWORK_PREFIX)}(\w+)\s*$", re.MULTILINE
+)
 GUARDED_COMPOSE_VERBS = {"up", "run", "down"}  # what creates or removes networks
 
 
@@ -97,9 +99,9 @@ def daemon_subnets() -> list[str]:
     ]
 
 
-def free_subnet(candidates: Sequence[str]) -> ipaddress.IPv4Network:
-    """The first candidate /24 that overlaps no network the daemon already has."""
-    used = [ipaddress.ip_network(subnet) for subnet in daemon_subnets()]
+def free_subnet(candidates: Sequence[str], occupied: Sequence[str]) -> ipaddress.IPv4Network:
+    """The first candidate /24 that overlaps none of the `occupied` subnets (`daemon_subnets()`)."""
+    used = [ipaddress.ip_network(subnet) for subnet in occupied]
     for candidate in map(ipaddress.IPv4Network, candidates):
         if not any(candidate.overlaps(other) for other in used if other.version == 4):
             return candidate
