@@ -198,4 +198,4 @@ def test_a_disabled_app_is_neither_fetched_nor_run(app_world):
 
     assert exit_code == 0
     assert "nothing to change" in out
-    assert app_world.docker.verbs == []
+    assert app_world.docker.verbs == ["ps"]

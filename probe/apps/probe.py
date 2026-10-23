@@ -9,7 +9,10 @@ healthy (Traefik routes nothing to it), A9 a build that fails, A12 containers wi
 an interpolation error that carries a sentinel value, A23 an update interrupted after part of the
 containers were replaced, with a second container of one service, B5 an image `VOLUME` that no
 named volume covers (refused after build, before `create`) and the same covered, B8 a service with
-`pull_policy: always`. The exits are hal's: 0 or 3.
+`pull_policy: always`, and block C, `enabled: false`: C1 an app switched off while running, C2 on
+again at the same tag, C3 off after an update that renamed a service and failed its build, C4 off
+with `compose.yaml` missing or invalid at HEAD, C5 off with a leftover container of an unknown
+service after an update dropped one. The exits are hal's: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -81,7 +84,16 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "b5_uncovered": "v2026.10.24.1",
     "b5_covered": "v2026.10.24.2",
     "b8": "v2026.10.24.3",
+    "c3_renamed": "v2026.10.25.1",
+    "c4_missing_ok": "v2026.10.25.3",
+    "c4_missing": "v2026.10.25.4",
+    "c4_invalid_ok": "v2026.10.25.5",
+    "c4_invalid": "v2026.10.25.6",
+    "c5_first": "v2026.10.26.1",
+    "c5_second": "v2026.10.26.2",
 }
+# A service that no release of the app names
+GHOST = f"services:\n  ghost:\n    image: {BUSYBOX}\n    command: [sleep, '3600']\n"
 FORBIDDEN_VERBS = ("online", "offline", "--all")
 
 
@@ -204,9 +216,10 @@ class Probe:
     def release(
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
         services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
-        covered: bool = True, pull_always: bool = False,
+        covered: bool = True, pull_always: bool = False, compose_file: str | None = None,
     ) -> str:  # fmt: skip
-        """A commit carrying the app at `tag`, pushed and tagged; its sha."""
+        """A commit carrying the app at `tag`, pushed and tagged; its sha. `compose_file` replaces
+        the generated compose.yaml with that text, or leaves it out when empty."""
         site = self.work / "site"
         site.mkdir(exist_ok=True)
         (site / "version").write_text(f"{tag}\n")
@@ -225,9 +238,13 @@ class Probe:
             if image_volume and covered
             else "    volumes: [data:/data]\n"
         )
-        (self.work / "compose.yaml").write_text(
-            self.compose_text(tag, services, interpolates, extra)
-        )
+        text = self.compose_text(tag, services, interpolates, extra)
+        if compose_file is None:
+            (self.work / "compose.yaml").write_text(text)
+        elif compose_file:
+            (self.work / "compose.yaml").write_text(compose_file)
+        else:
+            (self.work / "compose.yaml").unlink(missing_ok=True)
         if on != "master":
             edge_copy.git(self.work, "switch", "--quiet", "--create", on)
         edge_copy.git(self.work, "add", "--all")
@@ -308,6 +325,14 @@ class Probe:
         )
         return output
 
+    def set_enabled(self, enabled: bool) -> None:
+        """The catalog entry of the app switched on or off, published as a merged pull request
+        and its pull would bring it."""
+        fleet = self.copy / "fleet.yaml"
+        wanted, unwanted = ("true", "false") if enabled else ("false", "true")
+        fleet.write_text(fleet.read_text().replace(f"enabled: {unwanted}", f"enabled: {wanted}"))
+        edge_copy.publish(self.copy, f"probe: {self.key} enabled {wanted}")
+
     def apply(self, typed: bytes = b"yes\n", exit_code: int = HAL_OK) -> str:
         return self.hal("apply", "--closed", typed=typed, exit_code=exit_code)
 
@@ -355,6 +380,44 @@ class Probe:
         rows = self.containers()
         expect(len(rows) == 1, f"one container expected, found {[r['name'] for r in rows]}")
         return rows[0]
+
+    def volumes(self) -> list[str]:
+        """The names of the volumes of the app's project."""
+        project = f"label=com.docker.compose.project={self.key}"
+        listed = self.docker("volume", "ls", "--quiet", "--filter", project).stdout.decode()
+        return sorted(listed.split())
+
+    def volume_keys(self) -> list[str]:
+        """The keys in the compose file of those volumes, from the label Compose sets."""
+        project = f"label=com.docker.compose.project={self.key}"
+        key = '{{.Label "com.docker.compose.volume"}}'
+        listed = self.docker("volume", "ls", "--filter", project, "--format", key).stdout.decode()
+        return sorted(listed.split())
+
+    def switch_off(self, cell: str) -> str:
+        """`enabled: false` applied while containers run: the plan's output, after which no
+        container of the project is left, every volume is still there, and the checkout and the
+        record stay."""
+        volumes, head, record = self.volumes(), self.head(), self.record.read_text()
+        keys = self.volume_keys()
+        expect(len(volumes) >= 1 and self.containers() != [], f"{cell}: nothing to switch off")
+        self.set_enabled(False)
+        out = self.apply()
+        expect(f"{self.key}: off (containers" in out, f"{cell}: the plan said: {out[-400:]}")
+        expect(
+            all(key in out for key in keys)
+            and not any(name in out for name in volumes)
+            and "stay" in out,
+            f"{cell}: the plan names no volume that stays: {out[-400:]}",
+        )
+        expect(self.containers() == [], f"{cell}: containers left: {self.containers()}")
+        expect(self.volumes() == volumes, f"{cell}: the volumes changed: {self.volumes()}")
+        expect(
+            self.head() == head and self.record.read_text() == record,
+            f"{cell}: the checkout or the record moved",
+        )
+        expect(self.ask("/version")[0] == 404, f"{cell}: Traefik still routes the app")
+        return out
 
     def starts(self) -> list[str]:
         return self.exec_cat(self.only()["id"], "/data/starts")
@@ -568,6 +631,70 @@ class Probe:
         self.serves(tag)
         print("B8 held: pull_policy always starts healthy at the tag from the built image")
 
+    def cell_c1_c2_off_and_on_again(self) -> None:
+        tag, before = self.deployed()["tag"], self.starts()
+        out = self.switch_off("C1")
+        expect("partial" not in out, f"C1: {out[-300:]}")
+        again = self.apply(typed=b"no\n")
+        expect("nothing to change" in again, f"C1: a second apply said: {again[-200:]}")
+        print("C1 held: off removes every container, the named volumes, checkout and record stay")
+        self.set_enabled(True)
+        out = self.apply()
+        expect(f"start again at {tag}" in out, f"C2: the plan said: {out[-300:]}")
+        self.serves(tag)
+        after = self.starts()
+        expect(after[: len(before)] == before and len(after) > len(before), f"C2: {after}")
+        print(f"C2 held: on again at {tag} finds the same named volume with its data")
+
+    def cell_c3_renamed_service(self) -> None:
+        self.release(TAGS["c3_renamed"], services=("app",), builds=False)
+        out = self.apply(exit_code=HAL_FAILURE)
+        expect(f"could not build at {TAGS['c3_renamed']}" in out, f"C3: {out[-300:]}")
+        expect([r["service"] for r in self.containers()] == ["web"], "C3: setup")
+        expect(self.head() == self.shas[TAGS["c3_renamed"]], "C3: HEAD is not the failed tag")
+        out = self.switch_off("C3")
+        expect("web" in out, f"C3: the plan names no web: {out[-300:]}")
+        print("C3 held: off after a renamed service and a failed build removes the old web")
+
+    def cell_c4_compose_file_unusable(self) -> None:
+        for shape, text in (("missing", ""), ("invalid", "services: [unclosed\n")):
+            self.release(TAGS[f"c4_{shape}_ok"])
+            self.set_enabled(True)
+            self.apply()
+            self.release(TAGS[f"c4_{shape}"], compose_file=text)
+            self.git_in_srv(
+                "fetch", "--quiet", "--no-tags", "origin", "+refs/tags/v*:refs/edge/releases/v*"
+            )
+            self.git_in_srv("checkout", "--quiet", "--detach", self.shas[TAGS[f"c4_{shape}"]])
+            control = self.app_compose("config", check=False)
+            expect(control.returncode != 0, f"C4: the compose file at HEAD loads ({shape})")
+            self.switch_off(f"C4 {shape}")
+        print("C4 held: with compose.yaml missing or invalid at HEAD, off still removes")
+
+    def cell_c5_dropped_service_and_leftover(self) -> None:
+        self.release(TAGS["c5_first"], services=("web", "worker"))
+        self.set_enabled(True)
+        self.apply()
+        expect(sorted(r["service"] for r in self.containers()) == ["web", "worker"], "C5: setup")
+        self.release(TAGS["c5_second"])
+        self.apply()
+        expect([r["service"] for r in self.containers()] == ["web"], "C5: worker was not removed")
+        side = self.scratch / "ghost.yaml"
+        side.write_text(GHOST)
+        self.docker("compose", "-p", self.key, "--file", str(side), "up", "--detach")
+        expect(
+            sorted(r["service"] for r in self.containers()) == ["ghost", "web"],
+            f"C5: setup, {self.containers()}",
+        )
+        self.docker(
+            "compose", "-p", self.key, "--file", str(side), "run", "--detach",
+            "--name", f"{self.key}-oneoff", "ghost",
+        )  # fmt: skip
+        expect(len(self.containers()) == 3, f"C5: setup, no one-off in {self.containers()}")
+        out = self.switch_off("C5")
+        expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
+        print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
+
 
 def prove(probe: Probe) -> int:
     try:
@@ -585,6 +712,10 @@ def prove(probe: Probe) -> int:
         probe.cell_a23_interrupted_update()
         probe.cell_b5_image_volume()
         probe.cell_b8_pull_policy_always()
+        probe.cell_c1_c2_off_and_on_again()
+        probe.cell_c3_renamed_service()
+        probe.cell_c4_compose_file_unusable()
+        probe.cell_c5_dropped_service_and_leftover()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
@@ -616,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23 hold")
+        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5 hold")
     return exit_code
 
 
