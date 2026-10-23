@@ -3,5 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "74506b41fe3abd748f3a6bd8dfc3bf490715860d"
 branch = "claude/issue-349-339-c3-the-in-container-census-and-sanit"
-scope = ["probe/agent-service/tree_census.py", "sonar-project.properties", "tests/test_agent_service_tree_census.py"]
+scope = [".github/workflows/ci.yml", "probe/agent-service/tree_census.py", "sonar-project.properties", "tests/test_agent_service_tree_census.py"]
 opened_commit = "8e7e89dd0f7edb5b048dfee266248dfc48f8b5cb"
+whole_reason = "The census module, its tests, its Sonar entry and the CI coverage line that measures it land together; split, Sonar sees the module uncovered."
