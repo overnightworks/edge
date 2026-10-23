@@ -147,7 +147,7 @@ def _is_unit(entry: Any) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" not in entry
 
 
-def is_app(entry: Any) -> bool:
+def is_app(entry: object) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" in entry
 
 

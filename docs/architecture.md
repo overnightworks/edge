@@ -252,7 +252,7 @@ What the file declares belongs to the file: a console change to a declared objec
 ### Hopin as the worked example: what it needs before its entry works
 
 - **hopin#25 first:** login through webauth (`/apps/hopin`), Impressum and Datenschutz.
-- **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Hopin runs `uv run hopin` on port 8080, which songmaker already uses. Traefik reaches the container by its bridge IP, so no host port is needed.
+- **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Hopin's container listens on 8080, which songmaker already uses on the host; Traefik reaches it by its bridge IP, so no host port is needed.
 - **Its first release:** `edge release hopin` tags the green tip of `master`.
 - **The catalog entry above;** then `edge apply`.
 - **Its SonarCloud project** already exists: hopin has `sonar-project.properties`.

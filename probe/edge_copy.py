@@ -64,45 +64,61 @@ def namespaced_compose(text: str, project: str) -> str:
 
 def without_inherited_apps(text: str) -> str:
     """`text` of fleet.yaml without the entries `catalog.is_app` names (the lane's real apps, whose
-    projects a probe on the shared daemon must never plan or start), every other line byte-identical
-    and in order. Refuses a text that does not parse, has no `services` mapping, still names an
-    app, or names other entries than before."""
-    non_apps = _non_app_keys(text)
-    apps = set(_services(text)) - set(non_apps)
+    projects a probe on the shared daemon must never plan or start). It drops each app's key line
+    and the lines indented deeper than it; every other line, blank lines and comments at or above
+    the entry indent included, stays byte-identical and in order. Refuses a text that does not
+    parse or has no `services` mapping, and one whose result does not parse to the original minus
+    its apps, outside `services` as well as within."""
+    apps = {key for key, entry in _services(text).items() if catalog.is_app(entry)}
+    filtered = _without_app_lines(text, apps)
+    expect(
+        _without_services(filtered, set()) == _without_services(text, apps),
+        "the filtered fleet.yaml differs from the original minus its apps",
+    )
+    return filtered
+
+
+def _without_app_lines(text: str, apps: set[str]) -> str:
     kept: list[str] = []
     in_services, entry_indent, dropping = False, None, False
     for line in text.splitlines(keepends=True):
         content = line.strip()
         indent = len(line) - len(line.lstrip())
+        is_comment = content.startswith("#")
         if line.startswith("services:"):
             in_services = True
-        elif in_services and content and not content.startswith("#"):
+        elif in_services and content and not is_comment:
             if indent == 0:
                 in_services, dropping = False, False
             else:
                 entry_indent = entry_indent or indent
                 if indent == entry_indent:
                     dropping = content.split(":")[0].strip("'\"") in apps
-        if not (in_services and dropping):
+        removed = in_services and dropping and content and (not is_comment or indent > entry_indent)
+        if not removed:
             kept.append(line)
-    filtered = "".join(kept)
-    expect(_non_app_keys(filtered) == non_apps, "the filtered fleet.yaml names other entries")
-    expect(set(_services(filtered)) == set(non_apps), "the filtered fleet.yaml still names an app")
-    return filtered
+    return "".join(kept)
 
 
-def _services(text: str) -> dict:
+def _document(text: str) -> dict:
     try:
         document = catalog.parse(text.encode())
     except catalog.CatalogError as error:
         raise ProbeFailed(f"fleet.yaml does not parse: {error}") from error
-    services = document.get("services") if isinstance(document, dict) else None
+    expect(isinstance(document, dict), "fleet.yaml has no services mapping")
+    return document
+
+
+def _services(text: str) -> dict:
+    services = _document(text).get("services")
     expect(isinstance(services, dict), "fleet.yaml has no services mapping")
     return services
 
 
-def _non_app_keys(text: str) -> list[str]:
-    return [key for key, entry in _services(text).items() if not catalog.is_app(entry)]
+def _without_services(text: str, apps: set[str]) -> dict:
+    """The parsed `text` with the entries named `apps` taken out of its `services`."""
+    services = {key: entry for key, entry in _services(text).items() if key not in apps}
+    return {**_document(text), "services": services}
 
 
 def expect_project_networks(resolved: dict, project: str) -> None:

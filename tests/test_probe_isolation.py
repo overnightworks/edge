@@ -107,6 +107,8 @@ WITHOUT_APPS = dedent(
       zone: example.invalid
 
     services:
+
+      # a comment between entries
       hostsonly:
         hosts:
           - {name: only, exposure: public, reason: r}
@@ -134,13 +136,27 @@ def non_app_keys(text: str) -> list[str]:
 
 def test_without_inherited_apps_leaves_the_repositorys_catalog_without_an_app():
     text = (ROOT / "fleet.yaml").read_text()
+    original = yaml.safe_load(text)["services"]
 
     filtered = edge_copy.without_inherited_apps(text)
 
-    assert not any(catalog.is_app(entry) for entry in yaml.safe_load(filtered)["services"].values())
-    assert unit_keys(filtered) == non_app_keys(text)
+    kept = yaml.safe_load(filtered)["services"]
+    assert kept == {key: entry for key, entry in original.items() if not catalog.is_app(entry)}
+    assert "hopin" in original
+    assert not any(catalog.is_app(entry) for entry in kept.values())
     original_lines = iter(text.splitlines())
     assert all(line in original_lines for line in filtered.splitlines())  # in order
+    lines = text.splitlines()
+    start = lines.index("  hopin:")
+    end = next(
+        (
+            i
+            for i in range(start + 1, len(lines))
+            if lines[i].startswith("  ") and not lines[i].startswith("   ")
+        ),
+        len(lines),
+    )
+    assert len(lines) - len(filtered.splitlines()) == end - start  # hopin's entry, nothing else
 
 
 def test_both_styles_of_app_go_and_hosts_only_and_library_entries_stay():
@@ -153,6 +169,17 @@ def test_both_styles_of_app_go_and_hosts_only_and_library_entries_stay():
         ("services: [unclosed\n", "does not parse"),
         ("cloudflare:\n  zone: example.invalid\n", "no services mapping"),
         ("services: [a, b]\n", "no services mapping"),
+        (
+            "services:\n  run: {repo: {default_branch: main}, run: {enabled: false}}\n"
+            "  step-ca: {\n  run: {enabled: true}\n  }\n",
+            "differs",
+        ),
+        (
+            "services: {\n  enabled: {repo: {default_branch: main}, run: {enabled: false}},\n"
+            "  step-ca: {run: {\n  <<: {enabled: true},\n  enabled: false,\n  setup: null\n"
+            "  }}\n}\n",
+            "differs",
+        ),
     ],
 )
 def test_a_catalog_text_that_cannot_be_filtered_is_refused_with_its_reason(text, reason):
@@ -260,5 +287,7 @@ def test_an_app_written_after_the_copy_and_published_stays(tmp_path, project):
 
     edge_copy.publish(copy, "a fixture app")
 
-    assert "fixtureapp" in yaml.safe_load((copy / "fleet.yaml").read_text())["services"]
-    assert "fixtureapp" in yaml.safe_load(origin_fleet(origin))["services"]
+    declared = {"repo": {"default_branch": "main"}, "run": {"enabled": True}}
+    for text in ((copy / "fleet.yaml").read_text(), origin_fleet(origin)):
+        assert yaml.safe_load(text)["services"]["fixtureapp"] == declared
+        assert catalog.is_app(yaml.safe_load(text)["services"]["fixtureapp"])
