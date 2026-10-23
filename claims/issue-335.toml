@@ -1,0 +1,8 @@
+claim_id = "c58679af609e4941a63681a3dedb5226"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
+branch = "claude/issue-335-207-h5k-private-values"
+scope = ["docs/architecture.md", "docs/home.md", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_view.py", "tests/home/test_secrets_view.py", "tests/test_hal_rename.py"]
+opened_commit = "6d35d19ff8dbe9de16ed677c65dfcdca8883149e"
+whole_reason = "One private-value sweep: the manifest's tunnel path resolved at run time, its reader, and the four files that name the operator."
