@@ -3,6 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "4c256a25c9a9cf135ae4f16a11cc0ea342fd222c"
 branch = "claude/issue-362-255-p5-the-emergency-switch-for-apps-hal"
-scope = ["docs/stack.md", "probe/apps/probe.py", "src/edge/apps.py", "src/edge/barrier.py", "src/edge/emergency.py", "src/hal/stack_commands.py", "tests/test_edge_apps.py", "tests/test_edge_global_stop.py"]
+scope = ["docs/stack.md", "probe/apps/emergency_switch.py", "probe/apps/probe.py", "probe/edge_copy.py", "quality/baseline.toml", "src/edge/app_compose.py", "src/edge/apply.py", "src/edge/apps.py", "src/edge/barrier.py", "src/edge/catalog.py", "src/edge/cli.py", "src/edge/emergency.py", "src/edge/unit_plans.py", "src/hal/stack_commands.py", "tests/app_support.py", "tests/test_edge_apply_apps.py", "tests/test_edge_apps.py", "tests/test_edge_apps_switch.py", "tests/test_edge_global_stop.py", "tests/test_edge_online_apps.py"]
 opened_commit = "70d266d7c65c398fc220f4ee1deb1e275e56607e"
 whole_reason = "The marker, the barrier, the stop, apply's re-checks and online's proof are one emergency path; split, a stopped app could be started by apply."
