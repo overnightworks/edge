@@ -1,0 +1,8 @@
+claim_id = "2d00205bb11b45d78cc042b001b08f44"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
+branch = "claude/issue-341-the-agent-service-image-moves-to-agent-r"
+scope = ["agent-service/image/Dockerfile", "agent-service/image/requirements.txt", "agent-service/service.toml", "agent-service/setup", "docs/agent-service.md", "docs/architecture.md", "probe/agent-service/image.py", "scripts/agent_service_lock.py", "tests/test_agent_service_image.py", "tests/test_agent_service_setup.py", "tests/test_agent_service_unit.py"]
+opened_commit = "830d22bf2b5cd67115e05dbd382e170c22e71009"
+whole_reason = "The lock script, its generated requirements, the entry point, the probe anchor and the tests that pin them change together, or the image does not build."
