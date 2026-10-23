@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from app_support import HOSTED_COMPOSE, HOSTED_FLEET, KEY, NOW, Origin
+from app_support import HOSTED_COMPOSE, HOSTED_FLEET, KEY, NOW, SENTINEL, Origin
 from test_edge_apps import (
     EDGE_FLEET,
     FIRST,
@@ -142,6 +142,22 @@ def test_a_stop_in_the_look_that_finds_the_app_healthy_is_seen_under_the_lock_be
     assert hosted.docker.rows == []
     assert {"stop", "rm"} <= hosted.docker.locked_verbs()
     assert barrier_file(hosted).read_text() == BARRIER
+
+
+def test_an_off_step_that_fails_after_a_stop_won_adds_its_failure_to_the_stop_line(
+    hosted,
+    origin,  # noqa: F811
+):
+    hosted.docker.health_after_start = "starting"
+    hosted.docker.failing_verb = "stop"
+    origin.release(FIRST)
+    in_the_first_look_after_the_start(hosted, lambda: switch_off_meanwhile(hosted))
+
+    [failure] = hosted.run()
+
+    assert failure.startswith(f"{STOPPED_LINE}; {KEY}: could not stop the containers of {KEY}, ")
+    assert SENTINEL not in failure
+    assert hosted.deployed() is None
 
 
 def test_a_start_that_ends_the_switch_before_apply_looks_again_is_not_undone_by_apply(
