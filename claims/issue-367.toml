@@ -1,0 +1,8 @@
+claim_id = "30c1b966ff004b39ad8917c2e7a46477"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "83ff4afdfeaf484674af8bdb0d81858a1295f43a"
+branch = "claude/issue-367-254-s4-which-keycloak-console-actions-se"
+scope = ["docs/keycloak.md", "probe/keycloak/README.md", "probe/keycloak/logout_actions_cell.py", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py"]
+opened_commit = "4cda00a779b53abd727e33181b75cfc5c7a3456f"
+whole_reason = "The cell, its call site, the proof list and the documented answer are one measurement; split, the answer would stand without its proof."
