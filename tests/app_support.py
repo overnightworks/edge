@@ -33,6 +33,12 @@ FLEET = (
     "    repo: {default_branch: master}\n    run: {enabled: true}\n"
 )
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+# the app with a host behind Traefik, so a stop leaves a barrier, and the release that serves it
+HOSTED_FLEET = FLEET.replace(
+    "run: {enabled: true}",
+    "run: {enabled: true}\n    hosts: [{name: hopin, exposure: public, reason: a page, ready: /}]",
+)
+HOSTED_COMPOSE = COMPOSE + '    labels: {edge.name: hopin, traefik.enable: "true"}\n'
 
 
 @dataclass

@@ -364,13 +364,12 @@ def _run(
     outside it, record: the failure line of the first step that fails, None when the app is on and
     recorded. A stop that comes in meanwhile wins, wherever it comes in: the marker and the
     barrier are looked at before the checkout, under the lock around `create` and `start`, and
-    under it again after the health wait; from `create` on, the off step removes what started.
-    `progress` names the step, so an interrupt can say where the containers may be partly
-    replaced."""
+    under it again after the health wait; from `create` on, the off step removes what started,
+    under the lock of that look, so a start that came in after it is never undone. `progress`
+    names the step, so an interrupt can say where the containers may be partly replaced."""
     key, tag = plan.app.key, plan.release.tag
     progress.unit = key
     engine = app_compose.AppCompose(key, runtime.srv / key, runtime.docker)
-    created = False
     try:
         progress.step = f"look whether {key} was switched off"
         _require_on(plan, marks)
@@ -379,19 +378,18 @@ def _run(
             _require_on(plan, marks)
             progress.step = f"create the containers at {tag}; they may be partly replaced"
             engine.create(tag)
-            created = True
-            _start(plan, engine, marks, progress)
+            _start(plan, engine, runtime, marks, progress)
         failure = _wait_until_healthy(plan, runtime, engine, marks, progress)
         progress.step = f"record the deployment of {tag}"
         with marks.lock():
-            _require_on(plan, marks)
+            _require_on_else_switch_off(plan, runtime, marks, progress)
             if failure is None:
                 runtime.record.write(
                     key, Deployment(tag, plan.sha, runtime.now().isoformat(timespec="seconds"))
                 )
         return failure
     except _SwitchedOffMeanwhile as meanwhile:
-        return _after_stop(key, str(meanwhile), created, runtime, progress)
+        return SwitchedOffLine(str(meanwhile))
     except app_contract.ContractError as error:
         return str(error)
     except (checkout.GitError, compose.ComposeError, switches.SwitchError) as error:
@@ -422,7 +420,11 @@ def _build(
 
 
 def _start(
-    plan: AppPlan, engine: app_compose.AppCompose, marks: switches.Switches, progress: Progress
+    plan: AppPlan,
+    engine: app_compose.AppCompose,
+    runtime: AppRuntime,
+    marks: switches.Switches,
+    progress: Progress,
 ) -> None:
     """Start the created containers, under the switch lock; a failure is reported as a stop when
     one came in meanwhile."""
@@ -430,7 +432,7 @@ def _start(
     try:
         engine.start(plan.release.tag)
     except compose.ComposeError:
-        _require_on(plan, marks)
+        _require_on_else_switch_off(plan, runtime, marks, progress)
         raise
 
 
@@ -442,15 +444,17 @@ def _wait_until_healthy(
     progress: Progress,
 ) -> str | None:
     """Wait for the started containers to be healthy, outside the switch lock; the failure line,
-    None when all are healthy. Raises _SwitchedOffMeanwhile as soon as a stop is seen."""
+    None when all are healthy. A stop that is seen ends the wait early; the look under the lock
+    after it decides what the stop leaves."""
     key, tag = plan.app.key, plan.release.tag
     try:
         progress.step = f"wait for {key} to be healthy"
         unhealthy = unhealthy_after_waiting(
             engine, plan.services, runtime.health, lambda: _require_on(plan, marks)
         )
+    except _SwitchedOffMeanwhile:
+        return f"{key} was switched off and on again during the health wait; not recorded"
     except compose.ComposeError as error:
-        _require_on(plan, marks)
         return f"{key}: could not {progress.step}, {error}"
     if unhealthy:
         return (
@@ -460,13 +464,17 @@ def _wait_until_healthy(
     return None
 
 
-def _after_stop(
-    key: str, line: str, created: bool, runtime: AppRuntime, progress: Progress
-) -> SwitchedOffLine:
-    """The line of a stop that won; once containers were created, the off step removes whatever
-    started, and its own failure is added."""
-    off_failure = _switch_off(key, runtime, progress) if created else None
-    return SwitchedOffLine(f"{line}; {off_failure}" if off_failure else line)
+def _require_on_else_switch_off(
+    plan: AppPlan, runtime: AppRuntime, marks: switches.Switches, progress: Progress
+) -> None:
+    """Under the switch lock, once containers were created: a stop that came in wins, and the off
+    step removes whatever started before _SwitchedOffMeanwhile is raised, its own failure added."""
+    try:
+        _require_on(plan, marks)
+    except _SwitchedOffMeanwhile as meanwhile:
+        off_failure = _switch_off(plan.app.key, runtime, progress)
+        line = f"{meanwhile}; {off_failure}" if off_failure else str(meanwhile)
+        raise _SwitchedOffMeanwhile(line) from None
 
 
 def _switch_off(key: str, runtime: AppRuntime, progress: Progress) -> str | None:

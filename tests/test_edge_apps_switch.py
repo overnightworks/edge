@@ -3,10 +3,13 @@ the plan names it and fetches nothing, and a stop that comes in during the run w
 comes in, against a real origin and a scripted Docker."""
 
 import dataclasses
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
-from app_support import KEY, NOW
+from app_support import HOSTED_COMPOSE, HOSTED_FLEET, KEY, NOW, Origin
 from test_edge_apps import (
+    EDGE_FLEET,
     FIRST,
     SECOND,
     World,
@@ -20,12 +23,42 @@ from test_edge_apps import (
     world,  # noqa: F401 the fixture, requested by name below
 )
 
-from edge import catalog
+from edge import apps, barrier, catalog, switches
+
+DOMAIN = "edge-fixture.invalid"
+BARRIER = "the barrier a stop wrote\n"
+
+
+@pytest.fixture
+def hosted(world, repository, origin: Origin) -> World:  # noqa: F811
+    """The world of an app with a host behind Traefik, so a stop leaves a barrier."""
+    (repository / "fleet.yaml").write_text(f"cloudflare:\n  zone: {DOMAIN}\n{HOSTED_FLEET}")
+    origin.commit({"compose.yaml": HOSTED_COMPOSE})
+    origin.push("master")
+    traefik = {"traefik": {"environment": {"EDGE_DOMAIN": DOMAIN}}}
+    world.fleet = dataclasses.replace(EDGE_FLEET, config={"name": "edge", "services": traefik})
+    return world
+
+
+def barrier_file(world: World) -> Path:  # noqa: F811
+    return world.repository / barrier.DYNAMIC_DIRECTORY / f"switch-{KEY}.yml"
 
 
 def switch_off_meanwhile(world: World) -> None:  # noqa: F811
-    """Another operator's `hal stop`: the marker, the first thing it writes."""
+    """Another operator's `hal stop`: the marker first, then the barrier."""
     world.marks.record(KEY, NOW)
+    barrier_file(world).parent.mkdir(exist_ok=True)
+    barrier_file(world).write_text(BARRIER)
+
+
+def in_the_first_look_after_the_start(world: World, happening: Callable[[], None]) -> None:  # noqa: F811
+    """`happening` right after the first `ps` that follows `start`, the health wait's first look."""
+
+    def once() -> None:
+        world.docker.during.pop("ps")
+        happening()
+
+    world.docker.during["start"] = lambda: world.docker.during.update(ps=once)
 
 
 STOPPED_LINE = f"{KEY} was switched off meanwhile (since 22.10. 12:00); not started"
@@ -58,49 +91,86 @@ def test_a_barrier_left_without_a_marker_keeps_the_app_stopped(world, origin, re
     assert world.docker.verbs == []
 
 
-def test_a_stop_during_the_build_runs_no_create_and_keeps_the_record(world, origin):  # noqa: F811
-    deploy(world, origin, FIRST)
+def test_a_stop_during_the_build_runs_no_create_and_keeps_the_record_and_the_barrier(
+    hosted,
+    origin,  # noqa: F811
+):
+    deploy(hosted, origin, FIRST)
     origin.release(SECOND)
-    plan = world.plan()
-    world.docker.calls.clear()
-    world.docker.during["build"] = lambda: switch_off_meanwhile(world)
+    plan = hosted.plan()
+    hosted.docker.calls.clear()
+    hosted.docker.during["build"] = lambda: switch_off_meanwhile(hosted)
 
-    assert world.run(plan) == [STOPPED_LINE]
+    assert hosted.run(plan) == [STOPPED_LINE]
 
-    assert "create" not in world.docker.verbs
-    assert world.deployed()["tag"] == FIRST
-    assert world.marks.mark(KEY) is not None
+    assert "create" not in hosted.docker.verbs
+    assert hosted.deployed()["tag"] == FIRST
+    assert hosted.marks.mark(KEY) is not None
+    assert barrier_file(hosted).read_text() == BARRIER
 
 
-def test_a_stop_during_the_health_wait_ends_the_wait_without_a_record_and_removes_what_started(
-    world,  # noqa: F811
+def test_a_stop_during_the_health_wait_ends_it_early_and_removes_what_started_under_the_lock(
+    hosted,
     origin,  # noqa: F811
 ):
-    world.docker.health_after_start = "starting"
+    hosted.docker.health_after_start = "starting"
     origin.release(FIRST)
-    world.docker.during["start"] = lambda: world.docker.during.update(
-        ps=lambda: switch_off_meanwhile(world)
-    )
+    in_the_first_look_after_the_start(hosted, lambda: switch_off_meanwhile(hosted))
 
-    assert world.run() == [STOPPED_LINE]
+    assert hosted.run() == [STOPPED_LINE]
 
-    assert world.deployed() is None
-    assert world.docker.rows == []
-    assert world.docker.locked_verbs() == {"create", "start"}
-    assert world.docker.verbs.count("start") == 1
+    assert hosted.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
+    first_look = hosted.docker.calls[hosted.docker.verbs.index("start") + 1]
+    assert first_look[0] == "ps" and not first_look[2]  # the wait holds no lock a stop waits for
+    assert hosted.deployed() is None
+    assert hosted.docker.rows == []
+    assert {"create", "start", "stop", "rm"} <= hosted.docker.locked_verbs()
+    assert hosted.docker.verbs.count("start") == 1
+    assert barrier_file(hosted).read_text() == BARRIER
 
 
-def test_a_stop_after_the_health_wait_is_seen_under_the_lock_and_wins_over_the_record(
-    world,  # noqa: F811
+def test_a_stop_in_the_look_that_finds_the_app_healthy_is_seen_under_the_lock_before_the_record(
+    hosted,
     origin,  # noqa: F811
 ):
     origin.release(FIRST)
-    world.docker.during["start"] = lambda: switch_off_meanwhile(world)
+    in_the_first_look_after_the_start(hosted, lambda: switch_off_meanwhile(hosted))
 
-    assert world.run() == [STOPPED_LINE]
+    assert hosted.run() == [STOPPED_LINE]
 
-    assert world.deployed() is None
-    assert world.docker.rows == []
+    assert hosted.deployed() is None
+    assert hosted.docker.rows == []
+    assert {"stop", "rm"} <= hosted.docker.locked_verbs()
+    assert barrier_file(hosted).read_text() == BARRIER
+
+
+def test_a_start_that_ends_the_switch_before_apply_looks_again_is_not_undone_by_apply(
+    hosted,
+    origin,  # noqa: F811
+    monkeypatch,
+):
+    hosted.docker.health_after_start = "starting"
+    origin.release(FIRST)
+    in_the_first_look_after_the_start(hosted, lambda: switch_off_meanwhile(hosted))
+    taken_lock = switches.Switches.lock
+    takes: list[None] = []
+
+    def lock(marks: switches.Switches):
+        takes.append(None)
+        if len(takes) == 2:  # apply's look after the wait: the operator's `hal start` came first
+            assert hosted.marks.clear(KEY, hosted.marks.mark(KEY))
+            barrier_file(hosted).unlink()
+        return taken_lock(marks)
+
+    monkeypatch.setattr(switches.Switches, "lock", lock)
+
+    assert hosted.run() == [
+        f"{KEY} was switched off and on again during the health wait; not recorded"
+    ]
+
+    assert hosted.deployed() is None
+    assert {row["State"] for row in hosted.docker.rows} == {"running"}
+    assert not {"stop", "rm"} & set(hosted.docker.verbs)
 
 
 def test_a_barrier_that_appears_meanwhile_stops_the_run_like_a_marker(world, origin, repository):  # noqa: F811

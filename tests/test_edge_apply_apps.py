@@ -11,9 +11,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from app_support import FLEET, KEY, ScriptedDocker, origin_at, runtime_of, switch_lock_is_held
+from app_support import (
+    FLEET,
+    HOSTED_COMPOSE,
+    HOSTED_FLEET,
+    KEY,
+    Clock,
+    ScriptedDocker,
+    origin_at,
+    runtime_of,
+    switch_lock_is_held,
+)
 from test_edge_apply import (
     NOW,
+    WHOAMI,
     ZONE,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     home,  # noqa: F401 the fixture, requested by name below
@@ -29,7 +40,7 @@ from test_edge_apply import (
     write_fleet,
 )
 
-from edge import barrier, checkout, compose, emergency, switches
+from edge import apps, barrier, checkout, compose, emergency, switches
 
 APP = "github: {{org: overnightworks}}\nservices:\n  hopin:\n    repo: {repo}\n    run: {run}\n"
 
@@ -252,6 +263,24 @@ def deployed(app_world: AppWorld) -> None:
     assert app_world.apply()[0] == 0
 
 
+def hosted(app_world: AppWorld, hal: Hal) -> Path:
+    """The app with a host behind Traefik, at its next release, and Traefik answering for it:
+    a stop leaves a barrier. The barrier's file."""
+    write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{HOSTED_FLEET}")
+    app_world.origin.commit({"compose.yaml": HOSTED_COMPOSE})
+    app_world.origin.push("master")
+    barrier_file = app_world.repository / barrier.DYNAMIC_DIRECTORY / f"switch-{KEY}.yml"
+    clock = Clock()
+
+    def fetch(_address: str, _host: str, _seconds: float, _clock) -> barrier.Answer:
+        if barrier_file.exists():
+            return barrier.Answer(404, b"404 page not found\n", KEY)
+        return WHOAMI
+
+    hal.verifier = barrier.Verifier(fetch, clock.read, clock.sleep)
+    return barrier_file
+
+
 def test_hal_stop_writes_the_marker_and_stops_the_containers_without_a_terminal(app_world, hal):
     deployed(app_world)
 
@@ -432,19 +461,27 @@ def test_a_stop_that_comes_in_while_hal_start_holds_the_lock_waits_then_nothing_
     assert {row["State"] for row in app_world.docker.rows} == {"exited"}
 
 
-def test_a_stop_while_apply_waits_at_the_yes_prompt_checks_out_and_builds_nothing(app_world):
+def test_a_stop_while_apply_waits_at_the_yes_prompt_checks_out_and_builds_nothing(app_world, hal):
+    barrier_file = hosted(app_world, hal)
     app_world.origin.release(RELEASE)
     marks = switches.Switches(app_world.state)
+    written: list[bytes] = []
 
-    exit_code, _, err = app_world.run(
-        "yes", lambda: marks.record(KEY, NOW), app_runtime=app_world.runtime
-    )
+    def hal_stop_at_the_prompt() -> None:
+        stop = emergency.stop_unit(
+            marks, KEY, NOW, hal.engine(), app_world.repository, hal.verifier, app_world.runtime
+        )
+        assert stop == 0
+        written.append(barrier_file.read_bytes())
+
+    exit_code, _, err = app_world.run("yes", hal_stop_at_the_prompt, app_runtime=app_world.runtime)
 
     assert exit_code == 1
     assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
     assert "build" not in app_world.docker.verbs
     assert [path.name for path in app_world.srv.iterdir()] == [".git"]
     assert marks.mark(KEY) is not None
+    assert [barrier_file.read_bytes()] == written
 
 
 def test_a_marked_app_with_a_newer_tag_waiting_stays_stopped_and_its_marker_stays(app_world):
@@ -466,34 +503,38 @@ def test_a_marked_app_with_a_newer_tag_waiting_stays_stopped_and_its_marker_stay
 def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops_what_started(
     app_world, hal
 ):
+    barrier_file = hosted(app_world, hal)
     app_world.origin.release(RELEASE)
     marks = switches.Switches(app_world.state)
-    stopped: list[int] = []
+    when_stop_returned: list[tuple[int, set[str], bytes]] = []
 
     def stop_the_app() -> None:
-        stopped.append(
-            emergency.stop_unit(
-                marks, KEY, NOW, hal.engine(), app_world.repository, hal.verifier, app_world.runtime
-            )
+        exit_code = emergency.stop_unit(
+            marks, KEY, NOW, hal.engine(), app_world.repository, hal.verifier, app_world.runtime
         )
+        states = {row["State"] for row in app_world.docker.rows}
+        when_stop_returned.append((exit_code, states, barrier_file.read_bytes()))
 
     stop = threading.Thread(target=stop_the_app)
     waited: list[bool] = []
 
     def hal_stop_while_start_holds_the_lock() -> None:
-        assert switch_lock_is_held(app_world.state)
+        waited.append(switch_lock_is_held(app_world.state))
         stop.start()
-        while marks.mark(KEY) is None:  # the stop records first, then waits for the lock
-            stop.join(0.01)
-        waited.append(stop.is_alive() and not stopped)
+        join_until(lambda: marks.mark(KEY) is not None, stop)  # recorded, now waits
+        waited.append(stop.is_alive())
 
     app_world.docker.during["start"] = hal_stop_while_start_holds_the_lock
 
     exit_code, _, err = app_world.apply()
-    stop.join()
+    stop.join(JOIN_SECONDS)
 
-    assert waited == [True]
-    assert stopped == [0]
+    assert not stop.is_alive()
+    assert waited == [True, True]
+    [(stop_exit_code, states, barrier_written)] = when_stop_returned
+    assert stop_exit_code == 0
+    assert "running" not in states
+    assert app_world.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
     assert exit_code == 1
     assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
     assert "`hal start hopin`" in err
@@ -501,12 +542,7 @@ def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops
     assert not any(row["State"] == "running" for row in app_world.docker.rows)
     assert not (app_world.state / "deployed").exists()
     assert marks.mark(KEY) is not None
-
-
-HOSTED_FLEET = f"cloudflare:\n  zone: {ZONE}\n" + FLEET.replace(
-    "run: {enabled: true}",
-    "run: {enabled: true}\n    hosts: [{name: hopin, exposure: public, reason: a page, ready: /}]",
-)
+    assert barrier_file.read_bytes() == barrier_written
 
 
 def test_hal_stop_proves_the_barrier_of_the_apps_catalog_hosts_before_it_stops_the_containers(
@@ -514,7 +550,7 @@ def test_hal_stop_proves_the_barrier_of_the_apps_catalog_hosts_before_it_stops_t
 ):
     tree = app_world.repository
     domain = app_world.scripted.config["services"]["traefik"]["environment"]["EDGE_DOMAIN"]
-    write_fleet(tree, HOSTED_FLEET)
+    write_fleet(tree, f"cloudflare:\n  zone: {ZONE}\n{HOSTED_FLEET}")
     app_world.docker.put(KEY, "running", "healthy")
     states_when_proven: list[set[str]] = []
     asked: list[str] = []

@@ -82,7 +82,7 @@ class World:
     docker: ScriptedDocker
 
     def plan(self) -> apps.AppsPlan:
-        return apps.plan_apps(self.repository, EDGE_FLEET, self.runtime, self.marks)
+        return apps.plan_apps(self.repository, self.fleet, self.runtime, self.marks)
 
     def run(self, plan: apps.AppsPlan | None = None) -> list[str | None]:
         """The failure line of each app's run; None where it is on and recorded."""
@@ -95,6 +95,7 @@ class World:
 
     marks: switches.Switches = dataclasses.field(init=False)
     progress: Progress = dataclasses.field(default_factory=Progress)
+    fleet: Fleet = EDGE_FLEET
 
     def __post_init__(self) -> None:
         self.marks = switches.Switches(self.state)
