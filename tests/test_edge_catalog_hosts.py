@@ -500,3 +500,20 @@ def test_an_app_host_without_ready_is_refused_when_the_apps_are_read():
 
     with pytest.raises(catalog.CatalogError, match=r"services\.app\.hosts\[0\]\.ready"):
         catalog.apps(entry, {}, "edge")
+
+
+def test_the_repositorys_catalog_has_hopin_disabled_and_public_once_enabled():
+    fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
+
+    (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "hopin"]
+    fleet["services"]["hopin"]["run"]["enabled"] = True
+    (hopin,) = [one for one in catalog.hosts(fleet) if one.service == "hopin"]
+
+    assert (app.enabled, app.default_branch) == (False, "master")
+    assert (hopin.fqdn, hopin.exposure, hopin.target, hopin.ready, hopin.deny_public) == (
+        "hopin.hallucinai.de",
+        catalog.Exposure.PUBLIC,
+        catalog.DEFAULT_TARGET,
+        "/health",
+        ("/auth/backchannel-logout",),
+    )

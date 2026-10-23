@@ -147,7 +147,7 @@ def _is_unit(entry: Any) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" not in entry
 
 
-def _is_app(entry: Any) -> bool:
+def is_app(entry: object) -> bool:
     return isinstance(entry, dict) and "run" in entry and "repo" in entry
 
 
@@ -160,7 +160,7 @@ def apps(
     return tuple(
         _app(key, entry, profile_services, edge_project, document)
         for key, entry in _entries(document).items()
-        if _is_app(entry)
+        if is_app(entry)
     )
 
 
@@ -301,7 +301,7 @@ def hosts(document: Any) -> tuple[Host, ...]:
         if not isinstance(entry, dict) or "hosts" not in entry:
             continue
         entered = _entry_hosts(key, entry["hosts"], zone_name)
-        if _is_app(entry):
+        if is_app(entry):
             _require_ready(entered)
         if _entry_enabled(key, entry):
             enabled_hosts += entered
