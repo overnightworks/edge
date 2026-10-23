@@ -3,6 +3,7 @@ synthetic service logs: the probe's cells themselves run live under `unit.py --c
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,17 +23,18 @@ LOGIN_REFUSED = "run r1 failed: CliLoginRefusedError\n"
 
 @pytest.fixture(scope="module")
 def containment() -> Iterator[ModuleType]:
-    paths = [str(ROOT / "probe" / "agent-service"), str(ROOT / "agent-service")]
-    sys.path[:0] = paths
+    path_before = list(sys.path)
+    modules_before = set(sys.modules)
+    sys.path[:0] = [str(ROOT / "probe" / "agent-service"), str(ROOT / "agent-service")]
     try:
         import containment as module
 
         yield module
     finally:
-        for path in paths:
-            sys.path.remove(path)
+        sys.path[:] = path_before
         for name in PROBE_MODULES:
-            sys.modules.pop(name, None)
+            if name not in modules_before:
+                sys.modules.pop(name, None)
 
 
 def b2_verdicts(containment: ModuleType, log: str) -> dict[str, bool]:
@@ -78,3 +80,21 @@ def test_evidence_names_counts_and_never_the_smoke_lines(containment):
     evidence = [text for _, text in containment.b2_verdicts(seen).values()]
     evidence += [text for _, text in containment.b1_verdicts(seen).values()]
     assert not any(canary in text for text in evidence)
+
+
+@pytest.mark.parametrize("reader", ["service_log", "app_lines"])
+def test_a_failed_log_read_reports_no_output(containment, reader):
+    marker = "SECRET-LOG-LINE-MARKER"
+    probe = object.__new__(containment.ContainmentProbe)
+    probe.container = lambda service: "container-id"
+
+    def failed_run(command, *, check=True, **_):
+        if check:  # as egress.Probe.run does: the output's last line goes into the message
+            raise containment.ProbeFailed(f"{command[:5]} exited 1: {[marker]}")
+        return subprocess.CompletedProcess(command, 1, stdout=marker + "\n", stderr=marker + "\n")
+
+    probe.run = failed_run
+    with pytest.raises(containment.ProbeFailed) as raised:
+        getattr(probe, reader)()
+    assert marker not in str(raised.value)
+    assert "exited 1" in str(raised.value)

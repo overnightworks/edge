@@ -310,9 +310,16 @@ class ContainmentProbe(IssuerProbe):
         return LogCounts.of(self.service_log())
 
     def service_log(self) -> str:
-        logs = self.run(["docker", "logs", self.container(SERVICE)])
-        return logs.stdout + logs.stderr
+        return self.container_log(SERVICE)
 
     def app_lines(self) -> list[str]:
-        logs = self.run(["docker", "logs", self.container(APP_SERVICE)])
-        return (logs.stdout + logs.stderr).splitlines()
+        return self.container_log(APP_SERVICE).splitlines()
+
+    def container_log(self, service: str) -> str:
+        """The log text; a failed read reports the command and its exit code, never its output,
+        because the cell prints only verdicts, counts and event names."""
+        container = self.container(service)
+        logs = self.run(["docker", "logs", container], check=False)
+        if logs.returncode != 0:
+            raise ProbeFailed(f"docker logs {container} exited {logs.returncode}")
+        return logs.stdout + logs.stderr

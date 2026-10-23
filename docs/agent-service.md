@@ -202,7 +202,5 @@ dummy login. L4 is proven only live, with the real login; the probe has no L4 ce
 is accepted and fails at the upstream) and B2 (a capability written into a tool description fails
 the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the runner's failure is
 `CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict
-other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. The runs seen
-so far show the relay owner's and then the runner's `CapabilityReflected` line, without any
-verdict line. The cells print counts and event names, never a log line. Its loopback capture (the
+other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. The cells print counts and event names, never a log line. Its loopback capture (the
 (a) parts) is not driven yet.
