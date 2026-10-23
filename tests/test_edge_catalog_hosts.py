@@ -88,10 +88,10 @@ def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks
     ]
 
 
-def test_songmakers_host_refuses_the_back_channel_route_publicly():
+def test_songmakers_host_refuses_the_back_channel_route_and_its_metrics_publicly():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
-        "songmaker.hallucinai.de": ("/auth/backchannel-logout",)
+        "songmaker.hallucinai.de": ("/auth/backchannel-logout", "/metrics")
     }
 
 
