@@ -1,0 +1,8 @@
+claim_id = "9c93582293794121adb36893a55ff94c"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
+branch = "claude/issue-342-songmaker-s-metrics-is-refused-at-cloudf"
+scope = ["docs/architecture.md", "docs/external.md", "external/tests/live.tftest.hcl", "fleet.yaml"]
+opened_commit = "6d605133a85cb378f21293d8e065f7a66b123215"
+whole_reason = "One denied path with the live assertion and the two docs that name songmaker's denied paths."
