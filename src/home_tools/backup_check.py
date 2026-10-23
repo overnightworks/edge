@@ -9,13 +9,19 @@ never a pass.
 from __future__ import annotations
 
 import json
+import os
+import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
 
+STATUS_FILE = Path("state/edge/backup-status.json")  # below ~/.local; written by the backup, which `home` only reads
 STATUS_SCHEMA = 2
+STATES = frozenset({"running", "ok", "failed"})
+EXIT_CATEGORIES = frozenset({"configuration", "not-ready", "command-failed", "verification-failed", "interrupted", "internal"})
 MAXIMUM_BACKUP_AGE = timedelta(days=8)
 MAXIMUM_RUN_DURATION = timedelta(hours=6)
 STATUS_SUBJECT = "backup-status.json"
@@ -24,7 +30,7 @@ RUN_SUBJECT = "backup"
 
 @dataclass(frozen=True)
 class BackupStatus:
-    """The documented fields the check judges; times are timezone-aware."""
+    """The documented fields the check judges, each checked against its documented type or values; times are local and timezone-aware."""
 
     state: str
     last_attempt: datetime
@@ -33,26 +39,40 @@ class BackupStatus:
     last_successful_backups: dict[str, datetime | None]
 
 
-def _time(text: str | None) -> datetime | None:
-    moment = None if text is None else datetime.fromisoformat(text)
-    if moment is not None and moment.tzinfo is None:
+def _text(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Text erwartet")
+    return value
+
+
+def _one_of(value: object, allowed: frozenset[str]) -> str:
+    text = _text(value)
+    if text not in allowed:
+        raise ValueError("Wert nicht dokumentiert")
+    return text
+
+
+def _moment(value: object) -> datetime:
+    moment = datetime.fromisoformat(_text(value))
+    if moment.tzinfo is None:
         raise ValueError("Zeit ohne Zeitzone")
-    return moment
+    return moment.astimezone()
+
+
+def _optional[T](value: object, parse: Callable[[object], T]) -> T | None:
+    return None if value is None else parse(value)
 
 
 def parse_status(text: str) -> BackupStatus:
     document = json.loads(text)
     if document["schema"] != STATUS_SCHEMA:
         raise ValueError(f"Schema {document['schema']!r}")
-    last_attempt = _time(document["last_attempt"])
-    if last_attempt is None:
-        raise ValueError("last_attempt fehlt")
     return BackupStatus(
-        state=str(document["state"]),
-        last_attempt=last_attempt,
-        failing_app=document["failing_app"],
-        exit_category=document["exit_category"],
-        last_successful_backups={name: _time(record["last_successful_backup"]) for name, record in document["apps"].items()},
+        state=_one_of(document["state"], STATES),
+        last_attempt=_moment(document["last_attempt"]),
+        failing_app=_optional(document["failing_app"], _text),
+        exit_category=_optional(document["exit_category"], lambda value: _one_of(value, EXIT_CATEGORIES)),
+        last_successful_backups={name: _optional(record["last_successful_backup"], _moment) for name, record in document["apps"].items()},
     )
 
 
@@ -79,16 +99,26 @@ def _unreadable(why: str) -> list[Finding]:
     return [Finding("backup-status-unreadable", STATUS_SUBJECT, why)]
 
 
+def _read_regular_file(status_file: Path) -> str:
+    """A symlink in the file's place is refused, not followed, and so is anything that is not a regular file; it is opened
+    without blocking, because a FIFO planted there would otherwise wait forever for a writer."""
+    descriptor = os.open(status_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with open(descriptor, encoding="utf-8") as handle:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("keine reguläre Datei")
+        return handle.read()
+
+
 def _read(status_file: Path) -> tuple[BackupStatus | None, str]:
     """The status, or the reason it cannot be judged."""
     try:
-        return parse_status(status_file.read_text(encoding="utf-8")), ""
+        return parse_status(_read_regular_file(status_file)), ""
     except FileNotFoundError:
         return None, "Statusdatei fehlt, die Sicherung lief noch nie"
     except OSError as error:
         return None, f"Statusdatei unlesbar: {error.strerror}"
     except (ValueError, KeyError, TypeError, AttributeError):
-        return None, f"Statusdatei nicht lesbar oder Schema nicht {STATUS_SCHEMA}"
+        return None, f"Statusdatei ungültig oder Schema nicht {STATUS_SCHEMA}"
 
 
 def inspect(status_file: Path, now: datetime) -> tuple[list[Finding], str]:

@@ -272,11 +272,6 @@ class Layout:
         return self.state_dir / "check-findings.txt"
 
     @property
-    def backup_status_file(self) -> Path:
-        """Written by the backup, which lives in the independent `edge_backup` package; `home` only reads it."""
-        return self.local_dir / "state" / "edge" / "backup-status.json"
-
-    @property
     def secrets_dir(self) -> Path:
         return self.home / ".secrets"
 

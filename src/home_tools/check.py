@@ -90,7 +90,7 @@ def _platform_check(ctx: CheckContext) -> CheckFindings:
 
 
 def _backup_check(ctx: CheckContext) -> CheckFindings:
-    findings, report = backup_check.inspect(ctx.layout.backup_status_file, ctx.now)
+    findings, report = backup_check.inspect(ctx.layout.local_dir / backup_check.STATUS_FILE, ctx.now)
     return report, frozenset(finding.identity for finding in findings)
 
 

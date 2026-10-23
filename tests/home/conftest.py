@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import stat
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +21,25 @@ HOME_README = "`.local/state`, `.config/home`, `.secrets` and `git/` belong here
 
 # Every planted secret file holds this; no output and no report may ever contain any of it.
 FAKE_SECRET_VALUE = "FAKE-SECRET-VALUE ghp_0000notarealtoken glpat-0000notarealtoken"
+
+
+# The one `docker inspect --format` the platform check may send: named fields, and only whether a compose project label is set.
+# A fake docker answers any other format with a line that carries the canary, so a wider projection shows in the report.
+ALLOWED_PLATFORM_INSPECT_FORMAT = (
+    '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}'
+    '\t{{if index .Config.Labels "com.docker.compose.project"}}compose{{end}}'
+)
+INSPECT_CANARY = "CANARY-ENV-VALUE-s3cr3t"
+CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tcompose\n"
+
+
+@pytest.fixture
+def berlin_time(monkeypatch) -> Iterator[None]:
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 def symlinked_folder_fix(place: str) -> str:

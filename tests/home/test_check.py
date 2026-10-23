@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import FakeProbe, RunnerWithRealGitAndQuality, Sandbox
+from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox
 
-from home_tools import check, cli, platform_check
+from home_tools import backup_check, check, cli, logs_check
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
 from home_tools.tidy_home import Layout
 
@@ -31,14 +31,14 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
     """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
 
     container_listing = ""
-    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, compose project per line
+    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, "compose" or nothing per line
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "journalctl":
             return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
-        if argv[:2] == ["docker", "inspect"] and argv[3] == platform_check.INSPECT_FORMAT:
+        if argv[:2] == ["docker", "inspect"] and argv[3] != logs_check.INSPECT_FORMAT:
             self.calls.append(list(argv))
-            return self.platform_listing
+            return self.platform_listing if argv[3] == ALLOWED_PLATFORM_INSPECT_FORMAT else CANARY_INSPECT_LINE
         if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
             self.calls.append(list(argv))
             return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
@@ -55,7 +55,7 @@ def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | N
     last_backup = last_backup or datetime.now().astimezone()
     document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
     document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
-    status_file = Layout(home).backup_status_file
+    status_file = Layout(home).local_dir / backup_check.STATUS_FILE
     status_file.parent.mkdir(parents=True, exist_ok=True)
     status_file.write_text(json.dumps(document))
 
@@ -106,9 +106,9 @@ def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(
 
 
 def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_the_report_when_fixed(clean_home, runner) -> None:
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
     home_check(clean_home, runner)
-    runner.platform_listing = "/edge-step-ca-1\trunning\thealthy\t0\tedge\n"
+    runner.platform_listing = "/edge-step-ca-1\trunning\thealthy\t0\tcompose\n"
 
     code = home_check(clean_home, runner)
 
@@ -117,8 +117,19 @@ def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_th
     assert runner.notification_bodies[0].startswith("1 neu, 0 weg.")
 
 
+def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_inspect_fields(clean_home, runner) -> None:
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
+
+    home_check(clean_home, runner)
+
+    layout = Layout(clean_home)
+    carried = [layout.check_report_file.read_text(), layout.check_findings_file.read_text(), *runner.notifications, *runner.notification_bodies]
+    assert not any(INSPECT_CANARY in text for text in carried)
+    assert "container-unhealthy | edge-step-ca-1" in carried[0]
+
+
 def test_many_new_findings_give_one_notification_with_their_count(clean_home, runner) -> None:
-    runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tedge\n" for n in range(4))
+    runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tcompose\n" for n in range(4))
 
     home_check(clean_home, runner)
 

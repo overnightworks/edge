@@ -1,9 +1,9 @@
 """`home check`'s platform check: reports every broken compose container and a pending reboot.
 
-It asks Docker for named fields only (name, state, health, exit code, compose project label, start time), never the
-full inspect JSON, which holds each container's environment, and never a log. From the reboot flag it reads whether the
-file exists and when it was changed. Nothing is started, stopped or repaired. Docker that cannot be read is a finding
-of its own, never a pass.
+It asks Docker for named fields only (name, state, health, exit code, whether a compose project label is set), never
+the label's value or the full inspect JSON, which holds each container's environment, and never a log. From the reboot
+flag it reads whether the file exists and when it was changed. Nothing is started, stopped or repaired. Docker that
+cannot be read is a finding of its own, never a pass.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ REBOOT_REQUIRED_FILE = Path("/var/run/reboot-required")
 DOCKER_CONTAINER_IDS = ["docker", "ps", "-aq"]
 INSPECT_FORMAT = (
     '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}'
-    '\t{{index .Config.Labels "com.docker.compose.project"}}'
+    '\t{{if index .Config.Labels "com.docker.compose.project"}}compose{{end}}'
 )
 BROKEN_STATES = {"restarting": "container-restarting", "dead": "container-dead"}
 
@@ -30,12 +30,12 @@ class ContainerState:
     status: str
     health: str
     exit_code: int
-    project: str
+    in_compose_project: bool
 
 
 def _parse_container(line: str) -> ContainerState:
-    name, status, health, exit_code, project = line.split("\t")
-    return ContainerState(name.removeprefix("/"), status, health, int(exit_code), project)
+    name, status, health, exit_code, project_marker = line.split("\t")
+    return ContainerState(name.removeprefix("/"), status, health, int(exit_code), project_marker == "compose")
 
 
 def _container_finding(container: ContainerState) -> Finding | None:
@@ -43,7 +43,7 @@ def _container_finding(container: ContainerState) -> Finding | None:
         return Finding(BROKEN_STATES[container.status], container.name, f"Zustand {container.status}")
     if container.status == "exited" and container.exit_code != 0:
         return Finding("container-exited", container.name, f"beendet mit Code {container.exit_code}")
-    if container.health == "unhealthy":
+    if container.status == "running" and container.health == "unhealthy":
         return Finding("container-unhealthy", container.name, "Gesundheitsprüfung schlägt fehl")
     return None
 
@@ -66,7 +66,7 @@ def _container_findings(run: CommandRunner) -> tuple[list[Finding], list[str]]:
     containers = _inspect_all(run)
     if containers is None:
         return [Finding("docker-unreadable", "docker", "`docker ps` oder `docker inspect` lässt sich nicht ausführen")], []
-    judged = [container for container in containers if container.project]
+    judged = [container for container in containers if container.in_compose_project]
     findings = [finding for container in judged if (finding := _container_finding(container))]
     return findings, [f"Container mit Compose-Projekt: {len(judged)}, davon in Ordnung {len(judged) - len(findings)}"]
 

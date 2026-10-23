@@ -166,7 +166,8 @@ eigener Fund, nie ein sauberer Lauf.
 - **`backup`.** `~/.local/state/edge/backup-status.json` (Schema 2, nur die dokumentierten Felder): `backup-failed`,
   wenn der letzte Lauf `failed` ist; `backup-crashed`, wenn `running` länger als 6 Stunden her ist; `backup-stale` je
   App, wenn `last_successful_backup` älter als 8 Tage ist oder fehlt; `backup-status-unreadable`, wenn die Datei
-  fehlt, nicht lesbar ist oder ein anderes Schema hat. Die 8 Tage und 6 Stunden sind Konstanten in `backup_check.py`.
+  fehlt, nicht lesbar ist (ein Symlink an ihrer Stelle wird nicht verfolgt), ein anderes Schema oder einen Wert außerhalb
+  seiner dokumentierten Werte hat. Die 8 Tage und 6 Stunden sind Konstanten in `backup_check.py`.
 
 ### Die Prüfung `logs`
 

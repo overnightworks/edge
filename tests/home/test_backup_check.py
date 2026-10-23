@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -108,3 +109,55 @@ def test_fields_beyond_the_documented_ones_never_reach_the_report(status_file) -
     _findings, report = backup_check.inspect(status_file, NOW)
 
     assert "CANARY" not in report
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"state": "CANARY-STATE"},
+        {"state": 5},
+        {"exit_category": "CANARY-CATEGORY"},
+        {"exit_category": 7},
+        {"failing_app": 7},
+        {"last_attempt": None},
+        {"last_attempt": 12},
+        {"last_attempt": "CANARY-TIME"},
+        {"last_attempt": "2026-10-23T06:00:00"},
+        {"apps": ["CANARY-APP"]},
+        {"apps": {"songmaker": "CANARY-ENTRY"}},
+        {"apps": {"songmaker": {"last_successful_backup": 5}}},
+        {"apps": {"songmaker": {"last_successful_backup": "2026-10-23T06:00:00"}}},
+    ],
+    ids=str,
+)
+def test_a_value_outside_its_documented_type_or_values_is_unreadable_and_never_reaches_the_report(status_file, overrides) -> None:
+    status_file.write_text(json.dumps(status_document(**overrides)))
+
+    findings, report = backup_check.inspect(status_file, NOW)
+
+    assert [(f.rule, f.subject) for f in findings] == [("backup-status-unreadable", "backup-status.json")]
+    assert "CANARY" not in report
+
+
+def test_a_symlink_in_place_of_the_status_file_is_unreadable_not_followed(status_file, tmp_path) -> None:
+    target = tmp_path / "elsewhere.json"
+    target.write_text(json.dumps(status_document()))
+    status_file.symlink_to(target)
+
+    assert set(found(status_file)) == {("backup-status-unreadable", "backup-status.json")}
+
+
+@pytest.mark.parametrize("make", [os.mkfifo, os.mkdir], ids=["fifo", "directory"])
+def test_a_status_file_that_is_not_a_regular_file_is_unreadable_and_does_not_block(status_file, make) -> None:
+    make(status_file)
+
+    assert set(found(status_file)) == {("backup-status-unreadable", "backup-status.json")}
+
+
+def test_times_show_on_the_wall_clock_of_this_machine(status_file, berlin_time) -> None:
+    attempt = datetime.fromisoformat("2026-10-23T06:48:00+00:00")
+    status_file.write_text(json.dumps(status_document(last_attempt=attempt.isoformat(), state="ok")))
+
+    _findings, report = backup_check.inspect(status_file, datetime(2026, 10, 23, 12, 0))
+
+    assert "23.10.2026 08:48" in report
