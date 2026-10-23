@@ -32,7 +32,9 @@ from enum import StrEnum
 
 Identity = tuple[int, int]  # (st_dev, st_ino)
 
-ALLOWED_NAMES = frozenset({"system-prompt", "relay-mcp.json", ".claude", "/tmp", "home", "work"})
+ALLOWED_NAMES = frozenset(
+    {"system-prompt", "relay-mcp.json", ".claude", f"{os.sep}tmp", "home", "work"}
+)
 RUN_TREE = re.compile(r"agent-run-[A-Za-z0-9_-]{8}")
 OPAQUE_HEX_DIGITS = 8
 
@@ -191,6 +193,9 @@ class WalkRules:
     token: bytes | None = None
     root_device: int | None = None  # st_dev of the walked mount; another one is a nested mount
 
+    def for_mount(self, nested: frozenset[tuple[str, ...]], root_device: int) -> WalkRules:
+        return replace(self, nested=nested, root_device=root_device)
+
 
 def kind_letter(mode: int) -> str:
     for test, letter in (
@@ -259,16 +264,14 @@ def _walk(
             _count_file(directory_fd, name, _identity(info), rules.token, census)
         if kind != "d":
             continue
-        skip = _directory_skip(trail, name, info, rules)
+        skip = _directory_skip(trail, info, rules)
         if skip is not None:
             census.skip(skip)
             continue
         _descend(directory_fd, trail, name, info, names, rules, census)
 
 
-def _directory_skip(
-    trail: tuple[str, ...], name: str, info: os.stat_result, rules: WalkRules
-) -> Skip | None:
+def _directory_skip(trail: tuple[str, ...], info: os.stat_result, rules: WalkRules) -> Skip | None:
     if _identity(info) in rules.excluded:
         return Skip.LOGIN
     if info.st_dev != rules.root_device:
@@ -351,7 +354,7 @@ def census_mount(mount: WritableMount, names: Names, rules: WalkRules) -> Census
         elif _identity(root) in rules.excluded:
             census.skip(Skip.LOGIN)
         else:
-            walked = replace(rules, nested=mount.nested, root_device=root.st_dev)
+            walked = rules.for_mount(mount.nested, root.st_dev)
             _walk(root_fd, (), names, walked, census)
     finally:
         os.close(root_fd)
