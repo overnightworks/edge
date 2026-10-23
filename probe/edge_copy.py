@@ -84,20 +84,39 @@ def _without_app_lines(text: str, apps: set[str]) -> str:
     for line in text.splitlines(keepends=True):
         content = line.strip()
         indent = len(line) - len(line.lstrip())
-        is_comment = content.startswith("#")
         if line.startswith("services:"):
             in_services = True
-        elif in_services and content and not is_comment:
+        elif in_services and _is_code(content):
             if indent == 0:
-                in_services, dropping = False, False
+                in_services = dropping = False
             else:
                 entry_indent = entry_indent or indent
-                if indent == entry_indent:
-                    dropping = content.split(":")[0].strip("'\"") in apps
-        removed = in_services and dropping and content and (not is_comment or indent > entry_indent)
-        if not removed:
+                dropping = _dropping_at(content, indent, entry_indent, dropping, apps)
+        if not _is_removed(in_services and dropping, content, indent, entry_indent):
             kept.append(line)
     return "".join(kept)
+
+
+def _is_code(content: str) -> bool:
+    """Whether the stripped line is neither blank nor a comment."""
+    return bool(content) and not content.startswith("#")
+
+
+def _dropping_at(
+    content: str, indent: int, entry_indent: int, dropping: bool, apps: set[str]
+) -> bool:
+    """Whether the entry the stripped code line sits in is dropped: a line at `entry_indent` opens
+    an entry, which goes when it is one of `apps`; a deeper line stays in the entry before it."""
+    if indent != entry_indent:
+        return dropping
+    return content.split(":")[0].strip("'\"") in apps
+
+
+def _is_removed(
+    in_dropped_entry: bool, content: str, indent: int, entry_indent: int | None
+) -> bool:
+    """Whether a line goes: inside a dropped entry, code, or a comment deeper than the entry."""
+    return in_dropped_entry and bool(content) and (_is_code(content) or indent > entry_indent)
 
 
 def _document(text: str) -> dict:
