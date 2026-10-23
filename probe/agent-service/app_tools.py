@@ -106,14 +106,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class HttpsServer(http.server.HTTPServer):
+    """An HTTP server whose listening socket speaks TLS from the moment it is bound."""
+
+    def __init__(self, address: tuple[str, int], context: ssl.SSLContext) -> None:
+        self.tls_context = context
+        super().__init__(address, Handler)
+
+    def server_bind(self) -> None:
+        super().server_bind()
+        self.socket = self.tls_context.wrap_socket(self.socket, server_side=True)
+
+
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)
-    server.socket = context.wrap_socket(  # NOSONAR(S5332) this wrap makes it HTTPS
-        server.socket, server_side=True
-    )
-    server.serve_forever()
+    HttpsServer(("0.0.0.0", PORT), context).serve_forever()
     return 0
 
 
