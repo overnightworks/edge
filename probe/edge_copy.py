@@ -64,11 +64,11 @@ def namespaced_compose(text: str, project: str) -> str:
 
 def without_inherited_apps(text: str) -> str:
     """`text` of fleet.yaml without the entries `catalog.is_app` names (the lane's real apps, whose
-    projects a probe on the shared daemon must never plan or start). It drops each app's key line
-    and the lines indented deeper than it; every other line, blank lines and comments at or above
-    the entry indent included, stays byte-identical and in order. Refuses a text that does not
-    parse or has no `services` mapping, and one whose result does not parse to the original minus
-    its apps, outside `services` as well as within."""
+    projects a probe on the shared daemon must never plan or start). It drops each app's key line,
+    its deeper non-blank lines and its deeper comments. Every blank line and every comment at or
+    above the entry indent stays, as does every other line, byte-identical and in order. Refuses a
+    text that does not parse or has no `services` mapping, and one whose result does not parse to
+    the original minus its apps, outside `services` as well as within."""
     apps = {key for key, entry in _services(text).items() if catalog.is_app(entry)}
     filtered = _without_app_lines(text, apps)
     expect(
