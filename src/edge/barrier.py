@@ -18,6 +18,7 @@ import socket
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Self
 
@@ -192,10 +193,10 @@ def routed_names(config: Mapping[str, Any], services: Iterable[str]) -> tuple[st
     return tuple(names)
 
 
-def _declared_names(unit: catalog.Unit) -> tuple[str, ...]:
-    """The unit's declared names a `Host` rule can match: a wildcard line has no such rule, so
-    its routed `edge.name` stands for it."""
-    return tuple(name for name in unit.hosts if name != catalog.WILDCARD)
+def _declared_names(hosts: Iterable[str]) -> tuple[str, ...]:
+    """The declared names a `Host` rule can match: a wildcard line has no such rule, so its
+    routed `edge.name` stands for it."""
+    return tuple(name for name in hosts if name != catalog.WILDCARD)
 
 
 def _domain(config: Mapping[str, Any]) -> str:
@@ -242,8 +243,21 @@ class Barrier:
         verifier: Verifier = PROVEN_OVER_HTTP,
     ) -> Self:
         """The barrier over the names the unit declares and the ones Traefik routes, once each."""
-        names = dict.fromkeys((*_declared_names(unit), *routed_names(config, services)))
+        names = dict.fromkeys((*_declared_names(unit.hosts), *routed_names(config, services)))
         return cls(checkout, unit.key, tuple(names), _domain(config) if names else "", verifier)
+
+    @classmethod
+    def of_app(
+        cls,
+        config: Mapping[str, Any],
+        checkout: Path,
+        app: catalog.App,
+        verifier: Verifier = PROVEN_OVER_HTTP,
+    ) -> Self:
+        """The barrier over the names the app declares in the catalog; its compose file is not
+        read, so nothing of the release decides what is shut."""
+        names = _declared_names(app.hosts)
+        return cls(checkout, app.key, names, _domain(config) if names else "", verifier)
 
     @property
     def path(self) -> Path:
@@ -363,34 +377,40 @@ def prove_active(
     marks: switches.Switches,
     checkout: Path,
     verifier: Verifier = PROVEN_OVER_HTTP,
+    apps: Iterable[catalog.App] = (),
 ) -> Iterator[ActiveProof]:
-    """Re-render and prove the barrier of every unit that is switched off or still has one.
+    """Re-render and prove the barrier of every unit and app that is switched off or still has one.
 
     One outcome per active barrier, yielded as its proof ends, so a caller that stops at the
     first unproven barrier leaves the later ones untouched.
     """
-    for unit in units:
-        proof = _proof_of(unit, profile_services[unit.key], config, marks, checkout, verifier)
+    ingresses = (
+        *(
+            (unit.key, partial(Barrier.of_unit, config, profile_services[unit.key], checkout, unit))
+            for unit in units
+        ),
+        *((app.key, partial(Barrier.of_app, config, checkout, app)) for app in apps),
+    )
+    for key, build in ingresses:
+        proof = _proof_of(key, build, marks, verifier)
         if proof is not None:
             yield proof
 
 
 def _proof_of(
-    unit: catalog.Unit,
-    services: Iterable[str],
-    config: Mapping[str, Any],
+    key: str,
+    build: Callable[[Verifier], Barrier],
     marks: switches.Switches,
-    checkout: Path,
     verifier: Verifier,
 ) -> ActiveProof | None:
-    """The outcome for one unit; None when its barrier is not active."""
+    """The outcome for one unit or app; None when its barrier is not active."""
     try:
-        ingress = Barrier.of_unit(config, services, checkout, unit, verifier)
-        if not switched_off(marks.mark(unit.key), ingress):
+        ingress = build(verifier)
+        if not switched_off(marks.mark(key), ingress):
             return None
         if not ingress.names:
-            return NoHost(unit.key)
+            return NoHost(key)
         ingress.close()
     except (BarrierError, switches.SwitchError) as error:
-        return Unproven(unit.key, str(error))
-    return Proven(unit.key)
+        return Unproven(key, str(error))
+    return Proven(key)

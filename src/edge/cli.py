@@ -43,21 +43,22 @@ def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
 def add_switch_subcommands(subcommands: argparse._SubParsersAction) -> None:
     stop_parser = subcommands.add_parser(
         "stop",
-        help="switch a unit off at once and keep it off, or with --all the tunnel "
+        help="switch a unit or an app off at once and keep it off, or with --all the tunnel "
         "(no terminal needed)",
     )
     add_unit_or_all(stop_parser, "stop the tunnel, so the PC is off the internet")
     stop_parser.set_defaults(run=stop_command)
     start_parser = subcommands.add_parser(
-        "start", help="end the switch of a unit, or with --all of the tunnel (terminal, `yes`)"
+        "start",
+        help="end the switch of a unit or an app, or with --all of the tunnel (terminal, `yes`)",
     )
-    add_unit_or_all(start_parser, "reopen the tunnel once every unit barrier is proven")
+    add_unit_or_all(start_parser, "reopen the tunnel once every unit and app barrier is proven")
     start_parser.set_defaults(run=start_command)
 
 
 def add_unit_or_all(parser: argparse.ArgumentParser, all_help: str) -> None:
     choice = parser.add_mutually_exclusive_group(required=True)
-    choice.add_argument("unit", nargs="?", help="a unit of fleet.yaml")
+    choice.add_argument("unit", nargs="?", help="a unit or an app of fleet.yaml")
     choice.add_argument("--all", action="store_true", help=all_help)
 
 

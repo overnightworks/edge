@@ -47,8 +47,6 @@ write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
 
 [clones."probe/apps/probe.py"]
 "Probe.wait_until" = [["probe/switches/probe.py", "Probe.wait_until"]]
-main = [["probe/switches/probe.py", "main"]]
-prove = [["probe/step-ca/probe.py", "prove"]]
 
 [clones."probe/keycloak/probe.py"]
 claims = [["probe/keycloak/test_rp.py", "token_claims"]]

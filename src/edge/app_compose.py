@@ -89,6 +89,10 @@ class AppCompose:
     def start(self, tag: str) -> None:
         self._call("start", [], compose.CHANGE_SECONDS, tag)
 
+    def start_stopped(self) -> None:
+        """Starts the stopped containers of project `<key>`, file-free, and makes none."""
+        self._call("start", [], compose.CHANGE_SECONDS)
+
     def stop(self) -> None:
         """Stops every container of project `<key>`; file-free, so it holds whatever the
         checkout carries."""

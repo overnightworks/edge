@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
-from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps
+from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.realm import reconcile
 from edge.unit_plans import (
     Action,
@@ -168,7 +168,7 @@ def _plan(
         gates.get(reconcile.REALM_UNIT),
         starts_keycloak,
     )
-    app_plans = plan_apps(repository, fleet.profile_services, fleet.config["name"], app_runtime)
+    app_plans = plan_apps(repository, fleet, app_runtime, marks)
     return Plan(fleet, read, core_plans, follower_plans, plans, images, realm, app_plans)
 
 
@@ -328,21 +328,18 @@ def _plan_and_apply(
             )
             for line in waiting.describe(binds, reconcile.REALM_FILES):
                 print(f"{COMMAND}: {line}")
-        planned = _plan(engine, marks, record, repository, app_runtime)
-        missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
-        if kept := [m for m in missing if m.kept_stopped]:
-            _refuse_switched_off_units_still_running(kept)
-            return ApplyExit.REFUSED
-        if missing:
-            exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
+        while True:  # the plan made after the setups ran is held to the same refusals
+            planned = _plan(engine, marks, record, repository, app_runtime)
+            missing = _missing_setups(planned, repository, check)
+            exit_code = _refusal(missing, planned, bool(completed))
+            if exit_code is None:
+                exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
             if exit_code is not None:
                 return exit_code
+            if not missing:
+                break
             completed = [m.unit.key for m in missing]
-            planned = _plan(engine, marks, record, repository, app_runtime)
-            if unready := _missing_setups(planned, repository, check):
-                _refuse_units_still_not_set_up(unready)
-                return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
@@ -377,26 +374,25 @@ def _missing_setups(planned: Plan, repository: Path, check: setup.SetupCheck) ->
     return missing
 
 
-def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
-    """A unit that is switched on or already runs is still not set up: no question, no switch."""
-    for item in missing:
-        print(
+def _refusal(missing: Sequence[MissingSetup], planned: Plan, setups_ran: bool) -> int | None:
+    """REFUSED when a unit or app `edge stop` keeps off still runs, or, after the setups ran, a unit
+    is still not set up: none is started."""
+    lines = [
+        f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
+        f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}"
+        for item in missing
+        if item.kept_stopped
+    ] + [f"{COMMAND}: {line}" for line in planned.app_plans.switched_off_still_running]
+    if not lines and setups_ran:
+        lines = [
             f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
-            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
-            f"{item.check_line}",
-            file=sys.stderr,
-        )
-
-
-def _refuse_switched_off_units_still_running(missing: Sequence[MissingSetup]) -> None:
-    """A unit stopped by `edge stop` never gets a setup or a start,
-    but its containers still run."""
-    for item in missing:
-        print(
-            f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
-            f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}",
-            file=sys.stderr,
-        )
+            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; {item.check_line}"
+            for item in missing
+        ]
+    if lines:
+        print(*lines, sep="\n", file=sys.stderr)
+        return ApplyExit.REFUSED
+    return None
 
 
 def _ask_and_run_setups(
@@ -548,7 +544,7 @@ class CorePhase:
             verb = "is" if len(down) == 1 else "are"
             return f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
         progress.step = "prove the barriers"
-        if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
+        if unproven := self._unproven_barrier(planned, marks, plan.service):
             return unproven
         if plan.service in followed:
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
@@ -622,13 +618,16 @@ class CorePhase:
         progress.step = "find the services edge follows"
         return core.followed_services(config, self.repository)
 
-    def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
+    def _unproven_barrier(
+        self, planned: Plan, marks: switches.Switches, service: str
+    ) -> str | None:
         """Say each proven barrier; the failure line naming every one that is not, after all
         active barriers were tried (S9)."""
         unproven: list[barrier.Unproven] = []
         for proof in barrier.prove_active(
-            fleet.units, fleet.profile_services, fleet.config, marks, self.repository, self.verifier
-        ):
+            planned.fleet.units, planned.fleet.profile_services, planned.fleet.config, marks,
+            self.repository, self.verifier, planned.app_plans.catalogued,
+        ):  # fmt: skip
             match proof:
                 case barrier.Proven(unit):
                     print(f"{COMMAND}: the barrier of {unit} is proven")
@@ -709,7 +708,8 @@ def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> 
     failed = False
     for plan, failure in planned.app_plans.run(marks, progress):
         if failure:
-            print(f"{COMMAND}: partial, {failure}; run `{COMMAND}` again", file=sys.stderr)
+            advice = retry_advice(plan.app.key, failure, COMMAND)
+            print(f"{COMMAND}: partial, {failure}; {advice}", file=sys.stderr)
             failed = True
         else:
             print(f"{COMMAND}: {plan.app.key} is on at {plan.release.tag}")

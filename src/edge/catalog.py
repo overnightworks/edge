@@ -164,6 +164,16 @@ def apps(
     )
 
 
+def is_enabled_app(document: Any, key: str) -> bool:
+    """Whether the catalog has an enabled app `key` whose key and `run` are valid; a malformed
+    catalog or entry is not one, and planning reports it."""
+    try:
+        entry = _entries(document).get(key)
+        return is_app(entry) and _enabled(key, _app_run(key, entry))
+    except CatalogError:
+        return False
+
+
 def github_org(document: Any) -> str:
     """The GitHub organisation that owns the repositories of the apps (`github.org`)."""
     github = document.get("github") if isinstance(document, dict) else None
@@ -182,16 +192,23 @@ def _app(
 ) -> App:
     if key in profile_services or key == edge_project:
         raise CatalogError(f"services.{key}: an app's key is no compose profile or project of edge")
+    run = _app_run(key, entry)
+    hosts = _app_hosts(key, entry, document)
+    return App(key, _enabled(key, run), _default_branch(key, entry["repo"]), hosts)
+
+
+def _app_run(key: str, entry: dict) -> dict:
+    """The `run` map of an app entry, once its key is a compose project name, which is also a
+    safe file name, and every key of `run` is known."""
     if not _APP_KEY.fullmatch(key):
         raise CatalogError(f"services.{key}: an app's key must be a compose project name")
-    run, repo = entry["run"], entry["repo"]
+    run = entry["run"]
     if not isinstance(run, dict):
         raise CatalogError(f"services.{key}.run: must be a map")
     for run_key in run:
         if run_key not in _APP_RUN_KEYS:
             raise CatalogError(f"services.{key}.run.{run_key}: unknown key for an app")
-    hosts = _app_hosts(key, entry, document)
-    return App(key, _enabled(key, run), _default_branch(key, repo), hosts)
+    return run
 
 
 def _app_hosts(key: str, entry: dict, document: Any) -> tuple[str, ...]:

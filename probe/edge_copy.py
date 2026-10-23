@@ -27,6 +27,7 @@ from pathlib import Path
 from edge import catalog, checkout, compose
 
 APPLY_SECONDS = 600
+HAL_OK, HAL_FAILURE = 0, 3  # hal's exits: 3 is every outcome of the stack that is not "done"
 DISCARD_OUTPUT = "/dev/null"
 REMOTE = "origin.git"
 WORK_CLONE = "work"

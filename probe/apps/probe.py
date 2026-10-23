@@ -12,7 +12,11 @@ named volume covers (refused after build, before `create`) and the same covered,
 `pull_policy: always`, and block C, `enabled: false`: C1 an app switched off while running, C2 on
 again at the same tag, C3 off after an update that renamed a service and failed its build, C4 off
 with `compose.yaml` missing or invalid at HEAD, C5 off with a leftover container of an unknown
-service after an update dropped one. The exits are hal's: 0 or 3.
+service after an update dropped one, and the emergency switch (#255 P5): D1 `hal stop` without a
+terminal (marker, barrier answered by the probe's Traefik, containers stopped), D2 a stopped app
+with a newer tag waiting stays stopped, D4 a stop during the build leaves the containers and the
+record, D7 `hal start` and its refusal while disabled; D10, a stop while apply holds the switch
+lock, is a unit test. The exits are hal's: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -24,7 +28,7 @@ probe's own. The probe never runs `hal online`, `hal offline` or `--all`, so no 
 always removes its containers, volumes, networks and images, found by their compose project.
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
-        python3 probe/apps/probe.py --scratch DIR
+        python3 probe/apps/probe.py --scratch DIR [--switch-only]
 
 Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) and a Docker that
 may pull busybox and Traefik.
@@ -51,7 +55,8 @@ sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable 
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
-from edge_copy import ProbeFailed, expect  # noqa: E402
+from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
+from emergency_switch import EmergencySwitch  # noqa: E402
 
 from edge import checkout  # noqa: E402
 
@@ -67,7 +72,6 @@ READY_SECONDS = 90
 REQUEST_SECONDS = 3
 POLL_SECONDS = 0.5
 NOT_RUNNABLE = 3
-HAL_OK, HAL_FAILURE = 0, 3
 TAGS = {  # by cell, in the order they are cut: each is newer than the one before
     "a1": "v2026.10.22.1",
     "a3": "v2026.10.22.2",
@@ -89,6 +93,8 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "c4_missing": "v2026.10.25.4",
     "c4_invalid_ok": "v2026.10.25.5",
     "c4_invalid": "v2026.10.25.6",
+    "d2": "v2026.10.24.4",
+    "d4": "v2026.10.24.5",
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
 }
@@ -217,6 +223,7 @@ class Probe:
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
         services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
         covered: bool = True, pull_always: bool = False, compose_file: str | None = None,
+        slow_build: int = 0,
     ) -> str:  # fmt: skip
         """A commit carrying the app at `tag`, pushed and tagged; its sha. `compose_file` replaces
         the generated compose.yaml with that text, or leaves it out when empty."""
@@ -230,6 +237,8 @@ class Probe:
             health.unlink(missing_ok=True)
         (self.work / "Dockerfile").write_text(
             f"FROM {BUSYBOX}\n{'' if builds else 'RUN false' + chr(10)}COPY site /www\n"
+            # the key of this run makes the layer new, so the build never comes from the cache
+            f"{f'RUN sleep {slow_build}; echo {self.key} > /built' + chr(10) if slow_build else ''}"
             f"{'VOLUME ' + image_volume + chr(10) if image_volume else ''}"
             'CMD ["sh", "-c", "cat /www/version >> /data/starts; exec httpd -f -p 8080 -h /www"]\n'
         )
@@ -338,18 +347,25 @@ class Probe:
 
     # --- what a client of the probe's Traefik sees -------------------------------------------
 
-    def ask(self, path: str, host: str | None = None) -> tuple[int, str] | tuple[None, None]:
+    def ask_with_headers(
+        self, path: str, host: str | None = None
+    ) -> tuple[int, str, http.client.HTTPMessage] | None:
+        """(status, body, headers) of the probe's Traefik's answer; None when it gives none."""
         connection = http.client.HTTPConnection(
             "127.0.0.1", self.edge_port, timeout=REQUEST_SECONDS
         )
         try:
             connection.request("GET", path, headers={"Host": host or f"{self.key}.{DOMAIN}"})
             response = connection.getresponse()
-            return response.status, response.read().decode().strip()
+            return response.status, response.read().decode().strip(), response.msg
         except OSError:
-            return None, None
+            return None
         finally:
             connection.close()
+
+    def ask(self, path: str, host: str | None = None) -> tuple[int, str] | tuple[None, None]:
+        answer = self.ask_with_headers(path, host)
+        return (answer[0], answer[1]) if answer else (None, None)
 
     def wait_until(self, what: str, reached, seconds: int = READY_SECONDS) -> None:
         deadline = time.monotonic() + seconds
@@ -696,10 +712,13 @@ class Probe:
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
 
-def prove(probe: Probe) -> int:
+def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
         probe.bring_up()
         probe.cell_a1_first_apply()
+        if switch_only:
+            EmergencySwitch(probe, TAGS).prove()
+            return 0
         probe.cell_a2_second_apply()
         probe.cell_a3_update()
         probe.cell_a4_side_branch()
@@ -712,6 +731,7 @@ def prove(probe: Probe) -> int:
         probe.cell_a23_interrupted_update()
         probe.cell_b5_image_volume()
         probe.cell_b8_pull_policy_always()
+        EmergencySwitch(probe, TAGS).prove()
         probe.cell_c1_c2_off_and_on_again()
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
@@ -732,6 +752,9 @@ def raise_interrupt(_signal: int, _frame: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument(
+        "--switch-only", action="store_true", help="only A1 and the emergency-switch cells D1-D7"
+    )
     arguments = parser.parse_args(argv)
     if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
         print("PROBE FAILED: --scratch is not empty")
@@ -739,15 +762,21 @@ def main(argv: list[str] | None = None) -> int:
     arguments.scratch.mkdir(parents=True, exist_ok=True)
     probe = Probe(arguments.scratch)
     signal.signal(signal.SIGTERM, raise_interrupt)  # `timeout` ends the probe with SIGTERM
-    exit_code = prove(probe)
+    try:
+        exit_code = prove(probe, switch_only=arguments.switch_only)
+    except BaseException:
+        probe.teardown()  # a failure the probe did not foresee must not leave its containers
+        raise
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     try:
         probe.teardown()
     except (ProbeFailed, subprocess.TimeoutExpired) as failure:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
-    if exit_code == 0:
-        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5 hold")
+    if exit_code == 0 and arguments.switch_only:
+        print("PROBE PASSED: #255 A1, D1, D2, D4, D7 hold")
+    elif exit_code == 0:
+        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5, D1, D2, D4, D7 hold")
     return exit_code
 
 

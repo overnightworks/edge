@@ -15,6 +15,14 @@ class Action(StrEnum):
     STAYS_STOPPED = "stays stopped"
 
 
+def stays_stopped_line(key: str, since: str | None) -> str:
+    """A unit or app that its marker or its standing barrier keeps off; `since` is None when only
+    the barrier stands."""
+    if since is None:
+        return f"{key} stays stopped (its barrier stands; no switch recorded)"
+    return f"{key} stays stopped (switch since {switches.describe_since(since)})"
+
+
 @dataclass(frozen=True)
 class UnitPlan:
     unit: catalog.Unit
@@ -26,10 +34,8 @@ class UnitPlan:
 
     def describe(self) -> str:
         touched = f"services {', '.join(self.services)}"
-        if self.action is Action.STAYS_STOPPED and self.switched_off_since is None:
-            return f"{self.unit.key} stays stopped (its barrier stands; no switch recorded)"
         if self.action is Action.STAYS_STOPPED:
-            return f"{self.unit.key} stays stopped (switch since {self._since()})"
+            return stays_stopped_line(self.unit.key, self.switched_off_since)
         if self.action is Action.OFF:
             line = f"{self.unit.key}: off ({touched}; volumes {', '.join(self.volumes)} stay)"
             if self.switched_off_since:

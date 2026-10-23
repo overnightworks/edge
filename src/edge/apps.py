@@ -14,9 +14,16 @@ checkout's HEAD agree and every service has exactly one healthy container.
 
 The compose file of the release is held to the contract of `app_contract.py` before anything is
 built, and the images' volumes are checked after build and pull, before `create`. A one-shot service
-and a `depends_on` that waits for health or completion are refused, so `create` and `start` run
-together under the switch lock like the units', and only the health wait runs outside it. A new
-tag that fails stays: the run is partial and the fix is a newer tag.
+and a `depends_on` that waits for health or completion are refused. A new tag that fails stays: the
+run is partial and the fix is a newer tag.
+
+An app that `hal stop` switched off (its marker, or the barrier a stop left) is never planned: no
+fetch, no checkout, no build; one file-free `ps` asks whether it still runs, and apply refuses the
+whole run while it does. A stop that comes in after the plan wins: the marker and the barrier
+are looked at again before the checkout, under the switch lock around `create` and `start`
+together, and under it once more after the health wait; from `create` on, the off step removes
+whatever started. A stop that comes in while the lock is held waits for it, then stops what
+started. The health wait runs outside the lock, so a stop never waits for it.
 
 An app the catalog disables while containers of its project exist is switched off: file-free
 `stop` and `rm -f` of project `<key>`, which reaches every container, whatever the checkout's
@@ -26,7 +33,7 @@ are never touched (E4).
 
 import json
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -35,6 +42,7 @@ from pathlib import Path
 from edge import (
     app_compose,
     app_contract,
+    barrier,
     catalog,
     checkout,
     compose,
@@ -42,7 +50,7 @@ from edge import (
     releases,
     switches,
 )
-from edge.unit_plans import Progress
+from edge.unit_plans import Fleet, Progress, stays_stopped_line
 
 HEALTH_SECONDS = 300.0
 HEALTH_POLL_SECONDS = 2.0
@@ -125,6 +133,7 @@ class AppPlan:
     services: tuple[str, ...]
     url: str
     line: str
+    ingress: barrier.Barrier
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,8 @@ class AppsPlan:
     plans: tuple[AppPlan, ...] = ()
     notes: tuple[str, ...] = ()
     offs: tuple[OffPlan, ...] = ()
+    catalogued: tuple[catalog.App, ...] = ()  # every app of the catalog, for its barriers
+    switched_off_still_running: tuple[str, ...] = ()  # the refusal of each, by apply
 
     @property
     def changes_nothing(self) -> bool:
@@ -155,35 +166,64 @@ class AppsPlan:
         """Each app in turn, the ones switched off first, with the failure line of its run. An
         app that is on and recorded yields None; one switched off yields only a failure."""
         for off in self.offs:
-            if failure := _switch_off(off, self.runtime, progress):
+            if failure := _switch_off(off.app.key, self.runtime, progress):
                 yield off, failure
         for plan in self.plans:
             yield plan, _run(plan, self.runtime, marks, progress)
 
 
 def plan_apps(
-    repository: Path,
-    profile_services: Mapping[str, tuple[str, ...]],
-    edge_project: str,
-    runtime: AppRuntime,
+    repository: Path, fleet: Fleet, runtime: AppRuntime, marks: switches.Switches
 ) -> AppsPlan:
     """The plan of every enabled app: it fetches each app's origin and writes only `.git`. An
     app that is on as it should be is left out; one that cannot be planned raises AppError. A
-    disabled app is asked file-free for its containers and fetches nothing."""
+    disabled app is asked file-free for its containers and fetches nothing, and so is an app its
+    marker or its barrier keeps off: it is named and left alone, unless its containers still run,
+    which apply refuses."""
     document = catalog.read(repository / catalog.FLEET_FILE)
-    every = catalog.apps(document, profile_services, edge_project)
+    every = catalog.apps(document, fleet.profile_services, fleet.config["name"])
     offs = [off for app in every if not app.enabled if (off := _plan_off(app, runtime))]
     enabled = [app for app in every if app.enabled]
     if not enabled:
-        return AppsPlan(runtime, offs=tuple(offs))
+        return AppsPlan(runtime, offs=tuple(offs), catalogued=every)
     organisation = catalog.github_org(document)
-    plans, notes = [], []
+    plans, notes, still_running = [], [], []
     for app in enabled:
-        planned, skipped = _plan_one(app, organisation, runtime)
+        ingress = _ingress_of(app, fleet, repository)
+        if line := _stays_stopped_line(app.key, marks, ingress):
+            notes.append(line)
+            if _runs(app, runtime):
+                still_running.append(
+                    f"{app.key} is switched off but still runs; nothing switched; "
+                    f"run `edge stop {app.key}` again"
+                )
+            continue
+        planned, skipped = _plan_one(app, organisation, runtime, ingress)
         notes += [f"{app.key}: {line}" for line in skipped]
         if planned:
             plans.append(planned)
-    return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs))
+    return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every, tuple(still_running))
+
+
+def _ingress_of(app: catalog.App, fleet: Fleet, repository: Path) -> barrier.Barrier:
+    try:
+        return barrier.Barrier.of_app(fleet.config, repository, app)
+    except barrier.BarrierError as error:
+        raise AppError(f"services.{app.key}: {error}") from error
+
+
+def _stays_stopped_line(key: str, marks: switches.Switches, ingress: barrier.Barrier) -> str | None:
+    """The line for an app its marker or its standing barrier keeps off; None when it is on."""
+    mark = marks.mark(key)
+    if not barrier.switched_off(mark, ingress):
+        return None
+    return stays_stopped_line(key, mark.since if mark else None)
+
+
+def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
+    """Whether a container of the app's project runs, asked file-free."""
+    engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
+    return any(compose.is_live(container.state) for container in engine.containers())
 
 
 def _counted(keys: Sequence[str]) -> list[str]:
@@ -207,7 +247,7 @@ def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
 
 
 def _plan_one(
-    app: catalog.App, organisation: str, runtime: AppRuntime
+    app: catalog.App, organisation: str, runtime: AppRuntime, ingress: barrier.Barrier
 ) -> tuple[AppPlan | None, tuple[str, ...]]:
     url = f"https://github.com/{organisation}/{app.key}.git"
     app_checkout = deploy_checkout.AppCheckout(
@@ -241,7 +281,7 @@ def _plan_one(
     if recorded and recorded.sha == sha and head == sha and _settled(containers, services):
         return None, choice.skipped
     line = _describe(app, release, sha, recorded, head, containers)
-    return AppPlan(app, release, sha, services, url, line), choice.skipped
+    return AppPlan(app, release, sha, services, url, line, ingress), choice.skipped
 
 
 def _refuse_moved_tag(
@@ -305,59 +345,155 @@ def _contract_services(app: catalog.App, tag: str, text: str | None) -> tuple[st
         raise AppError(str(error)) from error
 
 
+class SwitchedOffLine(str):
+    """The failure line of a run that a stop won: running apply again would change nothing."""
+
+
+def retry_advice(key: str, failure: str, apply_command: str) -> str:
+    """What to do after a run that failed: apply again, unless a stop won, which only
+    `edge start` ends (E3: the stack's lines name `edge`)."""
+    if isinstance(failure, SwitchedOffLine):
+        return f"`edge start {key}` switches it back on"
+    return f"run `{apply_command}` again"
+
+
+class _SwitchedOffMeanwhile(Exception):
+    """A stop, or a barrier, came in after the plan; the message is the line to report."""
+
+
+def _require_on(plan: AppPlan, marks: switches.Switches) -> None:
+    """Raises _SwitchedOffMeanwhile when the app's marker or its barrier stands now ."""
+    mark = marks.mark(plan.app.key)
+    if barrier.switched_off(mark, plan.ingress):
+        since = f" (since {switches.describe_since(mark.since)})" if mark else ""
+        raise _SwitchedOffMeanwhile(
+            f"{plan.app.key} was switched off meanwhile{since}; not started"
+        )
+
+
 def _run(
     plan: AppPlan, runtime: AppRuntime, marks: switches.Switches, progress: Progress
 ) -> str | None:
-    """Check out the release, build, create and start under the switch lock, wait for health,
-    record: the failure line of the first step that fails, None when the app is on and recorded.
-    `progress` names the step, so an interrupt can say where the containers may be partly
-    replaced."""
+    """Check out the release, build, create and start under the switch lock, wait for health
+    outside it, record: the failure line of the first step that fails, None when the app is on and
+    recorded. A stop that comes in meanwhile wins, wherever it comes in: the marker and the
+    barrier are looked at before the checkout, under the lock around `create` and `start`, and
+    under it again after the health wait; from `create` on, the off step removes what started,
+    under the lock of that look, so a start that came in after it is never undone. `progress`
+    names the step, so an interrupt can say where the containers may be partly replaced."""
     key, tag = plan.app.key, plan.release.tag
     progress.unit = key
-    app_checkout = deploy_checkout.AppCheckout(
-        checkout.Git(runtime.srv / key, runtime.git), plan.url, plan.app.default_branch
-    )
     engine = app_compose.AppCompose(key, runtime.srv / key, runtime.docker)
     try:
-        progress.step = f"check out {tag}"
-        app_checkout.check_out(plan.sha)
-        progress.step = f"build at {tag}"
-        engine.build(tag)
-        progress.step = f"pull at {tag}"
-        engine.pull(tag)
-        progress.step = f"check the volumes of the images at {tag}"
-        app_contract.check_image_volumes(
-            app_checkout.compose_file(plan.sha) or "", key, tag,
-            engine.image_volumes(plan.services, tag),
-        )  # fmt: skip
-        progress.step = f"create the containers at {tag}; they may be partly replaced"
+        progress.step = f"look whether {key} was switched off"
+        _require_on(plan, marks)
+        _build(plan, runtime, engine, progress)
         with marks.lock():
+            _require_on(plan, marks)
+            progress.step = f"create the containers at {tag}; they may be partly replaced"
             engine.create(tag)
-            progress.step = f"start at {tag}; the containers may be partly replaced"
-            engine.start(tag)
-        progress.step = f"wait for {key} to be healthy"
-        if unhealthy := _unhealthy_after_waiting(engine, plan.services, runtime.health):
-            return (
-                f"{key} is not healthy at {tag} after {runtime.health.seconds:g}s ({unhealthy}); "
-                "the record stays, the fix is a newer tag"
-            )
+            _start(plan, engine, runtime, marks, progress)
+        failure = _wait_until_healthy(plan, runtime, engine, marks, progress)
         progress.step = f"record the deployment of {tag}"
-        runtime.record.write(
-            key, Deployment(tag, plan.sha, runtime.now().isoformat(timespec="seconds"))
-        )
+        with marks.lock():
+            _require_on_else_switch_off(plan, runtime, marks, progress)
+            if failure is None:
+                runtime.record.write(
+                    key, Deployment(tag, plan.sha, runtime.now().isoformat(timespec="seconds"))
+                )
+        return failure
+    except _SwitchedOffMeanwhile as meanwhile:
+        return SwitchedOffLine(str(meanwhile))
     except app_contract.ContractError as error:
         return str(error)
     except (checkout.GitError, compose.ComposeError, switches.SwitchError) as error:
         return f"{key}: could not {progress.step}, {error}"
     except OSError as error:
         return f"{key}: could not {progress.step} ({error.strerror})"
+
+
+def _build(
+    plan: AppPlan, runtime: AppRuntime, engine: app_compose.AppCompose, progress: Progress
+) -> None:
+    """Check out the release, build and pull, and hold the images' volumes to the contract."""
+    key, tag = plan.app.key, plan.release.tag
+    app_checkout = deploy_checkout.AppCheckout(
+        checkout.Git(runtime.srv / key, runtime.git), plan.url, plan.app.default_branch
+    )
+    progress.step = f"check out {tag}"
+    app_checkout.check_out(plan.sha)
+    progress.step = f"build at {tag}"
+    engine.build(tag)
+    progress.step = f"pull at {tag}"
+    engine.pull(tag)
+    progress.step = f"check the volumes of the images at {tag}"
+    app_contract.check_image_volumes(
+        app_checkout.compose_file(plan.sha) or "", key, tag,
+        engine.image_volumes(plan.services, tag),
+    )  # fmt: skip
+
+
+def _start(
+    plan: AppPlan,
+    engine: app_compose.AppCompose,
+    runtime: AppRuntime,
+    marks: switches.Switches,
+    progress: Progress,
+) -> None:
+    """Start the created containers, under the switch lock; a failure is reported as a stop when
+    one came in meanwhile."""
+    progress.step = f"start at {plan.release.tag}; the containers may be partly replaced"
+    try:
+        engine.start(plan.release.tag)
+    except compose.ComposeError:
+        _require_on_else_switch_off(plan, runtime, marks, progress)
+        raise
+
+
+def _wait_until_healthy(
+    plan: AppPlan,
+    runtime: AppRuntime,
+    engine: app_compose.AppCompose,
+    marks: switches.Switches,
+    progress: Progress,
+) -> str | None:
+    """Wait for the started containers to be healthy, outside the switch lock; the failure line,
+    None when all are healthy. A stop that is seen ends the wait early; the look under the lock
+    after it decides what the stop leaves."""
+    key, tag = plan.app.key, plan.release.tag
+    try:
+        progress.step = f"wait for {key} to be healthy"
+        unhealthy = unhealthy_after_waiting(
+            engine, plan.services, runtime.health, lambda: _require_on(plan, marks)
+        )
+    except _SwitchedOffMeanwhile:
+        return f"{key} was switched off and on again during the health wait; not recorded"
+    except compose.ComposeError as error:
+        return f"{key}: could not {progress.step}, {error}"
+    if unhealthy:
+        return (
+            f"{key} is not healthy at {tag} after {runtime.health.seconds:g}s ({unhealthy}); "
+            "the record stays, the fix is a newer tag"
+        )
     return None
 
 
-def _switch_off(off: OffPlan, runtime: AppRuntime, progress: Progress) -> str | None:
+def _require_on_else_switch_off(
+    plan: AppPlan, runtime: AppRuntime, marks: switches.Switches, progress: Progress
+) -> None:
+    """Under the switch lock, once containers were created: a stop that came in wins, and the off
+    step removes whatever started before _SwitchedOffMeanwhile is raised, its own failure added."""
+    try:
+        _require_on(plan, marks)
+    except _SwitchedOffMeanwhile as meanwhile:
+        off_failure = _switch_off(plan.app.key, runtime, progress)
+        line = f"{meanwhile}; {off_failure}" if off_failure else str(meanwhile)
+        raise _SwitchedOffMeanwhile(line) from None
+
+
+def _switch_off(key: str, runtime: AppRuntime, progress: Progress) -> str | None:
     """Stop, then remove, every container of the app's project: the failure line of the step that
     fails, None when none is left. The checkout, the record and every volume stay."""
-    key = off.app.key
     progress.unit = key
     engine = app_compose.AppCompose(key, runtime.srv / key, runtime.docker)
     try:
@@ -382,13 +518,17 @@ def _switch_off(off: OffPlan, runtime: AppRuntime, progress: Progress) -> str | 
     return None
 
 
-def _unhealthy_after_waiting(
-    engine: app_compose.AppCompose, services: Sequence[str], watch: compose.Watch
+def unhealthy_after_waiting(
+    engine: app_compose.AppCompose,
+    services: Sequence[str],
+    watch: compose.Watch,
+    still_on: Callable[[], None],
 ) -> str | None:
     """The containers as last seen when they are not all healthy by the deadline; None when
-    they are."""
+    they are. `still_on` is asked before every look and raises to end the wait early."""
     deadline = watch.clock() + watch.seconds
     while True:
+        still_on()
         containers = engine.containers()
         if _settled(containers, services):
             return None

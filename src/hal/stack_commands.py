@@ -31,7 +31,7 @@ def _configure_apply(parser: argparse.ArgumentParser) -> None:
 
 
 def _configure_unit(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("unit", help="a unit of fleet.yaml")
+    parser.add_argument("unit", help="a unit or an app of fleet.yaml")
 
 
 def _configure_nothing(_parser: argparse.ArgumentParser) -> None:
@@ -69,7 +69,7 @@ COMMANDS = (
     ),
     Command(
         "stop",
-        "switch a unit off at once and keep it off (no terminal needed)",
+        "switch a unit or an app off at once and keep it off (no terminal needed)",
         _stop,
         _configure_unit,
         json=False,
@@ -77,7 +77,7 @@ COMMANDS = (
     ),
     Command(
         "start",
-        "end the switch of a unit (terminal, `yes`)",
+        "end the switch of a unit or an app (terminal, `yes`)",
         _start,
         _configure_unit,
         json=False,
@@ -93,7 +93,7 @@ COMMANDS = (
     ),
     Command(
         "online",
-        "reopen the tunnel once every unit barrier is proven (terminal, `yes`)",
+        "reopen the tunnel once every unit and app barrier is proven (terminal, `yes`)",
         _online,
         _configure_nothing,
         json=False,

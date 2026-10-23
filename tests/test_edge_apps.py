@@ -24,7 +24,9 @@ from app_support import (
 from git_support import head_of, plain_git
 
 from edge import apps, compose, switches
-from edge.unit_plans import Progress
+from edge.unit_plans import Fleet, Progress
+
+EDGE_FLEET = Fleet({"name": "edge"}, {}, ())
 
 FIRST, SECOND, THIRD = "v2026.10.22.1", "v2026.10.22.2", "v2026.10.22.3"
 TWO_SERVICES = (
@@ -80,7 +82,7 @@ class World:
     docker: ScriptedDocker
 
     def plan(self) -> apps.AppsPlan:
-        return apps.plan_apps(self.repository, {}, "edge", self.runtime)
+        return apps.plan_apps(self.repository, self.fleet, self.runtime, self.marks)
 
     def run(self, plan: apps.AppsPlan | None = None) -> list[str | None]:
         """The failure line of each app's run; None where it is on and recorded."""
@@ -93,6 +95,7 @@ class World:
 
     marks: switches.Switches = dataclasses.field(init=False)
     progress: Progress = dataclasses.field(default_factory=Progress)
+    fleet: Fleet = EDGE_FLEET
 
     def __post_init__(self) -> None:
         self.marks = switches.Switches(self.state)
@@ -127,7 +130,7 @@ def test_a_first_apply_plans_tag_and_full_sha_then_runs_and_records_after_health
     ]  # fmt: skip
 
 
-def test_create_and_start_run_under_the_switch_lock_and_nothing_else_does(world, origin):
+def test_only_create_and_start_run_under_the_switch_lock_and_nothing_else_does(world, origin):
     origin.release(FIRST)
 
     world.run()
