@@ -58,7 +58,7 @@ what the restore test asks the restored database). There is no hook language. Au
 or nothing: Keycloak is DB-only. The database container and the volume are found by their
 `com.docker.compose.*` labels; exactly one of each must match.
 
-restic runs from the official image, pinned by version and digest (`src/edge_backup/settings.py`), with no
+restic runs from the official image, pinned by version and digest (stages of `src/edge_backup/images/Dockerfile`, which Dependabot keeps current), with no
 network, no capabilities and a read-only root, as your own user. Backup and restore test first check that
 the pinned restic image and each app's Postgres restore image are present; `docker image prune -a`
 removes them and the next run pulls them again by digest, failing early, before staging anything. The
@@ -136,7 +136,7 @@ and checks:
 - `pg_restore --list` reads the dump;
 - the dump loads with `pg_restore --exit-on-error --single-transaction` into a throwaway PostgreSQL
   container without network, of the major the app's database runs (16 for Songmaker, 17 for Keycloak),
-  each image pinned in `src/edge_backup/settings.py`; the pin of major 17 equals `keycloak-db` in
+  each image a stage of `src/edge_backup/images/Dockerfile`; the pin of major 17 equals `keycloak-db` in
   `compose.yaml` and a test fails when they differ. The server's diagnostics are discarded because
   PostgreSQL quotes row values in them: a failure shows the step and the exit code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for Keycloak
