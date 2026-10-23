@@ -98,15 +98,16 @@ gets 403 `not_enabled`. An app's privacy text therefore describes only the API r
 
 ## An app's side
 
-An app reaches the service by joining the `agent` network, whose name is fixed (`hal_agent`, so the
-project's rename does not move it), as an external network:
+An app reaches the service by joining its own agent network, `hal_agent_<app>` (`hal_agent_songmaker`,
+`hal_agent_presentator`), as an external network. The names are fixed, so the project's rename does not
+move them, and no app sees another's network:
 
 ```yaml
 services:
   app:
     networks: [default, agent]
 networks:
-  agent: {external: true, name: hal_agent}
+  agent: {external: true, name: hal_agent_songmaker}
 ```
 
 and calls `http://agent-service:8080` (the service's own default port; the smoke and the unit probe

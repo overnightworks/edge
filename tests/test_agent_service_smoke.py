@@ -326,12 +326,12 @@ def test_agent_smoke_runs_the_service_image_that_is_never_pulled(services):
     assert services["agent-smoke"]["pull_policy"] == "never"
 
 
-def test_agent_smoke_sits_on_the_agent_network_alone_with_no_port_secret_or_published_address(
+def test_agent_smoke_sits_on_songmakers_agent_network_alone_with_no_port_secret_or_address(
     services,
 ):
     smoke_service = services["agent-smoke"]
 
-    assert smoke_service["networks"] == ["agent"]
+    assert smoke_service["networks"] == ["agent-songmaker"]
     assert not {"ports", "expose", "secrets", "extra_hosts", "network_mode", "depends_on"} & (
         smoke_service.keys()
     )
@@ -352,11 +352,14 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
 
 def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     assert smoke.SERVICE_HOST in services
-    assert "agent" in services["agent-service"]["networks"]
+    assert {"agent-songmaker", "agent-presentator"} <= set(services["agent-service"]["networks"])
 
 
-def test_the_agent_network_has_the_fixed_name_apps_join_as_an_external_network():
+@pytest.mark.parametrize("app", ["songmaker", "presentator"])
+def test_each_app_has_an_agent_network_of_a_fixed_name_it_joins_as_an_external_network(app):
+    """P35: one internal network per app (isolated: test_agent_egress.py); `hal_agent` is gone."""
     networks = yaml.safe_load((ROOT / "compose.yaml").read_text())["networks"]
 
-    assert networks["agent"]["name"] == "hal_agent"
-    assert networks["agent"]["internal"] is True
+    assert networks[f"agent-{app}"]["name"] == f"hal_agent_{app}"
+    assert networks[f"agent-{app}"]["internal"] is True
+    assert "agent" not in networks

@@ -422,7 +422,8 @@ def test_an_interrupted_cancelled_turn_ends_its_child_and_removes_its_container(
 
 TARGETS = live_smoke.EgressTargets(
     provider="160.79.104.10", docker0="172.17.0.1", internet="172.31.251.1", lan="192.168.1.5",
-    agent_free="172.31.250.2", egress_free="172.31.252.2", agent_gateways=[], egress_gateways=[],
+    songmaker_free="172.31.250.2", presentator_free="172.31.249.2", egress_free="172.31.252.2",
+    agent_gateways=[], egress_gateways=[],
 )  # fmt: skip
 
 
@@ -432,7 +433,8 @@ def held_sighting() -> dict:
         "public_tcp": {"1.1.1.1": refused, TARGETS.provider: refused},
         "defaults": [],
         "reach": dict.fromkeys(
-            ("docker0", "internet", "lan", "agent_free", "egress_free"), refused
+            ("docker0", "internet", "lan", "songmaker_free", "presentator_free", "egress_free"),
+            refused,
         ),
         "ipv6_interfaces": ["lo"],
         "ipv6_tcp": refused,

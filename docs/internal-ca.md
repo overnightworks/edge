@@ -37,27 +37,35 @@ since it holds certificates from this CA.
 ## traefik-mcp
 
 A second Traefik, the gateway to the MCP origins. It has no host networking and no Docker API, and
-listens on 443 inside three internal networks, none with a route out: `mcp-ca` (step-ca and
-`traefik-mcp`), `mcp` (`traefik-mcp`, later the agent service) and `mcp-backends` (`traefik-mcp` and the
-apps' MCP servers). It is the only container on all three. It answers to `<app>.mcp.internal` on `mcp-ca`
+listens on 443 inside internal networks, none with a route out: `mcp-ca` (step-ca and
+`traefik-mcp`), `mcp` (`traefik-mcp`, later the agent service), `mcp-backends` (`traefik-mcp` and the
+probe's MCP server) and one network per app that serves an MCP origin, `hal_mcp_songmaker` for
+songmaker (`traefik-mcp` and the app's web service, which joins it as an external network). It is the
+only container on all of them. It answers to `<app>.mcp.internal` on `mcp-ca`
 and `mcp`, gets a 24-hour certificate per name from step-ca over TLS-ALPN-01 (trusting only the CA's root,
 `~/.secrets/step-ca/root_ca.crt`) and renews it by itself. `traefik-mcp.yml` is its static configuration;
-`mcp/dynamic/` holds one router file per app (`hello.yml` is the probe's) and is watched. The
+`mcp/dynamic/` holds one router file per app (`hello.yml` is the probe's; `songmaker.yml` routes
+`https://songmaker.mcp.internal/mcp`, the exact path, to `songmaker-web:8080` with the Host header
+unchanged) and is watched. The
 certificates live in the volume `traefik-mcp-acme`, which is not backed up because they are issued again.
 Traefik reads `traefik-mcp.yml` only when it starts, so `hal apply` recreates `traefik-mcp` alone when
 that file or its compose definition changed (rules in [stack.md](stack.md)). `traefik-mcp` waits for the
 CA to listen, so the start order does not matter, also after a restart of the Docker daemon.
 
-A new app adds its name to the `x-mcp-origins` list in `compose.yaml` and a router file under
-`mcp/dynamic/`, and puts its MCP server on `mcp-backends`. The name is `<stem>.mcp.internal`
-([naming.md](naming.md)).
+A new app adds its name to the `x-mcp-origins` list in `compose.yaml`, a router file under
+`mcp/dynamic/` and a network of its own (`hal_mcp_<app>`, internal and isolated, joined by
+`traefik-mcp` and the app's web service alone), so no app sees another's server. The name is
+`<stem>.mcp.internal` ([naming.md](naming.md)).
 
 **Proof:** `probe/step-ca/probe.py` starts a throwaway project under a throwaway `HOME` and holds the
 proofs of the CA (init modes and silence, the ACME directory, no root key in the volume, restart and
 partial-state behaviour) and of the gateway (reachable only with the root, 24-hour certificates, plain
-http refused, the network split as ruled, no new host listener, renewal without restart, apply on and off
-keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). It takes
-about 12 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock`. Re-run it for every
+http refused, the network split as ruled, songmaker's route (exactly `/mcp`, no other path or
+name reaches the stand-in), no new host listener, renewal without restart, apply on and off
+keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). Its
+compose calls run from a copy of `compose.yaml` whose fixed `hal_*` network names are moved into the
+probe's project, and each checks first that it resolves no other network, so it never touches a live
+one. It takes about 13 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock`. Re-run it for every
 step-ca or Traefik upgrade.
 
 ## agent-egress
