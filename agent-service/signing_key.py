@@ -1,4 +1,4 @@
-"""The agent service's signing key pair for agent-service/setup (#356): judged, made and replaced
+"""The agent service's signing key pair for agent-service/setup: judged, made and replaced
 through the signing folder's verified descriptor. `setup` is the only caller.
 
 The setup contract is docs/agent-service.md, "The signing key". Key bytes travel only over pipes to
@@ -159,14 +159,13 @@ class SigningKey:
             os.close(directory)
 
     def preflight(self) -> None:
-        """Refuse an unusable pair before `setup` changes anything else. A folder that is not made
-        yet, is open to others or is not a plain folder has no key to refuse here: the folder
-        steps of `setup` mend it or say so."""
+        """Refuse an unusable pair or folder before `setup` changes anything else. Only a folder
+        that is not made yet or is open to others passes: the folder steps of `setup` mend those."""
         try:
             directory = self.setup.open_verified_directories(
                 self.setup.signing_chain, tolerate_open_mode=True
             )
-        except (FileNotFoundError, StepFailure):
+        except FileNotFoundError:
             return
         try:
             state, line = self.judge(directory)
@@ -314,16 +313,20 @@ class SigningKey:
     ) -> subprocess.CompletedProcess[bytes] | None:
         """openssl's answer when it accepts the key, None when it refuses it. Exit 1 is how it
         refuses a key, and also how a host that cannot run it properly fails; only a throwaway key
-        that passes the same check proves the first, and anything else is "cannot tell"."""
+        that passes the same operation proves the first, and anything else is "cannot tell"."""
         result = self.setup.tools.openssl(arguments, stdin)
         if result.returncode == 0:
             return result
-        if result.returncode == 1 and self.openssl_passes_a_throwaway_key():
+        if result.returncode == 1 and self.openssl_passes_a_throwaway_key(arguments):
             return None
         raise CannotTell(f"`openssl {arguments[0]}` exited {result.returncode}")
 
-    def openssl_passes_a_throwaway_key(self) -> bool:
+    def openssl_passes_a_throwaway_key(self, arguments: list[str]) -> bool:
+        """The failed operation, repeated on a key made in memory for it."""
         throwaway = self.openssl_output(GENERATE_PRIVATE_KEY)
+        if arguments == PUBLIC_DETAILS_OF_PUBLIC:
+            throwaway = self.openssl_output(DERIVE_PUBLIC_KEY, throwaway)
+            return self.setup.tools.openssl(PUBLIC_DETAILS_OF_PUBLIC, throwaway).returncode == 0
         return self.setup.tools.openssl(CHECK_PRIVATE_KEY, throwaway).returncode == 0
 
     def ensure(self) -> None:

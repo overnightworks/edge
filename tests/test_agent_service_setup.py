@@ -488,7 +488,7 @@ def test_a_symlinked_folder_is_refused_before_the_paste_and_nothing_is_written(
         login_directory(home).symlink_to(outside)
 
     assert make_setup().run(renew=renew) == 1
-    assert "symbolic link" in terminal.said[-1]
+    assert ("symbolic link" if linked == "claude" else "not a plain folder") in terminal.said[-1]
     assert terminal.prompts == []
     assert list(outside.rglob("*")) == ([outside / "claude"] if linked == "agent-service" else [])
 

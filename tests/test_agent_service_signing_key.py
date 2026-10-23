@@ -1,4 +1,4 @@
-"""The signing key of agent-service/setup (#356, matrix P01-P08 and P32-P34): throwaway keys made by
+"""The signing key of agent-service/setup (matrix P01-P08 and P32-P34): throwaway keys made by
 host openssl in a throwaway home, never the real ~/.secrets."""
 
 import base64
@@ -210,9 +210,50 @@ def test_p07_a_symlinked_signing_folder_is_refused_and_nothing_is_written_outsid
     before = sorted(path.name for path in outside.iterdir())
 
     assert make_setup().run(renew=False) == 1
-    assert "symbolic link" in terminal.said[-1]
+    assert "not a plain folder" in terminal.said[-1]
     assert sorted(path.name for path in outside.iterdir()) == before
     assert make_setup().check() == 1
+
+
+@pytest.mark.parametrize("renew", [False, True], ids=["plain", "renew"])
+@pytest.mark.parametrize("fault", ["symlink", "not a folder"])
+def test_p07_a_refused_signing_folder_stops_setup_before_the_token_or_the_image_is_touched(
+    make_setup, home, terminal, docker, tmp_path, fault, renew
+):
+    write_token(home, DUMMY_TOKEN, mode=0o644)
+    docker.images.clear()
+    if fault == "symlink":
+        outside = tmp_path / "outside"
+        signing_directory(home).rename(outside)
+        signing_directory(home).symlink_to(outside)
+    else:
+        for path in signing_directory(home).iterdir():
+            path.unlink()
+        signing_directory(home).rmdir()
+        signing_directory(home).write_bytes(b"in the way")
+    status = token_path(home).stat()
+
+    assert make_setup().run(renew=renew) == 1
+    after = token_path(home).stat()
+    assert (after.st_ino, after.st_mode, token_path(home).read_bytes()) == (
+        status.st_ino, status.st_mode, DUMMY_TOKEN.encode(),
+    )  # fmt: skip
+    assert docker.builds() == []
+    assert terminal.prompts == []
+
+
+def test_p06_a_public_parse_that_fails_for_the_host_is_cannot_tell_not_a_malformed_key(
+    make_setup, home, openssl, terminal
+):
+    write_token(home, DUMMY_TOKEN)
+    public_path(home).unlink()
+    openssl.failing = {"pkey -pubin": 1}
+    before = private_path(home).read_bytes()
+
+    assert make_setup().run(renew=False) == 2
+    assert "cannot tell" in terminal.said[-1]
+    assert "--replace-signing-key" not in terminal.said[-1]
+    assert private_path(home).read_bytes() == before
 
 
 @pytest.mark.parametrize("linked", ["private", "public"])
