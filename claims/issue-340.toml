@@ -1,0 +1,8 @@
+claim_id = "52ed63cbb17349139e6821ecd591a781"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
+branch = "claude/issue-340-the-daily-check-reports-broken-container"
+scope = ["compose.yaml", "docs/architecture.md", "docs/home.md", "src/home_tools/backup_check.py", "src/home_tools/check.py", "src/home_tools/platform_check.py", "tests/home/test_backup_check.py", "tests/home/test_check.py", "tests/home/test_platform_check.py"]
+opened_commit = "cb61f244f8b386c4b73e79465ce24ffa0f69ae8f"
+whole_reason = "Two new pure check modules, their one CHECKS wiring, the step-ca healthcheck that makes the first finding true, and their tests and docs land together; split, the first report would carry a false finding or an unwired module."
