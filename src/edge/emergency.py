@@ -190,7 +190,7 @@ def _confirmed_off(
     marks: switches.Switches, target: Target, now: datetime
 ) -> tuple[str, bool] | None:
     """(switch time, barrier repaired) of a unit or app that is off, decided under the lock so no
-    start is mid-`up`.
+    start is between its look at the marker and its `up`, or an app's `start`.
 
     The marker is rewritten unchanged, so a start waiting at its prompt sees that a stop came in,
     and the barrier is rendered again from it and proven, in case the file was lost.
@@ -383,9 +383,9 @@ def _start_app(
     runtime: apps.AppRuntime,
     read: switches.Mark | None,
 ) -> int:
-    """The app's stopped containers started and waited for outside the lock, then, under it and
-    only if no stop came in meanwhile, the barrier removed and proven open and the marker cleared;
-    a stop that came in wins and stops the containers again."""
+    """The app's stopped containers started under the lock and waited for outside it, then, under
+    it again and only if no stop came in meanwhile, the barrier removed and proven open and the
+    marker cleared; a stop that came in wins and stops the containers again, under the lock."""
     key = target.key
     _say(START, f"{key}: start its containers; {_ending(read)}")
     if not terminal.confirmed(f"start {key}"):
@@ -397,36 +397,40 @@ def _start_app(
             raise _SwitchedOffAgain
 
     try:
-        existed, unhealthy = _started_app(project, runtime, still_off)
+        existed, unhealthy = _started_app(marks, project, runtime, still_off)
         with marks.lock():
             if changed := marks.changed(key, read):
-                stopped_again = changed.current
-            else:
-                return _end_app_switch(marks, target, read, existed, unhealthy)
-    except _SwitchedOffAgain:
-        stopped_again = marks.mark(key)
+                return _stopped_again(target, changed.current)
+            return _end_app_switch(marks, target, read, existed, unhealthy)
     except (compose.ComposeError, switches.SwitchError) as error:
         _complain(START, f"partial, could not start {key}, {error}; its switch stays")
         return ApplyExit.REFUSED
     except KeyboardInterrupt:
         _complain(START, f"interrupted while starting {key}; its switch stays")
         return ApplyExit.REFUSED
-    return _stopped_again(target, stopped_again)
 
 
 def _started_app(
-    project: app_compose.AppCompose, runtime: apps.AppRuntime, still_off: Callable[[], None]
+    marks: switches.Switches,
+    project: app_compose.AppCompose,
+    runtime: apps.AppRuntime,
+    still_off: Callable[[], None],
 ) -> tuple[bool, str | None]:
     """(whether containers of the app exist, what is not healthy by the deadline) after the start
-    of what is stopped and the wait for it."""
-    still_off()  # a stop that came in during the prompt starts nothing
-    containers = project.containers()
-    if not containers:
+    of what is stopped, under the lock so a stop waits for it, and the wait outside it. A stop that
+    came in ends both early; the caller's locked look finds it."""
+    try:
+        with marks.lock():
+            still_off()  # a stop that came in during the prompt starts nothing
+            containers = project.containers()
+            if not containers:
+                return False, None
+            project.start_stopped()
+        unhealthy = apps.unhealthy_after_waiting(
+            project, tuple(one.service for one in containers), runtime.health, still_off
+        )
+    except _SwitchedOffAgain:
         return False, None
-    project.start_stopped()
-    unhealthy = apps.unhealthy_after_waiting(
-        project, tuple(one.service for one in containers), runtime.health, still_off
-    )
     return True, unhealthy
 
 
@@ -460,7 +464,8 @@ def _end_app_switch(
 
 
 def _stopped_again(target: Target, current: switches.Mark | None) -> int:
-    """A stop came in while `start` waited: it wins, and what `start` started is stopped again."""
+    """A stop came in while `start` waited: it wins, and, under the lock, what `start` started is
+    stopped again."""
     if current is not None:
         try:
             target.stop()

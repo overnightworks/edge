@@ -5,6 +5,8 @@ origin and scripted Docker of `app_support`."""
 import io
 import sys
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -378,6 +380,55 @@ def test_a_stop_while_hal_start_waits_for_health_wins_and_stops_the_containers_a
     assert exit_code == 1
     assert "hopin was switched off meanwhile" in err
     assert switches.Switches(app_world.state).mark(KEY) is not None
+    assert {row["State"] for row in app_world.docker.rows} == {"exited"}
+
+
+JOIN_SECONDS = 10.0
+
+
+def join_until(done: Callable[[], bool], thread: threading.Thread) -> None:
+    """Wait for `done`, in short joins of `thread`, as long as the thread lives, and no longer
+    than JOIN_SECONDS."""
+    deadline = time.monotonic() + JOIN_SECONDS
+    while not done() and thread.is_alive() and time.monotonic() < deadline:
+        thread.join(0.01)
+
+
+def test_a_stop_that_comes_in_while_hal_start_holds_the_lock_waits_then_nothing_of_it_runs(
+    app_world, hal
+):
+    deployed(app_world)
+    hal.stop()
+    marks = switches.Switches(app_world.state)
+    read = marks.mark(KEY)
+    held: list[bool] = []
+    when_stop_returned: list[tuple[int, set[str]]] = []
+
+    def stop_the_app() -> None:
+        exit_code = emergency.stop_unit(
+            marks, KEY, NOW, hal.engine(), app_world.repository, hal.verifier, app_world.runtime
+        )
+        when_stop_returned.append((exit_code, {row["State"] for row in app_world.docker.rows}))
+
+    stop = threading.Thread(target=stop_the_app)
+
+    def hal_stop_while_start_holds_the_lock() -> None:
+        held.append(switch_lock_is_held(app_world.state))
+        stop.start()
+        join_until(lambda: marks.changed(KEY, read) is not None, stop)  # recorded, now waits
+        held.append(stop.is_alive())
+
+    app_world.docker.during["start"] = hal_stop_while_start_holds_the_lock
+
+    exit_code, _, err = hal.start()
+    stop.join(JOIN_SECONDS)
+
+    assert held == [True, True]
+    assert not stop.is_alive()
+    assert when_stop_returned == [(0, {"exited"})]
+    assert exit_code == 1
+    assert "hopin was switched off meanwhile" in err
+    assert marks.mark(KEY) is not None
     assert {row["State"] for row in app_world.docker.rows} == {"exited"}
 
 
