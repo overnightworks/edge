@@ -12,7 +12,11 @@ named volume covers (refused after build, before `create`) and the same covered,
 `pull_policy: always`, and block C, `enabled: false`: C1 an app switched off while running, C2 on
 again at the same tag, C3 off after an update that renamed a service and failed its build, C4 off
 with `compose.yaml` missing or invalid at HEAD, C5 off with a leftover container of an unknown
-service after an update dropped one. The exits are hal's: 0 or 3.
+service after an update dropped one, and the emergency switch (#255 P5): D1 `hal stop` without a
+terminal (marker, barrier answered by the probe's Traefik, containers stopped), D2 a stopped app
+with a newer tag waiting stays stopped, D4 a stop during the build leaves the containers and the
+record, D7 `hal start` and its refusal while disabled. D10 is not driven: the compose contract
+still refuses a `depends_on` that waits for health. The exits are hal's: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -24,7 +28,7 @@ probe's own. The probe never runs `hal online`, `hal offline` or `--all`, so no 
 always removes its containers, volumes, networks and images, found by their compose project.
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
-        python3 probe/apps/probe.py --scratch DIR
+        python3 probe/apps/probe.py --scratch DIR [--switch-only]
 
 Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) and a Docker that
 may pull busybox and Traefik.
@@ -89,12 +93,17 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "c4_missing": "v2026.10.25.4",
     "c4_invalid_ok": "v2026.10.25.5",
     "c4_invalid": "v2026.10.25.6",
+    "d2": "v2026.10.24.4",
+    "d4": "v2026.10.24.5",
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
 }
 # A service that no release of the app names
 GHOST = f"services:\n  ghost:\n    image: {BUSYBOX}\n    command: [sleep, '3600']\n"
 FORBIDDEN_VERBS = ("online", "offline", "--all")
+BARRIER_HEADER = "X-Edge-Barrier"
+SLOW_BUILD_SECONDS = 120  # long enough for `hal stop` to record while the build runs
+STOP_SECONDS = 60
 
 
 def free_port() -> int:
@@ -217,6 +226,7 @@ class Probe:
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
         services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
         covered: bool = True, pull_always: bool = False, compose_file: str | None = None,
+        slow_build: int = 0,
     ) -> str:  # fmt: skip
         """A commit carrying the app at `tag`, pushed and tagged; its sha. `compose_file` replaces
         the generated compose.yaml with that text, or leaves it out when empty."""
@@ -230,6 +240,7 @@ class Probe:
             health.unlink(missing_ok=True)
         (self.work / "Dockerfile").write_text(
             f"FROM {BUSYBOX}\n{'' if builds else 'RUN false' + chr(10)}COPY site /www\n"
+            f"{f'RUN sleep {slow_build}' + chr(10) if slow_build else ''}"
             f"{'VOLUME ' + image_volume + chr(10) if image_volume else ''}"
             'CMD ["sh", "-c", "cat /www/version >> /data/starts; exec httpd -f -p 8080 -h /www"]\n'
         )
@@ -325,6 +336,59 @@ class Probe:
         )
         return output
 
+    def hal_without_terminal(self, *arguments: str, exit_code: int = HAL_OK) -> str:
+        """`hal <arguments>` of the copy with stdin and stdout that are no terminal, as an agent
+        runs it; the whitespace-normalised output of a run that exits `exit_code`."""
+        result = subprocess.run(
+            [str(self.copy / ".venv" / "bin" / "hal"), *arguments], stdin=subprocess.DEVNULL,
+            capture_output=True, env=self.environment, cwd=self.copy, check=False,
+            timeout=STOP_SECONDS,
+        )  # fmt: skip
+        output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
+        expect(
+            result.returncode == exit_code,
+            f"hal {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
+            f"{output[-300:]}",
+        )
+        return output
+
+    def apply_in_background(self) -> subprocess.Popen[bytes]:
+        """`hal apply --closed` at a pty where the operator has typed `yes`; the caller reads its
+        exit with `finished`."""
+        command = shlex.join([str(self.copy / ".venv" / "bin" / "hal"), "apply", "--closed"])
+        running = subprocess.Popen(
+            ["script", "-qec", command, "/dev/null"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=self.environment, cwd=self.copy,
+        )  # fmt: skip
+        running.stdin.write(b"yes\n")
+        running.stdin.close()
+        return running
+
+    def finished(self, running: subprocess.Popen[bytes], exit_code: int) -> str:
+        output = running.stdout.read()
+        running.wait(timeout=HAL_SECONDS)
+        text = " ".join(output.decode(errors="replace").split())
+        expect(
+            running.returncode == exit_code,
+            f"the background apply exited {running.returncode}, wanted {exit_code}: {text[-300:]}",
+        )
+        return text
+
+    def set_hosts(self, listed: bool) -> None:
+        """The app's one host in the catalog (no `edge.name` label stands behind it: the barrier
+        reads only the catalog) or none, published as a merged pull request."""
+        fleet = self.copy / "fleet.yaml"
+        host = (
+            f"    hosts: [{{name: {self.key}, exposure: public, reason: probe, ready: /version}}]\n"
+        )
+        lines = [
+            line for line in fleet.read_text().splitlines(keepends=True) if "hosts:" not in line
+        ]
+        if listed:
+            lines.append(host)
+        fleet.write_text("".join(lines))
+        edge_copy.publish(self.copy, f"probe: {self.key} hosts {listed}")
+
     def set_enabled(self, enabled: bool) -> None:
         """The catalog entry of the app switched on or off, published as a merged pull request
         and its pull would bring it."""
@@ -348,6 +412,20 @@ class Probe:
             return response.status, response.read().decode().strip()
         except OSError:
             return None, None
+        finally:
+            connection.close()
+
+    def barrier_mark(self) -> str | None:
+        """The `X-Edge-Barrier` of the probe's Traefik's answer for the app's host, with its 404."""
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.edge_port, timeout=REQUEST_SECONDS
+        )
+        try:
+            connection.request("GET", "/", headers={"Host": f"{self.key}.{DOMAIN}"})
+            response = connection.getresponse()
+            return response.getheader(BARRIER_HEADER) if response.status == 404 else None
+        except OSError:
+            return None
         finally:
             connection.close()
 
@@ -695,11 +773,96 @@ class Probe:
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
+    # --- the emergency switch (#255 P5) --------------------------------------------------------
 
-def prove(probe: Probe) -> int:
+    @property
+    def marker(self) -> Path:
+        return self.home / ".local" / "state" / "edge" / "stopped" / self.key
+
+    @property
+    def barrier_file(self) -> Path:
+        return self.copy / "dynamic" / f"switch-{self.key}.yml"
+
+    def cell_d1_stop_without_a_terminal(self) -> None:
+        self.set_hosts(True)
+        before = self.only()["id"]
+        out = self.hal_without_terminal("stop", self.key)
+        expect(f"{self.key} is switched off (containers of {self.key} stopped" in out, out[-300:])
+        expect(self.marker.exists() and self.barrier_file.exists(), "D1: marker or barrier missing")
+        expect(self.barrier_mark() == self.key, "D1: Traefik does not answer the barrier's 404")
+        rows = self.containers()
+        expect([r["id"] for r in rows] == [before] and rows[0]["state"] == "exited", f"D1: {rows}")
+        again = self.hal_without_terminal("stop", self.key)
+        expect(f"{self.key} is already switched off (since" in again, f"D1 again: {again[-300:]}")
+        expect(self.barrier_mark() == self.key, "D1: the repeated stop lost the barrier")
+        print("D1 held: hal stop without a terminal wrote the marker and a proven barrier, stopped")
+
+    def cell_d2_stopped_app_stays_stopped(self) -> None:
+        tag = TAGS["d2"]
+        self.release(tag)
+        marker, barrier_bytes = self.marker.read_bytes(), self.barrier_file.read_bytes()
+        out = self.apply(typed=b"no\n")
+        expect(f"{self.key} stays stopped (switch since" in out, f"D2: {out[-300:]}")
+        expect("nothing to change" in out, f"D2: {out[-300:]}")
+        fetched = checkout.Git(self.srv).call(
+            ["for-each-ref", "--format=%(refname)", f"refs/edge/releases/{tag}"]
+        )
+        expect(fetched.stdout.decode().strip() == "", "D2: the new tag was fetched")
+        expect(
+            self.marker.read_bytes() == marker and self.barrier_file.read_bytes() == barrier_bytes,
+            "D2: the marker or the barrier changed",
+        )
+        print("D2 held: a stopped app with a newer tag waiting stays stopped, nothing fetched")
+
+    def cell_d7_start(self) -> None:
+        self.set_enabled(False)
+        out = self.hal("start", self.key, exit_code=HAL_FAILURE)
+        expect("refused" in out and "disabled in the catalog" in out, f"D7: {out[-300:]}")
+        expect(self.marker.exists(), "D7: the refused start cleared the marker")
+        self.set_enabled(True)
+        out = self.hal("start", self.key)
+        expect(f"{self.key} is on" in out, f"D7: {out[-300:]}")
+        expect(not self.marker.exists() and not self.barrier_file.exists(), "D7: switch remains")
+        expect(self.only()["health"] == "healthy", "D7: not healthy")
+        self.serves(self.deployed()["tag"])
+        self.set_hosts(False)
+        print("D7 held: hal start (yes) started, waited for health, opened; refused while disabled")
+
+    def cell_d4_stop_during_the_build(self) -> None:
+        self.apply()  # the tag of D2 is deployed
+        tag = TAGS["d4"]
+        sha = self.release(tag, slow_build=SLOW_BUILD_SECONDS)
+        before, record = self.only()["id"], self.record.read_text()
+        running = self.apply_in_background()
+        self.wait_until("the checkout is at the new tag", lambda: self.head() == sha)
+        out = self.hal_without_terminal("stop", self.key)
+        expect(f"{self.key} is switched off" in out, f"D4: {out[-300:]}")
+        text = self.finished(running, HAL_FAILURE)
+        expect("switched off meanwhile" in text and "not started" in text, f"D4: {text[-300:]}")
+        rows = self.containers()
+        expect(
+            [r["id"] for r in rows] == [before] and rows[0]["state"] == "exited",
+            f"D4: containers {rows}, before {before}; the apply said: {text[-700:]}",
+        )
+        expect(self.record.read_text() == record, "D4: the record moved")
+        expect(self.marker.exists(), "D4: the marker is gone")
+        out = self.hal("start", self.key)
+        expect(f"{self.key} is on" in out, f"D4: {out[-300:]}")
+        self.apply()
+        expect(self.deployed()["tag"] == tag, "D4: the app was not updated after the start")
+        print("D4 held: a stop during the build ran no create and kept the record (hal 3)")
+
+
+def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
         probe.bring_up()
         probe.cell_a1_first_apply()
+        if switch_only:
+            probe.cell_d1_stop_without_a_terminal()
+            probe.cell_d2_stopped_app_stays_stopped()
+            probe.cell_d7_start()
+            probe.cell_d4_stop_during_the_build()
+            return 0
         probe.cell_a2_second_apply()
         probe.cell_a3_update()
         probe.cell_a4_side_branch()
@@ -712,6 +875,10 @@ def prove(probe: Probe) -> int:
         probe.cell_a23_interrupted_update()
         probe.cell_b5_image_volume()
         probe.cell_b8_pull_policy_always()
+        probe.cell_d1_stop_without_a_terminal()
+        probe.cell_d2_stopped_app_stays_stopped()
+        probe.cell_d7_start()
+        probe.cell_d4_stop_during_the_build()
         probe.cell_c1_c2_off_and_on_again()
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
@@ -732,6 +899,9 @@ def raise_interrupt(_signal: int, _frame: object) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument(
+        "--switch-only", action="store_true", help="only A1 and the emergency-switch cells D1-D7"
+    )
     arguments = parser.parse_args(argv)
     if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
         print("PROBE FAILED: --scratch is not empty")
@@ -739,7 +909,11 @@ def main(argv: list[str] | None = None) -> int:
     arguments.scratch.mkdir(parents=True, exist_ok=True)
     probe = Probe(arguments.scratch)
     signal.signal(signal.SIGTERM, raise_interrupt)  # `timeout` ends the probe with SIGTERM
-    exit_code = prove(probe)
+    try:
+        exit_code = prove(probe, switch_only=arguments.switch_only)
+    except BaseException:
+        probe.teardown()  # a failure the probe did not foresee must not leave its containers
+        raise
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     try:
         probe.teardown()
@@ -747,7 +921,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0:
-        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5 hold")
+        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5, D1, D2, D4, D7 hold")
     return exit_code
 
 
