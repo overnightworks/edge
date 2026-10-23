@@ -40,12 +40,16 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
   assert {
     condition = (
       length(cloudflare_ruleset.deny_public) == 1
-      && length(cloudflare_ruleset.deny_public[0].rules) == 1
-      && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "lower(http.host) eq \"songmaker.${local.fleet.cloudflare.zone}\"")
-      && !strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "www.")
+      && length(cloudflare_ruleset.deny_public[0].rules) == 2
+      && alltrue([
+        for rule in cloudflare_ruleset.deny_public[0].rules :
+        strcontains(rule.expression, "lower(http.host) eq \"songmaker.${local.fleet.cloudflare.zone}\"")
+        && !strcontains(rule.expression, "www.")
+      ])
       && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "/*auth/*backchannel-logout*")
+      && strcontains(cloudflare_ruleset.deny_public[0].rules[1].expression, "/*metrics*")
     )
-    error_message = "the deny is not one rule for /auth/backchannel-logout on songmaker's host alone"
+    error_message = "the deny is not two rules, /auth/backchannel-logout and /metrics, on songmaker's host alone"
   }
 
   assert {

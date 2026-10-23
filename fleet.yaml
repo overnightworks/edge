@@ -13,7 +13,7 @@ github:
 services:
   songmaker:
     hosts:
-      - {name: songmaker, exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout]}
+      - {name: songmaker, exposure: public, reason: "songmaker is public with its own login", target: "http://localhost:8080", deny_public: [/auth/backchannel-logout, /metrics]}
   step-ca:
     run:
       enabled: true
