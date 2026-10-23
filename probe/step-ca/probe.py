@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
-#60 proof 11, #69 proof 12, #89 proof 13, #340 the step-ca healthcheck after proof 2): a throwaway
-compose project and a throwaway HOME.
+#60 proof 11, #69 proof 12, #89 proof 13): a throwaway compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
@@ -44,8 +43,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
-import edge_copy  # noqa: E402
-from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect  # noqa: E402
+import health  # noqa: E402
+from edge_copy import DISCARD_OUTPUT, ProbeFailed, expect, publish, run_edge  # noqa: E402
+from edge_copy import repository_copy as copy_repository  # noqa: E402
 
 from edge import core  # noqa: E402
 
@@ -57,7 +57,6 @@ COULD_NOT_RESOLVE = 6
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
-HEALTHY_SECONDS = 100  # three healthcheck intervals of compose.yaml
 ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
 COMPOSE_FILE = "compose.yaml"
@@ -307,21 +306,6 @@ class Probe:
         print(
             f"proof 2 held: {DIRECTORY_URL} -> 200 with the probe root; fails without it; "
             f"an order for {OUTSIDE_NAME} is refused by the policy"
-        )
-
-    def health_of(self, service: str) -> str:
-        container = self.container_id(service)
-        result = self.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container])
-        return result.stdout.decode().strip()
-
-    def proof_2_health(self) -> None:
-        self.poll_until(
-            "step-ca becoming healthy",
-            HEALTHY_SECONDS,
-            lambda: self.health_of("step-ca") == "healthy",
-        )
-        print(
-            f"proof 2 health held: the healthcheck of step-ca reports {self.health_of('step-ca')}"
         )
 
     def proof_3_volume(self) -> None:
@@ -626,9 +610,8 @@ class Probe:
     # --- edge apply --closed switches the unit and keeps its data (#52 rule 3) -----------------
 
     def repository_copy(self) -> Path:
-        """The lane's files as the live checkout of the scratch HOME, with its own venv: fleet.yaml
-        is flipped there only."""
-        return edge_copy.repository_copy(REPO, self.home, self.scratch)
+        """The lane's files as the scratch HOME's live checkout; only its fleet.yaml is flipped."""
+        return copy_repository(REPO, self.home, self.scratch)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         """Set step-ca's switch; the copy switches keycloak off, so apply never asks its setup."""
@@ -642,16 +625,15 @@ class Probe:
             "fleet.yaml lacks exactly one step-ca and one keycloak switch",
         )
         fleet.write_text(text)
-        edge_copy.publish(copy, f"probe: step-ca enabled {enabled}")
+        publish(copy, f"probe: step-ca enabled {enabled}")
 
     def edge(
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
         typed: bytes = b"yes\n",
     ) -> str:  # fmt: skip
-        return edge_copy.run_edge(
-            copy, self.environment, *arguments,
-            terminal=terminal, exit_code=exit_code, typed=typed,
-        )  # fmt: skip
+        return run_edge(
+            copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code, typed=typed
+        )
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
         self.set_enabled(copy, enabled)
@@ -835,7 +817,7 @@ class Probe:
     def edit_follower_file(self, copy: Path) -> None:
         with (copy / FOLLOWER_FILE).open("a") as file:
             file.write(HARMLESS_EDIT)
-        edge_copy.publish(copy, f"probe: a harmless {FOLLOWER_FILE} edit")
+        publish(copy, f"probe: a harmless {FOLLOWER_FILE} edit")
 
     def proof_13a_followers(self, copy: Path) -> None:
         config = json.loads(self.copy_compose(copy, "config", "--format", "json"))
@@ -890,7 +872,7 @@ class Probe:
         for anchor in LABEL_AFTER.values():
             text = text.replace(anchor, anchor + PROBE_LABEL, 1)
         compose_file.write_text(text)
-        edge_copy.publish(copy, "probe: a label on traefik-mcp")
+        publish(copy, "probe: a label on traefik-mcp")
         out = self.edge(copy, "apply", "--closed", terminal=True)
         expect("traefik-mcp: recreate (its compose definition changed)" in out, out[-240:])
         expect("step-ca:" not in out, f"P13d: step-ca was named: {out[-240:]}")
@@ -932,7 +914,7 @@ class Probe:
         expect(marker.read_text() == written, "P13e: apply touched the marker")
         self.volume_names_exist()
         (copy / FOLLOWER_FILE).write_text(recorded)
-        edge_copy.publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
+        publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
         self.edge(copy, "start", "step-ca", terminal=True)
         self.wait_until_answering()
         self.apply_says_nothing_to_change(copy, "P13e after start")
@@ -1047,7 +1029,7 @@ def prove(probe: Probe) -> int:
     try:
         probe.proof_1_init()
         probe.proof_2_directory()
-        probe.proof_2_health()
+        health.proof_2_health(probe)
         probe.proof_3_volume()
         probe.proof_4_restart()
         probe.proof_5_partial()
