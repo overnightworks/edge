@@ -1,7 +1,0 @@
-claim_id = "715323492faa4cca9af3792baa1ebd29"
-agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
-role = "builder"
-base = "de1d5d441ec9e3119c0856fc3e283ad9e96ac4fb"
-branch = "claude/issue-357-110-s2d-the-agent-service-s-own-section"
-scope = ["legal/pages/datenschutz.html"]
-opened_commit = "accd89824fc0d71a91ab33dcb4c0c3793bd20cf4"
