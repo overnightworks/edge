@@ -744,7 +744,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             name="claude-measure-token",
             kind=SecretKind.TOKEN,
             paths=(PurePosixPath(".secrets/claude-measure-token"),),
-            read_by=("agent-providers#115, Messläufe 0b2/0e",),
+            read_by=("agent-runtime#115, Messläufe 0b2/0e",),
             recreate="`claude setup-token` im Browser",
             purpose="Die Messläufe starten Claude damit unter einem eigenen, widerrufbaren Login.",
             optional=True,

@@ -16,5 +16,5 @@ RUN pip install --no-cache-dir --no-deps --require-hashes --only-binary :all: \
     && pip check \
     && rm /tmp/requirements.txt
 USER 1000:1000
-ENTRYPOINT ["agent-service"]
+ENTRYPOINT ["agent-runtime-service"]
 CMD ["--config", "/etc/agent-service/service.toml"]

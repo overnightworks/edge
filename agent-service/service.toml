@@ -1,4 +1,4 @@
-# The agent service's configuration (agent-providers v0.6.0). Every path is a mount target of the
+# The agent service's configuration (agent-runtime v0.7.0). Every path is a mount target of the
 # `agent-service` service in compose.yaml; tests/test_agent_service_unit.py holds the two equal.
 
 [identity]

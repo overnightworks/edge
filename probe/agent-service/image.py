@@ -155,7 +155,7 @@ def cell_i2(output: Path, scratch: Path) -> None:
     shutil.copytree(IMAGE_DIRECTORY, context)
     lock = context / "requirements.txt"
     text = lock.read_text(encoding="utf-8")
-    anchor = text.index("overnightworks_agent_client-")
+    anchor = text.index("overnightworks_agent_runtime_client-")
     digest_at = text.index("sha256:", anchor) + len("sha256:")
     flipped = "0" if text[digest_at] != "0" else "1"
     lock.write_text(text[:digest_at] + flipped + text[digest_at + 1 :], encoding="utf-8")

@@ -1,6 +1,6 @@
 """Writes `agent-service/image/requirements.txt`, the one hashed lock of the agent service image.
 
-`scripts/agent_service_lock.py <tag>` takes agent-providers' release tag (for example `v0.6.0`),
+`scripts/agent_service_lock.py <tag>` takes agent-runtime's release tag (for example `v0.7.0`),
 exports the service's runtime closure from that tag's `uv.lock`, and adds the release's three
 wheels by URL and sha256, computed from the downloaded bytes. The file's header names the tag and
 its commit. A release bump runs this script again; nothing else writes the file.
@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 from typing import Final
 
-REPOSITORY_URL: Final = "https://github.com/overnightworks/agent-providers"
+REPOSITORY_URL: Final = "https://github.com/overnightworks/agent-runtime"
 UV_EXPORT: Final = (
     "uv",
     "export",
@@ -27,7 +27,7 @@ UV_EXPORT: Final = (
     "--no-dev",
     "--no-emit-workspace",
     "--package",
-    "overnightworks-agent-service",
+    "overnightworks-agent-runtime-service",
 )
 GIT_CLONE_TAG: Final = (
     *("git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1"),
@@ -35,9 +35,9 @@ GIT_CLONE_TAG: Final = (
 )
 RELEASE_TAG: Final = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)
 RELEASE_WHEEL_STEMS: Final = (
-    "overnightworks_agent_client",
-    "overnightworks_agent_providers",
-    "overnightworks_agent_service",
+    "overnightworks_agent_runtime",
+    "overnightworks_agent_runtime_client",
+    "overnightworks_agent_runtime_service",
 )
 LOCK_PATH: Final = Path(__file__).resolve().parent.parent / "agent-service/image/requirements.txt"
 DOWNLOAD_SECONDS: Final = 120
@@ -46,7 +46,7 @@ DOWNLOAD_SECONDS: Final = 120
 def release_tag(text: str) -> str:
     """The only shape of tag that reaches `git clone` and the release URLs."""
     if not RELEASE_TAG.fullmatch(text):
-        raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.6.0")
+        raise argparse.ArgumentTypeError(f"{text!r} is not a release tag such as v0.7.0")
     return text
 
 
@@ -65,7 +65,7 @@ def lock_text(tag: str, commit: str, closure: str, wheel_digests: dict[str, str]
     """The whole lock: a header naming tag and commit, the closure, then the wheels by URL and
     sha256. `wheel_digests` holds one sha256 per requirement name of `release_wheel_urls`."""
     header = (
-        f"# agent-providers {tag}, commit {commit}\n"
+        f"# agent-runtime {tag}, commit {commit}\n"
         f"# {' '.join(UV_EXPORT)}, then the release's wheels.\n"
         "# Written only by scripts/agent_service_lock.py; do not edit.\n"
     )
@@ -111,7 +111,7 @@ def built_lock(tag: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent_service_lock", description=__doc__)
-    parser.add_argument("tag", type=release_tag, help="agent-providers release tag, such as v0.6.0")
+    parser.add_argument("tag", type=release_tag, help="agent-runtime release tag, such as v0.7.0")
     arguments = parser.parse_args(argv)
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOCK_PATH.write_text(built_lock(arguments.tag), encoding="utf-8")
