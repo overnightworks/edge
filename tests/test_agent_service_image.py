@@ -20,7 +20,7 @@ DOCKERFILE = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
 LOCK = (IMAGE_DIRECTORY / "requirements.txt").read_text(encoding="utf-8")
 AGENT_SERVICE_DOCUMENT = (REPOSITORY / "docs" / "agent-service.md").read_text(encoding="utf-8")
 
-RELEASE_WHEELS = ("agent-client", "agent-providers", "agent-service")
+RELEASE_WHEELS = ("agent-runtime", "agent-runtime-client", "agent-runtime-service")
 DIGEST_PINNED_IMAGE = re.compile(r"^FROM \S+@sha256:[0-9a-f]{64}\b", re.MULTILINE)
 
 
@@ -36,7 +36,7 @@ def lock_requirements() -> list[str]:
 
 
 def release_tag() -> str:
-    return re.match(r"# agent-providers (v\S+), commit [0-9a-f]{40}\n", LOCK).group(1)
+    return re.match(r"# agent-runtime (v\S+), commit [0-9a-f]{40}\n", LOCK).group(1)
 
 
 def test_every_base_image_is_pinned_by_digest():
@@ -83,7 +83,7 @@ def test_the_recipe_installs_no_system_package(package_manager):
     assert not re.search(rf"\b{package_manager}\b", DOCKERFILE)
 
 
-@pytest.mark.parametrize("tag", ["v0.6.0", "v10.0.1", "v10.20.30"])
+@pytest.mark.parametrize("tag", ["v0.7.0", "v10.0.1", "v10.20.30"])
 def test_the_lock_script_accepts_a_release_tag(tag):
     assert agent_service_lock.release_tag(tag) == tag
 
@@ -109,7 +109,7 @@ def composed_lock() -> str:
 
 
 def test_the_composed_lock_names_the_tag_and_the_commit_in_its_header():
-    assert composed_lock().startswith("# agent-providers v1.2.3, commit c0ffee\n")
+    assert composed_lock().startswith("# agent-runtime v1.2.3, commit c0ffee\n")
 
 
 def test_the_composed_lock_holds_the_closure_then_each_wheel_by_url_and_hash():
@@ -170,13 +170,13 @@ def test_the_lock_script_writes_the_built_lock(tmp_path, monkeypatch):
 
 def test_the_image_runs_the_service_as_uid_1000_without_a_login():
     assert "USER 1000:1000" in DOCKERFILE
-    assert 'ENTRYPOINT ["agent-service"]' in DOCKERFILE
+    assert 'ENTRYPOINT ["agent-runtime-service"]' in DOCKERFILE
     assert "/.claude" not in DOCKERFILE
     assert "managed-settings" not in DOCKERFILE
 
 
 def test_the_lock_names_its_release_tag_and_commit():
-    assert release_tag() == "v0.6.0"
+    assert release_tag() == "v0.7.0"
 
 
 def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():
@@ -189,7 +189,7 @@ def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():
 def test_the_lock_holds_the_release_wheel_by_url_and_sha256(package):
     tag = release_tag()
     wheel = f"overnightworks_{package.replace('-', '_')}-{tag.removeprefix('v')}-py3-none-any.whl"
-    url = f"https://github.com/overnightworks/agent-providers/releases/download/{tag}/{wheel}"
+    url = f"https://github.com/overnightworks/agent-runtime/releases/download/{tag}/{wheel}"
     assert any(
         requirement.startswith(f"overnightworks-{package} @ {url} --hash=sha256:")
         for requirement in lock_requirements()

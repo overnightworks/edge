@@ -111,10 +111,10 @@ def test_the_configuration_is_a_read_only_file_bind_from_the_checkout(binds):
 
 
 def test_the_image_tag_is_the_locks_release_and_the_cli_version(service):
-    """The tag names the agent-providers release of the lock and the Claude CLI of the recipe."""
+    """The tag names the agent-runtime release of the lock and the Claude CLI of the recipe."""
     lock = (ROOT / "agent-service/image/requirements.txt").read_text()
     dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
-    release = re.match(r"# agent-providers v(\S+), commit ", lock).group(1)
+    release = re.match(r"# agent-runtime v(\S+), commit ", lock).group(1)
     cli = re.search(r"^ARG CLAUDE_VERSION=(\S+)$", dockerfile, re.MULTILINE).group(1)
 
     assert service["image"] == f"edge-agent-service:{release}-{cli}"

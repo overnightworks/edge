@@ -8,7 +8,7 @@ and the probes under `probe/agent-service/`. The egress gateway it leaves throug
 
 ## The image
 
-`agent-service/image/` is the recipe of the service's image (agent-providers `v0.6.0`, Claude Code
+`agent-service/image/` is the recipe of the service's image (agent-runtime `v0.7.0`, Claude Code
 `2.1.302`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
 pinned: both base images by digest, the Python packages by hash, the Claude CLI by its sha256. A
 changed or vanished artifact fails the build. The image is never pulled from a registry, because its
@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.6.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.7.0-2.1.302 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
@@ -85,8 +85,8 @@ drops them. The only host binds are `service.toml` and the login directory, both
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
-stated in agent-providers' section
-[What a run keeps](https://github.com/overnightworks/agent-providers/blob/main/docs/wire.md#what-a-run-keeps).
+stated in agent-runtime's section
+[What a run keeps](https://github.com/overnightworks/agent-runtime/blob/main/docs/wire.md#what-a-run-keeps).
 The content of
 a turn leaves this PC for Anthropic, which generates the answer.
 
@@ -115,7 +115,7 @@ host process can reach it, because the network has no host address and publishes
 
 ## Proofs
 
-Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-providers upgrade.
+Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-runtime upgrade.
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in as yourself (the

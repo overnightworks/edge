@@ -141,14 +141,14 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 
 ### The agent service (A1d) in the layers
 
-The agent service is an L4 service: the one place that holds the subscription logins and runs the provider CLIs for every app ([agent-providers#18](https://github.com/overnightworks/agent-providers/issues/18)). It sits behind Keycloak (its client `agent-service`), reaches MCP servers only over https through `traefik-mcp` (edge#37 slice 2), and trusts the internal CA's root (section 4). It runs from edge's `compose.yaml` (the service `agent-service`, profile `agent-service`) with an image built on the PC; the unit `agent-service` of `fleet.yaml` starts it with its egress gateway. Six rulings of 16.10.2026 shape it. The library contract stays owned by agent-providers; each line here only states the ruling and links its owner.
+The agent service is an L4 service: the one place that holds the subscription logins and runs the provider CLIs for every app ([agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)). It sits behind Keycloak (its client `agent-service`), reaches MCP servers only over https through `traefik-mcp` (edge#37 slice 2), and trusts the internal CA's root (section 4). It runs from edge's `compose.yaml` (the service `agent-service`, profile `agent-service`) with an image built on the PC; the unit `agent-service` of `fleet.yaml` starts it with its egress gateway. Six rulings of 16.10.2026 shape it. The library contract stays owned by agent-runtime; each line here only states the ruling and links its owner.
 
-1. **Closed environment.** Every CLI child is started by the library's one spawn owner with an explicit environment, an absolute binary and an explicit cwd, and inherits nothing from the host ([agent-providers#10](https://github.com/overnightworks/agent-providers/issues/10)).
-2. **One private root.** Everything a child may write lives below the host's `cli_working_directory_root` (0700): the private credential homes, `TMPDIR` and the Codex sandbox directories; the library owns the layout below the root and the host owns the root ([agent-providers#10](https://github.com/overnightworks/agent-providers/issues/10), [agent-providers#49](https://github.com/overnightworks/agent-providers/issues/49); the host's owner of the root is Songmaker, [songmaker#1476](https://github.com/overnightworks/songmaker/issues/1476)).
-3. **Sandbox policy from that root.** The host derives its AppArmor profile and Bubblewrap mounts from the root and allows writes only below it, for songmaker today and for the agent-service container in A1d, because a closed environment is not access control and hiding the operator's real `~/.claude` is a deployment matter of one read-only directory bind per profile ([agent-providers#10](https://github.com/overnightworks/agent-providers/issues/10), [agent-providers#18](https://github.com/overnightworks/agent-providers/issues/18)).
+1. **Closed environment.** Every CLI child is started by the library's one spawn owner with an explicit environment, an absolute binary and an explicit cwd, and inherits nothing from the host ([agent-runtime#10](https://github.com/overnightworks/agent-runtime/issues/10)).
+2. **One private root.** Everything a child may write lives below the host's `cli_working_directory_root` (0700): the private credential homes, `TMPDIR` and the Codex sandbox directories; the library owns the layout below the root and the host owns the root ([agent-runtime#10](https://github.com/overnightworks/agent-runtime/issues/10), [agent-runtime#49](https://github.com/overnightworks/agent-runtime/issues/49); the host's owner of the root is Songmaker, [songmaker#1476](https://github.com/overnightworks/songmaker/issues/1476)).
+3. **Sandbox policy from that root.** The host derives its AppArmor profile and Bubblewrap mounts from the root and allows writes only below it, for songmaker today and for the agent-service container in A1d, because a closed environment is not access control and hiding the operator's real `~/.claude` is a deployment matter of one read-only directory bind per profile ([agent-runtime#10](https://github.com/overnightworks/agent-runtime/issues/10), [agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)).
 4. **MCP origins: https only, with step-ca** ([edge#37](https://github.com/overnightworks/edge/issues/37), option d).
-5. **No provider text in logs.** Provider text never reaches a service or library log or an exception chain; the host receives a sealed excerpt and alone decides whether to write it down ([agent-providers#9](https://github.com/overnightworks/agent-providers/issues/9), [agent-providers#56](https://github.com/overnightworks/agent-providers/issues/56), [agent-providers#68](https://github.com/overnightworks/agent-providers/issues/68)).
-6. **The library defines its contract, hosts adapt to it** ([agent-providers#49](https://github.com/overnightworks/agent-providers/issues/49)).
+5. **No provider text in logs.** Provider text never reaches a service or library log or an exception chain; the host receives a sealed excerpt and alone decides whether to write it down ([agent-runtime#9](https://github.com/overnightworks/agent-runtime/issues/9), [agent-runtime#56](https://github.com/overnightworks/agent-runtime/issues/56), [agent-runtime#68](https://github.com/overnightworks/agent-runtime/issues/68)).
+6. **The library defines its contract, hosts adapt to it** ([agent-runtime#49](https://github.com/overnightworks/agent-runtime/issues/49)).
 
 **What this means for the platform (A1d):**
 - The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker and presentator clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
@@ -304,7 +304,7 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 
 | Mount | Holds | Mode | In the backup |
 |---|---|---|---|
-| one read-only directory bind per profile, `~/.secrets/agent-service/<profile>/` (the file inside is replaced, the directory never) | that profile's subscription login, one file | the container user only (0700 directory, 0600 file); no other profile and not the operator's `~/.claude` | no: the login is restored from its `~/.secrets` source ([agent-providers#18](https://github.com/overnightworks/agent-providers/issues/18)) |
+| one read-only directory bind per profile, `~/.secrets/agent-service/<profile>/` (the file inside is replaced, the directory never) | that profile's subscription login, one file | the container user only (0700 directory, 0600 file); no other profile and not the operator's `~/.claude` | no: the login is restored from its `~/.secrets` source ([agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)) |
 | `./agent-service/service.toml` → `/etc/agent-service/service.toml`, read-only | the service's configuration | the checkout's | no: it is in the repository |
 | `cli_working_directory_root`, a tmpfs | the private credential homes, `TMPDIR`, the Codex sandbox directories | exactly 0700, owned by the container user (the service refuses to start otherwise); the library owns the layout below it | no: rebuilt on start |
 | `/tmp`, a tmpfs, also its `HOME` | nothing the service keeps | 0700, owned by the container user | no |
@@ -734,7 +734,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - **Spread:** one instance of a service runs on a second machine. It is an item each time, with the "Any second machine" checklist of §10 rule 4 as its done-when.
 - **Scale:** N instances of a service run. It is an item each time, and only when a caller needs it. Several rulings and facts make services singletons on purpose:
   - agent-presentator ADR 0006 and its `compose.yaml:1`: SQLite and files, one instance;
-  - agent-providers#18 A1b: one replica;
+  - agent-runtime#18 A1b: one replica;
   - edge's `duplicate-edge-name` check ([backup.md](backup.md), edge-check findings);
   - hopin's rooms in process memory (`src/hopin/rooms/manager.py:11`).
 
@@ -761,7 +761,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 **§10 rule 3: each app owns its stores.**
 - No volume, database or Redis is shared across compose projects. The edge networks are the exception.
 - Integration goes through the owning app's API.
-- A call between apps carries a signed, short-lived token whose audience is the callee: an issuer token, or the agent-service capability (agent-providers decision record 0001). Never a static secret shared between apps.
+- A call between apps carries a signed, short-lived token whose audience is the callee: an issuer token, or the agent-service capability (agent-runtime decision record 0001). Never a static secret shared between apps.
 
 **§10 rule 4: singleton by default; spreading and scaling are items.**
 - Today's state is allowed: in-process state, SQLite, local files.
@@ -792,7 +792,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - **Calls:** HTTP with typed JSON. Every request body carries the contract's version `v`; an unknown version answers 400 `unsupported_version`.
 - **Streams:** events from service to app are SSE; media are a chunked HTTP body of their media type; a WebSocket only where both sides stream at once (live audio).
 - **Identity:** the app's workload token, plus the person's token when a person acts, both Keycloak tokens whose audience is the service (§10 rule 3).
-- **Refusals:** an HTTP status and a JSON body with one code from the service's closed list. A refusal that means the same as an agent-service refusal takes its name and status (agent-providers `docs/wire.md`, "The run").
+- **Refusals:** an HTTP status and a JSON body with one code from the service's closed list. A refusal that means the same as an agent-service refusal takes its name and status (agent-runtime `docs/wire.md`, "The run").
 - **MCP** only where a model calls an app's tools, never for an app calling a service.
 - **One client library per service** owns its wire types; the service and the apps import them, and no app re-implements them.
 
@@ -831,7 +831,7 @@ Health: `run.health` (section 3).
 | Docker Compose | OCI and compose | low for apps; high for edge (apply, check, backup labels, barrier, watchers and the Traefik provider all speak Compose). presentator's `docker.sock` stays a high cost until agent-presentator#197 removes it (section 5, "How each service joins") |
 | `~/.secrets` | files | home-tools (L1). Apps stay unchanged only once gap 21 (section 7) has moved their secrets to files |
 | GitHub | git | not a swap goal (accepted) |
-| LLM providers and LiteLLM | the agent-service API | behind agent-providers#18 |
+| LLM providers and LiteLLM | the agent-service API | behind agent-runtime#18 |
 
 ### Where the operator's wish overreaches
 
