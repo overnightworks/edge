@@ -481,9 +481,11 @@ class OffDocker:
         return self.scripted.run(command, timeout, stdin)
 
     def remove_by_identifier(self, command):
-        assert "-v" not in command and "--volumes" not in command, command
+        assert "-v" not in command, command
+        assert "--volumes" not in command, command
         listed = {row["ID"] for row in self.scripted.rows}
-        assert command[3:] and set(command[3:]) <= listed, command
+        assert command[3:], command
+        assert set(command[3:]) <= listed, command
         if self.removal_by_identifier_exit:
             code = self.removal_by_identifier_exit
             return subprocess.CompletedProcess(command, code, SENTINEL, SENTINEL)
