@@ -5,6 +5,7 @@ the containers are a table."""
 import dataclasses
 import json
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -444,7 +445,124 @@ def test_a_disabled_app_is_not_fetched_and_has_nothing_to_change(world, reposito
 
     assert plan.changes_nothing
     assert asked == []
+    assert world.docker.verbs == ["ps"]
     assert not world.srv.exists()
+
+
+class OffDocker:
+    """What the off step asks of Docker: the project's `ps` from the scripted table, its volume
+    listing, and the file-free `stop` and `rm -f`, which empty the table. Every other call goes to
+    the scripted Docker, which fails the test on a `down`, a `-v` or a file-bound call."""
+
+    def __init__(self, scripted: ScriptedDocker, volumes: dict[str, str]) -> None:
+        self.scripted, self.volumes = scripted, volumes  # volume name -> its key in the file
+        self.commands: list[list[str]] = []
+        self.failing: str | None = None
+        self.removal_by_identifier_works = True
+        self.removal_by_identifier_exit = 0
+        self.survivors: set[str] = set()  # services whose containers only `docker rm` removes
+
+    def run(self, command, timeout, stdin=None):
+        self.commands.append(command)
+        if command[:3] == ["docker", "volume", "ls"]:
+            shown = self.volumes.values() if "Label" in command[-1] else self.volumes
+            return subprocess.CompletedProcess(command, 0, "\n".join(shown), "")
+        if command[:3] == ["docker", "rm", "-f"]:
+            return self.remove_by_identifier(command)
+        if command[4:5] in (["stop"], ["rm"]):
+            assert command[4:] in (["stop"], ["rm", "-f"]), command
+            if self.failing == command[4]:
+                return subprocess.CompletedProcess(command, 3, SENTINEL, SENTINEL)
+            if command[4] == "rm":
+                self.scripted.rows[:] = [
+                    r for r in self.scripted.rows if r["Service"] in self.survivors
+                ]
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return self.scripted.run(command, timeout, stdin)
+
+    def remove_by_identifier(self, command):
+        assert "-v" not in command, command
+        assert "--volumes" not in command, command
+        listed = {row["ID"] for row in self.scripted.rows}
+        assert command[3:], command
+        assert set(command[3:]) <= listed, command
+        if self.removal_by_identifier_exit:
+            code = self.removal_by_identifier_exit
+            return subprocess.CompletedProcess(command, code, SENTINEL, SENTINEL)
+        if self.removal_by_identifier_works:
+            self.scripted.rows[:] = [r for r in self.scripted.rows if r["ID"] not in command[3:]]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def compose_calls(self) -> list[list[str]]:
+        return [command[4:] for command in self.commands if command[:2] == ["docker", "compose"]]
+
+
+def switch_off(world: World) -> OffDocker:
+    """The app disabled in the catalog while its project holds a healthy container, a leftover of
+    a service the file does not name, and the named volume `hopin_data`."""
+    (world.repository / "fleet.yaml").write_text(FLEET.replace("enabled: true", "enabled: false"))
+    if not world.docker.rows:
+        world.docker.put(KEY, "running", "healthy")
+    world.docker.put("leftover", "exited")
+    fake = OffDocker(world.docker, {f"{KEY}_data": "data"})
+    world.runtime = dataclasses.replace(world.runtime, docker=fake.run)
+    return fake
+
+
+def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(world):
+    switch_off(world)
+
+    plan = world.plan()
+
+    assert not plan.changes_nothing
+    assert plan.describe() == [
+        f"{KEY}: off (containers {KEY} running (healthy), leftover exited; "
+        f"named volumes data stay; ~/srv/{KEY} stays)"
+    ]
+
+
+def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(world):
+    off = switch_off(world)
+    plan = world.plan()
+    off.commands.clear()
+
+    assert world.run(plan) == []
+
+    assert off.commands == [
+        ["docker", "compose", "-p", KEY, "stop"],
+        ["docker", "compose", "-p", KEY, "rm", "-f"],
+        ["docker", "compose", "-p", KEY, "ps", "--all", "--format", "json"],
+    ]
+    assert world.docker.rows == []
+    assert world.plan().changes_nothing
+
+
+def test_off_never_fetches_and_leaves_the_checkout_and_the_record(world, origin):
+    sha = deploy(world, origin, FIRST)
+    record = world.deployed()
+    off = switch_off(world)
+    world.runtime = dataclasses.replace(
+        world.runtime, git=lambda *call: pytest.fail("git was asked")
+    )
+
+    assert world.run() == []
+
+    assert [call[0] for call in off.compose_calls()[-3:]] == ["stop", "rm", "ps"]
+    assert head_of(world.srv) == sha
+    assert world.deployed() == record
+
+
+@pytest.mark.parametrize("verb", ["stop", "rm"])
+def test_a_failing_off_is_one_line_without_composes_output_and_stops_there(world, verb):
+    off = switch_off(world)
+    plan = world.plan()
+    off.failing = verb
+
+    [failure] = world.run(plan)
+
+    assert f"`docker compose {verb}` of {KEY}" in failure
+    assert SENTINEL not in failure
+    assert ("rm" in {c[0] for c in off.compose_calls()}) == (verb == "rm")
 
 
 @pytest.mark.parametrize(
@@ -563,3 +681,68 @@ def test_a_service_with_pull_policy_always_is_started_from_the_inspected_image(w
     assert "pull" not in verbs[verbs.index("image inspect") :]
     create = next(arguments for verb, arguments, _ in world.docker.calls if verb == "create")
     assert create == ("--no-build", "--pull", "never", "--remove-orphans")
+
+
+def test_off_removes_a_one_off_container_that_rm_leaves_by_its_identifier_and_never_a_volume(world):
+    off = switch_off(world)
+    world.docker.put("oneoff", "running")
+    off.survivors.add("oneoff")
+    plan = world.plan()
+    off.commands.clear()
+
+    assert world.run(plan) == []
+
+    assert ["docker", "rm", "-f", "id3"] in off.commands
+    assert world.docker.rows == []
+
+
+def test_a_container_that_survives_even_docker_rm_ends_the_off_partial_naming_service_and_state(
+    world,
+):
+    off = switch_off(world)
+    world.docker.put("stuck", "running")
+    off.survivors.add("stuck")
+    plan = world.plan()
+    off.removal_by_identifier_works = False
+
+    [failure] = world.run(plan)
+
+    assert failure == f"{KEY}: could not remove every container of {KEY}, left: stuck running"
+
+
+def test_a_failing_docker_rm_ends_the_off_partial_naming_service_and_state_and_withholds_output(
+    world,
+):
+    off = switch_off(world)
+    world.docker.put("stuck", "running")
+    off.survivors.add("stuck")
+    plan = world.plan()
+    off.removal_by_identifier_exit = 5
+
+    [failure] = world.run(plan)
+
+    assert failure.startswith(
+        f"{KEY}: could not remove every container of {KEY}, left: stuck running"
+    )
+    assert "exited 5" in failure
+    assert SENTINEL not in failure
+
+
+def test_volumes_that_share_a_key_are_named_once_with_their_count(world):
+    off = switch_off(world)
+    off.volumes = {f"{KEY}_data": "data", SENTINEL: "data", f"{KEY}_cache": "cache"}
+
+    [line] = world.plan().describe()
+
+    assert "named volumes data (2), cache stay" in line
+    assert SENTINEL not in line
+
+
+def test_a_volume_name_that_compose_interpolates_never_reaches_the_plan(world):
+    off = switch_off(world)
+    off.volumes = {SENTINEL: "data"}
+
+    [line] = world.plan().describe()
+
+    assert SENTINEL not in line
+    assert "named volumes data stay" in line

@@ -43,12 +43,20 @@ from functools import cached_property
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # the route cells, likewise
+sys.path[:0] = [str(REPO / "probe" / "step-ca"), str(REPO / "probe")]  # also when loaded by path
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
-from edge_copy import DISCARD_OUTPUT, GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
+import health  # noqa: E402
+from edge_copy import (  # noqa: E402
+    DISCARD_OUTPUT,
+    GUARDED_COMPOSE_VERBS,
+    ProbeFailed,
+    expect,
+    publish,
+    run_edge,
+)
+from edge_copy import repository_copy as copy_repository  # noqa: E402
 from mcp_networks import McpNetworks  # noqa: E402
 from step_ca_names import (  # noqa: E402
     CA_URL,
@@ -597,9 +605,8 @@ class Probe(McpNetworks):
     # --- edge apply --closed switches the unit and keeps its data (#52 rule 3) -----------------
 
     def repository_copy(self) -> Path:
-        """The lane's files as the live checkout of the scratch HOME, with its own venv: fleet.yaml
-        is flipped there only."""
-        return edge_copy.repository_copy(REPO, self.home, self.scratch, PROJECT)
+        """The lane's files as the scratch HOME's live checkout; only its fleet.yaml is flipped."""
+        return copy_repository(REPO, self.home, self.scratch, PROJECT)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
         """Set step-ca's switch; the copy switches keycloak off, so apply never asks its setup."""
@@ -613,7 +620,7 @@ class Probe(McpNetworks):
             "fleet.yaml lacks exactly one step-ca and one keycloak switch",
         )
         fleet.write_text(text)
-        edge_copy.publish(copy, f"probe: step-ca enabled {enabled}")
+        publish(copy, f"probe: step-ca enabled {enabled}")
 
     def edge(
         self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
@@ -621,10 +628,9 @@ class Probe(McpNetworks):
     ) -> str:  # fmt: skip
         if arguments[0] in ("apply", "start"):
             self.guard.expect(edge_copy.copy_compose_command(copy), once=False)
-        return edge_copy.run_edge(
-            copy, self.environment, *arguments,
-            terminal=terminal, exit_code=exit_code, typed=typed,
-        )  # fmt: skip
+        return run_edge(
+            copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code, typed=typed
+        )
 
     def edge_apply(self, copy: Path, enabled: bool) -> str:
         self.set_enabled(copy, enabled)
@@ -807,7 +813,7 @@ class Probe(McpNetworks):
     def edit_follower_file(self, copy: Path) -> None:
         with (copy / FOLLOWER_FILE).open("a") as file:
             file.write(HARMLESS_EDIT)
-        edge_copy.publish(copy, f"probe: a harmless {FOLLOWER_FILE} edit")
+        publish(copy, f"probe: a harmless {FOLLOWER_FILE} edit")
 
     def proof_13a_followers(self, copy: Path) -> None:
         config = json.loads(self.copy_compose(copy, "config", "--format", "json"))
@@ -862,7 +868,7 @@ class Probe(McpNetworks):
         for anchor in LABEL_AFTER.values():
             text = text.replace(anchor, anchor + PROBE_LABEL, 1)
         compose_file.write_text(text)
-        edge_copy.publish(copy, "probe: a label on traefik-mcp")
+        publish(copy, "probe: a label on traefik-mcp")
         out = self.edge(copy, "apply", "--closed", terminal=True)
         expect("traefik-mcp: recreate (its compose definition changed)" in out, out[-240:])
         expect("step-ca:" not in out, f"P13d: step-ca was named: {out[-240:]}")
@@ -904,7 +910,7 @@ class Probe(McpNetworks):
         expect(marker.read_text() == written, "P13e: apply touched the marker")
         self.volume_names_exist()
         (copy / FOLLOWER_FILE).write_text(recorded)
-        edge_copy.publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
+        publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
         self.edge(copy, "start", "step-ca", terminal=True)
         self.wait_until_answering()
         self.apply_says_nothing_to_change(copy, "P13e after start")
@@ -1020,6 +1026,7 @@ def prove(probe: Probe) -> int:
     try:
         probe.proof_1_init()
         probe.proof_2_directory()
+        health.proof_2_health(probe)
         probe.proof_3_volume()
         probe.proof_4_restart()
         probe.proof_5_partial()

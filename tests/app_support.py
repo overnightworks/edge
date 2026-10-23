@@ -139,7 +139,10 @@ class ScriptedDocker:
     def put(self, service: str, state: str, health: str = "") -> None:
         self.created += 1
         name = f"{KEY}-{service}-{self.created}"
-        self.rows.append({"Name": name, "Service": service, "State": state, "Health": health})
+        self.rows.append(
+            {"Name": name, "ID": f"id{self.created}", "Service": service, "State": state,
+             "Health": health}
+        )  # fmt: skip
 
     def run(
         self, command: list[str], _timeout: int, _stdin: str | None = None

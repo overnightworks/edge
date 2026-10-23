@@ -7,7 +7,6 @@
 "Keycloak.admin_api" = 29
 
 [file_lines]
-"probe/agent-service/unit.py" = 841
 "probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1045
 "probe/switches/probe.py" = 812
