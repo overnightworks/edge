@@ -25,8 +25,8 @@ from home_tools.user_units import UserUnits
 if TYPE_CHECKING:
     from home_tools.cli import Ports
 
-# Quality v0.5.0. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
-QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@02fbdd0fb1873b9ba91ba7735886ff6f700da1cc"
+# Quality v0.5.1. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
+QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@d3a0466fc6dc87898431b722e9488921d729be42"
 # The engine of the system step; a bump is a one-line change here.
 ANSIBLE_SOURCE = "ansible-core==2.21.5"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
