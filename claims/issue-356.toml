@@ -1,0 +1,8 @@
+claim_id = "e9b5e90278564cb0b59f646ed6d1af9e"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "de1d5d441ec9e3119c0856fc3e283ad9e96ac4fb"
+branch = "claude/issue-356-346-a-the-agent-service-s-signing-key-in"
+scope = ["agent-service/setup", "docs/agent-service.md", "src/home_tools/secrets_manifest.toml", "tests/home/test_secrets_view.py", "tests/test_agent_service_setup.py"]
+opened_commit = "0e4d82f0a5825b4fbb492f97ed289c7654670b8b"
+whole_reason = "The key's creation, check, refusals and replacement share one locked descriptor chain and one table of states in agent-service/setup, with its manifest entries and docs; split, a refusal would name a command that does not exist."
