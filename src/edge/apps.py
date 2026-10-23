@@ -186,6 +186,11 @@ def plan_apps(
     return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs))
 
 
+def _counted(keys: Sequence[str]) -> list[str]:
+    """Each key once, with the count when several volumes share it."""
+    return [f"{key} ({count})" if count > 1 else key for key, count in Counter(keys).items()]
+
+
 def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
     """None when no container of the project exists. The line names the containers as `ps` shows
     them (service and state, never a container name that Compose interpolated) and the named
@@ -193,7 +198,7 @@ def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
     engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
     if not (containers := engine.containers()):
         return None
-    volumes = ", ".join(engine.volumes()) or "none"
+    volumes = ", ".join(_counted(engine.volumes())) or "none"
     shown = ", ".join(container.describe() for container in containers)
     return OffPlan(
         app,
@@ -361,14 +366,19 @@ def _switch_off(off: OffPlan, runtime: AppRuntime, progress: Progress) -> str | 
         progress.step = f"remove the containers of {key}"
         engine.remove()
         progress.step = f"remove the one-off containers of {key}"
+        removal_failure: compose.ComposeError | None = None
         if left := engine.containers():
-            engine.remove_by_identifier([container.identifier for container in left])
+            try:
+                engine.remove_by_identifier([container.identifier for container in left])
+            except compose.ComposeError as error:
+                removal_failure = error
             left = engine.containers()
     except compose.ComposeError as error:
         return f"{key}: could not {progress.step}, {error}"
     if left:
         shown = ", ".join(container.describe() for container in left)
-        return f"{key}: could not remove every container of {key}, left: {shown}"
+        reason = f" ({removal_failure})" if removal_failure else ""
+        return f"{key}: could not remove every container of {key}, left: {shown}{reason}"
     return None
 
 

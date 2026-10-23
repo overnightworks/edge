@@ -111,9 +111,10 @@ def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(an
         lambda engine: engine.image_volumes(["web"], TAG),
         lambda engine: engine.stop(),
         lambda engine: engine.remove(),
+        lambda engine: engine.remove_by_identifier(["a1"]),
         lambda engine: engine.volumes(),
     ],
-    ids=["build", "pull", "create", "start", "ps", "config", "stop", "rm", "volume ls"],
+    ids=["build", "pull", "create", "start", "ps", "config", "stop", "rm", "rm by id", "volume ls"],
 )
 def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     docker = Docker(exit_code=17, stdout=SENTINEL)

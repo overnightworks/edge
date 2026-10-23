@@ -459,6 +459,7 @@ class OffDocker:
         self.commands: list[list[str]] = []
         self.failing: str | None = None
         self.removal_by_identifier_works = True
+        self.removal_by_identifier_exit = 0
         self.survivors: set[str] = set()  # services whose containers only `docker rm` removes
 
     def run(self, command, timeout, stdin=None):
@@ -467,13 +468,7 @@ class OffDocker:
             shown = self.volumes.values() if "Label" in command[-1] else self.volumes
             return subprocess.CompletedProcess(command, 0, "\n".join(shown), "")
         if command[:3] == ["docker", "rm", "-f"]:
-            assert "-v" not in command and "--volumes" not in command, command
-            listed = {row["ID"] for row in self.scripted.rows}
-            assert command[3:] and set(command[3:]) <= listed, command
-            if not self.removal_by_identifier_works:
-                return subprocess.CompletedProcess(command, 0, "", "")
-            self.scripted.rows[:] = [r for r in self.scripted.rows if r["ID"] not in command[3:]]
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return self.remove_by_identifier(command)
         if command[4:5] in (["stop"], ["rm"]):
             assert command[4:] in (["stop"], ["rm", "-f"]), command
             if self.failing == command[4]:
@@ -484,6 +479,17 @@ class OffDocker:
                 ]
             return subprocess.CompletedProcess(command, 0, "", "")
         return self.scripted.run(command, timeout, stdin)
+
+    def remove_by_identifier(self, command):
+        assert "-v" not in command and "--volumes" not in command, command
+        listed = {row["ID"] for row in self.scripted.rows}
+        assert command[3:] and set(command[3:]) <= listed, command
+        if self.removal_by_identifier_exit:
+            code = self.removal_by_identifier_exit
+            return subprocess.CompletedProcess(command, code, SENTINEL, SENTINEL)
+        if self.removal_by_identifier_works:
+            self.scripted.rows[:] = [r for r in self.scripted.rows if r["ID"] not in command[3:]]
+        return subprocess.CompletedProcess(command, 0, "", "")
 
     def compose_calls(self) -> list[list[str]]:
         return [command[4:] for command in self.commands if command[:2] == ["docker", "compose"]]
@@ -700,6 +706,34 @@ def test_a_container_that_survives_even_docker_rm_ends_the_off_partial_naming_se
     [failure] = world.run(plan)
 
     assert failure == f"{KEY}: could not remove every container of {KEY}, left: stuck running"
+
+
+def test_a_failing_docker_rm_ends_the_off_partial_naming_service_and_state_and_withholds_output(
+    world,
+):
+    off = switch_off(world)
+    world.docker.put("stuck", "running")
+    off.survivors.add("stuck")
+    plan = world.plan()
+    off.removal_by_identifier_exit = 5
+
+    [failure] = world.run(plan)
+
+    assert failure.startswith(
+        f"{KEY}: could not remove every container of {KEY}, left: stuck running"
+    )
+    assert "exited 5" in failure
+    assert SENTINEL not in failure
+
+
+def test_volumes_that_share_a_key_are_named_once_with_their_count(world):
+    off = switch_off(world)
+    off.volumes = {f"{KEY}_data": "data", SENTINEL: "data", f"{KEY}_cache": "cache"}
+
+    [line] = world.plan().describe()
+
+    assert "named volumes data (2), cache stay" in line
+    assert SENTINEL not in line
 
 
 def test_a_volume_name_that_compose_interpolates_never_reaches_the_plan(world):
