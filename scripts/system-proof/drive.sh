@@ -584,7 +584,8 @@ provide_docker_socket() {  # the Docker socket as the engine ships it: root:dock
 }
 
 connects_to_docker() {  # connects_to_docker <user>
-    run_as "$1" "docker-$1" python3 -c "import socket; socket.socket(socket.AF_UNIX).connect('$DOCKER_SOCKET')"
+    local user=$1
+    run_as "$user" "docker-$user" python3 -c "import socket; socket.socket(socket.AF_UNIX).connect('$DOCKER_SOCKET')"
     return
 }
 
@@ -647,14 +648,16 @@ move_entry() {  # move_entry <file> <name> <first|last>: the entry of that name 
 }
 
 set_passwd_field() {  # set_passwd_field <name> <field number> <value>
-    awk -F: -v OFS=: -v name="$1" -v field="$2" -v value="$3" '$1 == name { $field = value } 1' /etc/passwd >/etc/passwd.new
+    local name=$1 field=$2 value=$3
+    awk -F: -v OFS=: -v name="$name" -v field="$field" -v value="$value" '$1 == name { $field = value } 1' /etc/passwd >/etc/passwd.new
     cat /etc/passwd.new >/etc/passwd
     rm /etc/passwd.new
     return
 }
 
 drop_entry() {  # drop_entry <file> <name or id>: the entry keyed by it
-    sed -i "/^$2:/d" "$1"
+    local file=$1 entry=$2
+    sed -i "/^$entry:/d" "$file"
     return
 }
 
@@ -687,8 +690,9 @@ free_system_id() {  # the highest id below 1000 that no user and no group has
 }
 
 create_account_with_ids() {  # create_account_with_ids <uid> <gid>: the dormant account by hand, with those ids
-    groupadd --gid "$2" agent
-    useradd --create-home --home-dir "$AGENT_HOME" --gid "$2" --shell /usr/sbin/nologin --uid "$1" -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 agent
+    local uid=$1 gid=$2
+    groupadd --gid "$gid" agent
+    useradd --create-home --home-dir "$AGENT_HOME" --gid "$gid" --shell /usr/sbin/nologin --uid "$uid" -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 agent
     return
 }
 
@@ -811,14 +815,16 @@ cell_a1_3_without_subid_files() {  # the subordinate id files do not exist: an e
 }
 
 keep_the_cron_deny_of() {  # keep_the_cron_deny_of <entry> <owner:group> <mode>: the file the operator already has
-    printf '%s\n' "$1" >/etc/cron.deny
-    chown "$2" /etc/cron.deny
-    chmod "$3" /etc/cron.deny
+    local entry=$1 owner=$2 mode=$3
+    printf '%s\n' "$entry" >/etc/cron.deny
+    chown "$owner" /etc/cron.deny
+    chmod "$mode" /etc/cron.deny
     return
 }
 
 cron_deny_is() {  # cron_deny_is <entries> <owner:group> <mode>
-    [[ $(tr '\n' ' ' </etc/cron.deny) == "$1 " ]] && [[ $(stat -c '%U:%G' /etc/cron.deny) == "$2" ]] && [[ $(stat -c %a /etc/cron.deny) == "$3" ]]
+    local entries=$1 owner=$2 mode=$3
+    [[ $(tr '\n' ' ' </etc/cron.deny) == "$entries " ]] && [[ $(stat -c '%U:%G' /etc/cron.deny) == "$owner" ]] && [[ $(stat -c %a /etc/cron.deny) == "$mode" ]]
     return
 }
 
@@ -841,7 +847,8 @@ cell_a1_3_cron_files() {  # the states of the files; the proof image has no cron
 }
 
 install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that user's own home
-    run_as "$1" "install-$1" uv tool install /proof/*.whl
+    local user=$1
+    run_as "$user" "install-$user" uv tool install /proof/*.whl
     return
 }
 
