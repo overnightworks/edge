@@ -332,17 +332,13 @@ def _plan_and_apply(
         while True:  # the plan made after the setups ran is held to the same refusals
             planned = _plan(engine, marks, record, repository, app_runtime)
             missing = _missing_setups(planned, repository, check)
-            if refusals := _switched_off_still_running(missing, planned.app_plans):
-                print(*refusals, sep="\n", file=sys.stderr)
-                return ApplyExit.REFUSED
-            if not missing:
-                break
-            if completed:
-                _refuse_units_still_not_set_up(missing)
-                return ApplyExit.REFUSED
-            exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
+            exit_code = _refusal(missing, planned, bool(completed))
+            if exit_code is None:
+                exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
             if exit_code is not None:
                 return exit_code
+            if not missing:
+                break
             completed = [m.unit.key for m in missing]
     except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
@@ -378,26 +374,25 @@ def _missing_setups(planned: Plan, repository: Path, check: setup.SetupCheck) ->
     return missing
 
 
-def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
-    """A unit that is switched on or already runs is still not set up: no question, no switch."""
-    for item in missing:
-        print(
-            f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
-            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; "
-            f"{item.check_line}",
-            file=sys.stderr,
-        )
-
-
-def _switched_off_still_running(missing: Sequence[MissingSetup], app_plans: AppsPlan) -> list[str]:
-    """The refusal of each unit and app `edge stop` keeps off that still runs: none is started."""
-    units = [
+def _refusal(missing: Sequence[MissingSetup], planned: Plan, setups_ran: bool) -> int | None:
+    """REFUSED when a unit or app `edge stop` keeps off still runs, or, after the setups ran, a unit
+    is still not set up: none is started."""
+    lines = [
         f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
         f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}"
         for item in missing
         if item.kept_stopped
-    ]
-    return units + [f"{COMMAND}: {line}" for line in app_plans.switched_off_still_running]
+    ] + [f"{COMMAND}: {line}" for line in planned.app_plans.switched_off_still_running]
+    if not lines and setups_ran:
+        lines = [
+            f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
+            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; {item.check_line}"
+            for item in missing
+        ]
+    if lines:
+        print(*lines, sep="\n", file=sys.stderr)
+        return ApplyExit.REFUSED
+    return None
 
 
 def _ask_and_run_setups(

@@ -308,7 +308,8 @@ def test_hal_stop_of_an_app_records_the_marker_before_it_plans_anything(app_worl
 
     assert hal.stop()[0] == 0
 
-    assert planned_with_marker and all(planned_with_marker)
+    assert planned_with_marker
+    assert all(planned_with_marker)
 
 
 UNSAFE_APP = "services:\n  '{key}': {{repo: {{default_branch: master}}, run: {{enabled: true}}}}\n"
@@ -495,7 +496,7 @@ def test_a_stop_while_apply_waits_at_the_yes_prompt_checks_out_and_builds_nothin
     assert "build" not in app_world.docker.verbs
     assert [path.name for path in app_world.srv.iterdir()] == [".git"]
     assert marks.mark(KEY) is not None
-    assert [barrier_file.read_bytes()] == written
+    assert written == [barrier_file.read_bytes()]
 
 
 def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_stays(app_world, hal):
@@ -513,7 +514,8 @@ def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_sta
     assert exit_code == 0
     assert "hopin stays stopped (switch since 18.10. 08:00)" in out
     assert "nothing to change" in out
-    assert (marker_file.read_bytes(), barrier_file.read_bytes()) == (marker, barrier_bytes)
+    assert marker_file.read_bytes() == marker
+    assert barrier_file.read_bytes() == barrier_bytes
     assert app_world.docker.verbs == ["ps"]  # file-free: is anything of it still running?
     mirrored = ["for-each-ref", "--format=%(refname)", f"refs/edge/releases/{newer}"]
     assert checkout.Git(app_world.srv).call(mirrored).stdout == b""  # nothing fetched

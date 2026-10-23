@@ -36,6 +36,7 @@ from edge.apply import ApplyExit
 
 STOP = "edge stop"
 START = "edge start"
+ABORTED_UNCHANGED = "aborted, nothing changed"
 
 
 def _say(command: str, line: str) -> None:
@@ -368,7 +369,7 @@ def start_unit(
     services = fleet.profile_services[key]
     _say(START, f"{key}: start services {', '.join(services)}; {_ending(read)}")
     if not terminal.confirmed(f"start {key}"):
-        _complain(START, "aborted, nothing changed")
+        _complain(START, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
     return _open(engine, marks, target.ingress, key, services, read, fleet.config, watch)
 
@@ -396,7 +397,7 @@ def _start_app(
     key = target.key
     _say(START, f"{key}: start its containers; {_ending(read)}")
     if not terminal.confirmed(f"start {key}"):
-        _complain(START, "aborted, nothing changed")
+        _complain(START, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
 
     def still_off() -> None:
@@ -754,7 +755,7 @@ def start_all(
         return ApplyExit.REFUSED
     _say(START_ALL, "host check not built yet (#50 SW3)")
     if not terminal.confirmed("reopen the tunnel"):
-        _complain(START_ALL, "aborted, nothing changed")
+        _complain(START_ALL, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
     return _reopen(marks, now, door, read)
 

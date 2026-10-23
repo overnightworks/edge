@@ -121,7 +121,8 @@ def test_a_stop_during_the_health_wait_ends_it_early_and_removes_what_started_un
 
     assert hosted.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
     first_look = hosted.docker.calls[hosted.docker.verbs.index("start") + 1]
-    assert first_look[0] == "ps" and not first_look[2]  # the wait holds no lock a stop waits for
+    assert first_look[0] == "ps"
+    assert not first_look[2]  # the wait holds no lock a stop waits for
     assert hosted.deployed() is None
     assert hosted.docker.rows == []
     assert {"create", "start", "stop", "rm"} <= hosted.docker.locked_verbs()
