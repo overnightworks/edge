@@ -553,7 +553,7 @@ agent_world() {  # everything the play may write about the account, as one compa
     getent group agent
     getent shadow agent
     id -Gn agent
-    stat -c '%U:%G %a' "$AGENT_HOME"
+    stat -c '%U:%G %a' "$AGENT_HOME" 2>&1
     cat /etc/subuid /etc/subgid /etc/cron.deny 2>&1
     ls /var/lib/systemd/linger 2>&1
     snapshot
@@ -715,10 +715,12 @@ cell_a1_3() {
 cell_a1_3_homes() {  # an existing account whose home is not its own; the dry run refuses too
     refuses_foreign_shape "another home" 'usermod --home /srv/agent-elsewhere agent' "usermod --home $AGENT_HOME agent" "a home other than" dry
     refuses_foreign_shape "a home that is a link" "mv $AGENT_HOME $AGENT_HOME.real && ln -s $AGENT_HOME.real $AGENT_HOME" \
-        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
+        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link or not a directory" dry
     refuses_foreign_shape "a home that is a file of its own" "mv $AGENT_HOME $AGENT_HOME.real && touch $AGENT_HOME && chown agent:agent $AGENT_HOME" \
-        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link" dry
-    refuses_foreign_shape "a home owned by root" "chown root:root $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home that is a link" dry
+        "rm $AGENT_HOME && mv $AGENT_HOME.real $AGENT_HOME" "a home that is a link or not a directory" dry
+    refuses_foreign_shape "a home owned by root" "chown root:root $AGENT_HOME" "chown agent:agent $AGENT_HOME" "a home not owned by agent:agent" dry
+    refuses_foreign_shape "a home of group root" "chgrp root $AGENT_HOME" "chgrp agent $AGENT_HOME" "a home not owned by agent:agent" dry
+    refuses_foreign_shape "a home that is missing" "mv $AGENT_HOME $AGENT_HOME.real" "mv $AGENT_HOME.real $AGENT_HOME" "a home that is missing" dry
     refuses_foreign_shape "a line in cron.allow" 'echo agent >/etc/cron.allow' 'rm -f /etc/cron.allow'
     return
 }
@@ -741,6 +743,8 @@ cell_a1_3_shared_ids() {  # a uid or gid the account shares, with the shared nam
         'remove_account; recreate_account' "an id that is not one uid and gid from 1000 up" dry
     refuses_foreign_shape "a primary gid that is not the group agent's" 'set_passwd_field agent 4 $(id -g bystander)' 'set_passwd_field agent 4 $AGENT_GID' \
         "a primary group other than"
+    refuses_foreign_shape "a primary gid no group has a name for, so its groups cannot be read" 'set_passwd_field agent 4 5000' 'set_passwd_field agent 4 $AGENT_GID' \
+        "groups that could not be read" dry
     return
 }
 

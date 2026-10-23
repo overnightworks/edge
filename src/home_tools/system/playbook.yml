@@ -175,16 +175,19 @@
              + (['an id that is not one uid and gid from 1000 up'] if agent_exists and (agent_account[1] != agent_account[2] or agent_account[1] | int < 1000) else [])
              + (['a group ' ~ agent_user ~ ' without the account (sudo groupdel ' ~ agent_user ~ ' removes it)']
                 if not agent_exists and agent_user in every_group else [])
+             + (['groups that could not be read'] if agent_exists and agent_groups.rc != 0 else [])
              + (['a group beyond its own'] if agent_exists and agent_groups.rc == 0 and agent_groups.stdout.split() != [agent_user] else [])
              + (['a subuid or subgid entry'] if agent_user in subid_owners or (agent_uid | string) in subid_owners else [])
              + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
              + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
              + (['linger'] if agent_linger.stat.exists else [])
              + (['a home other than ' ~ agent_home] if agent_exists and agent_account[4] != agent_home else [])
-             + (['a home that is a link, not a directory or not its own']
-                if agent_exists and agent_home_stat.stat.exists
-                   and (agent_home_stat.stat.islnk or not agent_home_stat.stat.isdir or (agent_home_stat.stat.pw_name | default('')) != agent_user)
-                else [])
+             + (['a home that is missing'] if agent_exists and not agent_home_stat.stat.exists else [])
+             + (['a home that is a link or not a directory']
+                if agent_exists and agent_home_stat.stat.exists and (agent_home_stat.stat.islnk or not agent_home_stat.stat.isdir) else [])
+             + (['a home not owned by ' ~ agent_user ~ ':' ~ agent_user]
+                if agent_exists and agent_home_stat.stat.exists and agent_home_stat.stat.isdir and not agent_home_stat.stat.islnk
+                   and ((agent_home_stat.stat.pw_name | default('')) != agent_user or (agent_home_stat.stat.gr_name | default('')) != agent_user) else [])
              + (['a home path that is already taken'] if not agent_exists and agent_home_stat.stat.exists else [])
              + (['a line in /etc/cron.allow'] if cron_allow.content is defined
                 and agent_user in (cron_allow.content | b64decode).split() else []) }}
@@ -336,14 +339,12 @@
         home: "{{ agent_home }}"
         shell: "{{ agent_nologin }}"
         password_lock: true
-        create_home: true
+        create_home: false
 
     - name: Close the agents' home to everyone else
       ansible.builtin.file:
         path: "{{ agent_home }}"
         state: directory
-        owner: "{{ agent_user }}"
-        group: "{{ agent_user }}"
         mode: "0700"
       when: agent_exists or not ansible_check_mode
 
