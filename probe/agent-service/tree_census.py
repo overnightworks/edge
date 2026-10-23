@@ -1,20 +1,23 @@
 """The in-container census of the agent service's writable trees (#339 lane C3, agent-runtime#440).
 
-Standard library only. The host sends this file's text followed by one line, `emit(<json text>)`,
-on the stdin of `python3 -`; nothing is copied into the container, and the HMAC key and the
+Standard library only. The host sends this file's text followed by one line,
+`f"emit({settings_text!r})"` (the settings as one Python string literal, never a hand-quoted
+one), on the stdin of `python3 -`; nothing is copied into the container, and the HMAC key and the
 settings never reach an argv or the environment. `emit` prints exactly one JSON line.
 
 Nothing leaves memory before `Names`: every path component and every process name is shown as an
 allowlisted structural name or as an opaque id. The output holds counts, type letters, opaque ids
 and closed skip reasons, never an exception message, a raw name or a `repr`. The walk anchors at a
-mount point and goes down by descriptor: each directory is opened from its parent's descriptor
-with O_NOFOLLOW, checked against the listing by (st_dev, st_ino), and never resolved by path.
-Special files and links are listed by type letter and never opened or read; a regular file is
-opened only to count a token.
+mount point reached component by component from `/` with O_NOFOLLOW, checked against the mount
+table's device, and goes down by descriptor: each directory is opened from its parent's
+descriptor with O_NOFOLLOW, checked against the listing by (st_dev, st_ino), and never resolved
+by path. Special files and links are listed by type letter and never opened or read; a regular
+file is opened only to count a token, after the same identity check.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import hmac
 import json
@@ -30,8 +33,7 @@ from enum import StrEnum
 Identity = tuple[int, int]  # (st_dev, st_ino)
 
 ALLOWED_NAMES = frozenset({"system-prompt", "relay-mcp.json", ".claude", "/tmp", "home", "work"})
-SOCKS_DIRECTORY = re.compile(r"cc-socks-[0-9]+")
-RUN_TREE = re.compile(r"agent-run-([A-Za-z0-9_-]+)")
+RUN_TREE = re.compile(r"agent-run-[A-Za-z0-9_-]{8}")
 OPAQUE_HEX_DIGITS = 8
 
 EXCLUDED_FILESYSTEMS = frozenset({"proc", "sysfs", "cgroup", "cgroup2", "devpts", "mqueue"})
@@ -57,17 +59,17 @@ class Skip(StrEnum):
 class Names:
     """The sanitizer: the one way a name from the container's tree is shown."""
 
-    def __init__(self, key: bytes) -> None:
+    def __init__(self, key: bytes, socks_uid: int) -> None:
         self._key = key
+        self._allowed = ALLOWED_NAMES | {f"cc-socks-{socks_uid}"}
 
     def show(self, component: str | bytes) -> str:
         raw = os.fsencode(component)
         text = os.fsdecode(raw)
-        run_tree = RUN_TREE.fullmatch(text)
-        if text in ALLOWED_NAMES or SOCKS_DIRECTORY.fullmatch(text):
+        if text in self._allowed:
             return text
-        if run_tree:
-            return f"agent-run-<{len(run_tree.group(1))}>"
+        if RUN_TREE.fullmatch(text):
+            return "agent-run-<8>"
         digest = hmac.new(self._key, raw, hashlib.sha256).hexdigest()
         return f"n-{digest[:OPAQUE_HEX_DIGITS]}"
 
@@ -76,10 +78,16 @@ class Names:
 class WritableMount:
     point: str
     nested: frozenset[tuple[str, ...]]  # every other mount point below it, relative
+    device: tuple[int, int]  # major, minor
 
 
 def _decode_escapes(field_text: bytes) -> str:
     return os.fsdecode(re.sub(rb"\\([0-7]{3})", lambda m: bytes([int(m[1], 8)]), field_text))
+
+
+def _device(field_text: bytes) -> tuple[int, int]:
+    major, _, minor = field_text.partition(b":")
+    return (int(major), int(minor)) if major.isdigit() and minor.isdigit() else (-1, -1)
 
 
 def _relative(point: str, below: str) -> tuple[str, ...] | None:
@@ -92,7 +100,7 @@ def _relative(point: str, below: str) -> tuple[str, ...] | None:
 def writable_mounts(mountinfo_text: bytes) -> tuple[WritableMount, ...]:
     """Mounts whose own options (field 6) hold `rw`; the superblock options after ` - ` do not
     count. Pseudo filesystems are left out."""
-    mounts: list[tuple[str, bool]] = []
+    mounts: list[tuple[str, bool, tuple[int, int]]] = []
     for line in mountinfo_text.split(b"\n"):
         head, separator, tail = line.partition(b" - ")
         fields = head.split(b" ")
@@ -101,13 +109,16 @@ def writable_mounts(mountinfo_text: bytes) -> tuple[WritableMount, ...]:
         filesystem = tail.split(b" ")[0].decode("ascii", "replace")
         options = fields[5].split(b",")
         writable = b"rw" in options and filesystem not in EXCLUDED_FILESYSTEMS
-        mounts.append((_decode_escapes(fields[4]), writable))
+        mounts.append((_decode_escapes(fields[4]), writable, _device(fields[2])))
     return tuple(
         WritableMount(
             point,
-            frozenset(rel for other, _ in mounts if (rel := _relative(point, other)) is not None),
+            frozenset(
+                rel for other, _, _ in mounts if (rel := _relative(point, other)) is not None
+            ),
+            device,
         )
-        for point, writable in mounts
+        for point, writable, device in mounts
         if writable
     )
 
@@ -118,13 +129,14 @@ class TokenRead(StrEnum):
     NOT_REGULAR = "not regular"
     VANISHED = "vanished"
     REFUSED = "refused"
+    REPLACED = "replaced"
 
 
 def count_token(
-    directory_fd: int, name: str, token: bytes, chunk_size: int = CHUNK_SIZE
+    directory_fd: int, name: str, listed: Identity, token: bytes, chunk_size: int = CHUNK_SIZE
 ) -> TokenRead:
-    """One content read: does this file hold the token's bytes? The overlap between chunks is
-    the token's length minus one, compared in memory."""
+    """One content read: does the file the listing saw (`listed`) hold the token's bytes? The
+    overlap between chunks is the token's length minus one, compared in memory."""
     if not token:
         raise ValueError
     try:
@@ -134,7 +146,10 @@ def count_token(
     except OSError:
         return TokenRead.REFUSED
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        opened = os.fstat(descriptor)
+        if _identity(opened) != listed:
+            return TokenRead.REPLACED
+        if not stat.S_ISREG(opened.st_mode):
             return TokenRead.NOT_REGULAR
         overlap = len(token) - 1
         carried = b""
@@ -173,6 +188,7 @@ class WalkRules:
     nested: frozenset[tuple[str, ...]] = frozenset()
     harness_owned: frozenset[Identity] = frozenset()
     token: bytes | None = None
+    root_device: int | None = None  # st_dev of the walked mount; another one is a nested mount
 
 
 def kind_letter(mode: int) -> str:
@@ -226,8 +242,11 @@ def _walk(
             continue
         kind = kind_letter(info.st_mode)
         census.listings.append(Listing(shown, kind, _identity(info) in rules.harness_owned))
+        if (*trail, name) in rules.nested:
+            census.skip(Skip.NESTED_MOUNT)
+            continue
         if kind == "f" and rules.token is not None:
-            _count_file(directory_fd, name, rules.token, census)
+            _count_file(directory_fd, name, _identity(info), rules.token, census)
         if kind != "d":
             continue
         skip = _directory_skip(trail, name, info, rules)
@@ -242,15 +261,17 @@ def _directory_skip(
 ) -> Skip | None:
     if _identity(info) in rules.excluded:
         return Skip.LOGIN
-    if (*trail, name) in rules.nested:
+    if info.st_dev != rules.root_device:
         return Skip.NESTED_MOUNT
     if len(trail) + 1 >= MAXIMUM_DEPTH:
         return Skip.TOO_DEEP
     return None
 
 
-def _count_file(directory_fd: int, name: str, token: bytes, census: Census) -> None:
-    outcome = count_token(directory_fd, name, token)
+def _count_file(
+    directory_fd: int, name: str, listed: Identity, token: bytes, census: Census
+) -> None:
+    outcome = count_token(directory_fd, name, listed, token)
     if outcome is TokenRead.FOUND:
         census.token_files += 1
     elif outcome is not TokenRead.ABSENT:
@@ -280,17 +301,40 @@ def _descend(
         os.close(child_fd)
 
 
+def _open_root(point: str) -> int:
+    """The mount point, opened one component at a time from `/` so that no ancestor is followed."""
+    descriptor = os.open("/", DIRECTORY_FLAGS)
+    try:
+        for part in point.split("/"):
+            if part:
+                parent, descriptor = descriptor, _open_child(part, descriptor)
+                os.close(parent)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 def census_mount(mount: WritableMount, names: Names, rules: WalkRules) -> Census:
-    """Walk one mount from its mount point. The mount point itself is the only path string
-    opened; every level below is opened from its parent's descriptor."""
+    """Walk one mount from its mount point. Root and every level below are opened without
+    following links; the root must be the mount table's device and not the login directory."""
     census = Census()
     try:
-        root_fd = os.open(mount.point, DIRECTORY_FLAGS)
-    except OSError:
-        census.skip(Skip.REFUSED)
+        root_fd = _open_root(mount.point)
+    except OSError as failure:
+        census.skip(
+            Skip.REPLACED if failure.errno in (errno.ELOOP, errno.ENOTDIR) else Skip.REFUSED
+        )
         return census
     try:
-        _walk(root_fd, (), names, replace(rules, nested=mount.nested), census)
+        root = os.fstat(root_fd)
+        if (os.major(root.st_dev), os.minor(root.st_dev)) != mount.device:
+            census.skip(Skip.REPLACED)
+        elif _identity(root) in rules.excluded:
+            census.skip(Skip.LOGIN)
+        else:
+            walked = replace(rules, nested=mount.nested, root_device=root.st_dev)
+            _walk(root_fd, (), names, walked, census)
     finally:
         os.close(root_fd)
     return census
@@ -382,7 +426,7 @@ def _census_report(settings: dict, names: Names) -> dict:
     token_file = settings["token_file"]
     token = _read_small(token_file).strip()
     rules = WalkRules(
-        excluded=_identities([os.path.dirname(token_file)]),
+        excluded=frozenset({_identity(os.stat(os.path.dirname(token_file)))}),
         harness_owned=_identities(settings["harness_owned"]),
         token=token,
     )
@@ -416,7 +460,7 @@ def _sample_report(settings: dict, names: Names) -> dict:
 
 def run(settings_text: str) -> dict:
     settings = json.loads(settings_text)
-    names = Names(bytes.fromhex(settings["key"]))
+    names = Names(bytes.fromhex(settings["key"]), os.getuid())
     if settings["mode"] == "census":
         return _census_report(settings, names)
     return _sample_report(settings, names)

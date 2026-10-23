@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -21,12 +22,13 @@ import pytest
 
 PROGRAM = Path(__file__).resolve().parent.parent / "probe" / "agent-service" / "tree_census.py"
 KEY = bytes(range(32))
+SOCKS_UID = 1000
 OPAQUE = re.compile(r"n-[0-9a-f]{8}")
 TOKEN = b"sk-ant-oat01-Zq_9-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"
 GRAMMAR = re.compile(
-    r"(?:(?:system-prompt|relay-mcp\.json|\.claude|/tmp|home|work|cc-socks-[0-9]+"
-    r"|agent-run-<[0-9]+>|n-[0-9a-f]{8}))(?:/(?:system-prompt|relay-mcp\.json|\.claude|home|work"
-    r"|cc-socks-[0-9]+|agent-run-<[0-9]+>|n-[0-9a-f]{8}))*"
+    r"(?:(?:system-prompt|relay-mcp\.json|\.claude|/tmp|home|work|cc-socks-1000"
+    r"|agent-run-<8>|n-[0-9a-f]{8}))(?:/(?:system-prompt|relay-mcp\.json|\.claude|home|work"
+    r"|cc-socks-1000|agent-run-<8>|n-[0-9a-f]{8}))*"
 )
 
 
@@ -46,7 +48,7 @@ def census() -> Iterator[ModuleType]:
 
 @pytest.fixture
 def names(census: ModuleType):
-    return census.Names(KEY)
+    return census.Names(KEY, SOCKS_UID)
 
 
 HOSTILE = [
@@ -62,8 +64,14 @@ HOSTILE = [
     "home2",
     "cc-socks-1000x",
     "cc-socks-",
+    "cc-socks-1001",
+    "cc-socks-01000",
+    "cc-socks-0" + str(int.from_bytes(TOKEN, "big")),
     "agent-run-a\nb",
     "agent-run-",
+    "agent-run-Q",
+    "agent-run-Ab3xYz9",
+    "agent-run-Ab3xYz901",
     "work/",
     "\udcff\udcfe",
 ]
@@ -76,9 +84,8 @@ def test_structural_names_are_shown_as_they_are(names, name: str) -> None:
     assert names.show(name) == name
 
 
-def test_the_run_tree_is_shown_with_its_suffix_length_only(names) -> None:
+def test_the_run_tree_is_shown_without_its_suffix(names) -> None:
     assert names.show("agent-run-Ab3_-xYz") == "agent-run-<8>"
-    assert names.show("agent-run-Q") == "agent-run-<1>"
 
 
 @pytest.mark.parametrize("name", HOSTILE)
@@ -89,7 +96,7 @@ def test_every_other_name_becomes_an_opaque_id(names, name: str) -> None:
 
 
 def test_opaque_ids_are_stable_per_key_and_differ_across_keys(census: ModuleType, names) -> None:
-    other = census.Names(bytes(32))
+    other = census.Names(bytes(32), SOCKS_UID)
     assert names.show("alpha") == names.show("alpha") == names.show(b"alpha")
     assert names.show("alpha") != other.show("alpha")
     assert names.show("alpha") != names.show("beta")
@@ -108,8 +115,7 @@ def test_a_hostile_tree_is_shown_in_the_closed_grammar_only(
     census: ModuleType, names, tmp_path: Path
 ) -> None:
     hostile_tree(tmp_path)
-    mount = census.WritableMount(str(tmp_path), frozenset())
-    result = census.census_mount(mount, names, census.WalkRules())
+    result = walk(census, names, tmp_path)
     shown = [item.path for item in result.listings]
     assert len(shown) > 10
     assert all(GRAMMAR.fullmatch(path) for path in shown)
@@ -121,9 +127,7 @@ def test_the_grammar_check_fails_when_names_is_bypassed(
 ) -> None:
     hostile_tree(tmp_path)
     monkeypatch.setattr(census.Names, "show", lambda self, component: os.fsdecode(component))
-    result = census.census_mount(
-        census.WritableMount(str(tmp_path), frozenset()), census.Names(KEY), census.WalkRules()
-    )
+    result = walk(census, census.Names(KEY, SOCKS_UID), tmp_path)
     assert not all(GRAMMAR.fullmatch(item.path) for item in result.listings)
 
 
@@ -162,8 +166,11 @@ def test_nested_mount_points_are_reported_relative_to_the_walked_mount(census: M
 
 
 def walk(census: ModuleType, names, root: Path, **rules):
+    device = root.stat().st_dev if root.exists() else 0
     return census.census_mount(
-        census.WritableMount(str(root), rules.pop("nested", frozenset())),
+        census.WritableMount(
+            str(root), rules.pop("nested", frozenset()), (os.major(device), os.minor(device))
+        ),
         names,
         census.WalkRules(**rules),
     )
@@ -242,6 +249,8 @@ def test_a_directory_swapped_for_a_symlink_before_it_is_opened_fails_closed(
     real = census._open_child
 
     def swap_then_open(name: str, parent_fd: int) -> int:
+        if name != "victim":
+            return real(name, parent_fd)
         os.rmdir(tmp_path / name)
         os.symlink(elsewhere, tmp_path / name)
         return real(name, parent_fd)
@@ -260,6 +269,8 @@ def test_a_directory_replaced_by_another_directory_fails_closed(
     real = census._open_child
 
     def replace_then_open(name: str, parent_fd: int) -> int:
+        if name != "victim":
+            return real(name, parent_fd)
         os.rename(tmp_path / name, tmp_path / "moved")
         os.mkdir(tmp_path / name)
         return real(name, parent_fd)
@@ -277,7 +288,8 @@ def test_an_entry_that_vanishes_after_the_listing_is_counted(
     real = os.stat
 
     def stat_after_removal(path, *args, **kwargs):
-        os.unlink(tmp_path / "gone")
+        if path == "gone":
+            os.unlink(tmp_path / "gone")
         return real(path, *args, **kwargs)
 
     monkeypatch.setattr(os, "stat", stat_after_removal)
@@ -290,9 +302,9 @@ def test_a_file_that_vanishes_before_its_content_read_is_counted_as_skipped(
     (tmp_path / "f").write_bytes(TOKEN)
     real = census.count_token
 
-    def count_after_removal(directory_fd: int, name: str, token: bytes):
+    def count_after_removal(directory_fd: int, name: str, listed, token: bytes):
         os.unlink(tmp_path / name)
-        return real(directory_fd, name, token)
+        return real(directory_fd, name, listed, token)
 
     monkeypatch.setattr(census, "count_token", count_after_removal)
     result = walk(census, names, tmp_path, token=TOKEN)
@@ -342,11 +354,99 @@ def test_a_harness_planted_file_is_labelled_harness_owned(
     assert sorted(item.harness_owned for item in result.listings) == [False, True]
 
 
+def test_a_file_replaced_between_listing_and_read_is_refused_before_reading(
+    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "f").write_bytes(b"x")
+    real = census.count_token
+
+    def count_after_replacement(directory_fd: int, name: str, listed, token: bytes):
+        (tmp_path / "successor").write_bytes(TOKEN)
+        os.replace(tmp_path / "successor", tmp_path / name)
+        return real(directory_fd, name, listed, token)
+
+    monkeypatch.setattr(census, "count_token", count_after_replacement)
+    result = walk(census, names, tmp_path, token=TOKEN)
+    assert (result.token_files, result.skips) == (0, {"replaced": 1})
+
+
+def test_a_nested_file_mount_is_skipped_before_any_content_read(
+    census: ModuleType, names, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "bind-file").write_bytes(TOKEN)
+    (tmp_path / "plain").write_bytes(TOKEN)
+
+    def reads_only_the_plain_file(directory_fd: int, name: str, listed, token: bytes):
+        assert name == "plain"
+        return census.TokenRead.FOUND
+
+    monkeypatch.setattr(census, "count_token", reads_only_the_plain_file)
+    result = walk(census, names, tmp_path, nested=frozenset({("bind-file",)}), token=TOKEN)
+    assert (result.token_files, result.skips) == (1, {"nested mount skipped": 1})
+
+
+def test_a_directory_on_another_device_is_a_nested_mount_even_without_its_name(
+    census: ModuleType, names, tmp_path: Path
+) -> None:
+    (tmp_path / "foreign").mkdir()
+    (tmp_path / "foreign" / "hidden").write_bytes(b"x")
+    descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        outcome = census.Census()
+        rules = census.WalkRules(root_device=tmp_path.stat().st_dev + 1)
+        census._walk(descriptor, (), names, rules, outcome)
+    finally:
+        os.close(descriptor)
+    assert outcome.skips == {"nested mount skipped": 1}
+    assert len(outcome.listings) == 1
+
+
+def test_the_mount_root_is_not_acquired_through_a_symlinked_ancestor(
+    census: ModuleType, names, tmp_path: Path
+) -> None:
+    (tmp_path / "real" / "mount").mkdir(parents=True)
+    (tmp_path / "real" / "mount" / "inside").write_bytes(b"x")
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    result = walk(census, names, tmp_path / "link" / "mount")
+    assert result.skips == {"replaced": 1}
+    assert result.listings == []
+
+
+def test_a_mount_root_whose_device_is_not_the_mounts_fails_closed(
+    census: ModuleType, names, tmp_path: Path
+) -> None:
+    (tmp_path / "inside").write_bytes(b"x")
+    device = tmp_path.stat().st_dev
+    wrong = (os.major(device), os.minor(device) + 1)
+    result = census.census_mount(
+        census.WritableMount(str(tmp_path), frozenset(), wrong), names, census.WalkRules()
+    )
+    assert (result.skips, result.listings) == ({"replaced": 1}, [])
+
+
+def test_the_login_directory_as_a_mount_root_is_not_walked(
+    census: ModuleType, names, tmp_path: Path
+) -> None:
+    (tmp_path / "token").write_bytes(TOKEN)
+    login = frozenset({census._identity(tmp_path.stat())})
+    result = walk(census, names, tmp_path, excluded=login, token=TOKEN)
+    assert (result.skips, result.listings, result.token_files) == ({"login excluded": 1}, [], 0)
+
+
+def count(census: ModuleType, descriptor: int, name: str, token: bytes, chunk: int = 7):
+    """The token read of `name` as the walk makes it: with the identity the listing saw."""
+    try:
+        listed = census._identity(os.stat(name, dir_fd=descriptor, follow_symlinks=False))
+    except FileNotFoundError:
+        listed = (0, 0)
+    return census.count_token(descriptor, name, listed, token, chunk)
+
+
 def write_and_count(census: ModuleType, tmp_path: Path, content: bytes, chunk: int = 7) -> str:
     (tmp_path / "f").write_bytes(content)
     descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        return census.count_token(descriptor, "f", TOKEN, chunk).value
+        return count(census, descriptor, "f", TOKEN, chunk).value
     finally:
         os.close(descriptor)
 
@@ -376,14 +476,14 @@ def test_a_one_byte_token_needs_no_overlap(census: ModuleType, tmp_path: Path) -
     (tmp_path / "f").write_bytes(b"abc")
     descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        assert census.count_token(descriptor, "f", b"c", 2).value == "found"
+        assert count(census, descriptor, "f", b"c", 2).value == "found"
     finally:
         os.close(descriptor)
 
 
 def test_an_empty_token_is_refused_up_front(census: ModuleType, tmp_path: Path) -> None:
     with pytest.raises(ValueError):
-        census.count_token(0, "f", b"")
+        census.count_token(0, "f", (0, 0), b"")
 
 
 def test_non_regular_missing_and_linked_files_are_never_read(
@@ -395,7 +495,7 @@ def test_non_regular_missing_and_linked_files_are_never_read(
     descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         outcomes = {
-            name: census.count_token(descriptor, name, TOKEN).value
+            name: count(census, descriptor, name, TOKEN).value
             for name in ("pipe", "link", "missing")
         }
     finally:
@@ -484,7 +584,9 @@ def test_the_sampler_collects_distinct_processes_over_its_window(
 
 
 def record(census: ModuleType, pid: int, command: bytes, pgid: int = 10):
-    return census._process_record(stat_line(pid, command, 1, pgid, pgid), pid, census.Names(KEY))
+    return census._process_record(
+        stat_line(pid, command, 1, pgid, pgid), pid, census.Names(KEY, SOCKS_UID)
+    )
 
 
 def test_start_up_children_are_one_boolean_and_a_count(census: ModuleType) -> None:
@@ -543,6 +645,20 @@ def test_emit_reports_a_failure_without_its_text(
     assert json.loads(capsys.readouterr().out) == {"error": "failed"}
 
 
+def serve_mountinfo(census: ModuleType, monkeypatch: pytest.MonkeyPatch, tree: Path) -> None:
+    """The census run reads /proc/<pid>/mountinfo; it is given a table naming `tree` alone."""
+    device = tree.stat().st_dev
+    table = f"1 0 {os.major(device)}:{os.minor(device)} / {tree} rw - tmpfs tmpfs rw".encode()
+    real = census._read_small
+
+    def fake_mountinfo(path: str, directory_fd=None):
+        if path.endswith("/mountinfo"):
+            return table
+        return real(path, directory_fd)
+
+    monkeypatch.setattr(census, "_read_small", fake_mountinfo)
+
+
 def test_a_census_run_reads_its_token_itself_and_shows_no_raw_name(
     census: ModuleType,
     tmp_path: Path,
@@ -553,14 +669,7 @@ def test_a_census_run_reads_its_token_itself_and_shows_no_raw_name(
     tree.mkdir()
     (tree / "a-hostile-name").write_bytes(b"has " + TOKEN)
     (tree / "planted").write_bytes(b"x")
-    real = census._read_small
-
-    def fake_mountinfo(path: str, directory_fd=None):
-        if path.endswith("/mountinfo"):
-            return f"1 0 0:1 / {tree} rw - tmpfs tmpfs rw".encode()
-        return real(path, directory_fd)
-
-    monkeypatch.setattr(census, "_read_small", fake_mountinfo)
+    serve_mountinfo(census, monkeypatch, tree)
     census.emit(settings(tmp_path, harness_owned=[str(tree / "planted"), str(tree / "absent")]))
     output = capsys.readouterr().out
     report = json.loads(output)
@@ -569,6 +678,99 @@ def test_a_census_run_reads_its_token_itself_and_shows_no_raw_name(
     assert mount["token_files"] == 1
     assert sorted(item[2] for item in mount["listings"]) == [False, True]
     assert "a-hostile-name" not in output
+    assert TOKEN.decode() not in output
+
+
+def test_the_login_directory_is_excluded_when_the_token_file_is_reached_through_a_link(
+    census: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real_login = tmp_path / "tree" / "real-login"
+    real_login.mkdir(parents=True)
+    (real_login / "token").write_bytes(TOKEN)
+    (tmp_path / "login-link").symlink_to(real_login)
+    serve_mountinfo(census, monkeypatch, tmp_path / "tree")
+    census.emit(
+        json.dumps(
+            {
+                "mode": "census",
+                "key": KEY.hex(),
+                "token_file": str(tmp_path / "login-link" / "token"),
+                "harness_owned": [],
+            }
+        )
+    )
+    (mount,) = json.loads(capsys.readouterr().out)["mounts"]
+    assert (mount["skips"], mount["token_files"]) == ({"login excluded": 1}, 0)
+
+
+def test_a_census_that_cannot_identify_the_login_directory_does_not_run(
+    census: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    serve_mountinfo(census, monkeypatch, tree)
+    text = settings(tmp_path)
+
+    def refuse(path, *args, **kwargs):
+        raise PermissionError
+
+    monkeypatch.setattr(os, "stat", refuse)
+    census.emit(text)
+    assert json.loads(capsys.readouterr().out) == {"error": "failed"}
+
+
+def random_names(generator: random.Random) -> list[str]:
+    alphabet = "abcXYZ019_- \n\t\x1b'\"\\é"
+    fragments = [TOKEN.decode(), f"cc-socks-{int.from_bytes(TOKEN, 'big')}", "agent-run-Ab3xYz90"]
+    plain = ["".join(generator.choices(alphabet, k=generator.randint(1, 30))) for _ in range(8)]
+    hostile = [generator.choice(fragments) + generator.choice(alphabet) for _ in range(3)]
+    return sorted({*plain, *hostile, "home", "work", ".claude", f"cc-socks-{SOCKS_UID}"})
+
+
+def grow(generator: random.Random, directory: Path, depth: int) -> None:
+    for name in random_names(generator):
+        path = directory / name
+        kind = generator.choice("dfffl") if depth < 3 else "f"
+        if kind == "d":
+            path.mkdir()
+            grow(generator, path, depth + 1)
+        elif kind == "l":
+            path.symlink_to(directory)
+        else:
+            path.write_bytes(generator.choice([b"x", TOKEN, b"y" + TOKEN]))
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_every_emitted_line_of_a_random_tree_is_in_the_closed_grammar(
+    census: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    seed: int,
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    grow(random.Random(seed), tree, 0)
+    serve_mountinfo(census, monkeypatch, tree)
+    monkeypatch.setattr(census.os, "getuid", lambda: SOCKS_UID)
+    census.emit(settings(tmp_path))
+    output = capsys.readouterr().out
+    assert output.count("\n") == 1
+    (mount,) = json.loads(output)["mounts"]
+    assert set(mount) == {"mount", "listings", "skips", "token_files"}
+    assert OPAQUE.fullmatch(mount["mount"])
+    assert len(mount["listings"]) > 10
+    assert all(
+        GRAMMAR.fullmatch(path) and kind in "dflpsbc?" and isinstance(owned, bool)
+        for path, kind, owned in mount["listings"]
+    )
+    assert set(mount["skips"]) <= {skip.value for skip in census.Skip}
     assert TOKEN.decode() not in output
 
 
