@@ -237,7 +237,8 @@ class Probe:
             health.unlink(missing_ok=True)
         (self.work / "Dockerfile").write_text(
             f"FROM {BUSYBOX}\n{'' if builds else 'RUN false' + chr(10)}COPY site /www\n"
-            f"{f'RUN sleep {slow_build}' + chr(10) if slow_build else ''}"
+            # the key of this run makes the layer new, so the build never comes from the cache
+            f"{f'RUN sleep {slow_build}; echo {self.key} > /built' + chr(10) if slow_build else ''}"
             f"{'VOLUME ' + image_volume + chr(10) if image_volume else ''}"
             'CMD ["sh", "-c", "cat /www/version >> /data/starts; exec httpd -f -p 8080 -h /www"]\n'
         )

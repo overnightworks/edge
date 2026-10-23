@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import time
 from collections.abc import Mapping
 
 import edge_copy
@@ -167,7 +168,9 @@ class EmergencySwitch:
         before, record = probe.only()["id"], probe.record.read_text()
         running = self.apply_in_background()
         probe.wait_until("the checkout is at the new tag", lambda: probe.head() == sha)
+        asked = time.monotonic()
         out = self.hal_without_terminal("stop", probe.key)
+        stopped_in = time.monotonic() - asked
         expect(f"{probe.key} is switched off" in out, f"D4: {out[-300:]}")
         text = self.failed(running)
         expect("switched off meanwhile" in text and "not started" in text, f"D4: {text[-300:]}")
@@ -182,4 +185,7 @@ class EmergencySwitch:
         expect(f"{probe.key} is on" in out, f"D4: {out[-300:]}")
         probe.apply()
         expect(probe.deployed()["tag"] == tag, "D4: the app was not updated after the start")
-        print("D4 held: a stop during the build ran no create and kept the record (hal 3)")
+        print(
+            f"D4 held: a stop during the build ran no create and kept the record (hal 3); "
+            f"hal stop took {stopped_in:.0f} s"
+        )
