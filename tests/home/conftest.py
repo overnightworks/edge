@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import check, cli, secrets_view, system_step
+from home_tools import check, cli, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
+from home_tools.tunnel_config import TUNNEL_ID_PLACEHOLDER
 
 DAY_SECONDS = 24 * 60 * 60
 
@@ -30,6 +31,7 @@ def symlinked_folder_fix(place: str) -> str:
 
 
 # A small manifest of three kinds of place: one file, a wildcard plus a file, and a verified tool login.
+TEST_TUNNEL_ID = "0000-test-tunnel"
 TEST_MANIFEST = """\
 [[secret]]
 name = "gitlab"
@@ -61,6 +63,15 @@ def empty_log_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(check, "LOG_DIRECTORY", tmp_path / "var-log")
 
 
+@pytest.fixture(autouse=True)
+def stand_in_tunnel_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The tunnel config at /etc names this machine's tunnel; the tests read a stand-in naming a test tunnel."""
+    config = tmp_path_factory.mktemp("etc-cloudflared") / "config.yml"
+    config.write_text(f"tunnel: {TEST_TUNNEL_ID}\n")
+    monkeypatch.setattr(tunnel_config, "TUNNEL_CONFIG", config)
+    return config
+
+
 @pytest.fixture
 def use_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Path]:
     """Points `home secrets` at a manifest written from the given text."""
@@ -78,7 +89,7 @@ def plant_secrets(home: Path) -> None:
     """Every place the active manifest names for a live entry gets a fake secret, with the modes a tidy ~/.secrets keeps."""
     for entry in load_manifest(secrets_view.MANIFEST_PATH):
         for pattern in () if entry.retired else entry.paths:
-            path = home / str(pattern).replace("*", "fake")
+            path = home / str(pattern).replace("*", "fake").replace(TUNNEL_ID_PLACEHOLDER, TEST_TUNNEL_ID)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(FAKE_SECRET_VALUE)
             path.chmod(0o600)

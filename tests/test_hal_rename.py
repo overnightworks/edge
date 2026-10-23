@@ -629,12 +629,10 @@ def test_a_repeat_never_moves_a_clone_twice_when_the_new_name_extends_the_old(
 
 def test_claude_names_a_memory_directory_by_turning_every_other_character_into_a_dash():
     memory = rename_commands.memory_directory(
-        Path("/home/felix-hummert"), Path("/home/felix-hummert/.atelier/my_repo")
+        Path("/home/operator"), Path("/home/operator/.atelier/my_repo")
     )
 
-    assert memory == Path(
-        "/home/felix-hummert/.claude/projects/-home-felix-hummert--atelier-my-repo"
-    )
+    assert memory == Path("/home/operator/.claude/projects/-home-operator--atelier-my-repo")
 
 
 @pytest.fixture
