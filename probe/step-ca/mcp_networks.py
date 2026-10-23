@@ -109,7 +109,8 @@ class McpNetworks:
 
     def cell_p13_trusted_service_image(self, root: Path) -> str:
         """The service image's own `mcp_tls_context`, trusting the probe root alone."""
-        image = self.composed["services"]["agent-service"]["image"]
+        with_service = self.compose("--profile", "agent-service", "config", "--format", "json")
+        image = json.loads(with_service.stdout)["services"]["agent-service"]["image"]
         probed = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], check=False)
         if probed.returncode != 0:
             return f"route P13 NOT DRIVEN: the image {image} is absent"
