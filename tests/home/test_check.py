@@ -55,7 +55,7 @@ def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | N
     last_backup = last_backup or datetime.now().astimezone()
     document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
     document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
-    status_file = Layout(home).local_dir / backup_check.STATUS_FILE
+    status_file = home / backup_check.STATUS_FILE
     status_file.parent.mkdir(parents=True, exist_ok=True)
     status_file.write_text(json.dumps(document))
 

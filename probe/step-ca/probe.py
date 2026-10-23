@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
-#60 proof 11, #69 proof 12, #89 proof 13): a throwaway compose project and a throwaway HOME.
+#60 proof 11, #69 proof 12, #89 proof 13, #340 the step-ca healthcheck after proof 2): a throwaway
+compose project and a throwaway HOME.
 
 It runs the real `step-ca/init` against the scratch HOME, starts the real `step-ca`, `traefik-mcp`
 and `hello-mcp` services from compose.yaml and ca.json under their own compose project name, checks
@@ -56,6 +57,7 @@ COULD_NOT_RESOLVE = 6
 PROVISIONER = "acme"
 DIRECTORY_URL = f"{CA_URL}/acme/{PROVISIONER}/directory"
 READY_SECONDS = 60
+HEALTHY_SECONDS = 100  # three healthcheck intervals of compose.yaml
 ROOT_CERTIFICATE = "root_ca.crt"
 NOTHING_TO_CHANGE = "nothing to change"
 COMPOSE_FILE = "compose.yaml"
@@ -305,6 +307,21 @@ class Probe:
         print(
             f"proof 2 held: {DIRECTORY_URL} -> 200 with the probe root; fails without it; "
             f"an order for {OUTSIDE_NAME} is refused by the policy"
+        )
+
+    def health_of(self, service: str) -> str:
+        container = self.container_id(service)
+        result = self.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container])
+        return result.stdout.decode().strip()
+
+    def proof_2_health(self) -> None:
+        self.poll_until(
+            "step-ca becoming healthy",
+            HEALTHY_SECONDS,
+            lambda: self.health_of("step-ca") == "healthy",
+        )
+        print(
+            f"proof 2 health held: the healthcheck of step-ca reports {self.health_of('step-ca')}"
         )
 
     def proof_3_volume(self) -> None:
@@ -1030,6 +1047,7 @@ def prove(probe: Probe) -> int:
     try:
         probe.proof_1_init()
         probe.proof_2_directory()
+        probe.proof_2_health()
         probe.proof_3_volume()
         probe.proof_4_restart()
         probe.proof_5_partial()

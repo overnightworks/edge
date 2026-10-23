@@ -30,11 +30,17 @@ def status_document(**overrides) -> dict:
 
 @pytest.fixture
 def status_file(tmp_path: Path) -> Path:
-    return tmp_path / "backup-status.json"
+    path = tmp_path / backup_check.STATUS_FILE
+    path.parent.mkdir(parents=True)
+    return path
+
+
+def home_of(status_file: Path) -> Path:
+    return status_file.parents[len(backup_check.STATUS_FILE.parts) - 1]
 
 
 def found(status_file: Path) -> dict[tuple[str, str], str]:
-    findings, _report = backup_check.inspect(status_file, NOW)
+    findings, _report = backup_check.inspect(home_of(status_file), NOW)
     return {(f.rule, f.subject): f.detail for f in findings}
 
 
@@ -98,7 +104,7 @@ def test_an_unreadable_status_file_is_a_finding(status_file) -> None:
 def test_the_age_of_a_stale_backup_is_not_part_of_its_identity(status_file) -> None:
     def identity_at(age_days: int) -> list[str]:
         status_file.write_text(json.dumps(status_document(apps={"songmaker": {"last_successful_backup": (NOW - timedelta(days=age_days)).isoformat()}})))
-        return [f.identity for f in backup_check.inspect(status_file, NOW)[0]]
+        return [f.identity for f in backup_check.inspect(home_of(status_file), NOW)[0]]
 
     assert identity_at(9) == identity_at(30)
 
@@ -106,7 +112,7 @@ def test_the_age_of_a_stale_backup_is_not_part_of_its_identity(status_file) -> N
 def test_fields_beyond_the_documented_ones_never_reach_the_report(status_file) -> None:
     status_file.write_text(json.dumps(status_document(command_line="restic -p CANARY-PASSWORD", apps={"songmaker": {"last_successful_backup": NOW.isoformat(), "path": "/CANARY-PATH"}})))
 
-    _findings, report = backup_check.inspect(status_file, NOW)
+    _findings, report = backup_check.inspect(home_of(status_file), NOW)
 
     assert "CANARY" not in report
 
@@ -133,7 +139,7 @@ def test_fields_beyond_the_documented_ones_never_reach_the_report(status_file) -
 def test_a_value_outside_its_documented_type_or_values_is_unreadable_and_never_reaches_the_report(status_file, overrides) -> None:
     status_file.write_text(json.dumps(status_document(**overrides)))
 
-    findings, report = backup_check.inspect(status_file, NOW)
+    findings, report = backup_check.inspect(home_of(status_file), NOW)
 
     assert [(f.rule, f.subject) for f in findings] == [("backup-status-unreadable", "backup-status.json")]
     assert "CANARY" not in report
@@ -147,6 +153,26 @@ def test_a_symlink_in_place_of_the_status_file_is_unreadable_not_followed(status
     assert set(found(status_file)) == {("backup-status-unreadable", "backup-status.json")}
 
 
+def test_a_symlinked_parent_directory_is_unreadable_and_its_content_never_reaches_the_report(status_file, tmp_path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "backup-status.json").write_text(json.dumps(status_document(failing_app="CANARY", state="failed", exit_category="internal")))
+    status_file.parent.rmdir()
+    status_file.parent.symlink_to(elsewhere)
+
+    findings, report = backup_check.inspect(home_of(status_file), NOW)
+
+    assert [(f.rule, f.subject) for f in findings] == [("backup-status-unreadable", "backup-status.json")]
+    assert "CANARY" not in report
+
+
+def test_a_missing_parent_directory_is_unreadable_and_is_not_created(status_file) -> None:
+    status_file.parent.rmdir()
+
+    assert set(found(status_file)) == {("backup-status-unreadable", "backup-status.json")}
+    assert not status_file.parent.exists()
+
+
 @pytest.mark.parametrize("make", [os.mkfifo, os.mkdir], ids=["fifo", "directory"])
 def test_a_status_file_that_is_not_a_regular_file_is_unreadable_and_does_not_block(status_file, make) -> None:
     make(status_file)
@@ -158,6 +184,6 @@ def test_times_show_on_the_wall_clock_of_this_machine(status_file, berlin_time) 
     attempt = datetime.fromisoformat("2026-10-23T06:48:00+00:00")
     status_file.write_text(json.dumps(status_document(last_attempt=attempt.isoformat(), state="ok")))
 
-    _findings, report = backup_check.inspect(status_file, datetime(2026, 10, 23, 12, 0))
+    _findings, report = backup_check.inspect(home_of(status_file), datetime(2026, 10, 23, 12, 0))
 
     assert "23.10.2026 08:48" in report

@@ -9,16 +9,14 @@ never a pass.
 from __future__ import annotations
 
 import json
-import os
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from home_tools.report import Finding, render_findings_report
+from home_tools.report import Finding, read_state_file, render_findings_report
 
-STATUS_FILE = Path("state/edge/backup-status.json")  # below ~/.local; written by the backup, which `home` only reads
+STATUS_FILE = Path(".local/state/edge/backup-status.json")  # below the home directory; written by the backup, which `home` only reads
 STATUS_SCHEMA = 2
 STATES = frozenset({"running", "ok", "failed"})
 EXIT_CATEGORIES = frozenset({"configuration", "not-ready", "command-failed", "verification-failed", "interrupted", "internal"})
@@ -99,20 +97,13 @@ def _unreadable(why: str) -> list[Finding]:
     return [Finding("backup-status-unreadable", STATUS_SUBJECT, why)]
 
 
-def _read_regular_file(status_file: Path) -> str:
-    """A symlink in the file's place is refused, not followed, and so is anything that is not a regular file; it is opened
-    without blocking, because a FIFO planted there would otherwise wait forever for a writer."""
-    descriptor = os.open(status_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with open(descriptor, encoding="utf-8") as handle:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError("keine reguläre Datei")
-        return handle.read()
-
-
-def _read(status_file: Path) -> tuple[BackupStatus | None, str]:
-    """The status, or the reason it cannot be judged."""
+def _read(home: Path) -> tuple[BackupStatus | None, str]:
+    """The status, or the reason it cannot be judged. No symlink below the home directory is followed and nothing is created."""
     try:
-        return parse_status(_read_regular_file(status_file)), ""
+        text = read_state_file(home, home / STATUS_FILE, create_directories=False)
+        if text is None:
+            raise FileNotFoundError
+        return parse_status(text), ""
     except FileNotFoundError:
         return None, "Statusdatei fehlt, die Sicherung lief noch nie"
     except OSError as error:
@@ -121,9 +112,9 @@ def _read(status_file: Path) -> tuple[BackupStatus | None, str]:
         return None, f"Statusdatei ungültig oder Schema nicht {STATUS_SCHEMA}"
 
 
-def inspect(status_file: Path, now: datetime) -> tuple[list[Finding], str]:
+def inspect(home: Path, now: datetime) -> tuple[list[Finding], str]:
     """What `home check` reads of the backup's status; findings and their report."""
-    status, problem = _read(status_file)
+    status, problem = _read(home)
     if status is None:
         return _unreadable(problem), render_findings_report("backup", now, [], _unreadable(problem))
     local_now = now.astimezone()
