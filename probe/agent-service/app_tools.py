@@ -109,8 +109,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)  # NOSONAR(S5332) TLS-wrapped below
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)
+    server.socket = context.wrap_socket(  # NOSONAR(S5332) this wrap makes it HTTPS
+        server.socket, server_side=True
+    )
     server.serve_forever()
     return 0
 
