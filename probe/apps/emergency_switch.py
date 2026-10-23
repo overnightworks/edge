@@ -167,10 +167,15 @@ class EmergencySwitch:
         before, record = probe.only()["id"], probe.record.read_text()
         running = self.apply_in_background()
         probe.wait_until("the checkout is at the new tag", lambda: probe.head() == sha)
+        # listed only once apply has planned: at plan time its contract would want an `edge.name`
+        # label, which the live Traefik would see
+        self.set_hosts(True)
         asked = time.monotonic()
         out = self.hal_without_terminal("stop", probe.key)
         stopped_in = time.monotonic() - asked
         expect(f"{probe.key} is switched off" in out, f"D4: {out[-300:]}")
+        expect(self.barrier_mark() == probe.key, "D4: Traefik does not answer the barrier's 404")
+        barrier_bytes = self.barrier_file.read_bytes()
         text = self.failed(running)
         expect("switched off meanwhile" in text and "not started" in text, f"D4: {text[-300:]}")
         rows = probe.containers()
@@ -180,11 +185,14 @@ class EmergencySwitch:
         )
         expect(probe.record.read_text() == record, "D4: the record moved")
         expect(self.marker.exists(), "D4: the marker is gone")
+        expect(self.barrier_file.read_bytes() == barrier_bytes, "D4: the barrier changed")
+        expect(self.barrier_mark() == probe.key, "D4: Traefik no longer answers the barrier's 404")
         out = probe.hal("start", probe.key)
         expect(f"{probe.key} is on" in out, f"D4: {out[-300:]}")
+        self.set_hosts(False)
         probe.apply()
         expect(probe.deployed()["tag"] == tag, "D4: the app was not updated after the start")
         print(
-            f"D4 held: a stop during the build ran no create and kept the record (hal 3); "
-            f"hal stop took {stopped_in:.0f} s"
+            "D4 held: a stop during the build ran no create, kept the record and the barrier "
+            f"Traefik answers (hal 3); hal stop took {stopped_in:.0f} s"
         )
