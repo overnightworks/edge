@@ -8,8 +8,8 @@ holds a dummy login (never a real token).
 
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`
 drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
-issuer on the `agent` network, so the tokens verify and the CLI meets the real upstream with the
-dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
+issuer on the `agent-songmaker` network, so the tokens verify and the CLI meets the real upstream
+with the dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
 `agent-service/live_smoke.py` there, past its sign-in. The image
 `edge-agent-service:0.7.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
@@ -318,7 +318,7 @@ class UnitProbe(Probe):
             "    print(refusal.code)\n"
         )
         asked = self.run(
-            ["docker", "run", "--rm", "--label", LABEL, f"--network={PROJECT}_agent",
+            ["docker", "run", "--rm", "--label", LABEL, f"--network={PROJECT}_agent_songmaker",
              "--read-only", "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt",
              "no-new-privileges:true", "--entrypoint", "python", image, "-I", "-c", program],
         )  # fmt: skip
@@ -609,7 +609,7 @@ class SmokeProbe(IssuerProbe):
         browser: every cell but L2 holds with the dummy login, and L2 must fail, because the
         upstream refuses the dummy login."""
         stack = Stack(
-            compose_prefix=tuple(self.compose_command()), environment=self.environment,
+            compose_prefix=tuple(self.compose_command(guard=True)), environment=self.environment,
             directory=COMPOSE_FILE.parent,
         )  # fmt: skip
         expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")

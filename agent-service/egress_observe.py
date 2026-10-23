@@ -11,6 +11,8 @@ import socket
 
 PUBLIC_RESOLVER = "1.1.1.1"  # NOSONAR(S1313) a deliberate unreachable target for E6
 PUBLIC_RESOLVER_V6 = "2606:4700:4700::1111"  # NOSONAR(S1313) a deliberate unreachable target for E8
+# What `tcp_connect` answers for an address with no route to it.
+UNREACHABLE = ("ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL")
 
 
 def tcp_connect(address, port):

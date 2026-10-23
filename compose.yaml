@@ -10,7 +10,7 @@ x-traefik: &traefik
 
 # The MCP origins' names: traefik-mcp answers to them on mcp-ca (step-ca validates the ACME
 # challenge there) and on mcp (the clients). step-ca/ca.json's policy allows exactly this suffix.
-x-mcp-origins: &mcp-origins [hello.mcp.internal]
+x-mcp-origins: &mcp-origins [hello.mcp.internal, songmaker.mcp.internal]
 
 # The agent service's egress (agent-service/egress/): the gateway's one address on the egress
 # network, and what a member of the agent networks carries. The service finds the gateway through
@@ -19,7 +19,7 @@ x-mcp-origins: &mcp-origins [hello.mcp.internal]
 # agent-service/egress/dynamic/allowed.yml.
 x-egress-address: &egress-address 172.31.252.10
 x-agent-attachments: &agent-attachments
-  networks: [agent, egress]
+  networks: [agent, agent-songmaker, agent-presentator, egress]
   extra_hosts:
     api.anthropic.com: *egress-address
     auth.hallucinai.de: *egress-address
@@ -324,7 +324,7 @@ services:
       - traefik-mcp-acme:/acme
 
   # The second Traefik: the one gateway between the agent service and the MCP servers. No host
-  # networking, no Docker API; the only container on all three MCP networks.
+  # networking, no Docker API; the only container on all MCP networks.
   traefik-mcp:
     <<: *traefik
     profiles: [step-ca]
@@ -353,6 +353,7 @@ services:
       mcp-ca: {aliases: *mcp-origins}
       mcp: {aliases: *mcp-origins}
       mcp-backends: {}
+      mcp-songmaker: {}
     secrets: [step_ca_root_certificate]
     volumes:
       - ./traefik-mcp.yml:/etc/traefik/traefik.yml:ro
@@ -505,10 +506,27 @@ networks:
   # traefik-mcp and the apps' MCP servers.
   mcp-backends:
     internal: true
+  # songmaker's MCP server and traefik-mcp alone (mcp/dynamic/songmaker.yml); the app joins it as an
+  # external network. The fixed name survives the project's rename to `hal`.
+  mcp-songmaker:
+    name: hal_mcp_songmaker
+    internal: true
+    driver_opts: *isolated-bridge
   # The agent service's API and its callers; from the apps' lanes they join it as an external network
   # (docs/agent-service.md, "An app's side"). The fixed name survives the project's rename to `hal`.
+  # It stays until each app has moved to its own network below; then it goes.
   agent:
     name: hal_agent
+    internal: true
+    driver_opts: *isolated-bridge
+  # One app's callers and the agent service; each app joins its own network as an external network,
+  # so no app sees another's.
+  agent-songmaker:
+    name: hal_agent_songmaker
+    internal: true
+    driver_opts: *isolated-bridge
+  agent-presentator:
+    name: hal_agent_presentator
     internal: true
     driver_opts: *isolated-bridge
   # Keycloak's back-channel logout call to songmaker, which joins it as an external network with the

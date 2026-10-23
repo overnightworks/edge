@@ -5,6 +5,7 @@ cannot see in one run: the three-network split, the one names list, and the life
 assumes of the CA.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 MCP_SUFFIX = ".mcp.internal"
 NETWORKS = {"mcp-ca", "mcp", "mcp-backends"}
+ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+ROUTER_HOST = re.compile(r"^Host\(`([^`]+)`\)")
 CA_DEFAULT_LIFETIME_HOURS = 24  # step-ca's default; ca.json sets no claims
 
 
@@ -35,12 +38,21 @@ def static_config() -> dict:
     return load("traefik-mcp.yml")
 
 
-@pytest.fixture(scope="module")
-def routers() -> dict:
+def merged_dynamic(kind: str) -> dict:
     merged = {}
     for file in sorted((ROOT / "mcp" / "dynamic").glob("*.yml")):
-        merged.update(yaml.safe_load(file.read_text())["http"]["routers"])
+        merged.update(yaml.safe_load(file.read_text())["http"][kind])
     return merged
+
+
+@pytest.fixture(scope="module")
+def routers() -> dict:
+    return merged_dynamic("routers")
+
+
+@pytest.fixture(scope="module")
+def services() -> dict:
+    return merged_dynamic("services")
 
 
 def test_the_ca_the_gateway_and_its_helper_start_only_with_the_step_ca_profile(compose):
@@ -63,9 +75,36 @@ def test_the_three_mcp_networks_are_internal(compose):
 def test_the_mcp_network_gets_no_address_on_the_host(compose):
     """#189: the network the agent service joins is isolated, so no host listener is reachable."""
 
-    assert compose["networks"]["mcp"]["driver_opts"] == {
-        "com.docker.network.bridge.gateway_mode_ipv4": "isolated"
-    }
+    assert compose["networks"]["mcp"]["driver_opts"] == ISOLATED_MODE
+
+
+def test_songmakers_mcp_network_is_internal_isolated_and_joined_by_traefik_mcp_alone(compose):
+    """P25: hal_mcp_songmaker has no route out and no host address, and no service of the
+    stack but traefik-mcp joins it (songmaker-web joins it as an external network)."""
+
+    network = compose["networks"]["mcp-songmaker"]
+    members = [
+        name
+        for name, service in compose["services"].items()
+        if "mcp-songmaker" in (service.get("networks") or [])
+    ]
+
+    assert network["name"] == "hal_mcp_songmaker"
+    assert network["internal"] is True
+    assert network["driver_opts"] == ISOLATED_MODE
+    assert members == ["traefik-mcp"]
+    assert "aliases" not in (compose["services"]["traefik-mcp"]["networks"]["mcp-songmaker"] or {})
+
+
+def test_songmakers_route_takes_the_exact_path_mcp_to_songmaker_web_on_8080(routers, services):
+    """E4: Host(songmaker.mcp.internal) && Path(/mcp), the Host header unchanged."""
+
+    router = routers["songmaker"]
+    service = services[router["service"]]
+
+    assert router["rule"] == "Host(`songmaker.mcp.internal`) && Path(`/mcp`)"
+    assert service["loadBalancer"]["servers"] == [{"url": "http://songmaker-web:8080"}]
+    assert "passHostHeader" not in service["loadBalancer"]
 
 
 def test_traefik_mcp_is_the_only_service_on_all_three_networks(compose):
@@ -96,9 +135,7 @@ def test_every_alias_is_a_router_host_inside_the_names_the_ca_allows(traefik_mcp
 
     ca_policy = load("step-ca/ca.json")["authority"]["policy"]["x509"]["allow"]["dns"]
     aliases = set(traefik_mcp["networks"]["mcp"]["aliases"])
-    router_hosts = {
-        router["rule"].removeprefix("Host(`").removesuffix("`)") for router in routers.values()
-    }
+    router_hosts = {ROUTER_HOST.match(router["rule"]).group(1) for router in routers.values()}
 
     assert ca_policy == ["*" + MCP_SUFFIX]
     assert all(alias.endswith(MCP_SUFFIX) for alias in aliases)

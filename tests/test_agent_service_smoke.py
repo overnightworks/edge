@@ -355,8 +355,29 @@ def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     assert "agent" in services["agent-service"]["networks"]
 
 
-def test_the_agent_network_has_the_fixed_name_apps_join_as_an_external_network():
+@pytest.mark.parametrize(
+    ("key", "name"),
+    [
+        ("agent", "hal_agent"),
+        ("agent-songmaker", "hal_agent_songmaker"),
+        ("agent-presentator", "hal_agent_presentator"),
+    ],
+)
+def test_each_agent_network_has_the_fixed_name_apps_join_as_an_external_network(key, name):
+    """P35: one internal network per app (isolated: test_agent_egress.py), beside `agent`."""
     networks = yaml.safe_load((ROOT / "compose.yaml").read_text())["networks"]
 
-    assert networks["agent"]["name"] == "hal_agent"
-    assert networks["agent"]["internal"] is True
+    assert networks[key]["name"] == name
+    assert networks[key]["internal"] is True
+
+
+def test_the_service_keeps_the_agent_network_beside_the_per_app_ones_until_slice_c(services):
+    """The intermediate state of #346: the running service and agent-smoke stay on `agent` while
+    each app moves to its own network; the service is on all of them, so no recreate drops one."""
+    assert set(services["agent-service"]["networks"]) == {
+        "agent",
+        "agent-songmaker",
+        "agent-presentator",
+        "egress",
+    }
+    assert services["agent-smoke"]["networks"] == ["agent"]
