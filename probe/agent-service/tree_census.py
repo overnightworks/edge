@@ -33,7 +33,14 @@ from enum import StrEnum
 Identity = tuple[int, int]  # (st_dev, st_ino)
 
 ALLOWED_NAMES = frozenset(
-    {"system-prompt", "relay-mcp.json", ".claude", f"{os.sep}tmp", "home", "work"}
+    {
+        "system-prompt",
+        "relay-mcp.json",
+        ".claude",
+        "/tmp",  # NOSONAR(python:S5443): a name the report shows; nothing is written there
+        "home",
+        "work",
+    }
 )
 RUN_TREE = re.compile(r"agent-run-[A-Za-z0-9_-]{8}")
 OPAQUE_HEX_DIGITS = 8
