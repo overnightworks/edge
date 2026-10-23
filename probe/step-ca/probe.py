@@ -40,7 +40,7 @@ from functools import cached_property
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable by path too
+sys.path[:0] = [str(REPO / "probe" / "step-ca"), str(REPO / "probe")]  # also when loaded by path
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import health  # noqa: E402
