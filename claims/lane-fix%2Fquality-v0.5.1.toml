@@ -1,0 +1,7 @@
+claim_id = "8a722cd95d1145e99f5af9d4468332bc"
+agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
+role = "builder"
+base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
+branch = "fix/quality-v0.5.1"
+scope = [".github/workflows/ci.yml", "src/home_tools/setup.py"]
+opened_commit = "ea6ea73d0a8840f55ca38462d30df1493b740c74"
