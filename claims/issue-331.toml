@@ -3,6 +3,6 @@ agent = "Claude c7f9f647-1b82-4480-ba8d-16359e12faa8"
 role = "builder"
 base = "ff9dda6946cf9581acbfa44ace6b32db7fad4d8d"
 branch = "claude/issue-331-291-a1-agent-account"
-scope = ["docs/home.md", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "src/home_tools/setup.py", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/conftest.py", "tests/home/test_next.py", "tests/home/test_setup.py"]
+scope = ["docs/home.md", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "src/home_tools/next.py", "src/home_tools/setup.py", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/conftest.py", "tests/home/test_next.py", "tests/home/test_setup.py"]
 opened_commit = "55ec4736d3ae36984f378f30bbde5cbc8755d8c0"
 whole_reason = "One account and one role: the play, the step that passes the name, setup's role, its docs and the system proof."
