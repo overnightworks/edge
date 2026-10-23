@@ -57,6 +57,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
 import device_grant_cell  # noqa: E402
+import logout_actions_cell  # noqa: E402
 
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
@@ -2021,13 +2022,11 @@ class Probe:
                 if line.startswith("backchannel-logout "):
                     record = json.loads(line.removeprefix("backchannel-logout "))
                     if record["sub"] == user_id:
-                        expect(record["iss"] == PUBLIC_ISSUER, f"logout iss is {record['iss']}")
-                        self.held(
-                            "6",
-                            "an admin logout of probe-logout reached probe-rp over the compose "
-                            f"network (iss {record['iss']}, sid present: {bool(record['sid'])})",
-                        )
+                        iss, has_sid = record["iss"], bool(record["sid"])
+                        expect(iss == PUBLIC_ISSUER, f"logout iss is {iss}")
+                        self.held("6", f"admin logout reached probe-rp (iss {iss}, sid {has_sid})")
                         self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
+                        logout_actions_cell.prove(self, admin, expect, LOGOUT_TIMEOUT_SECONDS)
                         return
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
