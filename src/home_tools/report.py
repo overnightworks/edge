@@ -8,12 +8,39 @@ import stat
 import unicodedata
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
 def findings_count(count: int) -> str:
     """German singular and plural: "1 Fund", "0 Funde", "2 Funde"."""
     return "1 Fund" if count == 1 else f"{count} Funde"
+
+
+@dataclass(frozen=True)
+class Finding:
+    """What a check reports: its identity is rule plus subject, so a finding's age or detail never makes it a new one."""
+
+    rule: str
+    subject: str
+    detail: str
+
+    @property
+    def identity(self) -> str:
+        return f"{self.rule}\t{self.subject}"
+
+
+def render_findings_report(name: str, now: datetime, status_lines: Sequence[str], findings: Sequence[Finding]) -> str:
+    """The report of one check: title with the count, the lines that state what was read, then the findings."""
+    lines = [f"# home {name} {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
+    lines += [f"- {line}" for line in status_lines]
+    lines.append("")
+    if findings:
+        lines += markdown_table(["Regel", "Gegenstand", "Befund"], [[f.rule, f.subject, f.detail] for f in findings])
+    else:
+        lines.append("Keine Funde.")
+    return "\n".join(lines) + "\n"
 
 
 def _escape_cell(text: str) -> str:
@@ -51,14 +78,15 @@ def write_state_file(home: Path, path: Path, text: str) -> None:
         os.close(directory)
 
 
-def read_state_file(home: Path, path: Path) -> str | None:
+def read_state_file(home: Path, path: Path, *, create_directories: bool = True) -> str | None:
     """Reads a file of home's state directory below `home` without following a symlink anywhere on the way.
 
     None when the file does not exist yet. A symlink in its place raises instead of being read, because its target
     may lie outside the state directory, a secret under ~/.secrets included. Anything else that is not a regular file
     raises too; it is opened without blocking, because a FIFO planted there would otherwise wait forever for a writer.
+    A reader that must not change the disk passes `create_directories=False`; a missing directory then raises.
     """
-    directory = _open_state_directory(home, path.parent.relative_to(home))
+    directory = _open_state_directory(home, path.parent.relative_to(home), create_directories=create_directories)
     try:
         descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     except FileNotFoundError:
@@ -83,13 +111,14 @@ def _replace(directory: int, name: str, text: str) -> None:
         raise
 
 
-def _open_state_directory(home: Path, below_home: Path) -> int:
-    """Creates the missing directories below home one at a time and opens each without following a symlink."""
+def _open_state_directory(home: Path, below_home: Path, *, create_directories: bool = True) -> int:
+    """Opens the directories below home one at a time without following a symlink, creating the missing ones if asked."""
     directory = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
     for name in below_home.parts:
         try:
-            with contextlib.suppress(FileExistsError):
-                os.mkdir(name, dir_fd=directory)
+            if create_directories:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(name, dir_fd=directory)
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
         finally:
             os.close(directory)

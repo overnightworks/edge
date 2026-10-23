@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -152,15 +151,6 @@ def test_a_system_journal_that_cannot_be_read_is_named_while_the_merged_age_stil
 
     assert set(found) == {("journal-unreadable", "journal"), ("journal-age", "journal")}
     assert "Teilansicht" in found[("journal-unreadable", "journal")]
-
-
-@pytest.fixture
-def berlin_time(monkeypatch) -> None:
-    monkeypatch.setenv("TZ", "Europe/Berlin")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 def test_the_age_counts_the_hour_the_autumn_clock_change_adds(machine, log_directory, berlin_time) -> None:
