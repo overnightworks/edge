@@ -114,14 +114,14 @@ class HttpsServer(http.server.HTTPServer):
         super().__init__(address, Handler)
 
     def server_bind(self) -> None:
-        super().server_bind()
+        super().server_bind()  # NOSONAR(S5332) TLS: HttpsServer wraps its socket at bind
         self.socket = self.tls_context.wrap_socket(self.socket, server_side=True)
 
 
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    HttpsServer(("0.0.0.0", PORT), context).serve_forever()
+    HttpsServer(("0.0.0.0", PORT), context).serve_forever()  # NOSONAR(S5332) TLS via HttpsServer
     return 0
 
 
