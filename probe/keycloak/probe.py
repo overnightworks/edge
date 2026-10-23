@@ -672,11 +672,12 @@ class Stack:
         expect(bool(container_ids), "compose ps lists no running container")
         for container_id in container_ids:
             self.see_env(container_id)
-        logs = self.compose("logs", "--no-log-prefix")
-        expect(logs.returncode == 0, f"compose logs failed:\n{tail(logs.stderr)}")
+        self.logs()
 
-    def logs(self, service: str) -> str:
-        return self.compose("logs", "--no-log-prefix", service).stdout
+    def logs(self, *services: str) -> str:
+        logs = self.compose("logs", "--no-log-prefix", *services)
+        expect(logs.returncode == 0, f"compose logs failed:\n{tail(logs.stderr)}")
+        return logs.stdout
 
 
 def docker(*args: str) -> subprocess.CompletedProcess[str]:
@@ -1187,13 +1188,13 @@ class Probe:
         self.member_token_carries_groups_and_audience(rp_secret)
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
-        admin = self.admin_now()  # the logout cells outlived the token
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
         self.the_realm_step(stand)
-        admin = self.admin_now()  # proof 12 outlived the token
+        logout_actions_cell.prove(self, expect, MEMBER_GROUP, LOGOUT_TIMEOUT_SECONDS)
+        admin = self.admin_now()  # proof 12 and the logout cell outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -2017,20 +2018,19 @@ class Probe:
         user_id = admin.create_user(REALM, "probe-logout", password)
         self.password_grant("probe-logout", password, rp_secret)
         admin.must("POST", f"/{REALM}/users/{user_id}/logout")
+        record = self.logout_record(user_id)
+        expect(record is not None, f"probe-rp saw no logout within {LOGOUT_TIMEOUT_SECONDS}s")
+        expect((iss := record["iss"]) == PUBLIC_ISSUER, f"logout iss is {iss}")
+        self.held("6", f"admin logout reached probe-rp (iss {iss}, sid {bool(record['sid'])})")
+        self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
+
+    def logout_record(self, user_id: str) -> dict[str, Any] | None:
         deadline = time.monotonic() + LOGOUT_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            for line in self.stack.logs("probe-rp").splitlines():
-                if line.startswith("backchannel-logout "):
-                    record = json.loads(line.removeprefix("backchannel-logout "))
-                    if record["sub"] == user_id:
-                        iss, has_sid = record["iss"], bool(record["sid"])
-                        expect(iss == PUBLIC_ISSUER, f"logout iss is {iss}")
-                        self.held("6", f"admin logout reached probe-rp (iss {iss}, sid {has_sid})")
-                        self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
-                        logout_actions_cell.prove(self, expect, LOGOUT_TIMEOUT_SECONDS)
-                        return
+            for line in re.findall(r"^backchannel-logout (.*)$", self.stack.logs("probe-rp"), re.M):
+                if (record := json.loads(line))["sub"] == user_id and time.monotonic() < deadline:
+                    return record
             time.sleep(1)
-        raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")
 
     def only_logins_and_failed_logins_are_stored(self, admin: Admin, rp_secret: str) -> None:
         password = self.keep_secret("probe-events password", secrets.token_urlsafe(16))

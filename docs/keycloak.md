@@ -83,15 +83,15 @@ and edge's apply does not notice a network-only change (the service's config has
 named on #50). So songmaker's web service leaves the network, edge applies, and songmaker
 redeploys.
 
-Which console actions send that back-channel logout was measured (cell LA1 of the Keycloak probe).
-For each action a fresh user signed in to a client with the app clients' ruled logout settings
-(`backchannel.logout.url` on the internal network, `backchannel.logout.session.required: "false"`),
-the admin call succeeded, and a test relying party counted a logout token only when its `sub` was
-that user's within 20 seconds. A sign-out of the user's sessions (the control) arrived. Disabling
-the user, deleting the user and removing the user from a group did not: Keycloak sends no
-back-channel logout for any of the three, so an app that ends its sessions on the logout alone is
-not told. This describes Keycloak's behaviour, not any app's erasure: whether an app ends or
-erases an account on a sign-out is the app's own (hopin#79 S4).
+Which console actions send that back-channel logout was measured on Keycloak 26.8.1 (cell LA1 of
+the Keycloak probe). For each action a fresh user signed in to a client with songmaker's ruled
+logout settings, which hopin's will match (#254): `backchannel.logout.url` on the internal network
+and `backchannel.logout.session.required: "false"`. The admin call succeeded, and a test relying
+party counted a logout token only when its `sub` was that user's and it arrived within 20 seconds.
+A sign-out of the user's sessions, run first as the control, arrived. For disabling the user,
+deleting the user and removing the user from a group, no matching logout was observed within
+20 seconds. This describes what Keycloak did in that configuration, not any app's erasure: whether
+an app ends or erases an account on a sign-out is the app's own (hopin#79 S4).
 
 ### Theme and language
 

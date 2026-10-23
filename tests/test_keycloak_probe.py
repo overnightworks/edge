@@ -757,6 +757,7 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         print(FRESH_APPLY_LINE, flush=True)
         return object()
 
+    monkeypatch.setattr(probe.logout_actions_cell, "prove", lambda *_: None)
     for later_proof in (
         "fresh_realm_has_nothing_only_in_keycloak",
         "seed_member",
@@ -781,7 +782,6 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
     monkeypatch.setattr(probe.Probe, "missing_variable_fails_loudly", missing_variable_fails_loudly)
     monkeypatch.setattr(probe.Probe, "apply_and_restart", apply_and_restart)
     monkeypatch.setattr(probe.Probe, "admin_now", lambda _self: object())
-
     probe.Probe(stack=object()).run()
 
     lines = capsys.readouterr().out.splitlines()
