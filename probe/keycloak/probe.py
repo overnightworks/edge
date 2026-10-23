@@ -2026,7 +2026,7 @@ class Probe:
                         expect(iss == PUBLIC_ISSUER, f"logout iss is {iss}")
                         self.held("6", f"admin logout reached probe-rp (iss {iss}, sid {has_sid})")
                         self.held("BC1", backchannel_cell.prove(self, admin, rp_secret, expect))
-                        logout_actions_cell.prove(self, admin, expect, LOGOUT_TIMEOUT_SECONDS)
+                        logout_actions_cell.prove(self, expect, LOGOUT_TIMEOUT_SECONDS)
                         return
             time.sleep(1)
         raise ProbeFailure(f"probe-rp saw no back-channel logout within {LOGOUT_TIMEOUT_SECONDS}s")

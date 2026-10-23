@@ -51,6 +51,8 @@ class Probe(Protocol):
 
     def keep_secret(self, name: str, value: str) -> str: ...
 
+    def admin_now(self) -> Admin: ...
+
     def held(self, proof: str, detail: str) -> None: ...
 
 
@@ -90,21 +92,19 @@ def logout_arrived(probe: Probe, user_id: str, timeout_seconds: int) -> bool:
         time.sleep(1)
 
 
-def prove(
-    probe: Probe, admin: Admin, expect: Callable[[bool, str], None], timeout_seconds: int
-) -> None:
+def prove(probe: Probe, expect: Callable[[bool, str], None], timeout_seconds: int) -> None:
+    """Each action waits out the logout timeout, which outlives the admin token: every action
+    takes a fresh one."""
+    admin = probe.admin_now()
     client_secret = register_client(probe, admin)
     group_id = admin.get(f"/{REALM}/group-by-path{GROUP_PATH}")["id"]
     actions = {
-        "disable user": lambda user_id: admin.call(
-            "PUT", f"/{REALM}/users/{user_id}", {"enabled": False}
-        ),
-        "delete user": lambda user_id: admin.call("DELETE", f"/{REALM}/users/{user_id}"),
-        "remove group membership": lambda user_id: admin.call(
-            "DELETE", f"/{REALM}/users/{user_id}/groups/{group_id}"
-        ),
+        "disable user": ("PUT", "/users/{user}", {"enabled": False}),
+        "delete user": ("DELETE", "/users/{user}", None),
+        "remove group membership": ("DELETE", "/users/{user}/groups/" + group_id, None),
     }
-    for action, run_action in actions.items():
+    for action, (method, path, body) in actions.items():
+        admin = probe.admin_now()
         username = "probe-" + action.replace(" ", "-")
         password = probe.keep_secret(f"{username} password", secrets.token_urlsafe(16))
         user_id = admin.create_user(REALM, username, password)
@@ -125,7 +125,7 @@ def prove(
             },
         )
         probe.tokens_from(username, grant)
-        status = run_action(user_id).status
+        status = admin.call(method, f"/{REALM}" + path.format(user=user_id), body).status
         if status not in ADMIN_SUCCESS:
             outcome = f"action failed (the admin call answered {status})"
         elif logout_arrived(probe, user_id, timeout_seconds):
