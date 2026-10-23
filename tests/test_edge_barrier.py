@@ -7,9 +7,10 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import yaml
@@ -86,8 +87,16 @@ def checkout(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def barrier_of(checkout: Path, *services: str, fetch=lambda *_: NOT_FOUND) -> barrier.Barrier:
-    return barrier.Barrier.of_unit(config(), services, checkout, "probe", verifier(fetch))
+def probe_unit(*hosts: str, enabled: bool = True) -> catalog.Unit:
+    return catalog.Unit("probe", enabled=enabled, setup=None, hosts=hosts)
+
+
+def barrier_of(
+    checkout: Path, *services: str, hosts: tuple[str, ...] = (), fetch=lambda *_: NOT_FOUND
+) -> barrier.Barrier:
+    return barrier.Barrier.of_unit(
+        config(), services, checkout, probe_unit(*hosts), verifier(fetch)
+    )
 
 
 def parsed(checkout: Path) -> dict:
@@ -147,7 +156,7 @@ def test_every_spelling_traefik_reads_as_true_gets_a_barrier(checkout, spelling)
         {"services": {**config()["services"], "spelled": services}},
         ["spelled"],
         checkout,
-        "probe",
+        probe_unit(),
         verifier(lambda *_: NOT_FOUND),
     )
 
@@ -311,8 +320,10 @@ def test_the_host_domain_is_the_one_compose_gives_traefik():
     """#61 rule 1 / proof a: the domain is the one Compose gives traefik."""
     broken = {"services": {"traefik": {}, **{"hello": config()["services"]["hello"]}}}
 
+    unit = probe_unit()
+
     with pytest.raises(barrier.BarrierError, match="no EDGE_DOMAIN"):
-        barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, "probe")
+        barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, unit)
 
 
 def test_the_address_is_read_from_the_real_traefik_yml():
@@ -354,7 +365,7 @@ def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
         config(),
         ["hello"],
         checkout,
-        "probe",
+        probe_unit(),
         barrier.Verifier(fetch=slow, clock=clock, sleep=clock.sleep),
     )
 
@@ -363,6 +374,100 @@ def test_no_request_is_given_more_time_than_the_15_seconds_leave(checkout):
 
     assert clock.now <= barrier.VERIFY_SECONDS + 0.5
     assert max(allowed) <= 3.0
+
+
+KEYCLOAK_BARRIER = (
+    "# Written by `edge stop keycloak` from ~/.local/state/edge/stopped/keycloak; "
+    "removed by `edge start keycloak`. Generated, git-ignored.\n"
+    """\
+http:
+  routers:
+    switch-keycloak-auth:
+      entryPoints: [edge]
+      rule: Host(`auth.{{ env "EDGE_DOMAIN" }}`)
+      priority: 1000000
+      middlewares: [switch-keycloak-mark]
+      service: switch-keycloak-deny
+  middlewares:
+    switch-keycloak-mark:
+      headers:
+        customResponseHeaders:
+          X-Edge-Barrier: keycloak
+  services:
+    switch-keycloak-deny:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://127.0.0.1:8081
+"""
+)
+
+
+def asked_hosts(checkout: Path, *services: str, hosts: tuple[str, ...]) -> list[str]:
+    asked = []
+
+    def fetch(
+        _address: str, host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        asked.append(host)
+        return NOT_FOUND
+
+    barrier_of(checkout, *services, hosts=hosts, fetch=fetch).close()
+    return asked
+
+
+def test_a_declared_host_that_keycloak_also_routes_leaves_its_barrier_byte_identical(checkout):
+    """#325 B1: keycloak declares `auth` and routes `edge.name: auth`: one router, today's file."""
+    asked = []
+
+    def fetch(
+        _address: str, host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        asked.append(host)
+        return barrier.Answer(404, b"404 page not found\n", "keycloak")
+
+    unit = catalog.Unit("keycloak", enabled=True, setup=None, hosts=("auth",))
+    barrier.Barrier.of_unit(
+        config(), ("keycloak", "keycloak-db"), checkout, unit, verifier(fetch)
+    ).close()
+
+    assert (checkout / "dynamic" / "switch-keycloak.yml").read_text() == KEYCLOAK_BARRIER
+    assert asked == ["auth.probe.invalid"]
+
+
+def test_the_apex_gets_a_router_on_the_bare_domain_that_no_label_can_take(checkout):
+    """#325 B2: the rule is the bare domain, the proof asks the bare domain, the name is safe."""
+    asked = asked_hosts(checkout, "hello", hosts=("@", "hello"))
+
+    routers = parsed(checkout)["http"]["routers"]
+    assert routers["switch-probe-_apex"]["rule"] == 'Host(`{{ env "EDGE_DOMAIN" }}`)'
+    assert sorted(routers) == ["switch-probe-_apex", "switch-probe-hello"]
+    assert asked == ["probe.invalid", "hello.probe.invalid"]
+
+
+def test_a_declared_host_without_a_routed_service_gets_a_barrier_of_its_own(checkout):
+    """#325 B2/B4: a unit that routes nothing but declares the apex is still barred."""
+    ingress = barrier_of(checkout, "keycloak-db", hosts=("@",), fetch=refused)
+
+    assert ingress.names == ("@",)
+    assert ingress.hosts == ("probe.invalid",)
+
+
+def test_a_routed_name_no_declared_host_names_stays_covered(checkout):
+    """#325 B3: the union keeps `hello`, which the catalog does not list."""
+    barrier_of(checkout, "hello", hosts=("@",)).close()
+
+    assert sorted(parsed(checkout)["http"]["routers"]) == [
+        "switch-probe-_apex",
+        "switch-probe-hello",
+    ]
+
+
+def test_a_wildcard_line_adds_no_router_of_its_own(checkout):
+    """#325: a `*` name has no `Host` rule; the services it reaches are covered by `edge.name`."""
+    barrier_of(checkout, "hello", hosts=("*",)).close()
+
+    assert sorted(parsed(checkout)["http"]["routers"]) == ["switch-probe-hello"]
 
 
 # prove_active: the one owner that re-proves every active barrier (#80)
@@ -377,10 +482,15 @@ def marks(tmp_path: Path) -> switches.Switches:
 
 
 def proofs(
-    checkout: Path, marks: switches.Switches, fetch=lambda *_: NOT_FOUND, **units: tuple[str, ...]
+    checkout: Path,
+    marks: switches.Switches,
+    fetch=lambda *_: NOT_FOUND,
+    hosts: Mapping[str, tuple[str, ...]] = MappingProxyType({}),
+    enabled: bool = True,
+    **units: tuple[str, ...],
 ) -> Iterator[barrier.ActiveProof]:
     return barrier.prove_active(
-        [catalog.Unit(key, enabled=True, setup=None) for key in units],
+        [catalog.Unit(key, enabled=enabled, setup=None, hosts=hosts.get(key, ())) for key in units],
         units,
         config(),
         marks,
@@ -395,6 +505,27 @@ def test_a_switched_off_unit_with_a_routed_host_has_its_barrier_proven(checkout,
 
     assert list(proofs(checkout, marks, probe=("hello",))) == [barrier.Proven("probe")]
     assert parsed(checkout)["http"]["routers"]["switch-probe-hello"]
+
+
+def test_a_switched_off_unit_with_a_disabled_apex_has_the_apex_barrier_proven_again(
+    checkout, marks
+):
+    """#325 B8: `edge apply --closed` re-proves through here; a disabled unit counts."""
+    marks.record("probe", NOW)
+    asked = []
+
+    def fetch(
+        _address: str, host: str, _seconds: float, _clock: Callable[[], float]
+    ) -> barrier.Answer:
+        asked.append(host)
+        return NOT_FOUND
+
+    outcome = list(
+        proofs(checkout, marks, fetch=fetch, hosts={"probe": ("@",)}, enabled=False, probe=())
+    )
+
+    assert outcome == [barrier.Proven("probe")]
+    assert asked == ["probe.invalid"]
 
 
 def test_a_switched_off_unit_without_a_routed_host_has_no_host_and_no_file(checkout, marks):

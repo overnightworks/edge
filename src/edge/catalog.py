@@ -5,8 +5,9 @@ repository. A unit's key is a compose profile (docs/naming.md). An entry with `r
 an app: its key is its repository's name under `github.org`, its compose project and its checkout
 `~/srv/<key>`; `apps()` reads them. Entries without `run` are no units and no apps, and `units()`
 and `apps()` ignore them. `hosts()` is the separate reader of every entry's `hosts` list (an entry
-without `run` is enabled); the top-level `cloudflare:` and `github:` keys belong to OpenTofu, which
-reads the same file and must agree with these readers.
+without `run` is enabled). `units()` also reads each unit's hosts, enabled or not, and needs a valid
+`cloudflare.zone` once a unit declares one. The top-level `cloudflare:` and `github:` keys belong
+to OpenTofu, which reads the same file and must agree with these readers.
 """
 
 import os
@@ -83,6 +84,7 @@ class Unit:
     key: str
     enabled: bool
     setup: str | None
+    hosts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,7 +127,7 @@ def units(
 ) -> tuple[Unit, ...]:
     """The units of the repository's catalog, each checked against the compose profiles."""
     return tuple(
-        _unit(key, entry["run"], profile_services, repository)
+        _unit(key, entry, profile_services, repository, document)
         for key, entry in _entries(document).items()
         if _is_unit(entry)
     )
@@ -195,9 +197,7 @@ def _app(
 def _app_hosts(key: str, entry: dict, document: Any) -> tuple[str, ...]:
     """The names of an app's hosts, each one valid and with its `ready` path: the publish phase
     asks it there, so planning refuses a host without it before anything starts."""
-    if "hosts" not in entry:
-        return ()
-    entered = _entry_hosts(key, entry["hosts"], zone(document))
+    entered = _entered_hosts(key, entry, document)
     _require_ready(entered)
     return tuple(one.name for _, one in entered)
 
@@ -223,8 +223,13 @@ def _is_branch_name(branch: str) -> bool:
 
 
 def _unit(
-    key: str, run: Any, profile_services: Mapping[str, tuple[str, ...]], repository: Path
+    key: str,
+    entry: dict,
+    profile_services: Mapping[str, tuple[str, ...]],
+    repository: Path,
+    document: Any,
 ) -> Unit:
+    run = entry["run"]
     if key not in profile_services:
         profiles = ", ".join(sorted(profile_services))
         raise CatalogError(
@@ -235,7 +240,17 @@ def _unit(
     for run_key in run:
         if run_key not in _RUN_KEYS:
             raise CatalogError(f"services.{key}.run.{run_key}: unknown key")
-    return Unit(key, _enabled(key, run), _setup(key, run.get("setup"), repository))
+    return Unit(
+        key,
+        _enabled(key, run),
+        _setup(key, run.get("setup"), repository),
+        _declared_hosts(key, entry, document),
+    )
+
+
+def _declared_hosts(key: str, entry: dict, document: Any) -> tuple[str, ...]:
+    """The catalog names an entry declares, enabled or not: the emergency barrier covers all."""
+    return tuple(one.name for _, one in _entered_hosts(key, entry, document))
 
 
 def _enabled(key: str, run: dict) -> bool:
@@ -346,6 +361,12 @@ def _entry_hosts(key: str, listed: Any, zone: str) -> list[tuple[str, Host]]:
         (f"services.{key}.hosts[{index}]", _host(key, f"services.{key}.hosts[{index}]", item, zone))
         for index, item in enumerate(listed)
     ]
+
+
+def _entered_hosts(key: str, entry: dict, document: Any) -> list[tuple[str, Host]]:
+    if "hosts" not in entry:
+        return []
+    return _entry_hosts(key, entry["hosts"], zone(document))
 
 
 def _host(service: str, path: str, item: Any, zone: str) -> Host:

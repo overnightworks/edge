@@ -56,9 +56,9 @@ from test_edge_external import (
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from test_edge_global_stop import FakeSystemd
+from test_edge_global_stop import FakeSystemd, hosts_asked  # noqa: F401 the fixture, used by `fakes`
 
-from edge import apply, barrier, compose, emergency, switches, tunnel
+from edge import apply, barrier, catalog, compose, emergency, switches, tunnel
 from edge import cli as stack
 from hal import cli, stack_commands
 from hal.grammar import ExitCode
@@ -162,6 +162,7 @@ class Fakes:
     scripted: ScriptedCompose
     ingress: Ingress
     state: Path
+    hosts_asked: list[str]
 
     def unit_in(self, situation: str) -> None:
         put_unit_in(situation, self.scripted, self.repository, self.state)
@@ -169,8 +170,9 @@ class Fakes:
     def probe_switched_off_behind_a_barrier(self) -> None:
         write_fleet(self.repository, PROBE_ENABLED)
         put_probe_in_b(self.scripted, self.state, self.ingress)
+        unit = catalog.Unit("probe", enabled=True, setup=None)
         barrier.Barrier.of_unit(
-            self.scripted.config, ("hello",), self.repository, "probe", self.ingress.verifier
+            self.scripted.config, ("hello",), self.repository, unit, self.ingress.verifier
         ).close()
 
     def marker(self) -> str | None:
@@ -178,7 +180,7 @@ class Fakes:
 
 
 @pytest.fixture
-def fakes(repository, scripted, ingress, setup_check, systemd, state, monkeypatch):  # noqa: F811
+def fakes(repository, scripted, ingress, setup_check, systemd, state, hosts_asked, monkeypatch):  # noqa: F811
     """The stack's boundaries are scripted: Compose, Traefik, the setup check and systemctl."""
     boundaries = {
         "engine": compose.Compose(scripted.run, repository),
@@ -201,7 +203,7 @@ def fakes(repository, scripted, ingress, setup_check, systemd, state, monkeypatc
             )
         ),
     )
-    return Fakes(repository, scripted, ingress, state)
+    return Fakes(repository, scripted, ingress, state, hosts_asked)
 
 
 @pytest.fixture

@@ -2,9 +2,10 @@
 
 Traefik's file provider watches `dynamic/` but not its subdirectories, so the barrier is
 `dynamic/switch-<unit>.yml`, written through a `.tmp` name the provider never reads. One router per
-host the unit routes, on the `edge` entrypoint only, beats any label router by its priority and
-sends the request back to Traefik's own `edge` entrypoint without its `Host`; no router matches
-that, so Traefik itself answers `404 page not found`. That 404 is also Traefik's ordinary no-route
+host the unit declares in the catalog, enabled or not, or routes, on the `edge` entrypoint only,
+beats any label router by its priority and sends the request back to Traefik's own `edge`
+entrypoint without its `Host`; no router matches that, so Traefik itself answers
+`404 page not found`. That 404 is also Traefik's ordinary no-route
 answer, so a same-file middleware marks the barrier's answer with `X-Edge-Barrier: <unit>`; only
 the mark proves Traefik loaded the file. The checkout is an argument; only the CLI
 entry resolves the real one.
@@ -30,6 +31,8 @@ TRAEFIK_FILE = "traefik.yml"
 _TRAEFIK_NAME = re.compile(r"[a-z0-9-]{1,63}")  # the provider constraint of traefik.yml
 _NOT_FOUND_BODY = b"404 page not found\n"
 _NOT_FOUND = 404
+_APEX_ROUTER = "_apex"  # `_` is no part of a DNS label, so no host name can take it
+_DOMAIN_TEMPLATE = '{{ env "EDGE_DOMAIN" }}'
 MARK_HEADER = "X-Edge-Barrier"
 _PRIORITY = 1_000_000
 VERIFY_SECONDS = 15.0
@@ -55,9 +58,9 @@ http:
 """
 )
 _ROUTER = """\
-    switch-{unit}-{name}:
+    switch-{unit}-{router}:
       entryPoints: [edge]
-      rule: Host(`{name}.{{{{ env "EDGE_DOMAIN" }}}}`)
+      rule: Host(`{host}`)
       priority: {priority}
       middlewares: [switch-{unit}-mark]
       service: switch-{unit}-deny
@@ -189,6 +192,12 @@ def routed_names(config: Mapping[str, Any], services: Iterable[str]) -> tuple[st
     return tuple(names)
 
 
+def _declared_names(unit: catalog.Unit) -> tuple[str, ...]:
+    """The unit's declared names a `Host` rule can match: a wildcard line has no such rule, so
+    its routed `edge.name` stands for it."""
+    return tuple(name for name in unit.hosts if name != catalog.WILDCARD)
+
+
 def _domain(config: Mapping[str, Any]) -> str:
     """`EDGE_DOMAIN` as Compose resolves it for Traefik, so the barrier follows Traefik's own."""
     try:
@@ -229,11 +238,12 @@ class Barrier:
         config: Mapping[str, Any],
         services: Iterable[str],
         checkout: Path,
-        unit: str,
+        unit: catalog.Unit,
         verifier: Verifier = PROVEN_OVER_HTTP,
     ) -> Self:
-        names = routed_names(config, services)
-        return cls(checkout, unit, names, _domain(config) if names else "", verifier)
+        """The barrier over the names the unit declares and the ones Traefik routes, once each."""
+        names = dict.fromkeys((*_declared_names(unit), *routed_names(config, services)))
+        return cls(checkout, unit.key, tuple(names), _domain(config) if names else "", verifier)
 
     @property
     def path(self) -> Path:
@@ -241,7 +251,10 @@ class Barrier:
 
     @property
     def hosts(self) -> tuple[str, ...]:
-        return tuple(f"{name}.{self.domain}" for name in self.names)
+        return tuple(self._host(name) for name in self.names)
+
+    def _host(self, name: str) -> str:
+        return catalog.fqdn_of(name, self.domain)
 
     def close(self) -> bool:
         """Write the barrier and prove that every host answers 404 for it.
@@ -289,9 +302,7 @@ class Barrier:
             )
 
     def _write(self, address: str) -> str:
-        routers = "".join(
-            _ROUTER.format(unit=self.unit, name=name, priority=_PRIORITY) for name in self.names
-        )
+        routers = "".join(self._router(name) for name in self.names)
         text = _TEMPLATE.format(
             unit=self.unit, routers=routers, address=address, header=MARK_HEADER
         )
@@ -303,6 +314,14 @@ class Barrier:
             temporary.unlink(missing_ok=True)
             raise BarrierError(f"cannot write {self.path.name} ({error.strerror})") from error
         return text
+
+    def _router(self, name: str) -> str:
+        return _ROUTER.format(
+            unit=self.unit,
+            router=_APEX_ROUTER if name == catalog.APEX else name,
+            host=catalog.fqdn_of(name, _DOMAIN_TEMPLATE),
+            priority=_PRIORITY,
+        )
 
     def _remove(self) -> None:
         try:
@@ -351,13 +370,13 @@ def prove_active(
     first unproven barrier leaves the later ones untouched.
     """
     for unit in units:
-        proof = _proof_of(unit.key, profile_services[unit.key], config, marks, checkout, verifier)
+        proof = _proof_of(unit, profile_services[unit.key], config, marks, checkout, verifier)
         if proof is not None:
             yield proof
 
 
 def _proof_of(
-    unit: str,
+    unit: catalog.Unit,
     services: Iterable[str],
     config: Mapping[str, Any],
     marks: switches.Switches,
@@ -367,11 +386,11 @@ def _proof_of(
     """The outcome for one unit; None when its barrier is not active."""
     try:
         ingress = Barrier.of_unit(config, services, checkout, unit, verifier)
-        if not switched_off(marks.mark(unit), ingress):
+        if not switched_off(marks.mark(unit.key), ingress):
             return None
         if not ingress.names:
-            return NoHost(unit)
+            return NoHost(unit.key)
         ingress.close()
     except (BarrierError, switches.SwitchError) as error:
-        return Unproven(unit, str(error))
-    return Proven(unit)
+        return Unproven(unit.key, str(error))
+    return Proven(unit.key)

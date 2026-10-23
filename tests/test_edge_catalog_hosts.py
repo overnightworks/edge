@@ -310,12 +310,36 @@ def test_true_and_false_are_read_as_booleans(tmp_path):
     assert [unit.enabled for unit in catalog.load(tmp_path, PROFILES)] == [True]
 
 
-def test_a_broken_hosts_line_does_not_stop_units_or_load(tmp_path):
-    broken = {"services": {"kc": {"run": {"enabled": True}, "hosts": [{"name": "kc", "port": 1}]}}}
+def test_a_broken_hosts_line_of_a_unit_stops_units_and_load_naming_the_key(tmp_path):
+    """#325 B10: the barrier reads every declared host, so a malformed one refuses the plan."""
+    broken = {
+        "cloudflare": {"zone": ZONE},
+        "services": {"kc": {"run": {"enabled": True}, "hosts": [{"name": "kc", "port": 1}]}},
+    }
     (tmp_path / catalog.FLEET_FILE).write_text(yaml.safe_dump(broken))
-    assert [unit.key for unit in catalog.units(broken, PROFILES, tmp_path)] == ["kc"]
-    assert [unit.key for unit in catalog.load(tmp_path, PROFILES)] == ["kc"]
-    assert "hosts[0]" in refusal({"cloudflare": {"zone": ZONE}, **broken})
+
+    for read in (
+        lambda: catalog.units(broken, PROFILES, tmp_path),
+        lambda: catalog.load(tmp_path, PROFILES),
+    ):
+        with pytest.raises(catalog.CatalogError, match=r"services\.kc\.hosts\[0\]\.port"):
+            read()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_a_unit_declares_its_hosts_whether_it_is_enabled_or_not(enabled, tmp_path):
+    """#325: `hosts()` returns the enabled hosts only; `Unit.hosts` keeps the disabled ones."""
+    entry = hosted(host("@", "public"), host("www", "public"), key="kc", run={"enabled": enabled})
+
+    [unit] = catalog.units(document(entry), PROFILES, tmp_path)
+
+    assert unit.hosts == ("@", "www")
+
+
+def test_a_unit_without_hosts_declares_none_and_needs_no_zone(tmp_path):
+    [unit] = catalog.units({"services": {"kc": {"run": {"enabled": True}}}}, PROFILES, tmp_path)
+
+    assert unit.hosts == ()
 
 
 @pytest.mark.parametrize(

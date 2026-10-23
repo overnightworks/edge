@@ -67,7 +67,7 @@ def stop_unit(
             return ApplyExit.CANNOT_PLAN
         fleet, unit = read
         services = fleet.profile_services[key]
-        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, key, verifier)
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit, verifier)
         running = compose.has_running_container(engine.states(), services)
     except (compose.ComposeError, barrier.BarrierError) as error:
         _complain(STOP, f"cannot plan, {error}")
@@ -256,7 +256,7 @@ def start_unit(
             return ApplyExit.CANNOT_PLAN
         fleet, unit = planned
         services = fleet.profile_services[key]
-        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, key, verifier)
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit, verifier)
         read = marks.mark(key)
     except (compose.ComposeError, switches.SwitchError, barrier.BarrierError) as error:
         _complain(START, f"cannot plan, {error}")
