@@ -1,10 +1,15 @@
 version: 2
+# One pull for all images, so co-pinned images move together: realm-observer and probe-rp,
+# and keycloak-db (compose) with the restic stage restore-17 (Dockerfile).
+multi-ecosystem-groups:
+  images:
+    schedule:
+      interval: daily
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: daily
-  # One group per ecosystem, so co-pinned images (realm-observer and probe-rp) move in one pull.
   - package-ecosystem: docker-compose
     directories:
       - /
@@ -12,21 +17,25 @@ updates:
       - /probe/agent-service
       - /probe/keycloak
       - /probe/step-ca
-    schedule:
-      interval: daily
-    groups:
-      compose-images:
-        patterns: ["*"]
-    # A local tag built on the PC, never on a registry.
+    multi-ecosystem-group: images
+    patterns: ["*"]
     ignore:
+      # A local tag built on the PC, never on a registry.
       - dependency-name: edge-agent-service
+      # A major or minor move of an image (postgres 17 to 18) is a data migration, its own item.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
   - package-ecosystem: docker
     directories:
       - /agent-service/image
       - /scripts/system-proof
       - /src/edge_backup/images
-    schedule:
-      interval: daily
-    groups:
-      dockerfile-images:
-        patterns: ["*"]
+    multi-ecosystem-group: images
+    patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
