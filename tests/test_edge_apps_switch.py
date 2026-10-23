@@ -75,7 +75,7 @@ def test_a_stopped_app_stays_stopped_and_is_neither_fetched_nor_built(world, ori
 
     assert plan.changes_nothing
     assert plan.describe() == [f"{KEY} stays stopped (switch since 22.10. 12:00)"]
-    assert world.docker.verbs == []
+    assert world.docker.verbs == ["ps"]  # file-free: is anything of it still running?
     assert not world.srv.exists()
 
 
@@ -88,7 +88,7 @@ def test_a_barrier_left_without_a_marker_keeps_the_app_stopped(world, origin, re
 
     assert plan.changes_nothing
     assert plan.describe() == [f"{KEY} stays stopped (its barrier stands; no switch recorded)"]
-    assert world.docker.verbs == []
+    assert world.docker.verbs == ["ps"]  # file-free: is anything of it still running?
 
 
 def test_a_stop_during_the_build_runs_no_create_and_keeps_the_record_and_the_barrier(

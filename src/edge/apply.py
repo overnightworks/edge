@@ -331,8 +331,8 @@ def _plan_and_apply(
         planned = _plan(engine, marks, record, repository, app_runtime)
         missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
-        if kept := [m for m in missing if m.kept_stopped]:
-            _refuse_switched_off_units_still_running(kept)
+        if refusals := _switched_off_still_running(missing, planned.app_plans):
+            print(*refusals, sep="\n", file=sys.stderr)
             return ApplyExit.REFUSED
         if missing:
             exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
@@ -388,15 +388,15 @@ def _refuse_units_still_not_set_up(missing: Sequence[MissingSetup]) -> None:
         )
 
 
-def _refuse_switched_off_units_still_running(missing: Sequence[MissingSetup]) -> None:
-    """A unit stopped by `edge stop` never gets a setup or a start,
-    but its containers still run."""
-    for item in missing:
-        print(
-            f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
-            f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}",
-            file=sys.stderr,
-        )
+def _switched_off_still_running(missing: Sequence[MissingSetup], app_plans: AppsPlan) -> list[str]:
+    """The refusal of each unit and app `edge stop` keeps off that still runs: none is started."""
+    units = [
+        f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
+        f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}"
+        for item in missing
+        if item.kept_stopped
+    ]
+    return units + [f"{COMMAND}: {line}" for line in app_plans.switched_off_still_running]
 
 
 def _ask_and_run_setups(

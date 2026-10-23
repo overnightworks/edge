@@ -484,20 +484,47 @@ def test_a_stop_while_apply_waits_at_the_yes_prompt_checks_out_and_builds_nothin
     assert [barrier_file.read_bytes()] == written
 
 
-def test_a_marked_app_with_a_newer_tag_waiting_stays_stopped_and_its_marker_stays(app_world):
-    app_world.origin.release(RELEASE)
-    marks = switches.Switches(app_world.state)
-    marks.record(KEY, NOW)
-    marker = (app_world.state / switches.STOPPED_DIRECTORY / KEY).read_bytes()
+def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_stays(app_world, hal):
+    barrier_file = hosted(app_world, hal)
+    deployed(app_world)
+    assert hal.stop()[0] == 0
+    newer = "v2026.10.22.2"
+    app_world.origin.release(newer)
+    marker_file = app_world.state / switches.STOPPED_DIRECTORY / KEY
+    marker, barrier_bytes = marker_file.read_bytes(), barrier_file.read_bytes()
+    app_world.docker.calls.clear()
 
     exit_code, out, _ = app_world.apply()
 
     assert exit_code == 0
     assert "hopin stays stopped (switch since 18.10. 08:00)" in out
     assert "nothing to change" in out
-    assert (app_world.state / switches.STOPPED_DIRECTORY / KEY).read_bytes() == marker
-    assert app_world.docker.verbs == []
-    assert not app_world.srv.exists()
+    assert (marker_file.read_bytes(), barrier_file.read_bytes()) == (marker, barrier_bytes)
+    assert app_world.docker.verbs == ["ps"]  # file-free: is anything of it still running?
+    mirrored = ["for-each-ref", "--format=%(refname)", f"refs/edge/releases/{newer}"]
+    assert checkout.Git(app_world.srv).call(mirrored).stdout == b""  # nothing fetched
+
+
+@pytest.mark.parametrize("kept_off_by", ["marker", "barrier"])
+def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_world, kept_off_by):
+    deployed(app_world)
+    if kept_off_by == "marker":
+        switches.Switches(app_world.state).record(KEY, NOW)
+    else:
+        (app_world.repository / barrier.DYNAMIC_DIRECTORY).mkdir(exist_ok=True)
+        (app_world.repository / barrier.DYNAMIC_DIRECTORY / f"switch-{KEY}.yml").write_text("b\n")
+    app_world.docker.calls.clear()
+    changes_before = app_world.scripted.changing_verbs()
+
+    exit_code, _, err = app_world.apply()
+
+    assert exit_code == 1
+    assert (
+        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
+    )
+    assert app_world.docker.verbs == ["ps"]
+    assert app_world.scripted.changing_verbs() == changes_before
+    assert {row["State"] for row in app_world.docker.rows} == {"running"}
 
 
 def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops_what_started(

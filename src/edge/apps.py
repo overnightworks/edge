@@ -150,6 +150,7 @@ class AppsPlan:
     notes: tuple[str, ...] = ()
     offs: tuple[OffPlan, ...] = ()
     catalogued: tuple[catalog.App, ...] = ()  # every app of the catalog, for its barriers
+    switched_off_still_running: tuple[str, ...] = ()  # the refusal of each, by apply
 
     @property
     def changes_nothing(self) -> bool:
@@ -176,7 +177,8 @@ def plan_apps(
     """The plan of every enabled app: it fetches each app's origin and writes only `.git`. An
     app that is on as it should be is left out; one that cannot be planned raises AppError. A
     disabled app is asked file-free for its containers and fetches nothing, and so is an app its
-    marker or its barrier keeps off: it is named and left alone."""
+    marker or its barrier keeps off: it is named and left alone, unless its containers still run,
+    which apply refuses."""
     document = catalog.read(repository / catalog.FLEET_FILE)
     every = catalog.apps(document, fleet.profile_services, fleet.config["name"])
     offs = [off for app in every if not app.enabled if (off := _plan_off(app, runtime))]
@@ -184,17 +186,22 @@ def plan_apps(
     if not enabled:
         return AppsPlan(runtime, offs=tuple(offs), catalogued=every)
     organisation = catalog.github_org(document)
-    plans, notes = [], []
+    plans, notes, still_running = [], [], []
     for app in enabled:
         ingress = _ingress_of(app, fleet, repository)
         if line := _stays_stopped_line(app.key, marks, ingress):
             notes.append(line)
+            if _runs(app, runtime):
+                still_running.append(
+                    f"{app.key} is switched off but still runs; nothing switched; "
+                    f"run `edge stop {app.key}` again"
+                )
             continue
         planned, skipped = _plan_one(app, organisation, runtime, ingress)
         notes += [f"{app.key}: {line}" for line in skipped]
         if planned:
             plans.append(planned)
-    return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every)
+    return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every, tuple(still_running))
 
 
 def _ingress_of(app: catalog.App, fleet: Fleet, repository: Path) -> barrier.Barrier:
@@ -210,6 +217,12 @@ def _stays_stopped_line(key: str, marks: switches.Switches, ingress: barrier.Bar
     if not barrier.switched_off(mark, ingress):
         return None
     return stays_stopped_line(key, mark.since if mark else None)
+
+
+def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
+    """Whether a container of the app's project runs, asked file-free."""
+    engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
+    return any(compose.is_live(container.state) for container in engine.containers())
 
 
 def _counted(keys: Sequence[str]) -> list[str]:
