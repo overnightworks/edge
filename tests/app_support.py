@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,6 +129,8 @@ class ScriptedDocker:
     calls: list[tuple[str, tuple[str, ...], bool]] = field(default_factory=list)
     created: int = 0
     image_volumes: dict[str, list[str]] = field(default_factory=dict)  # service -> VOLUME paths
+    # verb -> what happens in the world right after that verb ran, as another operator's command
+    during: dict[str, Callable[[], None]] = field(default_factory=dict)
 
     @property
     def verbs(self) -> list[str]:
@@ -159,17 +162,22 @@ class ScriptedDocker:
             ]  # fmt: skip
             rest = rest[4:]
         verb, *arguments = rest
-        assert verb in {"ps", "build", "pull", "config", "create", "start"}, (
+        assert verb in {"ps", "build", "pull", "config", "create", "start", "stop", "rm"}, (
             f"docker compose {verb}"
         )
         assert "-v" not in arguments
-        assert bound == (verb != "ps"), f"{verb} is {'file-bound' if bound else 'file-free'}"
+        # `start` is bound when apply starts what `create` made, free when `hal start` resumes
+        free = verb in {"ps", "stop", "rm"}
+        assert verb == "start" or bound != free, f"{verb} is {'file-bound' if bound else 'free'}"
         self.calls.append((verb, tuple(arguments), switch_lock_is_held(self.state)))
         if verb == self.interrupted_verb:
             raise KeyboardInterrupt
         if verb == self.failing_verb:
             return subprocess.CompletedProcess(command, 3, SENTINEL, f"{SENTINEL}\n")
-        return subprocess.CompletedProcess(command, 0, getattr(self, f"verb_{verb}")(arguments), "")
+        output = getattr(self, f"verb_{verb}")(arguments)
+        if verb in self.during:
+            self.during[verb]()
+        return subprocess.CompletedProcess(command, 0, output, "")
 
     def inspect_image(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         """`docker image inspect --format {{json .Config.Volumes}} <image>`: the image of a built
@@ -206,8 +214,19 @@ class ScriptedDocker:
 
     def verb_start(self, _arguments: list[str]) -> str:
         for row in self.rows:
-            if row["State"] == "created":
+            if row["State"] in ("created", "exited"):
                 row["State"], row["Health"] = "running", self.health_after_start
+        return ""
+
+    def verb_stop(self, _arguments: list[str]) -> str:
+        for row in self.rows:
+            if row["State"] == "running":
+                row["State"], row["Health"] = "exited", ""
+        return ""
+
+    def verb_rm(self, arguments: list[str]) -> str:
+        assert arguments == ["-f"], arguments
+        self.rows[:] = [row for row in self.rows if row["State"] == "running"]
         return ""
 
 

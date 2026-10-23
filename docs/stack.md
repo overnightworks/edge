@@ -51,6 +51,13 @@ and `edge apply --closed` writes it again.
   is not "off": apply then leaves Keycloak as it is. Whether `auth` and `127.0.0.1:8090` answer depends
   on Traefik, which `edge apply` recreates only for a changed `traefik.yml` or compose definition and
   never starts.
+- **Switching an app off at once** (`hal stop <app>`, no terminal) records the marker, then writes and
+  proves the barrier over the app's catalog hosts, then stops the containers of its Compose project
+  (file-free; volumes, checkout and record stay). `hal apply` never starts a stopped app: it names it
+  and fetches nothing, and a stop that arrives during the `yes`, the build, the start or the health wait
+  wins: the app is not started, or what started is removed, and apply ends partial. `hal start <app>`
+  (terminal, `yes`) starts the stopped containers, waits for health, removes the barrier and clears the
+  marker; `hal online` proves the barriers of apps as of units.
 
 What the entrypoint answers without a route: an unknown host or invalid name gets `404`; an HTTP/1.1
 request without a `Host` header gets `400` (Go's HTTP server rejects it); an HTTP/1.0 one gets `404`.
@@ -88,7 +95,7 @@ not "applied or nothing to do". They deviate in exactly three ways:
   with 130.
 - **E3:** the stack's lines keep their form `edge <verb>: …`, not `error:`/`next:`, and name `edge`
   commands until H5e renames them; a number in such a line is edge's, not hal's process exit. Type
-  `hal stop <unit>` / `hal start <unit>` for `edge stop|start <unit>`, `hal offline` for
+  `hal stop <unit or app>` / `hal start <unit or app>` for `edge stop|start <unit or app>`, `hal offline` for
   `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
   `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c, so run it as
   `~/git/edge/bin/edge external check --hosts`.

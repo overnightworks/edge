@@ -168,7 +168,7 @@ def _plan(
         gates.get(reconcile.REALM_UNIT),
         starts_keycloak,
     )
-    app_plans = plan_apps(repository, fleet.profile_services, fleet.config["name"], app_runtime)
+    app_plans = plan_apps(repository, fleet, app_runtime, marks)
     return Plan(fleet, read, core_plans, follower_plans, plans, images, realm, app_plans)
 
 
@@ -548,7 +548,7 @@ class CorePhase:
             verb = "is" if len(down) == 1 else "are"
             return f"{' and '.join(down)} {verb} not running after the {plan.service} recreate"
         progress.step = "prove the barriers"
-        if unproven := self._unproven_barrier(planned.fleet, marks, plan.service):
+        if unproven := self._unproven_barrier(planned, marks, plan.service):
             return unproven
         if plan.service in followed:
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
@@ -622,13 +622,17 @@ class CorePhase:
         progress.step = "find the services edge follows"
         return core.followed_services(config, self.repository)
 
-    def _unproven_barrier(self, fleet: Fleet, marks: switches.Switches, service: str) -> str | None:
+    def _unproven_barrier(
+        self, planned: Plan, marks: switches.Switches, service: str
+    ) -> str | None:
         """Say each proven barrier; the failure line naming every one that is not, after all
         active barriers were tried (S9)."""
         unproven: list[barrier.Unproven] = []
+        fleet = planned.fleet
         for proof in barrier.prove_active(
-            fleet.units, fleet.profile_services, fleet.config, marks, self.repository, self.verifier
-        ):
+            fleet.units, fleet.profile_services, fleet.config, marks, self.repository,
+            self.verifier, planned.app_plans.catalogued,
+        ):  # fmt: skip
             match proof:
                 case barrier.Proven(unit):
                     print(f"{COMMAND}: the barrier of {unit} is proven")
