@@ -59,7 +59,7 @@ from egress import (
     service_configuration,
     write_dummy_token,
 )
-from issuer import ISSUER_SERVICE, LISTEN_SECONDS, LISTENING, IssuerProbe
+from issuer import ISSUER_SERVICE, LISTENING, IssuerProbe, wait_for_listening
 from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
 from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
@@ -297,12 +297,7 @@ class UnitProbe(Probe):
         self.cell_u15()
 
     def wait_until_listening(self) -> None:
-        deadline = time.monotonic() + LISTEN_SECONDS
-        while time.monotonic() < deadline:
-            if LISTENING in self.service_logs():
-                return
-            time.sleep(0.5)
-        raise ProbeFailed("U1: the service did not listen in time")
+        wait_for_listening(self.service_logs, "U1: the service did not listen")
 
     def unauthenticated_status(self) -> int:
         image = json.loads(self.compose("config", "--format", "json").stdout)["services"][SERVICE][
@@ -642,22 +637,22 @@ class SmokeProbe(IssuerProbe):
             ),
             stdin=f"{person}\n{workload}\n", check=False, timeout=240,
         )  # fmt: skip
-        logs = self.run(["docker", "logs", self.container(SERVICE)])
+        logs = self.container_log(SERVICE)
         shown = smoke.stdout + smoke.stderr
         lines = smoke.stdout.splitlines()
         expect(lines[:1] == ["event: run_started"], f"U14: the smoke began with {lines[:2]}")
         expect("event: failed" in lines, f"U14: no failed event for the dummy login: {lines}")
         expect(
-            "CliLoginRefusedError" in logs.stdout + logs.stderr,
+            "CliLoginRefusedError" in logs,
             "U14: the service log does not name the upstream's refusal of the login",
         )
         for secret in (person, workload, dummy):
-            expect(secret not in shown + logs.stdout + logs.stderr, "U14: a token was printed")
+            expect(secret not in shown + logs, "U14: a token was printed")
         self.held.append("U14")
         print(
             f"U14 held: the smoke exited {smoke.returncode}; its output was {lines}; no token "
             "in it or in the service log; the log ends "
-            f"{(logs.stdout + logs.stderr).strip().splitlines()[-3:]}",
+            f"{logs.strip().splitlines()[-3:]}",
             flush=True,
         )
 

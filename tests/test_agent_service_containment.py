@@ -82,7 +82,7 @@ def test_evidence_names_counts_and_never_the_smoke_lines(containment):
     assert not any(canary in text for text in evidence)
 
 
-@pytest.mark.parametrize("reader", ["service_log", "app_lines"])
+@pytest.mark.parametrize("reader", ["service_log", "app_lines", "wait_until_listening"])
 def test_a_failed_log_read_reports_no_output(containment, reader):
     marker = "SECRET-LOG-LINE-MARKER"
     probe = object.__new__(containment.ContainmentProbe)

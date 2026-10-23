@@ -8,6 +8,7 @@ import base64
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from egress import (
@@ -102,6 +103,16 @@ class StandInIssuer:
         return f"{signing_input}.{base64url(signature)}"
 
 
+def wait_for_listening(read_log: Callable[[], str], failure: str) -> None:
+    """Poll the service log until it says the service listens, or fail with `failure`."""
+    deadline = time.monotonic() + LISTEN_SECONDS
+    while time.monotonic() < deadline:
+        if LISTENING in read_log():
+            return
+        time.sleep(0.5)
+    raise ProbeFailed(f"{failure} in time")
+
+
 class IssuerProbe(Probe):
     """The service with a stand-in issuer on the `agent-songmaker` network."""
 
@@ -156,14 +167,17 @@ class IssuerProbe(Probe):
         resolved = self.compose("config", "--format", "json")
         return json.loads(resolved.stdout)["services"][SERVICE]["image"]
 
+    def container_log(self, service: str) -> str:
+        """The log text; a failed read reports the command and its exit code, never its output,
+        because the probes print only verdicts, counts and event names."""
+        container = self.container(service)
+        logs = self.run(["docker", "logs", container], check=False)
+        if logs.returncode != 0:
+            raise ProbeFailed(f"docker logs {container} exited {logs.returncode}")
+        return logs.stdout + logs.stderr
+
     def wait_until_listening(self) -> None:
-        deadline = time.monotonic() + LISTEN_SECONDS
-        while time.monotonic() < deadline:
-            logs = self.run(["docker", "logs", self.container(SERVICE)])
-            if LISTENING in logs.stdout + logs.stderr:
-                return
-            time.sleep(0.5)
-        raise ProbeFailed("the service did not listen in time")
+        wait_for_listening(lambda: self.container_log(SERVICE), "the service did not listen")
 
     @property
     def token_path(self) -> Path:
