@@ -73,15 +73,20 @@ HOSTILE = [
     "agent-run-Ab3xYz9",
     "agent-run-Ab3xYz901",
     "work/",
+    "tmp",
     "\udcff\udcfe",
 ]
 
 
 @pytest.mark.parametrize(
-    "name", ["system-prompt", "relay-mcp.json", ".claude", "/tmp", "home", "work", "cc-socks-1000"]
+    "name", ["system-prompt", "relay-mcp.json", ".claude", "home", "work", "cc-socks-1000"]
 )
 def test_structural_names_are_shown_as_they_are(names, name: str) -> None:
     assert names.show(name) == name
+
+
+def test_only_the_tmp_mount_is_shown_as_its_path(names) -> None:
+    assert names.show_mount("/tmp") == "/tmp" != names.show_mount("/tmp/inner")
 
 
 def test_the_run_tree_is_shown_without_its_suffix(names) -> None:

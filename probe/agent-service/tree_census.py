@@ -38,11 +38,12 @@ ALLOWED_NAMES = frozenset(
         "system-prompt",
         "relay-mcp.json",
         ".claude",
-        "/tmp",  # NOSONAR(S5443) a name the report shows; nothing is written there
         "home",
         "work",
     }
 )
+# Mount points the report shows as the path itself; named without the leading slash.
+SHOWN_MOUNT_POINTS = frozenset({"tmp"})
 RUN_TREE = re.compile(r"agent-run-[A-Za-z0-9_-]{8}")
 OPAQUE_HEX_DIGITS = 8
 
@@ -83,6 +84,9 @@ class Names:
             return "agent-run-<8>"
         digest = hmac.new(self._key, raw, hashlib.sha256).hexdigest()
         return f"n-{digest[:OPAQUE_HEX_DIGITS]}"
+
+    def show_mount(self, point: str) -> str:
+        return point if point.removeprefix("/") in SHOWN_MOUNT_POINTS else self.show(point)
 
 
 @dataclass(frozen=True)
@@ -464,7 +468,7 @@ def _census_report(settings: dict, names: Names) -> dict:
         census = census_mount(mount, names, rules)
         mounts.append(
             {
-                "mount": names.show(mount.point),
+                "mount": names.show_mount(mount.point),
                 "listings": [
                     [item.path, item.kind, item.harness_owned] for item in census.listings
                 ],
