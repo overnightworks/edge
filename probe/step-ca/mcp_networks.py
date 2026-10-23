@@ -164,8 +164,17 @@ class McpNetworks:
             expect(code == CERTIFICATE_UNVERIFIED, f"P14: {what}: curl exit {code}")
         self.expect_no_stand_in_request("P14", before, "an untrusted client")
 
-        plain = self.client("mcp", "--include", f"http://{SONGMAKER_ORIGIN}:443/mcp", root=root)
-        no_port = self.client("mcp", f"http://{SONGMAKER_ORIGIN}/mcp", root=root)  # NOSONAR(S5332)
+        plain = self.client(
+            "mcp",
+            "--include",
+            f"http://{SONGMAKER_ORIGIN}:443/mcp",  # NOSONAR(S5332) plain HTTP on purpose: P15 proves the gateway refuses it  # noqa: E501
+            root=root,
+        )
+        no_port = self.client(
+            "mcp",
+            f"http://{SONGMAKER_ORIGIN}/mcp",  # NOSONAR(S5332) plain HTTP on purpose: P15 proves the gateway refuses it  # noqa: E501
+            root=root,
+        )
         expect(
             f"Host: {SONGMAKER_ORIGIN}" not in plain.stdout.decode(errors="replace"),
             "P15: plain http answered",
@@ -338,10 +347,14 @@ class McpNetworks:
         lines = [self.cell_p13_trusted_service_image(root)]
         lines += self.cell_p14_p15_p17_refused(root)
         lines += self.cell_p16_p18_paths(root)
-        lines.append(self.cell_p19_other_origin(root))
-        lines.append(self.cell_p20_stand_in_stopped(root))
-        lines.append(self.cell_p21_gateway_to_stand_in())
-        lines.append(self.cell_p22_mcp_client_isolated())
+        lines.extend(
+            [
+                self.cell_p19_other_origin(root),
+                self.cell_p20_stand_in_stopped(root),
+                self.cell_p21_gateway_to_stand_in(),
+                self.cell_p22_mcp_client_isolated(),
+            ]
+        )
         lines += self.cell_p23_p24_stand_in_alone()
         lines.append(self.cell_p25_network_shape())
         self.proof_7_network_split()  # P27: hello's route and the existing pairs still hold
