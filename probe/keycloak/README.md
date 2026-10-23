@@ -29,7 +29,14 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   objects and keeps every other console change, and a changed YAML that applies and deletes no
   undeclared top-level object and no person, with a seeded member untouched (3a-3d); the `groups`
   claim and the `agent-service` audience (4); a disabled user refused on refresh (5); a
-  back-channel logout reaching the test relying party `probe-rp` (6); and none of the credentials
+  back-channel logout reaching the test relying party `probe-rp` (6);
+  which console actions send one (LA1: a user signed in to the client
+  `probe-logout-actions`, which carries hopin's ruled settings, `backchannel.logout.url`
+  `http://probe-rp:8000/backchannel-logout` and `backchannel.logout.session.required` `false`, then
+  a sign-out as control, disable user, delete user and remove group membership, one line each:
+  logout seen, not seen within `LOGOUT_TIMEOUT_SECONDS` for a token whose `sub` is the user's, or
+  action failed when the admin call did not succeed; the answer describes Keycloak's behaviour, not
+  HopIn's erasure, which hopin#79 S4 owns); and none of the credentials
   it made or received (secret files, passwords, the TOTP seed, the relying party's secret, every
   token of every token response, each client secret and its tokens, and the admin console's PKCE
   verifiers, authorization codes and session cookies) in the `Config.Env` of any container it ran,
