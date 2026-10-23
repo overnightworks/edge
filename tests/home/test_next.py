@@ -540,6 +540,15 @@ def test_before_any_verified_run_the_system_step_shows_and_neither_ansible_nor_s
     assert [call for call in runner.calls if Path(call[0]).name in {"sudo", "ansible-playbook"}] == []
 
 
+def test_as_the_agent_home_next_lists_none_of_the_operators_steps(home: Path, sandbox: Sandbox, probe: FakeProbe, capsys) -> None:
+    """Matrix A1 cell 4: Ansible, the system step and the user units are not the agent's to do."""
+    sandbox.system.user = system_step.AGENT_USER
+
+    _, lines = home_next(home, probe, capsys)
+
+    assert lines[0].split(" — erwartet: ")[1].split(";")[0] == "quality, Engines, Hook-Dateien, Aktivierung: changed"
+
+
 @pytest.mark.usefixtures("hook_installed")
 def test_after_a_verified_apply_there_is_no_system_step(home: Path, probe: FakeProbe, capsys) -> None:
     """Cell 15."""

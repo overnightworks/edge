@@ -12,13 +12,14 @@ import sys
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from shlex import quote
 from typing import TYPE_CHECKING
 
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
-from home_tools.system_step import Applied, CheckState, StepFailed, SystemStep
+from home_tools.system_step import AGENT_USER, Applied, CheckState, StepFailed, SystemStep
 from home_tools.tidy_home import Config, Layout
 from home_tools.user_units import UserUnits
 
@@ -41,6 +42,20 @@ SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, a
 # The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
 APPLY_ASKS_FOR_SUDO = True
 
+SKIPPED_FOR_THE_AGENT = "skipped: the operator's step"
+
+
+class ExecutionRole(Enum):
+    """Who runs `hal setup`: exactly the agents' account, or anyone else (root and a sudoers-only admin included)."""
+
+    AGENT = "agent"
+    OPERATOR = "operator"
+
+    @classmethod
+    def of(cls, running_user: str) -> ExecutionRole:
+        return cls.AGENT if running_user == AGENT_USER else cls.OPERATOR
+
+
 SETUP_EXAMPLES = """\
 Beispiele:
   home setup           zeigt, welche Schritte etwas ändern würden
@@ -56,6 +71,7 @@ class Step:
     `details` are the lines printed under the heading of an applied step.
     `would_change` are the lines printed under the heading of a dry run that found something to change.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
+    `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
     """
 
     name: str
@@ -67,9 +83,13 @@ class Step:
     details: Callable[[], list[str]] = lambda: []
     would_change: Callable[[], list[str]] = lambda: []
     listed_by_next: bool = True
+    operators_only: bool = False
+
+    def runs_for(self, role: ExecutionRole) -> bool:
+        return not (self.operators_only and role is ExecutionRole.AGENT)
 
 
-def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[], bool], why: str) -> Step:
+def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[], bool], why: str, *, operators_only: bool = False) -> Step:
     """A step in the user's own home: its check needs no password, so it is never `not checked`."""
 
     def check() -> CheckState:
@@ -82,7 +102,7 @@ def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[],
             raise StepFailed
         return Applied.CHANGED
 
-    return Step(name, is_current, check, apply, why)
+    return Step(name, is_current, check, apply, why, operators_only=operators_only)
 
 
 def _secrets_step(layout: Layout, ports: Ports) -> Step:
@@ -114,7 +134,7 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
     def open_lines() -> list[str]:
         return [f"  {_open_label(entry, found)}: {entry.name}" for entry, found in open_secrets()]
 
-    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=open_lines, listed_by_next=False)
+    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=open_lines, listed_by_next=False, operators_only=True)
 
 
 def _open_label(entry: SecretEntry, found: Presence) -> str:
@@ -213,11 +233,15 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         _local_step("Engines", engines_current, install_engines, HOOK_WHY),
         _local_step("Hook-Dateien", lambda: all(hook_current(path) for path in hook_paths), write_hooks, HOOK_WHY),
         _local_step("Aktivierung", hooks_active, activate_hooks, HOOK_WHY),
-        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY, details=units.loaded_command_lines),
-        _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY),
-        Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first),
+        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY, details=units.loaded_command_lines, operators_only=True),
+        _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY, operators_only=True),
+        Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first, operators_only=True),
         _secrets_step(layout, ports),
     )
+
+
+def _role(ports: Ports) -> ExecutionRole:
+    return ExecutionRole.of(ports.system.operator_user())
 
 
 def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
@@ -225,7 +249,7 @@ def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
     The secrets step is left out: `home next` lists the missing secrets from the view, one wizard step each.
     """
-    return tuple(step for step in _steps(layout, ports) if step.listed_by_next and not step.is_verified())
+    return tuple(step for step in _steps(layout, ports) if step.runs_for(_role(ports)) and step.listed_by_next and not step.is_verified())
 
 
 def _outcome(step: Step, apply: bool) -> str:
@@ -244,7 +268,11 @@ def _lines_under_heading(step: Step, apply: bool, outcome: str) -> list[str]:
 
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     """Stops at the first failed step, so a missing scanner never gets a hook activated."""
+    role = _role(ports)
     for step in _steps(layout, ports):
+        if not step.runs_for(role):
+            print(f"{step.name}: {SKIPPED_FOR_THE_AGENT}")
+            continue
         try:
             outcome = _outcome(step, apply)
             print(f"{step.name}: {outcome}")

@@ -255,14 +255,15 @@ class FakePlaybook:
 
 @dataclass
 class FakeSystem:
-    """The system step's boundaries: a terminal that is there or not, the FakePlaybook, and a fixed operator."""
+    """The system step's boundaries: a terminal that is there or not, the FakePlaybook, and the running user (the operator unless a test says otherwise)."""
 
     playbook: FakePlaybook
     terminal: bool = True
+    user: str = "operator"
 
     @property
     def boundaries(self) -> system_step.Boundaries:
-        return system_step.Boundaries(lambda: self.terminal, self.playbook, lambda: "operator")
+        return system_step.Boundaries(lambda: self.terminal, self.playbook, lambda: self.user)
 
 
 @dataclass(frozen=True)

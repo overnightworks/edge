@@ -23,6 +23,8 @@ from home_tools import secrets_setup
 from home_tools.tidy_home import Layout
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
+# The agents' own OS account: the play creates it dormant, and `hal setup` skips the operator's steps for exactly this user.
+AGENT_USER = "agent"
 # The ruled bound on every server log on this PC: „ja 30 tage für alle“.
 LOG_RETENTION_DAYS = 30
 # journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span
@@ -134,6 +136,7 @@ class SystemStep:
         return {
             "home": str(self.layout.home),
             "operator_user": self.boundaries.operator_user(),
+            "agent_user": AGENT_USER,
             "edge_tunnel_dir": str(self.layout.edge_tunnel_dir),
             "journal_vacuum_days": JOURNAL_VACUUM_DAYS,
         }

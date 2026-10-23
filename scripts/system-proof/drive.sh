@@ -525,10 +525,184 @@ cell_8() {
     return
 }
 
+# The agents' account (#331, matrix A1; its cells are named A1-<n> so they never meet the cells of #40). Cell 10, a revert,
+# is not driven: it keeps the user and its home, and no revert exists to run.
+AGENT_HOME=/home/agent
+DOCKER_SOCKET=/run/docker.sock
+OPERATORS_SKIP="skipped: the operator's step"
+
+run_as() {  # run_as <user> <log> <command...>: with that user's own HOME and runtime directory, no terminal, no sudo
+    local user=$1 log=$2
+    shift 2
+    timeout 1800 runuser -u "$user" -- env -i HOME="/home/$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" LC_ALL=C.UTF-8 \
+        PATH="/usr/local/bin:/usr/bin:/bin:/home/$user/.local/bin" "$@" </dev/null >"$EVIDENCE/$log.log" 2>&1
+    return
+}
+
+agent_world() {  # everything the play may write about the account, as one comparable text
+    getent passwd agent
+    getent shadow agent
+    id -Gn agent
+    stat -c '%U:%G %a' "$AGENT_HOME"
+    cat /etc/subuid /etc/subgid /etc/cron.deny 2>&1
+    ls /var/lib/systemd/linger 2>&1
+    snapshot
+    return 0
+}
+
+agent_is_dormant() {  # one account, its own group, locked, nologin, a closed home, no subids, no linger, denied cron and nothing else denied
+    [[ $(getent passwd agent | cut -d: -f7) == /usr/sbin/nologin ]] &&
+        [[ $(id -Gn agent) == agent ]] &&
+        [[ $(getent shadow agent | cut -d: -f2 | cut -c1) == '!' ]] &&
+        [[ $(stat -c '%U:%G %a' "$AGENT_HOME") == 'agent:agent 700' ]] &&
+        ! grep -qE '^agent:' /etc/subuid /etc/subgid &&
+        [[ $(cat /etc/cron.deny) == agent ]] &&
+        [[ ! -e /var/lib/systemd/linger/agent ]]
+    return
+}
+
+provide_docker_socket() {  # the Docker socket as the engine ships it: root:docker 660, with the operator in the group
+    groupadd --force docker
+    usermod --append --groups docker tester
+    printf '%s\n' '[Socket]' "ListenStream=$DOCKER_SOCKET" 'SocketMode=0660' 'SocketUser=root' 'SocketGroup=docker' \
+        '[Install]' 'WantedBy=sockets.target' >"$UNIT_DIR/proof-docker.socket"
+    printf '%s\n' '[Service]' 'ExecStart=/bin/sleep infinity' >"$UNIT_DIR/proof-docker.service"
+    systemctl daemon-reload
+    systemctl enable --now proof-docker.socket >/dev/null 2>&1
+    return
+}
+
+connects_to_docker() {  # connects_to_docker <user>
+    run_as "$1" "docker-$1" python3 -c "import socket; socket.socket(socket.AF_UNIX).connect('$DOCKER_SOCKET')"
+    return
+}
+
+agent_is_refused() {  # what the account may not reach, each against a control that shows the thing is there and reachable by its owner
+    local secret=/home/tester/.secrets/proof-a1
+    [[ $(stat -c %a /home/tester) -le 750 ]] || return 1
+    as_tester mkdir -p "$(dirname "$secret")" && as_tester touch "$secret" && as_tester cat "$secret" || return 1
+    connects_to_docker tester || return 1
+    ! run_as agent a1-ls ls /home/tester &&
+        ! run_as agent a1-cat cat "$secret" &&
+        ! run_as agent a1-sudo sudo -n true &&
+        ! connects_to_docker agent &&
+        ! su - agent -c true >"$EVIDENCE/a1-su.log" 2>&1 &&
+        grep -q 'not available' "$EVIDENCE/a1-su.log"
+    return
+}
+
+cell_a1_1() {
+    verdict A1-1 "the apply created agent: own group, locked, nologin, home 0700, no subids, cron.deny, no linger" agent_is_dormant
+    A1_WORLD_AFTER_CREATION=$(agent_world)
+    return
+}
+
+cell_a1_2() {  # runs after the second apply of cell 9
+    verdict A1-2 "a second apply changes nothing of the account" \
+        '[ "$A1_WORLD_AFTER_CREATION" = "$(agent_world)" ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log"'
+    return
+}
+
+refuses_foreign_shape() {  # refuses_foreign_shape <name> <make> <undo>: the play fails with exit 1 and nothing, not even cloudflared's files, moves
+    local name=$1 make=$2 undo=$3 before after code
+    eval "$make"
+    before=$(agent_world)
+    at_terminal "a1-3-$name" "$HOME_BIN setup --apply"
+    code=$?
+    after=$(agent_world)
+    eval "$undo"
+    verdict A1-3 "$name: the play refuses with exit 1 and nothing was written" \
+        '[ $code -eq 1 ] && in_log "a1-3-$name" "nothing was written" && [ "$before" = "$after" ]'
+    verdict A1-3 "$name: undone, the account is dormant again" agent_is_dormant
+    return
+}
+
+cell_a1_3() {
+    refuses_foreign_shape "an extra group" 'usermod --append --groups bystander agent' 'gpasswd --delete agent bystander'
+    refuses_foreign_shape "a subuid entry" 'echo agent:100000:65536 >>/etc/subuid' "sed -i '/^agent:/d' /etc/subuid"
+    refuses_foreign_shape "the shell bash" 'usermod --shell /bin/bash agent' 'usermod --shell /usr/sbin/nologin agent'
+    refuses_foreign_shape "linger" 'loginctl enable-linger agent' 'loginctl disable-linger agent'
+    refuses_foreign_shape "a usable password" 'passwd --delete agent >/dev/null' 'usermod --lock agent'
+    return
+}
+
+install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that user's own home
+    run_as "$1" "install-$1" uv tool install /proof/*.whl
+    return
+}
+
+cell_a1_4_and_5() {
+    local dry apply
+    install_wheel_for agent
+    run_as agent a1-4-dry "$AGENT_HOME/.local/bin/home" setup
+    dry=$?
+    verdict A1-4 "as agent the dry run exits 0, shows the per-user steps and skips the operator's" \
+        '[ $dry -eq 0 ] && in_log a1-4-dry "quality: would change" && in_log a1-4-dry "Aktivierung: would change" &&
+         in_log a1-4-dry "User units: skipped" && in_log a1-4-dry "Ansible: skipped" && in_log a1-4-dry "System: skipped"'
+    run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
+    verdict A1-4 "home next lists none of the operator's steps" \
+        'in_log a1-4-next "hal setup --apply" && ! grep -qE "User units|Ansible|System" "$EVIDENCE/a1-4-next.log"'
+    run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
+    apply=$?
+    verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \
+        '[ $apply -eq 0 ] && in_log a1-5-apply "Aktivierung: changed" && in_log a1-5-apply "System: skipped" &&
+         ! grep -qi "password" "$EVIDENCE/a1-5-apply.log" && [ ! -e "$AGENT_HOME/.config/systemd/user" ]'
+    verdict A1-5 "the account is still dormant after the agent's own apply" agent_is_dormant
+    return
+}
+
+cell_a1_6() {
+    verdict A1-6 "the operator's dry run and apply print no skip and still run the user units and the system step" \
+        '! grep -q "$OPERATORS_SKIP" "$EVIDENCE"/cell1.log "$EVIDENCE"/cell9.log "$EVIDENCE"/cell10.log &&
+         in_log cell9 "User units: " && in_log cell9 "System: unchanged" && in_log cell10 "System: would change"'
+    return
+}
+
+cell_a1_7() {
+    local dry apply
+    loginctl enable-linger bystander
+    timeout 60 bash -c 'until systemctl is-active --quiet "user@$(id -u bystander).service"; do sleep 1; done'
+    install -d -o bystander -g bystander /home/bystander/git/edge
+    cp -r /proof/systemd /proof/tunnel /home/bystander/git/edge/
+    chown -R bystander:bystander /home/bystander/git
+    install_wheel_for bystander
+    run_as bystander a1-7-dry /home/bystander/.local/bin/home setup
+    dry=$?
+    verdict A1-7 "a bystander's dry run behaves as today: not checked, exit 0, nothing skipped" \
+        '[ $dry -eq 0 ] && in_log a1-7-dry "System: not checked (needs sudo at a terminal)" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-dry.log"'
+    run_as bystander a1-7-apply /home/bystander/.local/bin/home setup --apply
+    apply=$?
+    verdict A1-7 "a bystander's --apply fails the system step, exit 1" \
+        '[ $apply -eq 1 ] && in_log a1-7-apply "„System“" && in_log a1-7-apply "sudo at a terminal" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-apply.log"'
+    return
+}
+
+cell_a1_8() {
+    verdict A1-8 "agent may not read ~tester or its secrets, use sudo or the Docker socket, and has no login shell" agent_is_refused
+    return
+}
+
+cell_a1_9() {  # after a reboot
+    provide_docker_socket
+    verdict A1-9 "after a reboot the account is still dormant" agent_is_dormant
+    verdict A1-9 "after a reboot agent is still refused" agent_is_refused
+    return
+}
+
+cells_agent() {
+    cell_a1_3
+    provide_docker_socket
+    cell_a1_4_and_5
+    cell_a1_6
+    cell_a1_7
+    cell_a1_8
+    return
+}
+
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_9; cell_s1; cells_retention; cells_polkit; marker_on ;;
-    after-marker-reboot) cell_7; marker_off ;;
+    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_a1_1; cell_9; cell_a1_2; cell_s1; cells_agent; cells_retention; cells_polkit; marker_on ;;
+    after-marker-reboot) cell_7; cell_a1_9; marker_off ;;
     after-unmarked-reboot) cell_8 ;;
     prepared) prepare_today; cell_2 ;;
     *) echo "unknown stage $1" >&2; exit 2 ;;

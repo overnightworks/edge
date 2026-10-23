@@ -482,6 +482,12 @@ come before the system step, which is the one that asks for sudo:
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It asks once for sudo.
 
+**Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
+(`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
+Aktivierung run, and User units, Ansible, System and Geheimnisse print `skipped: the operator's step`
+(the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them. Everyone else, root
+and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
+
 Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
 `would change` or `unchanged`, and the system step also `not checked (needs
 sudo at a terminal)`, or `not checked (needs Ansible, …)` before the Ansible
@@ -539,6 +545,12 @@ below are home's own and are not backed up.
     task with `state: absent` for each of the two units; a reload. Then
     `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
     journal lines do not come back.
+- **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
+  locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
+  (`useradd -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`), no linger, and a line in the new `/etc/cron.deny`, which
+  leaves every other user as before. An `agent` that already exists with an extra group, a subuid or subgid
+  entry, another shell, a usable password or linger is refused before anything is written, in the dry run too.
+  A revert keeps the user and its home.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,
   the dry run says `System: not checked (needs sudo at a terminal)` and

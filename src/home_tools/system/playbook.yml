@@ -3,11 +3,16 @@
 #
 # home_tools.system_step runs it with `--ask-become-pass`, so sudo asks once, and passes `home`,
 # `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and
-# the running user; nothing here is taken from facts gathered under become. It never starts, stops or
+# the running user, and the agents' account name as `agent_user`; nothing here is taken from facts gathered under become. It never starts, stops or
 # restarts cloudflared. Every `--apply` reloads systemd; a dry run does not. An extra reload at the end
 # follows only when an edge file or the retired drop-in changed. What it replaces of edge's files is
 # copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
 # or a drop-in; the retention units are home's own and are not backed up.
+#
+# The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
+# password, the shell nologin, a 0700 home, no subuid or subgid range, no linger, and a line in /etc/cron.deny
+# (every other user keeps today's cron). An account of that name in any other shape is refused before anything is
+# written. A revert of this play keeps the user and its home.
 - name: Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer
   hosts: localhost
   connection: local
@@ -19,6 +24,9 @@
     drop_in_dir: "{{ unit_dir }}/cloudflared.service.d"
     retired_drop_in: "{{ drop_in_dir }}/10-root-binary.conf"
     backup_dir: /var/backups/home-setup
+    agent_home: "/home/{{ agent_user }}"
+    agent_nologin: /usr/sbin/nologin
+    cron_deny: /etc/cron.deny
     retention_units:
       - dest: "{{ unit_dir }}/hal-journal-retention.service"
         content: |
@@ -62,6 +70,59 @@
       ansible.builtin.assert:
         that: tunnel_id | length > 0
         fail_msg: "{{ tunnel_config }} names no `tunnel:`; nothing was written"
+        quiet: true
+
+    - name: Look at the agents' account
+      ansible.builtin.getent:
+        database: "{{ item }}"
+        key: "{{ agent_user }}"
+        fail_key: false
+      loop: [passwd, shadow]
+
+    - name: Note whether the agents' account exists
+      ansible.builtin.set_fact:
+        agent_account: "{{ getent_passwd[agent_user] }}"
+        agent_exists: "{{ getent_passwd[agent_user] is not none }}"
+
+    - name: Read the groups of the agents' account
+      ansible.builtin.command:
+        argv: [id, --groups, --name, "{{ agent_user }}"]
+      register: agent_groups
+      changed_when: false
+      check_mode: false
+      when: agent_exists
+
+    - name: Read the subordinate id ranges of the agents' account, by name and by uid
+      ansible.builtin.command:
+        argv:
+          - grep
+          - --extended-regexp
+          - "^({{ agent_user }}{{ '|' ~ agent_account[1] if agent_exists else '' }}):"
+          - /etc/subuid
+          - /etc/subgid
+      register: agent_subids
+      changed_when: false
+      failed_when: agent_subids.rc not in [0, 1]
+      check_mode: false
+
+    - name: Look at the agents' lingering
+      ansible.builtin.stat:
+        path: "/var/lib/systemd/linger/{{ agent_user }}"
+      register: agent_linger
+
+    - name: Name every way the agents' account is not the dormant one
+      ansible.builtin.set_fact:
+        agent_foreign_shape: >-
+          {{ (['a group beyond its own'] if agent_exists and agent_groups.stdout.split() != [agent_user] else [])
+             + (['a subuid or subgid entry'] if agent_subids.stdout | length > 0 else [])
+             + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
+             + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
+             + (['linger'] if agent_linger.stat.exists else []) }}
+
+    - name: Refuse before writing anything when the agents' account has another shape
+      ansible.builtin.assert:
+        that: agent_foreign_shape | length == 0
+        fail_msg: "{{ agent_user }} exists with {{ agent_foreign_shape | join(', ') }}; nothing was written"
         quiet: true
 
     - name: Fill edge's files with this PC's values
@@ -143,6 +204,53 @@
         path: "{{ retired_drop_in }}"
         state: absent
       notify: Reload systemd
+
+    # useradd with -K because the user module cannot refuse the subordinate id ranges that login.defs grants by
+    # default. The user task after it creates nothing then; in a dry run it is the one that reports the creation.
+    - name: Create the agents' account without subordinate id ranges
+      ansible.builtin.command:
+        argv:
+          - useradd
+          - --create-home
+          - --home-dir
+          - "{{ agent_home }}"
+          - --user-group
+          - --shell
+          - "{{ agent_nologin }}"
+          - -K
+          - SUB_UID_COUNT=0
+          - -K
+          - SUB_GID_COUNT=0
+          - "{{ agent_user }}"
+      changed_when: true
+      when: not agent_exists
+
+    - name: Keep the agents' account locked, shell-less and with a home
+      ansible.builtin.user:
+        name: "{{ agent_user }}"
+        home: "{{ agent_home }}"
+        shell: "{{ agent_nologin }}"
+        password_lock: true
+        create_home: true
+
+    - name: Close the agents' home to everyone else
+      ansible.builtin.file:
+        path: "{{ agent_home }}"
+        state: directory
+        owner: "{{ agent_user }}"
+        group: "{{ agent_user }}"
+        mode: "0700"
+      when: agent_exists or not ansible_check_mode
+
+    - name: Keep the agents out of cron and every other user as it is
+      ansible.builtin.lineinfile:
+        path: "{{ cron_deny }}"
+        line: "{{ agent_user }}"
+        regexp: "^{{ agent_user }}$"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"  # NOSONAR ansible:S2612 cron reads this as the invoking user; root-owned 644 is the ruled mode
 
     # `daemon_reload` on every run, so a run interrupted after the files were written converges on the
     # next. Nothing restarts journald: the timer's own service rotates and vacuums it. A check run that
