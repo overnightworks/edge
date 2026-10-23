@@ -616,7 +616,7 @@ cell_a1_2() {  # runs after the second apply of cell 9
 }
 
 refuses_foreign_shape() {  # refuses_foreign_shape <name> <make> <undo> [reason] [dry]: the play fails with exit 1 and nothing, not even cloudflared's files, moves
-    local name=$1 make=$2 undo=$3 reason=${4:-nothing was written} before after code dry_code dry_after
+    local name=$1 make=$2 undo=$3 reason=${4:-nothing was written} before after code dry_code dry_after  # NOSONAR(shelldre:S1481) read inside the condition that verdict evals
     eval "$make"
     before=$(agent_world)
     at_terminal "a1-3-$name" "$HOME_BIN setup --apply"
