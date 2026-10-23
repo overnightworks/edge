@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 # `hal_agent_<app>` of compose.yaml, as the probe's copy names them: `<project>_agent_<app>`.
 AGENT_NETWORKS = ("agent_songmaker", "agent_presentator")
+# Every network the service joins: the shared `hal_agent` stays beside the per-app ones until
+# slice C removes it, and then this tuple is AGENT_NETWORKS again.
+SERVICE_AGENT_NETWORKS = ("agent", *AGENT_NETWORKS)
 CALLER_PORT = 8000
 READY_SECONDS = 90
 

@@ -56,7 +56,7 @@ sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with 
 
 import edge_copy  # noqa: E402
 import egress_observe  # noqa: E402
-from agent_networks import AGENT_NETWORKS, cell_p36  # noqa: E402
+from agent_networks import SERVICE_AGENT_NETWORKS, cell_p36  # noqa: E402
 from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
 from egress_observe import (  # noqa: E402
     PUBLIC_RESOLVER,
@@ -604,7 +604,7 @@ class Probe:
             result = self.client("connect", target, port)
             expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
             errnos.append(f"{name} {result['result']}")
-        for network in (*AGENT_NETWORKS, "egress"):
+        for network in (*SERVICE_AGENT_NETWORKS, "egress"):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
             expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
             free = self.free_address(network)
@@ -762,7 +762,7 @@ class Probe:
         self.scan_network("E13", "egress")
 
     def cell_e14(self) -> None:
-        for network in AGENT_NETWORKS:
+        for network in SERVICE_AGENT_NETWORKS:
             self.scan_network(f"E14 {network}", network)
 
 
