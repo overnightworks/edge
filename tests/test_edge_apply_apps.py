@@ -23,6 +23,7 @@ from app_support import (
     switch_lock_is_held,
 )
 from test_edge_apply import (
+    ENABLED,
     NOW,
     WHOAMI,
     ZONE,
@@ -536,6 +537,32 @@ def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_
         "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
     )
     assert app_world.docker.verbs == ["ps"]
+    assert app_world.scripted.changing_verbs() == changes_before
+    assert {row["State"] for row in app_world.docker.rows} == {"running"}
+
+
+def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_replanned_apply(
+    app_world,
+    setup_check,  # noqa: F811 the fixture, imported by name above
+    setup_run,  # noqa: F811 the fixture, imported by name above
+):
+    """The plan made after the setups ran is held to the same refusal as the first one."""
+    deployed(app_world)
+    with_a_setup = FLEET.replace("services:\n", ENABLED)
+    write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{with_a_setup}")
+    setup_check.exit_code, setup_check.line = 1, "step-ca/init --check: not set up"
+    setup_run.meanwhile = lambda: switches.Switches(app_world.state).record(KEY, NOW)
+    changes_before = app_world.scripted.changing_verbs()
+
+    exit_code, out, err = app_world.apply("yes\nyes")
+
+    assert exit_code == 1
+    assert len(setup_run.commands) == 1
+    assert (
+        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
+    )
+    assert "nothing to change" not in out
+    assert "stays stopped" not in out
     assert app_world.scripted.changing_verbs() == changes_before
     assert {row["State"] for row in app_world.docker.rows} == {"running"}
 

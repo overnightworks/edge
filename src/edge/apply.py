@@ -328,21 +328,22 @@ def _plan_and_apply(
             )
             for line in waiting.describe(binds, reconcile.REALM_FILES):
                 print(f"{COMMAND}: {line}")
-        planned = _plan(engine, marks, record, repository, app_runtime)
-        missing = _missing_setups(planned, repository, check)
         completed: list[str] = []
-        if refusals := _switched_off_still_running(missing, planned.app_plans):
-            print(*refusals, sep="\n", file=sys.stderr)
-            return ApplyExit.REFUSED
-        if missing:
+        while True:  # the plan made after the setups ran is held to the same refusals
+            planned = _plan(engine, marks, record, repository, app_runtime)
+            missing = _missing_setups(planned, repository, check)
+            if refusals := _switched_off_still_running(missing, planned.app_plans):
+                print(*refusals, sep="\n", file=sys.stderr)
+                return ApplyExit.REFUSED
+            if not missing:
+                break
+            if completed:
+                _refuse_units_still_not_set_up(missing)
+                return ApplyExit.REFUSED
             exit_code = _ask_and_run_setups(missing, repository, check, run_setup)
             if exit_code is not None:
                 return exit_code
             completed = [m.unit.key for m in missing]
-            planned = _plan(engine, marks, record, repository, app_runtime)
-            if unready := _missing_setups(planned, repository, check):
-                _refuse_units_still_not_set_up(unready)
-                return ApplyExit.REFUSED
     except CANNOT_PLAN_ERRORS as error:
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
@@ -628,10 +629,9 @@ class CorePhase:
         """Say each proven barrier; the failure line naming every one that is not, after all
         active barriers were tried (S9)."""
         unproven: list[barrier.Unproven] = []
-        fleet = planned.fleet
         for proof in barrier.prove_active(
-            fleet.units, fleet.profile_services, fleet.config, marks, self.repository,
-            self.verifier, planned.app_plans.catalogued,
+            planned.fleet.units, planned.fleet.profile_services, planned.fleet.config, marks,
+            self.repository, self.verifier, planned.app_plans.catalogued,
         ):  # fmt: skip
             match proof:
                 case barrier.Proven(unit):
