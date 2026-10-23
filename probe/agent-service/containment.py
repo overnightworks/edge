@@ -4,9 +4,11 @@ app lists tools, in the stand-in issuer's project with a fake app on `agent-song
 
 B1 is the run with the relay: the CLI's start announcement is accepted (no refusal verdict) and
 the run reaches the upstream, which refuses the dummy login. B2 plants the run capability's
-signature in a tool description: the relay's owner fails with `CapabilityReflected`, the
-announcement is refused with `RELAY_NOT_CONNECTED`, and the run fails. A cell reads verdicts,
-counts and event names, never a token. The (a) parts, the loopback capture, are #339 C2's."""
+signature in a tool description: the relay's owner fails with `CapabilityReflected`, and the
+runner's failure is `CapabilityReflected` too, with no announcement verdict (a
+`RELAY_NOT_CONNECTED` line is tolerated, any other verdict fails the cell) and no run reaching
+`CliLoginRefusedError`; the run fails. A cell reads verdicts, counts and event names, never a
+token, and none of them prints a log line. The (a) parts, the loopback capture, are #339 C2's."""
 
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import NamedTuple
 
 from egress import LABEL, NotDriven, ProbeFailed, expect
 from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe, openssl
@@ -39,6 +42,7 @@ LOGIN_REFUSED = "CliLoginRefusedError"
 RELAY_OWNER_FAILED = re.compile(
     r"The owner of the relay of run \S+ failed: CapabilityReflected at "
 )
+RUNNER_FAILED = re.compile(r"The runner of run \S+ failed: CapabilityReflected at ")
 APP_LINE = re.compile(
     r"method=(?:initialize|notifications/initialized|tools/list|other) "
     r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
@@ -54,22 +58,84 @@ APP_LISTING = "method=tools/list offered=step,bare,extra canary={canary} bearer=
 PROVIDER_ERROR = "provider_error"
 
 
-@dataclass(frozen=True)
-class Observed:
-    """What one run left behind: the smoke's lines, the fake app's new lines and the new service
-    log lines of each kind."""
+class LogCounts(NamedTuple):
+    """How often the service log holds each kind of verdict line."""
 
-    smoke: list[str]
-    app: list[str]
     refused: int
     login_refused: int
     relay_owner_failed: int
+    runner_failed: int
     relay_not_connected: int
+
+    @classmethod
+    def of(cls, log: str) -> LogCounts:
+        return cls(
+            log.count(REFUSED_ANNOUNCEMENT),
+            log.count(LOGIN_REFUSED),
+            len(RELAY_OWNER_FAILED.findall(log)),
+            len(RUNNER_FAILED.findall(log)),
+            log.count(RELAY_NOT_CONNECTED),
+        )
+
+    def since(self, earlier: LogCounts) -> LogCounts:
+        return LogCounts(*(now - before for now, before in zip(self, earlier, strict=True)))
+
+    def other_refusals(self) -> int:
+        """Announcement verdicts other than RELAY_NOT_CONNECTED."""
+        return self.refused - self.relay_not_connected
+
+
+@dataclass(frozen=True)
+class Observed:
+    """What one run left behind: the smoke's lines, the fake app's new lines and the new service
+    log counts."""
+
+    smoke: list[str]
+    app: list[str]
+    new: LogCounts
 
     def failed_as_provider_error(self) -> bool:
         return "event: failed" in self.smoke and any(
             line.startswith(PROVIDER_ERROR) for line in self.smoke
         )
+
+
+Verdicts = dict[str, tuple[bool, str]]
+
+
+def smoke_evidence(seen: Observed) -> str:
+    return (
+        f"event: failed {'seen' if 'event: failed' in seen.smoke else 'missing'}, "
+        f"{PROVIDER_ERROR} {'seen' if seen.failed_as_provider_error() else 'missing'}"
+    )
+
+
+def b1_verdicts(seen: Observed) -> Verdicts:
+    new = seen.new
+    return {
+        "B1 (b)": (
+            new.refused == 0 and new.login_refused == 1,
+            f"{new.refused} announcement refusals and {new.login_refused} refused logins",
+        ),
+        "B1 (c)": (seen.failed_as_provider_error(), smoke_evidence(seen)),
+    }
+
+
+def b2_verdicts(seen: Observed) -> Verdicts:
+    new = seen.new
+    return {
+        "B2 (b)": (
+            new.relay_owner_failed == 1,
+            f"{new.relay_owner_failed} lines of the relay's owner failing on the capability",
+        ),
+        "B2 (c)": (
+            new.runner_failed == 1 and new.login_refused == 0 and new.other_refusals() == 0,
+            f"{new.runner_failed} lines of the runner failing on the capability, "
+            f"{new.login_refused} refused logins, {new.other_refusals()} other announcement "
+            f"verdicts, {new.relay_not_connected} RELAY_NOT_CONNECTED verdicts (tolerated)",
+        ),
+        "B2 (d)": (seen.failed_as_provider_error(), smoke_evidence(seen)),
+    }
 
 
 class Mode(StrEnum):
@@ -166,9 +232,13 @@ class ContainmentProbe(IssuerProbe):
         self.wait_until_listening()
         tokens = self.tokens()
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
-        failed = [*self.cell_b1(tokens), *self.cell_b2(tokens)]
+        relay = self.run_with(Mode.RELAY, tokens)
+        canary = self.run_with(Mode.CANARY, tokens)
         self.expect_no_token(tokens, dummy)
         self.cell_s2()
+        self.expect_driven("B1", relay, [*APP_HANDSHAKE, APP_LISTING.format(canary=0)])
+        self.expect_driven("B2", canary, [APP_LISTING.format(canary=1)])
+        failed = [*self.judge(b1_verdicts(relay)), *self.judge(b2_verdicts(canary))]
         for cell in ("B1 (a)", "B2 (a)"):
             print(f"{cell} NOT DRIVEN: the loopback capture is #339 C2's", flush=True)
         if failed:
@@ -176,39 +246,11 @@ class ContainmentProbe(IssuerProbe):
 
     # --- the cells ----------------------------------------------------------------------------
 
-    def cell_b1(self, tokens: Tokens) -> list[str]:
-        seen = self.run_with(Mode.RELAY, tokens)
-        self.expect_driven("B1", seen, [*APP_HANDSHAKE, APP_LISTING.format(canary=0)])
-        return self.judge({
-            "B1 (b)": (
-                seen.refused == 0 and seen.login_refused == 1,
-                f"{seen.refused} announcement refusals and {seen.login_refused} refused logins",
-            ),
-            "B1 (c)": (seen.failed_as_provider_error(), f"the smoke printed {seen.smoke}"),
-        })  # fmt: skip
-
-    def cell_b2(self, tokens: Tokens) -> list[str]:
-        seen = self.run_with(Mode.CANARY, tokens)
-        self.expect_driven("B2", seen, [APP_LISTING.format(canary=1)])
-        return self.judge({
-            "B2 (b)": (
-                seen.relay_owner_failed == 1,
-                f"{seen.relay_owner_failed} lines of the relay's owner failing on the capability",
-            ),
-            "B2 (c)": (
-                seen.relay_not_connected == 1,
-                f"{seen.relay_not_connected} RELAY_NOT_CONNECTED verdicts",
-            ),
-            "B2 (d)": (seen.failed_as_provider_error(), f"the smoke printed {seen.smoke}"),
-        })  # fmt: skip
-
-    def judge(self, verdicts: dict[str, tuple[bool, str]]) -> list[str]:
+    def judge(self, verdicts: Verdicts) -> list[str]:
         """Each cell held or failed, reported at once; the failed names come back."""
         for cell, (held, evidence) in verdicts.items():
             if held:
                 self.held.append(cell)
-            if not held:
-                evidence += f"; the service log ends {self.service_log()[-2500:]!r}"
             print(f"{cell} {'held' if held else 'FAILED'}: {evidence}", flush=True)
         return [cell for cell, (held, _) in verdicts.items() if not held]
 
@@ -216,13 +258,14 @@ class ContainmentProbe(IssuerProbe):
         missing = [line for line in lines if line not in seen.app]
         if missing:
             raise NotDriven(
-                f"{cell}: the fake app did not log {missing}; it logged {seen.app}; the smoke "
-                f"printed {seen.smoke}; the service log ends {self.service_log()[-1500:]!r}"
+                f"{cell}: the fake app did not log {len(missing)} of {len(lines)} expected "
+                f"lines ({', '.join(line.split()[0] for line in missing)}); it logged "
+                f"{len(seen.app)} lines; {smoke_evidence(seen)}"
             )
 
     def cell_s2(self) -> None:
         stray = [line for line in self.app_lines() if not APP_LINE.fullmatch(line)]
-        expect(not stray, f"S2: the fake app logged lines outside its vocabulary: {stray[:3]}")
+        expect(not stray, f"S2: the fake app logged {len(stray)} lines outside its vocabulary")
         self.held.append("S2")
 
     def expect_no_token(self, tokens: Tokens, dummy: str) -> None:
@@ -246,36 +289,25 @@ class ContainmentProbe(IssuerProbe):
             stdin=f"{tokens.person}\n{tokens.workload}\n", check=False, timeout=240,
         )  # fmt: skip
         self.shown.append(smoke.stdout + smoke.stderr)
-        counts = self.wait_for_a_verdict(before)
-        refused, login_refused, owner_failed, not_connected = (
-            after - earlier for after, earlier in zip(counts, before, strict=True)
-        )
-        return Observed(
-            smoke.stdout.splitlines(),
-            self.app_lines()[app_before:],
-            refused,
-            login_refused,
-            owner_failed,
-            not_connected,
-        )
+        new = self.wait_for_a_verdict(before).since(before)
+        return Observed(smoke.stdout.splitlines(), self.app_lines()[app_before:], new)
 
-    def wait_for_a_verdict(self, before: tuple[int, ...]) -> tuple[int, ...]:
-        """The service logs a run's verdict a moment after the smoke saw its end."""
+    def wait_for_a_verdict(self, before: LogCounts) -> LogCounts:
+        """The service logs a run's verdict a moment after the smoke saw its end; the runner's
+        line comes after the relay owner's."""
         deadline = time.monotonic() + LOG_SECONDS
         counts = self.verdict_counts()
-        while counts[1] + counts[2] == before[1] + before[2] and time.monotonic() < deadline:
+        while (
+            counts.login_refused + counts.runner_failed
+            == before.login_refused + before.runner_failed
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.5)
             counts = self.verdict_counts()
         return counts
 
-    def verdict_counts(self) -> tuple[int, int, int, int]:
-        log = self.service_log()
-        return (
-            log.count(REFUSED_ANNOUNCEMENT),
-            log.count(LOGIN_REFUSED),
-            len(RELAY_OWNER_FAILED.findall(log)),
-            log.count(RELAY_NOT_CONNECTED),
-        )
+    def verdict_counts(self) -> LogCounts:
+        return LogCounts.of(self.service_log())
 
     def service_log(self) -> str:
         logs = self.run(["docker", "logs", self.container(SERVICE)])
