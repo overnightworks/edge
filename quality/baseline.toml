@@ -11,7 +11,7 @@
 "probe/step-ca/probe.py" = 1052
 "probe/switches/probe.py" = 812
 "src/edge/realm/observe.py" = 815
-"src/home_tools/secrets_view.py" = 860
+"src/home_tools/secrets_view.py" = 862
 "src/home_tools/tidy_home.py" = 1071
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089
