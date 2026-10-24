@@ -165,6 +165,8 @@ def test_a_recreate_of_only_the_keycloak_database_holds_the_realm_check_and_says
     switch,  # noqa: F811
     scripted,  # noqa: F811
 ):
+    """M14 (#376): a recreate in the realm unit holds the realm check; a database-only one
+    says the database restarts, not Keycloak."""
     scripted.change_definition("keycloak-db")
 
     exit_code, out, _ = switch()
