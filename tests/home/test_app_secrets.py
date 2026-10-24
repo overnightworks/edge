@@ -212,6 +212,17 @@ def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboa
     assert f"Kein Browser ließ sich öffnen; die Seite von Hand öffnen: {CLOUDFLARE_DASHBOARD}" in output
 
 
+def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    terminal = FakeTerminal(enter=KeyboardInterrupt)
+
+    code, _ = run_turn_setup(turn_home, capsys, terminal)
+
+    assert code == 130
+    assert terminal.opened == []
+    assert PASTE_PROMPT not in terminal.prompts
+    assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
+
+
 def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal())
 
