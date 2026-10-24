@@ -18,7 +18,7 @@ mock_provider "cloudflare" {
 }
 
 # The live catalog, rendered with the mocked provider: songmaker's host with its deny, and the
-# apex and www as proxied records that redirect at the edge and have no tunnel line.
+# apex and www as proxied records that redirect at the edge; only the apex, as legal's host, has a tunnel line.
 run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirect" {
   command = plan
 
