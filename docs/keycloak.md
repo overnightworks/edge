@@ -94,7 +94,7 @@ deleting the user and removing the user from a group, no matching logout was obs
 an app ends or erases an account on a sign-out is the app's own (hopin#79 S4).
 
 HopIn is logged out the same way, over its own internal network `hal_backchannel_hopin`, which
-Keycloak joins and no other service does: its client has `backchannel.logout.url`
+only `keycloak` joins on edge's side and HopIn joins as an external network: its client has `backchannel.logout.url`
 `http://hopin.hallucinai.de:8080/auth/backchannel-logout` and `session.required: "false"`. HopIn
 uses no refresh token, so its client also has `use.refresh.tokens: "false"` and Keycloak issues it
 none; the rule for every app is that it gets a refresh token only if it uses one (operator ruling
