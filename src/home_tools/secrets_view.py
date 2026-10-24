@@ -64,6 +64,7 @@ class SecretKind(Enum):
     TOOL_LOGIN = "tool-login"
     TOKEN = "token"
     SERVICE_PASSWORD = "service-password"
+    UNVERIFIED_TOKEN = "unverified-token"
     DERIVED_MIRROR = "derived-mirror"
     CONFIGURATION = "configuration"
     DOCUMENTATION = "documentation"
@@ -78,6 +79,7 @@ KIND_LABELS = {
     SecretKind.TOOL_LOGIN: "Tool-Login",
     SecretKind.TOKEN: "Token",
     SecretKind.SERVICE_PASSWORD: "Dienstpasswort",
+    SecretKind.UNVERIFIED_TOKEN: "Token, ungeprüft",
     SecretKind.DERIVED_MIRROR: "abgeleitete Kopie",
     SecretKind.CONFIGURATION: "Konfiguration",
     SecretKind.DOCUMENTATION: "Dokumentation",
@@ -156,8 +158,8 @@ class SecretEntry:
 
     @property
     def written_by_setup(self) -> bool:
-        """`--setup` writes a token it guides through and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
-        return self.source is not None or self.kind is SecretKind.SERVICE_PASSWORD
+        """`--setup` writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
+        return self.source is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
 
     @property
     def place(self) -> PurePosixPath:
@@ -792,15 +794,11 @@ def places(entry: SecretEntry) -> str:
     return f"{listed}; {entry.elsewhere}" if entry.elsewhere else listed
 
 
-def _revocation(entry: SecretEntry) -> str:
-    confirmed = entry.revocation_confirmed
-    return REVOCATION_CONFIRMED.format(date=confirmed) if confirmed else REVOCATION_UNCONFIRMED
-
-
 def _status_row(status: SecretStatus) -> list[str]:
     entry = status.entry
     if entry.retired:
-        return [entry.name, entry.kind.label, RETIRED, _revocation(entry), EXPIRY_UNKNOWN, places(entry), f"Widerruf: {entry.revoke_url}"]
+        revocation = REVOCATION_CONFIRMED.format(date=entry.revocation_confirmed) if entry.revocation_confirmed else REVOCATION_UNCONFIRMED
+        return [entry.name, entry.kind.label, RETIRED, revocation, EXPIRY_UNKNOWN, places(entry), f"Widerruf: {entry.revoke_url}"]
     presence = OPTIONAL.format(presence=status.presence.value) if entry.optional else status.presence.value
     return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.recreate]
 
