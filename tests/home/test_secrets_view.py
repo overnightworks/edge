@@ -61,7 +61,7 @@ INVENTORY = {
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
     "keycloak/clients/*",
-    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key",
+    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret",
 }
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
