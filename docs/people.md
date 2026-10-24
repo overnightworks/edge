@@ -15,20 +15,24 @@ contract" (presentator#293, 20.10.2026) and the counter-check of songmaker's pro
 - **Target.** `{subject}` is the target person's Keycloak `sub`, compared exactly. hal must resolve a
   name to the `sub` with an exact match before calling any app. A lookup by `{subject}` never creates
   an account in the app.
-- **Caller.** A separate identity: the operator, with his own access token, from the login hal
-  must offer (#256); no such login exists yet. The app checks the token in this order:
+- **Caller.** A separate identity: the operator, with his own access token, from the device login
+  hal must offer (#256): a code the operator enters in the browser and confirms with his passkey. hal
+  is a public Keycloak client, `hal`, without a secret. The realm's `hal` client arrives with hal's
+  first people command and is not built yet. The app checks the token in this order:
   1. the signature verifies with the realm's keys and the token is within its lifetime (`exp`,
      and `nbf` when present);
   2. the issuer is the realm's;
   3. the JWT header `typ` is `at+jwt` or `application/at+jwt` (RFC 9068);
   4. `aud` names exactly the app's own client, and no other app or Keycloak's `account`;
-  5. `azp` is a client id the app's configuration allows, in practice hal's client.
+  5. `azp` is a client id the app's configuration allows; for these routes that is `hal`, and the
+     token's subject is the person who ran the command.
 
   A missing token or any failure among these makes the token invalid and answers `401`. A valid
   token whose `groups` hold neither `/apps/<app>/admin` nor a group below it (subgroups count, as
   in the browser login) answers `403`. The token
   authenticates the caller; it never names the target. There is no hal service account and no
-  standing secret for these routes.
+  standing secret for these routes; someone outside the admin group is refused by the app even
+  through hal, and every erasure is attributable to the person who ran it.
 - A request to these routes never creates or provisions an account, neither the caller's nor the
   target's. Given a valid token, a caller without an account in the app is authorised by the
   token alone or refused with `403`.
@@ -80,6 +84,10 @@ Rules:
 
 - **Idempotent.** An unknown subject answers `200` with zero counts, never `404`, and the call never
   creates the subject. Running it twice leaves the second run at zero.
+- **Leftovers.** When the erasure leaves something behind, it answers `500` with the same body and
+  one more key, `leftover`: a list of `{kind, count, path}`, where `path` is relative to the app's
+  data volume. A path may contain the subject's internal id, never a name, an email or file content.
+  A complete erasure has no `leftover` key and answers `200`.
 - **Files before rows.** Delete the files before the rows that locate them, or keep them findable
   through a per-person directory, so an interrupted run can be repeated and still finds everything.
 - **Running work.** The erasure first stops new work for the person from starting and cancels queued and
@@ -108,7 +116,20 @@ hal must, in this order:
    data.
 4. Run a second dry run in every app. Only when every count is zero (`bytes` is not considered),
    untraceable copies excluded, delete the Keycloak user, again with his admin login.
-5. Retry a failed step by running the whole command again; idempotency makes that safe.
+5. Retry a failed step by running the whole command again; idempotency makes that safe. An
+   erasure that answers `500` with a `leftover` is repeated up to 3 times in all, and hal shows the
+   leftover entries on every attempt. After the third it ends with an error that names what is left
+   and the one next step; the daily check reminds the operator until the erasure is complete.
+
+What hal records and shows:
+
+- **On failure.** The journal carries the audit record: the subject id, who ran it, the result and the
+  leftover entries with their paths. It is pseudonymous, becomes unlinkable once the erasure is
+  complete, is deleted after 30 days (#167) and never holds a name or an email. The terminal shows the
+  same, plus the name the operator typed.
+- **On success.** The journal carries the same record with `result=complete` and the counts per app,
+  never a name or an email. The terminal shows per app what was deleted (kinds and counts) and one
+  closing line.
 
 Recovery after a crash works from the register, without the Keycloak user.
 
