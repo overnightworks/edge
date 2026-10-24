@@ -1037,7 +1037,8 @@ stop_mail_sink() {
 }
 
 sink_events() {  # sink_events <log name>: what the sink saw, after it was ready
-    sed '1,/^READY$/d' "$EVIDENCE/$1.log"
+    local name=$1
+    sed '1,/^READY$/d' "$EVIDENCE/$name.log"
     return
 }
 
@@ -1051,8 +1052,9 @@ set_up_mail_account() {  # set_up_mail_account <port>: the operator's two files,
 }
 
 mail_run() {  # mail_run <log>: one `home check` with news that has never been delivered, as the operator without a session
+    local log=$1
     rm -f "$MAIL_STATE/check-findings.txt"
-    run_as tester "$1" "$HOME_BIN" check
+    run_as tester "$log" "$HOME_BIN" check
     return 0
 }
 
@@ -1078,8 +1080,7 @@ printf '%s\n' "$@" >>/proof/evidence/msmtp-argv.log
 exec /usr/bin/msmtp "$@"
 SHIM
     chmod 755 /usr/local/bin/msmtp
-    : >"$EVIDENCE/msmtp-argv.log"
-    chmod 666 "$EVIDENCE/msmtp-argv.log"
+    install -o tester -g tester -m 0600 /dev/null "$EVIDENCE/msmtp-argv.log"
 
     set_up_mail_account 587
     start_mail_sink sink-d3 starttls 587 trusted

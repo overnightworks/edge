@@ -20,7 +20,7 @@ ACCOUNT_KEYS = frozenset({"host", "port", "user", "to"})
 IMPLICIT_TLS_PORT = 465
 SEND_TIMEOUT_SECONDS = 30
 HOSTNAME = re.compile(r"(?!-)[A-Za-z0-9.-]{1,253}")
-ADDRESS = re.compile(r"[^\s,<>\"'@\x00-\x1f\x7f]+@[^\s,<>\"'@\x00-\x1f\x7f]+")
+ADDRESS = re.compile(r"(?!.*\s)[^,<>\"'@\x00-\x1f\x7f]+@[^,<>\"'@\x00-\x1f\x7f]+")
 # The message reaches `sh` as a positional parameter, never as text of the script; msmtp's own argv follows it.
 PIPE_MESSAGE_TO_COMMAND = 'printf %s "$1" | { shift; exec "$@"; }'
 
