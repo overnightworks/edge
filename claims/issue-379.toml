@@ -3,6 +3,6 @@ agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
 role = "builder"
 base = "051ee112dcaea1bd07a39f22321edab5aeab7f9d"
 branch = "claude/issue-379-110-s3a-the-apex-serves-the-terms-page-a"
-scope = ["compose.yaml", "docs/architecture.md", "docs/external.md", "docs/stack.md", "external/cloudflare.tf", "external/tests/cloudflare.tftest.hcl", "external/tests/fixtures/cloudflare-redirect.yaml", "external/tests/live.tftest.hcl", "fleet.yaml", "src/edge/catalog.py", "src/edge/external/host_check.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_host_check.py"]
+scope = ["compose.yaml", "docs/architecture.md", "docs/external.md", "docs/stack.md", "external/cloudflare.tf", "external/tests/cloudflare.tftest.hcl", "external/tests/fixtures/cloudflare-redirect-keep.yaml", "external/tests/fixtures/cloudflare-redirect.yaml", "external/tests/live.tftest.hcl", "fleet.yaml", "src/edge/catalog.py", "src/edge/external/host_check.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_host_check.py", "tests/test_legal_unit.py"]
 opened_commit = "e1c59d720cb549cfd12bbd6e6e7666eacafecd99"
 whole_reason = "The catalog key, its validator, the OpenTofu rendering and the live declaration go live in one apply; split, a key is unvalidated or code has no caller."
