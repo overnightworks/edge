@@ -6,6 +6,7 @@ cloudflare:
     keep:
       - {path: /impressum, target: "https://app.edge-fixture.invalid"}
       - {path: /datenschutz, target: "https://app.edge-fixture.invalid"}
+    serve: {pages: [/terms, /conditions], files: /_legal/}
 
 github:
   org: edge-fixture.invalid
@@ -14,3 +15,6 @@ services:
   app:
     hosts:
       - {name: app, exposure: public, reason: "own login"}
+  legal:
+    hosts:
+      - {name: "@", exposure: public, reason: "static legal pages"}

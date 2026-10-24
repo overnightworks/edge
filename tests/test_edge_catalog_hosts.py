@@ -75,10 +75,11 @@ def test_a_host_carries_its_service_fqdn_and_all_five_fields():
     )
 
 
-def test_the_repositorys_catalog_declares_songmakers_hosts_on_8080_and_keycloaks_auth():
+def test_the_repositorys_catalog_declares_songmakers_hosts_the_legal_apex_and_keycloaks_auth():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
         ("songmaker.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
+        ("hallucinai.de", catalog.Exposure.PUBLIC, "http://127.0.0.1:8081", "/impressum"),
         (
             "auth.hallucinai.de",
             catalog.Exposure.PUBLIC,
@@ -400,8 +401,13 @@ REDIRECT = {
 }
 
 
-def with_redirect(redirect) -> dict:
-    return {**document(hosted(host("app"))), "cloudflare": {"zone": ZONE, "redirect": redirect}}
+SERVE = {"pages": ["/terms"], "files": "/_legal/"}
+APEX_HOST = hosted(host("@", ready="/impressum"), key="legal")
+
+
+def with_redirect(redirect, *more_entries: dict) -> dict:
+    entries = [hosted(host("app")), *more_entries]
+    return {**document(*entries), "cloudflare": {"zone": ZONE, "redirect": redirect}}
 
 
 def test_a_redirect_of_the_zones_names_is_accepted():
@@ -461,11 +467,94 @@ def test_a_malformed_redirect_is_refused_naming_the_key(redirect, key):
     assert refusal(with_redirect(redirect)).startswith(f"{key}:")
 
 
+def test_the_apex_may_be_a_host_and_redirected_while_it_serves_pages():
+    served = with_redirect({**REDIRECT, "serve": SERVE}, APEX_HOST)
+    assert [one.fqdn for one in catalog.hosts(served)] == [f"app.{ZONE}", ZONE]
+
+
+@pytest.mark.parametrize(
+    ("redirect", "entries", "key"),
+    [
+        pytest.param(REDIRECT, [APEX_HOST], "cloudflare.redirect.hosts", id="apex host, no serve"),
+        pytest.param(
+            {**REDIRECT, "hosts": ["www"], "serve": SERVE},
+            [APEX_HOST],
+            "cloudflare.redirect.serve",
+            id="serve without @ among the redirected names",
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": SERVE}, [], "cloudflare.redirect.serve", id="no apex host"
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": SERVE},
+            [hosted(host("@"), key="legal", run={"enabled": False})],
+            "cloudflare.redirect.serve",
+            id="a disabled apex host",
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": SERVE},
+            [APEX_HOST, hosted(host("www"), key="other")],
+            "cloudflare.redirect.hosts",
+            id="another redirected name is still a service host",
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": "/terms"},
+            [APEX_HOST],
+            "cloudflare.redirect.serve",
+            id="not a map",
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": {**SERVE, "extra": 1}},
+            [APEX_HOST],
+            "cloudflare.redirect.serve.extra",
+            id="unknown key",
+        ),
+        *[
+            pytest.param(
+                {**REDIRECT, "serve": {**SERVE, "pages": pages}},
+                [APEX_HOST],
+                "cloudflare.redirect.serve.pages",
+                id=f"pages {pages}",
+            )
+            for pages in ([], "/terms", ["/Terms"], ["terms"], ["/terms", "/terms"], [3])
+        ],
+        *[
+            pytest.param(
+                {**REDIRECT, "serve": {**SERVE, "files": files}},
+                [APEX_HOST],
+                "cloudflare.redirect.serve.files",
+                id=f"files {files}",
+            )
+            for files in ("/_legal", "/", "_legal/", "/_Legal/", "/_legal//", ["/_legal/"])
+        ],
+        pytest.param(
+            {**REDIRECT, "serve": {**SERVE, "pages": ["/impressum"]}},
+            [APEX_HOST],
+            "cloudflare.redirect.keep[0].path",
+            id="a kept path that is a page",
+        ),
+        pytest.param(
+            {
+                **REDIRECT,
+                "serve": SERVE,
+                "keep": [{"path": "/_legal/x", "target": "https://a.invalid"}],
+            },
+            [APEX_HOST],
+            "cloudflare.redirect.keep[0].path",
+            id="a kept path under the files prefix",
+        ),
+    ],
+)
+def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, key):
+    assert refusal(with_redirect(redirect, *entries)).startswith(f"{key}:")
+
+
 def test_the_repositorys_catalog_redirects_the_apex_and_www_and_keeps_the_legal_pages():
     redirect = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]
     assert redirect == {
         "hosts": ["@", "www"],
         "target": "https://auth.hallucinai.de/",
+        "serve": {"pages": ["/nutzungsbedingungen"], "files": "/_rechtliches/"},
         "keep": [
             {"path": path, "target": "https://songmaker.hallucinai.de"}
             for path in ("/impressum", "/datenschutz")

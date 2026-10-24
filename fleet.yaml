@@ -6,6 +6,7 @@ cloudflare:
     keep:
       - {path: /impressum, target: "https://songmaker.hallucinai.de"}
       - {path: /datenschutz, target: "https://songmaker.hallucinai.de"}
+    serve: {pages: [/nutzungsbedingungen], files: /_rechtliches/}
 
 github:
   org: overnightworks
@@ -26,6 +27,8 @@ services:
   legal:
     run:
       enabled: true
+    hosts:
+      - {name: "@", exposure: public, reason: "static legal pages without a login", ready: /impressum}
   agent-service:
     run:
       enabled: true

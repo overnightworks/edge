@@ -40,7 +40,9 @@ _HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
 _DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
 _HTTPS_URL = re.compile(r"https://[a-z0-9.-]+(:\d+)?(/[a-z0-9._~/-]*)?")
 _HTTPS_ORIGIN = re.compile(r"https://[a-z0-9.-]+(:\d+)?")
-_REDIRECT_KEYS = {"hosts", "target", "keep"}
+_REDIRECT_KEYS = {"hosts", "target", "keep", "serve"}
+_SERVE_KEYS = {"pages", "files"}
+_FILES_PREFIX = re.compile(r"(/[a-z0-9._~-]+)+/")
 _KEPT_PATH_KEYS = {"path", "target"}
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 # A compose project name: it is also the repository and the directory name of an app.
@@ -526,11 +528,44 @@ def _check_redirect(document: dict, zone: str, taken: set[str]) -> None:
     for field in redirect:
         if field not in _REDIRECT_KEYS:
             raise CatalogError(f"{path}.{field}: unknown key")
-    _check_redirect_hosts(f"{path}.hosts", redirect.get("hosts"), zone, taken)
+    serve = redirect.get("serve")
+    apex = fqdn_of(APEX, zone)
+    # Only while the apex serves pages may it be a service host and a redirected name.
+    unclaimed = taken - {apex} if serve is not None else taken
+    _check_redirect_hosts(f"{path}.hosts", redirect.get("hosts"), zone, unclaimed)
     target = redirect.get("target")
     if not (isinstance(target, str) and _HTTPS_URL.fullmatch(target) and _has_valid_origin(target)):
         raise CatalogError(f"{path}.target: must be an https URL without query or fragment")
-    _check_kept_paths(f"{path}.keep", redirect.get("keep", []))
+    kept = redirect.get("keep", [])
+    _check_kept_paths(f"{path}.keep", kept)
+    if serve is not None:
+        _check_serve(path, redirect, apex in taken, kept)
+
+
+def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: list[dict]) -> None:
+    """`serve`: the apex's own pages and files are answered by the tunnel, not redirected."""
+    path = f"{redirect_path}.serve"
+    serve = redirect["serve"]
+    if not isinstance(serve, dict):
+        raise CatalogError(f"{path}: must be a map")
+    for field in serve:
+        if field not in _SERVE_KEYS:
+            raise CatalogError(f"{path}.{field}: unknown key")
+    if APEX not in redirect["hosts"] or not apex_is_host:
+        raise CatalogError(f"{path}: needs '@' among the redirected names and as an enabled host")
+    pages, files = serve.get("pages"), serve.get("files")
+    if not (
+        isinstance(pages, list)
+        and pages
+        and all(isinstance(page, str) and _DENIED_PATH.fullmatch(page) for page in pages)
+        and len(set(pages)) == len(pages)
+    ):
+        raise CatalogError(f"{path}.pages: must be a list of different lowercase absolute paths")
+    if not (isinstance(files, str) and _FILES_PREFIX.fullmatch(files)):
+        raise CatalogError(f"{path}.files: must be a lowercase absolute path prefix ending in '/'")
+    for index, item in enumerate(kept):
+        if item["path"] in pages or item["path"].startswith(files):
+            raise CatalogError(f"{redirect_path}.keep[{index}].path: is served, not kept")
 
 
 def _check_redirect_hosts(path: str, names: Any, zone: str, taken: set[str]) -> None:
