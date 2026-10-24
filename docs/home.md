@@ -245,7 +245,7 @@ So liest sich die Tabelle:
 
 | Spalte | Werte |
 |---|---|
-| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, Token (ungeprüft), abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
+| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, „Token, ungeprüft“, abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
 | Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen`; ein optionaler Eintrag trägt `(optional)` |
 | Prüfung | bei einem zurückgezogenen Eintrag `Widerruf unbestätigt` oder `Widerruf bestätigt <Datum>` |
 | Ort | die Pfade im Home; liegen Kopien woanders (etwa `/etc/cloudflared`, root), nennt sie die Zelle dahinter, gelesen werden sie nie |
@@ -316,7 +316,7 @@ Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
 Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/key-id` und
 `…/api-token`, Art „Token, ungeprüft“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
 der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
-bietet die Cloudflare-Startseite an. Er speichert sie so, wie sie eingefügt wurden: gespeichert, nicht
+bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter: gespeichert, nicht
 geprüft, denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
 zeigt beide als `nicht geprüft`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt

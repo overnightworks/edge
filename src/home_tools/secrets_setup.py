@@ -445,7 +445,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
-    """O6: the value is asked hidden and stored as pasted; no provider is asked, because the TURN key's token is no user token."""
+    """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
     _say(f"Anlegen: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(boundaries.terminal)
