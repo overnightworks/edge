@@ -47,9 +47,11 @@ services:
       - ./probe/keycloak/backchannel_client.py:/cell/backchannel_client.py:ro
 
 networks:
-  # The project's own copy of the back-channel network, not the live one.
+  # The project's own copies of the back-channel networks, not the live ones.
   backchannel-songmaker:
     name: ${COMPOSE_PROJECT_NAME}_backchannel_songmaker
+  backchannel-hopin:
+    name: ${COMPOSE_PROJECT_NAME}_backchannel_hopin
 
 secrets:
   keycloak_db_password:

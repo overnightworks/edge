@@ -614,7 +614,7 @@ class Stack:
             f"the observe stopped by {stop_signal.name} {moment.__name__} exited 0 with "
             f"{len(stdout)} bytes of a cut inventory",
         )
-        deadline = time.monotonic() + Probe.logout_timeout_seconds
+        deadline = time.monotonic() + OBSERVER_START_SECONDS
         while observer_containers() and time.monotonic() < deadline:
             time.sleep(0.5)
         return observer_containers()
@@ -2114,6 +2114,7 @@ class Probe:
         tokens = self.app_client_sign_in(client, browser, username, password, client_secret)
         groups = claims(tokens["id_token"]).get("groups", [])
         expect(client.group in groups, f"{name}'s ID token groups are {groups}")
+        backchannel_cell.refresh_token_follows_the_ruling(name, tokens, expect)
         subscription_token = ""
         if client.agent_workload:
             self.person_token_is_no_workload(client, tokens["access_token"])
@@ -2129,13 +2130,12 @@ class Probe:
             "10",
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
             f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
-            f"with groups {groups}{subscription_token}; no code challenge, a callback with a "
-            "suffix, plain http, the "
-            f"password grant, {'' if client.agent_workload else 'client_credentials, '}and the "
-            "offline_access scope are refused; the "
-            f"end-session page asks before logging out for {client.logout_redirect} and refuses "
-            "an unregistered address and the origin root; the client has no front- or back-channel "
-            "logout or optional scope, a base URL and shows in the console"
+            f"with groups {groups}{subscription_token}; no code challenge, a suffixed callback, "
+            f"http, the password grant, {'' if client.agent_workload else 'client_credentials, '}"
+            "and the offline_access scope are refused; the end-session page asks before logging "
+            f"out for {client.logout_redirect} and refuses an unregistered address and the "
+            "origin root; the client's logout, optional scopes, base URL, console listing and "
+            "refresh token are as ruled"
             + (
                 f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
                 f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
