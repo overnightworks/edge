@@ -18,7 +18,7 @@ mock_provider "cloudflare" {
 }
 
 # The live catalog, rendered with the mocked provider: songmaker's host with its deny, and the
-# apex and www as proxied records that redirect at the edge and have no tunnel line.
+# apex and www as proxied records that redirect at the edge; only the apex, as legal's host, has a tunnel line.
 run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirect" {
   command = plan
 
@@ -55,11 +55,11 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
   assert {
     condition = (
       length(cloudflare_dns_record.host) == 4
-      && length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 3
+      && length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 4
       && alltrue([for fqdn in [local.fleet.cloudflare.zone, "www.${local.fleet.cloudflare.zone}"] : cloudflare_dns_record.host[fqdn].proxied])
       && !can(cloudflare_zero_trust_access_application.host["songmaker.${local.fleet.cloudflare.zone}"])
     )
-    error_message = "the rendered plan does not have 4 proxied records and 3 tunnel lines (songmaker, auth, the 404), with the apex and www only as records"
+    error_message = "the rendered plan does not have 4 proxied records and 4 tunnel lines (songmaker, the apex, auth, the 404), with www only as a record"
   }
 
   assert {
@@ -67,17 +67,20 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
       [for rule in cloudflare_ruleset.apex_redirect[0].rules : rule.action_parameters.from_value.target_url.value] == [
         "https://songmaker.${local.fleet.cloudflare.zone}/impressum",
         "https://songmaker.${local.fleet.cloudflare.zone}/datenschutz",
+        "https://${local.fleet.cloudflare.zone}/nutzungsbedingungen",
         "https://auth.${local.fleet.cloudflare.zone}/",
       ]
       && alltrue([
         for rule in cloudflare_ruleset.apex_redirect[0].rules :
         rule.action_parameters.from_value.status_code == 302 && !rule.action_parameters.from_value.preserve_query_string
       ])
+      && length(cloudflare_ruleset.apex_redirect[0].rules) <= 10
+      && strcontains(cloudflare_ruleset.apex_redirect[0].rules[3].expression, "starts_with(http.request.uri.path, \"/_rechtliches/\")")
       && alltrue([
         for rule in cloudflare_ruleset.apex_redirect[0].rules :
         startswith(rule.expression, "ssl and ") && strcontains(rule.expression, "lower(http.host) eq \"${local.fleet.cloudflare.zone}\"") && strcontains(rule.expression, "starts_with(lower(http.host), \"www.${local.fleet.cloudflare.zone}:\")")
       ])
     )
-    error_message = "the apex redirect is not /impressum and /datenschutz to songmaker, then everything else to auth, 302 without the query, for the apex and www"
+    error_message = "the apex redirect is not /impressum and /datenschutz to songmaker, the terms page to the apex, then everything else but the apex's served paths to auth, 302 without the query, for the apex and www"
   }
 }

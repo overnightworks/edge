@@ -148,7 +148,7 @@ def compare(
     declared = {host.fqdn: host for host in hosts}
     findings = [
         finding
-        for fqdn in [host.fqdn for host in hosts] + sorted(redirected)
+        for fqdn in [host.fqdn for host in hosts] + sorted(redirected - declared.keys())
         for finding in _record_findings(fqdn, snapshot)
     ]
     hosts_without_record = {f.subject for f in findings if f.problem is Problem.RECORD_MISSING}
