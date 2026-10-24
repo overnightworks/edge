@@ -335,34 +335,6 @@ COVERAGE: dict[str, Coverage] = {
         "client secrets never leave, so a rotated config-cli secret is invisible"
     ),
 }
-# keycloak-config-cli 6.5.1's import types (its `import.managed.*` switches and the realm and
-# user imports), each onto the realm representation key above it reads or leaves out.
-IMPORT_TYPES = {
-    "realm": "realm",
-    "user": "users",
-    "group": "groups",
-    "sub-group": "groups",
-    "role": "roles",
-    "client": "clients",
-    "client-scope": "clientScopes",
-    "scope-mapping": "scopeMappings",
-    "client-scope-mapping": "clientScopeMappings",
-    "authentication-flow": "authenticationFlows",
-    "required-action": "requiredActions",
-    "identity-provider": "identityProviders",
-    "identity-provider-mapper": "identityProviderMappers",
-    "component": "components",
-    "sub-component": "subComponents",
-    "client-authorization-resources": "authorizationSettings",
-    "client-authorization-policies": "authorizationSettings",
-    "client-authorization-scopes": "authorizationSettings",
-    "client-policies": "clientPolicies",
-    "client-profiles": "clientProfiles",
-    "message-bundles": "messageBundles",
-    "user-profile": "userProfile",
-    "organization": "organizations",
-    "workflow": "workflows",
-}
 
 
 # --- Projection -------------------------------------------------------------------------------
