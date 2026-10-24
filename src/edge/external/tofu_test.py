@@ -1,7 +1,7 @@
 """edge's one way to run the OpenTofu tests: pinned tofu, exact environment, mocked providers.
 
-`python -m edge.external.tofu_test ROOT` installs or reuses the pinned tofu under ROOT and runs
-`tofu test` in `external/`. It is a build helper, not an `edge` subcommand. The tests may never act
+`python -m edge.external.tofu_test` runs `tofu test` in `external/` with the tofu on PATH, which
+must be the pinned version. It is a build helper, not an `edge` subcommand. The tests may never act
 on the live accounts, so it refuses a test that does not mock the provider or names a live
 object, and it gives tofu no token.
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from edge import catalog
-from edge.external import secrets, tofu, tofu_binary
+from edge.external import secrets, tofu
 from edge.external.tofu import EXTERNAL_ROOT, PROJECT_ROOT, TofuError
 
 FLEET_FILE = PROJECT_ROOT / "fleet.yaml"
@@ -113,15 +113,18 @@ def run_tests(tofu_path: Path, external_directory: Path = EXTERNAL_ROOT) -> int:
 
 
 def main(arguments: list[str]) -> int:
-    if len(arguments) != 1:
-        print("usage: python -m edge.external.tofu_test ROOT", file=sys.stderr)
+    if arguments:
+        print("usage: python -m edge.external.tofu_test", file=sys.stderr)
         return 2
     try:
-        installed = tofu_binary.ensure(Path(arguments[0]))
+        located = tofu.locate_tofu()
+        with tempfile.TemporaryDirectory(prefix="edge-tofu-version-") as scratch:
+            environment = test_environment(located, Path(scratch), Path(scratch))
+            tofu.require_pinned_version(located, environment)
     except TofuError as error:
         print(f"edge: {error}", file=sys.stderr)
         return 2
-    return run_tests(installed)
+    return run_tests(located)
 
 
 if __name__ == "__main__":
