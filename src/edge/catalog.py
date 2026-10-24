@@ -563,8 +563,11 @@ def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: l
         raise CatalogError(f"{path}.pages: must be a list of different lowercase absolute paths")
     if not (isinstance(files, str) and _FILES_PREFIX.fullmatch(files)):
         raise CatalogError(f"{path}.files: must be a lowercase absolute path prefix ending in '/'")
+    files_stem = files.rstrip("/")
+    if files_stem in pages:
+        raise CatalogError(f"{path}.pages: {files_stem} is also the files prefix")
     for index, item in enumerate(kept):
-        if item["path"] in pages or item["path"].startswith(files):
+        if item["path"] in pages or item["path"] == files_stem or item["path"].startswith(files):
             raise CatalogError(f"{redirect_path}.keep[{index}].path: is served, not kept")
 
 

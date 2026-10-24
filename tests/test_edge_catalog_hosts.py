@@ -544,6 +544,22 @@ def test_the_apex_may_be_a_host_and_redirected_while_it_serves_pages():
             "cloudflare.redirect.keep[0].path",
             id="a kept path under the files prefix",
         ),
+        pytest.param(
+            {
+                **REDIRECT,
+                "serve": SERVE,
+                "keep": [{"path": "/_legal", "target": "https://a.invalid"}],
+            },
+            [APEX_HOST],
+            "cloudflare.redirect.keep[0].path",
+            id="a kept path equal to the files prefix without its slash",
+        ),
+        pytest.param(
+            {**REDIRECT, "serve": {**SERVE, "pages": ["/_legal"]}},
+            [APEX_HOST],
+            "cloudflare.redirect.serve.pages",
+            id="a page equal to the files prefix without its slash",
+        ),
     ],
 )
 def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, key):
