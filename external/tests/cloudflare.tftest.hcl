@@ -561,6 +561,31 @@ run "x11b_the_redirected_names_get_records_the_apex_a_tunnel_line_www_none_and_o
   }
 }
 
+run "x11b_a_redirect_without_serve_keeps_paths_then_a_plain_catch_all_and_no_apex_tunnel_line" {
+  command = plan
+
+  variables {
+    catalog_file = "tests/fixtures/cloudflare-redirect-keep.yaml"
+  }
+
+  assert {
+    condition = (
+      toset(keys(cloudflare_dns_record.host)) == toset(["app.edge-fixture.invalid", "edge-fixture.invalid", "www.edge-fixture.invalid"])
+      && [for rule in cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress : rule.hostname == null ? "" : rule.hostname] == ["app.edge-fixture.invalid", ""]
+    )
+    error_message = "without serve the redirect names do not have three records, or the tunnel lines are not the app and the 404"
+  }
+
+  assert {
+    condition = [for rule in cloudflare_ruleset.apex_redirect[0].rules : [rule.expression, rule.action_parameters.from_value.target_url.value]] == [
+      ["ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/impressum\" \"/impressum/\"}", "https://app.edge-fixture.invalid/impressum"],
+      ["ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") ) and lower(http.request.uri.path) in {\"/datenschutz\" \"/datenschutz/\"}", "https://app.edge-fixture.invalid/datenschutz"],
+      ["ssl and ( lower(http.host) eq \"edge-fixture.invalid\" or starts_with(lower(http.host), \"edge-fixture.invalid:\") or lower(http.host) eq \"www.edge-fixture.invalid\" or starts_with(lower(http.host), \"www.edge-fixture.invalid:\") )", "https://auth.edge-fixture.invalid/"],
+    ]
+    error_message = "without serve the redirect is not the kept paths, then a catch-all with no exclusion"
+  }
+}
+
 run "x11b_a_catalog_without_a_redirect_plans_no_redirect_ruleset" {
   command = plan
 
