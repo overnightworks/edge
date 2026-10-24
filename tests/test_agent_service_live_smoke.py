@@ -453,3 +453,12 @@ def test_a_compose_that_cannot_resolve_stops_the_run_with_its_last_line():
 
     with pytest.raises(LiveSmokeFailed, match="config failed: required variable EDGE_DOMAIN"):
         FakeStack(answer=refusing).project  # noqa: B018
+
+
+def test_the_listeners_probe_container_logs_to_none():
+    stack = FakeStack(answer=healthy_service)
+
+    live_smoke.listeners_cell(stack, "service-id")
+
+    (probe,) = [command for command in stack.asked if command[:2] == ["docker", "run"]]
+    assert probe[probe.index("--log-driver") + 1] == "none"

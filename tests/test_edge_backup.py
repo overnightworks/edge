@@ -930,6 +930,7 @@ def test_restic_runs_without_network_privileges_or_a_writable_root(edge_backup, 
     assert backup[backup.index("--network") + 1] == "none"
     assert backup[backup.index("--hostname") + 1] == "edge-backup"
     assert {"--read-only", "--rm"} <= set(backup)
+    assert backup[backup.index("--log-driver") + 1] == "none"
     assert backup[backup.index("--cap-drop") + 1] == "ALL"
     assert any(m.endswith("target=/backup/songmaker/audio,readonly") for m in backup)
 
