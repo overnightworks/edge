@@ -1,0 +1,7 @@
+claim_id = "8d6ac762a37a4bf29d6b0db13772024c"
+agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
+role = "builder"
+base = "e438b212ff2b15d5ae75f0e11de4ab33d67d0056"
+branch = "claude/issue-319-question-from-presentator-which-client-i"
+scope = ["docs/people.md"]
+opened_commit = "1e5ba2746d1dc319202c3f84aad7af683ae16e24"
