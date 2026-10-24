@@ -697,7 +697,14 @@ def test_p44_the_missing_origin_stops_before_any_sign_in(tmp_path, capsys):
     def signed_in(_: str):
         pytest.fail("signed in")
 
-    assert live_signer.main([], service_toml=service, sign_in_with=signed_in) == 1
+    def reached_docker():
+        pytest.fail("reached the stack")
+
+    code = live_signer.main(
+        [], service_toml=service, sign_in_with=signed_in, stack_of=reached_docker
+    )
+
+    assert code == 1
     assert "#346 slice C" in capsys.readouterr().err
 
 
@@ -792,7 +799,7 @@ def test_p41_the_standin_is_removed_by_its_exact_name_whatever_the_verdict(case)
     assert stack.standin.ended
 
 
-def test_p41_a_standin_that_gone_by_itself_is_a_clean_removal():
+def test_p41_a_standin_that_is_gone_by_itself_is_a_clean_removal():
     code, printed = run_signer(standin_stack(removal=1, gone=True))
 
     assert code == 0
@@ -805,10 +812,17 @@ def test_p41_a_standin_that_prints_nothing_gives_no_verdict_at_the_deadline():
     process = FakeStandIn([])
     process.stdout = silent
 
-    assert live_signer.read_line(process, 0.01) is None
+    answers: list[str | None] = []
+    caller = threading.Thread(target=lambda: answers.append(live_signer.read_line(process, 0.01)))
+    caller.start()
+    caller.join(1)
 
+    finished = not caller.is_alive()
     os.close(write_end)  # the reader thread sees end of file and ends
+    caller.join(1)
     silent.close()
+    assert finished
+    assert answers == [None]
 
 
 def test_p41_a_smoke_the_host_gave_up_on_still_removes_the_standin():

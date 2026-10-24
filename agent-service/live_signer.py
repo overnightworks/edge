@@ -243,11 +243,12 @@ def main(
     argv: Sequence[str],
     service_toml: Path = SERVICE_TOML,
     sign_in_with: Callable[[str], Tokens] = sign_in,
+    stack_of: Callable[[], Stack] = Stack,
 ) -> int:
     argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args(argv)
     try:
         origin = mcp_origin(service_toml)
-        stack = Stack()
+        stack = stack_of()
         if busy := occupied_network_cell(stack):
             Report([]).add(busy)  # before the sign-in, so that nothing secret exists yet
             return 1
