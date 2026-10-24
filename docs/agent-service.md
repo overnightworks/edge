@@ -2,8 +2,8 @@
 
 Reference and runbook for the operator and for an engineer changing the agent service. The code is
 the truth: `compose.yaml` (the `agent-service` service, its `agent`, `agent-songmaker`, `agent-presentator` and `egress` networks),
-`agent-service/service.toml`, `agent-service/image/` (the image recipe), `agent-service/live_smoke.py`
-and the probes under `probe/agent-service/`. The egress gateway it leaves through is in
+`agent-service/service.toml`, `agent-service/image/` (the image recipe), `agent-service/live_smoke.py`,
+`agent-service/live_signer.py` and the probes under `probe/agent-service/`. The egress gateway it leaves through is in
 [internal-ca.md](internal-ca.md); the platform picture is [architecture.md](architecture.md).
 
 ## The image
@@ -123,8 +123,8 @@ private key's directory entry is removed by the rename; the blocks are not erase
 | R3 | one container recreated | every tool call fails with 401 until the other is recreated |
 | R4 | both recreated | done once a new capability verifies against the new `public.pem` and every songmaker-web container was created after it |
 
-The command ends by naming the two recreates: agent-service with `python3 agent-service/live_smoke.py
---mcp-signer` while songmaker-web is not on the network (otherwise as in "The service"), then
+The command ends by naming the two recreates: agent-service with `python3 agent-service/live_signer.py`
+while songmaker-web is not on the network (otherwise as in "The service"), then
 songmaker-web with songmaker's own deploy command. A file bind keeps the old inode, so only a recreate
 reaches a container, never a restart. There is no grace period.
 
@@ -185,6 +185,18 @@ probe's `egress.py`. It needs the image, the client's secret file and the login 
 The realm declares these groups but grants no membership: add yourself once in the admin
 console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
 the workload token lives five minutes, and send the head its report.
+
+**The live signer proof** is `cd ~/git/edge && python3 agent-service/live_signer.py`, run by the operator
+after a key change or a change of the service's gateway route. It signs you in as the live smoke does,
+recreates the service and runs `agent-smoke --tool` twice, with no paid turn: both runs fail before any
+CLI starts. L4a, with no backend behind the gateway, holds when the run ends `failed` with no text and the
+service log shows the gateway's refusal. L4b joins a stand-in, `mcp_signer.py` in the service image with only
+`public.pem` mounted read-only, at songmaker-web's place on songmaker's MCP network, and holds when the
+capability it receives verifies against `public.pem` (signature, `kid`, `aud`, the one tool, the Host
+`songmaker.mcp.internal`); the stand-in is removed afterwards. Only the verdict is printed, never the
+capability. It needs `[apps.songmaker] mcp_origin` in `service.toml` and refuses until slice C of #346
+sets it. It also refuses once anything but traefik-mcp is on songmaker's MCP network; from then on
+songmaker's own call is the proof.
 
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project

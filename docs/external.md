@@ -161,14 +161,14 @@ Item in den Katalog, sonst entfernt er sie bewusst. Nichts verschwindet ungesehe
 **Die Weiterleitung des Apex** (`cloudflare_ruleset.apex_redirect`, Phase `http_request_dynamic_redirect`):
 `cloudflare.redirect` im Katalog nennt die Namen (`hallucinai.de` und `www`), das Ziel
 (`https://auth.hallucinai.de/`, dessen Adresse Keycloak selbst auf die Kontokonsole leitet) und die
-Pfade, die bleiben (`/impressum`, `/datenschutz`, je mit dem Ursprung von songmaker). Cloudflare antwortet
+Pfade, die bleiben (`/impressum`, `/datenschutz`, je mit dem Ursprung von songmaker), und `serve`: die Seiten (`/nutzungsbedingungen`) und das Praefix der Dateien (`/_rechtliches/`), die der Apex selbst beantwortet. Cloudflare antwortet
 mit 302, ohne Tunnel: ein bleibender Pfad geht mit Pfad zu seinem Ursprung, alles andere zum Ziel, Pfad und
 Query entfallen (`preserve_query_string = false`); alte Links behalten keinen Pfad (Betreiber, 18.10.2026).
 Single Redirects laufen der Reihe nach, und ein Redirect beendet die Auswertung
 ([Doku](https://developers.cloudflare.com/rules/url-forwarding/), dort auch die 10 Regeln des Free-Plans):
-die bleibenden Pfade stehen vor der letzten Regel. Der Host gilt mit und ohne `:<port>`, ein bleibender Pfad
+die bleibenden Pfade stehen vor der letzten Regel. Mit `serve` folgt je Seite eine Regel, die jede andere Schreibweise (Grossschreibung, Schraegstrich, `www`) auf den genauen Pfad am Apex leitet; die letzte Regel nimmt die Seiten und das Dateipraefix des Apex aus, sie gehen durch den Tunnel zur Einheit `legal`. Der Host gilt mit und ohne `:<port>`, ein bleibender Pfad
 genau, mit und ohne abschliessenden Schraegstrich und ohne Beachtung der Grossschreibung; er geht ohne Schraegstrich weiter. Nur https wird weitergeleitet (`ssl`): `http://` geht zuerst auf demselben Host nach https (Always Use HTTPS), wie es der HSTS-Preload verlangt. Die Namen behalten proxied
-DNS-Eintraege, haben aber keine Tunnelzeile und keinen Ausschluss; ihr Eintrag wartet auf dieses Regelwerk,
+DNS-Eintraege, haben aber keine Tunnelzeile (nur der Apex hat eine, als Host von `legal`) und keinen Ausschluss; ihr Eintrag wartet auf dieses Regelwerk,
 wie auf den Ausschluss. Die Felder `action_parameters.from_value` des Providers 5.28.0:
 [ruleset.md](https://github.com/cloudflare/terraform-provider-cloudflare/blob/v5.28.0/docs/resources/ruleset.md).
 Gibt es den Einstiegspunkt `http_request_dynamic_redirect` der Zone schon (Dashboard-Regeln), schlaegt das

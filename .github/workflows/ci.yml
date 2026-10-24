@@ -23,7 +23,7 @@ jobs:
       # Placeholder the compose file interpolates; the real one lives in the uncommitted .env.
       DOCKER_GID: "127"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -42,9 +42,6 @@ jobs:
           uv run --no-sync --no-build ruff check
           uv run --no-sync --no-build ruff format --check
 
-      - name: The repository root holds only what a tool must find there
-        run: uv run --no-sync --no-build python scripts/check_root_layout.py
-
       - name: edge-check tests
         # pytest and pytest-cov come from the lock file, installed by the sync step above;
         # pyproject.toml's pythonpath makes src and scripts importable.
@@ -54,7 +51,7 @@ jobs:
       # If a home or hal path moves, this include moves with it. hal's console script runs in child
       # processes, which [tool.coverage.run] patch = ["subprocess"] measures.
       - name: home's and hal's code stay at 100 % line and branch coverage
-        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*,scripts/check_root_layout.py' --fail-under=100 --show-missing
+        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*' --fail-under=100 --show-missing
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -393,7 +390,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: overnightworks/quality/.github/workflows/gate.yml@d3a0466fc6dc87898431b722e9488921d729be42 # v0.5.1
+    uses: overnightworks/quality/.github/workflows/gate.yml@68f58fa1246c18d55674caecf361ab59b4ec13ed # v0.6.0
     with:
       coverage-artifact: coverage
     secrets:

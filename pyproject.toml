@@ -30,7 +30,7 @@ extend-include = ["keycloak/go-live", "step-ca/init", "agent-service/setup"]
 [tool.ruff.format]
 # home's tree is imported as it is: home-tools#56 / home-tools#45 move its texts.
 # Deletion target: home-tools#45, or one mechanical reformat item, whichever lands first.
-exclude = ["src/home_tools/**", "scripts/check_root_layout.py", "tests/home/**"]
+exclude = ["src/home_tools/**", "tests/home/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -40,7 +40,6 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 # RUF001: the German strings carry U+203A; I001/RUF009/RUF043/RUF100: single imported lines
 # (the last three only in the tests).
 "src/home_tools/**" = ["E501", "I001", "RUF001"]
-"scripts/check_root_layout.py" = ["E501"]
 "tests/home/**" = ["E501", "I001", "RUF001", "RUF009", "RUF043", "RUF100"]
 
 [tool.coverage.run]

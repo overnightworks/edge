@@ -428,12 +428,12 @@ def test_records_at_undeclared_names_are_reported_unless_they_are_not_hosts(extr
     assert result == expected
 
 
-def test_the_records_of_redirected_names_are_declared_and_other_names_still_are_not():
-    current = snapshot(tunnel_record("@"), tunnel_record("www"), tunnel_record("stray"))
-    check = host_check.compare(ZONE, [], current, {}, frozenset({fqdn("@"), fqdn("www")}))
-    assert [(f.problem.value, f.subject) for f in check.findings] == [
-        ("undeclared-record", fqdn("stray"))
-    ]
+def test_a_name_hosted_and_redirected_is_judged_once_and_stray_names_stay_undeclared():
+    """#379 cell 6: the host check judges the apex once."""
+    current, hosts = snapshot(tunnel_record("www"), tunnel_record("stray")), [public("@")]
+    answers, redirected = right_answers(hosts, current), frozenset({fqdn("@"), fqdn("www")})
+    check = host_check.compare(ZONE, hosts, current, answers, redirected)
+    assert [f.subject for f in check.findings] == [fqdn("@"), fqdn("stray")]
 
 
 @pytest.mark.parametrize(("records", "expected"), WWW_RECORD_CASES)

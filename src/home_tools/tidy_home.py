@@ -548,13 +548,6 @@ def _docker_findings(run: CommandRunner, now: datetime, limits: Limits) -> list[
     return findings
 
 
-def docker_leftovers(run: CommandRunner, now: datetime, limits: Limits) -> list[Finding]:
-    """Stopped probe containers, dangling images and the build cache grow without bound."""
-    if not _docker_available(run):
-        return []
-    return _docker_findings(run, now, limits)
-
-
 def run_housekeeping(run: CommandRunner) -> str:
     """uv/npm cache maintenance: runs under --apply, never a Fund, never affects the exit code."""
     outcomes: list[str] = []

@@ -24,6 +24,9 @@ x-agent-attachments: &agent-attachments
     api.anthropic.com: *egress-address
     auth.hallucinai.de: *egress-address
 
+# A one-off container's output belongs to its caller alone: it stays out of the journal.
+x-one-off-logging: &one-off-logging {driver: none}
+
 # A bridge that is internal and gets no address of its own on the host: no host listener is
 # reachable from it (Engine 28.0+).
 x-isolated-bridge: &isolated-bridge
@@ -165,7 +168,7 @@ services:
       traefik.http.routers.auth-admin.rule: Host(`localhost`)
 
   # The imprint (and the other legal pages) of every app at hallucinai.de: static files from legal/,
-  # the login theme's fonts as the one copy. The page is not public until the catalog gives it a host.
+  # the login theme's fonts as the one copy. The catalog gives it the apex as its host; the redirect leaves the served paths to it.
   legal:
     profiles: [legal]
     image: nginxinc/nginx-unprivileged:1.30.6-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
@@ -193,6 +196,7 @@ services:
   keycloak-config-cli:
     image: adorsys/keycloak-config-cli:6.5.1-26.5.5@sha256:0955d98c8a341898b7aa177477edf8a1e90569ae50bbe7598141c1270b773274
     profiles: [apply]
+    logging: *one-off-logging
     depends_on: [keycloak]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -258,6 +262,7 @@ services:
     # agent-probe below carries the same pin; Dependabot moves all of them in one pull.
     image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
     profiles: [apply]
+    logging: *one-off-logging
     user: "65534:65534"
     read_only: true
     cap_drop: [ALL]
@@ -434,6 +439,7 @@ services:
     image: *agent-service-image
     pull_policy: never
     profiles: [apply]
+    logging: *one-off-logging
     user: "65534:65534"
     read_only: true
     cap_drop: [ALL]

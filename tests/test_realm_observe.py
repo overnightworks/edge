@@ -686,9 +686,39 @@ def test_every_top_level_key_of_the_realm_files_is_read_or_a_named_gap(config_fi
     assert sorted(set(declared) - observer.COVERAGE.keys()) == []
 
 
+# keycloak-config-cli 6.5.1's import types (its `import.managed.*` switches and the realm and
+# user imports), each onto the realm representation key above it reads or leaves out.
+IMPORT_TYPES = {
+    "realm": "realm",
+    "user": "users",
+    "group": "groups",
+    "sub-group": "groups",
+    "role": "roles",
+    "client": "clients",
+    "client-scope": "clientScopes",
+    "scope-mapping": "scopeMappings",
+    "client-scope-mapping": "clientScopeMappings",
+    "authentication-flow": "authenticationFlows",
+    "required-action": "requiredActions",
+    "identity-provider": "identityProviders",
+    "identity-provider-mapper": "identityProviderMappers",
+    "component": "components",
+    "sub-component": "subComponents",
+    "client-authorization-resources": "authorizationSettings",
+    "client-authorization-policies": "authorizationSettings",
+    "client-authorization-scopes": "authorizationSettings",
+    "client-policies": "clientPolicies",
+    "client-profiles": "clientProfiles",
+    "message-bundles": "messageBundles",
+    "user-profile": "userProfile",
+    "organization": "organizations",
+    "workflow": "workflows",
+}
+
+
 def test_every_config_cli_import_type_maps_onto_the_coverage_table() -> None:
     """Rule 3: each config-cli 6.5.1 import type is a read or a named gap."""
-    assert sorted(set(observer.IMPORT_TYPES.values()) - observer.COVERAGE.keys()) == []
+    assert sorted(set(IMPORT_TYPES.values()) - observer.COVERAGE.keys()) == []
 
 
 def test_observe_py_imports_alone_with_python_isolated(tmp_path: Path) -> None:
