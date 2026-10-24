@@ -1,0 +1,8 @@
+claim_id = "e705097ba2444428acdd383e3dfd308b"
+agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
+role = "builder"
+base = "051ee112dcaea1bd07a39f22321edab5aeab7f9d"
+branch = "claude/issue-363-ci-installs-opentofu-with-the-maintained"
+scope = [".github/workflows/ci.yml", "external/opentofu.toml", "src/edge/external/tofu_binary.py", "src/edge/external/tofu_test.py", "tests/test_edge_tofu_binary.py", "tests/test_edge_tofu_test.py"]
+opened_commit = "ab75a64ed76962436dd0a987ae27dc46246d63c6"
+whole_reason = "CI's OpenTofu install, the in-house installer it replaces, that installer's one other importer and their tests change together; split, CI or the importer points at a deleted module."
