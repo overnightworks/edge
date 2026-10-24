@@ -45,6 +45,7 @@ from home_tools.secrets_view import (
     Provider,
     SecretEntry,
     SecretFinding,
+    SecretKind,
     TokenSource,
     load_manifest,
     presence,
@@ -64,6 +65,7 @@ ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
 OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
 PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
+SKIPPED = "übersprungen; nichts gespeichert"
 NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
 PLAN_READER = "edge external plan"
 NEXT_STEP = "next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
@@ -84,6 +86,7 @@ RESPONSE_LIMIT_BYTES = 64 * 1024
 GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new"
 GITHUB_API = "https://api.github.com"
 CLOUDFLARE_TOKEN_PAGE = "https://dash.cloudflare.com/profile/api-tokens"
+CLOUDFLARE_DASHBOARD_PAGE = "https://dash.cloudflare.com/"
 CLOUDFLARE_VERIFY_URL = "https://api.cloudflare.com/client/v4/user/tokens/verify"
 CLOUDFLARE_ACTIVE = "active"
 NOT_YET_VALID = (
@@ -378,9 +381,12 @@ def _say(*lines: str) -> None:
 
 
 def stored_line(entry: SecretEntry) -> str:
-    """What the walk says once an entry is stored: a token after its provider confirmed it, a service password unseen."""
-    done = "geprüft" if entry.source else "erzeugt"
-    return f"{done} und gespeichert: {HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
+    """What the walk says once an entry is stored: a token after its provider confirmed it, an unverified one as such, a service password unseen."""
+    if entry.kind is SecretKind.UNVERIFIED_TOKEN:
+        done = "gespeichert, nicht geprüft"
+    else:
+        done = "geprüft und gespeichert" if entry.source else "erzeugt und gespeichert"
+    return f"{done}: {HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
 
 
 def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
@@ -405,28 +411,47 @@ def _is_visible_ascii(value: str) -> bool:
     return all("!" <= character <= "~" for character in value)
 
 
+def _visible_paste(terminal: Terminal) -> str:
+    """The first pasted value that is visible ASCII; empty when the operator leaves the prompt empty."""
+    while value := _paste_unseen(terminal):
+        if _is_visible_ascii(value):
+            return value
+        _say(UNSENDABLE_PASTE)
+    return ""
+
+
 def _accepted_paste(source: TokenSource, boundaries: Boundaries) -> str | None:
     """The first pasted value the provider accepts; None when the operator leaves the prompt empty."""
-    while value := _paste_unseen(boundaries.terminal):
-        if not _is_visible_ascii(value):
-            _say(UNSENDABLE_PASTE)
-            continue
+    while value := _visible_paste(boundaries.terminal):
         verdict = boundaries.verify(source, value)
         if verdict.outcome is Outcome.ACCEPTED:
             return value
         _say(f"abgelehnt: {verdict.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen.")
-    _say("übersprungen; nichts gespeichert")
+    _say(SKIPPED)
     return None
+
+
+def _offer_page(terminal: Terminal, page: str) -> None:
+    terminal.ask(OPEN_PROMPT)
+    _say(f"Geöffnet: {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
     guide = GUIDES[source.provider]
     _say(*guide.briefing(entry, source, now))
-    boundaries.terminal.ask(OPEN_PROMPT)
-    page = guide.page(entry, source)
-    _say(f"Geöffnet: {page}" if boundaries.terminal.open_page(page) else f"{NO_BROWSER} {page}")
+    _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(source, boundaries)
     return value is not None and _stored(entry, layout, boundaries, value)
+
+
+def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
+    """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
+    _say(f"Anlegen: {entry.recreate}")
+    _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
+    value = _visible_paste(boundaries.terminal)
+    if not value:
+        _say(SKIPPED)
+    return bool(value) and _stored(entry, layout, boundaries, value)
 
 
 class Step(Enum):
@@ -502,6 +527,8 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
         return Step.STILL_MISSING
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
+    elif entry.kind is SecretKind.UNVERIFIED_TOKEN:
+        stored = _set_up_unverified_token(entry, layout, boundaries)
     else:
         _say("Wird zufällig erzeugt und nie gezeigt.")
         stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))

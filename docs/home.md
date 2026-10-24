@@ -245,7 +245,7 @@ So liest sich die Tabelle:
 
 | Spalte | Werte |
 |---|---|
-| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
+| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, „Token, ungeprüft“, abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
 | Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen`; ein optionaler Eintrag trägt `(optional)` |
 | Prüfung | bei einem zurückgezogenen Eintrag `Widerruf unbestätigt` oder `Widerruf bestätigt <Datum>` |
 | Ort | die Pfade im Home; liegen Kopien woanders (etwa `/etc/cloudflared`, root), nennt sie die Zelle dahinter, gelesen werden sie nie |
@@ -313,13 +313,20 @@ Mensch, alles andere der Assistent. Je Token:
    Rechte.
 
 Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
+Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/key-id` und
+`…/api-token`, Art „Token, ungeprüft“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
+der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
+bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter: gespeichert, nicht
+geprüft, denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
+zeigt beide als `nicht geprüft`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 `recreate` genannt, ein optionaler, der fehlt, übersprungen. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
 (Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
 Die letzte Zeile nennt den nächsten Schritt.
 
-Beispiel (gekürzt, ein abgelehnter Versuch):
+Beispiel (gekürzt, ein abgelehnter Versuch; ein TURN-Wert endet mit
+`gespeichert, nicht geprüft: ~/.secrets/cloudflare/turn-hopin/key-id (644)`):
 
 ```
 == github/fleet-read (Token, fehlt)
@@ -396,7 +403,8 @@ empfiehlt nie ein engeres. Ein Token, durch
 das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
-`expires_in_days` (1 bis 366), alle vier zusammen; ein `service-password`
+`expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon und hat
+genau einen Pfad: `--setup` fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
 hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
 dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
