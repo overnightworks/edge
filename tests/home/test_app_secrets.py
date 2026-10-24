@@ -213,6 +213,7 @@ def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboa
 
 
 def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    """#388 matrix cell 15a: cancelling at the open prompt opens nothing and writes no value."""
     terminal = FakeTerminal(enter=KeyboardInterrupt)
 
     code, _ = run_turn_setup(turn_home, capsys, terminal)
