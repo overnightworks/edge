@@ -456,6 +456,7 @@ def test_a_compose_that_cannot_resolve_stops_the_run_with_its_last_line():
 
 
 def test_the_listeners_probe_container_logs_to_none():
+    """#384 U3"""
     stack = FakeStack(answer=healthy_service)
 
     live_smoke.listeners_cell(stack, "service-id")

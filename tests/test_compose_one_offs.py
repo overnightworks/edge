@@ -51,6 +51,7 @@ def one_off_names(config: dict) -> set[str]:
 
 
 def test_every_apply_profile_service_logs_to_none_and_no_other_service_does(monkeypatch):
+    """#384 U4"""
     services = resolved(monkeypatch)["services"]
 
     one_offs = one_off_names({"services": services})
@@ -62,6 +63,7 @@ def test_every_apply_profile_service_logs_to_none_and_no_other_service_does(monk
 
 @pytest.mark.parametrize("overlay", OVERLAYS, ids=lambda path: path.relative_to(ROOT).as_posix())
 def test_an_overlay_keeps_the_one_offs_logging_to_none(monkeypatch, overlay):
+    """#384 U5"""
     services = resolved(monkeypatch, overlay)["services"]
 
     assert all(
