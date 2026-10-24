@@ -114,7 +114,7 @@ services:
       - /opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700,size=64m,nosuid,nodev,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [keycloak, backchannel-songmaker]
+    networks: [keycloak, backchannel-songmaker, backchannel-hopin]
     # Secrets reach the process from /run/secrets, never through the container's Config.Env.
     entrypoint: ["/opt/edge/entrypoint.sh", "/opt/keycloak/bin/kc.sh"]
     command: ["start"]
@@ -540,6 +540,11 @@ networks:
   # One network per app, so no app sees another's. The fixed name survives the project's rename to `hal`.
   backchannel-songmaker:
     name: hal_backchannel_songmaker
+    internal: true
+    driver_opts: *isolated-bridge
+  # The same for HopIn, whose alias is hopin.hallucinai.de.
+  backchannel-hopin:
+    name: hal_backchannel_hopin
     internal: true
     driver_opts: *isolated-bridge
   # The agent service and agent-egress, the only way out of the service.

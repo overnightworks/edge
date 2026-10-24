@@ -912,7 +912,7 @@ def imported_client(client: object, **changes: object) -> dict[str, object]:
         "alwaysDisplayInConsole": False,
         "optionalClientScopes": [],
         "defaultClientScopes": WORKLOAD_SCOPES if client.agent_workload else LOGIN_SCOPES,
-        "attributes": {},
+        "attributes": sys.modules["backchannel_cell"].ruled_settings(client.client_id),
     } | changes
 
 

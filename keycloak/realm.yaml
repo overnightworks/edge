@@ -157,8 +157,8 @@ clients:
       - groups
       - agent-service-audience
     optionalClientScopes: []
-  # hopin signs people in the same way as songmaker, back-channel logout left out until hopin decides
-  # its back-channel address (#254). Its URLs are hopin's proposal; hopin mounts none of them yet.
+  # hopin signs people in the same way as songmaker and is logged out the same way (#254). It uses
+  # no refresh token, so it gets none: an app gets one only if it uses one.
   - clientId: hopin
     name: hopin
     enabled: true
@@ -176,6 +176,9 @@ clients:
     attributes:
       post.logout.redirect.uris: "https://hopin.hallucinai.de/login"
       pkce.code.challenge.method: "S256"
+      backchannel.logout.url: "http://hopin.hallucinai.de:8080/auth/backchannel-logout"
+      backchannel.logout.session.required: "false"
+      use.refresh.tokens: "false"
     defaultClientScopes:
       - basic
       - profile
