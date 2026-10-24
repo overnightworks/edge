@@ -3,6 +3,6 @@ agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
 role = "builder"
 base = "051ee112dcaea1bd07a39f22321edab5aeab7f9d"
 branch = "claude/issue-376-hal-apply-recreates-a-running-unit-servi"
-scope = ["docs/architecture.md", "docs/keycloak.md", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "src/edge/realm/reconcile.py", "src/edge/service_recreate.py", "src/edge/unit_plans.py", "tests/test_edge_apply.py", "tests/test_edge_apply_recreate.py", "tests/test_realm_reconcile.py"]
+scope = ["docs/architecture.md", "docs/keycloak.md", "quality/baseline.toml", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "src/edge/realm/reconcile.py", "src/edge/service_recreate.py", "src/edge/unit_plans.py", "tests/test_edge_apply.py", "tests/test_edge_apply_recreate.py", "tests/test_realm_reconcile.py"]
 opened_commit = "8bb4e94a4a16560b9ba7d5dfb70d32338da14f79"
 whole_reason = "Plan, run and wiring of one recreate rule live in apply, unit_plans and core; split, the plan has no run and the run no plan."
