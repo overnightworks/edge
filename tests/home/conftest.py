@@ -218,6 +218,7 @@ def set_up_mail(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, por
         file.chmod(0o600)
     smtp.chmod(0o700)
     manifest = secrets_view.MANIFEST_PATH
+    assert tmp_path in manifest.parents, "set_up_mail edits the manifest; point it at a temporary copy first (use_manifest)"
     manifest.write_text(manifest.read_text() + SMTP_ENTRIES)
     return MailStub(directory)
 

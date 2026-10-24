@@ -1,3 +1,5 @@
+"""Tests of `home check`; the #390 mail tests name the cells of the item's scenario matrix in their docstrings."""
+
 from __future__ import annotations
 
 import email.message
@@ -553,6 +555,7 @@ def message_of(sent: SentMail) -> email.message.EmailMessage:
 
 
 def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_password_read_by_msmtp(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+    """#390 C1, E2, T1 and C9, R1: one mail per news, and the password canary reaches no output channel."""
     leave_pasted_image(clean_home)
 
     home_check(clean_home, runner)
@@ -565,11 +568,13 @@ def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_passw
     assert (news["From"], news["To"]) == ("home@example.test", "me@example.test")
     assert sent.arguments[-2:] == ["--", "me@example.test"]
     assert sent.password == PASSWORD_CANARY
-    outputs = [capsys.readouterr().out, layout.check_report_file.read_text(), layout.check_findings_file.read_text(), sent.stdin, *sent.arguments]
+    captured = capsys.readouterr()
+    outputs = [captured.out, captured.err, layout.check_report_file.read_text(), layout.check_findings_file.read_text(), sent.stdin, *sent.arguments]
     assert not any(PASSWORD_CANARY in text for text in outputs)
 
 
 def test_the_mail_names_counts_and_new_platform_and_backup_findings_but_never_a_file_or_the_report(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#390 C2, E2: the body holds counts and new platform and backup lines, no tidy file name and no report text."""
     leave_pasted_image(clean_home)
     runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
     write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
@@ -587,6 +592,7 @@ def test_the_mail_names_counts_and_new_platform_and_backup_findings_but_never_a_
 
 
 def test_two_hundred_new_findings_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
+    """#390 C2, E2: 200 new lines name 20 and count the rest."""
     runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tcompose\n" for n in range(200))
 
     home_check(clean_home, runner)
@@ -597,6 +603,8 @@ def test_two_hundred_new_findings_name_twenty_and_count_the_rest(clean_home, run
 
 
 def test_a_subject_with_shell_syntax_or_a_newline_reaches_the_mail_verbatim_and_runs_nothing(tmp_path, monkeypatch) -> None:
+    """#390 C10, E2: shell syntax and a newline in a subject reach stdin verbatim and run nothing."""
+    monkeypatch.chdir(tmp_path)
     stub = set_up_mail(tmp_path / "home", tmp_path, monkeypatch)
     hostile = "platform\tcontainer-dead\t$(touch PWNED) `touch PWNED`\nBcc: x@example.test"
     account = mail.load_account(Layout(tmp_path / "home"))
@@ -606,10 +614,11 @@ def test_a_subject_with_shell_syntax_or_a_newline_reaches_the_mail_verbatim_and_
 
     (sent,) = stub.sent
     assert "$(touch PWNED) `touch PWNED`\n" in message_of(sent).get_content()
-    assert not list(Path.cwd().glob("PWNED"))
+    assert not list(tmp_path.glob("PWNED"))
 
 
 def test_unchanged_findings_and_a_clean_home_send_no_mail(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#390 C3, E1: an unchanged set and a clean home send no mail."""
     image = leave_pasted_image(clean_home)
     home_check(clean_home, runner)
     home_check(clean_home, runner)
@@ -622,6 +631,7 @@ def test_unchanged_findings_and_a_clean_home_send_no_mail(clean_home, leave_past
 
 
 def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
+    """#390 C3, E1: a recovered check is news and is mailed."""
     layout = Layout(clean_home)
     layout.state_dir.mkdir(parents=True, exist_ok=True)
     layout.check_findings_file.write_text('["tidy\\tcheck-failed"]')
@@ -632,6 +642,7 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
 
 
 def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, leave_pasted_image, runner, capsys) -> None:
+    """#390 C5, N1: an absent account.toml sends nothing and prints nothing."""
     leave_pasted_image(clean_home)
 
     home_check(clean_home, runner)
@@ -649,6 +660,7 @@ INVALID_ACCOUNTS = {
 
 @pytest.mark.parametrize("extra", INVALID_ACCOUNTS.values(), ids=INVALID_ACCOUNTS)
 def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_for_the_next_run(clean_home, leave_pasted_image, runner, mail_stub, capsys, extra) -> None:
+    """#390 C6, V1: an invalid account sends nothing, names the problem on stderr and keeps the set."""
     leave_pasted_image(clean_home)
     (Layout(clean_home).secrets_dir / "smtp" / "account.toml").write_text('host = "smtp.example.test"\nuser = "home@example.test"\nto = "me@example.test"\n' + extra)
 
@@ -663,6 +675,7 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
 
 
 def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#390 C7, F1: enabled = false sends no mail and no popup, and the set advances."""
     config_file = Layout(clean_home).config_file
     config_file.parent.mkdir(parents=True)
     config_file.write_text("[notify]\nenabled = false\n")
@@ -677,6 +690,7 @@ def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_
 @pytest.mark.parametrize("session_active", [True, False], ids=["session", "logged-out"])
 @pytest.mark.parametrize("mail_state", ["ok", "failing", "absent"])
 def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, leave_pasted_image, runner, mail_stub, capsys, session_active, mail_state) -> None:
+    """#390 C8, F1: the set advances iff every set-up channel delivered; zero channels keep it, silently."""
     leave_pasted_image(clean_home)
     runner.session_active = session_active
     if mail_state == "failing":
@@ -698,6 +712,7 @@ def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, 
 
 
 def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#390 C4, F1: a failed send keeps the news and the next run mails it."""
     leave_pasted_image(clean_home)
     mail_stub.exit_with(1)
     home_check(clean_home, runner)
@@ -709,7 +724,33 @@ def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, leav
     assert len(mail_stub.sent) == 2
 
 
+def test_a_failing_send_prints_its_failure_line_but_never_the_password(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+    """#390 C9, R1: a failed send reports on stderr without the password canary."""
+    leave_pasted_image(clean_home)
+    mail_stub.exit_with(1)
+
+    home_check(clean_home, runner)
+
+    captured = capsys.readouterr()
+    assert "msmtp fehlgeschlagen (smtp.example.test:587)" in captured.err
+    assert PASSWORD_CANARY not in captured.out + captured.err
+
+
+def test_an_account_path_that_is_a_directory_is_an_invalid_account_and_keeps_the_news(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+    """#390 C6, V1, F1: a present but unusable account.toml is reported, not taken for an unset mail channel."""
+    leave_pasted_image(clean_home)
+    account = Layout(clean_home).secrets_dir / "smtp" / "account.toml"
+    account.unlink()
+    account.mkdir()
+
+    home_check(clean_home, runner)
+
+    assert "home: keine Mail, account.toml:" in capsys.readouterr().err
+    assert not Layout(clean_home).check_findings_file.exists()
+
+
 def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, leave_pasted_image, runner, mail_stub, tmp_path, monkeypatch, capsys) -> None:
+    """#390 C4, F1: a missing msmtp is one stderr line and the set stays."""
     leave_pasted_image(clean_home)
     only_sh = tmp_path / "only-sh"
     only_sh.mkdir()
@@ -725,6 +766,7 @@ def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, lea
 
 @pytest.mark.parametrize(("port", "starttls"), [(2525, "on"), (465, "off")])
 def test_the_port_of_the_account_decides_between_starttls_and_implicit_tls(clean_home, leave_pasted_image, runner, tmp_path, monkeypatch, port, starttls) -> None:
+    """#390 C1, T1: ports 2525 and 465 choose STARTTLS on or off."""
     stub = set_up_mail(clean_home, tmp_path, monkeypatch, port=port)
     leave_pasted_image(clean_home)
 
@@ -734,6 +776,7 @@ def test_the_port_of_the_account_decides_between_starttls_and_implicit_tls(clean
 
 
 def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_path, leave_pasted_image, runner, use_manifest, furnish_clean_home, monkeypatch, capsys) -> None:
+    """#390 C9, R1: a home path with a space and a quote still lets msmtp read the password, which appears in no channel."""
     odd_home = furnish_clean_home(tmp_path / "ho me's")
     stub = set_up_mail(odd_home, tmp_path, monkeypatch)
     leave_pasted_image(odd_home)
@@ -742,4 +785,5 @@ def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_
 
     (sent,) = stub.sent
     assert sent.password == PASSWORD_CANARY
-    assert PASSWORD_CANARY not in capsys.readouterr().out + "".join(sent.arguments) + sent.stdin
+    captured = capsys.readouterr()
+    assert PASSWORD_CANARY not in captured.out + captured.err + "".join(sent.arguments) + sent.stdin

@@ -4,7 +4,7 @@ It writes one report and sends at most one desktop notification and one e-mail, 
 the set of findings differs from the last run's: findings that merely persist
 never nag. A check that breaks or recovers is news too, but its findings count
 as neither new nor gone; the title names the broken check. The desktop counts as a channel only while a graphical session
-exists, the mail only while `~/.secrets/smtp/account.toml` exists; the news is remembered once every such channel delivered it. Exit code: 0 when
+exists, the mail only while `~/.secrets/smtp/account.toml` exists; the news is remembered once every such channel delivered it and at least one exists. Exit code: 0 when
 every check is clean, 1 when any finding exists, 2 when the configuration file
 or the secrets manifest is invalid, 3 when a check broke on an unexpected error. A broken check leaves the other checks' findings
 in the report.
