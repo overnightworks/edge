@@ -1,8 +1,0 @@
-claim_id = "aec527a56bbf42be8561bcd4d16c8cf3"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "7dd835cdfd835969329e50e787969276fae331ab"
-branch = "claude/issue-390-4-m1-home-check-mails-its-news-through-m"
-scope = ["docs/architecture.md", "docs/home.md", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "src/home_tools/check.py", "src/home_tools/mail.py", "src/home_tools/secrets_manifest.toml", "src/home_tools/system/playbook.yml", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_mail.py", "tests/home/test_secrets_view.py"]
-opened_commit = "9c5297db73b9c388ff7757d66e2d8031be60c7e0"
-whole_reason = "The package install, the declared secret and the send call prove nothing alone: a package nobody calls or a manifest reader that never reads would be dead code, so the slice is one vertical proof."
