@@ -1,8 +1,0 @@
-claim_id = "47ea583d18ed43cd82e397436d879130"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "051ee112dcaea1bd07a39f22321edab5aeab7f9d"
-branch = "claude/issue-369-346-c2-the-live-signer-proof-a-capture-v"
-scope = ["agent-service/live_signer.py", "agent-service/live_smoke.py", "agent-service/mcp_signer.py", "agent-service/signing_key.py", "docs/agent-service.md", "tests/live_smoke_fakes.py", "tests/test_agent_service_live_signer.py", "tests/test_agent_service_live_smoke.py", "tests/test_agent_service_mcp_signer.py", "tests/test_agent_service_signing_key.py"]
-opened_commit = "95492055d3ea6d4226d9bf5f22f137a6e185232c"
-whole_reason = "The stand-in verifier, the command that places it and judges L4a and L4b, and live_smoke's two hooks are one caller chain from the operator to the capability; split, each part has no caller. signing_key.py and its test carry only the renamed command."
