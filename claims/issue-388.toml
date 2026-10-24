@@ -1,8 +1,0 @@
-claim_id = "0f0e2d603b8e42199ca1d8dd27a6d755"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "e0d71df708ff1468fc63f0dcbb59d3ac2a058d75"
-branch = "claude/issue-388-254-s5b-hal-setup-asks-hopin-s-turn-key"
-scope = ["docs/architecture.md", "docs/home.md", "quality/baseline.toml", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_setup.py", "src/home_tools/secrets_view.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_view.py"]
-opened_commit = "ee9c725d07efb31b52c1a6f2201330a77037625b"
-whole_reason = "Marker, wizard branch and manifest entries ship together: a marker without an entry has no caller, and an entry without the branch is a by-hand secret."
