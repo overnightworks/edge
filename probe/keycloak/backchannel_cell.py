@@ -56,7 +56,7 @@ class Probe(Protocol):
 
 
 def ruled_settings(client_id: str) -> dict[str, str]:
-    return RULED_SETTINGS.get(client_id, {})
+    return dict(RULED_SETTINGS.get(client_id, {}))
 
 
 def wrong_logout_settings(client_id: str, attributes: Mapping[str, str]) -> dict[str, str | None]:

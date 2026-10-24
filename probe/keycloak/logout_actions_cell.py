@@ -12,6 +12,8 @@ import secrets
 from collections.abc import Callable
 from typing import Any, Protocol
 
+import backchannel_cell
+
 REALM = "hallucinai"
 CLIENT_ID = "probe-logout-actions"
 TOKEN_PATH = f"/realms/{REALM}/protocol/openid-connect/token"
@@ -67,9 +69,8 @@ def register_client(probe: Probe, admin: Admin) -> str:
             "serviceAccountsEnabled": False,
             "frontchannelLogout": False,
             "attributes": {
-                "backchannel.logout.url": LOGOUT_URL,
-                "backchannel.logout.session.required": "false",
-                "use.refresh.tokens": "false",
+                **backchannel_cell.ruled_settings("hopin"),
+                backchannel_cell.LOGOUT_URL_KEY: LOGOUT_URL,
             },
         },
     )
