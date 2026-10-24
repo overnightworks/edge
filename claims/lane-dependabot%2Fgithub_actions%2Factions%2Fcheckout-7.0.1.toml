@@ -1,0 +1,7 @@
+claim_id = "085dcfa772024961b5892ba0ef15bc0a"
+agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
+role = "builder"
+base = "81542aaadbbbd657afc20d8746d7866cc9369c7b"
+branch = "dependabot/github_actions/actions/checkout-7.0.1"
+scope = [".github/workflows/ci.yml"]
+opened_commit = "12e61686c390a44f76c7e2e40e4d1ea5a6c60fc1"
