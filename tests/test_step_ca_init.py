@@ -246,6 +246,7 @@ def test_every_container_runs_without_a_network_from_the_composed_image(init, do
     runs = [command for command in docker.commands if command[1] == "run"]
     assert runs
     assert all(command[command.index("--network") + 1] == "none" for command in runs)
+    assert all(command[command.index("--log-driver") + 1] == "none" for command in runs)
     assert all(IMAGE in command for command in runs)
     assert all(not argument.startswith("DOCKER_STEPCA_INIT") for c in runs for argument in c)
 

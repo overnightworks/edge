@@ -232,7 +232,8 @@ class StepCaInit:
         self, entrypoint: str, *arguments: str, mounts: list[str]
     ) -> subprocess.CompletedProcess[str]:
         command = [
-            "docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp",
+            "docker", "run", "--rm", "--log-driver", "none", "--network", "none",
+            "--read-only", "--tmpfs", "/tmp",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--user", str(IMAGE_USER), "--workdir", VOLUME_MOUNT, "--entrypoint", entrypoint,
         ]  # fmt: skip

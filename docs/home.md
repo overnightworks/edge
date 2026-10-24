@@ -178,6 +178,10 @@ und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
 - **Container mit `json-file`.** Jeder Container in jedem Zustand, dessen
   Log-Treiber `json-file` ist, mit Namen und Compose-Projekt. `journald` und
   `none` sind keine Funde.
+  Jeder Einmal-Container von edge (`keycloak-config-cli`, `realm-observer`,
+  `agent-smoke`, die Einmal-Container von `step-ca/init` und der Sicherung, die
+  Listener-Probe) startet mit Treiber `none`: Seine Ausgabe gehört allein dem
+  Aufrufer und gelangt nicht ein zweites Mal ins Journal.
 - **Docker-Standardtreiber** (`docker info`) außer `journald`.
 - **Journal zu alt.** Der älteste Eintrag laut `journalctl --list-boots -o json`
   (Zeiten der Boots, nicht der Meldungen) ist älter als `LOG_RETENTION_DAYS`.

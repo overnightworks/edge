@@ -661,7 +661,8 @@ def listeners_cell(stack: Stack, service: str) -> Cell:
         ["docker", "inspect", "--format", "{{.Config.Image}}", service]
     ).stdout.strip()
     listing = stack.run([
-        "docker", "run", "--rm", "--network", f"container:{gateway}", "--read-only",
+        "docker", "run", "--rm", "--log-driver", "none", "--network", f"container:{gateway}",
+        "--read-only",
         "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
         "--entrypoint", "python", image, "-I", "-c", LISTENERS_PROGRAM,
     ])  # fmt: skip
