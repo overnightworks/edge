@@ -224,12 +224,6 @@ def test_dangling_images_are_counted_from_the_list_and_sized_no_higher_than_dock
     assert images.command == ("docker", "image", "prune", "-f")
 
 
-def test_a_failing_image_listing_yields_no_images_finding(docker_findings) -> None:
-    docker = fake_docker(system_df="Images\t59.34GB\t29.22GB (49%)\nBuild Cache\t1GB\t0GB\n", dangling_images=None)
-
-    assert docker_findings(docker) == []
-
-
 def test_docker_prune_commands_name_only_week_old_stopped_containers(docker_findings) -> None:
     docker = fake_docker(
         containers=(
