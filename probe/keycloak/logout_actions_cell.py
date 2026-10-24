@@ -1,16 +1,18 @@
 """Cell LA1 of probe.py: which Keycloak console actions send a back-channel logout. A sign-out of
 the user's sessions runs first as the control and gates the measurement: it must succeed and its
 logout must arrive. Then, for each action (disable the user, delete the user, remove the user from
-a group), a fresh user signs in to a client with songmaker's ruled logout settings, the admin call
-runs, and probe-rp, the test relying party the client calls, says whether a logout token for that
-user arrived. The result describes Keycloak's behaviour; it proves nothing about an app's own
-erasure."""
+a group), a fresh user signs in to a client with HopIn's ruled logout and refresh settings, the
+admin call runs, and probe-rp, the test relying party the client calls, says whether a logout token
+for that user arrived. The result describes Keycloak's behaviour; it proves nothing about an app's
+own erasure."""
 
 from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
 from typing import Any, Protocol
+
+import backchannel_cell
 
 REALM = "hallucinai"
 CLIENT_ID = "probe-logout-actions"
@@ -54,7 +56,7 @@ class Probe(Protocol):
 
 
 def register_client(probe: Probe, admin: Admin) -> str:
-    """The client carries songmaker's ruled logout settings; direct grants only give it sessions."""
+    """The client carries HopIn's ruled logout and refresh settings; direct grants make sessions."""
     client_uuid = admin.create(
         f"/{REALM}/clients",
         {
@@ -67,8 +69,8 @@ def register_client(probe: Probe, admin: Admin) -> str:
             "serviceAccountsEnabled": False,
             "frontchannelLogout": False,
             "attributes": {
-                "backchannel.logout.url": LOGOUT_URL,
-                "backchannel.logout.session.required": "false",
+                **backchannel_cell.ruled_settings("hopin"),
+                backchannel_cell.LOGOUT_URL_KEY: LOGOUT_URL,
             },
         },
     )

@@ -31,9 +31,9 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   claim and the `agent-service` audience (4); a disabled user refused on refresh (5); a
   back-channel logout reaching the test relying party `probe-rp` (6);
   which console actions send one (LA1, measured on Keycloak 26.8.1: a user signed in to the client
-  `probe-logout-actions`, which carries songmaker's ruled settings that hopin's will match (#254),
-  `backchannel.logout.url` `http://probe-rp:8000/backchannel-logout` and
-  `backchannel.logout.session.required` `false`; a sign-out as control runs first and the probe
+  `probe-logout-actions`, which carries HopIn's ruled settings (#254),
+  `backchannel.logout.url` `http://probe-rp:8000/backchannel-logout`,
+  `backchannel.logout.session.required` `false` and `use.refresh.tokens` `false`; a sign-out as control runs first and the probe
   fails unless its logout arrives; then disable user, delete user and remove group membership, one
   line each: logout seen, no matching logout observed within `Probe.logout_timeout_seconds` for a token
   whose `sub` is the user's, or action failed when the admin call did not succeed; the answer
@@ -63,7 +63,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the master's untouched theme and language. Proof 10 signs a member of the app's group
   (`/apps/songmaker/admin`, `/apps/hopin`, `/apps/presentator/admin`) in to each of the
   songmaker, hopin and presentator clients through the edge entrypoint with PKCE, its secret a scratch file the
-  overlay mounts. For songmaker and presentator it also drives the agent workload cells of #183
+  overlay mounts; the token response has a refresh token for songmaker and presentator and none for hopin. The overlay names both back-channel networks `<project>_backchannel_*`, so the probe never creates a `hal_*` network. For songmaker and presentator it also drives the agent workload cells of #183
   (W1 to W3: the `client_credentials` token has `agent-workload`, the `agent-service` audience, `azp`
   and the realm's token lifespan, with no client override; a person's token has no `agent-workload`; proof 10 also puts the person in `/services/agent-service/subscription` and requires that group, as a full path, in the access token beside the `agent-service` audience), hopin's refusal of
   `client_credentials` (W5) and `agent-service` with every flow off (W4); DG1 (#297) shows that only songmaker starts a device sign-in and only with its secret. Proof 11 (#129) loads
