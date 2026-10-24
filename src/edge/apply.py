@@ -55,6 +55,7 @@ from typing import Any
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.realm import reconcile
+from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
     Action,
     Fleet,
@@ -66,7 +67,6 @@ from edge.unit_plans import (
     plan_recreates,
     plan_switches,
     read_fleet,
-    since_of,
     switch,
     unobserved,
 )
@@ -170,9 +170,18 @@ def _plan(
     images = plan_kept_images(
         fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
     )
-    recreates = plan_recreates(
-        fleet.units, fleet.profile_services, containers, hashes, plans, followers, images
+    recreates, moved_images = plan_recreates(
+        fleet.units,
+        fleet.profile_services,
+        fleet.config,
+        containers,
+        hashes,
+        plans,
+        followers,
+        images,
+        engine.image_id,
     )
+    images += moved_images
     starts_keycloak = any(
         plan.unit.key == reconcile.REALM_UNIT and plan.action is Action.ON for plan in plans
     ) or any(recreate.unit == reconcile.REALM_UNIT for recreate in recreates)
@@ -485,11 +494,27 @@ class CorePhase:
     ) -> str | None:
         """The core, the followers, then the services of the units that run on; the failure line of
         the first step that fails."""
-        return (
-            self._recreate_core(engine, planned, marks, progress)
-            or self._recreate_followers(engine, planned, marks, progress)
-            or self._recreate_unit_services(engine, planned, marks, progress)
+        return self._recreate_core(engine, planned, marks, progress) or self._recreate_services(
+            engine, planned, marks, progress
         )
+
+    def _recreate_services(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        progress: Progress,
+    ) -> str | None:
+        config = planned.fleet.config
+        recreator = ServiceRecreator(
+            engine, marks, planned.read, config, self.watch, progress, _show
+        )
+        followers = [
+            plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
+        ]
+        return recreator.followers(
+            followers, self.record, lambda: self._followed(config, progress)
+        ) or recreator.unit_services(planned.recreates)
 
     def _recreate_core(
         self,
@@ -570,100 +595,6 @@ class CorePhase:
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
             self.record.write(plan.service, plan.digests, followed)
         print(f"{COMMAND}: {plan.recreated(followed)}")
-        return None
-
-    def _recreate_followers(
-        self,
-        engine: compose.Compose,
-        planned: Plan,
-        marks: switches.Switches,
-        progress: Progress,
-    ) -> str | None:
-        """Recreate each changed follower whose unit is on, alone (`--no-deps`: its unit's other
-        services are never touched, C6), under the switch lock, so a marker that appeared since
-        the plan holds it (P7). Its entry is emptied first and its plan-time digests written once
-        it is observed running (#89 rule 3). No barrier is proven again: a follower serves no
-        barrier."""
-        recreates = [
-            plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
-        ]
-        if not recreates:
-            return None
-        config = planned.fleet.config
-        try:
-            followed = self._followed(config, progress)
-            for plan in recreates:
-                progress.unit = plan.service
-                if failure := self._recreate_alone(
-                    engine,
-                    planned,
-                    marks,
-                    plan.unit,
-                    plan.service,
-                    progress,
-                    lambda plan=plan: self._mark_unfinished_before(plan, followed, progress),
-                ):
-                    return failure
-                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
-                self.record.write(plan.service, plan.digests, followed)
-                print(f"{COMMAND}: {plan.recreated()}")
-        except (compose.ComposeError, core.CoreError, switches.SwitchError) as error:
-            return f"could not {progress.step}, {error}"
-        return None
-
-    def _mark_unfinished_before(
-        self, plan: core.FollowerPlan, followed: frozenset[str], progress: Progress
-    ) -> None:
-        progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
-        self.record.mark_unfinished([plan.service], followed)
-
-    def _recreate_unit_services(
-        self,
-        engine: compose.Compose,
-        planned: Plan,
-        marks: switches.Switches,
-        progress: Progress,
-    ) -> str | None:
-        """Recreate each live service of a unit that runs on whose definition changed, alone and
-        in the order planned, under the switch lock. A volume is kept and the image is the
-        container's own, never swapped (#376)."""
-        try:
-            for plan in planned.recreates:
-                progress.unit = plan.service
-                if failure := self._recreate_alone(
-                    engine, planned, marks, plan.unit, plan.service, progress
-                ):
-                    return failure
-                print(f"{COMMAND}: {plan.service} is recreated")
-        except (compose.ComposeError, switches.SwitchError) as error:
-            return f"could not {progress.step}, {error}"
-        return None
-
-    def _recreate_alone(
-        self,
-        engine: compose.Compose,
-        planned: Plan,
-        marks: switches.Switches,
-        unit: str,
-        service: str,
-        progress: Progress,
-        before: Callable[[], None] = lambda: None,
-    ) -> str | None:
-        """Recreate one service of `unit` with `--no-deps` under the switch lock, so a marker that
-        appeared since the plan holds it (P7), and observe it running; the failure line of the
-        first step that fails."""
-        with marks.lock():
-            if changed := marks.changed(unit, planned.read[unit]):
-                since = switches.describe_since(since_of(changed))
-                return (
-                    f"{unit} was switched off meanwhile (since {since}); {service} is not recreated"
-                )
-            before()
-            progress.step = f"recreate {service}"
-            engine.recreate(service)
-        progress.step = f"observe {service} running"
-        if engine.down_while_watched(planned.fleet.config, (service,), self.watch):
-            return f"{service} is not running after the {service} recreate"
         return None
 
     def record_switched_on(

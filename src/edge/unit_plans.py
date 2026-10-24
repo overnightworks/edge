@@ -1,10 +1,10 @@
 """What each unit needs to become what the catalog says, and how one unit is switched."""
 
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from edge import catalog, compose, core, switches
 
@@ -94,6 +94,7 @@ def plan_switches(
     return plans
 
 
+DIGEST_SEPARATOR = "@"
 KEPT_IMAGE_OWNER = "the upgrade is yours (block 6; Keycloak with a dump first, K11b)"
 
 
@@ -176,24 +177,34 @@ class Recreate:
         return f"{self.unit}: recreate {self.service} ({core.DEFINITION_CHANGED})"
 
 
+class RecreatePlans(NamedTuple):
+    recreates: list[Recreate]
+    moved: list[KeptImage]
+
+
 def plan_recreates(
     units: Sequence[catalog.Unit],
     profile_services: Mapping[str, tuple[str, ...]],
+    config: Mapping[str, Any],
     containers: Sequence[compose.Container],
     hashes: Mapping[str, str],
     plans: Sequence[UnitPlan],
     followers: Collection[str],
     kept: Sequence[KeptImage],
-) -> list[Recreate]:
+    image_id: Callable[[str], str],
+) -> RecreatePlans:
     """Each live service of an enabled unit that is not switched on, off or kept stopped by a
     plan, whose container is labelled with another definition hash than `hashes` (from
-    `docker compose config --hash`), in catalog and file order. The followers have their own plan,
-    a service whose image differs is only named (#91), and a container without the label cannot be
-    planned (#376)."""
+    `docker compose config --hash`), in catalog order and, within a unit, after the services it
+    depends on. The followers have their own plan, a service whose image differs is only named
+    (#91), and a container without the label cannot be planned (#376). A reference that is not
+    pinned by digest may name another image than the container runs (a rebuilt local tag), which
+    a recreate would swap in: that service is named, not recreated."""
     planned = {plan.unit.key for plan in plans}
     kept_services = {image.service for image in kept}
     live = [container for container in containers if container.live]
-    recreates = []
+    recreates: list[Recreate] = []
+    moved: list[KeptImage] = []
     for unit in units:
         if not unit.enabled or unit.key in planned:
             continue
@@ -202,13 +213,43 @@ def plan_recreates(
             for service in profile_services[unit.key]
             if service not in followers and service not in kept_services
         ]
-        labels = core.config_hash_labels(live, services)
-        recreates += [
-            Recreate(unit.key, service)
-            for service in services
-            if labels.get(service, set()) - {hashes[service]}
-        ]
-    return recreates
+        changed = core.changed_definitions(live, services, hashes)
+        for service in core.dependency_order(config, services):
+            if service not in changed:
+                continue
+            if swapped := _swapped_image(unit.key, service, config, live, image_id):
+                moved.append(swapped)
+            else:
+                recreates.append(Recreate(unit.key, service))
+    return RecreatePlans(recreates, moved)
+
+
+def _swapped_image(
+    unit: str,
+    service: str,
+    config: Mapping[str, Any],
+    live: Sequence[compose.Container],
+    image_id: Callable[[str], str],
+) -> KeptImage | None:
+    """The service when a recreate would run another image than its container runs now: its
+    reference is not pinned by digest and names another image id than the container was created
+    from."""
+    reference = config["services"][service].get("image")
+    if reference is None or DIGEST_SEPARATOR in reference:
+        return None
+    current = image_id(reference)
+    for container in live:
+        if container.service != service:
+            continue
+        if container.image_id is None:
+            raise compose.ComposeError(
+                f"a live {service} container has no {compose.IMAGE_ID_LABEL} label"
+            )
+        if container.image_id != current:
+            return KeptImage(
+                unit, service, f"{reference} ({container.image_id})", f"{reference} ({current})"
+            )
+    return None
 
 
 @dataclass
