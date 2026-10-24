@@ -1,8 +1,0 @@
-claim_id = "1cd2aeee9ea2477eb2e26c9f21f7a264"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "ef812877a892d1e59e84029fc4e5eb93f3b1f9f8"
-branch = "claude/issue-384-167-s1-every-edge-one-off-container-logs"
-scope = ["agent-service/live_smoke.py", "compose.yaml", "docs/home.md", "probe/keycloak/probe.py", "src/edge_backup/restic.py", "step-ca/init", "tests/test_agent_service_live_smoke.py", "tests/test_compose_one_offs.py", "tests/test_edge_backup.py", "tests/test_step_ca_init.py"]
-opened_commit = "e78307ea1fbf252e44a1bce4cae934de904ef123"
-whole_reason = "One invariant, every edge one-off logs to none, has one caller per start site; split, a site keeps writing to the journal twice."
