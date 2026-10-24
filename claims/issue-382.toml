@@ -1,8 +1,0 @@
-claim_id = "f128606629f84228b8ef27c25ab1f929"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "e438b212ff2b15d5ae75f0e11de4ab33d67d0056"
-branch = "claude/issue-382-254-s2-keycloak-s-back-channel-network-t"
-scope = ["compose.yaml", "docs/keycloak.md", "keycloak/realm.yaml", "probe/keycloak/README.md", "probe/keycloak/backchannel_cell.py", "probe/keycloak/compose.probe.yaml", "probe/keycloak/logout_actions_cell.py", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py", "tests/test_keycloak_unit.py"]
-opened_commit = "f70816156208b5d2825e0cda2be5837ef3040427"
-whole_reason = "Network, client lines and the probe overlay are one declaration: without the overlay rename the probe creates the live name, without the client pin the probe goes stale."
