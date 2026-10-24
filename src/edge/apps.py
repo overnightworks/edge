@@ -36,7 +36,6 @@ from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 
 from edge import (
@@ -59,12 +58,6 @@ _SHA = 40
 
 class AppError(Exception):
     """An app cannot be planned; the message is one line that names the entry."""
-
-
-class Reason(StrEnum):
-    FIRST = "on"
-    UPDATE = "update"
-    START_AGAIN = "start again"
 
 
 @dataclass(frozen=True)
