@@ -85,14 +85,21 @@ image (#376). So songmaker's web service leaves the network, edge applies, and
 songmaker redeploys.
 
 Which console actions send that back-channel logout was measured on Keycloak 26.8.1 (cell LA1 of
-the Keycloak probe). For each action a fresh user signed in to a client with songmaker's ruled
-logout settings, which hopin's will match (#254): `backchannel.logout.url` on the internal network
-and `backchannel.logout.session.required: "false"`. The admin call succeeded, and a test relying
+the Keycloak probe). For each action a fresh user signed in to a client with HopIn's ruled
+settings, which match songmaker's logout lines (#254): `backchannel.logout.url` on the internal
+network and `backchannel.logout.session.required: "false"`, plus `use.refresh.tokens: "false"`. The admin call succeeded, and a test relying
 party counted a logout token only when its `sub` was that user's and it arrived within 20 seconds.
 A sign-out of the user's sessions, run first as the control, arrived. For disabling the user,
 deleting the user and removing the user from a group, no matching logout was observed within
 20 seconds. This describes what Keycloak did in that configuration, not any app's erasure: whether
 an app ends or erases an account on a sign-out is the app's own (hopin#79 S4).
+
+HopIn is logged out the same way, over its own internal network `hal_backchannel_hopin`, which
+only `keycloak` joins on edge's side and HopIn joins as an external network: its client has `backchannel.logout.url`
+`http://hopin.hallucinai.de:8080/auth/backchannel-logout` and `session.required: "false"`. HopIn
+uses no refresh token, so its client also has `use.refresh.tokens: "false"` and Keycloak issues it
+none; the rule for every app is that it gets a refresh token only if it uses one (operator ruling
+O1 of #254), so songmaker keeps Keycloak's default until its head has checked.
 
 ### Theme and language
 

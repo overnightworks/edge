@@ -208,19 +208,62 @@ def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_the
     assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
 
 
-def test_the_songmaker_back_channel_is_an_internal_network_only_keycloak_joins():
-    """#293: songmaker joins the fixed name as an external network; only keycloak is on it here."""
+@pytest.mark.parametrize("app", ["songmaker", "hopin"])
+def test_an_app_back_channel_is_an_internal_isolated_network_only_keycloak_joins(app):
+    """#293, #254: the app joins the fixed name as an external network; only keycloak is on it."""
     document = compose_document()
-    network = document["networks"]["backchannel-songmaker"]
+    network = document["networks"][f"backchannel-{app}"]
     members = [
         name
         for name, service in document["services"].items()
-        if "backchannel-songmaker" in service.get("networks", [])
+        if f"backchannel-{app}" in service.get("networks", [])
     ]
 
-    assert network["name"] == "hal_backchannel_songmaker"
+    assert network["name"] == f"hal_backchannel_{app}"
     assert network["internal"] is True
+    assert network["driver_opts"] == document["x-isolated-bridge"]
     assert members == ["keycloak"]
+
+
+def test_no_service_but_keycloak_joins_any_back_channel_network():
+    """#382 cell 2 (#254 invariant): Keycloak is the only edge member of a back-channel network."""
+    document = compose_document()
+    back_channels = {name for name in document["networks"] if name.startswith("backchannel-")}
+
+    joiners = {
+        name
+        for name, service in document["services"].items()
+        if back_channels & set(service.get("networks", []))
+    }
+
+    assert joiners == {"keycloak"}
+
+
+def test_keycloak_trusts_forwarded_from_its_own_network_only():
+    """#382 cell 3: Keycloak trusts forwarded headers from its own network only."""
+    document = compose_document()
+    keycloak = document["services"]["keycloak"]
+
+    assert (
+        keycloak["environment"]["KC_PROXY_TRUSTED_ADDRESSES"]
+        == document["networks"]["keycloak"]["ipam"]["config"][0]["subnet"]
+    )
+
+
+def test_the_probe_overlay_renames_every_fixed_back_channel_network_keycloak_joins():
+    """#382: a name left fixed would make the probe create the live `hal_backchannel_*` network."""
+    document = compose_document()
+    overlay = yaml.safe_load((REPOSITORY / "probe/keycloak/compose.probe.yaml").read_text())
+    joined = [
+        name
+        for name in document["services"]["keycloak"]["networks"]
+        if name.startswith("backchannel-")
+    ]
+
+    assert joined
+    for name in joined:
+        app = name.removeprefix("backchannel-")
+        assert overlay["networks"][name]["name"] == f"${{COMPOSE_PROJECT_NAME}}_backchannel_{app}"
 
 
 def test_traefik_reaches_keycloak_through_the_keycloak_network_whatever_the_project_is_called():
@@ -230,16 +273,41 @@ def test_traefik_reaches_keycloak_through_the_keycloak_network_whatever_the_proj
     assert labels["traefik.docker.network"] == "${COMPOSE_PROJECT_NAME}_keycloak"
 
 
-def test_songmaker_is_logged_out_by_a_back_channel_call_that_needs_no_session_id():
-    """#293: webauth ends every session of the subject and ignores `sid`."""
+def realm_clients() -> dict[str, dict]:
     realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
-    songmaker = next(client for client in realm["clients"] if client["clientId"] == "songmaker")
+    return {client["clientId"]: client for client in realm["clients"]}
+
+
+@pytest.mark.parametrize("app", ["songmaker", "hopin"])
+def test_an_app_is_logged_out_by_a_back_channel_call_that_needs_no_session_id(app):
+    """#293: webauth ends every session of the subject and ignores `sid`; hopin has the shape."""
+    attributes = realm_clients()[app]["attributes"]
 
     assert (
-        songmaker["attributes"]["backchannel.logout.url"]
-        == "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
+        attributes["backchannel.logout.url"]
+        == f"http://{app}.hallucinai.de:8080/auth/backchannel-logout"
     )
-    assert songmaker["attributes"]["backchannel.logout.session.required"] == "false"
+    assert attributes["backchannel.logout.session.required"] == "false"
+
+
+def test_only_songmaker_and_hopin_have_a_back_channel_logout_address():
+    """#382 cell 6: only songmaker and HopIn have a back-channel logout address."""
+    with_address = [
+        name
+        for name, client in realm_clients().items()
+        if "backchannel.logout.url" in client.get("attributes", {})
+    ]
+
+    assert sorted(with_address) == ["hopin", "songmaker"]
+
+
+def test_only_hopin_gets_no_refresh_token_because_it_uses_none():
+    """O1 of #254 (24.10.2026): an app gets a refresh token only if it uses one."""
+    clients = realm_clients()
+
+    assert clients["hopin"]["attributes"]["use.refresh.tokens"] == "false"
+    assert "use.refresh.tokens" not in clients["songmaker"]["attributes"]
+    assert "use.refresh.tokens" not in clients["presentator"].get("attributes", {})
 
 
 def test_only_songmaker_allows_the_device_grant():
@@ -404,3 +472,63 @@ def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_op
         ),
         "auth-admin rule": "Host(`localhost`)",
     }
+
+
+HOPIN_RULED = {
+    "backchannel.logout.url": "http://hopin.hallucinai.de:8080/auth/backchannel-logout",
+    "backchannel.logout.session.required": "false",
+    "use.refresh.tokens": "false",
+}
+SONGMAKER_RULED = {
+    "backchannel.logout.url": "http://songmaker.hallucinai.de:8080/auth/backchannel-logout",
+    "backchannel.logout.session.required": "false",
+}
+
+
+@pytest.mark.parametrize(
+    ("client_id", "attributes", "wrong"),
+    [
+        pytest.param("hopin", HOPIN_RULED, set(), id="hopin as ruled"),
+        pytest.param(
+            "hopin",
+            HOPIN_RULED | {"backchannel.logout.url": "http://x"},
+            {"backchannel.logout.url"},
+            id="hopin wrong url",
+        ),
+        pytest.param("hopin", {}, set(HOPIN_RULED), id="hopin missing"),
+        pytest.param(
+            "hopin",
+            HOPIN_RULED | {"backchannel.logout.session.required": "true"},
+            {"backchannel.logout.session.required"},
+            id="hopin session required",
+        ),
+        pytest.param(
+            "hopin",
+            HOPIN_RULED | {"use.refresh.tokens": "true"},
+            {"use.refresh.tokens"},
+            id="hopin refresh tokens",
+        ),
+        pytest.param("songmaker", SONGMAKER_RULED, set(), id="songmaker as ruled"),
+        pytest.param(
+            "songmaker",
+            SONGMAKER_RULED | {"use.refresh.tokens": "false"},
+            {"use.refresh.tokens"},
+            id="songmaker with the refresh line",
+        ),
+        pytest.param("presentator", {}, set(), id="presentator without a url"),
+        pytest.param(
+            "presentator",
+            {"backchannel.logout.url": "http://x"},
+            {"backchannel.logout.url"},
+            id="presentator with a url",
+        ),
+    ],
+)
+def test_wrong_logout_settings_names_what_differs_from_the_ruling(
+    monkeypatch, client_id, attributes, wrong
+):
+    """#382 cell 8: a wrong logout setting names what differs from the ruling."""
+    monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
+    import backchannel_cell
+
+    assert set(backchannel_cell.wrong_logout_settings(client_id, attributes)) == wrong
