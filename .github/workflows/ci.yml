@@ -260,12 +260,14 @@ jobs:
               sys.exit("traefik-mcp.yml's hardening block differs from traefik.yml's")
           PY
 
-      # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same pinned tofu
-      # through edge's own installer, verified against external/opentofu.toml.
+      # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same version that
+      # external/main.tf pins (tofu_test checks it) and the action verifies the download's sha256.
+      # The wrapper is off: later steps read tofu's raw output and exit code.
       - name: Install pinned tofu
-        run: |
-          folder="$(PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_binary "$RUNNER_TEMP/opentofu")"
-          echo "$folder" >> "$GITHUB_PATH"
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.1
+          tofu_wrapper: false
 
       - name: "#32 X1a rule 1: OpenTofu root is formatted, pinned by the lock file and valid"
         working-directory: external
@@ -374,9 +376,9 @@ jobs:
           grep -q "successfully initialized" "$fake_home/guarded.txt"
           echo OVERRIDE-BLOCKED
 
-      # The one tofu test entry point: the pinned tofu installed above, an exact environment, mocked providers.
+      # The one tofu test entry point: the tofu installed above, an exact environment, mocked providers.
       - name: "#123 X1d: the OpenTofu tests run through edge's entry point"
-        run: PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_test "$RUNNER_TEMP/opentofu"
+        run: PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_test
 
       # The quality gate scans the history for literal-looking secrets; the structural rule (a
       # literal in keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.
