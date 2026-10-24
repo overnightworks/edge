@@ -31,6 +31,8 @@ _NOT_RUNNING = {"exited", _COMPLETED, _CREATED, "dead"}
 # Compose's record of the service definition a container was created from. Only this label is
 # read out of ps's comma-joined `Labels`, so another label's value may hold commas.
 CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
+IMAGE_ID_LABEL = "com.docker.compose.image"
+_IMAGE_ID = re.compile(rf"(?:^|,){re.escape(IMAGE_ID_LABEL)}=(sha256:[0-9a-f]{{64}})(?:,|$)")
 _CONFIG_HASH = re.compile(rf"(?:^|,){re.escape(CONFIG_HASH_LABEL)}=([0-9a-f]{{64}})(?:,|$)")
 _HASH_LINE = re.compile(r"(\S+) ([0-9a-f]{64})")
 
@@ -112,12 +114,14 @@ class Container:
     """One container of the project as `ps` lists it. `config_hash` is the hash of the service
     definition it was created from, as Compose labelled it; None when the label is missing.
     `image` is the image reference it was created from, spelled as the definition named it then;
-    None when `ps` names none."""
+    None when `ps` names none. `image_id` is the id of the image it was created from, as Compose
+    labelled it; None when the label is missing."""
 
     service: str
     state: str
     config_hash: str | None
     image: str | None
+    image_id: str | None = None
 
     @property
     def live(self) -> bool:
@@ -160,6 +164,18 @@ class Compose:
                 f"`docker compose config --hash` named no hash for {', '.join(missing)}"
             )
         return hashes
+
+    def image_id(self, reference: str) -> str:
+        """The id of the image the reference names in Docker now."""
+        result = self.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", reference], READ_SECONDS
+        )
+        if result.returncode != 0:
+            raise ComposeError(
+                f"`docker image inspect {reference}` exited {result.returncode}: "
+                f"{last_line(result.stderr + result.stdout)}"
+            )
+        return result.stdout.strip()
 
     def start(self, unit: str, services: tuple[str, ...]) -> None:
         self._call(unit, "up", ["-d", "--no-recreate", *services], CHANGE_SECONDS)
@@ -257,9 +273,15 @@ def states_of(containers: Iterable[Container]) -> dict[str, set[str]]:
 
 
 def _container(entry: Mapping[str, Any]) -> Container:
-    label = _CONFIG_HASH.search(entry.get("Labels", ""))
+    labels = entry.get("Labels", "")
+    config_hash = _CONFIG_HASH.search(labels)
+    image_id = _IMAGE_ID.search(labels)
     return Container(
-        entry["Service"], _state_of(entry), label[1] if label else None, entry.get("Image") or None
+        entry["Service"],
+        _state_of(entry),
+        config_hash[1] if config_hash else None,
+        entry.get("Image") or None,
+        image_id[1] if image_id else None,
     )
 
 
