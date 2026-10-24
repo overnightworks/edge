@@ -1,7 +1,7 @@
 # A throwaway Ubuntu 24.04 with systemd as PID 1, dbus and polkitd, for the container proof of `home setup`'s
 # system step (#40). cloudflared comes from Cloudflare's apt repository; its config names a fake tunnel id, and
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
-# python3 is the interpreter Ansible's modules run with, as on every PC; a bare ubuntu image has none.
+# python3 and python3-apt supply Ansible's interpreter and apt module binding in this fixture.
 # openssl and python3-aiosmtpd are for the mail cells (D1-D8): a test CA and a mail sink; msmtp itself comes from the apply.
 FROM ubuntu:24.04
 
@@ -17,6 +17,7 @@ RUN apt-get update \
         openssl \
         polkitd \
         python3 \
+        python3-apt \
         python3-aiosmtpd \
         sudo \
         systemd \
@@ -27,8 +28,8 @@ RUN apt-get update \
     && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared noble main" \
         > /etc/apt/sources.list.d/cloudflared.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends cloudflared \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends cloudflared
+# Keep the package indexes consistent with the fresh apt timestamp that setup uses for cache_valid_time.
 
 COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /uvx /usr/local/bin/
 

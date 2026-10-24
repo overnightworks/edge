@@ -96,10 +96,11 @@ import sys
 from pathlib import Path
 
 from home_tools import secrets_view
+from home_tools.tunnel_config import with_tunnel_id
 
 home = Path.home()
 live = [entry for entry in secrets_view.load_manifest(secrets_view.MANIFEST_PATH) if not entry.retired]
-places = [home / str(pattern).replace("*", "fake") for entry in live for pattern in entry.paths]
+places = [home / str(with_tunnel_id(pattern)).replace("*", "fake") for entry in live for pattern in entry.paths]
 for path in places:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("proof-fake-secret")
@@ -109,7 +110,7 @@ for directory in [home / ".secrets", *(home / ".secrets").rglob("*")]:
         directory.chmod(0o700)
 if sys.argv[1:] == ["drop"]:
     for pattern in live[0].paths:
-        (home / str(pattern).replace("*", "fake")).unlink()
+        (home / str(with_tunnel_id(pattern)).replace("*", "fake")).unlink()
     print(live[0].name)
 PYTHON
     su - tester -c "$python -I /proof/plant_secrets.py $*"
@@ -923,7 +924,8 @@ cell_a1_9() {  # after a reboot
 # reach the sink only as the AUTH of a verified TLS session.
 MAIL_HOST=mail.proof.test
 MAIL_DIR=/proof/mail
-MAIL_CANARY=proof-mail-canary-5c1e
+MAIL_CANARY=$(openssl rand -hex 24)
+export MAIL_CANARY
 MAIL_STATE=/home/tester/.local/state/home
 SINK_PID_FILE=$EVIDENCE/mail-sink.pid
 
@@ -941,6 +943,7 @@ make_mail_ca() {  # make_mail_ca <name>: a CA and a certificate for $MAIL_HOST s
 write_mail_sink() {
     cat >/proof/mail_sink.py <<'PYTHON'
 import asyncio
+import os
 import email
 import email.policy
 import ssl
@@ -988,11 +991,12 @@ class LoggingSmtp(SMTP):
 
 def authenticate(server, session, envelope, mechanism, data):
     assert isinstance(data, LoginPassword)
-    note(f"CREDENTIALS user={data.login.decode()} password={data.password.decode()}")
+    note(f"CREDENTIALS user_matches={data.login == b'home@proof.test'} password_matches={data.password.decode() == os.environ['MAIL_CANARY']}")
     return AuthResult(success=mode != "reject", handled=False)
 
 
 async def hold(reader, writer):  # accepts and never says a word
+    note("CONNECT stall")
     await asyncio.sleep(3600)
 
 
@@ -1038,7 +1042,7 @@ stop_mail_sink() {
 
 sink_events() {  # sink_events <log name>: what the sink saw, after it was ready
     local name=$1
-    sed '1,/^READY$/d' "$EVIDENCE/$name.log"
+    awk 'seen {print} /^READY$/ {seen=1}' "$EVIDENCE/$name.log"
     return
 }
 
@@ -1091,7 +1095,7 @@ SHIM
     stop_mail_sink
     verdict D3 "the sink saw STARTTLS, then AUTH with the account and the canary, then MAIL FROM, RCPT TO and the subject" \
         '[ "$(sink_events sink-d3 | grep -x -e STARTTLS -e AUTH | tr "\n" " ")" = "STARTTLS AUTH " ] &&
-         sink_events sink-d3 | grep -qx "CREDENTIALS user=home@proof.test password=$MAIL_CANARY" &&
+         sink_events sink-d3 | grep -qx "CREDENTIALS user_matches=True password_matches=True" &&
          sink_events sink-d3 | grep -qx "MAIL FROM home@proof.test" && sink_events sink-d3 | grep -qx "RCPT TO me@proof.test" &&
          sink_events sink-d3 | grep -q "^SUBJECT home check "'
     verdict D3 "the argv log and the run's output never hold the canary, and the argv asks for STARTTLS" \
@@ -1104,14 +1108,16 @@ SHIM
     mail_run cell-d4
     stop_mail_sink
     verdict D4 "a sink without STARTTLS gets no mail, no AUTH, and the news is kept" \
-        '[ -z "$(sink_events sink-d4 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d4 "msmtp fehlgeschlagen ($MAIL_HOST:25)" && ! mail_run_has_set'
+        'sink_events sink-d4 | grep -qx "CONNECT ssl=False" &&
+         [ -z "$(sink_events sink-d4 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d4 "msmtp fehlgeschlagen ($MAIL_HOST:25)" && ! mail_run_has_set'
 
     set_up_mail_account 587
     start_mail_sink sink-d5 starttls 587 untrusted
     mail_run cell-d5
     stop_mail_sink
     verdict D5 "a certificate the system does not trust is refused despite msmtprc files that switch the check off: no AUTH, news kept" \
-        '[ -z "$(sink_events sink-d5 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d5 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+        'sink_events sink-d5 | grep -qx "CONNECT ssl=False" && sink_events sink-d5 | grep -qx STARTTLS &&
+         [ -z "$(sink_events sink-d5 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d5 "msmtp fehlgeschlagen" && ! mail_run_has_set'
 
     set_up_mail_account 465
     start_mail_sink sink-d6 implicit 465 trusted
@@ -1124,7 +1130,7 @@ SHIM
     start_mail_sink sink-d7 reject 587 trusted
     mail_run cell-d7
     stop_mail_sink
-    verdict D7 "a rejected AUTH is one failure line and keeps the news" 'in_log cell-d7 "msmtp fehlgeschlagen ($MAIL_HOST:587)" && ! mail_run_has_set'
+    verdict D7 "a rejected AUTH is one failure line and keeps the news" 'sink_events sink-d7 | grep -qx AUTH && sink_events sink-d7 | grep -qx "CREDENTIALS user_matches=True password_matches=True" && ! sink_events sink-d7 | grep -q "^SUBJECT " && in_log cell-d7 "msmtp fehlgeschlagen ($MAIL_HOST:587)" && ! mail_run_has_set'
     start_mail_sink sink-d7-good starttls 587 trusted
     mail_run cell-d7-again
     stop_mail_sink
@@ -1134,7 +1140,7 @@ SHIM
     started=$SECONDS
     mail_run cell-d8
     stop_mail_sink
-    verdict D8 "a sink that never greets ends the run within 45 s and keeps the news" '[ $((SECONDS - started)) -le 45 ] && in_log cell-d8 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+    verdict D8 "a sink that never greets ends the run within 45 s and keeps the news" 'sink_events sink-d8 | grep -qx "CONNECT stall" && [ $((SECONDS - started)) -le 45 ] && in_log cell-d8 "msmtp fehlgeschlagen" && ! mail_run_has_set'
     rm -f /etc/msmtprc /home/tester/.msmtprc /usr/local/bin/msmtp
     plant_fake_secrets >/dev/null
     return
@@ -1152,6 +1158,14 @@ cells_agent() {
 
 case "${1:?stage}" in
     install) install_home ;;
+    mail)
+        trap 'if [[ -f $SINK_PID_FILE ]]; then stop_mail_sink; fi' EXIT
+        verdict D1 "msmtp is absent before the first apply" '! dpkg -s msmtp >/dev/null 2>&1'
+        install_home
+        cell_1
+        cell_9
+        cells_mail
+        ;;
     fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_a1_1; cell_9; cell_a1_2; cell_s1; cells_mail; cells_agent; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; marker_off ;;
     after-unmarked-reboot) cell_8 ;;
