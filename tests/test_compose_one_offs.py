@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from edge import compose
+from edge_backup.restic import container_argv
+from edge_backup.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLY_PROFILE = "apply"
@@ -70,3 +72,10 @@ def test_an_overlay_keeps_the_one_offs_logging_to_none(monkeypatch, overlay):
         services[name].get("logging") == NO_LOGGING
         for name in one_off_names({"services": services})
     )
+
+
+def test_the_restic_container_starts_with_log_driver_none(tmp_path):
+    """#384 U1"""
+    argv = container_argv(Settings.for_home(tmp_path, uid=1000, gid=1000))
+
+    assert argv[argv.index("--log-driver") + 1] == "none"
