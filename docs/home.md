@@ -76,13 +76,13 @@ Prüfung; `3` nur bei einem unerwarteten Fehler.
 ## home check
 
 ```
-home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung
+home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 ```
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
 `home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`. Eine
-Desktop-Benachrichtigung (über `notify-send`, falls installiert) kommt nur,
+Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
 wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
 Funde gibt oder eine zerbrochene Prüfung wieder läuft. Ein Fund ist dabei Regel plus Gegenstand: Derselbe Fund, der nur
 älter oder größer wird, nervt nicht erneut. Zerbricht eine Prüfung oder läuft
@@ -108,6 +108,20 @@ wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die zuletzt
 gemeldete Fundmenge stehen — auch bei einem sauberen Lauf nach einer wieder
 laufenden Prüfung —, und der nächste Lauf meldet, was dann noch von ihr
 abweicht.
+
+**Die Mail.** Sie geht über `msmtp`, als du, mit dem Konto aus `~/.secrets/smtp/account.toml`, und nur, wenn diese Datei
+existiert; fehlt sie, schickt `home check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
+Einträge). Betreff ist die erste Zeile des Berichts. Der Text hat die Zeile der Benachrichtigung, die Zahl der Funde je
+Prüfung, die neuen Funde der Prüfungen `platform` und `backup` als Regel plus Gegenstand (höchstens 20, dann „… und N
+weitere“) und den Pfad des Berichts auf dem PC; kein anderer Gegenstand, kein Dateiname, nie der Bericht selbst. Ein
+ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
+
+**Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
+graphical-session.target`, nur geprüft, wenn es etwas zu melden gibt), die Mail, solange das Konto existiert. Jeder
+eingerichtete Kanal wird versucht; scheitert einer, steht eine Zeile auf stderr, der Exit-Code bleibt, und die gemeldete
+Fundmenge rückt nicht vor, sodass der nächste Lauf erneut meldet. Sie rückt vor, wenn jeder eingerichtete Kanal
+geliefert hat: ein Lauf ohne Sitzung (Linger, 09:00) mit gelieferter Mail genügt. Ohne einen einzigen eingerichteten Kanal
+bleibt sie stehen, ohne Ausgabe. `[notify] enabled = false` schaltet beide ab.
 
 Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
 lesen darf), steht an ihrer Stelle eine Zeile „Prüfung secrets fehlgeschlagen
@@ -152,7 +166,7 @@ zerbrochen, nie als sauber.
 ### Die Prüfungen `backup` und `platform`
 
 Beide lesen nur und ändern nichts. Was sie lesen, ist fest: nie ein Container-Log, nie die Umgebung eines Containers, nie
-`~/.secrets` oder `~/backups`. Bericht und Benachrichtigung tragen nur Namen, Zustände und Zeiten. Ein Fund ist Regel
+`~/.secrets` oder `~/backups`. Bericht, Benachrichtigung und Mail tragen nur Namen, Zustände und Zeiten. Ein Fund ist Regel
 plus Gegenstand (Containername, Appname); sein Alter gehört nie dazu. Lässt sich die Quelle nicht lesen, ist das ein
 eigener Fund, nie ein sauberer Lauf.
 
@@ -512,6 +526,7 @@ come before the system step, which is the one that asks for sudo:
    another version.
 7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
+   It also installs `msmtp` and `ca-certificates` for the mail of `home check`.
    It asks once for sudo.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
@@ -579,6 +594,10 @@ below are home's own and are not backed up.
     task with `state: absent` for each of the two units; a reload. Then
     `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
     journal lines do not come back.
+- **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
+  Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
+  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "msmtp fehlgeschlagen" while
+  `~/.secrets/smtp/account.toml` exists.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
   (`groupadd --gid N agent`, then `useradd --uid N --gid N -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0`, with N the lowest
@@ -622,7 +641,27 @@ below are home's own and are not backed up.
 
   Or roll back as described.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
-  the step in a throwaway systemd container, never on this PC.
+  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `home check` there:
+  the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
+  a rejected login and a stalled server.
+
+### Das Mail-Konto von `home check`
+
+Zwei Dateien, beide von Hand angelegt, beide Modus 0600, beide im Geheimnis-Manifest:
+
+- `~/.secrets/smtp/account.toml` mit genau den Schlüsseln `host`, `port`, `user` (zugleich Absender) und `to`; nie das
+  Passwort.
+- `~/.secrets/smtp/password`: ein App-Passwort nur dafür, sonst nichts.
+
+`msmtp` läuft als du und liest das Passwort beim Senden selbst (`--passwordeval`); `home` öffnet die Datei nie, und das
+Passwort steht in keinem Terminal, Log, keiner Mail, keinem Argument und keiner Zustandsdatei. Rotieren heißt die Datei
+ersetzen (neues App-Passwort anlegen, das alte widerrufen); die Kopie in songmakers `.env` ziehst du von Hand nach, bis
+songmaker die Datei selbst liest. Akzeptiertes Risiko: Jeder Prozess, der als du läuft, Agenten eingeschlossen, kann über
+dieses Konto senden; darum ein App-Passwort nur dafür, widerrufbar.
+
+Die Mail geht nur über TLS (STARTTLS auf 587, implizites TLS auf 465), das Serverzertifikat wird gegen den System-Trust-Store
+geprüft; ein Server ohne TLS oder mit unbekanntem Zertifikat bekommt weder Mail noch Passwort. Nichts schaltet das ab: keine
+Konfigurationsdatei, kein Schalter.
 
 ### Was der Hook nicht garantiert
 
@@ -670,7 +709,7 @@ siehe dort) und nennt den genauen Befehl, der die alte Datei einmalig unter
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `enabled` | `true` | `false` schaltet die Benachrichtigung von `home check` ab |
+| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `home check` ab |
 
 Beispiel:
 

@@ -1,10 +1,12 @@
 # A throwaway Ubuntu 24.04 with systemd as PID 1, dbus and polkitd, for the container proof of `home setup`'s
 # system step (#40). cloudflared comes from Cloudflare's apt repository; its config names a fake tunnel id, and
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
-# python3 is the interpreter Ansible's modules run with, as on every PC; a bare ubuntu image has none.
+# python3 and python3-apt supply Ansible's interpreter and apt module binding in this fixture.
+# openssl and python3-aiosmtpd are for the mail cells (D1-D8): a test CA and a mail sink; msmtp itself comes from the apply.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Ansible dates the cache by its success stamp or the lists directory, so empty indexes must also be stale.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -13,8 +15,11 @@ RUN apt-get update \
         expect \
         git \
         gnupg \
+        openssl \
         polkitd \
         python3 \
+        python3-aiosmtpd \
+        python3-apt \
         sudo \
         systemd \
         systemd-sysv \
@@ -25,7 +30,8 @@ RUN apt-get update \
         > /etc/apt/sources.list.d/cloudflared.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflared \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /var/lib/apt/periodic/update-success-stamp \
+    && touch -d @0 /var/lib/apt/lists
 
 COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /uvx /usr/local/bin/
 

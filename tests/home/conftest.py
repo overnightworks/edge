@@ -151,16 +151,90 @@ def leave_pasted_image() -> Callable[[Path, int], Path]:
     return leave
 
 
+PASSWORD_CANARY = "CANARY-SMTP-PASSWORD-9f3"
+SMTP_ENTRIES = """
+[[secret]]
+name = "smtp/password"
+kind = "token"
+paths = ["~/.secrets/smtp/password"]
+read_by = ["home check"]
+recreate = "r"
+
+[[secret]]
+name = "smtp/account.toml"
+kind = "configuration"
+paths = ["~/.secrets/smtp/account.toml"]
+read_by = ["home check"]
+recreate = "r"
+"""
+# Stands in for msmtp: records argv and stdin per call, runs --passwordeval through sh like msmtp does, exits as the `exit` file says.
+STUB_MSMTP = """\
+#!/bin/sh
+call=$(mktemp -d "$STUB_MAIL_DIR/call.XXXXXX")
+for argument; do printf '%s\\n' "$argument"; done > "$call/argv"
+cat > "$call/stdin"
+for argument; do
+    case "$argument" in --passwordeval=*) sh -c "${argument#--passwordeval=}" > "$call/password" ;; esac
+done
+exit "$(cat "$STUB_MAIL_DIR/exit" 2>/dev/null || echo 0)"
+"""
+
+
+@dataclass
+class SentMail:
+    arguments: list[str]
+    stdin: str
+    password: str
+
+
+class MailStub:
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+
+    def exit_with(self, code: int) -> None:
+        (self.directory / "exit").write_text(str(code))
+
+    @property
+    def sent(self) -> list[SentMail]:
+        calls = sorted(self.directory.glob("call.*"))
+        return [SentMail((call / "argv").read_text().splitlines(), (call / "stdin").read_text(), (call / "password").read_text()) for call in calls]
+
+
+def set_up_mail(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int = 587) -> MailStub:
+    """An account and password under home, a stub msmtp first on PATH, and a manifest that knows both files."""
+    directory = tmp_path / "mail-stub"
+    directory.mkdir(exist_ok=True)
+    stub = directory / "bin" / "msmtp"
+    stub.parent.mkdir(exist_ok=True)
+    stub.write_text(STUB_MSMTP)
+    stub.chmod(0o755)
+    monkeypatch.setenv("STUB_MAIL_DIR", str(directory))
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
+    smtp = Layout(home).secrets_dir / "smtp"
+    smtp.mkdir(parents=True, exist_ok=True)
+    (smtp / "account.toml").write_text(f'host = "smtp.example.test"\nport = {port}\nuser = "home@example.test"\nto = "me@example.test"\n')
+    (smtp / "password").write_text(PASSWORD_CANARY)
+    for file in smtp.iterdir():
+        file.chmod(0o600)
+    smtp.chmod(0o700)
+    manifest = secrets_view.MANIFEST_PATH
+    assert tmp_path in manifest.parents, "set_up_mail edits the manifest; point it at a temporary copy first (use_manifest)"
+    manifest.write_text(manifest.read_text() + SMTP_ENTRIES)
+    return MailStub(directory)
+
+
 class RecordingRunner:
-    """Delivers notifications (systemd-run succeeds only if notify-send did), fails every other tool as missing, records calls."""
+    """Delivers notifications (systemd-run succeeds only if notify-send did), answers the graphical-session probe, fails every other tool as missing, records calls."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.notify_delivers = True
+        self.session_active = True
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         self.calls.append(list(argv))
-        return "" if argv[0] == "systemd-run" and self.notify_delivers else None
+        delivers = {"systemd-run": self.notify_delivers, "systemctl": self.session_active}
+        return "" if delivers.get(argv[0], False) else None
 
     @property
     def notifications(self) -> list[str]:

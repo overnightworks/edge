@@ -9,6 +9,8 @@
 # copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
 # or a drop-in; the retention units are home's own and are not backed up.
 #
+# It also installs msmtp and ca-certificates (never msmtp-mta) once the refusals above passed, for the mail of `home check`.
+#
 # The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
 # password, the shell nologin, a 0700 home, no subuid or subgid range, no linger, and a line in /etc/cron.deny
 # (every other user keeps today's cron; an existing cron.allow decides alone and must not list it). Its uid and gid
@@ -197,6 +199,15 @@
         that: agent_foreign_shape | length == 0
         fail_msg: "{{ agent_user }} exists with {{ agent_foreign_shape | join(', ') }}; nothing was written"
         quiet: true
+
+    # `home check` mails its news through msmtp, which needs the system's trust store for the server certificate.
+    # Recommends are off: msmtp-mta (Postfix's replacement as the system mailer) is only suggested and must stay out.
+    - name: Install msmtp and the certificate authorities it checks the mail server against
+      ansible.builtin.apt:
+        name: [msmtp, ca-certificates]
+        install_recommends: false
+        update_cache: true
+        cache_valid_time: 86400
 
     - name: Fill edge's files with this PC's values
       ansible.builtin.set_fact:

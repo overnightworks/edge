@@ -61,7 +61,7 @@ INVENTORY = {
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
     "keycloak/clients/*",
-    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token",
+    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
 }
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
@@ -628,7 +628,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
         "opentofu/tmp": SecretKind.CONFIGURATION,
         "secrets/README": SecretKind.DOCUMENTATION,
         "step-ca/root_ca.crt": SecretKind.CONFIGURATION,
-        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION, "agent-service/signing-public-key": SecretKind.CONFIGURATION,
+        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION, "agent-service/signing-public-key": SecretKind.CONFIGURATION, "smtp/account.toml": SecretKind.CONFIGURATION,
     }
     assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
     assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
