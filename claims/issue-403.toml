@@ -1,8 +1,0 @@
-claim_id = "200aedc6698c47f1830b757857a52c2a"
-agent = "Codex 01a16e71-12b7-7422-a26b-e9939f44a38e"
-role = "builder"
-base = "18748836db34b903f890fa9ebaa464aeeaa1bc30"
-branch = "codex/issue-403-hopin-back-channel-declarations-code-and"
-scope = ["compose.yaml", "docs/keycloak.md", "keycloak/realm.yaml", "probe/keycloak/README.md", "probe/keycloak/backchannel_cell.py", "probe/keycloak/compose.probe.yaml", "probe/keycloak/logout_actions_cell.py", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py", "tests/test_keycloak_unit.py"]
-opened_commit = "d41001d752084f1161060cd6467e3aeda51f2276"
-whole_reason = "Network, client lines and the probe overlay are one declaration: without the overlay rename the probe creates the live name, without the client pin the probe goes stale."
