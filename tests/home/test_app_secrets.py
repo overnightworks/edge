@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 import stat
+from datetime import datetime
 from pathlib import PurePosixPath
 
 import pytest
-from conftest import Sandbox, plant_secrets
+from conftest import FakeProbe, Sandbox, plant_secrets
+from test_secrets_view import findings_of
 from test_setup import secrets_terminal
 
 from home_tools import secrets_view
@@ -17,6 +19,7 @@ from home_tools.secrets_view import SecretEntry, SecretKind, load_manifest
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
 HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
 URL_SAFE_48_BYTES = re.compile(r"[A-Za-z0-9_-]{64}")
+NOW = datetime(2026, 10, 15, 9, 0)
 
 
 def packaged_entry(name: str) -> SecretEntry:
@@ -83,3 +86,42 @@ def test_apply_generates_hopins_session_secret_unseen_at_0644_in_a_0700_folder_a
 
     assert value not in run_packaged_setup(packaged_home, capsys, "--apply")
     assert secret.read_text() == value
+
+
+@pytest.mark.parametrize(
+    ("mode", "loose_subjects"),
+    [(0o644, set()), (0o666, {f"~/{HOPIN_SESSION_SECRET}"})],
+    ids=["0644 is the declared loosest mode", "0666 is loose"],
+)
+def test_hopins_session_secret_is_loose_only_beyond_0644(
+    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str], mode: int, loose_subjects: set[str]
+) -> None:
+    secret = packaged_home.home / HOPIN_SESSION_SECRET
+    secret.write_text("planted")
+    secret.chmod(mode)
+
+    main(["secrets"], home=packaged_home.home, probe=probe, now=NOW)
+
+    assert set(findings_of(capsys.readouterr().out, "loose-mode")) == loose_subjects
+
+
+def test_by_service_lists_the_session_secret_under_hopin(
+    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(["secrets", "--by-service"], home=packaged_home.home, probe=probe, now=NOW)
+
+    assert "| hopin | keycloak/clients/*, hopin/session-secret |" in capsys.readouterr().out
+
+
+def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
+    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(["next"], home=packaged_home.home, probe=probe, now=NOW)
+
+    assert f"home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/{HOPIN_SESSION_SECRET} (644)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None:
+    assert not re.search(r"[A-Za-z0-9_-]{43,}", PACKAGED_MANIFEST.read_text())
