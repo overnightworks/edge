@@ -1,0 +1,8 @@
+claim_id = "0f695940ea7b415dbfb68fd71f346b49"
+agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
+role = "builder"
+base = "7dd835cdfd835969329e50e787969276fae331ab"
+branch = "claude/issue-393-edge-moves-to-quality-v0-6-0-whose-root"
+scope = [".github/workflows/ci.yml", "AGENTS.md", "docs/home.md", "pyproject.toml", "quality/config.toml", "scripts/check_root_layout.py", "tests/home/scripts/test_check_root_layout.py"]
+opened_commit = "5f0633793b5904caadbbff6fa329103d83243ce8"
+whole_reason = "The pin move turns quality's root rule on, and edge's own gate then duplicates it; the declaration and the deletion must land with the pin or CI is red or holds two owners."
