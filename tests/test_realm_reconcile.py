@@ -127,10 +127,8 @@ class World:
 
     # the step ----------------------------------------------------------------------------------
 
-    def plan(self, gate: core.Gate | None = core.Gate.ON, starts_now: bool = False) -> RealmPlan:
-        return reconcile.plan_realm(
-            self, self, self.record, self.config, self.root, gate, starts_now
-        )
+    def plan(self, gate: core.Gate | None = core.Gate.ON, restart: str | None = None) -> RealmPlan:
+        return reconcile.plan_realm(self, self, self.record, self.config, self.root, gate, restart)
 
     def run(self, plan: RealmPlan, mark: switches.Mark | None = None) -> reconcile.StepResult:
         realm = reconcile.Realm(
@@ -257,7 +255,7 @@ def test_unchanged_files_while_keycloak_is_off_say_nothing(world: World) -> None
 
 
 def test_keycloak_starting_in_this_run_is_not_checked_and_one_line_says_so(world: World) -> None:
-    plan = world.plan(starts_now=True)
+    plan = world.plan(restart="Keycloak starts now")
 
     assert (plan.action, plan.settled) == (RealmAction.NOT_CHECKED, True)
     assert plan.lines == ["realm: not checked, Keycloak starts now; the next `hal apply` checks it"]

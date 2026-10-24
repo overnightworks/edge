@@ -173,14 +173,14 @@ def plan_realm(
     config: Mapping[str, Any],
     repository: Path,
     gate: core.Gate | None,
-    starts_now: bool,
+    restart: str | None,
 ) -> RealmPlan:
     """What the step does: `gate` is the Keycloak unit's, None when the catalog has none, and
-    `starts_now` says this run switches it on."""
+    `restart` says what this run starts of its unit, None when nothing."""
     if gate is None:
         return RealmPlan()
-    if starts_now:
-        line = "realm: not checked, Keycloak starts now; the next `hal apply` checks it"
+    if restart:
+        line = f"realm: not checked, {restart}; the next `hal apply` checks it"
         return RealmPlan(RealmAction.NOT_CHECKED, line)
     inputs = read_inputs(engine, config, repository)
     reading = record.read()

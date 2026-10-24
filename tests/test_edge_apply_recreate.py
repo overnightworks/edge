@@ -160,6 +160,20 @@ def test_keycloak_is_recreated_alone_with_its_database_and_volume_kept_and_its_r
     assert (realm_backup.asked, scripted.realm_applies) == realm_before
 
 
+def test_a_recreate_of_only_the_keycloak_database_holds_the_realm_check_and_says_so(
+    two_units_applied,
+    switch,  # noqa: F811
+    scripted,  # noqa: F811
+):
+    scripted.change_definition("keycloak-db")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "realm: not checked, its database restarts now; the next `hal apply` checks it" in out
+    assert "Keycloak starts now" not in out
+
+
 def test_two_units_with_a_changed_definition_are_two_lines_in_dependency_order_under_one_yes(
     two_units_applied,
     switch,  # noqa: F811

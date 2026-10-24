@@ -182,9 +182,15 @@ def _plan(
         engine.image_id,
     )
     images += moved_images
-    starts_keycloak = any(
+    realm_unit_recreates = [r for r in recreates if r.unit == reconcile.REALM_UNIT]
+    if any(
         plan.unit.key == reconcile.REALM_UNIT and plan.action is Action.ON for plan in plans
-    ) or any(recreate.unit == reconcile.REALM_UNIT for recreate in recreates)
+    ) or any(r.service == reconcile.REALM_UNIT for r in realm_unit_recreates):
+        restart = "Keycloak starts now"
+    elif realm_unit_recreates:
+        restart = "its database restarts now"
+    else:
+        restart = None
     realm = reconcile.plan_realm(
         engine,
         reconcile.Observer(engine),
@@ -192,7 +198,7 @@ def _plan(
         fleet.config,
         repository,
         gates.get(reconcile.REALM_UNIT),
-        starts_keycloak,
+        restart,
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
     return Plan(fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans)
