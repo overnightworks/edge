@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from home_tools.secrets_view import MANIFEST_PATH, SecretKind, load_manifest
 from home_tools.mail import AccountInvalid, MailAccount, load_account, sendmail_command
 from home_tools.tidy_home import Layout
 
@@ -116,3 +117,13 @@ def test_the_password_path_is_quoted_for_the_shell_and_the_message_is_a_position
     assert "--passwordeval=cat -- '/h o'\"'\"'me/.secrets/smtp/password'" in command
     assert command[:3] == ["sh", "-c", 'printf %s "$1" | { shift; exec "$@"; }']
     assert command[3:5] == ["sh", message().as_string()]
+
+
+def test_the_packaged_manifest_declares_the_account_and_the_password_for_home_check() -> None:
+    entries = {entry.name: entry for entry in load_manifest(MANIFEST_PATH) if entry.name.startswith("smtp/")}
+
+    assert {name: (entry.kind, entry.read_by, entry.optional, entry.loosest_mode) for name, entry in entries.items()} == {
+        "smtp/password": (SecretKind.TOKEN, ("home check",), False, 0o600),
+        "smtp/account.toml": (SecretKind.CONFIGURATION, ("home check",), False, 0o600),
+    }
+    assert "songmaker" in entries["smtp/password"].recreate
