@@ -103,7 +103,7 @@ def test_a_changed_definition_recreates_a_running_unit_service_alone_then_nothin
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert ("step-ca" in drifted) == (STEP_CA_RECREATE_LINE in out)
+    assert (STEP_CA_RECREATE_LINE in out) == ("step-ca" in drifted)
     assert up_calls(scripted) == recreated
     assert {service for service in ids if scripted.container_ids[service] != ids[service]} == set(
         drifted
@@ -344,18 +344,31 @@ def test_a_recreate_that_fails_is_partial_and_no_unit_is_switched(
     assert after in err
 
 
-def test_a_live_unit_container_without_the_hash_label_cannot_be_planned(
+@pytest.mark.parametrize(
+    ("missing", "message"),
+    [
+        ("labels", "cannot plan, a step-ca container has no com.docker.compose.config-hash label"),
+        (
+            "images",
+            "cannot plan, a live step-ca container's `docker compose ps` line names no Image",
+        ),
+    ],
+    ids=["missing config hash", "missing image"],
+)
+def test_a_live_unit_container_without_required_metadata_cannot_be_planned(
+    missing,
+    message,
     step_ca_applied,  # noqa: F811
     switch,  # noqa: F811
     scripted,  # noqa: F811
 ):
-    """#376 Q2, cell M15: exit 2 and nothing changed, as for the core (#87 D11)."""
-    scripted.labels["step-ca"] = None
+    """#376 Q2/M15 and #91 rule 3/E10: missing metadata exits 2 without changes."""
+    getattr(scripted, missing)["step-ca"] = None
 
     exit_code, _, err = switch()
 
     assert exit_code == 2
-    assert "cannot plan, a step-ca container has no com.docker.compose.config-hash label" in err
+    assert message in err
     assert scripted.changing_verbs() == []
 
 

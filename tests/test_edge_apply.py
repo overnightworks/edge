@@ -4366,19 +4366,6 @@ def test_a_unit_service_whose_definition_names_no_image_is_not_compared(
     assert "nothing to change" in out
 
 
-def test_a_live_unit_container_whose_ps_line_names_no_image_cannot_be_planned(
-    step_ca_applied, switch, scripted
-):
-    """#91 rule 3, cell E10: exit 2, as a missing label is (#87); nothing changes."""
-    scripted.images["step-ca"] = None
-
-    exit_code, _, err = switch()
-
-    assert exit_code == 2
-    assert "cannot plan, a live step-ca container's `docker compose ps` line names no Image" in err
-    assert scripted.changing_verbs() == []
-
-
 def test_a_stop_still_closes_a_unit_whose_ps_line_names_no_image(stop, scripted, state):
     """#91 rule 3: compose's parsing stays lenient, so `edge stop` never fails on it."""
     scripted.put_containers(STEP_CA_ON)
