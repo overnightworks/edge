@@ -553,6 +553,11 @@ def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: l
             raise CatalogError(f"{path}.{field}: unknown key")
     if APEX not in redirect["hosts"] or not apex_is_host:
         raise CatalogError(f"{path}: needs '@' among the redirected names and as an enabled host")
+    pages, files = _serve_pages_and_files(path, serve)
+    _check_serve_collisions(path, redirect_path, pages, files, kept)
+
+
+def _serve_pages_and_files(path: str, serve: dict) -> tuple[list[str], str]:
     pages, files = serve.get("pages"), serve.get("files")
     if not (
         isinstance(pages, list)
@@ -563,6 +568,12 @@ def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: l
         raise CatalogError(f"{path}.pages: must be a list of different lowercase absolute paths")
     if not (isinstance(files, str) and _FILES_PREFIX.fullmatch(files)):
         raise CatalogError(f"{path}.files: must be a lowercase absolute path prefix ending in '/'")
+    return pages, files
+
+
+def _check_serve_collisions(
+    path: str, redirect_path: str, pages: list[str], files: str, kept: list[dict]
+) -> None:
     files_stem = files.rstrip("/")
     if files_stem in pages:
         raise CatalogError(f"{path}.pages: {files_stem} is also the files prefix")
