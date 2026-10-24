@@ -70,8 +70,9 @@ NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
 NEVER_RUN = {"down", "-v", "--volumes", "-V", "--renew-anon-volumes"}
 # The labels beside the definition hash in a real `ps --format json` line (frozen from #87 Q1,
 # Compose 2.40.3): another label's value may hold commas and an `=`.
+LABELLED_IMAGE_ID = "sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9"
 OTHER_LABELS = (
-    "com.docker.compose.image=sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9,"
+    f"com.docker.compose.image={LABELLED_IMAGE_ID},"
     "com.docker.compose.oneoff=False,edge.note=x,y=z,com.docker.compose.depends_on="
 )
 # The `Image` of a real `ps --format json` line is the reference the container was created from,
@@ -171,6 +172,8 @@ class ScriptedCompose:
     labels: dict[str, str | None] = field(default_factory=dict)  # service -> its container's
     # service -> the image its container was created from; None: its ps line names no `Image`
     images: dict[str, str | None] = field(default_factory=dict)
+    # reference -> the id Docker gives it now, if not the one of OTHER_LABELS' image label
+    image_ids: dict[str, str] = field(default_factory=dict)
     hash_answer: str | None = None  # what `config --hash` answers instead of the hashes
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
@@ -193,6 +196,10 @@ class ScriptedCompose:
     def run(
         self, command: list[str], _timeout: int, _stdin: str | None = None
     ) -> subprocess.CompletedProcess[str]:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                command, 0, self.image_ids.get(command[-1], LABELLED_IMAGE_ID), ""
+            )
         self.calls.append(command[PROJECT_PREFIX:])
         _, profile, verb, *arguments = command[PROJECT_PREFIX:]
         refused = NEVER_RUN & {verb, *arguments}
@@ -3668,7 +3675,11 @@ def test_the_definition_hash_is_read_from_a_real_ps_line_beside_labels_holding_c
     [container] = compose.Compose(answering(Q1_PS_LINE)).containers()
 
     assert container == compose.Container(
-        "a", "running", "6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4", IMAGE
+        "a",
+        "running",
+        "6b06f5db5a8fd0a0d8f3dcdcd3a5e382a08ea099d03358a583156959264b46d4",
+        IMAGE,
+        LABELLED_IMAGE_ID,
     )
 
 
@@ -3915,23 +3926,6 @@ def test_a_follower_without_an_entry_is_recreated_once_and_a_second_run_changes_
     assert "apply exactly this plan" not in out
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
-
-
-def test_a_changed_traefik_mcp_definition_recreates_it_and_a_stale_step_ca_label_is_left(
-    step_ca_applied, switch, scripted
-):
-    """#89 rule 2, C6, cell F3: only the follower's label is compared; step-ca is never named."""
-    ids = dict(scripted.container_ids)
-    scripted.change_definition("traefik-mcp")
-    scripted.change_definition("step-ca")
-
-    exit_code, out, _ = switch()
-
-    assert exit_code == 0
-    assert "traefik-mcp: recreate (its compose definition changed)" in out
-    assert "step-ca:" not in out
-    assert up_calls(scripted) == [RECREATE_FOLLOWER]
-    assert scripted.container_ids["step-ca"] == ids["step-ca"]
 
 
 @pytest.mark.parametrize(
@@ -4370,19 +4364,6 @@ def test_a_unit_service_whose_definition_names_no_image_is_not_compared(
     assert exit_code == 0
     assert NEVER_SWAPS not in out
     assert "nothing to change" in out
-
-
-def test_a_live_unit_container_whose_ps_line_names_no_image_cannot_be_planned(
-    step_ca_applied, switch, scripted
-):
-    """#91 rule 3, cell E10: exit 2, as a missing label is (#87); nothing changes."""
-    scripted.images["step-ca"] = None
-
-    exit_code, _, err = switch()
-
-    assert exit_code == 2
-    assert "cannot plan, a live step-ca container's `docker compose ps` line names no Image" in err
-    assert scripted.changing_verbs() == []
 
 
 def test_a_stop_still_closes_a_unit_whose_ps_line_names_no_image(stop, scripted, state):

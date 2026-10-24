@@ -46,8 +46,10 @@ from edge.realm.observe import (
     Inventory,
     keys,
 )
+from edge.unit_plans import Action, Recreate, UnitPlan
 
 REALM_UNIT = "keycloak"
+KEYCLOAK_SERVICE = "keycloak"
 CONFIG_CLI = "keycloak-config-cli"
 # config-cli imports these from its directory bind of keycloak/, which `core.file_binds` skips.
 REALM_FILES = ("keycloak/master.yaml", "keycloak/realm.yaml")
@@ -166,6 +168,18 @@ class Observer:
             raise RealmError("the realm observer answered no JSON") from error
 
 
+def restart_of(plans: Iterable[UnitPlan], recreates: Iterable[Recreate]) -> str | None:
+    """What this run starts of the Keycloak unit, None when nothing: Keycloak itself when its
+    unit is switched on or its service recreated, else only another service of the unit."""
+    realm_recreates = [recreate for recreate in recreates if recreate.unit == REALM_UNIT]
+    switched_on = any(plan.unit.key == REALM_UNIT and plan.action is Action.ON for plan in plans)
+    if switched_on or any(recreate.service == KEYCLOAK_SERVICE for recreate in realm_recreates):
+        return "Keycloak starts now"
+    if realm_recreates:
+        return "its database restarts now"
+    return None
+
+
 def plan_realm(
     engine: compose.Compose,
     observer: Observer,
@@ -173,14 +187,14 @@ def plan_realm(
     config: Mapping[str, Any],
     repository: Path,
     gate: core.Gate | None,
-    starts_now: bool,
+    restart: str | None,
 ) -> RealmPlan:
     """What the step does: `gate` is the Keycloak unit's, None when the catalog has none, and
-    `starts_now` says this run switches it on."""
+    `restart` says what this run starts of its unit, None when nothing."""
     if gate is None:
         return RealmPlan()
-    if starts_now:
-        line = "realm: not checked, Keycloak starts now; the next `hal apply` checks it"
+    if restart:
+        line = f"realm: not checked, {restart}; the next `hal apply` checks it"
         return RealmPlan(RealmAction.NOT_CHECKED, line)
     inputs = read_inputs(engine, config, repository)
     reading = record.read()

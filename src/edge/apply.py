@@ -12,7 +12,9 @@ without a live container is named and never started (#85, #87). After the core, 
 definition changed is recreated alone while its unit is on, under the switch lock so a marker
 stops it, and recorded once observed running; while its unit is off or switched off it is named
 and nothing starts, and one that starts with its unit is recorded once the unit is on (#89).
-A unit is a compose profile: on starts its services, off removes their containers. Volumes are never
+A unit is a compose profile: on starts its services, off removes their containers. A live service of
+a unit that is enabled and not switched off or on whose compose definition changed is recreated
+alone after the followers, under the switch lock, one plan line each (#376). Volumes are never
 touched. A live service of a unit not planned off whose container runs another image than
 compose.yaml now names is named after the unit lines and keeps running: its image is never swapped
 here, and the line alone asks nothing (#91). A unit that would be switched on, or is enabled and
@@ -53,16 +55,18 @@ from typing import Any
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.realm import reconcile
+from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
     Action,
     Fleet,
     KeptImage,
     Progress,
+    Recreate,
     UnitPlan,
     plan_kept_images,
+    plan_recreates,
     plan_switches,
     read_fleet,
-    since_of,
     switch,
     unobserved,
 )
@@ -102,6 +106,7 @@ class Plan:
     read: Mapping[str, switches.Mark | None]
     core: list[core.CorePlan]
     followers: list[core.FollowerPlan]
+    recreates: list[Recreate]
     plans: list[UnitPlan]
     images: list[KeptImage]
     realm: reconcile.RealmPlan
@@ -114,11 +119,12 @@ class Plan:
             and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
             and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
+            and not self.recreates
             and self.app_plans.changes_nothing
         )
 
     def describe(self) -> list[str]:
-        plans = (*self.core, *self.followers, *self.plans, *self.images)
+        plans = (*self.core, *self.followers, *self.recreates, *self.plans, *self.images)
         return [
             *(plan.describe() for plan in plans),
             *self.realm.lines,
@@ -145,7 +151,15 @@ def _plan(
     switched_off = _switched_off(fleet, read, repository)
     gates = _gates(fleet.units, switched_off)
     followers = core.follower_units(fleet.config, gates)
-    hashes = engine.config_hashes((*core.core_services(fleet.config), *followers))
+    running_services = (
+        service
+        for unit in fleet.units
+        if gates[unit.key] is core.Gate.ON
+        for service in fleet.profile_services[unit.key]
+    )
+    hashes = engine.config_hashes(
+        tuple(dict.fromkeys((*core.core_services(fleet.config), *followers, *running_services)))
+    )
     containers = engine.containers()
     states = compose.states_of(containers)
     plans = plan_switches(fleet.units, fleet.profile_services, fleet.config, states, switched_off)
@@ -156,9 +170,18 @@ def _plan(
     images = plan_kept_images(
         fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
     )
-    starts_keycloak = any(
-        plan.unit.key == reconcile.REALM_UNIT and plan.action is Action.ON for plan in plans
+    recreates, moved_images = plan_recreates(
+        fleet.units,
+        fleet.profile_services,
+        fleet.config,
+        containers,
+        hashes,
+        plans,
+        followers,
+        images,
+        engine.image_id,
     )
+    images += moved_images
     realm = reconcile.plan_realm(
         engine,
         reconcile.Observer(engine),
@@ -166,10 +189,10 @@ def _plan(
         fleet.config,
         repository,
         gates.get(reconcile.REALM_UNIT),
-        starts_keycloak,
+        reconcile.restart_of(plans, recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
-    return Plan(fleet, read, core_plans, follower_plans, plans, images, realm, app_plans)
+    return Plan(fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans)
 
 
 def _gates(
@@ -466,10 +489,29 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """The core, then the followers; the failure line of the first step that fails."""
-        if failure := self._recreate_core(engine, planned, marks, progress):
-            return failure
-        return self._recreate_followers(engine, planned, marks, progress)
+        """The core, the followers, then the services of the units that run on; the failure line of
+        the first step that fails."""
+        return self._recreate_core(engine, planned, marks, progress) or self._recreate_services(
+            engine, planned, marks, progress
+        )
+
+    def _recreate_services(
+        self,
+        engine: compose.Compose,
+        planned: Plan,
+        marks: switches.Switches,
+        progress: Progress,
+    ) -> str | None:
+        config = planned.fleet.config
+        recreator = ServiceRecreator(
+            engine, marks, planned.read, config, self.watch, progress, _show
+        )
+        followers = [
+            plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
+        ]
+        return recreator.followers(
+            followers, self.record, lambda: self._followed(config, progress)
+        ) or recreator.unit_services(planned.recreates)
 
     def _recreate_core(
         self,
@@ -550,49 +592,6 @@ class CorePhase:
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
             self.record.write(plan.service, plan.digests, followed)
         print(f"{COMMAND}: {plan.recreated(followed)}")
-        return None
-
-    def _recreate_followers(
-        self,
-        engine: compose.Compose,
-        planned: Plan,
-        marks: switches.Switches,
-        progress: Progress,
-    ) -> str | None:
-        """Recreate each changed follower whose unit is on, alone (`--no-deps`: its unit's other
-        services are never touched, C6), under the switch lock, so a marker that appeared since
-        the plan holds it (P7). Its entry is emptied first and its plan-time digests written once
-        it is observed running (#89 rule 3). No barrier is proven again: a follower serves no
-        barrier."""
-        recreates = [
-            plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
-        ]
-        if not recreates:
-            return None
-        config = planned.fleet.config
-        try:
-            followed = self._followed(config, progress)
-            for plan in recreates:
-                progress.unit = plan.service
-                with marks.lock():
-                    if changed := marks.changed(plan.unit, planned.read[plan.unit]):
-                        since = switches.describe_since(since_of(changed))
-                        return (
-                            f"{plan.unit} was switched off meanwhile (since {since}); "
-                            f"{plan.service} is not recreated"
-                        )
-                    progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
-                    self.record.mark_unfinished([plan.service], followed)
-                    progress.step = f"recreate {plan.service}"
-                    engine.recreate(plan.service)
-                progress.step = f"observe {plan.service} running"
-                if engine.down_while_watched(config, (plan.service,), self.watch):
-                    return f"{plan.service} is not running after the {plan.service} recreate"
-                progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
-                self.record.write(plan.service, plan.digests, followed)
-                print(f"{COMMAND}: {plan.recreated()}")
-        except (compose.ComposeError, core.CoreError, switches.SwitchError) as error:
-            return f"could not {progress.step}, {error}"
         return None
 
     def record_switched_on(

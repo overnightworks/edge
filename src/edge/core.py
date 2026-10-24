@@ -79,19 +79,26 @@ def dependencies(config: Mapping[str, Any], service: str) -> tuple[str, ...]:
     return tuple(name for name in config["services"][service].get("depends_on", {}) if name in core)
 
 
-def start_order(config: Mapping[str, Any]) -> tuple[str, ...]:
-    """The core services, each after the core services it depends on, else in file order."""
+def dependency_order(config: Mapping[str, Any], services: Collection[str]) -> tuple[str, ...]:
+    """The services, each after the services of the set it depends on (`depends_on`), else in the
+    order given."""
     ordered: dict[str, None] = {}
 
     def place(service: str) -> None:
         if service not in ordered:
-            for dependency in dependencies(config, service):
-                place(dependency)
+            for dependency in config["services"][service].get("depends_on", {}):
+                if dependency in services:
+                    place(dependency)
             ordered[service] = None
 
-    for service in core_services(config):
+    for service in services:
         place(service)
     return tuple(ordered)
+
+
+def start_order(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """The core services, each after the core services it depends on, else in file order."""
+    return dependency_order(config, core_services(config))
 
 
 def followers(config: Mapping[str, Any]) -> tuple[str, ...]:
@@ -322,13 +329,11 @@ def plan_core(
     recreate left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
     states = compose.states_of(containers)
-    labels = _config_hash_labels(containers, core_services(config))
+    changed = changed_definitions(containers, core_services(config), hashes)
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):
         current = digests(file_binds(config["services"][service], checkout), checkout)
-        whys = _own_changes(
-            config, service, labels.get(service, set()), hashes, checkout, current, reading
-        )
+        whys = _own_changes(config, service, service in changed, checkout, current, reading)
         left_unstarted = _left_unstarted(config, states, reading, checkout, service)
         if left_unstarted and UNFINISHED not in whys:
             whys.append(UNFINISHED)
@@ -393,14 +398,12 @@ def plan_followers(
     reading = record.read()
     states = compose.states_of(containers)
     units = follower_units(config, gates)
-    labels = _config_hash_labels(containers, units)
+    changed = changed_definitions(containers, units, hashes)
     plans = []
     for follower, unit in units.items():
         gate = gates[unit]
         current = digests(file_binds(config["services"][follower], checkout), checkout)
-        whys = _own_changes(
-            config, follower, labels.get(follower, set()), hashes, checkout, current, reading
-        )
+        whys = _own_changes(config, follower, follower in changed, checkout, current, reading)
         if not whys:
             continue
         if gate is not Gate.ON:
@@ -416,8 +419,7 @@ def plan_followers(
 def _own_changes(
     config: Mapping[str, Any],
     service: str,
-    labels: Collection[str],
-    hashes: Mapping[str, str],
+    definition_changed: bool,
     checkout: Path,
     current: Digests,
     reading: Reading,
@@ -425,7 +427,7 @@ def _own_changes(
     """Why the service itself changed: a container labelled with another definition hash, or a
     file it binds that differs from the record."""
     whys = []
-    if set(labels) - {hashes[service]}:
+    if definition_changed:
         whys.append(DEFINITION_CHANGED)
     if follows(config, service, checkout) and (why := _why_changed(current, reading, service)):
         whys.append(why)
@@ -476,6 +478,20 @@ def _dependents(config: Mapping[str, Any], service: str) -> set[str]:
         ):
             found.add(name)
     return found
+
+
+def changed_definitions(
+    containers: Iterable[compose.Container],
+    services: Collection[str],
+    hashes: Mapping[str, str],
+) -> set[str]:
+    """The services with a container labelled with another definition hash than `hashes` (from
+    `docker compose config --hash`)."""
+    return {
+        service
+        for service, labels in _config_hash_labels(containers, services).items()
+        if labels - {hashes[service]}
+    }
 
 
 def _config_hash_labels(
