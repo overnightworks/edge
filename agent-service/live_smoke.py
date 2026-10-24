@@ -21,6 +21,7 @@ that do not bind one app to one person, `not_enabled` no subscription group; the
 The compose project and the egress gateway's address are read from `docker compose config` of the
 repository this file sits in. The in-container smoke is `smoke.py`, used as it is, and the egress
 observations are `egress_observe.py`, shared with the probe. Only the standard library is used.
+`live_signer.py` is the second command: it proves what the service signs for one tool (L4a, L4b).
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
 LOGIN_TOKEN_FILE = SECRETS_DIRECTORY / "agent-service/claude/token"
 REPOSITORY = Path(__file__).resolve().parents[1]
+SERVICE_TOML = REPOSITORY / "agent-service/service.toml"
 LIVE_COMPOSE = (
     "docker", "compose", "--project-directory", str(REPOSITORY),
     "--file", str(REPOSITORY / "compose.yaml"), "--profile", "agent-service",
@@ -149,11 +151,14 @@ class Stack:
     ) -> subprocess.CompletedProcess[str]:
         return self.run([*self.compose_prefix, *arguments], stdin, timeout)
 
-    def start_compose(self, *arguments: str) -> subprocess.Popen[str]:
+    def start(self, command: Sequence[str]) -> subprocess.Popen[str]:
         return subprocess.Popen(
-            [*self.compose_prefix, *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, env=self.environment, cwd=self.directory,
         )  # fmt: skip
+
+    def start_compose(self, *arguments: str) -> subprocess.Popen[str]:
+        return self.start([*self.compose_prefix, *arguments])
 
     @cached_property
     def configuration(self) -> dict:
@@ -220,7 +225,7 @@ REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MUL
 
 
 def subscription_groups() -> list[str]:
-    service = tomllib.loads((REPOSITORY / "agent-service/service.toml").read_text(encoding="utf-8"))
+    service = tomllib.loads(SERVICE_TOML.read_text(encoding="utf-8"))
     return service["identity"]["subscription_groups"]
 
 
@@ -333,13 +338,19 @@ class PaidTurn:
     cleanup: str | None
 
 
-def paid_turn(stack: Stack, tokens: Tokens, seconds: int = PAID_TURN_SECONDS) -> PaidTurn:
+def paid_turn(
+    stack: Stack,
+    tokens: Tokens,
+    seconds: int = PAID_TURN_SECONDS,
+    smoke_arguments: Sequence[str] = (),
+) -> PaidTurn:
     try:
         process = stack.compose(
             "run",
             "--rm",
             "-T",
             SMOKE_SERVICE,
+            *smoke_arguments,
             stdin=f"{tokens.person}\n{tokens.workload}\n",
             timeout=seconds,
         )

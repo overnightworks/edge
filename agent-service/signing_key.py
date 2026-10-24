@@ -421,7 +421,7 @@ class SigningKey:
             self.rename_into_place(directory, PUBLIC_NEXT, PUBLIC_FILE)  # between: R1
         self.setup.tools.say(
             "replaced both halves; nothing is shown. Now recreate agent-service "
-            "(`python3 agent-service/live_smoke.py --mcp-signer` while songmaker-web is not on "
+            "(`python3 agent-service/live_signer.py` while songmaker-web is not on "
             "the network, else as docs/agent-service.md says), then songmaker-web with "
             "songmaker's own deploy command"
         )
