@@ -474,7 +474,7 @@ def test_p33_the_replacement_makes_a_sound_new_pair_and_leaves_no_old_byte_or_pr
     warning = terminal.said[0]
     assert "replacement alone revokes nothing" in warning
     assert "both recreated" in warning
-    assert "live_smoke.py --mcp-signer" in terminal.said[-1]
+    assert "agent-service/live_signer.py" in terminal.said[-1]
     assert make_setup().check() == 0
 
 
