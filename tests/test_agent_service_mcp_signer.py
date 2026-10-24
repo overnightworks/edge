@@ -1,4 +1,4 @@
-"""The capture verifier (`agent-service/mcp_signer.py`, #369): its own decisions on a request,
+"""The capture verifier (`agent-service/mcp_signer.py`): its own decisions on a request,
 with the verifier injected. The cryptography is agent-runtime's, driven in the service image."""
 
 import base64
@@ -141,7 +141,10 @@ def test_p37f_a_post_without_a_bearer_is_refused_with_no_bearer(standin, headers
     assert running.verdicts() == ["refused: no bearer"]
 
 
-@pytest.mark.parametrize(("method", "path"), [("GET", "/mcp"), ("POST", "/other"), ("PUT", "/mcp")])
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("GET", "/mcp"), ("POST", "/other"), ("PUT", "/mcp"), ("TRACE", "/mcp"), ("CONNECT", "/mcp")],
+)
 def test_p37f_any_other_request_gets_404_and_is_not_judged_and_the_server_goes_on(
     standin, method, path
 ):

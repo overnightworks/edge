@@ -97,7 +97,11 @@ class CaptureHandler(BaseHTTPRequestHandler):
     def not_judged(self) -> None:
         self.answer(HTTPStatus.NOT_FOUND)
 
-    do_GET = do_HEAD = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = not_judged
+    def __getattr__(self, name: str) -> Callable[[], None]:
+        """Every method but POST, even TRACE or CONNECT, is answered 404 and not judged."""
+        if name.startswith("do_"):
+            return self.not_judged
+        raise AttributeError(name)
 
     def answer(self, status: HTTPStatus) -> None:
         self.send_response(status)

@@ -5,6 +5,7 @@ probe/agent-service/unit.py (cell U16) and by the operator.
 
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -535,7 +536,7 @@ def test_a_compose_that_cannot_resolve_stops_the_run_with_its_last_line():
         FakeStack(answer=refusing).project  # noqa: B018
 
 
-# --- the live signer proof (#369) -------------------------------------------------------------
+# --- the live signer proof -------------------------------------------------------------
 
 TOOL = live_signer.PROOF_TOOL
 ORIGIN = "https://songmaker.mcp.internal"
@@ -561,8 +562,21 @@ class FakeStandIn:
         return 0
 
 
-def signer_docker(members=("traefik-id",), smoke=FAILED_RUN, log="UpstreamRefused", removal=0):
-    """A docker with the project's MCP network, traefik-mcp and the service's logs."""
+def signer_docker(
+    members=("traefik-id",),
+    smoke=FAILED_RUN,
+    log="UpstreamRefused",
+    removal=0,
+    gone=False,
+    gateway_listing=0,
+    late_member=None,
+):
+    """A docker with the project's MCP network, traefik-mcp and the service's logs.
+
+    `gone` is a stand-in `--rm` already removed; `late_member` joins the network once the first
+    smoke has run.
+    """
+    smokes = []
 
     def answer(command: list[str]) -> subprocess.CompletedProcess:
         if "config" in command:
@@ -570,16 +584,20 @@ def signer_docker(members=("traefik-id",), smoke=FAILED_RUN, log="UpstreamRefuse
             return completed(
                 json.dumps({**document, "services": {"agent-service": {"image": "i:1"}}})
             )
+        if command[:2] == ["docker", "ps"]:
+            return completed("" if gone else "standin-id\n")
         if "traefik-mcp" in command:
-            return completed("traefik-id\n")
+            return completed("traefik-id\n", returncode=gateway_listing)
         if command[:3] == ["docker", "network", "inspect"]:
-            containers = {member: {} for member in members}
+            joined = (late_member,) if late_member and smokes else ()
+            containers = {member: {} for member in (*members, *joined)}
             return completed(json.dumps([{"Name": NETWORK, "Containers": containers}]))
         if command[:2] == ["docker", "rm"]:
             return completed(returncode=removal, stderr=f"removal failed {TOKENS.person}")
         if "logs" in command and "--since" in command:
             return completed(log)
         if "agent-smoke" in command:
+            smokes.append(command)
             if callable(smoke):
                 return smoke()
             return completed(smoke, returncode=1)
@@ -641,6 +659,29 @@ def test_p40_a_member_besides_traefik_mcp_fails_before_any_recreate_stand_in_or_
     assert not started_standins(stack)
 
 
+def test_p40_a_failed_gateway_listing_is_named_not_mistaken_for_another_container():
+    stack = standin_stack(gateway_listing=1)
+
+    code, printed = run_signer(stack)
+
+    assert code == 1
+    assert len(printed) == 1
+    assert "ps traefik-mcp failed" in printed[0]
+    assert not started_standins(stack)
+
+
+def test_p40_a_member_that_joins_during_l4a_stops_before_the_standin_starts():
+    stack = standin_stack(late_member="late")
+
+    code, printed = run_signer(stack)
+
+    assert code == 1
+    assert [line.split(" ")[0] for line in printed] == ["recreate", "L4a", "L4"]
+    assert "FAILED" in printed[-1]
+    assert "songmaker's own" in printed[-1]
+    assert not started_standins(stack)
+
+
 def test_p44_a_service_toml_without_the_mcp_origin_stops_naming_slice_c(tmp_path):
     service = tmp_path / "service.toml"
     service.write_text('[apps.songmaker]\nworkload_client = "songmaker"\n', encoding="utf-8")
@@ -649,17 +690,18 @@ def test_p44_a_service_toml_without_the_mcp_origin_stops_naming_slice_c(tmp_path
         live_signer.mcp_origin(service)
 
 
-def test_p44_the_missing_origin_stops_before_any_sign_in(tmp_path, monkeypatch, capsys):
+def test_p44_the_missing_origin_stops_before_any_sign_in(tmp_path, capsys):
     service = tmp_path / "service.toml"
     service.write_text("[apps.songmaker]\n", encoding="utf-8")
-    monkeypatch.setattr(live_signer, "SERVICE_TOML", service)
-    monkeypatch.setattr(live_signer, "sign_in", lambda *_: pytest.fail("signed in"))
 
-    assert live_signer.main([]) == 1
+    def signed_in(_: str):
+        pytest.fail("signed in")
+
+    assert live_signer.main([], service_toml=service, sign_in_with=signed_in) == 1
     assert "#346 slice C" in capsys.readouterr().err
 
 
-def test_the_origin_is_read_from_the_songmaker_app(tmp_path):
+def test_p44_a_service_toml_with_the_mcp_origin_gives_it(tmp_path):
     service = tmp_path / "service.toml"
     service.write_text(f'[apps.songmaker]\nmcp_origin = "{ORIGIN}"\n', encoding="utf-8")
 
@@ -667,30 +709,33 @@ def test_the_origin_is_read_from_the_songmaker_app(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("output", "log", "verdict"),
+    ("output", "log", "verdict", "named"),
     [
-        (FAILED_RUN, "UpstreamRefused", Verdict.HELD),
-        (FAILED_RUN, "UpstreamUnreachable", Verdict.FAILED),
-        (FAILED_RUN, "nothing", Verdict.FAILED),
+        (FAILED_RUN, "UpstreamRefused", Verdict.HELD, "the gateway refused"),
+        (FAILED_RUN, "UpstreamUnreachable", Verdict.FAILED, "unreachable"),
+        (FAILED_RUN, "nothing", Verdict.FAILED, "no UpstreamRefused"),
         (
             "event: run_started\nevent: assistant_text\nhi\nevent: succeeded\nhi\n",
             "UpstreamRefused",
             Verdict.FAILED,
+            "a fallback answered",
         ),
         (
             "event: run_started\nevent: assistant_text\nhi\nevent: failed\nprovider_error: x\n",
             "UpstreamRefused",
             Verdict.FAILED,
+            "a fallback answered",
         ),
-        ("refused with 403 forbidden: no\n", "", Verdict.FAILED),
+        ("refused with 403 forbidden: no\n", "", Verdict.FAILED, "the service lacks the origin"),
     ],
 )
 def test_p42_l4a_holds_only_on_a_failed_run_without_text_refused_by_the_gateway(
-    output, log, verdict
+    output, log, verdict, named
 ):
     cell = live_signer.l4a_cell(output, log, KNOWN)
 
     assert cell.verdict is verdict
+    assert named in cell.figure
     assert cell.name.startswith("L4a")
 
 
@@ -712,7 +757,7 @@ def test_p43_l4b_holds_on_a_verdict_and_a_failed_run_and_names_what_it_refused(
     assert named in cell.figure
 
 
-def test_a_clean_proof_recreates_runs_l4a_then_l4b_and_removes_the_standin():
+def test_p43_a_clean_proof_recreates_runs_l4a_then_l4b_and_removes_the_standin():
     stack = standin_stack()
 
     code, printed = run_signer(stack)
@@ -745,6 +790,25 @@ def test_p41_the_standin_is_removed_by_its_exact_name_whatever_the_verdict(case)
     assert code == 1
     assert ["docker", "rm", "-f", "edge-mcp-signer"] in stack.asked
     assert stack.standin.ended
+
+
+def test_p41_a_standin_that_gone_by_itself_is_a_clean_removal():
+    code, printed = run_signer(standin_stack(removal=1, gone=True))
+
+    assert code == 0
+    assert not [line for line in printed if line.startswith("cleanup of the stand-in")]
+
+
+def test_p41_a_standin_that_prints_nothing_gives_no_verdict_at_the_deadline():
+    read_end, write_end = os.pipe()
+    silent = os.fdopen(read_end)
+    process = FakeStandIn([])
+    process.stdout = silent
+
+    assert live_signer.read_line(process, 0.01) is None
+
+    os.close(write_end)  # the reader thread sees end of file and ends
+    silent.close()
 
 
 def test_p41_a_smoke_the_host_gave_up_on_still_removes_the_standin():

@@ -54,6 +54,7 @@ SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
 LOGIN_TOKEN_FILE = SECRETS_DIRECTORY / "agent-service/claude/token"
 REPOSITORY = Path(__file__).resolve().parents[1]
+SERVICE_TOML = REPOSITORY / "agent-service/service.toml"
 LIVE_COMPOSE = (
     "docker", "compose", "--project-directory", str(REPOSITORY),
     "--file", str(REPOSITORY / "compose.yaml"), "--profile", "agent-service",
@@ -224,7 +225,7 @@ REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MUL
 
 
 def subscription_groups() -> list[str]:
-    service = tomllib.loads((REPOSITORY / "agent-service/service.toml").read_text(encoding="utf-8"))
+    service = tomllib.loads(SERVICE_TOML.read_text(encoding="utf-8"))
     return service["identity"]["subscription_groups"]
 
 

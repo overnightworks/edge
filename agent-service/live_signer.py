@@ -34,9 +34,9 @@ from live_smoke import (
     LOGIN_TOKEN_FILE,
     RECREATE_REASON_CHARACTERS,
     REFUSAL_LINE,
-    REPOSITORY,
     SECRETS_DIRECTORY,
     SERVICE,
+    SERVICE_TOML,
     TIME_FORMAT,
     Cell,
     LiveSmokeFailed,
@@ -56,8 +56,8 @@ from live_smoke import (
 )
 from mcp_signer import LISTENING_LINE, PUBLIC_KEY_MOUNT, SCRIPT_MOUNT, VERIFIED
 from signing_key import PUBLIC_FILE, SIGNING_DIRECTORY
+from smoke import Tokens
 
-SERVICE_TOML = REPOSITORY / "agent-service/service.toml"
 PUBLIC_KEY = SECRETS_DIRECTORY / SERVICE / SIGNING_DIRECTORY / PUBLIC_FILE
 STANDIN_SCRIPT = Path(__file__).resolve().with_name("mcp_signer.py")
 PROOF_TOOL = "capability_check"
@@ -102,9 +102,12 @@ def standin_command(
 
 def occupied_network_cell(stack: Stack) -> Cell | None:
     """FAILED while any container but traefik-mcp's is on songmaker's MCP network."""
-    gateway = stack.compose(
-        "--profile", GATEWAY_PROFILE, "ps", "-q", GATEWAY_SERVICE
-    ).stdout.split()
+    listed = stack.compose("--profile", GATEWAY_PROFILE, "ps", "-q", GATEWAY_SERVICE)
+    if listed.returncode != 0:
+        return Cell(
+            "L4 the MCP network", Verdict.FAILED, f"docker compose ps {GATEWAY_SERVICE} failed"
+        )
+    gateway = listed.stdout.split()
     members = project_network(stack, MCP_NETWORK).get("Containers") or {}
     others = [member for member in members if member not in gateway]
     if not others:
@@ -180,9 +183,15 @@ def run_smoke(stack: Stack, known: Secrets) -> tuple[str, str, list[Cell]]:
     return turn.process.stdout, log, cleanup_cell(turn.cleanup, known)
 
 
+def standin_is_gone(stack: Stack, name: str) -> bool:
+    """`--rm` may have removed the stand-in already; only a confirmed absence counts."""
+    listed = stack.run(["docker", "ps", "-a", "-q", "--filter", f"name=^{name}$"])
+    return listed.returncode == 0 and not listed.stdout.strip()
+
+
 def remove_standin(stack: Stack, name: str, known: Secrets) -> list[Cell]:
     removed = stack.run(["docker", "rm", "-f", name])
-    if removed.returncode == 0:
+    if removed.returncode == 0 or standin_is_gone(stack, name):
         return []
     reason = known.redact(last_line(removed.stderr))[:RECREATE_REASON_CHARACTERS]
     return [
@@ -230,17 +239,21 @@ def live_signer(
     return 1 if report.failed() else 0
 
 
-def main(argv: Sequence[str]) -> int:
+def main(
+    argv: Sequence[str],
+    service_toml: Path = SERVICE_TOML,
+    sign_in_with: Callable[[str], Tokens] = sign_in,
+) -> int:
     argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args(argv)
     try:
-        origin = mcp_origin(SERVICE_TOML)
+        origin = mcp_origin(service_toml)
         stack = Stack()
         if busy := occupied_network_cell(stack):
             Report([]).add(busy)  # before the sign-in, so that nothing secret exists yet
             return 1
         client_secret = read_secret(CLIENT_SECRET_FILE, "the client secret")
         login_token = read_secret(LOGIN_TOKEN_FILE, "the login token")
-        known = Secrets(sign_in(client_secret), login_token, client_secret)
+        known = Secrets(sign_in_with(client_secret), login_token, client_secret)
         return live_signer(stack, known, Report(known.values()), origin)
     except (LiveSmokeFailed, SignInFailed) as failure:
         print(f"live signer: {failure}", file=sys.stderr)
