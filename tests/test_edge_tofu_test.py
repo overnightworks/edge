@@ -172,28 +172,30 @@ def _fake_tofu(tmp_path: Path, exit_code: int) -> Path:
     return fake
 
 
-def _ensure_raising(error: TofuError):
-    def ensure(root: Path) -> Path:
+def _raising(error: TofuError):
+    def fail(*_arguments) -> None:
         raise error
 
-    return ensure
+    return fail
 
 
 @pytest.mark.parametrize(
-    ("arguments", "ensure", "exit_code", "stderr_names"),
+    ("arguments", "locate", "check_version", "exit_code", "stderr_names"),
     [
-        ([], None, 2, "usage"),
-        (["root"], _ensure_raising(TofuError("no pinned tofu")), 2, "no pinned tofu"),
-        (["root"], None, 0, ""),
+        (["root"], None, None, 2, "usage"),
+        ([], _raising(TofuError("tofu is not on PATH")), None, 2, "not on PATH"),
+        ([], None, _raising(TofuError("the pin is")), 2, "the pin is"),
+        ([], None, None, 0, ""),
     ],
-    ids=["usage error", "tofu cannot be installed", "init and test succeed"],
+    ids=["usage error", "tofu is missing", "tofu is not the pin", "init and test succeed"],
 )
 def test_main_exits_with_the_outcome(
-    tmp_path, monkeypatch, capsys, arguments, ensure, exit_code, stderr_names
+    tmp_path, monkeypatch, capsys, arguments, locate, check_version, exit_code, stderr_names
 ):
-    """#123 S3: main reports usage and install errors with 2 and success with 0."""
+    """#123 S3: main reports usage and tofu problems with 2 and success with 0."""
+    monkeypatch.setattr(tofu_test.tofu, "locate_tofu", locate or (lambda: _fake_tofu(tmp_path, 0)))
     monkeypatch.setattr(
-        tofu_test.tofu_binary, "ensure", ensure or (lambda root: _fake_tofu(tmp_path, 0))
+        tofu_test.tofu, "require_pinned_version", check_version or (lambda *_arguments: None)
     )
 
     assert tofu_test.main(arguments) == exit_code
