@@ -1,8 +1,0 @@
-claim_id = "165f679d77794f0dbecf4778c716e8a4"
-agent = "Codex 01a16e71-12b7-7422-a26b-e9939f44a38e"
-role = "builder"
-base = "0656232a572d7d1fb2996e9f16ac8170cb314ff5"
-branch = "codex/issue-401-definition-drift-recreation-code-and-iso"
-scope = ["docs/architecture.md", "docs/keycloak.md", "quality/baseline.toml", "src/edge/apply.py", "src/edge/compose.py", "src/edge/core.py", "src/edge/realm/reconcile.py", "src/edge/service_recreate.py", "src/edge/unit_plans.py", "tests/test_edge_apply.py", "tests/test_edge_apply_recreate.py", "tests/test_realm_reconcile.py"]
-opened_commit = "430fba0a2f7e8891954eb7bdbbf8e08cff0f1534"
-whole_reason = "Plan, run and wiring of one recreate rule live in apply, unit_plans and core; split, the plan has no run and the run no plan."
