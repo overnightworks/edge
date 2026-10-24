@@ -1,3 +1,67 @@
 [gate]
 mandatory_jobs = ["check"]
 legacy = "fail"
+
+[[root.allow]]
+entry = "edge-check.toml"
+reason = "the listener allowlist that edge-check reads at the repository root"
+
+[[root.allow]]
+entry = "fleet.yaml"
+reason = "the fleet declaration that the edge tools read at the repository root"
+
+[[root.allow]]
+entry = "traefik-mcp.yml"
+reason = "static configuration of traefik-mcp, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "traefik.yml"
+reason = "static configuration of traefik, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "agent-service/"
+reason = "the agent service image context that compose.yaml builds"
+
+[[root.allow]]
+entry = "backup/"
+reason = "backup app declarations that the backup units read"
+
+[[root.allow]]
+entry = "bin/"
+reason = "the edge, hal and home launchers"
+
+[[root.allow]]
+entry = "dynamic/"
+reason = "traefik's dynamic configuration directory, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "external/"
+reason = "terraform for the external Cloudflare zone"
+
+[[root.allow]]
+entry = "keycloak/"
+reason = "keycloak's bootstrap and entrypoint files, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "legal/"
+reason = "the legal pages served at the apex, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "mcp/"
+reason = "the MCP traefik's dynamic configuration, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "probe/"
+reason = "the probes of the agent service, run apart from the packages"
+
+[[root.allow]]
+entry = "step-ca/"
+reason = "the step-ca configuration, bind-mounted by compose.yaml"
+
+[[root.allow]]
+entry = "systemd/"
+reason = "the systemd units that hal apply installs"
+
+[[root.allow]]
+entry = "tunnel/"
+reason = "the cloudflared units and drop-ins that hal apply installs"

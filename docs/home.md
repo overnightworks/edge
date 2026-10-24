@@ -754,11 +754,11 @@ Handgriff.
 uv run pytest          # nur die Tests
 uv run pytest --cov    # zusätzlich die 100-%-Grenze aus pyproject.toml
 uv run ruff check .
-uv run python scripts/check_root_layout.py   # was im Wurzelverzeichnis liegen darf
 ```
 
-`src/home_tools/` und `scripts/check_root_layout.py` halten 100 %
+`src/home_tools/` hält 100 %
 Zeilen- und Branch-Abdeckung; `fail_under = 100` in `pyproject.toml` lässt
-jeden Coverage-Lauf rot werden, der darunter bleibt. Die Layout-Prüfung hält
-das Wurzelverzeichnis auf der Allowlist, die der globale Vertrag unter „Repository layout“ beschreibt.
+jeden Coverage-Lauf rot werden, der darunter bleibt. Die Layout-Prüfung des
+Wurzelverzeichnisses gehört der Qualitätsschranke (`quality / verdict`); was dort liegt und nicht auf
+ihrer Basisliste steht, deklariert `quality/config.toml` mit Grund.
 `.github/workflows/ci.yml` fährt alles bei jedem Push und Pull Request.
