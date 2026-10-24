@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from edge.external import tofu_test
-from edge.external.tofu import TofuError
+from edge.external import tofu, tofu_test
 
 MOCKS = 'mock_provider "cloudflare" {}\n'
 INHERITED_FROM_THE_CALLER = {
@@ -165,35 +164,33 @@ def test_tofu_gets_a_fresh_home_and_nothing_inherited(tmp_path, monkeypatch):
     assert not os.path.exists(seen["HOME"])
 
 
-def _fake_tofu(tmp_path: Path, exit_code: int) -> Path:
-    fake = tmp_path / "tofu"
-    fake.write_text(f"#!/bin/sh\nexit {exit_code}\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-    return fake
-
-
-def _ensure_raising(error: TofuError):
-    def ensure(root: Path) -> Path:
-        raise error
-
-    return ensure
+def _fake_tofu_on_path(tmp_path: Path, monkeypatch, version: str | None) -> None:
+    """Put a `tofu` reporting `version` (exit 0) on PATH; None leaves PATH without tofu."""
+    bin_directory = tmp_path / "bin"
+    bin_directory.mkdir()
+    if version is not None:
+        fake = bin_directory / "tofu"
+        fake.write_text(f'#!/bin/sh\n[ "$1" = version ] && echo "OpenTofu v{version}"\nexit 0\n')
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bin_directory))
 
 
 @pytest.mark.parametrize(
-    ("arguments", "ensure", "exit_code", "stderr_names"),
+    ("arguments", "tofu_version", "exit_code", "stderr_names"),
     [
-        ([], None, 2, "usage"),
-        (["root"], _ensure_raising(TofuError("no pinned tofu")), 2, "no pinned tofu"),
-        (["root"], None, 0, ""),
+        (["root"], "pinned", 2, "usage"),
+        ([], None, 2, "not on PATH"),
+        ([], "0.0.1", 2, "the pin is"),
+        ([], "pinned", 0, ""),
     ],
-    ids=["usage error", "tofu cannot be installed", "init and test succeed"],
+    ids=["usage error", "tofu is missing", "tofu is not the pin", "init and test succeed"],
 )
 def test_main_exits_with_the_outcome(
-    tmp_path, monkeypatch, capsys, arguments, ensure, exit_code, stderr_names
+    tmp_path, monkeypatch, capsys, arguments, tofu_version, exit_code, stderr_names
 ):
-    """#123 S3: main reports usage and install errors with 2 and success with 0."""
-    monkeypatch.setattr(
-        tofu_test.tofu_binary, "ensure", ensure or (lambda root: _fake_tofu(tmp_path, 0))
+    """#123 S3: main reports usage and tofu problems with 2 and success with 0."""
+    _fake_tofu_on_path(
+        tmp_path, monkeypatch, tofu.pinned_version() if tofu_version == "pinned" else tofu_version
     )
 
     assert tofu_test.main(arguments) == exit_code
