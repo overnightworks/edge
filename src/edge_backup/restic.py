@@ -54,6 +54,7 @@ def container_argv(settings: Settings, *mounts: Mount, entrypoint: str | None = 
     """`docker run` with no network, no privileges and a read-only root, as the operator's user."""
     argv = [
         "docker", "run", "--rm",
+        "--log-driver", "none",
         "--network", "none",
         "--hostname", RESTIC_HOSTNAME,
         "--user", f"{settings.uid}:{settings.gid}",
