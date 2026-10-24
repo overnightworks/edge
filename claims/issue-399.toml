@@ -1,8 +1,0 @@
-claim_id = "bb8d47fc633a46f8a5652b2aa0552196"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "dc74a3faec9083ee5167a190502e71a1e06a7019"
-branch = "claude/issue-399-remove-three-test-only-symbols-from-prod"
-scope = ["quality/baseline.toml", "src/edge/apps.py", "src/edge/realm/observe.py", "src/home_tools/tidy_home.py", "tests/home/test_tidy_home.py", "tests/test_realm_observe.py"]
-opened_commit = "777d4fadcc0de658f95827103ab790ba25ad7393"
-whole_reason = "Three tiny removals from one audit, too small to pay a lane each; they share nothing but the reason."
