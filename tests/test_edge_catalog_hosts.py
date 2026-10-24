@@ -468,6 +468,7 @@ def test_a_malformed_redirect_is_refused_naming_the_key(redirect, key):
 
 
 def test_the_apex_may_be_a_host_and_redirected_while_it_serves_pages():
+    """#379 cell 1: the catalog accepts `serve` and the apex host beside the redirect."""
     served = with_redirect({**REDIRECT, "serve": SERVE}, APEX_HOST)
     assert [one.fqdn for one in catalog.hosts(served)] == [f"app.{ZONE}", ZONE]
 
@@ -546,6 +547,7 @@ def test_the_apex_may_be_a_host_and_redirected_while_it_serves_pages():
     ],
 )
 def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, key):
+    """#379 cell 2: each refusal names the key it breaks."""
     assert refusal(with_redirect(redirect, *entries)).startswith(f"{key}:")
 
 
