@@ -226,6 +226,7 @@ def test_an_app_back_channel_is_an_internal_isolated_network_only_keycloak_joins
 
 
 def test_no_service_but_keycloak_joins_any_back_channel_network():
+    """#382 cell 2 (#254 invariant): Keycloak is the only edge member of a back-channel network."""
     document = compose_document()
     back_channels = {name for name in document["networks"] if name.startswith("backchannel-")}
 
@@ -239,6 +240,7 @@ def test_no_service_but_keycloak_joins_any_back_channel_network():
 
 
 def test_keycloak_trusts_forwarded_from_its_own_network_only():
+    """#382 cell 3: Keycloak trusts forwarded headers from its own network only."""
     document = compose_document()
     keycloak = document["services"]["keycloak"]
 
@@ -289,6 +291,7 @@ def test_an_app_is_logged_out_by_a_back_channel_call_that_needs_no_session_id(ap
 
 
 def test_only_songmaker_and_hopin_have_a_back_channel_logout_address():
+    """#382 cell 6: only songmaker and HopIn have a back-channel logout address."""
     with_address = [
         name
         for name, client in realm_clients().items()
@@ -299,7 +302,7 @@ def test_only_songmaker_and_hopin_have_a_back_channel_logout_address():
 
 
 def test_only_hopin_gets_no_refresh_token_because_it_uses_none():
-    """O1 (24.10.2026): an app gets a refresh token only if it uses one."""
+    """O1 of #254 (24.10.2026): an app gets a refresh token only if it uses one."""
     clients = realm_clients()
 
     assert clients["hopin"]["attributes"]["use.refresh.tokens"] == "false"
@@ -524,6 +527,7 @@ SONGMAKER_RULED = {
 def test_wrong_logout_settings_names_what_differs_from_the_ruling(
     monkeypatch, client_id, attributes, wrong
 ):
+    """#382 cell 8: a wrong logout setting names what differs from the ruling."""
     monkeypatch.syspath_prepend(str(REPOSITORY / "probe" / "keycloak"))
     import backchannel_cell
 
