@@ -157,7 +157,8 @@ def test_keycloak_is_recreated_alone_with_its_database_and_volume_kept_and_its_r
         s: ids[s] for s in ids if s != "keycloak"
     }
     assert scripted.volumes["keycloak-db"] == "the database"
-    assert (realm_backup.asked, scripted.realm_applies) == realm_before
+    realm_after = (realm_backup.asked, scripted.realm_applies)
+    assert realm_after == realm_before
 
 
 def test_a_recreate_of_only_the_keycloak_database_holds_the_realm_check_and_says_so(
