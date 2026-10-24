@@ -62,14 +62,17 @@ def _checked_port(raw: dict[str, object]) -> int:
 def load_account(layout: Layout) -> MailAccount | None:
     """None while the file is absent (mail is not set up); a present file that is unusable raises AccountInvalid."""
     path = account_file(layout)
-    if not path.is_file():
+    if not path.exists():
         return None
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as error:
         raise AccountInvalid("account.toml: kein lesbares TOML") from error
-    if raw.keys() != ACCOUNT_KEYS:
-        raise AccountInvalid(f"account.toml: genau die Schlüssel {', '.join(sorted(ACCOUNT_KEYS))} sind erlaubt")
+    missing = ACCOUNT_KEYS - raw.keys()
+    if missing:
+        raise AccountInvalid(f"account.toml: Schlüssel fehlt: {', '.join(sorted(missing))}")
+    if raw.keys() - ACCOUNT_KEYS:
+        raise AccountInvalid("account.toml: unbekannter Schlüssel")
     return MailAccount(
         host=_checked_text(raw, "host", HOSTNAME, "muss ein Hostname sein (Buchstaben, Ziffern, Punkt, Minus; kein Minus am Anfang)"),
         port=_checked_port(raw),
