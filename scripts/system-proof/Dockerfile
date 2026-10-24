@@ -2,6 +2,7 @@
 # system step (#40). cloudflared comes from Cloudflare's apt repository; its config names a fake tunnel id, and
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
 # python3 is the interpreter Ansible's modules run with, as on every PC; a bare ubuntu image has none.
+# openssl and python3-aiosmtpd are for the mail cells (D1-D8): a test CA and a mail sink; msmtp itself comes from the apply.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,8 +14,10 @@ RUN apt-get update \
         expect \
         git \
         gnupg \
+        openssl \
         polkitd \
         python3 \
+        python3-aiosmtpd \
         sudo \
         systemd \
         systemd-sysv \

@@ -256,6 +256,8 @@ cell_1() {
     verdict 1 "the four files are root-owned, mode 644" '[ "$(stat -c "%U %a" "${SYSTEM_FILES[@]}" | sort -u)" = "root 644" ]'
     verdict 1 "every placeholder is filled" 'all_exist "${SYSTEM_FILES[@]}" && ! grep -lE "@[A-Z_]+@" "${SYSTEM_FILES[@]}"'
     verdict 1 "systemd-analyze verify passes" 'systemd-analyze verify cloudflared.service >"$EVIDENCE/verify.log" 2>&1'
+    verdict D1 "the apply installed msmtp and ca-certificates, and msmtp-mta is not there" \
+        'dpkg -s msmtp ca-certificates >/dev/null 2>&1 && ! dpkg -s msmtp-mta >/dev/null 2>&1'
     return
 }
 
@@ -266,6 +268,7 @@ cell_9() {
     verdict 9 "a second apply: Ansible reports changed=0, System unchanged" \
         '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log" && in_log cell9 "System: unchanged"'
     verdict 9 "Ansible left nothing in the home" '[ ! -e /home/tester/.ansible ]'
+    verdict D2 "a second apply installs nothing: changed=0" '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log"'
     return
 }
 
@@ -915,6 +918,227 @@ cell_a1_9() {  # after a reboot
     return
 }
 
+# The mail cells (D3-D8): `home check` as the operator, with no graphical session, against a sink that speaks SMTP with a
+# test CA the system trust store knows (or does not). The sink and the CA are made here; the password is a canary that must
+# reach the sink only as the AUTH of a verified TLS session.
+MAIL_HOST=mail.proof.test
+MAIL_DIR=/proof/mail
+MAIL_CANARY=proof-mail-canary-5c1e
+MAIL_STATE=/home/tester/.local/state/home
+SINK_PID_FILE=$EVIDENCE/mail-sink.pid
+
+make_mail_ca() {  # make_mail_ca <name>: a CA and a certificate for $MAIL_HOST signed by it, in $MAIL_DIR
+    local name=$1
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 -subj "/CN=proof $name CA" \
+        -keyout "$MAIL_DIR/$name-ca.key" -out "$MAIL_DIR/$name-ca.crt" 2>/dev/null &&
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=$MAIL_HOST" \
+            -keyout "$MAIL_DIR/$name.key" -out "$MAIL_DIR/$name.csr" 2>/dev/null &&
+        openssl x509 -req -days 2 -in "$MAIL_DIR/$name.csr" -CA "$MAIL_DIR/$name-ca.crt" -CAkey "$MAIL_DIR/$name-ca.key" \
+            -CAcreateserial -extfile <(printf 'subjectAltName=DNS:%s\n' "$MAIL_HOST") -out "$MAIL_DIR/$name.crt" 2>/dev/null
+    return
+}
+
+write_mail_sink() {
+    cat >/proof/mail_sink.py <<'PYTHON'
+import asyncio
+import email
+import email.policy
+import ssl
+import sys
+
+from aiosmtpd.smtp import SMTP, AuthResult, LoginPassword
+
+mode, port, log_path, certificate_name = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+
+
+def note(text):
+    with open(log_path, "a") as log:
+        log.write(text + "\n")
+
+
+class Handler:
+    async def handle_MAIL(self, server, session, envelope, address, mail_options):
+        note(f"MAIL FROM {address}")
+        envelope.mail_from = address
+        return "250 OK"
+
+    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
+        note(f"RCPT TO {address}")
+        envelope.rcpt_tos.append(address)
+        return "250 OK"
+
+    async def handle_DATA(self, server, session, envelope):
+        note("SUBJECT " + str(email.message_from_bytes(envelope.content, policy=email.policy.default)["Subject"]))
+        return "250 OK"
+
+
+class LoggingSmtp(SMTP):
+    def connection_made(self, transport):
+        note(f"CONNECT ssl={transport.get_extra_info('ssl_object') is not None}")
+        super().connection_made(transport)
+
+    async def smtp_STARTTLS(self, arg):
+        note("STARTTLS")
+        return await super().smtp_STARTTLS(arg)
+
+    async def smtp_AUTH(self, arg):
+        note("AUTH")
+        return await super().smtp_AUTH(arg)
+
+
+def authenticate(server, session, envelope, mechanism, data):
+    assert isinstance(data, LoginPassword)
+    note(f"CREDENTIALS user={data.login.decode()} password={data.password.decode()}")
+    return AuthResult(success=mode != "reject", handled=False)
+
+
+async def hold(reader, writer):  # accepts and never says a word
+    await asyncio.sleep(3600)
+
+
+async def main():
+    loop = asyncio.get_running_loop()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(f"/proof/mail/{certificate_name}.crt", f"/proof/mail/{certificate_name}.key")
+    if mode == "stall":
+        server = await asyncio.start_server(hold, "127.0.0.1", port)
+    elif mode == "plain":
+        server = await loop.create_server(lambda: LoggingSmtp(Handler(), hostname="sink"), "127.0.0.1", port)
+    elif mode == "implicit":
+        server = await loop.create_server(lambda: LoggingSmtp(Handler(), hostname="sink", authenticator=authenticate, auth_required=True, auth_require_tls=False), "127.0.0.1", port, ssl=context)
+    else:
+        server = await loop.create_server(
+            lambda: LoggingSmtp(Handler(), hostname="sink", tls_context=context, require_starttls=True, authenticator=authenticate, auth_required=True),
+            "127.0.0.1",
+            port,
+        )
+    note("READY")
+    await server.serve_forever()
+
+
+asyncio.run(main())
+PYTHON
+    return
+}
+
+start_mail_sink() {  # start_mail_sink <log name> <mode: starttls|plain|implicit|reject|stall> <port> <certificate: trusted|untrusted>
+    local name=$1 mode=$2 port=$3 certificate=$4
+    : >"$EVIDENCE/$name.log"
+    timeout 300 python3 /proof/mail_sink.py "$mode" "$port" "$EVIDENCE/$name.log" "$certificate" 2>>"$EVIDENCE/$name.err" &
+    echo $! >"$SINK_PID_FILE"
+    timeout 20 bash -c "until grep -qx READY '$EVIDENCE/$name.log'; do sleep 0.2; done"
+    return
+}
+
+stop_mail_sink() {
+    kill "$(cat "$SINK_PID_FILE")" 2>/dev/null
+    wait 2>/dev/null
+    return 0
+}
+
+sink_events() {  # sink_events <log name>: what the sink saw, after it was ready
+    sed '1,/^READY$/d' "$EVIDENCE/$1.log"
+    return
+}
+
+set_up_mail_account() {  # set_up_mail_account <port>: the operator's two files, the account on that port and the canary as password
+    install -d -o tester -g tester -m 0700 /home/tester/.secrets/smtp
+    printf 'host = "%s"\nport = %s\nuser = "home@proof.test"\nto = "me@proof.test"\n' "$MAIL_HOST" "$1" >/home/tester/.secrets/smtp/account.toml
+    printf '%s' "$MAIL_CANARY" >/home/tester/.secrets/smtp/password
+    chown tester:tester /home/tester/.secrets/smtp/account.toml /home/tester/.secrets/smtp/password
+    chmod 600 /home/tester/.secrets/smtp/account.toml /home/tester/.secrets/smtp/password
+    return
+}
+
+mail_run() {  # mail_run <log>: one `home check` with news that has never been delivered, as the operator without a session
+    rm -f "$MAIL_STATE/check-findings.txt"
+    run_as tester "$1" "$HOME_BIN" check
+    return 0
+}
+
+mail_run_has_set() {
+    [[ -s $MAIL_STATE/check-findings.txt ]]
+    return
+}
+
+cells_mail() {
+    local started advanced
+    mkdir -p "$MAIL_DIR"
+    make_mail_ca trusted && make_mail_ca untrusted && write_mail_sink
+    cp "$MAIL_DIR/trusted-ca.crt" /usr/local/share/ca-certificates/proof-trusted-ca.crt && update-ca-certificates >"$EVIDENCE/ca.log" 2>&1
+    grep -qx "127.0.0.1 $MAIL_HOST" /etc/hosts || echo "127.0.0.1 $MAIL_HOST" >>/etc/hosts
+    # What msmtp would read without --host: a config that switches the certificate check off, at both places it looks.
+    printf 'defaults\ntls_certcheck off\n' | tee /etc/msmtprc /home/tester/.msmtprc >/dev/null
+    chown tester:tester /home/tester/.msmtprc
+    chmod 600 /home/tester/.msmtprc
+    # The shim records msmtp's argv, which must never hold the password, and runs the real msmtp.
+    cat >/usr/local/bin/msmtp <<'SHIM'
+#!/bin/sh
+printf '%s\n' "$@" >>/proof/evidence/msmtp-argv.log
+exec /usr/bin/msmtp "$@"
+SHIM
+    chmod 755 /usr/local/bin/msmtp
+    : >"$EVIDENCE/msmtp-argv.log"
+    chmod 666 "$EVIDENCE/msmtp-argv.log"
+
+    set_up_mail_account 587
+    start_mail_sink sink-d3 starttls 587 trusted
+    mail_run cell-d3
+    mail_run_has_set
+    advanced=$?
+    run_as tester cell-d3-rerun "$HOME_BIN" check
+    stop_mail_sink
+    verdict D3 "the sink saw STARTTLS, then AUTH with the account and the canary, then MAIL FROM, RCPT TO and the subject" \
+        '[ "$(sink_events sink-d3 | grep -x -e STARTTLS -e AUTH | tr "\n" " ")" = "STARTTLS AUTH " ] &&
+         sink_events sink-d3 | grep -qx "CREDENTIALS user=home@proof.test password=$MAIL_CANARY" &&
+         sink_events sink-d3 | grep -qx "MAIL FROM home@proof.test" && sink_events sink-d3 | grep -qx "RCPT TO me@proof.test" &&
+         sink_events sink-d3 | grep -q "^SUBJECT home check "'
+    verdict D3 "the argv log and the run's output never hold the canary, and the argv asks for STARTTLS" \
+        '! grep -qF -- "$MAIL_CANARY" "$EVIDENCE/msmtp-argv.log" "$EVIDENCE/cell-d3.log" && grep -qx -e "--tls-starttls=on" "$EVIDENCE/msmtp-argv.log"'
+    verdict D3 "with no graphical session the delivered mail advanced the set, and the rerun sent nothing" \
+        '[ $advanced -eq 0 ] && [ "$(sink_events sink-d3 | grep -c "^SUBJECT ")" -eq 1 ]'
+
+    set_up_mail_account 25
+    start_mail_sink sink-d4 plain 25 trusted
+    mail_run cell-d4
+    stop_mail_sink
+    verdict D4 "a sink without STARTTLS gets no mail, no AUTH, and the news is kept" \
+        '[ -z "$(sink_events sink-d4 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d4 "msmtp fehlgeschlagen ($MAIL_HOST:25)" && ! mail_run_has_set'
+
+    set_up_mail_account 587
+    start_mail_sink sink-d5 starttls 587 untrusted
+    mail_run cell-d5
+    stop_mail_sink
+    verdict D5 "a certificate the system does not trust is refused despite msmtprc files that switch the check off: no AUTH, news kept" \
+        '[ -z "$(sink_events sink-d5 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d5 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+
+    set_up_mail_account 465
+    start_mail_sink sink-d6 implicit 465 trusted
+    mail_run cell-d6
+    stop_mail_sink
+    verdict D6 "implicit TLS on 465: the sink's first event is a TLS connection, and the mail arrived" \
+        '[ "$(sink_events sink-d6 | head -n 1)" = "CONNECT ssl=True" ] && ! sink_events sink-d6 | grep -q "ssl=False" && sink_events sink-d6 | grep -q "^SUBJECT "'
+
+    set_up_mail_account 587
+    start_mail_sink sink-d7 reject 587 trusted
+    mail_run cell-d7
+    stop_mail_sink
+    verdict D7 "a rejected AUTH is one failure line and keeps the news" 'in_log cell-d7 "msmtp fehlgeschlagen ($MAIL_HOST:587)" && ! mail_run_has_set'
+    start_mail_sink sink-d7-good starttls 587 trusted
+    mail_run cell-d7-again
+    stop_mail_sink
+    verdict D7 "the next run against a good sink mails the news" 'sink_events sink-d7-good | grep -q "^SUBJECT " && mail_run_has_set'
+
+    start_mail_sink sink-d8 stall 587 trusted
+    started=$SECONDS
+    mail_run cell-d8
+    stop_mail_sink
+    verdict D8 "a sink that never greets ends the run within 45 s and keeps the news" '[ $((SECONDS - started)) -le 45 ] && in_log cell-d8 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+    rm -f /etc/msmtprc /home/tester/.msmtprc /usr/local/bin/msmtp
+    plant_fake_secrets >/dev/null
+    return
+}
+
 cells_agent() {
     cell_a1_3
     provide_docker_socket
@@ -927,7 +1151,7 @@ cells_agent() {
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_a1_1; cell_9; cell_a1_2; cell_s1; cells_agent; cells_retention; cells_polkit; marker_on ;;
+    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_a1_1; cell_9; cell_a1_2; cell_s1; cells_mail; cells_agent; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; marker_off ;;
     after-unmarked-reboot) cell_8 ;;
     prepared) prepare_today; cell_2 ;;
