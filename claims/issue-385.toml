@@ -1,7 +1,0 @@
-claim_id = "0a549e69906d4f049939bc16361d4e4e"
-agent = "Claude f2c3b4f4-5700-4d8f-9d2b-e5cb0f0337e6"
-role = "builder"
-base = "ef812877a892d1e59e84029fc4e5eb93f3b1f9f8"
-branch = "claude/issue-385-254-s5a-hal-setup-generates-hopin-s-sess"
-scope = ["src/home_tools/secrets_manifest.toml", "tests/home/test_app_secrets.py", "tests/home/test_secrets_view.py"]
-opened_commit = "9952f2c2b021de6c4eabc4efffeece5e590495d0"
