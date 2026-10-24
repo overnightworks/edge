@@ -78,10 +78,9 @@ external network. songmaker ignores the session id and ends every session of the
 client does not require one. The public tunnel denies the path, matched on the recursively decoded
 path and on the host with any port. Until songmaker has joined the network, the call fails and a
 sign-out ends no songmaker session. A later change to the network's definition needs an order: Docker refuses to recreate a network
-with active endpoints, so `up` stops Keycloak and fails while songmaker's web service is attached,
-and edge's apply does not notice a network-only change (the service's config hash is unchanged,
-named on #50). So songmaker's web service leaves the network, edge applies, and songmaker
-redeploys.
+with active endpoints, so `up` stops Keycloak and fails while songmaker's web service is attached.
+So songmaker's web service leaves the network, edge applies (it recreates a running Keycloak
+whose compose definition changed, never its image; #376), and songmaker redeploys.
 
 Which console actions send that back-channel logout was measured on Keycloak 26.8.1 (cell LA1 of
 the Keycloak probe). For each action a fresh user signed in to a client with songmaker's ruled

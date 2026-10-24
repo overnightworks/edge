@@ -322,7 +322,7 @@ def plan_core(
     recreate left it so, and it is recreated again (#87 rule 4)."""
     reading = record.read()
     states = compose.states_of(containers)
-    labels = _config_hash_labels(containers, core_services(config))
+    labels = config_hash_labels(containers, core_services(config))
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):
         current = digests(file_binds(config["services"][service], checkout), checkout)
@@ -393,7 +393,7 @@ def plan_followers(
     reading = record.read()
     states = compose.states_of(containers)
     units = follower_units(config, gates)
-    labels = _config_hash_labels(containers, units)
+    labels = config_hash_labels(containers, units)
     plans = []
     for follower, unit in units.items():
         gate = gates[unit]
@@ -478,7 +478,7 @@ def _dependents(config: Mapping[str, Any], service: str) -> set[str]:
     return found
 
 
-def _config_hash_labels(
+def config_hash_labels(
     containers: Iterable[compose.Container], services: Collection[str]
 ) -> dict[str, set[str]]:
     """The definition hash labels of each named service's containers; one without is an error,

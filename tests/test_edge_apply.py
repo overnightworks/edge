@@ -3917,23 +3917,6 @@ def test_a_follower_without_an_entry_is_recreated_once_and_a_second_run_changes_
     assert scripted.container_ids == ids
 
 
-def test_a_changed_traefik_mcp_definition_recreates_it_and_a_stale_step_ca_label_is_left(
-    step_ca_applied, switch, scripted
-):
-    """#89 rule 2, C6, cell F3: only the follower's label is compared; step-ca is never named."""
-    ids = dict(scripted.container_ids)
-    scripted.change_definition("traefik-mcp")
-    scripted.change_definition("step-ca")
-
-    exit_code, out, _ = switch()
-
-    assert exit_code == 0
-    assert "traefik-mcp: recreate (its compose definition changed)" in out
-    assert "step-ca:" not in out
-    assert up_calls(scripted) == [RECREATE_FOLLOWER]
-    assert scripted.container_ids["step-ca"] == ids["step-ca"]
-
-
 @pytest.mark.parametrize(
     ("marked", "held"), [(False, HELD_OFF), (True, HELD_SWITCHED_OFF)], ids=["F5", "F5 marked"]
 )
@@ -4624,3 +4607,275 @@ def test_keycloak_that_starts_in_this_run_is_not_checked_and_one_line_says_so(
     assert exit_code == 0
     assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
     assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
+
+
+# --- #376: a running unit service follows its compose definition, never its image ------------
+
+RECREATE_STEP_CA = [*RECREATE_TRAEFIK[:-1], "step-ca"]
+RECREATE_KEYCLOAK_DB = [*RECREATE_TRAEFIK[:-1], "keycloak-db"]
+RECREATE_KEYCLOAK = [*RECREATE_TRAEFIK[:-1], "keycloak"]
+STEP_CA_RECREATE_LINE = "step-ca: recreate step-ca (its compose definition changed)"
+KEYCLOAK_RECREATE_LINE = "keycloak: recreate keycloak (its compose definition changed)"
+KEYCLOAK_DB_IMAGE = f"postgres:18@sha256:{'5' * 64}"
+BOTH_UNITS = ENABLED + "  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
+DRIFTS = {
+    "a unit service": (["step-ca"], [RECREATE_STEP_CA]),
+    "a follower": (["traefik-mcp"], [RECREATE_FOLLOWER]),
+    "a follower and a unit service, the follower in the core phase first": (
+        ["traefik-mcp", "step-ca"],
+        [RECREATE_FOLLOWER, RECREATE_STEP_CA],
+    ),
+    "the core and a unit service, the core first": (
+        ["traefik", "step-ca"],
+        [RECREATE_TRAEFIK, RECREATE_STEP_CA],
+    ),
+}
+
+
+@pytest.fixture
+def two_units_applied(step_ca_applied, realm_unit, scripted, repository, switch):
+    """step-ca and Keycloak (its database ahead of it in file order) on and applied, every
+    container from the current definitions; the calls so far are forgotten."""
+    database = {
+        "image": KEYCLOAK_DB_IMAGE,
+        "profiles": ["keycloak"],
+        "volumes": [{"type": "volume", "source": "keycloak-db", "target": "/data"}],
+    }
+    ordered = {}
+    for name, definition in scripted.config["services"].items():
+        if name == "keycloak":
+            ordered["keycloak-db"] = database
+        ordered[name] = definition
+    scripted.config["services"] = ordered
+    write_fleet(repository, BOTH_UNITS)
+    scripted.put_containers({"keycloak-db": "running", "keycloak": "running"})
+    scripted.volumes["keycloak-db"] = "the database"
+    assert switch()[0] == 0
+    scripted.calls.clear()
+
+
+@pytest.mark.parametrize(("drifted", "recreated"), DRIFTS.values(), ids=DRIFTS)
+def test_a_changed_definition_recreates_a_running_unit_service_alone_then_nothing_changes(
+    drifted, recreated, step_ca_applied, switch, scripted
+):
+    """#376 slice 1, cells M3, M16, M19, M4: one plan, one yes, each recreate by its own argv
+    with the other containers (the completed acme owner included) kept; a second run is quiet."""
+    ids = dict(scripted.container_ids)
+    for service in drifted:
+        scripted.change_definition(service)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert ("step-ca" in drifted) == (STEP_CA_RECREATE_LINE in out)
+    assert up_calls(scripted) == recreated
+    assert {service for service in ids if scripted.container_ids[service] != ids[service]} == set(
+        drifted
+    )
+    scripted.calls.clear()
+    exit_code, out, _ = switch(answer="no")
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_declined_yes_recreates_nothing(step_ca_applied, switch, scripted):
+    """#376 invariant 1, cell M2: the recreate is a plan line and a no changes nothing."""
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("step-ca")
+
+    exit_code, out, err = switch(answer="no")
+
+    assert exit_code == 1
+    assert STEP_CA_RECREATE_LINE in out
+    assert "aborted, nothing changed" in err
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+def test_keycloak_is_recreated_alone_with_its_database_and_volume_kept_and_its_realm_not_checked(
+    two_units_applied, switch, scripted, realm_backup
+):
+    """#376 cells M1, M14: the sign-in service gets a new container; the database keeps its id
+    and volume, step-ca is untouched; the realm waits for the next apply."""
+    ids = dict(scripted.container_ids)
+    realm_before = (list(realm_backup.asked), scripted.realm_applies)
+    scripted.change_definition("keycloak")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert KEYCLOAK_RECREATE_LINE in out
+    assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
+    assert up_calls(scripted) == [RECREATE_KEYCLOAK]
+    assert scripted.container_ids["keycloak"] != ids["keycloak"]
+    assert {s: scripted.container_ids[s] for s in ids if s != "keycloak"} == {
+        s: ids[s] for s in ids if s != "keycloak"
+    }
+    assert scripted.volumes["keycloak-db"] == "the database"
+    assert (realm_backup.asked, scripted.realm_applies) == realm_before
+
+
+def test_two_units_with_a_changed_definition_are_two_lines_in_compose_order_under_one_yes(
+    two_units_applied, switch, scripted
+):
+    """#376 cells M11, M23: step-ca's unit first (catalog order), the database before Keycloak
+    (file order)."""
+    for service in ("keycloak", "keycloak-db", "step-ca"):
+        scripted.change_definition(service)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.count("apply exactly this plan") == 1
+    assert up_calls(scripted) == [RECREATE_STEP_CA, RECREATE_KEYCLOAK_DB, RECREATE_KEYCLOAK]
+
+
+def test_an_image_change_is_named_and_a_definition_change_beside_it_recreates_nothing_else(
+    step_ca_applied, switch, scripted
+):
+    """#376 invariant 2, cells M5, M6: the image of step-ca is never swapped; a service whose
+    image differs is only named."""
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+    scripted.change_definition("traefik-mcp")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert STEP_CA_KEPT in out
+    assert "step-ca: recreate" not in out
+    assert up_calls(scripted) == [RECREATE_FOLLOWER]
+
+
+def test_a_unit_switched_off_by_its_marker_stays_stopped_whatever_its_definition(
+    step_ca_applied, switch, scripted, state
+):
+    """#376 invariant 4, cell M7."""
+    switch_off(state)
+    scripted.change_definition("step-ca")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "step-ca stays stopped" in out
+    assert "recreate" not in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_marker_that_appears_after_the_yes_wins_and_the_run_is_partial(
+    step_ca_applied, switch, scripted, state
+):
+    """#376 invariant 4, cell M8: the recreate is taken under the switch lock."""
+    ids = dict(scripted.container_ids)
+    scripted.change_definition("step-ca")
+
+    exit_code, _, err = switch(while_prompt_waits=lambda: switch_off(state))
+
+    assert exit_code == 1
+    assert "partial, step-ca was switched off meanwhile" in err
+    assert "step-ca is not recreated" in err
+    assert scripted.container_ids == ids
+
+
+def test_a_disabled_unit_is_only_switched_off_not_recreated(
+    step_ca_applied, switch, scripted, repository
+):
+    """#376 invariant 4, cell M9."""
+    scripted.change_definition("step-ca")
+    write_fleet(repository, DISABLED)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "step-ca: off" in out
+    assert "recreate step-ca" not in out
+    assert up_calls(scripted) == []
+
+
+def test_a_unit_planned_on_is_started_without_recreating_its_running_service(switch, scripted):
+    """#376 invariant 3, cell M10 (#75): the switch-on keeps `--no-recreate`."""
+    scripted.put_containers(APP_EXITED)
+    scripted.change_definition("step-ca")
+    ids = dict(scripted.container_ids)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "recreate step-ca" not in out
+    assert up_calls(scripted) == [
+        ["--profile", "step-ca", "up", "-d", "--no-recreate", *STEP_CA_SERVICES]
+    ]
+    assert scripted.container_ids["step-ca"] == ids["step-ca"]
+
+
+def test_edge_start_keeps_the_running_service_of_a_changed_definition(start, scripted, state):
+    """#376 invariant 3, cell M20."""
+    switch_off(state)
+    scripted.put_containers(STEP_CA_ON)
+    scripted.change_definition("step-ca")
+    ids = dict(scripted.container_ids)
+
+    exit_code, _, _ = start()
+
+    assert exit_code == 0
+    assert scripted.container_ids == ids
+
+
+FAILING_RECREATES = {
+    "an up that fails": (
+        lambda scripted: setattr(scripted, "failing_verb", "up"),
+        "partial, could not recreate step-ca, `docker compose up` exited 1",
+    ),
+    "a container that crashes in the watch": (
+        lambda scripted: scripted.crash_loops.add("step-ca"),
+        "partial, step-ca is not running after the step-ca recreate",
+    ),
+    "a Ctrl-C": (
+        lambda scripted: setattr(scripted, "after_up", interrupted_at_the_prompt),
+        "interrupted while changing step-ca (recreate step-ca)",
+    ),
+}
+
+
+@pytest.mark.parametrize(("arrange", "line"), FAILING_RECREATES.values(), ids=FAILING_RECREATES)
+def test_a_recreate_that_fails_is_partial_and_no_unit_is_switched(
+    arrange, line, step_ca_applied, switch, scripted
+):
+    """#376 cells M12, M13, M22: exit 1 naming the step; the next run plans it again."""
+    scripted.change_definition("step-ca")
+    arrange(scripted)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert line in err
+
+
+def test_a_live_unit_container_without_the_hash_label_cannot_be_planned(
+    step_ca_applied, switch, scripted
+):
+    """#376 Q2, cell M15: exit 2 and nothing changed, as for the core (#87 D11)."""
+    scripted.labels["step-ca"] = None
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert "cannot plan, a step-ca container has no com.docker.compose.config-hash label" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_a_completed_one_shot_and_a_service_outside_the_catalog_are_left_alone(
+    step_ca_applied, switch, scripted
+):
+    """#376 cells M17, M18."""
+    scripted.config["services"]["echo"] = {"image": IMAGE, "profiles": ["echo"]}
+    scripted.put_containers({"echo": "running"})
+    scripted.change_definition("echo")
+    scripted.change_definition("traefik-mcp-acme-owner")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []

@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, compose, switches
+from edge import catalog, compose, core, switches
 
 
 class Action(StrEnum):
@@ -163,6 +163,52 @@ def _running_images(service: str, live: Sequence[compose.Container]) -> list[str
             )
         images.append(container.image)
     return images
+
+
+@dataclass(frozen=True)
+class Recreate:
+    """A live service of a unit that runs on whose compose definition changed."""
+
+    unit: str
+    service: str
+
+    def describe(self) -> str:
+        return f"{self.unit}: recreate {self.service} ({core.DEFINITION_CHANGED})"
+
+
+def plan_recreates(
+    units: Sequence[catalog.Unit],
+    profile_services: Mapping[str, tuple[str, ...]],
+    containers: Sequence[compose.Container],
+    hashes: Mapping[str, str],
+    plans: Sequence[UnitPlan],
+    followers: Collection[str],
+    kept: Sequence[KeptImage],
+) -> list[Recreate]:
+    """Each live service of an enabled unit that is not switched on, off or kept stopped by a
+    plan, whose container is labelled with another definition hash than `hashes` (from
+    `docker compose config --hash`), in catalog and file order. The followers have their own plan,
+    a service whose image differs is only named (#91), and a container without the label cannot be
+    planned (#376)."""
+    planned = {plan.unit.key for plan in plans}
+    kept_services = {image.service for image in kept}
+    live = [container for container in containers if container.live]
+    recreates = []
+    for unit in units:
+        if not unit.enabled or unit.key in planned:
+            continue
+        services = [
+            service
+            for service in profile_services[unit.key]
+            if service not in followers and service not in kept_services
+        ]
+        labels = core.config_hash_labels(live, services)
+        recreates += [
+            Recreate(unit.key, service)
+            for service in services
+            if labels.get(service, set()) - {hashes[service]}
+        ]
+    return recreates
 
 
 @dataclass
