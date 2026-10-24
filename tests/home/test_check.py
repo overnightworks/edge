@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import email.message
+import email.policy
 import json
 import os
 import select
@@ -12,11 +14,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox
+from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, HOME_README, INSPECT_CANARY, PASSWORD_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox, SentMail, MailStub, set_up_mail
 
-from home_tools import backup_check, check, cli, logs_check
+from home_tools import backup_check, check, cli, logs_check, mail
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
-from home_tools.tidy_home import Layout
+from home_tools.tidy_home import Layout, run_command
 
 READY_DEADLINE_SECONDS = 30  # a pass returns at once; the deadline only bounds a hang under load
 
@@ -42,6 +44,9 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
         if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
             self.calls.append(list(argv))
             return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
+        if argv[0] == "sh":
+            self.calls.append(list(argv))
+            return run_command(argv)
         return super().__call__(argv)
 
 
@@ -536,3 +541,205 @@ def test_a_symlinked_findings_memory_is_refused_and_never_carried_into_the_state
     assert code == 3
     assert state_files
     assert not any("leaked-secret" in path.read_text() for path in state_files)
+
+
+@pytest.fixture
+def mail_stub(clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MailStub:
+    return set_up_mail(clean_home, tmp_path, monkeypatch)
+
+
+def message_of(sent: SentMail) -> email.message.EmailMessage:
+    return email.message_from_string(sent.stdin, policy=email.policy.default)  # type: ignore[return-value]
+
+
+def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_password_read_by_msmtp(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+    leave_pasted_image(clean_home)
+
+    home_check(clean_home, runner)
+    home_check(clean_home, runner)
+
+    layout = Layout(clean_home)
+    (sent,) = mail_stub.sent
+    news = message_of(sent)
+    assert news["Subject"] == runner.notifications[0]
+    assert (news["From"], news["To"]) == ("home@example.test", "me@example.test")
+    assert sent.arguments[-2:] == ["--", "me@example.test"]
+    assert sent.password == PASSWORD_CANARY
+    outputs = [capsys.readouterr().out, layout.check_report_file.read_text(), layout.check_findings_file.read_text(), sent.stdin, *sent.arguments]
+    assert not any(PASSWORD_CANARY in text for text in outputs)
+
+
+def test_the_mail_names_counts_and_new_platform_and_backup_findings_but_never_a_file_or_the_report(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    leave_pasted_image(clean_home)
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
+
+    home_check(clean_home, runner)
+
+    body = message_of(mail_stub.sent[0]).get_content()
+    assert body.startswith(f"{runner.notification_bodies[0].partition('.')[0]}.")
+    assert f"Bericht: {Layout(clean_home).check_report_file}" in body
+    assert "  platform: 1" in body
+    assert "container-unhealthy | edge-step-ca-1" in body
+    assert "backup-stale | songmaker" in body
+    assert "Eingefügtes Bild" not in body
+    assert "# home" not in body
+
+
+def test_two_hundred_new_findings_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
+    runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tcompose\n" for n in range(200))
+
+    home_check(clean_home, runner)
+
+    body = message_of(mail_stub.sent[0]).get_content()
+    assert body.count("container-exited |") == 20
+    assert "… und 180 weitere" in body
+
+
+def test_a_subject_with_shell_syntax_or_a_newline_reaches_the_mail_verbatim_and_runs_nothing(tmp_path, monkeypatch) -> None:
+    stub = set_up_mail(tmp_path / "home", tmp_path, monkeypatch)
+    hostile = "platform\tcontainer-dead\t$(touch PWNED) `touch PWNED`\nBcc: x@example.test"
+    account = mail.load_account(Layout(tmp_path / "home"))
+    body = check.mail_body(frozenset({hostile}), None, tmp_path / "report.md")
+
+    run_command(mail.sendmail_command(account, Layout(tmp_path / "home").secrets_dir, mail.compose(account, "s", body)))
+
+    (sent,) = stub.sent
+    assert "$(touch PWNED) `touch PWNED`\n" in message_of(sent).get_content()
+    assert not list(Path.cwd().glob("PWNED"))
+
+
+def test_unchanged_findings_and_a_clean_home_send_no_mail(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    image = leave_pasted_image(clean_home)
+    home_check(clean_home, runner)
+    home_check(clean_home, runner)
+    image.unlink()
+    (clean_home / "README.md").write_text(HOME_README)
+
+    home_check(clean_home, runner)
+
+    assert len(mail_stub.sent) == 1
+
+
+def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
+    layout = Layout(clean_home)
+    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.check_findings_file.write_text('["tidy\\tcheck-failed"]')
+
+    home_check(clean_home, runner)
+
+    assert len(mail_stub.sent) == 1
+
+
+def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, leave_pasted_image, runner, capsys) -> None:
+    leave_pasted_image(clean_home)
+
+    home_check(clean_home, runner)
+
+    assert not [call for call in runner.calls if call[0] == "sh"]
+    assert "msmtp" not in capsys.readouterr().err
+
+
+INVALID_ACCOUNTS = {
+    "string port": 'port = "587"\n',
+    "a password key": f'port = 587\npassword = "{PASSWORD_CANARY}"\n',
+    "no TOML": f"this is {PASSWORD_CANARY}\n",
+}
+
+
+@pytest.mark.parametrize("extra", INVALID_ACCOUNTS.values(), ids=INVALID_ACCOUNTS)
+def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_for_the_next_run(clean_home, leave_pasted_image, runner, mail_stub, capsys, extra) -> None:
+    leave_pasted_image(clean_home)
+    (Layout(clean_home).secrets_dir / "smtp" / "account.toml").write_text('host = "smtp.example.test"\nuser = "home@example.test"\nto = "me@example.test"\n' + extra)
+
+    home_check(clean_home, runner)
+    home_check(clean_home, runner)
+
+    errors = capsys.readouterr().err
+    assert mail_stub.sent == []
+    assert errors.count("home: keine Mail, account.toml:") == 2
+    assert PASSWORD_CANARY not in errors
+    assert len(runner.notifications) == 2
+
+
+def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    config_file = Layout(clean_home).config_file
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("[notify]\nenabled = false\n")
+    leave_pasted_image(clean_home)
+
+    home_check(clean_home, runner)
+
+    assert (mail_stub.sent, runner.notifications) == ([], [])
+    assert Layout(clean_home).check_findings_file.exists()
+
+
+@pytest.mark.parametrize("session_active", [True, False], ids=["session", "logged-out"])
+@pytest.mark.parametrize("mail_state", ["ok", "failing", "absent"])
+def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, leave_pasted_image, runner, mail_stub, capsys, session_active, mail_state) -> None:
+    leave_pasted_image(clean_home)
+    runner.session_active = session_active
+    if mail_state == "failing":
+        mail_stub.exit_with(1)
+    if mail_state == "absent":
+        (Layout(clean_home).secrets_dir / "smtp" / "account.toml").unlink()
+
+    code = home_check(clean_home, runner)
+
+    errors = capsys.readouterr().err
+    channels = [session_active, mail_state != "absent"]
+    advanced = any(channels) and mail_state != "failing"
+    assert code == 1
+    assert (len(runner.notifications), len(mail_stub.sent)) == (int(session_active), int(mail_state != "absent"))
+    assert Layout(clean_home).check_findings_file.exists() == advanced
+    assert ("msmtp fehlgeschlagen (smtp.example.test:587)" in errors) == (mail_state == "failing")
+    assert "me@example.test" not in errors
+    assert (errors == "") == (advanced or not any(channels))
+
+
+def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    leave_pasted_image(clean_home)
+    mail_stub.exit_with(1)
+    home_check(clean_home, runner)
+    mail_stub.exit_with(0)
+
+    home_check(clean_home, runner)
+    home_check(clean_home, runner)
+
+    assert len(mail_stub.sent) == 2
+
+
+def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, leave_pasted_image, runner, mail_stub, tmp_path, monkeypatch, capsys) -> None:
+    leave_pasted_image(clean_home)
+    only_sh = tmp_path / "only-sh"
+    only_sh.mkdir()
+    (only_sh / "sh").symlink_to("/bin/sh")
+    monkeypatch.setenv("PATH", str(only_sh))
+
+    code = home_check(clean_home, runner)
+
+    assert code == 1
+    assert "msmtp fehlgeschlagen" in capsys.readouterr().err
+    assert not Layout(clean_home).check_findings_file.exists()
+
+
+@pytest.mark.parametrize(("port", "starttls"), [(2525, "on"), (465, "off")])
+def test_the_port_of_the_account_decides_between_starttls_and_implicit_tls(clean_home, leave_pasted_image, runner, tmp_path, monkeypatch, port, starttls) -> None:
+    stub = set_up_mail(clean_home, tmp_path, monkeypatch, port=port)
+    leave_pasted_image(clean_home)
+
+    home_check(clean_home, runner)
+
+    assert f"--tls-starttls={starttls}" in stub.sent[0].arguments
+
+
+def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_path, leave_pasted_image, runner, use_manifest, furnish_clean_home, monkeypatch, capsys) -> None:
+    odd_home = furnish_clean_home(tmp_path / "ho me's")
+    stub = set_up_mail(odd_home, tmp_path, monkeypatch)
+    leave_pasted_image(odd_home)
+
+    home_check(odd_home, runner)
+
+    (sent,) = stub.sent
+    assert sent.password == PASSWORD_CANARY
+    assert PASSWORD_CANARY not in capsys.readouterr().out + "".join(sent.arguments) + sent.stdin

@@ -1,9 +1,10 @@
 """`home check` runs every read-only check of `home` and nudges only on news.
 
-It writes one report and sends at most one desktop notification, and only when
+It writes one report and sends at most one desktop notification and one e-mail, and only when
 the set of findings differs from the last run's: findings that merely persist
 never nag. A check that breaks or recovers is news too, but its findings count
-as neither new nor gone; the title names the broken check. Exit code: 0 when
+as neither new nor gone; the title names the broken check. The desktop counts as a channel only while a graphical session
+exists, the mail only while `~/.secrets/smtp/account.toml` exists; the news is remembered once every such channel delivered it. Exit code: 0 when
 every check is clean, 1 when any finding exists, 2 when the configuration file
 or the secrets manifest is invalid, 3 when a check broke on an unexpected error. A broken check leaves the other checks' findings
 in the report.
@@ -20,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from home_tools import backup_check, hook_check, logs_check, platform_check, secrets_view, tidy_home
+from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view, tidy_home
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import REBOOT_REQUIRED_FILE
 from home_tools.report import findings_count, read_state_file, write_state_file
@@ -187,6 +188,72 @@ def notification_body(current: frozenset[str], previous: frozenset[str] | None, 
     return f"{len(found - before)} neu, {len(before - found)} weg. Bericht: {report_file}"
 
 
+MAIL_FAILED = "home: msmtp fehlgeschlagen ({host}:{port}); der nächste Lauf meldet die geänderten Funde erneut.\n"
+MAIL_ACCOUNT_INVALID = "home: keine Mail, {problem}; der nächste Lauf meldet die geänderten Funde erneut.\n"
+GRAPHICAL_SESSION_PROBE = ["systemctl", "--user", "is-active", "--quiet", "graphical-session.target"]
+MAX_NEW_FINDING_LINES = 20
+
+
+def _check_name(check_function: Callable[[CheckContext], CheckFindings]) -> str:
+    return next(name for name, function in CHECKS if function is check_function)
+
+
+# Only these checks' new findings are named in the mail: container and app names are not private files (#340 R1).
+MAILED_CHECK_NAMES = frozenset({_check_name(_platform_check), _check_name(_backup_check)})
+
+
+def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_file: Path) -> str:
+    """The notification's counts, the findings per check, and the new platform and backup findings by rule and subject; no other finding, never the report."""
+    found = current - FAILURE_MARKERS
+    per_check = [f"  {name}: {count}" for name, _ in CHECKS if (count := sum(identity.startswith(f"{name}\t") for identity in found))]
+    named = sorted(identity.split("\t", 2) for identity in found - (previous or frozenset()) if identity.partition("\t")[0] in MAILED_CHECK_NAMES)
+    new_lines = [f"  {rule} | {subject}" for _, rule, subject in named[:MAX_NEW_FINDING_LINES]]
+    if len(named) > MAX_NEW_FINDING_LINES:
+        new_lines.append(f"  … und {len(named) - MAX_NEW_FINDING_LINES} weitere")
+    sections = [notification_body(current, previous, report_file)]
+    if per_check:
+        sections.append("Funde je Prüfung:\n" + "\n".join(per_check))
+    if new_lines:
+        sections.append("Neu:\n" + "\n".join(new_lines))
+    return "\n\n".join(sections) + "\n"
+
+
+def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
+    """None while mail is not set up; False (after one stderr line) when the account is invalid or msmtp did not deliver."""
+    try:
+        account = mail.load_account(ctx.layout)
+    except mail.AccountInvalid as error:
+        sys.stderr.write(MAIL_ACCOUNT_INVALID.format(problem=error))
+        return False
+    if account is None:
+        return None
+    delivered = ctx.run(mail.sendmail_command(account, ctx.layout.secrets_dir, mail.compose(account, subject, body))) is not None
+    if not delivered:
+        sys.stderr.write(MAIL_FAILED.format(host=account.host, port=account.port))
+    return delivered
+
+
+def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | None:
+    """None without a graphical session; False (after one stderr line) when the notification was not delivered."""
+    if ctx.run(GRAPHICAL_SESSION_PROBE) is None:
+        return None
+    delivered = _notify(ctx.run, summary, body, ctx.layout.check_report_file)
+    if not delivered:
+        sys.stderr.write(NOTIFY_FAILED)
+    return delivered
+
+
+def _news_delivered(ctx: CheckContext, summary: str, current: frozenset[str], previous: frozenset[str] | None) -> bool:
+    """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
+    report_file = ctx.layout.check_report_file
+    outcomes = [
+        _desktop_delivered(ctx, summary, notification_body(current, previous, report_file)),
+        _mail_delivered(ctx, summary, mail_body(current, previous, report_file)),
+    ]
+    set_up = [outcome for outcome in outcomes if outcome is not None]
+    return bool(set_up) and all(set_up)
+
+
 OPEN_REPORT_ACTION = "open=Bericht öffnen"
 # Runs inside the detached unit. A printed notification ID above 0 proves delivery (0 is what a failed show prints),
 # so only then is the unit ready and systemd-run succeeds; afterwards the click is awaited and opens the report, a dismissal ends quietly.
@@ -227,11 +294,8 @@ def check(ctx: CheckContext) -> int:
     sys.stdout.write(report)
     news = ctx.config.notify_enabled and _is_news(current, previous)
     summary = report.splitlines()[0].removeprefix("# ")
-    body = notification_body(current, previous, layout.check_report_file)
-    if news and not _notify(ctx.run, summary, body, layout.check_report_file):
-        # The remembered set stays at the last delivered one, so the next run sends this news again.
-        sys.stderr.write(NOTIFY_FAILED)
-    else:
+    # The remembered set stays at the last delivered one, so the next run sends this news again.
+    if not news or _news_delivered(ctx, summary, current, previous):
         _remember(layout, current)
     failed = [result for result in results if result.error]
     if failed:
@@ -241,9 +305,9 @@ def check(ctx: CheckContext) -> int:
 
 CHECK_EXAMPLES = """\
 Beispiele:
-  home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung
+  home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 
-Benachrichtigt nur, wenn sich die Menge der Funde seit dem letzten Lauf
+Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn sich die Menge der Funde seit dem letzten Lauf
 geändert hat. Bericht: ~/.local/state/home/check-report.md
 Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwarteter Fehler.
 """
