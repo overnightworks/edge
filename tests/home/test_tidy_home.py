@@ -60,6 +60,14 @@ def layout(tmp_path: Path) -> Layout:
     return Layout(tmp_path)
 
 
+@pytest.fixture
+def docker_findings(layout: Layout):
+    def collect(run, limits: Limits = LIMITS) -> list[Finding]:
+        all_rules = tidy_home.collect_findings(layout, NOW, Options(), limits, run=run, issue_state=lambda r, n: None)
+        return [f for f in all_rules.clean if f.rule == tidy_home.DOCKER_RULE]
+    return collect
+
+
 def subjects(findings: list[Finding]) -> set[str]:
     return {f.subject for f in findings}
 
@@ -183,23 +191,18 @@ def test_the_trash_age_limit_is_configurable(layout: Layout) -> None:
     assert subjects(tidy_home.expired_trash(layout, NOW, LIMITS)) == {str(item), str(info)}
 
 
-def test_docker_rules_are_skipped_when_docker_is_unavailable() -> None:
-    assert tidy_home.docker_leftovers(no_tools, NOW, LIMITS) == []
-
-
-def test_docker_leftovers_emit_nothing_when_there_is_nothing_to_clean() -> None:
-    docker = fake_docker(
-        containers="live\t2026-08-01 10:00:00 +0200 CEST\trunning\n",
-        system_df="Images\t5GB\t0GB (0%)\nBuild Cache\t1GB\t0GB\n",
-    )
-
-    assert tidy_home.docker_leftovers(docker, NOW, LIMITS) == []
-
-
-def test_images_are_not_reported_without_dangling_images_even_when_docker_calls_them_reclaimable() -> None:
-    docker = fake_docker(system_df="Images\t55.69GB\t25.66GB (46%)\nBuild Cache\t1GB\t0GB\n", dangling_images="")
-
-    assert tidy_home.docker_leftovers(docker, NOW, LIMITS) == []
+@pytest.mark.parametrize(
+    "docker",
+    [
+        no_tools,
+        fake_docker(containers="live\t2026-08-01 10:00:00 +0200 CEST\trunning\n", system_df="Images\t5GB\t0GB (0%)\n"),
+        fake_docker(system_df="Images\t55.69GB\t25.66GB (46%)\nBuild Cache\t1GB\t0GB\n"),
+        fake_docker(system_df="Images\t59.34GB\t29.22GB (49%)\nBuild Cache\t1GB\t0GB\n", dangling_images=None),
+    ],
+    ids=["docker unavailable", "nothing to clean", "no dangling images", "failing image listing"],
+)
+def test_docker_rules_report_nothing_when_there_is_nothing_to_clean(docker_findings, docker) -> None:
+    assert docker_findings(docker) == []
 
 
 @pytest.mark.parametrize(
@@ -212,23 +215,22 @@ def test_images_are_not_reported_without_dangling_images_even_when_docker_calls_
     ids=["sum below docker's figure", "shared layers inflate the sum", "docker reports no images at all"],
 )
 def test_dangling_images_are_counted_from_the_list_and_sized_no_higher_than_docker_says(
-    system_df: str, dangling_images: str, expected_detail: str
+    docker_findings, system_df: str, dangling_images: str, expected_detail: str
 ) -> None:
     docker = fake_docker(system_df=system_df, dangling_images=dangling_images)
-
-    images = next(f for f in tidy_home.docker_leftovers(docker, NOW, LIMITS) if f.subject == "dangling images")
+    images = next(f for f in docker_findings(docker) if f.subject == "dangling images")
 
     assert images.detail == expected_detail
     assert images.command == ("docker", "image", "prune", "-f")
 
 
-def test_a_failing_image_listing_yields_no_images_finding() -> None:
+def test_a_failing_image_listing_yields_no_images_finding(docker_findings) -> None:
     docker = fake_docker(system_df="Images\t59.34GB\t29.22GB (49%)\nBuild Cache\t1GB\t0GB\n", dangling_images=None)
 
-    assert tidy_home.docker_leftovers(docker, NOW, LIMITS) == []
+    assert docker_findings(docker) == []
 
 
-def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
+def test_docker_prune_commands_name_only_week_old_stopped_containers(docker_findings) -> None:
     docker = fake_docker(
         containers=(
             "old-probe\t2026-08-20 10:00:00 +0200 CEST\texited\n"
@@ -239,7 +241,7 @@ def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
         dangling_images="25.66GB\n",
     )
 
-    findings = tidy_home.docker_leftovers(docker, NOW, LIMITS)
+    findings = docker_findings(docker)
 
     containers = next(f for f in findings if f.command[:3] == ("docker", "container", "prune"))
     assert containers.detail == "old-probe"
@@ -250,18 +252,16 @@ def test_docker_prune_commands_name_only_week_old_stopped_containers() -> None:
     assert details["build cache beyond 20GB"] == "32.33GB, reclaimable 421MB"
 
 
-def test_docker_build_cache_limit_is_configurable() -> None:
-    docker = fake_docker(system_df="Build Cache\t10GB\t3GB\n")
-
-    findings = tidy_home.docker_leftovers(docker, NOW, Limits(docker_build_cache_keep="5GB"))
+def test_docker_build_cache_limit_is_configurable(docker_findings) -> None:
+    findings = docker_findings(fake_docker(system_df="Build Cache\t10GB\t3GB\n"), Limits(docker_build_cache_keep="5GB"))
 
     assert any(f.subject == "build cache beyond 5GB" for f in findings)
 
 
-def test_terabyte_sized_images_and_build_cache_are_findings() -> None:
+def test_terabyte_sized_images_and_build_cache_are_findings(docker_findings) -> None:
     docker = fake_docker(system_df="Images\t2TB\t1.2TB (60%)\nBuild Cache\t1.5TB\t900GB\n", dangling_images="1.2TB\n")
 
-    findings = tidy_home.docker_leftovers(docker, NOW, LIMITS)
+    findings = docker_findings(docker)
 
     assert {f.subject for f in findings} == {"dangling images", "build cache beyond 20GB"}
     assert {f.subject: f.reclaimable_bytes for f in findings} == {
