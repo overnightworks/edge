@@ -19,8 +19,8 @@ locals {
   ]
   operator_group_id = length(local.operator_group_ids) == 1 ? local.operator_group_ids[0] : null
 
-  # Every name that answers at the edge: the tunnel's hosts and the redirected names, which have a
-  # record and no tunnel line.
+  # Every name that answers at the edge: the tunnel's hosts and the redirected names. A redirected
+  # name has a record and no tunnel line unless it is also a host (the serving apex).
   redirect = try(local.fleet.cloudflare.redirect, null)
   redirect_fqdns = [
     for name in try(local.redirect.hosts, []) : name == "@" ? local.fleet.cloudflare.zone : "${name}.${local.fleet.cloudflare.zone}"
@@ -264,13 +264,16 @@ resource "cloudflare_ruleset" "deny_public" {
 # reach the tunnel. Single Redirects run in the phase http_request_dynamic_redirect, in order, and a
 # redirect ends the evaluation (https://developers.cloudflare.com/rules/url-forwarding/, which also
 # lists the Free plan's 10 single redirects),
-# so the kept paths come first and the last rule takes the rest. The target is a static URL
-# (`from_value.target_url.value`), so the path and, with preserve_query_string off, the query of
+# so the kept paths come first, then one rule per served page, and the last rule takes the rest.
+# The target is a static URL (`from_value.target_url.value`), so the path and, with preserve_query_string off, the query of
 # the request are dropped
 # (https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-api/). A host
 # matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. A kept path matches exactly, with
-# or without a trailing slash, case-insensitively, and goes on without the slash. Only https is
-# redirected (`ssl`): `http://` first goes to https on the same host (Always Use HTTPS), as the
+# or without a trailing slash, case-insensitively, and goes on without the slash. With
+# `redirect.serve` the apex answers its pages (exactly, as written) and everything under its files
+# prefix from the tunnel: the rule of a page sends every other form of it (another case, a trailing
+# slash, www) to the apex's exact path, and the last rule leaves the apex's served paths out. Only
+# https is redirected (`ssl`): `http://` first goes to https on the same host (Always Use HTTPS), as the
 # HSTS preload requires.
 # A record waits for this ruleset, as for the deny. Without `cloudflare.redirect` no ruleset
 # exists; if the zone already holds the entry point of this phase, import it before the first apply
@@ -280,6 +283,12 @@ locals {
     for fqdn in sort(local.redirect_fqdns) :
     "lower(http.host) eq \"${fqdn}\" or starts_with(lower(http.host), \"${fqdn}:\")"
   ])
+  apex_host_expression = "lower(http.host) eq \"${local.fleet.cloudflare.zone}\" or starts_with(lower(http.host), \"${local.fleet.cloudflare.zone}:\")"
+  served_pages         = try(local.redirect.serve.pages, [])
+  served_expression = join(" or ", concat(
+    length(local.served_pages) == 0 ? [] : ["http.request.uri.path in {${join(" ", [for page in local.served_pages : "\"${page}\""])}}"],
+    try(["starts_with(http.request.uri.path, \"${local.redirect.serve.files}\")"], [])
+  ))
   redirect_rules = local.redirect == null ? [] : concat(
     [
       for kept in try(local.redirect.keep, []) : {
@@ -288,9 +297,16 @@ locals {
         target_url  = "${kept.target}${kept.path}"
       }
     ],
+    [
+      for page in local.served_pages : {
+        description = "${page} is served at ${local.fleet.cloudflare.zone}"
+        expression  = "ssl and ( ${local.redirect_host_expression} ) and lower(http.request.uri.path) in {\"${page}\" \"${page}/\"} and not ( ( ${local.apex_host_expression} ) and http.request.uri.path eq \"${page}\" )"
+        target_url  = "https://${local.fleet.cloudflare.zone}${page}"
+      }
+    ],
     [{
       description = "everything else goes to ${local.redirect.target}"
-      expression  = "ssl and ( ${local.redirect_host_expression} )"
+      expression  = "ssl and ( ${local.redirect_host_expression} )${local.served_expression == "" ? "" : " and not ( ( ${local.apex_host_expression} ) and ( ${local.served_expression} ) )"}"
       target_url  = local.redirect.target
     }]
   )

@@ -63,12 +63,12 @@ def test_traefik_routes_the_zone_apex_to_port_8080_on_the_edge_entrypoint(legal)
     assert labels["traefik.http.routers.legal.rule"] == "Host(`${EDGE_DOMAIN}`)"
 
 
-def test_the_catalog_runs_the_unit_and_gives_it_no_public_host():
+def test_the_catalog_runs_the_unit_and_gives_it_the_apex_as_its_one_public_host():
     fleet = catalog.read(ROOT / "fleet.yaml")
     profiles = compose.profile_services(yaml.safe_load((ROOT / "compose.yaml").read_text()))
     (unit,) = [one for one in catalog.load(ROOT, profiles) if one.key == "legal"]
     assert unit.enabled
-    assert "hosts" not in fleet["services"]["legal"]
+    assert [host["name"] for host in fleet["services"]["legal"]["hosts"]] == ["@"]
 
 
 def test_the_security_headers_stand_at_server_level_and_no_location_overrides_them():
