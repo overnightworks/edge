@@ -290,8 +290,17 @@ def test_p41_a_standin_that_is_gone_by_itself_is_a_clean_removal():
 def test_p41_a_standin_that_prints_nothing_gives_no_verdict_at_the_deadline():
     read_end, write_end = os.pipe()
     silent = os.fdopen(read_end)
+    reader_done = threading.Event()
+
+    class ObservedStream:
+        def readline(self) -> str:
+            try:
+                return silent.readline()
+            finally:
+                reader_done.set()
+
     process = FakeStandIn([])
-    process.stdout = silent
+    process.stdout = ObservedStream()
 
     answers: list[str | None] = []
     caller = threading.Thread(target=lambda: answers.append(live_signer.read_line(process, 0.01)))
@@ -301,6 +310,7 @@ def test_p41_a_standin_that_prints_nothing_gives_no_verdict_at_the_deadline():
     finished = not caller.is_alive()
     os.close(write_end)  # the reader thread sees end of file and ends
     caller.join(1)
+    assert reader_done.wait(1)  # the abandoned reader has returned before the stream closes
     silent.close()
     assert finished
     assert answers == [None]
