@@ -38,7 +38,7 @@ since it holds certificates from this CA.
 
 A second Traefik, the gateway to the MCP origins. It has no host networking and no Docker API, and
 listens on 443 inside internal networks, none with a route out: `mcp-ca` (step-ca and
-`traefik-mcp`), `mcp` (`traefik-mcp`, later the agent service), `mcp-backends` (`traefik-mcp` and the
+`traefik-mcp`), `mcp` (`traefik-mcp` and the agent service), `mcp-backends` (`traefik-mcp` and the
 probe's MCP server) and one network per app that serves an MCP origin, `hal_mcp_songmaker` for
 songmaker (`traefik-mcp` and the app's web service, which joins it as an external network). It is the
 only container on all of them. It answers to `<app>.mcp.internal` on `mcp-ca`
@@ -75,7 +75,7 @@ ClientHello and dials only `api.anthropic.com:443` (the provider CLI) and `auth.
 JWKS fetch). It holds no key and has no API, ping or metrics. Any other name, or none, matches no router
 and `sniStrict` ends the handshake in the gateway; `agent-service/egress/dynamic/allowed.yml` is the one
 owner of the two names. The service finds the gateway through `extra_hosts` (`x-agent-attachments` in
-`compose.yaml`), not through DNS: the networks `agent` (until each app has its own), `agent-songmaker`, `agent-presentator`, `egress` and `mcp` are internal and isolated
+`compose.yaml`), not through DNS: the networks `agent-songmaker`, `agent-presentator`, `egress` and `mcp` (the anchor's four) are internal and isolated
 (`gateway_mode_ipv4: isolated`), so a member has no route out, no host address and no DNS forwarding.
 Only `agent-egress` sits on `internet`, a plain NAT bridge, and listens on `172.31.252.10:443` of
 `egress` alone. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config

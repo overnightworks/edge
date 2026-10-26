@@ -52,33 +52,14 @@ class FakeStandIn:
         return 0
 
 
-def signer_docker(
-    members=("traefik-id",),
-    smoke=FAILED_RUN,
-    log="UpstreamRefused",
-    removal=0,
-    gone=False,
-    gateway_listing=0,
-    late_member=None,
-    shared=None,
-    joined=None,
-    mounted=None,
-    open_network=None,
-):
-    """A docker with the project's MCP network, traefik-mcp and the service's logs.
-
-    `gone` is a stand-in `--rm` already removed; `late_member` joins the network once the first
-    smoke has run. `shared` is the members of the live `hal_agent` network (None: it is gone),
-    `joined` and `mounted` what the recreated container holds, `open_network` a service network
-    that is not internal.
-    """
-    smokes = []
+def recreated_service(joined, mounted, shared, open_network, mcp_members):
+    """The docker answers about the recreated service: its resolved configuration, its container
+    and the project's networks. `mcp_members` gives the MCP network's members when asked."""
     joined = tuple(SERVICE_NETWORKS.values()) if joined is None else joined
     mounted = tuple(map(str, SECRET_FILES.values())) if mounted is None else mounted
 
     def network(key: str) -> dict:
-        late = (late_member,) if late_member and smokes else ()
-        present = {"mcp-songmaker": (*members, *late), "agent": shared or ()}.get(key, ())
+        present = {"mcp-songmaker": mcp_members(), "agent": shared or ()}.get(key, ())
         return {
             "Name": SERVICE_NETWORKS.get(key, NETWORK),
             "Internal": key != open_network,
@@ -86,7 +67,7 @@ def signer_docker(
             "Containers": {member: {} for member in present},
         }
 
-    def answer(command: list[str]) -> subprocess.CompletedProcess:
+    def answer(command: list[str]) -> subprocess.CompletedProcess | None:
         if "config" in command:
             document = resolved_configuration()
             document["networks"]["mcp-songmaker"] = {"name": NETWORK}
@@ -102,14 +83,50 @@ def signer_docker(
             return completed(json.dumps([container]))
         if command[:3] == ["docker", "network", "ls"]:
             key = next(a for a in command if "compose.network=" in a).rpartition("=")[2]
-            gone_key = key == "agent" and shared is None
-            return completed("" if gone_key else f"id-{key}\n")
+            return completed("" if key == "agent" and shared is None else f"id-{key}\n")
+        if command[:3] == ["docker", "network", "inspect"]:
+            return completed(json.dumps([network(command[3].removeprefix("id-"))]))
+        return None
+
+    return answer
+
+
+def signer_docker(
+    members=("traefik-id",),
+    smoke=FAILED_RUN,
+    log="UpstreamRefused",
+    removal=0,
+    gone=False,
+    gateway_listing=0,
+    late_member=None,
+    **recreated,
+):
+    """A docker with the project's MCP network, traefik-mcp and the service's logs.
+
+    `gone` is a stand-in `--rm` already removed; `late_member` joins the network once the first
+    smoke has run. `recreated` holds the knobs of `recreated_service`: `shared` (the members of the
+    live `hal_agent` network, None: it is gone), `joined`, `mounted` and `open_network`.
+    """
+    smokes = []
+
+    def mcp_members() -> tuple:
+        return (*members, *((late_member,) if late_member and smokes else ()))
+
+    recreated_answer = recreated_service(
+        recreated.get("joined"),
+        recreated.get("mounted"),
+        recreated.get("shared"),
+        recreated.get("open_network"),
+        mcp_members,
+    )
+
+    def answer(command: list[str]) -> subprocess.CompletedProcess:
+        if (found := recreated_answer(command)) is not None:
+            return found
         if command[:2] == ["docker", "ps"]:
             return completed("" if gone else "standin-id\n")
         if "traefik-mcp" in command:
             return completed("traefik-id\n", returncode=gateway_listing)
-        if command[:3] == ["docker", "network", "inspect"]:
-            return completed(json.dumps([network(command[3].removeprefix("id-"))]))
         if command[:2] == ["docker", "rm"]:
             return completed(returncode=removal, stderr=f"removal failed {TOKENS.person}")
         if "logs" in command and "--since" in command:
