@@ -1,8 +1,0 @@
-claim_id = "01695db577324ac6a33585a689380ebe"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "15138f78e6cfaf6b06baf64ac0115cbcd3cf2da2"
-branch = "claude/issue-419-hopin-goes-on"
-scope = ["docs/architecture.md", "docs/external.md", "external/tests/live.tftest.hcl", "fleet.yaml", "tests/test_edge_catalog_hosts.py"]
-opened_commit = "5d7030872a43500aa8d7b14d3c89a5972b66184f"
-whole_reason = "Switching hopin on adds its host to the published catalog, so the flag, the catalog test, the live tofu test and the two documents that list the published hosts must change together or CI pins a catalog that no longer exists."
