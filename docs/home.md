@@ -233,7 +233,9 @@ und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
 - **Journal zu alt.** Der älteste Eintrag laut `journalctl --list-boots -o json`
   (Zeiten der Boots, nicht der Meldungen) ist älter als `LOG_RETENTION_DAYS`.
 - **rsyslog-Dateien.** `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err`
-  und `ufw.log` samt Archiven unter `/var/log`, nur nach Name und Dasein.
+  und `ufw.log` samt Archiven unter `/var/log`, nur nach Name und Dasein. Der Fund
+  heißt: rsyslog ist zurück (etwa durch ein Paket-Update); der nächste
+  `hal setup --apply` entfernt es und die Dateien wieder.
 
 Lässt sich `docker` oder `journalctl` nicht ausführen oder liefert das Journal
 kein lesbares Ergebnis, ist das ein eigener Fund (`docker-unreadable`,
@@ -559,7 +561,8 @@ come before the system step, which is the one that asks for sudo:
    another version.
 7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
-   It also installs `msmtp` and `ca-certificates` for the mail of `home check`.
+   It also installs `msmtp` and `ca-certificates` for the mail of `home check`, and purges `rsyslog`
+   with its six log files.
    It asks once for sudo.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
@@ -602,7 +605,7 @@ An extra reload at the end follows only when an edge file or the retired drop-in
 cloudflared is never started, stopped or restarted.
 Whatever is replaced or deleted of these files is copied first to
 `/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`. The retention units
-below are home's own and are not backed up.
+below and rsyslog's conffiles are home's own and are not backed up.
 
 - **Journal retention.** The same run writes `hal-journal-retention.service` and
   `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
@@ -627,6 +630,23 @@ below are home's own and are not backed up.
     task with `state: absent` for each of the two units; a reload. Then
     `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
     journal lines do not come back.
+- **rsyslog is removed.** After the refusals below pass, the play purges the package `rsyslog` (apt, no autoremove) and then
+  deletes `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err` and `ufw.log` with every rotation (`name` and `name.*`
+  directly under `/var/log`, files only) **without a copy**, not even to `/var/backups/home-setup`: a copy would outlive the
+  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `home check` reads the
+  same list. The purge comes first, so a running rsyslog cannot recreate a deleted file. Both tasks work by state, so a run
+  interrupted between them is finished by the next `--apply`, and a second one reports `changed=0`. The dry run lists the
+  purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
+  journald is not changed: it keeps forwarding to a syslog socket nobody listens on, which is harmless.
+  - **Where the lines went.** The journal holds the same lines (journald forwards, it does not move them), minus what the
+    retention timer already deleted. `auth.log` held the facilities `auth` and `authpriv` (sudo, polkit, logind, cron):
+    `journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10`. `mail.log` and `mail.err` held the facility `mail`:
+    `journalctl SYSLOG_FACILITY=2`. `kern.log` held the kernel: `journalctl -k -b all`. Narrow any of them with `--since` or
+    `-t <identifier>`, for example `journalctl -t sshd --since yesterday`.
+  - **Rollback.** Revert the change, or the next `--apply` purges again; then `sudo apt install rsyslog`. The deleted files do
+    not come back. A purge discards a conffile of rsyslog that was modified, and the playbook never copies one first (the
+    backup covers edge's files only): `dpkg --verify rsyslog` before the apply names each such file, and a reinstall brings
+    back the packaged one.
 - **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
   Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
   Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "msmtp fehlgeschlagen" while
@@ -676,7 +696,15 @@ below are home's own and are not backed up.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
   the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `home check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
-  a rejected login and a stalled server.
+  a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an
+  unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
+  the cells prove that a refused run and the dry run delete nothing, that the purge and the deletion are complete without
+  touching the installer's logs, that mail lines stay in the journal, that a retry converges, that kerneloops restarts without
+  `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 24.04, so the proof does not run
+  the removal's maintainer scripts of the release on the PC nor its systemd; the PC's own facts cover that.
+  The container runs a real Docker engine (its images and snapshots live in anonymous volumes that `run.sh` removes with the container);
+  cell DK1 proves it answers with the default `json-file` log driver, runs an imported rootfs offline and starts without
+  `/etc/docker/daemon.json`, and the agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
 ### Das Mail-Konto von `home check`
 

@@ -30,6 +30,8 @@ LOG_RETENTION_DAYS = 30
 # journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span
 # and one day of slack for a PC that is off at midnight keep every line under LOG_RETENTION_DAYS.
 JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
+# The files rsyslog wrote: the play deletes them (and their rotations) once rsyslog is purged, and `home check` reports them.
+RSYSLOG_FILE_NAMES = ("syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log")
 # The last line of a play recap names the host and counts each outcome.
 RECAP = re.compile(
     r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
@@ -143,7 +145,7 @@ class SystemStep:
     layout: Layout
     boundaries: Boundaries
 
-    def extra_vars(self) -> dict[str, str | int]:
+    def extra_vars(self) -> dict[str, str | int | tuple[str, ...]]:
         """The values the playbook fills in; the tunnel id it reads itself, as root, from cloudflared's config."""
         return {
             "home": str(self.layout.home),
@@ -151,6 +153,7 @@ class SystemStep:
             "agent_user": AGENT_USER,
             "edge_tunnel_dir": str(self.layout.edge_tunnel_dir),
             "journal_vacuum_days": JOURNAL_VACUUM_DAYS,
+            "rsyslog_file_names": RSYSLOG_FILE_NAMES,
         }
 
     def inputs_digest(self) -> str:

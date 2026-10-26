@@ -238,8 +238,9 @@ cell_13() {  # cell 11 has activated the hook already, so it is undone here for 
     return
 }
 
-cell_10() {
+cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, and the image ships them empty
     local code
+    apt-get update >"$EVIDENCE/cell10-apt-update.log" 2>&1
     at_terminal cell10 "$HOME_BIN setup"
     code=$?
     verdict 10 "a dry run at a terminal asks once for sudo" '[ $code -eq 0 ] && asked_once cell10'
@@ -576,14 +577,9 @@ agent_is_dormant() {  # one account, one regular id for uid and gid, its own gro
     return
 }
 
-provide_docker_socket() {  # the Docker socket as the engine ships it: root:docker 660, with the operator in the group
-    groupadd --force docker
+put_operator_in_docker_group() {  # the engine ships docker.socket as root:docker 660; the operator is in the group, the agents' account is not
     usermod --append --groups docker tester
-    printf '%s\n' '[Socket]' "ListenStream=$DOCKER_SOCKET" 'SocketMode=0660' 'SocketUser=root' 'SocketGroup=docker' \
-        '[Install]' 'WantedBy=sockets.target' >"$UNIT_DIR/proof-docker.socket"
-    printf '%s\n' '[Service]' 'ExecStart=/bin/sleep infinity' >"$UNIT_DIR/proof-docker.service"
-    systemctl daemon-reload
-    systemctl enable --now proof-docker.socket >/dev/null 2>&1
+    systemctl start docker.socket
     return
 }
 
@@ -913,7 +909,6 @@ cell_a1_8() {
 }
 
 cell_a1_9() {  # after a reboot
-    provide_docker_socket
     verdict A1-9 "after a reboot the account is still dormant" agent_is_dormant
     verdict A1-9 "after a reboot agent is still refused" agent_is_refused
     return
@@ -1148,7 +1143,7 @@ SHIM
 
 cells_agent() {
     cell_a1_3
-    provide_docker_socket
+    put_operator_in_docker_group
     cell_a1_4_and_5
     cell_a1_6
     cell_a1_7
@@ -1156,19 +1151,186 @@ cells_agent() {
     return
 }
 
+# rsyslog's six files and their rotations (#422, cells R0-R7). The names are the playbook's `rsyslog_file_names`, written
+# here once because the proof must not read what it checks; the bookkeeping logs are the ones that must stay.
+RSYSLOG_NAMES=(syslog auth.log kern.log mail.log mail.err ufw.log)
+RSYSLOG_SUFFIXES=("" .1 .2.gz .3.gz)
+BOOKKEEPING_LOGS=(/var/log/dpkg.log /var/log/cloud-init.log /var/log/alternatives.log)
+PLANTED_FILES="$EVIDENCE/rsyslog-planted.txt"
+PACKAGE_CONFFILES="$EVIDENCE/rsyslog-conffiles.txt"
+JOURNALD_CONFIG_BEFORE="$EVIDENCE/journald-config-before.txt"
+
+plant_rsyslog_files() {  # a file for every name and rotation, and a bookkeeping log of the installer
+    local name suffix file
+    : >"$PLANTED_FILES"
+    for name in "${RSYSLOG_NAMES[@]}"; do
+        for suffix in "${RSYSLOG_SUFFIXES[@]}"; do
+            file="/var/log/$name$suffix"
+            echo "planted by the proof" >>"$file"
+            echo "$file" >>"$PLANTED_FILES"
+        done
+    done
+    for file in "${BOOKKEEPING_LOGS[@]}"; do
+        echo "planted by the proof" >>"$file"
+    done
+    return
+}
+
+record_rsyslog_before() {  # what the package owns and what journald is set to, read before the first apply changes either
+    dpkg-query -W -f='${Conffiles}\n' rsyslog | awk 'NF { print $1 }' >"$PACKAGE_CONFFILES"
+    systemd-analyze cat-config systemd/journald.conf >"$JOURNALD_CONFIG_BEFORE"
+    return
+}
+
+all_planted_files_exist() {
+    local file
+    while read -r file; do
+        [[ -e $file ]] || return 1
+    done <"$PLANTED_FILES"
+    return
+}
+
+no_planted_file_exists() {
+    local file
+    while read -r file; do
+        [[ ! -e $file ]] || return 1
+    done <"$PLANTED_FILES"
+    return
+}
+
+cell_r0() {  # after the refused runs of cells 12 and 13 and the dry run of cell 10: nothing was deleted
+    verdict R0 "the dry run says it would change, names rsyslog and a planted file" \
+        'in_log cell10 "System: would change" && in_log cell10 "rsyslog" && in_log cell10 "/var/log/mail.err.1"'
+    verdict R0 "the refused runs and the dry run left the package and every planted file in place" \
+        'dpkg -s rsyslog >/dev/null 2>&1 && all_planted_files_exist'
+    return
+}
+
+journal_has_line_of() {  # journal_has_line_of <tag>: within 30 s
+    local tag=$1 waited=0
+    until journalctl --no-pager --quiet --identifier "$tag" 2>/dev/null | grep -q .; do
+        (( waited++ >= 30 )) && return 1
+        sleep 1
+    done
+    return 0
+}
+
+cell_r1() {
+    local conffile missing=()
+    while read -r conffile; do
+        [[ ! -e $conffile ]] || missing+=("$conffile")
+    done <"$PACKAGE_CONFFILES"
+    verdict R1 "rsyslog is purged: no package, no unit, no conffile of it left (${missing[*]:-none})" \
+        '[ -s "$PACKAGE_CONFFILES" ] && ! dpkg -s rsyslog >/dev/null 2>&1 && ! systemctl cat rsyslog.service >/dev/null 2>&1 && ! systemctl cat syslog.service >/dev/null 2>&1 && [[ ${#missing[@]} -eq 0 ]]'
+    verdict R1 "syslog.socket is inactive" '[[ $(systemctl is-active syslog.socket) == inactive ]]'
+    verdict R1 "the six files and every archive are gone, and none was copied to the backups" \
+        'no_planted_file_exists && [[ -z $(find /var/backups/home-setup -name "*.log*" -o -name "syslog*" -o -name "mail.err*" 2>/dev/null) ]]'
+    return
+}
+
+cell_r2() {
+    local since
+    since=$(date '+%Y-%m-%d %H:%M:%S')
+    seq 1000 | logger --tag r2-probe
+    sleep 2
+    journalctl --no-pager --unit systemd-journald --since "$since" >"$EVIDENCE/r2-journald.txt" 2>&1
+    verdict R2 "1000 lines without a syslog listener leave no \"Forwarding to syslog missed\"" \
+        '! grep -q "Forwarding to syslog missed" "$EVIDENCE/r2-journald.txt"'
+    verdict R2 "journald's configuration is what it was before the apply" \
+        'systemd-analyze cat-config systemd/journald.conf | diff - "$JOURNALD_CONFIG_BEFORE"'
+    return
+}
+
+cell_r2_after_boot() {
+    verdict R2 "after the boot there is no syslog socket and journald's configuration is still what it was before the apply" \
+        '[ ! -S /run/systemd/journal/syslog ] && systemd-analyze cat-config systemd/journald.conf | diff - "$JOURNALD_CONFIG_BEFORE"'
+    return
+}
+
+cell_r3() {
+    local log=$EVIDENCE/r3-sendmail.log
+    echo "proof" | /usr/sbin/sendmail root >"$log" 2>&1
+    verdict R3 "an unconfigured postfix sendmail still logs, and the line is in the journal" 'journal_has_line_of postfix/sendmail'
+    return
+}
+
+cell_r6() {
+    local file
+    for file in "${BOOKKEEPING_LOGS[@]}"; do
+        verdict R6 "$file stays" '[ -e "$file" ]'
+    done
+    return
+}
+
+cell_r7() {  # kerneloops reads /var/log/kern.log; what it does without it is the installed package's answer, recorded for the operator
+    systemctl restart kerneloops >"$EVIDENCE/r7-restart.log" 2>&1
+    sleep 2
+    systemctl status kerneloops --no-pager >"$EVIDENCE/r7-status.log" 2>&1
+    journalctl --no-pager --unit kerneloops --since '-1 min' >>"$EVIDENCE/r7-status.log" 2>&1
+    verdict R7 "kerneloops restarts and is active without kern.log, or its failure is in r7-status.log for the head: $(systemctl is-active kerneloops)" \
+        '[[ $(systemctl is-active kerneloops) == active ]]'
+    return
+}
+
+cells_rsyslog_purged() {  # after the first apply, while the package is purged
+    cell_r1
+    cell_r2
+    cell_r3
+    cell_r6
+    cell_r7
+    return
+}
+
+cell_r4() {  # a run interrupted after the purge: the files are there again, one apply finishes it, the next changes nothing
+    local first second
+    plant_rsyslog_files
+    at_terminal r4-first "$HOME_BIN setup --apply"
+    first=$?
+    at_terminal r4-second "$HOME_BIN setup --apply"
+    second=$?
+    verdict R4 "an apply after the purge deletes the files that came back" \
+        '[ $first -eq 0 ] && in_log r4-first "System: changed" && no_planted_file_exists'
+    verdict R4 "the next apply changes nothing" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/r4-second.log" && in_log r4-second "System: unchanged"'
+    return
+}
+
+cell_dk1() {  # the engine runs: it answers, records its drivers, runs an imported rootfs offline and starts from no daemon.json
+    local waited=0 info="$EVIDENCE/dk1-info.txt" code
+    until docker info >"$EVIDENCE/dk1-docker-info.txt" 2>&1; do
+        (( waited++ >= 60 )) && break
+        sleep 1
+    done
+    docker info --format 'storage driver {{.Driver}}, default log driver {{.LoggingDriver}}' >"$info" 2>&1
+    verdict DK1 "docker info answers with the default json-file log driver ($(cat "$info"))" 'grep -q "default log driver json-file" "$info"'
+    docker import /usr/local/share/proof-rootfs.tar proof-rootfs >"$EVIDENCE/dk1-import.log" 2>&1
+    docker run --rm --network none proof-rootfs /bin/busybox true >"$EVIDENCE/dk1-run.log" 2>&1
+    code=$?
+    verdict DK1 "a container of the imported rootfs runs with no network and exits 0" '[ $code -eq 0 ]'
+    verdict DK1 "there is no /etc/docker/daemon.json" '[ ! -e /etc/docker/daemon.json ]'
+    return
+}
+
+cell_r5() {  # last: the rollback puts the package back, so nothing after it may expect it gone
+    local conffile missing=() line="r5-probe-$$"
+    apt-get update >"$EVIDENCE/r5-apt.log" 2>&1 && apt-get install --yes rsyslog >>"$EVIDENCE/r5-apt.log" 2>&1
+    while read -r conffile; do
+        [[ -e $conffile ]] || missing+=("$conffile")
+    done <"$PACKAGE_CONFFILES"
+    logger "$line"
+    # The image's dpkg excludes /usr/share/doc and /usr/share/man, so those files are missing from every package here.
+    dpkg --verify rsyslog 2>&1 | grep -v -e ' /usr/share/doc/' -e ' /usr/share/man/' >"$EVIDENCE/r5-verify.txt"
+    verdict R5 "apt install rsyslog restores a package dpkg finds unchanged, and its conffiles (${missing[*]:-none missing})" \
+        '[ -s "$PACKAGE_CONFFILES" ] && [ ! -s "$EVIDENCE/r5-verify.txt" ] && [[ ${#missing[@]} -eq 0 ]] && [ -e /etc/rsyslog.d/50-default.conf ]'
+    verdict R5 "a logged line lands in /var/log/syslog" \
+        'for _ in {1..30}; do grep -q "$line" /var/log/syslog 2>/dev/null && break; sleep 1; done; grep -q "$line" /var/log/syslog'
+    return
+}
+
 case "${1:?stage}" in
     install) install_home ;;
-    mail)
-        trap 'if [[ -f $SINK_PID_FILE ]]; then stop_mail_sink; fi' EXIT
-        verdict D1 "msmtp is absent before the first apply" '! dpkg -s msmtp >/dev/null 2>&1'
-        install_home
-        cell_1
-        cell_9
-        cells_mail
-        ;;
-    fresh) cell_11; cell_12; cell_13; cell_10; cell_1; cell_a1_1; cell_9; cell_a1_2; cell_s1; cells_mail; cells_agent; cells_retention; cells_polkit; marker_on ;;
-    after-marker-reboot) cell_7; cell_a1_9; marker_off ;;
-    after-unmarked-reboot) cell_8 ;;
+    fresh) plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cell_dk1; cells_retention; cells_polkit; marker_on ;;
+    after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
+    after-unmarked-reboot) cell_8; cell_r5 ;;
     prepared) prepare_today; cell_2 ;;
     *) echo "unknown stage $1" >&2; exit 2 ;;
 esac
