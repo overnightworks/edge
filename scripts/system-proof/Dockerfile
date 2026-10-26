@@ -11,12 +11,13 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections
 # Ansible dates the cache by its success stamp or the lists directory, so empty indexes must also be stale.
-RUN apt-get update \
+# The base image's policy-rc.d (exit 101) is removed last, as on the PC, so a package installed in the proof starts its service.
+RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
         busybox-static \
+        ca-certificates \
         curl \
         dbus \
         docker.io \
@@ -42,7 +43,8 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflared \
     && rm -rf /var/lib/apt/lists/* /var/lib/apt/periodic/update-success-stamp \
-    && touch -d @0 /var/lib/apt/lists
+    && touch -d @0 /var/lib/apt/lists \
+    && rm -f /usr/sbin/policy-rc.d
 
 RUN install -D /bin/busybox /tmp/rootfs/bin/busybox \
     && tar --directory /tmp/rootfs --create --file /usr/local/share/proof-rootfs.tar . \
