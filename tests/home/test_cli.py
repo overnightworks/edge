@@ -106,4 +106,4 @@ def test_the_help_promises_a_notification_only_when_the_findings_change(capsys: 
         cli.main(["--help"])
 
     help_text = " ".join(capsys.readouterr().out.split())  # argparse wraps long help lines
-    assert "meldet nur, wenn sich die Funde ändern" in help_text
+    assert "meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet" in help_text

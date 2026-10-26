@@ -476,7 +476,7 @@ def _check_from_args(_args: argparse.Namespace, layout: Layout, config: Config, 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "check",
-        help="alle Prüfungen ohne Änderung; meldet nur, wenn sich die Funde ändern",
+        help="alle Prüfungen ohne Änderung; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet",
         description="Führt jede Prüfung von home lesend aus und schreibt einen Bericht.",
         epilog=CHECK_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
