@@ -440,7 +440,11 @@ def test_the_redirected_names_are_the_zones_apex_and_labels_and_none_without_a_r
         ({**REDIRECT, "target": "http://auth.edge-fixture.invalid/"}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": 'https://a.invalid/"'}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": "https://a.invalid/?x=1"}, "cloudflare.redirect.target"),
-        ({**REDIRECT, "keep": []}, "cloudflare.redirect.keep"),
+        pytest.param(
+            {**REDIRECT, "keep": []},
+            "cloudflare.redirect.keep",
+            id="#429 cell 1: keep is an unknown key",
+        ),
     ],
 )
 def test_a_malformed_redirect_is_refused_naming_the_key(redirect, key):
@@ -522,6 +526,7 @@ def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, k
 
 
 def test_the_repositorys_catalog_redirects_the_apex_and_www_and_serves_the_legal_pages():
+    """#429 cell 5: the real fleet serves the four pages and the files prefix, with no keep."""
     redirect = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]
     assert redirect == {
         "hosts": ["@", "www"],
