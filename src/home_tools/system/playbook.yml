@@ -7,7 +7,13 @@
 # restarts cloudflared. Every `--apply` reloads systemd; a dry run does not. An extra reload at the end
 # follows only when an edge file or the retired drop-in changed. What it replaces of edge's files is
 # copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
-# or a drop-in; the retention units are home's own and are not backed up.
+# or a drop-in; the retention units and rsyslog's conffiles are home's own and are not backed up.
+#
+# It purges rsyslog (the journal is the one log store) and then deletes its six files, `rsyslog_file_names`, with their
+# rotations, without a copy; the purge comes first so a running rsyslog cannot recreate one, and both follow the refusals.
+# Both are by state, so a run interrupted between them is finished by the next. A revert of this play, then
+# `apt install rsyslog`, puts the package back; the deleted lines stay gone, and a purge discards a conffile of
+# rsyslog that was modified.
 #
 # It also installs msmtp and ca-certificates (never msmtp-mta) once the refusals above passed, for the mail of `home check`.
 #
@@ -208,6 +214,26 @@
         install_recommends: false
         update_cache: true
         cache_valid_time: 86400
+
+    - name: Purge rsyslog, the journal is the one log store
+      ansible.builtin.apt:
+        name: rsyslog
+        state: absent
+        purge: true
+
+    - name: Find rsyslog's files and their rotations
+      ansible.builtin.find:
+        paths: /var/log
+        patterns: "{{ rsyslog_file_names | product(['', '.*']) | map('join') | list }}"
+      register: rsyslog_files
+
+    - name: Delete rsyslog's files without a copy
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ rsyslog_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
 
     - name: Fill edge's files with this PC's values
       ansible.builtin.set_fact:

@@ -13,11 +13,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
-from home_tools.system_step import LOG_RETENTION_DAYS
+from home_tools.system_step import LOG_RETENTION_DAYS, RSYSLOG_FILE_NAMES
 from home_tools.tidy_home import CommandRunner
 
 LOG_DIRECTORY = Path("/var/log")
-RSYSLOG_FILE_NAMES = ("syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log")
 WANTED_DRIVER = "journald"
 JSON_FILE_DRIVER = "json-file"
 MICROSECONDS_PER_SECOND = 1_000_000

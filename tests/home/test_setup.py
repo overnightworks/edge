@@ -370,6 +370,16 @@ def test_the_playbook_vacuums_two_days_short_of_the_ruled_retention(
     assert (system_step.LOG_RETENTION_DAYS, extra_vars["journal_vacuum_days"]) == (30, 28)
 
 
+def test_the_playbook_is_told_the_rsyslog_files_the_logs_check_looks_for(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_setup(sandbox, capsys, "--apply")
+
+    (argv,) = sandbox.system.playbook.calls
+    extra_vars = json.loads(argv[argv.index("--extra-vars") + 1])
+    assert extra_vars["rsyslog_file_names"] == ["syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log"]
+
+
 def test_the_playbook_ships_inside_the_package() -> None:
     """Rule 3: the playbook is read from beside the module, so a non-editable install carries it."""
     assert system_step.PLAYBOOK.is_file()
