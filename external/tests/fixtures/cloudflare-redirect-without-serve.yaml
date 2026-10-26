@@ -3,9 +3,6 @@ cloudflare:
   redirect:
     hosts: ["@", www]
     target: "https://auth.edge-fixture.invalid/"
-    keep:
-      - {path: /impressum, target: "https://app.edge-fixture.invalid"}
-      - {path: /datenschutz, target: "https://app.edge-fixture.invalid"}
 
 github:
   org: edge-fixture.invalid

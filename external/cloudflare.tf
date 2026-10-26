@@ -264,12 +264,11 @@ resource "cloudflare_ruleset" "deny_public" {
 # reach the tunnel. Single Redirects run in the phase http_request_dynamic_redirect, in order, and a
 # redirect ends the evaluation (https://developers.cloudflare.com/rules/url-forwarding/, which also
 # lists the Free plan's 10 single redirects),
-# so the kept paths come first, then one rule per served page, and the last rule takes the rest.
+# so one rule per served page comes first and the last rule takes the rest.
 # The target is a static URL (`from_value.target_url.value`), so the path and, with preserve_query_string off, the query of
 # the request are dropped
 # (https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-api/). A host
-# matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. A kept path matches exactly, with
-# or without a trailing slash, case-insensitively, and goes on without the slash. With
+# matches as `<fqdn>` or `<fqdn>:<port>`, as in the public deny. With
 # `redirect.serve` the apex answers its pages (exactly, as written) and everything under its files
 # prefix from the tunnel: the rule of a page sends every other form of it (another case, a trailing
 # slash, www) to the apex's exact path, and the last rule leaves the apex's served paths out. Only
@@ -290,13 +289,6 @@ locals {
     try(["starts_with(http.request.uri.path, \"${local.redirect.serve.files}\")"], [])
   ))
   redirect_rules = local.redirect == null ? [] : concat(
-    [
-      for kept in try(local.redirect.keep, []) : {
-        description = "${kept.path} keeps its path at ${kept.target}"
-        expression  = "ssl and ( ${local.redirect_host_expression} ) and lower(http.request.uri.path) in {\"${kept.path}\" \"${kept.path}/\"}"
-        target_url  = "${kept.target}${kept.path}"
-      }
-    ],
     [
       for page in local.served_pages : {
         description = "${page} is served at ${local.fleet.cloudflare.zone}"
