@@ -1,0 +1,8 @@
+claim_id = "0a46871fae9a4bf586f7ae794c05f634"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "69d383c2d44dc09d33cb566ae45993693588d001"
+branch = "claude/issue-413-signer-probe"
+scope = ["docs/agent-service.md", "probe/agent-service/signer.py", "probe/agent-service/unit.py", "sonar-project.properties"]
+opened_commit = "aed72cdb28bc7927fbb1fc8e2ce8e963985d856d"
+whole_reason = "The signer cell, its helper module, the doc that names the cell and the Sonar test-source line are one probe addition; a cell without its helper or its doc line is half a proof."
