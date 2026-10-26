@@ -176,8 +176,7 @@ def _is_remembered(identity: str) -> bool:
     """Check name, then either the failure marker or the rule and subject of a finding with a level, each separated by a tab."""
     name, _, finding = identity.partition("\t")
     rule, _, subject = finding.partition("\t")
-    leveled = name == "tidy" or (name, rule) in RULE_REPORTS
-    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(subject and leveled))
+    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(subject and _rule_report(name, rule)))
 
 
 def _remember(layout: Layout, identities: frozenset[str]) -> None:
@@ -273,15 +272,16 @@ class Item:
         return self.report.level
 
 
-def _rule_report(check_name: str, rule: str) -> RuleReport:
+def _rule_report(check_name: str, rule: str) -> RuleReport | None:
     if rule == CHECK_FAILED_IDENTITY:
         return BROKEN_CHECK_REPORT
-    return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS[check_name, rule]
+    return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS.get((check_name, rule))
 
 
 def _item(identity: str) -> Item:
     check_name, rule, subject = [*identity.split("\t", 2), ""][:3]
     report = _rule_report(check_name, rule)
+    assert report is not None, identity
     words = {"subject": subject, "area": AREA_LABELS[check_name]}
     return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words))
 

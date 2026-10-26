@@ -149,6 +149,7 @@ def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_
 
 
 def test_many_new_actions_give_one_notification_naming_each(clean_home, runner) -> None:
+    """#415 Z4: several actions that appear together give one mail naming each."""
     runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tcompose\n" for n in range(4))
 
     home_check(clean_home, runner)
@@ -299,6 +300,7 @@ def test_an_action_that_stays_never_notifies_again_even_as_it_ages(clean_home, r
 
 
 def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_is_remembered_and_never_notifies(clean_home, runner) -> None:
+    """#415 Z5: an unchanged item is remembered and never mails again."""
     secrets_dir = os.fsencode(Layout(clean_home).secrets_dir)
     os.close(os.open(secrets_dir + b"/bad\xffname", os.O_CREAT | os.O_WRONLY, 0o600))
     assert home_check(clean_home, runner) == 1
@@ -311,6 +313,7 @@ def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_is_remembered
 
 
 def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clean_home, runner) -> None:
+    """#415 Z4: a second action that appears mails and the title names both areas."""
     restarting_containers(runner, "edge-a-1")
     home_check(clean_home, runner)
     write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
@@ -321,6 +324,7 @@ def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clea
 
 
 def test_an_action_that_goes_while_another_stays_notifies_the_one_that_stays(clean_home, runner) -> None:
+    """#415 Z4: an action that goes mails even while another one stays."""
     write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
     restarting_containers(runner, "edge-a-1")
     home_check(clean_home, runner)
@@ -340,6 +344,7 @@ def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
 
 
 def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, runner) -> None:
+    """#415 Z4: an action that comes back after a clean run mails again."""
     restarting_containers(runner, "edge-a-1")
     home_check(clean_home, runner)
     no_container_restarts(runner)
@@ -516,10 +521,11 @@ def memory_text(text: str) -> Callable[[Path], None]:
     [
         (memory_text('["tidy\\t'), "JSONDecodeError"),
         (memory_text('["tidy\\tleaked-secret"]'), "ValueError"),
+        (memory_text('["platform\\tno-such-rule\\tx"]'), "ValueError"),
         (memory_text('{"tidy": 1}'), "ValueError"),
         (os.mkfifo, "ValueError"),
     ],
-    ids=["cut off", "not a finding identity", "not a list", "a fifo that never gets a writer"],
+    ids=["cut off", "not a finding identity", "a rule without a level", "not a list", "a fifo that never gets a writer"],
 )
 def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     clean_home, runner, capsys, plant_memory: Callable[[Path], None], refusal: str
