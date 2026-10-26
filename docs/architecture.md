@@ -176,7 +176,7 @@ services:
   hopin:
     repo: {default_branch: master}   # the release branch; `visibility` (GitHub settings, E3, X2) is planned
     run:
-      enabled: false             # Dienst an/aus: the one switch; hopin stays off until it goes live
+      enabled: true              # Dienst an/aus: the one switch
       # setup: step-ca/init      # only where a unit needs key material (step-ca, keycloak)
     hosts:
       - name: hopin              # hopin.hallucinai.de → container labelled edge.name=hopin
@@ -417,7 +417,7 @@ Every finding names the subject and a page to fix it, never a value.
 |---|---|---|
 | **songmaker** | system timer `songmaker-autodeploy.timer` (every 2 min) runs the 1,253-line `scripts/auto-deploy.sh` on `~/git/songmaker`, following `origin/main` once CI is green. The checkout is also the place `aco land` must not run (memory: land from `~/git/songmaker-land`) | the migration below |
 | **presentator** | manual. `~/presentator-live` is a separate checkout at `1f0422c` and runs a locally built image (`presentator-adoption-instance:ap112-e04e837a`) on 127.0.0.1:8100. Two host user units run from that checkout: `presentator-speech` and `presentator-copresenter`; speech is crash-looping (stale socket file, seen 16.10.2026). Offline publicly since 14.10.2026 | its go-public item agent-presentator#197 adds a catalog entry with `deploy: tags` and its first `edge release`. It joins under §10 rule 1: the two host units and their unix sockets (its `compose.yaml:52-53`) and the `docker.sock` mount (`:51`) leave its release, so the watcher deploys the compose release and nothing on the host |
-| **hopin** | not deployed; no container | section 3's example: a compose file, then its first tag |
+| **hopin** | deployed from its tag `v2026.10.26.1` as `hopin-hopin-1` | section 3's example: a compose file, then its first tag |
 
 Every service that holds people's data also offers the export and erase routes of `docs/people.md`.
 
