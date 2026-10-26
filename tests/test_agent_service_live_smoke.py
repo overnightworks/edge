@@ -3,6 +3,7 @@ no-secret rule against a scripted docker. The command against a running service 
 probe/agent-service/unit.py (cell U16) and by the operator.
 """
 
+import json
 import subprocess
 import sys
 import tomllib
@@ -342,12 +343,40 @@ def test_an_interrupted_cancelled_turn_ends_its_child_and_removes_its_container(
 # --- L5, judged from what the container saw ---------------------------------------------------
 
 
+REACH = {
+    "docker0": "172.17.0.1", "internet": "172.31.251.1", "lan": "192.168.1.5",
+    "agent-songmaker_free": "172.31.248.2", "agent-presentator_free": "172.31.249.2",
+    "mcp_free": "172.31.250.2", "egress_free": "172.31.252.2",
+}  # fmt: skip
 TARGETS = live_smoke.EgressTargets(
-    provider="160.79.104.10", docker0="172.17.0.1", internet="172.31.251.1", lan="192.168.1.5",
-    agent_free="172.31.250.2", songmaker_free="172.31.248.2", presentator_free="172.31.249.2",
-    egress_free="172.31.252.2",
-    agent_gateways=[], egress_gateways=[],
-)  # fmt: skip
+    provider="160.79.104.10", reach=REACH, agent_gateways=[], egress_gateways=[]
+)
+
+
+def test_the_targets_cover_every_network_the_resolved_service_joins_but_name_none_by_literal(
+    monkeypatch,
+):
+    monkeypatch.setattr(live_smoke.socket, "gethostbyname", lambda _: "160.79.104.10")
+    monkeypatch.setattr(live_smoke, "lan_address", lambda: "192.168.1.5")
+
+    def docker(command: list[str]) -> subprocess.CompletedProcess:
+        if "config" in command:
+            return healthy_service(command)
+        if command[:3] == ["docker", "network", "ls"]:
+            return completed("id-" + next(a for a in command if "network=" in a).rpartition("=")[2])
+        subnets = {"mcp": "10.0.1.0/24", "agent-songmaker": "10.0.2.0/24"}
+        key = command[3].removeprefix("id-")
+        subnet = subnets.get(key, "10.0.3.0/24")
+        gateway = subnet.replace("0/24", "1")
+        config = [{"Subnet": subnet, "Gateway": gateway}]
+        return completed(json.dumps([{"IPAM": {"Config": config}, "Containers": {}}]))
+
+    targets = live_smoke.egress_targets(FakeStack(answer=docker))
+
+    assert {"mcp_free", "agent-songmaker_free", "agent-presentator_free"} <= set(targets.reach)
+    assert "agent_free" not in targets.reach
+    assert "10.0.1.1" in targets.agent_gateways
+    assert targets.reach["mcp_free"] == "10.0.1.254"
 
 
 def held_sighting() -> dict:
@@ -355,18 +384,7 @@ def held_sighting() -> dict:
     return {
         "public_tcp": {"1.1.1.1": refused, TARGETS.provider: refused},
         "defaults": [],
-        "reach": dict.fromkeys(
-            (
-                "docker0",
-                "internet",
-                "lan",
-                "agent_free",
-                "songmaker_free",
-                "presentator_free",
-                "egress_free",
-            ),
-            refused,
-        ),
+        "reach": dict.fromkeys(REACH, refused),
         "ipv6_interfaces": ["lo"],
         "ipv6_tcp": refused,
         "udp": {"443": refused, "53": refused},
@@ -403,7 +421,7 @@ def test_a_reachable_address_fails_exactly_its_cell(cell, change):
     assert {c.name.split()[0] for c in cells if c.verdict is Verdict.FAILED} == {cell}
 
 
-def test_a_gateway_on_the_agent_network_fails_e7():
+def test_a_gateway_on_a_service_network_fails_e7():
     targets = live_smoke.EgressTargets(**{**TARGETS.__dict__, "agent_gateways": ["172.31.250.1"]})
 
     cells = live_smoke.judge_egress(targets, held_sighting(), GATEWAY)
