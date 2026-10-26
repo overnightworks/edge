@@ -161,9 +161,8 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     assert jwks.hostname == issuer.hostname
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
-    assert (
-        set(identity["subscription_groups"]) == {"/services/agent-service/subscription"} <= groups
-    )
+    assert set(identity["subscription_groups"]) == {"/services/agent-service/subscription"}
+    assert set(identity["subscription_groups"]) <= groups
     assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
@@ -234,12 +233,11 @@ def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_
     assert set(service["secrets"]) == {key_secret, ca_secret}
     assert configuration["signing"] == {"key_file": f"/run/secrets/{key_secret}"}
     assert configuration["mcp"] == {"ca_file": f"/run/secrets/{ca_secret}"}
-    assert [compose["secrets"][key_secret]["file"].replace("${HOME}", "~")] == [
-        path.removesuffix("*") for path in paths["agent-service/signing-key"]
+    secret_files = [
+        compose["secrets"][name]["file"].replace("${HOME}", "~") for name in (key_secret, ca_secret)
     ]
-    assert [compose["secrets"][ca_secret]["file"].replace("${HOME}", "~")] == paths[
-        "step-ca/root_ca.crt"
-    ]
+    signing_key_files = [path.removesuffix("*") for path in paths["agent-service/signing-key"]]
+    assert secret_files == signing_key_files + paths["step-ca/root_ca.crt"]
     assert "agent-service" in {
         reader
         for entry in manifest["secret"]
