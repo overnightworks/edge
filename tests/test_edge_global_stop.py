@@ -211,7 +211,7 @@ def test_a_refused_stop_is_partial_and_keeps_the_switch(stop_all, marks, systemd
     assert exit_code == 1
     assert (
         "partial: the global switch is recorded, but the tunnel still runs; "
-        "`sudo systemctl stop cloudflared`" in output
+        "`systemctl stop cloudflared`" in output
     )
     assert marks.global_mark() is not None
 
@@ -226,7 +226,8 @@ def test_a_missing_boot_drop_in_is_incomplete_though_the_tunnel_is_stopped(
 
     assert exit_code == 1
     assert "incomplete: a reboot would reopen the tunnel" in output
-    assert "overnightworks/home-tools#9" in output
+    assert "`hal setup --apply`" in output
+    assert "home-tools" not in output
     assert not systemd.active
     assert marks.global_mark() is not None
 
@@ -272,7 +273,7 @@ def test_stop_all_still_stops_the_tunnel_when_the_switch_cannot_be_recorded(
 
 
 def test_stop_all_reports_a_missing_systemctl_as_not_stopped(marks, capsys):
-    """#70 rule 3: a stop that could not even be asked is partial with the sudo hint."""
+    """#70 rule 3: a stop that could not even be asked is partial with the stop hint."""
 
     def no_systemctl(_command):
         raise tunnel.TunnelError("cannot run systemctl (missing)")
@@ -282,7 +283,7 @@ def test_stop_all_reports_a_missing_systemctl_as_not_stopped(marks, capsys):
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "is not confirmed stopped" in err
-    assert "`sudo systemctl stop cloudflared`" in err
+    assert "`systemctl stop cloudflared`" in err
     assert marks.global_mark() is not None
 
 
@@ -383,7 +384,7 @@ def test_an_interrupt_at_the_password_prompt_of_the_stop_is_partial_with_the_sud
     assert exit_code == 1
     assert (
         "partial: the global switch is recorded, but the tunnel still runs; "
-        "`sudo systemctl stop cloudflared`"
+        "`systemctl stop cloudflared`"
     ) in output
     assert marks.global_mark() is not None
 
@@ -752,12 +753,12 @@ def test_a_stop_that_cannot_be_asked_names_edges_own_reason_beside_the_partial(s
     exit_code, output = stop_all()
 
     assert exit_code == 1
-    assert "the tunnel still runs; `sudo systemctl stop cloudflared`" in output
+    assert "the tunnel still runs; `systemctl stop cloudflared`" in output
     assert "stop failed: cannot run systemctl (timed out)" in output
 
 
 def test_a_failed_stop_and_failed_record_still_name_edges_own_reason(marks, systemd, capsys):
-    """#70 rule 3: with no switch recorded, the partial line keeps the stop error and sudo hint."""
+    """#70 rule 3: with no switch recorded, the partial line keeps the stop error and hint."""
     marks.directory.mkdir(parents=True)
     (marks.directory / switches.GLOBAL_STOP_FILE).mkdir()
     systemd.refuses_stop = True
@@ -768,7 +769,7 @@ def test_a_failed_stop_and_failed_record_still_name_edges_own_reason(marks, syst
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "could not be recorded" in err
-    assert "`sudo systemctl stop cloudflared`" in err
+    assert "`systemctl stop cloudflared`" in err
     assert "stop failed: cannot run systemctl (timed out)" in err
 
 

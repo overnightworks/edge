@@ -230,8 +230,8 @@ warten, stoppt `cloudflared.service`, schreibt den Schalter unter `switch.lock` 
 Erfolg erst, wenn `systemctl is-active` den Tunnel als beendet (`inactive` oder `failed`) zeigt. Die
 Einheiten laufen lokal weiter, ihre Schalter bleiben. Ohne Terminal laeuft `systemctl --no-ask-password`.
 Exit 1 heisst teilweise: "partial", wenn der Tunnel noch laeuft (Schalter bleibt;
-`sudo systemctl stop cloudflared`), und "incomplete", wenn das Boot-Drop-in `30-edge-global-stop.conf`
-fehlt (ein Neustart oeffnete den Tunnel wieder, das bringt overnightworks/home-tools#9).
+`systemctl stop cloudflared`), und "incomplete", wenn das Boot-Drop-in `30-edge-global-stop.conf`
+fehlt (ein Neustart oeffnete den Tunnel wieder; `hal setup --apply` installiert es).
 `edge start --all` braucht ein Terminal und das exakte `yes` (Agenten nie, R4). Es beweist zuerst die
 Sperre jeder noch ausgeschalteten Einheit (bei Bedarf neu geschrieben), holt die Berechtigung des
 Systems (`pkcheck`) noch vor dem Loeschen des Schalters, liest ihn unter der Sperre noch einmal, loescht
@@ -242,7 +242,7 @@ yet (#50 SW3)"). edge liest nie `/etc/cloudflared`, aendert den Tunnel nicht und
 `EDGE_TUNNEL_UNIT` und `EDGE_TUNNEL_MANAGER=user` setzen fuer den Wegwerf-Beweis eine Einheit des
 Benutzer-Managers an die Stelle von `cloudflared.service`.
 
-**`tunnel/`** ist der Inhalt, den overnightworks/home-tools#9 mit einem `sudo` nach `/etc` installiert;
+**`tunnel/`** ist der Inhalt, den der Systemschritt von `hal setup` mit `sudo` nach `/etc` installiert;
 edge installiert nichts. `20-nonroot.conf` laesst `cloudflared.service` ohne root laufen,
 `30-edge-global-stop.conf` startet es nicht, solange `global-stop` existiert, und
 `polkit/10-edge-cloudflared-stop.rules` erlaubt dem Betreiber nur das **Stoppen** ohne Passwort, auch

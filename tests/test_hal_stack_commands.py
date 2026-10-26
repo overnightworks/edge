@@ -568,7 +568,8 @@ def test_offline_interrupted_while_the_tunnel_still_runs_is_partial(hal, fakes, 
 
     assert result.exit_code == ExitCode.FAILURE
     assert "partial: the global switch is recorded, but the tunnel still runs" in result.err
-    assert "sudo systemctl stop cloudflared" in result.err
+    assert "`systemctl stop cloudflared`" in result.err
+    assert "sudo" not in result.err
     assert "interrupted" not in result.err
     assert marks.global_mark() is not None
 
@@ -639,6 +640,7 @@ def test_offline_without_the_boot_drop_in_is_incomplete(hal, fakes, systemd, mar
 
     assert result.exit_code == ExitCode.FAILURE
     assert "incomplete: a reboot would reopen the tunnel" in result.err
+    assert "`hal setup --apply`" in result.err
     assert marks.global_mark() is not None
 
 
@@ -650,7 +652,7 @@ def test_offline_whose_stop_is_refused_and_times_out_is_3_never_4(hal, fakes, sy
     result = hal("offline")
 
     assert result.exit_code == ExitCode.FAILURE
-    assert "the tunnel still runs; `sudo systemctl stop cloudflared`" in result.err
+    assert "the tunnel still runs; `systemctl stop cloudflared`" in result.err
     assert "stop failed: cannot run systemctl (timed out)" in result.err
     assert marks.global_mark() is not None
 

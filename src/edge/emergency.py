@@ -639,7 +639,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
     else:
         report = f"the global switch is recorded, but the tunnel {tunnel_state}"
     if record_failure or not stopped:
-        hint = "" if stopped else f"; `sudo systemctl stop {unit}`"
+        hint = "" if stopped else f"; `systemctl stop {unit}`"
         _complain(STOP_ALL, f"partial: {report}{hint}")
         if stop_failure and not stopped:
             _complain(STOP_ALL, f"stop failed: {stop_failure}")
@@ -648,7 +648,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
         _complain(
             STOP_ALL,
             "incomplete: a reboot would reopen the tunnel (the boot drop-in is not installed "
-            "yet; overnightworks/home-tools#9)",
+            "yet; `hal setup --apply` installs it)",
         )
         return ApplyExit.REFUSED
     _say(
