@@ -57,7 +57,9 @@ def dynamic_configuration(host: str) -> dict:
                 "service": FRONT_ROUTER, "tls": {},
             }},
             "services": {FRONT_ROUTER: {"loadBalancer": {
-                "servers": [{"url": f"http://{STANDIN_ALIAS}:8080"}],
+                "servers": [{
+                    "url": f"http://{STANDIN_ALIAS}:8080",  # NOSONAR(S5332) probe network
+                }],
             }}},
         },
         "tls": {"certificates": [{
