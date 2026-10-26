@@ -3,10 +3,10 @@ cloudflare:
   redirect:
     hosts: ["@", www]
     target: "https://auth.hallucinai.de/"
-    keep:
-      - {path: /impressum, target: "https://songmaker.hallucinai.de"}
-      - {path: /datenschutz, target: "https://songmaker.hallucinai.de"}
-    serve: {pages: [/nutzungsbedingungen], files: /_rechtliches/}
+    # /favicon.ico is the browser's automatic request: it must be answered here, not redirected to auth.
+    serve:
+      pages: [/impressum, /datenschutz, /nutzungsbedingungen, /favicon.ico]
+      files: /_rechtliches/
 
 github:
   org: overnightworks

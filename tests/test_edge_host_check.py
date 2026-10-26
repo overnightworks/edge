@@ -442,7 +442,6 @@ def test_a_redirected_name_needs_the_same_proxied_cname_without_being_asked(reco
     document["cloudflare"]["redirect"] = {
         "hosts": ["www"],
         "target": "https://auth.example.test/",
-        "keep": [],
     }
     prober = CountingProber()
     check = host_check.check_hosts(

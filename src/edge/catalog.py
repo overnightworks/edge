@@ -39,11 +39,9 @@ _HOST_KEYS = {"name", "exposure", "reason", "ready", "target", "deny_public"}
 # Lowercase unreserved segments, no query or trailing slash: the rendering embeds it in a rule.
 _DENIED_PATH = re.compile(r"(/[a-z0-9._~-]+)+")
 _HTTPS_URL = re.compile(r"https://[a-z0-9.-]+(:\d+)?(/[a-z0-9._~/-]*)?")
-_HTTPS_ORIGIN = re.compile(r"https://[a-z0-9.-]+(:\d+)?")
-_REDIRECT_KEYS = {"hosts", "target", "keep", "serve"}
+_REDIRECT_KEYS = {"hosts", "target", "serve"}
 _SERVE_KEYS = {"pages", "files"}
 _FILES_PREFIX = re.compile(r"(/[a-z0-9._~-]+)+/")
-_KEPT_PATH_KEYS = {"path", "target"}
 _LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 # A compose project name: it is also the repository and the directory name of an app.
 _APP_KEY = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -536,13 +534,11 @@ def _check_redirect(document: dict, zone: str, taken: set[str]) -> None:
     target = redirect.get("target")
     if not (isinstance(target, str) and _HTTPS_URL.fullmatch(target) and _has_valid_origin(target)):
         raise CatalogError(f"{path}.target: must be an https URL without query or fragment")
-    kept = redirect.get("keep", [])
-    _check_kept_paths(f"{path}.keep", kept)
     if serve is not None:
-        _check_serve(path, redirect, apex in taken, kept)
+        _check_serve(path, redirect, apex in taken)
 
 
-def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: list[dict]) -> None:
+def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool) -> None:
     """`serve`: the apex's own pages and files are answered by the tunnel, not redirected."""
     path = f"{redirect_path}.serve"
     serve = redirect["serve"]
@@ -554,7 +550,9 @@ def _check_serve(redirect_path: str, redirect: dict, apex_is_host: bool, kept: l
     if APEX not in redirect["hosts"] or not apex_is_host:
         raise CatalogError(f"{path}: needs '@' among the redirected names and as an enabled host")
     pages, files = _serve_pages_and_files(path, serve)
-    _check_serve_collisions(path, redirect_path, pages, files, kept)
+    files_stem = files.rstrip("/")
+    if files_stem in pages:
+        raise CatalogError(f"{path}.pages: {files_stem} is also the files prefix")
 
 
 def _serve_pages_and_files(path: str, serve: dict) -> tuple[list[str], str]:
@@ -569,17 +567,6 @@ def _serve_pages_and_files(path: str, serve: dict) -> tuple[list[str], str]:
     if not (isinstance(files, str) and _FILES_PREFIX.fullmatch(files)):
         raise CatalogError(f"{path}.files: must be a lowercase absolute path prefix ending in '/'")
     return pages, files
-
-
-def _check_serve_collisions(
-    path: str, redirect_path: str, pages: list[str], files: str, kept: list[dict]
-) -> None:
-    files_stem = files.rstrip("/")
-    if files_stem in pages:
-        raise CatalogError(f"{path}.pages: {files_stem} is also the files prefix")
-    for index, item in enumerate(kept):
-        if item["path"] in pages or item["path"] == files_stem or item["path"].startswith(files):
-            raise CatalogError(f"{redirect_path}.keep[{index}].path: is served, not kept")
 
 
 def _check_redirect_hosts(path: str, names: Any, zone: str, taken: set[str]) -> None:
@@ -607,22 +594,3 @@ def _has_valid_origin(url: str) -> bool:
         return False
     labels = (parts.hostname or "").split(".")
     return all(_LABEL.fullmatch(label) for label in labels) and port != 0
-
-
-def _check_kept_paths(path: str, kept: Any) -> None:
-    items = kept if isinstance(kept, list) else [None]
-    for index, item in enumerate(items):
-        where = f"{path}[{index}]"
-        if not isinstance(item, dict) or set(item) != _KEPT_PATH_KEYS:
-            raise CatalogError(f"{where}: must be a map of exactly path and target")
-        if not (isinstance(item["path"], str) and _DENIED_PATH.fullmatch(item["path"])):
-            raise CatalogError(f"{where}.path: must be a lowercase absolute path, no query")
-        if not (
-            isinstance(item["target"], str)
-            and _HTTPS_ORIGIN.fullmatch(item["target"])
-            and _has_valid_origin(item["target"])
-        ):
-            raise CatalogError(f"{where}.target: must be an https origin without a path")
-    paths = [item["path"] for item in items]
-    if len(set(paths)) != len(paths):
-        raise CatalogError(f"{path}: a path is listed twice")
