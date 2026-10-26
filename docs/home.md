@@ -606,8 +606,10 @@ below and rsyslog's conffiles are home's own and are not backed up.
   purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
   journald is not changed: it keeps forwarding to a syslog socket nobody listens on, which is harmless.
   - **Where the lines went.** The journal holds the same lines (journald forwards, it does not move them), minus what the
-    retention timer already deleted: `journalctl -t sshd --since yesterday` shows what `auth.log` held, `journalctl -k` what
-    `kern.log` held, `journalctl -t postfix/sendmail` what `mail.log` held.
+    retention timer already deleted. `auth.log` held the facilities `auth` and `authpriv` (sudo, polkit, logind, cron):
+    `journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10`. `mail.log` and `mail.err` held the facility `mail`:
+    `journalctl SYSLOG_FACILITY=2`. `kern.log` held the kernel: `journalctl -k`. Narrow any of them with `--since` or
+    `-t <identifier>`, for example `journalctl -t sshd --since yesterday`.
   - **Rollback.** Revert the change, or the next `--apply` purges again; then `sudo apt install rsyslog`. The deleted files do
     not come back. A purge discards a conffile of rsyslog that was modified, and the playbook never copies one first (the
     backup covers edge's files only): `dpkg --verify rsyslog` before the apply names each such file, and a reinstall brings
