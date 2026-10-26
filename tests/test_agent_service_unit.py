@@ -81,7 +81,7 @@ def test_a_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(
     """U6, U7: owned by 1000 with exactly mode 0700, nosuid, nodev, noexec and bounded."""
     options = tmpfs_options[directory]
 
-    assert set(OWNER_ONLY_TMPFS) <= set(options)
+    assert set(options) >= set(OWNER_ONLY_TMPFS)
     assert any(SIZE_BOUND.fullmatch(option) for option in options)
 
 
