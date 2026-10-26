@@ -91,7 +91,7 @@ waits up to 10 minutes, then fails. One host lock (`~/.local/state/edge/backup.l
 
 To run now, start the same units the timers take (`systemctl --user start hal-backup.service` and
 `hal-backup-restore-test.service`); the last journal line of the unit is the verdict.
-`hal restore --list` lists the repository.
+`hal restore --list` lists the snapshots of host `hal` only.
 
 ### One app, and the pre-apply snapshot
 
@@ -117,7 +117,7 @@ snapshot (`--keep-tag pre-apply`). Restore one with `hal restore <app> --snapsho
 
 Every restic command that selects snapshots (`forget`, `snapshots --json`) is scoped to host `hal`: `forget`
 never thins an older snapshot of another host, and `hal restore` and `hal restore --test`
-see only host `hal`. Snapshots that an earlier version wrote under host
+see only host `hal`, and so does `hal restore --list`. Snapshots that an earlier version wrote under host
 `edge-backup` are invisible to hal and stay in the repository; they are deleted once
 (`restic forget --host edge-backup --prune`, by a delegated agent) after every app has a `hal`
 snapshot and `hal restore --test` has passed once (operator ruling 26.10.2026). Until then `hal restore`
@@ -210,7 +210,7 @@ app is recorded yet, or the recorded snapshot is missing in the repository.
 The restore test verifies each app against its own last good snapshot and
 refuses the same way; a failed `check --read-data` gives no app a new time.
 
-Disaster recovery on a machine without the status file: list the repository
+Disaster recovery on a machine without the status file: list the `hal` snapshots
 with `hal restore --list`, then choose a snapshot of that app by the
 first 8 or more characters of its ID:
 

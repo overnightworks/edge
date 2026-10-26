@@ -295,7 +295,13 @@ class Machine:
             ]
             listed = tagged[-1:] if "--latest" in argv else tagged
             return json.dumps([{"id": s["id"]} for s in listed]).encode()
-        return f"{len(self.snapshots)} snapshots\n".encode()
+        shown = [
+            s
+            for s in self.snapshots
+            if "--host" not in argv
+            or s.get("host", RESTIC_HOSTNAME) == argv[argv.index("--host") + 1]
+        ]
+        return "".join(f"{s['id']} {s.get('host', RESTIC_HOSTNAME)}\n" for s in shown).encode()
 
     def _restore(self, argv, **_) -> bytes:
         snapshot_id = argv[argv.index("restore") + 1].split(":")[0]

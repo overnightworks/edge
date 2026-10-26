@@ -412,3 +412,15 @@ def test_no_restic_command_names_the_old_host(edge_backup, machine, home):
     assert restic_calls
     assert not [argv for argv in restic_calls if OLD_HOST in argv]
     assert all(argv[argv.index("--host") + 1] == "hal" for argv in restic_calls if "--host" in argv)
+
+
+def test_an_old_host_snapshot_does_not_appear_in_the_restore_list(edge_backup, machine):
+    edge_backup("backup")
+    edge_backup("backup")
+    _hand_over_to_the_old_host(machine, machine.snapshots[0])
+
+    outcome = edge_backup("restore", "--list")
+
+    assert outcome.exit_code == 0, outcome.err
+    assert machine.snapshots[0]["id"] not in outcome.out
+    assert machine.snapshots[1]["id"] in outcome.out
