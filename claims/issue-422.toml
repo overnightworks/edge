@@ -1,0 +1,8 @@
+claim_id = "e3073bcbf6a644c49588e4a5d49c5c92"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "96ddac7d97330799eab33c40e6cfc1573a8b4e3c"
+branch = "claude/issue-422-rsyslog-purge"
+scope = ["docs/home.md", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "src/home_tools/logs_check.py", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py"]
+opened_commit = "dcf332d24a7cc126b3344642280f7c37a1ab7bd4"
+whole_reason = "S3 and P edit the same proof Dockerfile, the same drive.sh stage and the same judge line of run.sh, and one privileged proof run proves both; the playbook, the one-owner constant and the docs are what that proof drives."
