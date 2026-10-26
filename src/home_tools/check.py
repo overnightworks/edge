@@ -1,9 +1,9 @@
-"""`home check` runs every read-only check of `home` and nudges only on news.
+"""`home check` runs every read-only check of `home` and says in plain words whether all is well and what to do.
 
-It writes one report and sends at most one desktop notification and one e-mail, and only when
-the set of findings differs from the last run's: findings that merely persist
-never nag. A check that breaks or recovers is news too, but its findings count
-as neither new nor gone; the title names the broken check. The desktop counts as a channel only while a graphical session
+It writes one report and sends at most one desktop notification and one e-mail, and only when an action appears or
+goes: every finding has one level (in Ordnung, Hinweis, Handlungsbedarf), notes alone and findings that merely persist
+never nag. A check that breaks or recovers is an action that appears or goes, because its failure is remembered as one; the mail and the popup
+name it. The desktop counts as a channel only while a graphical session
 exists, the mail only while `~/.secrets/smtp/account.toml` exists; the news is remembered once every such channel delivered it and at least one exists. Exit code: 0 when
 every check is clean, 1 when any finding exists, 2 when the configuration file
 or the secrets manifest is invalid, 3 when a check broke on an unexpected error. A broken check leaves the other checks' findings
@@ -14,18 +14,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view, tidy_home
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import REBOOT_REQUIRED_FILE
-from home_tools.report import findings_count, read_state_file, write_state_file
-from home_tools.secrets_view import ExitCodeProbe
+from home_tools.report import Level, findings_count, read_state_file, write_state_file
+from home_tools.secrets_view import ExitCodeProbe, FindingRule, SecretKind
 from home_tools.tidy_home import CommandRunner, Config, Layout
 
 if TYPE_CHECKING:
@@ -70,9 +72,19 @@ def _tidy_check(ctx: CheckContext) -> CheckFindings:
     return report, frozenset(finding.identity for finding in findings)
 
 
+MISSING_PASSWORD_RULE = "missing-password"
+
+
+def _secret_rule(finding: secrets_view.SecretFinding) -> str:
+    """A missing human password is its own rule: the one missing secret that needs action."""
+    if (finding.rule, finding.kind) == (FindingRule.MISSING, SecretKind.HUMAN_PASSWORD):
+        return MISSING_PASSWORD_RULE
+    return finding.rule.value
+
+
 def _secrets_check(ctx: CheckContext) -> CheckFindings:
     view, report = secrets_view.inspect(ctx.layout, ctx.probe, ctx.now)
-    return report, frozenset(finding.identity for finding in view.findings)
+    return report, frozenset(f"{_secret_rule(finding)}\t{finding.subject}" for finding in view.findings)
 
 
 def _hook_check(ctx: CheckContext) -> CheckFindings:
@@ -163,10 +175,10 @@ def _parse_identities(text: str) -> frozenset[str]:
 
 
 def _is_remembered(identity: str) -> bool:
-    """Check name, then either the failure marker or a finding's rule and subject, each separated by a tab."""
+    """Check name, then either the failure marker or the rule and subject of a finding with a level, each separated by a tab."""
     name, _, finding = identity.partition("\t")
     rule, _, subject = finding.partition("\t")
-    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(rule and subject))
+    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(subject and rule != CHECK_FAILED_IDENTITY and _rule_report(name, rule)))
 
 
 def _remember(layout: Layout, identities: frozenset[str]) -> None:
@@ -176,46 +188,245 @@ def _remember(layout: Layout, identities: frozenset[str]) -> None:
 NOTIFY_FAILED = "home: notify-send fehlgeschlagen; der nächste Lauf meldet die geänderten Funde erneut.\n"
 
 
+@dataclass(frozen=True)
+class RuleReport:
+    """What the mail says of one rule: its level, the plain sentence, and the one step that clears it (for an action)."""
+
+    level: Level
+    sentence: str
+    next_step: str = ""
+    area_note: str = ""
+    """What the area line says after the level when the rule is a note; the sentence without its final period when empty."""
+    resolved: str = ""
+    """What the mail says once an action is gone, as a sentence that reads true on its own."""
+    describes_shared_state: bool = False
+    """Whether the sentence describes one state however many subjects or rules show it, so a current action with the same sentence still denies a recovery."""
+    hides_state: bool = False
+    """Whether the rule means its check cannot read the state it checks, so no other action of that check may be reported as done."""
+
+
+AGENT_STEP = "Sag einem Agenten „{area}: bitte schau nach“."
+
+
+def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
+    return RuleReport(Level.ACTION, sentence, f"Sag einem Agenten „{{subject}} {problem}, schau nach“.", resolved=resolved)
+
+
+ACTION, NOTE = Level.ACTION, Level.NOTE
+HOME_NEXT = "Führe `home next` aus."
+BACKUP_NOW = "Führe `hal backup` aus."
+SETUP_APPLY = "Führe `hal setup --apply` aus."
+HOOK_BROKEN = RuleReport(
+    ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY,
+    resolved="Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder.",
+    describes_shared_state=True,
+)
+LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP, resolved="Der Check kann die Logs wieder vollständig sehen.", hides_state=True)
+LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.", area_note="noch nicht überall nach 30 Tagen gelöscht")
+SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.", area_note="ein Ordner bei den Geheimnissen ist nicht in Form")
+# The sentence of a rule names only what the mail may carry: a Compose project or an app by name, never a secret, a path or a home file (#415 Z6).
+RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
+    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu", "{subject} startet nicht mehr ständig neu."),
+    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt", "{subject} meldet sich nicht mehr als abgestürzt."),
+    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich nicht mehr krank."),
+    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} meldet keinen Fehlerabbruch mehr."),
+    ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen.", hides_state=True),
+    ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
+    ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
+    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr.", describes_shared_state=True),
+    ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt.", hides_state=True),
+    ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr.", describes_shared_state=True),
+    ("hook", "hooks-path"): HOOK_BROKEN,
+    ("hook", "hook-file"): HOOK_BROKEN,
+    ("hook", "quality"): HOOK_BROKEN,
+    ("hook", "engines"): HOOK_BROKEN,
+    ("hook", "hidden-hook"): RuleReport(NOTE, "Ein Repo-eigener Commit-Schritt wird verdeckt.", area_note="ein Repo-eigener Commit-Schritt wird verdeckt"),
+    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "Ein Geheimnis ist für andere lesbar.", HOME_NEXT, resolved="Ein Geheimnis ist nicht mehr für andere lesbar."),
+    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "Ein Geheimnis liegt hinter einem Verweis.", HOME_NEXT, resolved="Ein Geheimnis liegt nicht mehr hinter einem Verweis."),
+    ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
+        ACTION, "Ein ausgemusterter Schlüssel ist noch nicht als widerrufen bestätigt.", HOME_NEXT, resolved="Ein ausgemusterter Schlüssel ist als widerrufen bestätigt."
+    ),
+    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT, resolved="Die Prüfung einer Anmeldung meldet keinen Fehler mehr."),
+    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT, resolved="Das Passwort der Sicherung wird nicht mehr als fehlend gemeldet."),
+    ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten{readers} fehlen noch."),
+    ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
+    ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
+    ("secrets", FindingRule.PRESENCE_UNKNOWN.value): RuleReport(NOTE, "Ob ein Geheimnis da ist, lässt sich nicht sehen.", area_note="ob ein Geheimnis da ist, lässt sich nicht sehen"),
+    ("secrets", FindingRule.VERIFICATION_UNREACHABLE.value): RuleReport(NOTE, "Eine Anmeldung ließ sich gerade nicht prüfen.", area_note="eine Anmeldung ließ sich gerade nicht prüfen"),
+    ("secrets", FindingRule.UNKNOWN_FILE.value): RuleReport(NOTE, "Es gibt unbekannte Dateien bei den Geheimnissen.", area_note="es gibt unbekannte Dateien bei den Geheimnissen"),
+    ("logs", "container-json-file"): LOGS_NOT_ROTATED,
+    ("logs", "docker-default-driver"): LOGS_NOT_ROTATED,
+    ("logs", "rsyslog-file"): LOGS_NOT_ROTATED,
+    ("logs", "journal-age"): RuleReport(ACTION, "Es gibt Logs, die älter als 30 Tage sind.", SETUP_APPLY, resolved="Es gibt keine Logs mehr, die älter als 30 Tage sind.", describes_shared_state=True),
+    ("logs", "journal-unreadable"): LOGS_UNSEEN,
+    ("logs", "docker-unreadable"): LOGS_UNSEEN,
+}
+# Nothing `home tidy` finds is broken: its rules clean or list, so the whole area is a note.
+TIDY_REPORT = RuleReport(NOTE, "Es gibt etwas aufzuräumen.", area_note="es gibt etwas aufzuräumen")
+BROKEN_CHECK_REPORT = RuleReport(ACTION, "Die Prüfung {area} lief nicht.", "Führe `home check` aus.", resolved="Die Prüfung {area} läuft wieder.")
+# The areas in the order the mail names them, by the check that owns each.
+AREAS = (
+    ("platform", "Dienste"),
+    ("backup", "Sicherung"),
+    ("hook", "Commit-Schutz"),
+    ("secrets", "Geheimnisse"),
+    ("logs", "Server-Logs"),
+    ("tidy", "Aufräumen"),
+)
+AREA_LABELS = dict(AREAS)
+
+
+@dataclass(frozen=True)
+class Item:
+    """One remembered identity, told what it says and how much it matters."""
+
+    identity: str
+    check: str
+    report: RuleReport
+    sentence: str
+    next_step: str
+    area_note: str
+    resolved: str
+
+    @property
+    def level(self) -> Level:
+        return self.report.level
+
+
+def _rule_report(check_name: str, rule: str) -> RuleReport | None:
+    if rule == CHECK_FAILED_IDENTITY:
+        return BROKEN_CHECK_REPORT
+    return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS.get((check_name, rule))
+
+
+APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+NO_READERS: Mapping[str, str] = MappingProxyType({})
+
+
+def _split(identity: str) -> tuple[str, str, str]:
+    """The check, the rule and the subject of a remembered identity."""
+    check_name, rule, subject = [*identity.split("\t", 2), "", ""][:3]
+    return check_name, rule, subject
+
+
+def _item(identity: str, readers: Mapping[str, str]) -> Item:
+    check_name, rule, subject = _split(identity)
+    report = _rule_report(check_name, rule)
+    assert report is not None, identity
+    words = {"subject": subject, "area": AREA_LABELS[check_name], "readers": f" für {readers[subject]}" if readers.get(subject) else ""}
+    note = (report.area_note or report.sentence).removesuffix(".")
+    return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words), note.format(**words), report.resolved.format(**words))
+
+
+def _items(identities: frozenset[str], readers: Mapping[str, str] = NO_READERS) -> list[Item]:
+    """In the order of the mail: area, then the rule and subject the identity starts with."""
+    area_order = {name: position for position, (name, _) in enumerate(AREAS)}
+    return sorted((_item(identity, readers) for identity in identities), key=lambda item: (area_order[item.check], item.identity))
+
+
+def _actions(identities: frozenset[str] | None) -> frozenset[str]:
+    return frozenset(item.identity for item in _items(identities or frozenset()) if item.level is Level.ACTION)
+
+
 def _is_news(current: frozenset[str], previous: frozenset[str] | None) -> bool:
-    """A changed set is news while findings remain or a broken check recovered; a home turning clean stays silent."""
-    recovered = bool(((previous or frozenset()) & FAILURE_MARKERS) - current)
-    return current != previous and (bool(current) or recovered)
+    """An action that appeared or went is news, a broken or recovered check included; notes alone never are."""
+    return _actions(current) != _actions(previous)
 
 
-def notification_body(current: frozenset[str], previous: frozenset[str] | None, report_file: Path) -> str:
-    """Counts findings only: a failure marker is named in the summary, never counted as new or gone."""
-    found, before = current - FAILURE_MARKERS, (previous or frozenset()) - FAILURE_MARKERS
-    return f"{len(found - before)} neu, {len(before - found)} weg. Bericht: {report_file}"
+def _area_level(items: list[Item], check_name: str) -> Level:
+    return max((item.level for item in items if item.check == check_name), default=Level.OK)
+
+
+def title(current: frozenset[str]) -> str:
+    """The state of the PC in one phrase; at action it names the areas."""
+    items = _items(current)
+    levels = {name: _area_level(items, name) for name, _ in AREAS}
+    action_areas = [label for name, label in AREAS if levels[name] is Level.ACTION]
+    if action_areas:
+        return f"PC-Check: {Level.ACTION.label} – {', '.join(action_areas)}"
+    return "PC-Check: in Ordnung – nur Hinweise" if Level.NOTE in levels.values() else "PC-Check: alles in Ordnung"
+
+
+MAX_ITEM_LINES = 20
+MORE_ITEMS = "… und {count} weitere, siehe Bericht"
+
+
+def _capped(lines: list[str]) -> list[str]:
+    if len(lines) <= MAX_ITEM_LINES:
+        return lines
+    return [*lines[:MAX_ITEM_LINES], MORE_ITEMS.format(count=len(lines) - MAX_ITEM_LINES)]
+
+
+def _action_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
+    before = _actions(previous)
+    lines = [
+        f"{number}. {item.sentence}{'' if item.identity in before else ' (neu)'}\n   Nächster Schritt: {item.next_step}"
+        for number, item in enumerate((item for item in _items(current) if item.level is Level.ACTION), start=1)
+    ]
+    return _capped(lines)
+
+
+def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
+    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or, for a shared state, with the same sentence, and no current action of its check that cannot be read."""
+    current_actions = _items(_actions(current))
+    held_back = {(item.check, _split(item.identity)[2]) for item in current_actions}
+    held_sentences = {item.sentence for item in current_actions if item.report.describes_shared_state}
+    unreadable_checks = {item.check for item in current_actions if item.report.hides_state}
+    gone = [
+        item
+        for item in _items(_actions(previous) - current)
+        if (item.check, _split(item.identity)[2]) not in held_back and item.sentence not in held_sentences and item.check not in unreadable_checks
+    ]
+    return _capped([f"- {sentence}" for sentence in dict.fromkeys(item.resolved for item in gone)])
+
+
+@dataclass(frozen=True)
+class MailFacts:
+    """What the mail says beyond the findings: who reads each secret (a manifest fact) and when the last backup succeeded."""
+
+    readers: Mapping[str, str] = NO_READERS
+    last_backup: datetime | None = None
+
+
+def _when(moment: datetime, now: datetime) -> str:
+    local, today = moment.astimezone(), now.astimezone().date()
+    day = {today: "heute", today - timedelta(days=1): "gestern"}.get(local.date(), f"{local:%d.%m.%Y}")
+    return f"{day} {local:%H:%M}"
+
+
+def _area_line(items: list[Item], check_name: str, facts: MailFacts, now: datetime) -> str:
+    level = _area_level(items, check_name)
+    notes = [item.area_note for item in items if item.check == check_name and item.level is Level.NOTE]
+    detail = f" – {notes[0]}" if level is Level.NOTE else ""
+    if check_name == "backup" and level is Level.OK and facts.last_backup:
+        detail = f", zuletzt {_when(facts.last_backup, now)}"
+    return f"{AREA_LABELS[check_name]}: {level.label}{detail}"
+
+
+def notification_body(current: frozenset[str], report_file: str) -> str:
+    """The sentences of the actions without their steps, and where the report is."""
+    sentences = _capped([item.sentence for item in _items(current) if item.level is Level.ACTION])
+    return "\n".join([*sentences, f"Alles im Einzelnen: {report_file}"])
+
+
+def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_file: str, now: datetime, facts: MailFacts) -> str:
+    """The actions with one step each, what is no longer an action, and one line per area; no number, no secret, no home file."""
+    items = _items(current, facts.readers)
+    sections = []
+    if actions := _action_lines(current, previous):
+        sections.append("Handlungsbedarf\n\n" + "\n\n".join(actions))
+    if gone := _gone_lines(current, previous):
+        sections.append("Erledigt\n\n" + "\n".join(gone))
+    area_lines = "\n".join(_area_line(items, name, facts, now) for name, _ in AREAS)
+    sections.append(f"So steht der PC ({now:%d.%m.%Y %H:%M})\n\n{area_lines}")
+    hint = "Hinweise eilen nicht; home next zeigt, was davon du tun kannst.\n" if any(item.level is Level.NOTE for item in items) else ""
+    sections.append(f"{hint}Alles im Einzelnen: {report_file}")
+    return "\n\n".join(sections) + "\n"
 
 
 MAIL_FAILED = "home: msmtp fehlgeschlagen ({host}:{port}); der nächste Lauf meldet die geänderten Funde erneut.\n"
 MAIL_ACCOUNT_INVALID = "home: keine Mail, {problem}; der nächste Lauf meldet die geänderten Funde erneut.\n"
 GRAPHICAL_SESSION_PROBE = ["systemctl", "--user", "is-active", "--quiet", "graphical-session.target"]
-MAX_NEW_FINDING_LINES = 20
-
-
-def _check_name(check_function: Callable[[CheckContext], CheckFindings]) -> str:
-    return next(name for name, function in CHECKS if function is check_function)
-
-
-# Only these checks' new findings are named in the mail: container and app names are not private files (#340 R1).
-MAILED_CHECK_NAMES = frozenset({_check_name(_platform_check), _check_name(_backup_check)})
-
-
-def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_file: Path) -> str:
-    """The notification's counts, the findings per check, and the new platform and backup findings by rule and subject; no other finding, never the report."""
-    found = current - FAILURE_MARKERS
-    per_check = [f"  {name}: {count}" for name, _ in CHECKS if (count := sum(identity.startswith(f"{name}\t") for identity in found))]
-    named = sorted(identity.split("\t", 2) for identity in found - (previous or frozenset()) if identity.partition("\t")[0] in MAILED_CHECK_NAMES)
-    new_lines = [f"  {rule} | {subject}" for _, rule, subject in named[:MAX_NEW_FINDING_LINES]]
-    if len(named) > MAX_NEW_FINDING_LINES:
-        new_lines.append(f"  … und {len(named) - MAX_NEW_FINDING_LINES} weitere")
-    sections = [notification_body(current, previous, report_file)]
-    if per_check:
-        sections.append("Funde je Prüfung:\n" + "\n".join(per_check))
-    if new_lines:
-        sections.append("Neu:\n" + "\n".join(new_lines))
-    return "\n\n".join(sections) + "\n"
 
 
 def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
@@ -243,12 +454,27 @@ def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | Non
     return delivered
 
 
-def _news_delivered(ctx: CheckContext, summary: str, current: frozenset[str], previous: frozenset[str] | None) -> bool:
+def _mail_facts(ctx: CheckContext) -> MailFacts:
+    """A manifest that cannot be read leaves the app names out; the secrets check reports that failure itself.
+
+    `read_by` is free text, so only a reader that is a bare app or service name reaches the mail (no file, path or secret name).
+    """
+    try:
+        manifest = secrets_view.load_manifest(secrets_view.MANIFEST_PATH)
+    except secrets_view.ManifestError:
+        manifest = ()
+    readers = {entry.name: ", ".join(reader for reader in entry.read_by if APP_NAME.fullmatch(reader)) for entry in manifest}
+    return MailFacts(readers, backup_check.last_successful_backup(ctx.layout.home))
+
+
+def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> bool:
     """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
-    report_file = ctx.layout.check_report_file
+    home = ctx.layout.home
+    report_file = f"~/{ctx.layout.check_report_file.relative_to(home)}"
+    summary = title(current)
     outcomes = [
-        _desktop_delivered(ctx, summary, notification_body(current, previous, report_file)),
-        _mail_delivered(ctx, summary, mail_body(current, previous, report_file)),
+        _desktop_delivered(ctx, summary, notification_body(current, report_file)),
+        _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, _mail_facts(ctx))),
     ]
     set_up = [outcome for outcome in outcomes if outcome is not None]
     return bool(set_up) and all(set_up)
@@ -293,9 +519,8 @@ def check(ctx: CheckContext) -> int:
     current = remembered_identities(results, previous)
     sys.stdout.write(report)
     news = ctx.config.notify_enabled and _is_news(current, previous)
-    summary = report.splitlines()[0].removeprefix("# ")
     # The remembered set stays at the last delivered one, so the next run sends this news again.
-    if not news or _news_delivered(ctx, summary, current, previous):
+    if not news or _news_delivered(ctx, current, previous):
         _remember(layout, current)
     failed = [result for result in results if result.error]
     if failed:
@@ -307,8 +532,8 @@ CHECK_EXAMPLES = """\
 Beispiele:
   home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 
-Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn sich die Menge der Funde seit dem letzten Lauf
-geändert hat. Bericht: ~/.local/state/home/check-report.md
+Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn ein Handlungsbedarf neu auftaucht
+oder verschwindet; Hinweise allein melden nichts. Bericht: ~/.local/state/home/check-report.md
 Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwarteter Fehler.
 """
 
@@ -320,7 +545,7 @@ def _check_from_args(_args: argparse.Namespace, layout: Layout, config: Config, 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "check",
-        help="alle Prüfungen ohne Änderung; meldet nur, wenn sich die Funde ändern",
+        help="alle Prüfungen ohne Änderung; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet",
         description="Führt jede Prüfung von home lesend aus und schreibt einen Bericht.",
         epilog=CHECK_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,

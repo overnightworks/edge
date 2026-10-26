@@ -101,9 +101,10 @@ def test_an_unexpected_error_exits_3_with_one_german_line_never_1(
     assert error.count("\n") == 1
 
 
-def test_the_help_promises_a_notification_only_when_the_findings_change(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_help_promises_a_notification_only_when_an_action_appears_or_goes(capsys: pytest.CaptureFixture[str]) -> None:
+    """#415 Z4: the help says a mail comes only when an action appears or goes."""
     with pytest.raises(SystemExit):
         cli.main(["--help"])
 
     help_text = " ".join(capsys.readouterr().out.split())  # argparse wraps long help lines
-    assert "meldet nur, wenn sich die Funde ändern" in help_text
+    assert "meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet" in help_text

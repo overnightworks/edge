@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import email.message
+import email.policy
+import json
 import os
 import stat
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from home_tools import check, cli, secrets_view, system_step, tunnel_config
+from home_tools import backup_check, check, cli, logs_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
@@ -24,14 +28,14 @@ HOME_README = "`.local/state`, `.config/home`, `.secrets` and `git/` belong here
 FAKE_SECRET_VALUE = "FAKE-SECRET-VALUE ghp_0000notarealtoken glpat-0000notarealtoken"
 
 
-# The one `docker inspect --format` the platform check may send: named fields, and only whether a compose project label is set.
+# The one `docker inspect --format` the platform check may send: named fields, and the compose project label.
 # A fake docker answers any other format with a line that carries the canary, so a wider projection shows in the report.
 ALLOWED_PLATFORM_INSPECT_FORMAT = (
     '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}'
-    '\t{{if index .Config.Labels "com.docker.compose.project"}}compose{{end}}'
+    '\t{{index .Config.Labels "com.docker.compose.project"}}'
 )
 INSPECT_CANARY = "CANARY-ENV-VALUE-s3cr3t"
-CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tcompose\n"
+CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tedge\n"
 
 
 @pytest.fixture
@@ -170,7 +174,7 @@ recreate = "r"
 # Stands in for msmtp: records argv and stdin per call, runs --passwordeval through sh like msmtp does, exits as the `exit` file says.
 STUB_MSMTP = """\
 #!/bin/sh
-call=$(mktemp -d "$STUB_MAIL_DIR/call.XXXXXX")
+call=$(mktemp -d "$STUB_MAIL_DIR/call.$(date +%s%N).XXXXXX")
 for argument; do printf '%s\\n' "$argument"; done > "$call/argv"
 cat > "$call/stdin"
 for argument; do
@@ -419,3 +423,66 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
     return Sandbox(home, global_git_config, uv_calls, system)
+
+
+class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
+    """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
+
+    container_listing = ""
+    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, compose project or nothing per line
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        if argv[0] == "journalctl":
+            return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
+        if argv[:2] == ["docker", "inspect"] and argv[3] != logs_check.INSPECT_FORMAT:
+            self.calls.append(list(argv))
+            return self.platform_listing if argv[3] == ALLOWED_PLATFORM_INSPECT_FORMAT else CANARY_INSPECT_LINE
+        if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
+            self.calls.append(list(argv))
+            return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
+        if argv[0] == "sh":
+            self.calls.append(list(argv))
+            return run_command(argv)
+        return super().__call__(argv)
+
+
+def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | None = None) -> None:
+    last_backup = last_backup or datetime.now().astimezone()
+    document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
+    document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
+    status_file = home / backup_check.STATUS_FILE
+    status_file.parent.mkdir(parents=True, exist_ok=True)
+    status_file.write_text(json.dumps(document))
+
+
+@pytest.fixture
+def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
+    monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
+    write_backup_status(clean_home)
+    assert cli.main(["setup", "--apply"], home=clean_home) == 0
+
+
+def home_check(home: Path, runner, probe: FakeProbe | None = None) -> int:
+    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe())
+
+
+REPORT_DISPLAY = "~/.local/state/home/check-report.md"
+
+
+def restarting_containers(runner, *names: str) -> None:
+    """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
+    runner.platform_listing = "".join(f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",))
+
+
+def no_container_restarts(runner) -> None:
+    runner.platform_listing = ""
+
+
+@pytest.fixture
+def mail_stub(clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MailStub:
+    return set_up_mail(clean_home, tmp_path, monkeypatch)
+
+
+def message_of(sent: SentMail) -> email.message.EmailMessage:
+    return email.message_from_string(sent.stdin, policy=email.policy.default)  # type: ignore[return-value]
