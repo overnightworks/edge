@@ -1,8 +1,0 @@
-claim_id = "88171dffe4e746c48e0db3bceb2c5087"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "651422f4f41d128f09a1d12424f652bcd6b5bec8"
-branch = "claude/issue-412-slice-c-agent-service-activation"
-scope = ["agent-service/live_signer.py", "agent-service/live_smoke.py", "agent-service/service.toml", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "docs/internal-ca.md", "probe/agent-service/agent_networks.py", "probe/agent-service/containment.py", "probe/agent-service/egress.py", "probe/agent-service/scratch_secrets.py", "probe/agent-service/unit.py", "sonar-project.properties", "src/home_tools/secrets_manifest.toml", "tests/live_smoke_fakes.py", "tests/test_agent_egress.py", "tests/test_agent_service_live_signer.py", "tests/test_agent_service_live_smoke.py", "tests/test_agent_service_smoke.py", "tests/test_agent_service_unit.py"]
-opened_commit = "9d3d09857e1fe57dffcd61a7a14757d305de3a65"
-whole_reason = "Taking hal_agent out of the anchor and giving the service its key, CA and origin breaks the live smoke, the containment probe and every probe that starts the real service unless their changes land together; the L3 step is the operator's command for the state this change creates."
