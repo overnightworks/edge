@@ -13,11 +13,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
-from home_tools.system_step import LOG_RETENTION_DAYS, RSYSLOG_FILE_NAMES
+from home_tools.system_step import DOCKER_LOG_DRIVER, LOG_RETENTION_DAYS, RSYSLOG_FILE_NAMES
 from home_tools.tidy_home import CommandRunner
 
 LOG_DIRECTORY = Path("/var/log")
-WANTED_DRIVER = "journald"
 JSON_FILE_DRIVER = "json-file"
 MICROSECONDS_PER_SECOND = 1_000_000
 
@@ -67,9 +66,9 @@ def _default_driver_findings(run: CommandRunner) -> LogReading:
         return LogReading([Finding("docker-unreadable", "docker", "`docker info` lässt sich nicht ausführen")], [])
     driver = output.strip()
     status_lines = [f"Docker-Standardtreiber: {driver}"]
-    if driver == WANTED_DRIVER:
+    if driver == DOCKER_LOG_DRIVER:
         return LogReading([], status_lines)
-    return LogReading([Finding("docker-default-driver", driver, f"Standardtreiber ist {driver}, erwartet {WANTED_DRIVER}")], status_lines)
+    return LogReading([Finding("docker-default-driver", driver, f"Standardtreiber ist {driver}, erwartet {DOCKER_LOG_DRIVER}")], status_lines)
 
 
 def _oldest_journal_entry(boots_json: str) -> datetime | None:
