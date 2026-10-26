@@ -44,9 +44,8 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
     && apt-get install -y --no-install-recommends cloudflared \
     && rm -rf /var/lib/apt/lists/* /var/lib/apt/periodic/update-success-stamp \
     && touch -d @0 /var/lib/apt/lists \
-    && rm -f /usr/sbin/policy-rc.d
-
-RUN install -D /bin/busybox /tmp/rootfs/bin/busybox \
+    && rm -f /usr/sbin/policy-rc.d \
+    && install -D /bin/busybox /tmp/rootfs/bin/busybox \
     && tar --directory /tmp/rootfs --create --file /usr/local/share/proof-rootfs.tar . \
     && rm -rf /tmp/rootfs
 
