@@ -8,7 +8,7 @@ the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `
 
 ## The image
 
-`agent-service/image/` is the recipe of the service's image (agent-runtime `v0.7.0`, Claude Code
+`agent-service/image/` is the recipe of the service's image (agent-runtime, Claude Code
 `2.1.302`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
 pinned: both base images by digest, the Python packages by hash, the Claude CLI by its sha256. A
 changed or vanished artifact fails the build. The image is never pulled from a registry, because its
@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.7.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.8.0-2.1.302 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the

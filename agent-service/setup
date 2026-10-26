@@ -18,8 +18,7 @@ first: a second run changes nothing. The token is read without echo and exists o
 The signing key pair in ~/.secrets/agent-service/signing is made once; a plain run and --renew
 refuse a pair they cannot use and leave it as it is. Key bytes travel only over pipes to openssl.
 
-The token rules equal the service's reader (agent_runtime/secret_file.py, agent-runtime
-v0.7.0): a regular file of at most 16 KiB that group and others cannot touch, holding one
+The token rules equal the service's reader (agent_runtime/secret_file.py): a regular file of at most 16 KiB that group and others cannot touch, holding one
 printable line without whitespace that is neither JSON nor an API key. A pasted line is judged as
 the exact bytes to be written, with those rules, before anything is created; a refused paste
 leaves the old token as it was. Every write goes through a descriptor of ~/.secrets/agent-service/

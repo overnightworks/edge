@@ -234,6 +234,7 @@ models = ["sonnet"]
 [profiles.subscription]
 provider = "claude"
 token_file = "/run/secrets/claude-token"
+background = false
 
 [apps.probe]
 workload_client = "probe-client"
@@ -247,11 +248,13 @@ LEFTOVER_CONFIGURATION = {
     ),
     "purposes": ("[apps.probe]", '[purposes.chat]\ncli_provider = "claude"\n\n[apps.probe]'),
     "apps.probe.tools": ("[apps.probe]", "[apps.probe.tools]\n\n[apps.probe]"),
+    "apps.probe.models": ("[apps.probe]", "[apps.probe.models]\n\n[apps.probe]"),
+    "profiles.subscription.background": ("background = false\n", ""),
 }
 
 
 def cell_i8(scratch: Path) -> None:
-    """A field the 0.6.0 configuration dropped stops the start and the log names it."""
+    """A dropped field, or a missing required one, stops the start and the log names it."""
     for field, (anchor, leftover) in LEFTOVER_CONFIGURATION.items():
         configuration = scratch / "leftover.toml"
         configuration.write_text(
