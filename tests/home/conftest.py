@@ -170,7 +170,7 @@ recreate = "r"
 # Stands in for msmtp: records argv and stdin per call, runs --passwordeval through sh like msmtp does, exits as the `exit` file says.
 STUB_MSMTP = """\
 #!/bin/sh
-call=$(mktemp -d "$STUB_MAIL_DIR/call.XXXXXX")
+call=$(mktemp -d "$STUB_MAIL_DIR/call.$(date +%s%N).XXXXXX")
 for argument; do printf '%s\\n' "$argument"; done > "$call/argv"
 cat > "$call/stdin"
 for argument; do

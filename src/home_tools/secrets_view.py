@@ -589,11 +589,6 @@ class SecretFinding:
     def recommendation(self) -> str:
         return self.fix or KIND_RECOMMENDATIONS.get((self.rule, self.kind)) or RECOMMENDATIONS[self.rule]
 
-    @property
-    def identity(self) -> str:
-        """What the finding is about; `home check` notifies when this set changes."""
-        return f"{self.rule.value}\t{self.subject}"
-
 
 @dataclass(frozen=True)
 class SecretStatus:

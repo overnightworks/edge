@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, HOME_README, INSPECT_CANARY, PASSWORD_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox, SentMail, MailStub, set_up_mail
+from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, TEST_MANIFEST, INSPECT_CANARY, PASSWORD_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox, SentMail, MailStub, set_up_mail
 
 from home_tools import backup_check, check, cli, logs_check, mail
 from home_tools.check import WAIT_FOR_CLICK_SCRIPT
@@ -88,8 +88,23 @@ def home_check(home: Path, runner, probe: FakeProbe | None = None) -> int:
     return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe())
 
 
-def test_a_first_run_with_findings_writes_one_report_and_sends_one_notification(clean_home, leave_pasted_image, runner) -> None:
+ACTION_TITLE = "PC-Check: Handlungsbedarf – Dienste"
+REPORT_DISPLAY = "~/.local/state/home/check-report.md"
+
+
+def restarting_containers(runner, *names: str) -> None:
+    """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
+    runner.platform_listing = "".join(f"/{name}\trestarting\t\t0\tcompose\n" for name in names or ("edge-a-1",))
+
+
+def no_container_restarts(runner) -> None:
+    runner.platform_listing = ""
+
+
+def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, leave_pasted_image, runner) -> None:
+    """#415 Z1: the popup title is the state in a phrase, its body the sentences and the report."""
     leave_pasted_image(clean_home)
+    restarting_containers(runner, "presentator-live-presentator-1")
 
     code = home_check(clean_home, runner)
 
@@ -97,10 +112,8 @@ def test_a_first_run_with_findings_writes_one_report_and_sends_one_notification(
     assert code == 1
     assert report.startswith("# home check ")
     assert "| pasted-images |" in report
-    assert len(runner.notifications) == 1
-    assert runner.notifications[0] == report.splitlines()[0].removeprefix("# ")
-    assert report.splitlines()[0].endswith("| 2 Funde")  # the image is also unknown to ~/README.md
-    assert runner.notification_bodies[0] == f"2 neu, 0 weg. Bericht: {Layout(clean_home).check_report_file}"
+    assert runner.notifications == [ACTION_TITLE]
+    assert runner.notification_bodies == [f"presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar.\nAlles im Einzelnen: {REPORT_DISPLAY}"]
 
 
 def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(clean_home, runner) -> None:
@@ -121,7 +134,7 @@ def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_th
 
     assert code == 0
     assert "container-unhealthy" not in Layout(clean_home).check_findings_file.read_text()
-    assert runner.notification_bodies[0].startswith("1 neu, 0 weg.")
+    assert runner.notifications == [ACTION_TITLE, "PC-Check: alles in Ordnung"]
 
 
 def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_inspect_fields(clean_home, runner) -> None:
@@ -135,13 +148,13 @@ def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_
     assert "container-unhealthy | edge-step-ca-1" in carried[0]
 
 
-def test_many_new_findings_give_one_notification_with_their_count(clean_home, runner) -> None:
+def test_many_new_actions_give_one_notification_naming_each(clean_home, runner) -> None:
     runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tcompose\n" for n in range(4))
 
     home_check(clean_home, runner)
 
     assert len(runner.notifications) == 1
-    assert runner.notification_bodies[0].startswith("4 neu, 0 weg.")
+    assert runner.notification_bodies[0].count("hat sich mit einem Fehler beendet.") == 4
 
 
 def test_a_stale_backup_is_in_the_daily_report(clean_home, runner) -> None:
@@ -153,20 +166,19 @@ def test_a_stale_backup_is_in_the_daily_report(clean_home, runner) -> None:
     assert "backup-stale | songmaker" in Layout(clean_home).check_report_file.read_text()
 
 
-def test_a_pending_reboot_notifies_once_and_does_not_nag(clean_home, runner, tmp_path) -> None:
+def test_a_pending_reboot_is_a_note_and_never_notifies(clean_home, runner, tmp_path) -> None:
+    """#415 Z4: a note that appears sends nothing."""
     (tmp_path / "reboot-required").touch()
-    home_check(clean_home, runner)
-    os.utime(tmp_path / "reboot-required", (1.0, 1.0))
 
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert len(runner.notifications) == 1
+    assert runner.notifications == []
 
 
-def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean_home, leave_pasted_image, runner) -> None:
+def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean_home, runner) -> None:
     """#29 rule 1 (action and report path) and rule 2 (detached: systemd-run takes no waiting option)."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
 
     home_check(clean_home, runner)
 
@@ -274,18 +286,19 @@ def test_the_unit_is_ready_while_the_notification_is_still_open(stubs, tmp_path)
     assert logged_before_click == ["ready --ready"]
 
 
-def test_unchanged_findings_never_notify_again_even_as_they_age(clean_home, leave_pasted_image, runner) -> None:
-    leave_pasted_image(clean_home, age_days=30)
+def test_an_action_that_stays_never_notifies_again_even_as_it_ages(clean_home, runner) -> None:
+    """#415 Z5: a backup 9 days and then 10 days stale is the same item and mails once."""
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
     home_check(clean_home, runner)
-    leave_pasted_image(clean_home, age_days=40)
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=10))
 
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert len(runner.notifications) == 1
+    assert runner.notifications == ["PC-Check: Handlungsbedarf – Sicherung"]
 
 
-def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_notifies_once(clean_home, runner) -> None:
+def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_is_remembered_and_never_notifies(clean_home, runner) -> None:
     secrets_dir = os.fsencode(Layout(clean_home).secrets_dir)
     os.close(os.open(secrets_dir + b"/bad\xffname", os.O_CREAT | os.O_WRONLY, 0o600))
     assert home_check(clean_home, runner) == 1
@@ -293,29 +306,29 @@ def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_notifies_once
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert len(runner.notifications) == 1
+    assert runner.notifications == []
+    assert "unknown-file" in Layout(clean_home).check_findings_file.read_text()
 
 
-def test_a_changed_set_of_findings_notifies_again(clean_home, leave_pasted_image, runner) -> None:
-    leave_pasted_image(clean_home)
+def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clean_home, runner) -> None:
+    restarting_containers(runner, "edge-a-1")
     home_check(clean_home, runner)
-    leave_pasted_image(clean_home / "git")
-
-    home_check(clean_home, runner)
-
-    assert len(runner.notifications) == 2
-    assert runner.notification_bodies[1].startswith("2 neu, 0 weg.")  # the image, and git/ litter
-
-
-def test_a_finding_that_goes_while_another_stays_notifies_it_as_gone(clean_home, leave_pasted_image, runner) -> None:
-    leave_pasted_image(clean_home)
-    second = leave_pasted_image(clean_home / "git")
-    home_check(clean_home, runner)
-    second.unlink()
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
 
     home_check(clean_home, runner)
 
-    assert runner.notification_bodies[1].startswith("0 neu, 2 weg.")
+    assert runner.notifications == [ACTION_TITLE, "PC-Check: Handlungsbedarf – Dienste, Sicherung"]
+
+
+def test_an_action_that_goes_while_another_stays_notifies_the_one_that_stays(clean_home, runner) -> None:
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
+    restarting_containers(runner, "edge-a-1")
+    home_check(clean_home, runner)
+    no_container_restarts(runner)
+
+    home_check(clean_home, runner)
+
+    assert runner.notifications == ["PC-Check: Handlungsbedarf – Dienste, Sicherung", "PC-Check: Handlungsbedarf – Sicherung"]
 
 
 def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
@@ -326,23 +339,23 @@ def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
     assert "Nichts zu tun." in Layout(clean_home).check_report_file.read_text()
 
 
-def test_findings_that_return_after_a_clean_run_notify_again(clean_home, leave_pasted_image, runner) -> None:
-    image = leave_pasted_image(clean_home)
+def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, runner) -> None:
+    restarting_containers(runner, "edge-a-1")
     home_check(clean_home, runner)
-    image.unlink()
+    no_container_restarts(runner)
     home_check(clean_home, runner)
-    leave_pasted_image(clean_home)
+    restarting_containers(runner, "edge-a-1")
 
     home_check(clean_home, runner)
 
-    assert len(runner.notifications) == 2
+    assert len(runner.notifications) == 3
 
 
-def test_switched_off_notifications_stay_silent(clean_home, leave_pasted_image, runner) -> None:
+def test_switched_off_notifications_stay_silent(clean_home, runner) -> None:
     config_file = Layout(clean_home).config_file
     config_file.parent.mkdir(parents=True)
     config_file.write_text("[notify]\nenabled = false\n")
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
 
     code = home_check(clean_home, runner)
 
@@ -350,8 +363,8 @@ def test_switched_off_notifications_stay_silent(clean_home, leave_pasted_image, 
     assert runner.notifications == []
 
 
-def test_a_failed_notification_is_reported_and_sent_again_on_the_next_run(clean_home, leave_pasted_image, runner, capsys) -> None:
-    leave_pasted_image(clean_home)
+def test_a_failed_notification_is_reported_and_sent_again_on_the_next_run(clean_home, runner, capsys) -> None:
+    restarting_containers(runner)
     runner.notify_delivers = False
 
     failed_code = home_check(clean_home, runner)
@@ -363,7 +376,8 @@ def test_a_failed_notification_is_reported_and_sent_again_on_the_next_run(clean_
     assert len(runner.notifications) == 2
 
 
-def test_secrets_findings_join_the_one_report_and_the_one_notification(clean_home, leave_pasted_image, runner) -> None:
+def test_notes_from_tidy_and_secrets_join_the_report_but_send_nothing(clean_home, leave_pasted_image, runner) -> None:
+    """#415 Z4: a missing secret and tidy litter are notes; the report keeps the numbers."""
     leave_pasted_image(clean_home / "git")
     (clean_home / ".secrets" / "gitlab").unlink()
 
@@ -375,7 +389,7 @@ def test_secrets_findings_join_the_one_report_and_the_one_notification(clean_hom
     assert "# home tidy " in report
     assert "# home secrets " in report
     assert "| missing | gitlab |" in report
-    assert runner.notification_bodies == [f"3 neu, 0 weg. Bericht: {Layout(clean_home).check_report_file}"]
+    assert runner.notifications == []
 
 
 def break_tidy(home: Path) -> Path:
@@ -447,12 +461,9 @@ def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone
         locked.chmod(0o700)
     home_check(clean_home, runner)
 
-    unchanged = f"0 neu, 0 weg. Bericht: {Layout(clean_home).check_report_file}"
     assert broken_codes == [3, 3]
-    # the locked ~/git also stops the hook check from scanning
-    assert runner.notifications[1].endswith("| 1 Fund | fehlgeschlagen: tidy, hook")
-    assert runner.notification_bodies[0] != unchanged
-    assert runner.notification_bodies[1:] == [unchanged, unchanged]  # one for the break, one for the recovery
+    # the locked ~/git also stops the hook check from scanning; one notification for the break, one for the recovery
+    assert runner.notifications == ["PC-Check: Handlungsbedarf – Commit-Schutz, Aufräumen", "PC-Check: in Ordnung – nur Hinweise"]
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
@@ -462,8 +473,7 @@ def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(
     code = home_check(clean_home, runner)
 
     assert code == 0
-    assert len(runner.notifications) == 2
-    assert runner.notifications[1].endswith("| 0 Funde")
+    assert runner.notifications == ["PC-Check: Handlungsbedarf – Geheimnisse", "PC-Check: alles in Ordnung"]
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
@@ -476,7 +486,7 @@ def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(cle
     home_check(clean_home, runner)
 
     assert len(runner.notifications) == 3
-    assert runner.notifications[2].endswith("| 0 Funde")
+    assert runner.notifications[2] == "PC-Check: alles in Ordnung"
 
 
 def test_an_invalid_manifest_leaves_the_tidy_findings_in_the_report_and_exits_2(
@@ -554,9 +564,9 @@ def message_of(sent: SentMail) -> email.message.EmailMessage:
     return email.message_from_string(sent.stdin, policy=email.policy.default)  # type: ignore[return-value]
 
 
-def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_password_read_by_msmtp(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
-    """#390 C1, E2, T1 and C9, R1: one mail per news, and the password canary reaches no output channel."""
-    leave_pasted_image(clean_home)
+def test_the_first_news_is_mailed_once_with_the_title_as_subject_and_the_password_read_by_msmtp(clean_home, runner, mail_stub, capsys) -> None:
+    """#390 C1, T1 and C9, R1 and #415 Z1: one mail per news, and the password canary reaches no output channel."""
+    restarting_containers(runner)
 
     home_check(clean_home, runner)
     home_check(clean_home, runner)
@@ -564,7 +574,7 @@ def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_passw
     layout = Layout(clean_home)
     (sent,) = mail_stub.sent
     news = message_of(sent)
-    assert news["Subject"] == runner.notifications[0]
+    assert news["Subject"] == ACTION_TITLE == runner.notifications[0]
     assert (news["From"], news["To"]) == ("home@example.test", "me@example.test")
     assert sent.arguments[-2:] == ["--", "me@example.test"]
     assert sent.password == PASSWORD_CANARY
@@ -573,65 +583,138 @@ def test_the_first_news_is_mailed_once_with_the_summary_as_subject_and_the_passw
     assert not any(PASSWORD_CANARY in text for text in outputs)
 
 
-def test_the_mail_names_counts_and_new_platform_and_backup_findings_but_never_a_file_or_the_report(clean_home, leave_pasted_image, runner, mail_stub) -> None:
-    """#390 C2, E2: the body holds counts and new platform and backup lines, no tidy file name and no report text."""
+def a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image) -> None:
+    restarting_containers(runner, "presentator-live-presentator-1")
+    (clean_home / ".secrets" / "gitlab").unlink()
     leave_pasted_image(clean_home)
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
-    write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
+
+
+def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_number(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#415 Z2, Z6: mail A; the tidy file, the secret and the counts stay in the report."""
+    a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image)
 
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert body.startswith(f"{runner.notification_bodies[0].partition('.')[0]}.")
-    assert f"Bericht: {Layout(clean_home).check_report_file}" in body
-    assert "  platform: 1" in body
-    assert "container-unhealthy | edge-step-ca-1" in body
-    assert "backup-stale | songmaker" in body
-    assert "Eingefügtes Bild" not in body
-    assert "# home" not in body
+    stamp = body.split("So steht der PC (")[1].split(")")[0]
+    assert body == f"""Handlungsbedarf
+
+1. presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar. (neu)
+   Nächster Schritt: Sag einem Agenten „presentator-live-presentator-1: bitte schau nach“.
+
+So steht der PC ({stamp})
+
+Dienste: Handlungsbedarf
+Sicherung: in Ordnung
+Commit-Schutz: in Ordnung
+Geheimnisse: Hinweis – Zugangsdaten fehlen noch.
+Server-Logs: in Ordnung
+Aufräumen: Hinweis – Es gibt etwas aufzuräumen.
+
+Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
+
+Alles im Einzelnen: {REPORT_DISPLAY}
+"""
 
 
-def test_two_hundred_new_findings_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
-    """#390 C2, E2: 200 new lines name 20 and count the rest."""
-    runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tcompose\n" for n in range(200))
+@pytest.mark.parametrize("sees_notes", [True, False], ids=["with notes", "clean"])
+def test_an_action_that_goes_is_mailed_as_no_longer_current_and_the_title_is_the_new_state(clean_home, leave_pasted_image, runner, mail_stub, sees_notes) -> None:
+    """#415 Z4, mail C: the action goes and the PC is clean or only notes remain; one mail says so."""
+    restarting_containers(runner, "presentator-live-presentator-1")
+    if sees_notes:
+        leave_pasted_image(clean_home)
+    home_check(clean_home, runner)
+    no_container_restarts(runner)
+
+    home_check(clean_home, runner)
+
+    news = message_of(mail_stub.sent[1])
+    assert news["Subject"] == ("PC-Check: in Ordnung – nur Hinweise" if sees_notes else "PC-Check: alles in Ordnung")
+    assert "Nicht mehr aktuell\n\n- presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar." in news.get_content()
+    assert "Handlungsbedarf\n\n1." not in news.get_content()
+
+
+def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_the_mail(clean_home, runner, mail_stub, use_manifest) -> None:
+    """#415 Z3, Z6: the one missing secret that is an action says so without naming the secret."""
+    use_manifest(TEST_MANIFEST.replace('kind = "token"', 'kind = "human-password"'))
+    (clean_home / ".secrets" / "gitlab").unlink()
+
+    home_check(clean_home, runner)
+
+    news = message_of(mail_stub.sent[0])
+    assert news["Subject"] == "PC-Check: Handlungsbedarf – Geheimnisse"
+    assert "1. Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen. (neu)\n   Nächster Schritt: Führe `home next` aus." in news.get_content()
+    assert "gitlab" not in news.get_content()
+
+
+def test_a_note_that_appears_or_goes_sends_no_mail(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+    """#415 Z4: only notes change, so nothing is mailed."""
+    image = leave_pasted_image(clean_home)
+    home_check(clean_home, runner)
+    image.unlink()
+
+    home_check(clean_home, runner)
+
+    assert mail_stub.sent == []
+
+
+def test_a_restarting_container_that_then_exits_is_a_new_item(clean_home, runner, mail_stub) -> None:
+    """#415 Z5: the rule is part of the identity, so restarting then exited mails again and marks the item new."""
+    restarting_containers(runner, "edge-a-1")
+    home_check(clean_home, runner)
+    runner.platform_listing = "/edge-a-1\texited\t\t1\tcompose\n"
+
+    home_check(clean_home, runner)
+
+    body = message_of(mail_stub.sent[1]).get_content()
+    assert "1. edge-a-1 hat sich mit einem Fehler beendet. (neu)" in body
+    assert "- edge-a-1 startet ständig neu" in body
+
+
+def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
+    """#415 Z7: 21 actions give 20 items, one more-line and the six area lines."""
+    runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tcompose\n" for n in range(21))
 
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert body.count("container-exited |") == 20
-    assert "… und 180 weitere" in body
+    assert body.count("hat sich mit einem Fehler beendet.") == 20
+    assert "… und 1 weitere, siehe Bericht" in body
+    assert body.count("in Ordnung") == 5
 
 
-def test_a_subject_with_shell_syntax_or_a_newline_reaches_the_mail_verbatim_and_runs_nothing(tmp_path, monkeypatch) -> None:
-    """#390 C10, E2: shell syntax and a newline in a subject reach stdin verbatim and run nothing."""
+def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_runs_nothing(tmp_path, monkeypatch) -> None:
+    """#390 C10 and #415 Z6: shell syntax in a container name reaches stdin verbatim and runs nothing; a secret path or home file name appears nowhere."""
     monkeypatch.chdir(tmp_path)
     stub = set_up_mail(tmp_path / "home", tmp_path, monkeypatch)
-    hostile = "platform\tcontainer-dead\t$(touch PWNED) `touch PWNED`\nBcc: x@example.test"
+    hostile_container = "platform\tcontainer-dead\t$(touch PWNED) `touch PWNED`\nBcc: x@example.test"
+    secret_path = "secrets\tloose-mode\t~/.secrets/songmaker/token"
+    home_file = "tidy\tpasted-images\tEingefügtes Bild.png"
     account = mail.load_account(Layout(tmp_path / "home"))
-    body = check.mail_body(frozenset({hostile}), None, tmp_path / "report.md")
+    body = check.mail_body(frozenset({hostile_container, secret_path, home_file}), None, REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54))
 
     run_command(mail.sendmail_command(account, Layout(tmp_path / "home").secrets_dir, mail.compose(account, "s", body)))
 
     (sent,) = stub.sent
-    assert "$(touch PWNED) `touch PWNED`\n" in message_of(sent).get_content()
+    content = message_of(sent).get_content()
+    assert "$(touch PWNED) `touch PWNED`\n" in content
+    assert "songmaker" not in content
+    assert "Eingefügtes" not in content
     assert not list(tmp_path.glob("PWNED"))
 
 
-def test_unchanged_findings_and_a_clean_home_send_no_mail(clean_home, leave_pasted_image, runner, mail_stub) -> None:
-    """#390 C3, E1: an unchanged set and a clean home send no mail."""
-    image = leave_pasted_image(clean_home)
+def test_unchanged_actions_and_a_home_that_was_never_in_trouble_send_no_second_mail_and_no_first(clean_home, runner, mail_stub) -> None:
+    """#390 C3 and #415 Z4, Z5: an unchanged action mails once; a clean home mails nothing."""
     home_check(clean_home, runner)
+    restarting_containers(runner)
     home_check(clean_home, runner)
-    image.unlink()
-    (clean_home / "README.md").write_text(HOME_README)
-
     home_check(clean_home, runner)
 
     assert len(mail_stub.sent) == 1
 
 
 def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
-    """#390 C3, E1: a recovered check is news and is mailed."""
+    """#390 C3 and #415 Z4: a recovered check is an action that went and is mailed."""
     layout = Layout(clean_home)
     layout.state_dir.mkdir(parents=True, exist_ok=True)
     layout.check_findings_file.write_text('["tidy\\tcheck-failed"]')
@@ -639,11 +722,12 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
     home_check(clean_home, runner)
 
     assert len(mail_stub.sent) == 1
+    assert "Nicht mehr aktuell\n\n- Die Prüfung Aufräumen lief nicht." in message_of(mail_stub.sent[0]).get_content()
 
 
-def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, leave_pasted_image, runner, capsys) -> None:
+def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, runner, capsys) -> None:
     """#390 C5, N1: an absent account.toml sends nothing and prints nothing."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
 
     home_check(clean_home, runner)
 
@@ -659,9 +743,9 @@ INVALID_ACCOUNTS = {
 
 
 @pytest.mark.parametrize("extra", INVALID_ACCOUNTS.values(), ids=INVALID_ACCOUNTS)
-def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_for_the_next_run(clean_home, leave_pasted_image, runner, mail_stub, capsys, extra) -> None:
+def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_for_the_next_run(clean_home, runner, mail_stub, capsys, extra) -> None:
     """#390 C6, V1: an invalid account sends nothing, names the problem on stderr and keeps the set."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     (Layout(clean_home).secrets_dir / "smtp" / "account.toml").write_text('host = "smtp.example.test"\nuser = "home@example.test"\nto = "me@example.test"\n' + extra)
 
     home_check(clean_home, runner)
@@ -674,12 +758,12 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
     assert len(runner.notifications) == 2
 
 
-def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, runner, mail_stub) -> None:
     """#390 C7, F1: enabled = false sends no mail and no popup, and the set advances."""
     config_file = Layout(clean_home).config_file
     config_file.parent.mkdir(parents=True)
     config_file.write_text("[notify]\nenabled = false\n")
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
 
     home_check(clean_home, runner)
 
@@ -689,9 +773,9 @@ def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_
 
 @pytest.mark.parametrize("session_active", [True, False], ids=["session", "logged-out"])
 @pytest.mark.parametrize("mail_state", ["ok", "failing", "absent"])
-def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, leave_pasted_image, runner, mail_stub, capsys, session_active, mail_state) -> None:
+def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, runner, mail_stub, capsys, session_active, mail_state) -> None:
     """#390 C8, F1: the set advances iff every set-up channel delivered; zero channels keep it, silently."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     runner.session_active = session_active
     if mail_state == "failing":
         mail_stub.exit_with(1)
@@ -711,9 +795,9 @@ def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, 
     assert (errors == "") == (advanced or not any(channels))
 
 
-def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, runner, mail_stub) -> None:
     """#390 C4, F1: a failed send keeps the news and the next run mails it."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     mail_stub.exit_with(1)
     home_check(clean_home, runner)
     mail_stub.exit_with(0)
@@ -724,9 +808,9 @@ def test_a_failed_send_keeps_the_news_and_the_next_run_mails_it(clean_home, leav
     assert len(mail_stub.sent) == 2
 
 
-def test_a_failing_send_prints_its_failure_line_but_never_the_password(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+def test_a_failing_send_prints_its_failure_line_but_never_the_password(clean_home, runner, mail_stub, capsys) -> None:
     """#390 C9, R1: a failed send reports on stderr without the password canary."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     mail_stub.exit_with(1)
 
     home_check(clean_home, runner)
@@ -736,9 +820,9 @@ def test_a_failing_send_prints_its_failure_line_but_never_the_password(clean_hom
     assert PASSWORD_CANARY not in captured.out + captured.err
 
 
-def test_an_account_path_that_is_a_directory_is_an_invalid_account_and_keeps_the_news(clean_home, leave_pasted_image, runner, mail_stub, capsys) -> None:
+def test_an_account_path_that_is_a_directory_is_an_invalid_account_and_keeps_the_news(clean_home, runner, mail_stub, capsys) -> None:
     """#390 C6, V1, F1: a present but unusable account.toml is reported, not taken for an unset mail channel."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     account = Layout(clean_home).secrets_dir / "smtp" / "account.toml"
     account.unlink()
     account.mkdir()
@@ -749,9 +833,9 @@ def test_an_account_path_that_is_a_directory_is_an_invalid_account_and_keeps_the
     assert not Layout(clean_home).check_findings_file.exists()
 
 
-def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, leave_pasted_image, runner, mail_stub, tmp_path, monkeypatch, capsys) -> None:
+def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, runner, mail_stub, tmp_path, monkeypatch, capsys) -> None:
     """#390 C4, F1: a missing msmtp is one stderr line and the set stays."""
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
     only_sh = tmp_path / "only-sh"
     only_sh.mkdir()
     (only_sh / "sh").symlink_to("/bin/sh")
@@ -765,21 +849,21 @@ def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, lea
 
 
 @pytest.mark.parametrize(("port", "starttls"), [(2525, "on"), (465, "off")])
-def test_the_port_of_the_account_decides_between_starttls_and_implicit_tls(clean_home, leave_pasted_image, runner, tmp_path, monkeypatch, port, starttls) -> None:
+def test_the_port_of_the_account_decides_between_starttls_and_implicit_tls(clean_home, runner, tmp_path, monkeypatch, port, starttls) -> None:
     """#390 C1, T1: ports 2525 and 465 choose STARTTLS on or off."""
     stub = set_up_mail(clean_home, tmp_path, monkeypatch, port=port)
-    leave_pasted_image(clean_home)
+    restarting_containers(runner)
 
     home_check(clean_home, runner)
 
     assert f"--tls-starttls={starttls}" in stub.sent[0].arguments
 
 
-def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_path, leave_pasted_image, runner, use_manifest, furnish_clean_home, monkeypatch, capsys) -> None:
+def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_path, runner, use_manifest, furnish_clean_home, monkeypatch, capsys) -> None:
     """#390 C9, R1: a home path with a space and a quote still lets msmtp read the password, which appears in no channel."""
     odd_home = furnish_clean_home(tmp_path / "ho me's")
     stub = set_up_mail(odd_home, tmp_path, monkeypatch)
-    leave_pasted_image(odd_home)
+    restarting_containers(runner)
 
     home_check(odd_home, runner)
 

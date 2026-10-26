@@ -1,0 +1,86 @@
+"""#415 Z3 and Z1: every rule a check can report has exactly one level, and the title says the PC's state from them."""
+
+from __future__ import annotations
+
+import ast
+import inspect
+from types import ModuleType
+
+import pytest
+
+from home_tools import backup_check, check, hook_check, logs_check, platform_check, secrets_view
+from home_tools.report import Level
+
+FINDING_CONSTRUCTORS = {"Finding", "HookFinding"}
+
+
+def rules_named_in(module: ModuleType) -> set[str]:
+    """The first argument of every finding the module builds with a literal rule."""
+    calls = (node for node in ast.walk(ast.parse(inspect.getsource(module))) if isinstance(node, ast.Call))
+    return {
+        call.args[0].value
+        for call in calls
+        if isinstance(call.func, ast.Name) and call.func.id in FINDING_CONSTRUCTORS and call.args and isinstance(call.args[0], ast.Constant)
+    }
+
+
+CHECK_MODULES = {"platform": platform_check, "backup": backup_check, "hook": hook_check, "logs": logs_check}
+RULES_BY_CHECK = {
+    **{name: rules_named_in(module) for name, module in CHECK_MODULES.items()},
+    "secrets": {rule.value for rule in secrets_view.FindingRule} | {check.MISSING_PASSWORD_RULE},
+}
+RULES_BY_CHECK["platform"] |= set(platform_check.BROKEN_STATES.values())
+RULES = [(name, rule) for name, rules in RULES_BY_CHECK.items() for rule in sorted(rules)]
+
+
+@pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
+def test_every_rule_of_a_check_has_a_level(check_name: str, rule: str) -> None:
+    assert (check_name, rule) in check.RULE_REPORTS
+
+
+def test_no_level_is_kept_for_a_rule_no_check_reports() -> None:
+    assert set(check.RULE_REPORTS) == set(RULES)
+
+
+@pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
+def test_an_action_has_exactly_one_next_step_and_a_note_has_none(check_name: str, rule: str) -> None:
+    report = check.RULE_REPORTS[check_name, rule]
+    assert bool(report.next_step) == (report.level is Level.ACTION)
+
+
+@pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
+def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule: str) -> None:
+    """#415 Z6: no sentence of secrets, hook, logs or tidy takes the finding's subject, a path or a file name."""
+    report = check.RULE_REPORTS[check_name, rule]
+    assert ("{subject}" in report.sentence + report.next_step) <= (check_name in {"platform", "backup"})
+
+
+@pytest.mark.parametrize(
+    ("identities", "title"),
+    [
+        (set(), "PC-Check: alles in Ordnung"),
+        ({"tidy\tpasted-images\tx.png", "platform\treboot-pending\treboot"}, "PC-Check: in Ordnung – nur Hinweise"),
+        ({"platform\tcontainer-restarting\tedge-a-1"}, "PC-Check: Handlungsbedarf – Dienste"),
+        (
+            {"logs\tjournal-age\tjournal", "platform\tcontainer-dead\tedge-a-1", "tidy\tpasted-images\tx.png"},
+            "PC-Check: Handlungsbedarf – Dienste, Server-Logs",
+        ),
+        ({"hook\tcheck-failed"}, "PC-Check: Handlungsbedarf – Commit-Schutz"),
+    ],
+    ids=["clean", "only notes", "one area", "two areas and a note", "a check that broke"],
+)
+def test_the_title_names_the_state_and_at_action_the_areas(identities: set[str], title: str) -> None:
+    assert check.title(frozenset(identities)) == title
+
+
+@pytest.mark.parametrize(
+    ("identity", "level"),
+    [
+        ("secrets\tmissing-password\trestic/password", Level.ACTION),
+        ("secrets\tmissing\tgitlab", Level.NOTE),
+        ("tidy\tanything-tidy-finds\tx", Level.NOTE),
+    ],
+    ids=["human password", "other secret", "tidy rule"],
+)
+def test_the_level_of_a_missing_secret_follows_its_kind_and_every_tidy_rule_is_a_note(identity: str, level: Level) -> None:
+    assert check.title(frozenset({identity})) == ("PC-Check: Handlungsbedarf – Geheimnisse" if level is Level.ACTION else "PC-Check: in Ordnung – nur Hinweise")
