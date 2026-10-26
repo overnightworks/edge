@@ -1,8 +1,0 @@
-claim_id = "78189fe2fd224afc91c383fdafda75ff"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "b192194ce441904d7e5fa220235a2999908a4dd2"
-branch = "claude/issue-410-h5b2-hal-backup-units"
-scope = ["docs/architecture.md", "docs/backup.md", "src/edge/realm/reconcile.py", "src/edge_backup/docker.py", "src/home_tools/secrets_manifest.toml", "systemd/edge-backup-restore-test.service", "systemd/edge-backup-restore-test.timer", "systemd/edge-backup.service", "systemd/edge-backup.timer", "systemd/hal-backup-restore-test.service", "systemd/hal-backup-restore-test.timer", "systemd/hal-backup.service", "systemd/hal-backup.timer", "tests/edge_backup_support.py", "tests/home/test_secrets_view.py", "tests/home/test_user_units.py", "tests/test_edge_backup.py"]
-opened_commit = "49a14508a23db9185a213fba901bf47f235193aa"
-whole_reason = "One rename: a unit pair cannot move apart, and the throwaway's name, the manifest entry and every text and test pinning them move with it, or something names a missing unit."
