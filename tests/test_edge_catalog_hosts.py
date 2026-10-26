@@ -75,10 +75,11 @@ def test_a_host_carries_its_service_fqdn_and_all_five_fields():
     )
 
 
-def test_the_repositorys_catalog_declares_songmakers_hosts_the_legal_apex_and_keycloaks_auth():
+def test_the_repositorys_catalog_declares_songmakers_hopins_legal_and_keycloaks_hosts():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
         ("songmaker.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
+        ("hopin.hallucinai.de", catalog.Exposure.PUBLIC, "http://127.0.0.1:8081", "/health"),
         ("hallucinai.de", catalog.Exposure.PUBLIC, "http://127.0.0.1:8081", "/impressum"),
         (
             "auth.hallucinai.de",
@@ -89,10 +90,11 @@ def test_the_repositorys_catalog_declares_songmakers_hosts_the_legal_apex_and_ke
     ]
 
 
-def test_songmakers_host_refuses_the_back_channel_route_and_its_metrics_publicly():
+def test_songmaker_and_hopin_refuse_the_back_channel_route_and_songmaker_alone_its_metrics():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
-        "songmaker.hallucinai.de": ("/auth/backchannel-logout", "/metrics")
+        "songmaker.hallucinai.de": ("/auth/backchannel-logout", "/metrics"),
+        "hopin.hallucinai.de": ("/auth/backchannel-logout",),
     }
 
 
@@ -609,14 +611,13 @@ def test_an_app_host_without_ready_is_refused_when_the_apps_are_read():
         catalog.apps(entry, {}, "edge")
 
 
-def test_the_repositorys_catalog_has_hopin_disabled_and_public_once_enabled():
+def test_the_repositorys_catalog_has_hopin_enabled_and_public():
     fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
 
     (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "hopin"]
-    fleet["services"]["hopin"]["run"]["enabled"] = True
     (hopin,) = [one for one in catalog.hosts(fleet) if one.service == "hopin"]
 
-    assert (app.enabled, app.default_branch) == (False, "master")
+    assert (app.enabled, app.default_branch) == (True, "master")
     assert (hopin.fqdn, hopin.exposure, hopin.target, hopin.ready, hopin.deny_public) == (
         "hopin.hallucinai.de",
         catalog.Exposure.PUBLIC,

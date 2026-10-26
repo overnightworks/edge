@@ -39,6 +39,17 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
 
   assert {
     condition = (
+      cloudflare_dns_record.host["hopin.${local.fleet.cloudflare.zone}"].proxied
+      && contains(
+        [for rule in cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress : rule.hostname == null ? "" : "${rule.hostname}=${rule.service}"],
+        "hopin.${local.fleet.cloudflare.zone}=http://127.0.0.1:8081"
+      )
+    )
+    error_message = "hopin's host has no proxied record or no tunnel line to :8081"
+  }
+
+  assert {
+    condition = (
       length(cloudflare_ruleset.deny_public) == 1
       && length(cloudflare_ruleset.deny_public[0].rules) == 2
       && alltrue([
@@ -47,19 +58,21 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
         && !strcontains(rule.expression, "www.")
       ])
       && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "/*auth/*backchannel-logout*")
+      && strcontains(cloudflare_ruleset.deny_public[0].rules[0].expression, "lower(http.host) eq \"hopin.${local.fleet.cloudflare.zone}\"")
       && strcontains(cloudflare_ruleset.deny_public[0].rules[1].expression, "/*metrics*")
+      && !strcontains(cloudflare_ruleset.deny_public[0].rules[1].expression, "hopin.")
     )
-    error_message = "the deny is not two rules, /auth/backchannel-logout and /metrics, on songmaker's host alone"
+    error_message = "the deny is not two rules: /auth/backchannel-logout on songmaker's and hopin's host, /metrics on songmaker's alone"
   }
 
   assert {
     condition = (
-      length(cloudflare_dns_record.host) == 4
-      && length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 4
+      length(cloudflare_dns_record.host) == 5
+      && length(cloudflare_zero_trust_tunnel_cloudflared_config.this.config.ingress) == 5
       && alltrue([for fqdn in [local.fleet.cloudflare.zone, "www.${local.fleet.cloudflare.zone}"] : cloudflare_dns_record.host[fqdn].proxied])
       && !can(cloudflare_zero_trust_access_application.host["songmaker.${local.fleet.cloudflare.zone}"])
     )
-    error_message = "the rendered plan does not have 4 proxied records and 4 tunnel lines (songmaker, the apex, auth, the 404), with www only as a record"
+    error_message = "the rendered plan does not have 5 proxied records and 5 tunnel lines (songmaker, hopin, the apex, auth, the 404), with www only as a record"
   }
 
   assert {
