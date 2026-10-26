@@ -35,15 +35,18 @@ RULES = [(name, rule) for name, rules in RULES_BY_CHECK.items() for rule in sort
 
 @pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
 def test_every_rule_of_a_check_has_a_level(check_name: str, rule: str) -> None:
+    """#415 Z3: every rule of the six checks has a level."""
     assert (check_name, rule) in check.RULE_REPORTS
 
 
 def test_no_level_is_kept_for_a_rule_no_check_reports() -> None:
+    """#415 Z3: the level table holds no rule a check never reports."""
     assert set(check.RULE_REPORTS) == set(RULES)
 
 
 @pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
 def test_an_action_has_exactly_one_next_step_and_a_note_has_none(check_name: str, rule: str) -> None:
+    """#415 Z2: an action carries exactly one next step, a note none."""
     report = check.RULE_REPORTS[check_name, rule]
     assert bool(report.next_step) == (report.level is Level.ACTION)
 
@@ -70,6 +73,7 @@ def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule
     ids=["clean", "only notes", "one area", "two areas and a note", "a check that broke"],
 )
 def test_the_title_names_the_state_and_at_action_the_areas(identities: set[str], title: str) -> None:
+    """#415 Z1: the title names the state and, at an action, the areas."""
     assert check.title(frozenset(identities)) == title
 
 
@@ -83,4 +87,5 @@ def test_the_title_names_the_state_and_at_action_the_areas(identities: set[str],
     ids=["human password", "other secret", "tidy rule"],
 )
 def test_the_level_of_a_missing_secret_follows_its_kind_and_every_tidy_rule_is_a_note(identity: str, level: Level) -> None:
+    """#415 Z3: a missing secret is an action only for a human password; every tidy rule is a note."""
     assert check.title(frozenset({identity})) == ("PC-Check: Handlungsbedarf – Geheimnisse" if level is Level.ACTION else "PC-Check: in Ordnung – nur Hinweise")
