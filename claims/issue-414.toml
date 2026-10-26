@@ -1,8 +1,0 @@
-claim_id = "ec7073b820b44bdba2223e66fd0ff132"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "651422f4f41d128f09a1d12424f652bcd6b5bec8"
-branch = "claude/issue-414-h5b3-restic-host-hal"
-scope = ["docs/backup.md", "src/edge_backup/restic.py", "src/edge_backup/settings.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_restore_safety.py"]
-opened_commit = "ac73fb6a77a8260d283a66f6f52c76e4f0d0f477"
-whole_reason = "One value: the host constant, the fake that must model it, the tests that pin it and the doc that describes it move together, or a test passes against a host restic never sees."
