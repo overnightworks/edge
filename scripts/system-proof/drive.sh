@@ -238,8 +238,9 @@ cell_13() {  # cell 11 has activated the hook already, so it is undone here for 
     return
 }
 
-cell_10() {
+cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, and the image ships them empty
     local code
+    apt-get update >"$EVIDENCE/cell10-apt-update.log" 2>&1
     at_terminal cell10 "$HOME_BIN setup"
     code=$?
     verdict 10 "a dry run at a terminal asks once for sudo" '[ $code -eq 0 ] && asked_once cell10'
@@ -1316,8 +1317,10 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
         [[ -e $conffile ]] || missing+=("$conffile")
     done <"$PACKAGE_CONFFILES"
     logger "$line"
+    # The image's dpkg excludes /usr/share/doc and /usr/share/man, so those files are missing from every package here.
+    dpkg --verify rsyslog 2>&1 | grep -v -e ' /usr/share/doc/' -e ' /usr/share/man/' >"$EVIDENCE/r5-verify.txt"
     verdict R5 "apt install rsyslog restores a package dpkg finds unchanged, and its conffiles (${missing[*]:-none missing})" \
-        '[ -s "$PACKAGE_CONFFILES" ] && [[ -z $(dpkg --verify rsyslog) ]] && [[ ${#missing[@]} -eq 0 ]] && [ -e /etc/rsyslog.d/50-default.conf ]'
+        '[ -s "$PACKAGE_CONFFILES" ] && [ ! -s "$EVIDENCE/r5-verify.txt" ] && [[ ${#missing[@]} -eq 0 ]] && [ -e /etc/rsyslog.d/50-default.conf ]'
     verdict R5 "a logged line lands in /var/log/syslog" \
         'for _ in {1..30}; do grep -q "$line" /var/log/syslog 2>/dev/null && break; sleep 1; done; grep -q "$line" /var/log/syslog'
     return
