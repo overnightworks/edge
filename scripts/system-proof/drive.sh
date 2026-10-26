@@ -576,14 +576,9 @@ agent_is_dormant() {  # one account, one regular id for uid and gid, its own gro
     return
 }
 
-provide_docker_socket() {  # the Docker socket as the engine ships it: root:docker 660, with the operator in the group
-    groupadd --force docker
+put_operator_in_docker_group() {  # the engine ships docker.socket as root:docker 660; the operator is in the group, the agents' account is not
     usermod --append --groups docker tester
-    printf '%s\n' '[Socket]' "ListenStream=$DOCKER_SOCKET" 'SocketMode=0660' 'SocketUser=root' 'SocketGroup=docker' \
-        '[Install]' 'WantedBy=sockets.target' >"$UNIT_DIR/proof-docker.socket"
-    printf '%s\n' '[Service]' 'ExecStart=/bin/sleep infinity' >"$UNIT_DIR/proof-docker.service"
-    systemctl daemon-reload
-    systemctl enable --now proof-docker.socket >/dev/null 2>&1
+    systemctl start docker.socket
     return
 }
 
@@ -913,7 +908,6 @@ cell_a1_8() {
 }
 
 cell_a1_9() {  # after a reboot
-    provide_docker_socket
     verdict A1-9 "after a reboot the account is still dormant" agent_is_dormant
     verdict A1-9 "after a reboot agent is still refused" agent_is_refused
     return
@@ -1148,7 +1142,7 @@ SHIM
 
 cells_agent() {
     cell_a1_3
-    provide_docker_socket
+    put_operator_in_docker_group
     cell_a1_4_and_5
     cell_a1_6
     cell_a1_7
@@ -1299,6 +1293,22 @@ cell_r4() {  # a run interrupted after the purge: the files are there again, one
     return
 }
 
+cell_dk1() {  # the engine runs: it answers, records its drivers, runs an imported rootfs offline and starts from no daemon.json
+    local waited=0 info="$EVIDENCE/dk1-info.txt" code
+    until docker info >"$EVIDENCE/dk1-docker-info.txt" 2>&1; do
+        (( waited++ >= 60 )) && break
+        sleep 1
+    done
+    docker info --format 'storage driver {{.Driver}}, default log driver {{.LoggingDriver}}' >"$info" 2>&1
+    verdict DK1 "docker info answers with the default json-file log driver ($(cat "$info"))" 'grep -q "default log driver json-file" "$info"'
+    docker import /usr/local/share/proof-rootfs.tar proof-rootfs >"$EVIDENCE/dk1-import.log" 2>&1
+    docker run --rm --network none proof-rootfs /bin/busybox true >"$EVIDENCE/dk1-run.log" 2>&1
+    code=$?
+    verdict DK1 "a container of the imported rootfs runs with no network and exits 0" '[ $code -eq 0 ]'
+    verdict DK1 "there is no /etc/docker/daemon.json" '[ ! -e /etc/docker/daemon.json ]'
+    return
+}
+
 cell_r5() {  # last: the rollback puts the package back, so nothing after it may expect it gone
     local conffile missing=() line="r5-probe-$$"
     apt-get update >"$EVIDENCE/r5-apt.log" 2>&1 && apt-get install --yes rsyslog >>"$EVIDENCE/r5-apt.log" 2>&1
@@ -1315,7 +1325,7 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) plant_rsyslog_files record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cells_retention; cells_polkit; marker_on ;;
+    fresh) plant_rsyslog_files record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cell_dk1; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
     after-unmarked-reboot) cell_8; cell_r5 ;;
     prepared) prepare_today; cell_2 ;;

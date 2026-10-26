@@ -1,13 +1,13 @@
 #!/bin/bash
 # The container proof of `hal setup`'s system step (#40, cells 1-13), of its secrets step (S1) and of the agents'
-# account (#331, cells A1-1 to A1-9), of the mail of `home check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7): a throwaway Ubuntu 24.04 with systemd as PID 1, never the live PC, never the
+# account (#331, cells A1-1 to A1-9), of the mail of `home check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7) and of a real Docker engine (DK1): a throwaway Ubuntu 24.04 with systemd as PID 1, never the live PC, never the
 # real /etc or ~/.secrets. Cells 14-17 are unit tests (tests/test_next.py).
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>
 #
 # <edge checkout> is a clone whose `origin/main` (or $EDGE_REF) carries tunnel/ and systemd/; only `git archive` reads it.
 # It takes /tmp/probe-stack.lock itself (flock -o, so no child holds it), waits while the load is high, keeps the
-# container ids in the evidence dir and removes both containers on exit. The sudo password is generated per run.
+# container ids in the evidence dir and removes both containers, with their volumes and nothing else, on exit. The sudo password is generated per run.
 set -euo pipefail
 
 if [[ -z ${SYSTEM_PROOF_LOCKED:-} ]]; then
@@ -31,7 +31,7 @@ cleanup() {  # the logs of every container are copied out first, so a failing pr
     while read -r container; do
         name=$(docker inspect --format '{{.Name}}' "$container" 2>/dev/null) || name=$container
         docker cp "$container:/proof/evidence" "$evidence/${name#/}" >/dev/null 2>&1 || true
-        docker rm -f "$container" >/dev/null 2>&1 || true
+        docker rm --force --volumes "$container" >/dev/null 2>&1 || true
     done <"$evidence/containers.txt"
     rm -rf "$context"
 }
@@ -57,7 +57,9 @@ wait_for_boot() {  # wait_for_boot <container>: until systemd reports running or
 
 start_container() {  # start_container <name>: systemd as PID 1, the tester's password set for this run only
     local name=$1 container
+    # The engine inside stores its images in an anonymous volume: overlay does not work on overlay. cleanup removes it with the container.
     container=$(docker run --detach --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
+        --volume /var/lib/docker \
         --name "home-tools-system-proof-$name-$$" "$image")
     echo "$container" >>"$evidence/containers.txt"
     wait_for_boot "$container"
@@ -91,9 +93,9 @@ prepared=$(start_container prepared)
 stage "$prepared" install
 stage "$prepared" prepared
 
-judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7 and T1-T5, T5b printed a held line and none printed a failed one
+judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1 and T1-T5, T5b printed a held line and none printed a failed one
     local cells=$1 cell missing=()
-    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} T{1..5} T5b; do
+    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} DK1 T{1..5} T5b; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then

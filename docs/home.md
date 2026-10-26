@@ -667,6 +667,9 @@ below and rsyslog's conffiles are home's own and are not backed up.
   touching the installer's logs, that mail lines stay in the journal, that a retry converges, that kerneloops restarts without
   `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 24.04, so the proof does not run
   the removal's maintainer scripts of the release on the PC nor its systemd; the PC's own facts cover that.
+  The container runs a real Docker engine (its images live in an anonymous volume that `run.sh` removes with the container);
+  cell DK1 proves it answers with the default `json-file` log driver, runs an imported rootfs offline and starts without
+  `/etc/docker/daemon.json`, and the agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
 ### Das Mail-Konto von `home check`
 
