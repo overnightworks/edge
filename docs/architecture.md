@@ -60,7 +60,7 @@ flowchart TB
             KC["Keycloak + its database<br/>auth.hallucinai.de: the login page"]
             CA["step-ca :9000, internal network mcp-ca<br/>internal CA for the MCP origins, *.mcp.internal"]
             TMC["traefik-mcp :443, no host port<br/>the gateway to the MCP origins, certificates from step-ca"]
-            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, later the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp-songmaker (traefik-mcp, songmaker; isolated)<br/>agent (until each app has its own), agent-songmaker, agent-presentator, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
+            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp-songmaker (traefik-mcp, songmaker; isolated)<br/>agent-songmaker, agent-presentator, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
             BAK["hal backup<br/>restic weekly, restore test monthly<br/>second copy off this disk (D3)"]
             LOOK["Traffic-light page, Gatus<br/>is it OK now?"]
             MON["Prometheus, Grafana, Alertmanager<br/>why, since when? every service"]
@@ -303,11 +303,13 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 | volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | planned (Block 9) |
 | volume `traefik-mcp-acme`: `acme.json` (the issued certificates and their keys) | uid 65534 | `traefik-mcp` | no: they are issued again |
 
-**The agent service's mounts (A1d).** Its container binds two things from the host and nothing else (the login directory and its `service.toml`), plus two tmpfs; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
+**The agent service's mounts (A1d).** Its container binds two things from the host (the login directory and its `service.toml`), gets two compose file secrets (the signing key and the step-ca root), plus two tmpfs; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
 
 | Mount | Holds | Mode | In the backup |
 |---|---|---|---|
 | one read-only directory bind per profile, `~/.secrets/agent-service/<profile>/` (the file inside is replaced, the directory never) | that profile's subscription login, one file | the container user only (0700 directory, 0600 file); no other profile and not the operator's `~/.claude` | no: the login is restored from its `~/.secrets` source ([agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)) |
+| the compose secret `agent_service_signing_key`, `~/.secrets/agent-service/signing/private.pem` → `/run/secrets/agent_service_signing_key` (the private file alone, never the `signing/` folder) | the key the service signs app-tool capabilities with | 0600, owned by the container user; the service refuses to start otherwise | no: a lost key is replaced by `agent-service/setup --replace-signing-key` |
+| the compose secret `step_ca_root_certificate`, `~/.secrets/step-ca/root_ca.crt` → `/run/secrets/step_ca_root_certificate` | the CA root the service trusts for MCP origins | 0644; no secret | see the step-ca table |
 | `./agent-service/service.toml` → `/etc/agent-service/service.toml`, read-only | the service's configuration | the checkout's | no: it is in the repository |
 | `cli_working_directory_root`, a tmpfs | the private credential homes, `TMPDIR`, the Codex sandbox directories | exactly 0700, owned by the container user (the service refuses to start otherwise); the library owns the layout below it | no: rebuilt on start |
 | `/tmp`, a tmpfs, also its `HOME` | nothing the service keeps | 0700, owned by the container user | no |

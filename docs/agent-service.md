@@ -1,7 +1,7 @@
 # The agent service
 
 Reference and runbook for the operator and for an engineer changing the agent service. The code is
-the truth: `compose.yaml` (the `agent-service` service, its `agent`, `agent-songmaker`, `agent-presentator` and `egress` networks),
+the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `agent-presentator`, `egress` and `mcp` networks),
 `agent-service/service.toml`, `agent-service/image/` (the image recipe), `agent-service/live_smoke.py`,
 `agent-service/live_signer.py` and the probes under `probe/agent-service/`. The egress gateway it leaves through is in
 [internal-ca.md](internal-ca.md); the platform picture is [architecture.md](architecture.md).
@@ -33,8 +33,15 @@ capability, `no-new-privileges`, no core dump and `restart: unless-stopped`; `/t
 the working root `/run/agent-service/cli` are size-bounded tmpfs mounts owned by 1000 with mode 0700
 (the service refuses to start on a working root that is not owned by its user with exactly that
 mode), all `nosuid,nodev,noexec`. The unit `agent-service` of `fleet.yaml` starts it with
-`agent-egress`: `hal apply` brings both up. A missing image or login directory stops the start
-(`pull_policy: never`, `create_host_path: false`), so apply reports the unit partial and never on.
+`agent-egress`: `hal apply` brings both up. A missing image, login directory, signing key or CA root stops the start
+(`pull_policy: never`, `create_host_path: false`, and a compose file secret that has no source), so apply reports the unit partial and never on.
+
+It signs for songmaker's origin, `https://songmaker.mcp.internal`, the name `traefik-mcp` answers to on `mcp`, which it joins
+beside the per-app agent networks and `egress` (never `mcp-songmaker`). The key reaches it as the compose secret
+`agent_service_signing_key`, the one file `~/.secrets/agent-service/signing/private.pem` and never its folder, read through
+`[signing] key_file`; the step-ca root reaches it as `step_ca_root_certificate` through `[mcp] ca_file`, because the service
+trusts that file alone and ignores `SSL_CERT_FILE`. A file secret binds the inode, so a new key reaches the service only
+through a recreate. There is no model override: the model is the app's.
 
 A change to `service.toml`, `compose.yaml` or the image reaches the running service only by
 recreating it, which ends every run in flight:
@@ -133,7 +140,7 @@ reaches a container, never a restart. There is no grace period.
 The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
 are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
 drops them. The only host binds are `service.toml` and the login directory, both read-only
-([The login](#the-login)); the login reaches the CLI only through its environment. The service sets
+([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the login reaches the CLI only through its environment. The service sets
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
@@ -152,8 +159,7 @@ gets 403 `not_enabled`. An app's privacy text therefore describes only the API r
 
 An app reaches the service by joining its own agent network, `hal_agent_<app>` (`hal_agent_songmaker`,
 `hal_agent_presentator`), as an external network. The names are fixed, so the project's rename does not
-move them, and no app sees another's network (the older shared `hal_agent` stays, with the service and
-`agent-smoke` on it, until each app has moved):
+move them, and no app sees another's network:
 
 ```yaml
 services:
@@ -188,29 +194,35 @@ the workload token lives five minutes, and send the head its report.
 
 **The live signer proof** is `cd ~/git/edge && python3 agent-service/live_signer.py`, run by the operator
 after a key change or a change of the service's gateway route. It signs you in as the live smoke does,
-recreates the service and runs `agent-smoke --tool` twice, with no paid turn: both runs fail before any
-CLI starts. L4a, with no backend behind the gateway, holds when the run ends `failed` with no text and the
+recreates the service and judges the recreate (L3): the service's networks are the resolved ones and each is internal and
+isolated, and its two secret mounts come from `private.pem` and `root_ca.crt` under `~/.secrets`, as the compose
+configuration names them. It then removes the shared `hal_agent` network, which no compose file defines any more, once it
+has no member (found by its compose labels, never by name); with a member it prints FAILED and removes nothing. Then it
+runs `agent-smoke --tool` twice, with no paid turn: both runs fail before any CLI starts. L4a, with no backend behind the gateway, holds when the run ends `failed` with no text and the
 service log shows the gateway's refusal. L4b joins a stand-in, `mcp_signer.py` in the service image with only
 `public.pem` mounted read-only, at songmaker-web's place on songmaker's MCP network, and holds when the
 capability it receives verifies against `public.pem` (signature, `kid`, `aud`, the one tool, the Host
 `songmaker.mcp.internal`); the stand-in is removed afterwards. Only the verdict is printed, never the
-capability. It needs `[apps.songmaker] mcp_origin` in `service.toml` and refuses until slice C of #346
-sets it. It also refuses once anything but traefik-mcp is on songmaker's MCP network; from then on
+capability. It needs `[apps.songmaker] mcp_origin` in `service.toml`. It also refuses once anything but traefik-mcp is on songmaker's MCP network; from then on
 songmaker's own call is the proof.
 
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
 with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the
 process, the container hardening, the tmpfs and login mounts, a renewal seen at once, and the
-refusals (bad working-root mode, missing login directory, token at the wrong mode, no token).
+refusals (bad working-root mode, missing login directory, token at the wrong mode, no token). P09 and P11a are the
+signing key's: a key at mode 0640 or 0000 stops the start, naming `signing.key_file` and no key byte (a wrong owner needs
+root and is not driven), and with the key or the CA root moved aside the service is not created and nothing appears at the
+source. Every probe that starts the real service writes a throwaway CA and signing pair into its scratch HOME
+(`scratch_secrets.py`).
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
 `--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
 refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 403 `forbidden`,
 the api group only: 403 `not_enabled`), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.
-`--cell containment` adds a throwaway signing key and a fake app that lists tools on
-`agent-songmaker`, and runs `agent-smoke --tool NAME:EFFECT` against it: B1 (the run with the relay
+`--cell containment` adds a fake app that lists tools on
+`agent-songmaker`, certified by the scratch CA and named in place of songmaker's origin, and runs `agent-smoke --tool NAME:EFFECT` against it: B1 (the run with the relay
 is accepted and fails at the upstream) and B2 (a capability written into a tool description fails
 the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the runner's failure is
 `CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict

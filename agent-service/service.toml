@@ -10,6 +10,12 @@ audience = "agent-service"
 subscription_groups = ["/services/agent-service/subscription"]
 group_claim = "groups"
 
+[signing]
+key_file = "/run/secrets/agent_service_signing_key"
+
+[mcp]
+ca_file = "/run/secrets/step_ca_root_certificate"
+
 [server]
 host = "0.0.0.0"
 
@@ -25,9 +31,10 @@ models = ["opus", "sonnet", "haiku"]
 provider = "claude"
 token_file = "/run/agent-service/login/claude/token"
 
-# The workload clients of keycloak/realm.yaml; no app lists tools, so none needs an MCP origin.
+# The workload clients of keycloak/realm.yaml; songmaker lists tools, so it names its MCP origin.
 [apps.songmaker]
 workload_client = "songmaker"
+mcp_origin = "https://songmaker.mcp.internal"
 
 # The copresenter sees only the talk, so presentator lists no tools and no MCP origin.
 [apps.presentator]

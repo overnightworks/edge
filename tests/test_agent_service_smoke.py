@@ -346,12 +346,12 @@ def test_agent_smoke_runs_the_service_image_that_is_never_pulled(services):
     assert services["agent-smoke"]["pull_policy"] == "never"
 
 
-def test_agent_smoke_sits_on_the_agent_network_alone_with_no_port_secret_or_published_address(
+def test_agent_smoke_sits_on_songmakers_network_alone_with_no_port_secret_or_address(
     services,
 ):
     smoke_service = services["agent-smoke"]
 
-    assert smoke_service["networks"] == ["agent"]
+    assert smoke_service["networks"] == ["agent-songmaker"]
     assert not {"ports", "expose", "secrets", "extra_hosts", "network_mode", "depends_on"} & (
         smoke_service.keys()
     )
@@ -372,32 +372,34 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
 
 def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     assert smoke.SERVICE_HOST in services
-    assert "agent" in services["agent-service"]["networks"]
+    assert set(services["agent-smoke"]["networks"]) <= set(services["agent-service"]["networks"])
 
 
 @pytest.mark.parametrize(
     ("key", "name"),
     [
-        ("agent", "hal_agent"),
         ("agent-songmaker", "hal_agent_songmaker"),
         ("agent-presentator", "hal_agent_presentator"),
     ],
 )
 def test_each_agent_network_has_the_fixed_name_apps_join_as_an_external_network(key, name):
-    """P35: one internal network per app (isolated: test_agent_egress.py), beside `agent`."""
+    """P35: one internal network per app (isolated: test_agent_egress.py), and no shared one."""
     networks = yaml.safe_load((ROOT / "compose.yaml").read_text())["networks"]
 
     assert networks[key]["name"] == name
     assert networks[key]["internal"] is True
+    assert "agent" not in networks
+    assert "hal_agent" not in {network.get("name") for network in networks.values()}
 
 
-def test_the_service_keeps_the_agent_network_beside_the_per_app_ones_until_slice_c(services):
-    """The intermediate state of #346: the running service and agent-smoke stay on `agent` while
-    each app moves to its own network; the service is on all of them, so no recreate drops one."""
+def test_the_service_is_on_the_per_app_networks_egress_and_mcp_and_agent_smoke_on_songmakers(
+    services,
+):
+    """P35: the service reaches each app, the gateway and traefik-mcp; smoke is songmaker's."""
     assert set(services["agent-service"]["networks"]) == {
-        "agent",
         "agent-songmaker",
         "agent-presentator",
         "egress",
+        "mcp",
     }
-    assert services["agent-smoke"]["networks"] == ["agent"]
+    assert services["agent-smoke"]["networks"] == ["agent-songmaker"]

@@ -15,27 +15,21 @@ from __future__ import annotations
 import json
 import re
 import time
-import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
 from egress import LABEL, NotDriven, ProbeFailed, expect
-from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe, openssl
+from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe
 from refusals import SMOKE_SERVICE
+from scratch_secrets import issue_certificate
 from smoke import Tokens
 
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
-CERTIFICATE_FILE = "cert.pem"
-APP_CERTIFICATE = f"/app/{CERTIFICATE_FILE}"
-APP_PRIVATE_KEY = "/app/key.pem"
-SIGNING_KEY_BITS = "3072"
-SERVICE_SIGNING_KEY = "/etc/agent-service/signing.key"
-SERVICE_APP_CA = "/etc/agent-service/app-ca.pem"
-WORKLOAD_ANCHOR = 'workload_client = "songmaker"\n'
+ORIGIN_LINE = re.compile(r'^mcp_origin = ".*"$', re.MULTILINE)
 SMOKE_TOOLS = ("step:read_only", "bare:read_only")
 REFUSED_ANNOUNCEMENT = "A CLI run's start announcement was refused ("
 RELAY_NOT_CONNECTED = f"{REFUSED_ANNOUNCEMENT}RELAY_NOT_CONNECTED)"
@@ -144,23 +138,16 @@ class Mode(StrEnum):
     CANARY = "canary"
 
 
-def with_containment(text: str, signing_key: Path, app_ca: Path) -> str:
-    """The service's configuration with the signing key, the CA of the app and the app's origin;
-    it stops before any container when the repository's own file already declares one of them."""
-    document = tomllib.loads(text)
-    songmaker = document["apps"]["songmaker"]
-    for declared in ("signing", "mcp"):
-        expect(declared not in document, f"service.toml already declares [{declared}]")
-    expect("mcp_origin" not in songmaker, "service.toml already declares an mcp_origin")
-    expect(text.count(WORKLOAD_ANCHOR) == 1, "service.toml: no single songmaker workload client")
-    return (
-        text.replace(WORKLOAD_ANCHOR, f'{WORKLOAD_ANCHOR}mcp_origin = "{APP_ORIGIN}"\n')
-        + f'\n[signing]\nkey_file = "{signing_key}"\n\n[mcp]\nca_file = "{app_ca}"\n'
-    )
+def with_containment(text: str) -> str:
+    """The service's configuration with the fake app's origin in place of songmaker's; the
+    signing key and the CA come from the repository's own `[signing]` and `[mcp]`."""
+    expect(len(ORIGIN_LINE.findall(text)) == 1, "service.toml: no single mcp_origin")
+    return ORIGIN_LINE.sub(f'mcp_origin = "{APP_ORIGIN}"', text)
 
 
 class ContainmentProbe(IssuerProbe):
-    """The service with a signing key and a fake app that lists tools on `agent-songmaker`."""
+    """The service with the scratch signing key and CA and a fake app that lists tools on
+    `agent-songmaker`, its certificate issued by that CA."""
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch)
@@ -172,36 +159,18 @@ class ContainmentProbe(IssuerProbe):
         self.mode_directory = directory / "mode"
         self.mode_directory.mkdir()
         self.write_mode(Mode.RELAY)
-        openssl(
-            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(app / "key.pem"),
-            "-out", str(app / CERTIFICATE_FILE), "-days", "1", "-subj", f"/CN={APP_SERVICE}",
-            "-addext", f"subjectAltName=DNS:{APP_SERVICE}",
-        )  # fmt: skip
-        signing_key = directory / "signing.key"
-        openssl("genrsa", "-out", str(signing_key), SIGNING_KEY_BITS)
-        signing_key.chmod(0o600)
+        certificate, key = issue_certificate(self.scratch_secrets, APP_SERVICE, app)
         for readable in (app, self.mode_directory):
             readable.chmod(0o755)
-        for name in ("key.pem", CERTIFICATE_FILE):
-            (app / name).chmod(0o644)
+        for name in (certificate, key):
+            name.chmod(0o644)
         self.configuration.write_text(
-            with_containment(
-                self.configuration.read_text(encoding="utf-8"),
-                Path(SERVICE_SIGNING_KEY),
-                Path(SERVICE_APP_CA),
-            ),
-            encoding="utf-8",
+            with_containment(self.configuration.read_text(encoding="utf-8")), encoding="utf-8"
         )
         program = Path(__file__).resolve().with_name("app_tools.py")
         overlay = scratch / "compose.containment.yaml"
         overlay.write_text(
             json.dumps({"services": {
-                SERVICE: {"volumes": [
-                    {"type": "bind", "source": str(signing_key), "read_only": True,
-                     "target": SERVICE_SIGNING_KEY},
-                    {"type": "bind", "source": str(app / CERTIFICATE_FILE), "read_only": True,
-                     "target": SERVICE_APP_CA},
-                ]},
                 APP_SERVICE: {
                     "image": self.image,
                     "profiles": ["agent-service"],

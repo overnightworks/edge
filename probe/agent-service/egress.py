@@ -56,7 +56,7 @@ sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with 
 
 import edge_copy  # noqa: E402
 import egress_observe  # noqa: E402
-from agent_networks import SERVICE_AGENT_NETWORKS, cell_p36  # noqa: E402
+from agent_networks import cell_p36, service_networks  # noqa: E402
 from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
 from egress_observe import (  # noqa: E402
     PUBLIC_RESOLVER,
@@ -70,6 +70,7 @@ from egress_observe import (  # noqa: E402
     tcp_connect,
     udp_connect,
 )
+from scratch_secrets import write_scratch_secrets  # noqa: E402
 
 PROJECT = "edge-agentegress-probe"
 LABEL = f"edge.probe={PROJECT}"
@@ -285,6 +286,7 @@ class Probe:
         home = scratch / "home"
         home.mkdir()
         write_login_directory(home)
+        self.scratch_secrets = write_scratch_secrets(home, scratch / "ca")
         subnet = edge_copy.free_subnet(SUBNET_CANDIDATES, edge_copy.daemon_subnets())
         self.prefix = str(subnet.network_address).removesuffix("0")
         self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
@@ -604,7 +606,7 @@ class Probe:
             result = self.client("connect", target, port)
             expect(result["result"] in UNREACHABLE, f"E7: {name} {target}:{port}: {result}")
             errnos.append(f"{name} {result['result']}")
-        for network in (*SERVICE_AGENT_NETWORKS, "egress"):
+        for network in service_networks(self, PROJECT):
             gateways = self.network_gateways(f"{PROJECT}_{network}")
             expect(not gateways, f"E7: {network} has a bridge address: {gateways}")
             free = self.free_address(network)
@@ -762,8 +764,9 @@ class Probe:
         self.scan_network("E13", "egress")
 
     def cell_e14(self) -> None:
-        for network in SERVICE_AGENT_NETWORKS:
-            self.scan_network(f"E14 {network}", network)
+        for network in service_networks(self, PROJECT):
+            if network != "egress":
+                self.scan_network(f"E14 {network}", network)
 
 
 def interrupt(*_: object) -> None:

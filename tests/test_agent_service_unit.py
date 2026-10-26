@@ -22,8 +22,6 @@ from edge.realm.declared import declared_realm
 ROOT = Path(__file__).resolve().parents[1]
 
 SERVICE = "agent-service"
-OPERATOR_UID_GID = "1000:1000"
-LOGIN_SOURCE = "${HOME}/.secrets/agent-service/claude"
 OWNER_ONLY_TMPFS = ("uid=1000", "gid=1000", "mode=0700", "nosuid", "nodev", "noexec")
 SIZE_BOUND = re.compile(r"size=\d+[kmg]")
 
@@ -56,7 +54,7 @@ def binds(service) -> dict[str, dict]:
 
 def test_the_service_is_hardened_and_never_pulled(service):
     """U13: a fixed user, an init, a read-only root, no capability, no privilege gain, no core."""
-    assert service["user"] == OPERATOR_UID_GID
+    assert service["user"] == "1000:1000"
     assert service["init"] is True
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
@@ -81,7 +79,7 @@ def test_a_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(
     """U6, U7: owned by 1000 with exactly mode 0700, nosuid, nodev, noexec and bounded."""
     options = tmpfs_options[directory]
 
-    assert set(OWNER_ONLY_TMPFS) <= set(options)
+    assert set(options) >= set(OWNER_ONLY_TMPFS)
     assert any(SIZE_BOUND.fullmatch(option) for option in options)
 
 
@@ -97,7 +95,7 @@ def test_the_login_is_a_read_only_directory_bind_that_is_never_created(binds):
     the start instead of becoming root's directory."""
     login = binds["/run/agent-service/login/claude"]
 
-    assert login["source"] == LOGIN_SOURCE
+    assert login["source"] == "${HOME}/.secrets/agent-service/claude"
     assert login["read_only"] is True
     assert login["bind"] == {"create_host_path": False}
 
@@ -159,19 +157,20 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     groups = declared.identities[observe.GROUP.name]
 
     assert issuer.path == f"/realms/{realm['realm']}"
-    assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)
+    assert jwks.scheme == "https"
+    assert jwks.hostname == issuer.hostname
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
-    assert (
-        set(identity["subscription_groups"]) == {"/services/agent-service/subscription"} <= groups
-    )
+    assert set(identity["subscription_groups"]) == {"/services/agent-service/subscription"}
+    assert set(identity["subscription_groups"]) <= groups
     assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
-def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_no_tools(
+def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrides_no_model(
     configuration, realm
 ):
-    """The workload clients of #183; no app lists tools or an MCP origin yet."""
+    """The workload clients of #183; no app declares a `tools` table (songmaker's MCP server
+    lists them) or overrides the model (N2)."""
     service_accounts = {
         client["clientId"] for client in realm["clients"] if client.get("serviceAccountsEnabled")
     }
@@ -179,7 +178,7 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_n
     assert configuration["apps"]
     for app in configuration["apps"].values():
         assert app["workload_client"] in service_accounts
-        assert not {"tools", "mcp_origin", "purposes", "models"} & app.keys()
+        assert not {"tools", "purposes", "models"} & app.keys()
 
 
 def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
@@ -203,3 +202,46 @@ def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_m
     configuration,
 ):
     assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
+
+
+def test_songmakers_mcp_origin_is_the_host_traefik_mcp_answers_to_on_mcp(configuration):
+    """E1, T1: the origin's host is traefik-mcp's alias on `mcp` and the route's router host."""
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    origin = urlsplit(configuration["apps"]["songmaker"]["mcp_origin"])
+    router = yaml.safe_load((ROOT / "mcp/dynamic/songmaker.yml").read_text())["http"]["routers"][
+        "songmaker"
+    ]
+
+    assert origin.scheme == "https"
+    assert origin.hostname == "songmaker.mcp.internal"
+    assert origin.hostname in compose["services"]["traefik-mcp"]["networks"]["mcp"]["aliases"]
+    assert f"Host(`{origin.hostname}`)" in router["rule"]
+    assert "mcp" in compose["services"][SERVICE]["networks"]
+    assert "mcp-songmaker" not in compose["services"][SERVICE]["networks"]
+
+
+def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_paths(
+    service, configuration
+):
+    """E3, B1, T1: `key_file` and `ca_file` are the service's secret targets, and each secret's
+    source is the path the secrets manifest names for it, so the folder is never mounted."""
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    manifest = tomllib.loads((ROOT / "src/home_tools/secrets_manifest.toml").read_text())
+    paths = {entry["name"]: entry["paths"] for entry in manifest["secret"]}
+    key_secret, ca_secret = "agent_service_signing_key", "step_ca_root_certificate"
+
+    assert set(service["secrets"]) == {key_secret, ca_secret}
+    assert configuration["signing"] == {"key_file": f"/run/secrets/{key_secret}"}
+    assert configuration["mcp"] == {"ca_file": f"/run/secrets/{ca_secret}"}
+    secret_files = [
+        compose["secrets"][name]["file"].replace("${HOME}", "~") for name in (key_secret, ca_secret)
+    ]
+    signing_key_files = [path.removesuffix("*") for path in paths["agent-service/signing-key"]]
+    assert secret_files == signing_key_files + paths["step-ca/root_ca.crt"]
+    assert "agent-service" in {
+        reader
+        for entry in manifest["secret"]
+        if entry["name"] == "step-ca/root_ca.crt"
+        for reader in entry["read_by"]
+    }
+    assert not any("signing" in str(volume["source"]) for volume in service["volumes"])

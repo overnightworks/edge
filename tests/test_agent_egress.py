@@ -66,7 +66,7 @@ def test_every_network_of_the_agent_attachments_is_internal_and_isolated(compose
     """E16: the service and the stand-in join only networks with no route out or host address."""
     joined = {name: compose["networks"][name] for name in attachments["networks"]}
 
-    assert set(joined) == {"agent", "agent-songmaker", "agent-presentator", "egress"}
+    assert set(joined) == {"agent-songmaker", "agent-presentator", "egress", "mcp"}
     for network in joined.values():
         assert network["internal"] is True
         assert network["driver_opts"] == ISOLATED_MODE

@@ -17,6 +17,29 @@ from smoke import Tokens
 TOKENS = Tokens(person="person-token-0123456789", workload="workload-token-9876543210")
 KNOWN = Secrets(TOKENS, login_token="login-token-abcdef", client_secret="client-secret-fedcba")
 GATEWAY = "172.31.252.10"
+SERVICE_NETWORKS = {
+    "agent-songmaker": "hal_agent_songmaker",
+    "agent-presentator": "hal_agent_presentator",
+    "mcp": "edge_mcp",
+    "egress": "edge_egress",
+}
+SECRET_FILES = {
+    "agent_service_signing_key": Path.home() / ".secrets/agent-service/signing/private.pem",
+    "step_ca_root_certificate": Path.home() / ".secrets/step-ca/root_ca.crt",
+}
+
+
+def resolved_configuration(image: str = "i:1") -> dict:
+    """What `docker compose config --format json` gives for the service."""
+    return {
+        "name": "edge",
+        "x-egress-address": GATEWAY,
+        "services": {
+            "agent-service": {"image": image, "networks": dict.fromkeys(SERVICE_NETWORKS)}
+        },
+        "networks": {key: {"name": name} for key, name in SERVICE_NETWORKS.items()},
+        "secrets": {name: {"file": str(path)} for name, path in SECRET_FILES.items()},
+    }
 
 
 def completed(stdout: str = "", returncode: int = 0, stderr: str = ""):
@@ -80,7 +103,7 @@ class FakeStack(Stack):
 def healthy_service(command: list[str]) -> subprocess.CompletedProcess:
     text = " ".join(command)
     if "config" in command:
-        return completed(json.dumps({"name": "edge", "x-egress-address": GATEWAY}))
+        return completed(json.dumps(resolved_configuration()))
     if "cat /sys/fs/cgroup/memory" in text:
         return completed("1234\n")
     if "grep -c" in text:

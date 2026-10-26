@@ -15,7 +15,7 @@ L7's figures are the idle `memory.current` of the recreated service and its `mem
 right after the one turn (an upper bound of the answer phase, it includes the start).
 A refusal `unauthorized` means expired tokens, `forbidden` a missing `/apps/songmaker` or tokens
 that do not bind one app to one person, `not_enabled` no subscription group; the report names them.
-`agent-smoke` is the service image running `smoke.py` on the `agent` network alone (profile
+`agent-smoke` is the service image running `smoke.py` on songmaker's agent network alone (profile
 `apply`).
 
 The compose project and the egress gateway's address are read from `docker compose config` of the
@@ -477,13 +477,7 @@ def leak_cells(stack: Stack, known: Secrets, smoke_outputs: str) -> list[Cell]:
 @dataclass(frozen=True)
 class EgressTargets:
     provider: str
-    docker0: str
-    internet: str
-    lan: str
-    agent_free: str
-    songmaker_free: str
-    presentator_free: str
-    egress_free: str
+    reach: dict[str, str]  # label -> an address the service must not reach on TCP 22
     agent_gateways: list[str]
     egress_gateways: list[str]
 
@@ -500,11 +494,7 @@ print(json.dumps({
     },
     "defaults": default_routes()["default_routes"],
     "reach": {
-        label: tcp_connect(targets[label], 22)["result"]
-        for label in (
-            "docker0", "internet", "lan", "agent_free", "songmaker_free", "presentator_free",
-            "egress_free",
-        )
+        label: tcp_connect(address, 22)["result"] for label, address in targets["reach"].items()
     },
     "ipv6_interfaces": ipv6_interfaces()["interfaces"],
     "ipv6_tcp": tcp_connect(PUBLIC_RESOLVER_V6, 443)["result"],
@@ -523,11 +513,14 @@ LISTENERS_PROGRAM = (
 
 
 def network_ids(stack: Stack, name: str) -> list[str]:
-    return stack.run([
+    listed = stack.run([
         "docker", "network", "ls", "-q",
         "--filter", f"label=com.docker.compose.project={stack.project}",
         "--filter", f"label=com.docker.compose.network={name}",
-    ]).stdout.split()  # fmt: skip
+    ])  # fmt: skip
+    if listed.returncode != 0:
+        raise LiveSmokeFailed(f"docker network ls for {name} failed")
+    return listed.stdout.split()
 
 
 def inspect_network(stack: Stack, reference: str) -> dict:
@@ -564,22 +557,35 @@ def unused_address(network: dict) -> str:
     return str(next(host for host in reversed(list(subnet.hosts())) if host not in owned))
 
 
-def egress_targets(stack: Stack) -> EgressTargets:
+def service_network_names(stack: Stack) -> list[str]:
+    """The networks the service joins, from the configuration compose resolves."""
+    return list(stack.configuration["services"][SERVICE]["networks"])
+
+
+def egress_targets(
+    stack: Stack,
+    resolve_provider: Callable[[str], str] = socket.gethostbyname,
+    discover_lan: Callable[[], str] = lan_address,
+) -> EgressTargets:
     """The host looks up the addresses, because the container has no DNS and no Docker."""
-    agent = project_network(stack, "agent")
-    songmaker = project_network(stack, "agent-songmaker")
-    presentator = project_network(stack, "agent-presentator")
     egress = project_network(stack, "egress")
+    agent_networks = {
+        name: project_network(stack, name)
+        for name in service_network_names(stack)
+        if name != "egress"
+    }
     return EgressTargets(
-        provider=socket.gethostbyname(PROVIDER_HOST),
-        docker0=gateways_of(inspect_network(stack, "bridge"))[0],
-        internet=gateways_of(project_network(stack, "internet"))[0],
-        lan=lan_address(),
-        agent_free=unused_address(agent),
-        songmaker_free=unused_address(songmaker),
-        presentator_free=unused_address(presentator),
-        egress_free=unused_address(egress),
-        agent_gateways=[*gateways_of(agent), *gateways_of(songmaker), *gateways_of(presentator)],
+        provider=resolve_provider(PROVIDER_HOST),
+        reach={
+            "docker0": gateways_of(inspect_network(stack, "bridge"))[0],
+            "internet": gateways_of(project_network(stack, "internet"))[0],
+            "lan": discover_lan(),
+            **{f"{name}_free": unused_address(net) for name, net in agent_networks.items()},
+            "egress_free": unused_address(egress),
+        },
+        agent_gateways=[
+            address for network in agent_networks.values() for address in gateways_of(network)
+        ],
         egress_gateways=gateways_of(egress),
     )
 
@@ -595,7 +601,7 @@ def all_unreachable(codes: Mapping[str, str]) -> bool:
 def judge_egress(targets: EgressTargets, seen: dict, gateway: str) -> list[Cell]:
     tcp = ", ".join(f"{target}:443 {code}" for target, code in seen["public_tcp"].items())
     reached = ", ".join(
-        f"{label} {getattr(targets, label)}:22 {code}" for label, code in seen["reach"].items()
+        f"{label} {targets.reach[label]}:22 {code}" for label, code in seen["reach"].items()
     )
     udp = ", ".join(f"{PUBLIC_RESOLVER}:{port} {code}" for port, code in seen["udp"].items())
     no_gateway = not targets.agent_gateways and not targets.egress_gateways

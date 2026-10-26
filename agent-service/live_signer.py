@@ -5,7 +5,10 @@
 
 It proves what the service signs for one tool, through songmaker's own client and the real
 gateway, with no paid turn: both runs fail before any CLI starts. You sign in as for
-`live_smoke.py`. The command recreates the service, then runs `agent-smoke` with one tool:
+`live_smoke.py`. The command recreates the service and judges the recreate (L3): the service's
+networks are the resolved ones and each is internal and isolated, and its two secret mounts come
+from the files `compose.yaml` names. It then removes the shared `hal_agent` network once it is
+empty, and refuses while it has a member. Then it runs `agent-smoke` with one tool:
 L4a with no backend behind the gateway (the run must end `failed` with no text, the gateway
 having refused), L4b with the capture verifier `mcp_signer.py` at songmaker-web's place on the MCP
 network (the received capability must verify against the live public.pem). Only the verdict is
@@ -18,6 +21,7 @@ Exit 1 when a cell prints FAILED. Only the standard library is used.
 from __future__ import annotations
 
 import argparse
+import json
 import queue
 import subprocess
 import sys
@@ -47,18 +51,30 @@ from live_smoke import (
     cleanup_cell,
     end_child,
     event_names,
+    inspect_network,
     last_line,
+    network_ids,
     other_lines,
     paid_turn,
     project_network,
     read_secret,
     recreate_service,
+    service_network_names,
 )
 from mcp_signer import LISTENING_LINE, PUBLIC_KEY_MOUNT, SCRIPT_MOUNT, VERIFIED
-from signing_key import PUBLIC_FILE, SIGNING_DIRECTORY
+from signing_key import PRIVATE_FILE, PUBLIC_FILE, SIGNING_DIRECTORY
 from smoke import Tokens
 
 PUBLIC_KEY = SECRETS_DIRECTORY / SERVICE / SIGNING_DIRECTORY / PUBLIC_FILE
+SIGNING_KEY_SECRET = "agent_service_signing_key"
+CA_ROOT_SECRET = "step_ca_root_certificate"
+SECRET_SOURCES = {
+    SIGNING_KEY_SECRET: SECRETS_DIRECTORY / SERVICE / SIGNING_DIRECTORY / PRIVATE_FILE,
+    CA_ROOT_SECRET: SECRETS_DIRECTORY / "step-ca/root_ca.crt",
+}
+SECRET_TARGET_DIRECTORY = "/run/secrets"
+GATEWAY_MODE_OPTION = "com.docker.network.bridge.gateway_mode_ipv4"
+SHARED_NETWORK_KEY = "agent"
 STANDIN_SCRIPT = Path(__file__).resolve().with_name("mcp_signer.py")
 PROOF_TOOL = "capability_check"
 SMOKE_ARGUMENTS = ("--tool", f"{PROOF_TOOL}:read_only")
@@ -77,8 +93,7 @@ def mcp_origin(service_toml: Path) -> str:
     songmaker = tomllib.loads(service_toml.read_text(encoding="utf-8"))["apps"]["songmaker"]
     if "mcp_origin" not in songmaker:
         raise LiveSmokeFailed(
-            "service.toml has no [apps.songmaker] mcp_origin; it comes with #346 slice C, "
-            "so there is nothing to prove yet"
+            "service.toml has no [apps.songmaker] mcp_origin, so there is nothing to prove"
         )
     return songmaker["mcp_origin"]
 
@@ -98,6 +113,80 @@ def standin_command(
         "-v", f"{STANDIN_SCRIPT}:{SCRIPT_MOUNT}:ro", "-v", f"{PUBLIC_KEY}:{PUBLIC_KEY_MOUNT}:ro",
         "--entrypoint", "python", image, "-I", "-B", SCRIPT_MOUNT, origin, tool,
     ]  # fmt: skip
+
+
+def service_container(stack: Stack) -> dict:
+    listed = stack.compose("ps", "-q", SERVICE)
+    identifiers = listed.stdout.split()
+    if listed.returncode != 0 or len(identifiers) != 1:
+        raise LiveSmokeFailed(f"docker compose ps {SERVICE} did not name one container")
+    answer = stack.run(["docker", "inspect", identifiers[0]])
+    try:
+        return json.loads(answer.stdout)[0]
+    except (ValueError, IndexError):
+        raise LiveSmokeFailed(f"docker inspect {SERVICE} gave no container") from None
+
+
+def internal_and_isolated(network: dict) -> bool:
+    options = network.get("Options") or {}
+    return bool(network.get("Internal")) and options.get(GATEWAY_MODE_OPTION) == "isolated"
+
+
+def l3_networks_cell(stack: Stack, container: dict) -> Cell:
+    """The service sits on exactly the networks the resolved configuration names, each of them
+    internal and isolated."""
+    keys = service_network_names(stack)
+    resolved = {stack.configuration["networks"][key]["name"] for key in keys}
+    joined = set(container["NetworkSettings"]["Networks"])
+    leaky = [key for key in keys if not internal_and_isolated(project_network(stack, key))]
+    held = joined == resolved and not leaky
+    return Cell(
+        "L3 networks", Verdict.HELD if held else Verdict.FAILED,
+        f"joined {sorted(joined)}, resolved {sorted(resolved)}, "
+        f"not internal and isolated {sorted(leaky)}",
+    )  # fmt: skip
+
+
+def l3_mounts_cell(stack: Stack, container: dict) -> Cell:
+    """Each secret is mounted from the file the resolved configuration names, and that file is
+    the one SECRET_SOURCES names: the private file alone, never its folder."""
+    declared = stack.configuration["secrets"]
+    seen = {
+        mount["Destination"]: mount["Source"]
+        for mount in container["Mounts"]
+        if mount["Destination"].startswith(f"{SECRET_TARGET_DIRECTORY}/")
+    }
+    wanted = {
+        f"{SECRET_TARGET_DIRECTORY}/{name}": str(path) for name, path in SECRET_SOURCES.items()
+    }
+    resolved = {
+        f"{SECRET_TARGET_DIRECTORY}/{name}": declared[name]["file"] for name in SECRET_SOURCES
+    }
+    held = seen == wanted == resolved
+    return Cell(
+        "L3 mounts", Verdict.HELD if held else Verdict.FAILED,
+        f"mounted {sorted(seen.values())}, resolved {sorted(resolved.values())}",
+    )  # fmt: skip
+
+
+def shared_network_cell(stack: Stack) -> Cell:
+    """The shared `hal_agent` is found by its compose labels. Empty means removed, a member means
+    it stays, absent means held."""
+    name = "L3 shared network"
+    found = network_ids(stack, SHARED_NETWORK_KEY)
+    if not found:
+        return Cell(name, Verdict.HELD, "the shared agent network is gone")
+    if len(found) != 1:
+        return Cell(name, Verdict.FAILED, f"{len(found)} networks carry the shared labels")
+    members = inspect_network(stack, found[0]).get("Containers") or {}
+    if members:
+        return Cell(
+            name, Verdict.FAILED, f"{len(members)} container(s) are still on it; nothing removed"
+        )
+    removed = stack.run(["docker", "network", "rm", found[0]])
+    if removed.returncode != 0:
+        return Cell(name, Verdict.FAILED, f"docker network rm exited {removed.returncode}")
+    return Cell(name, Verdict.HELD, "the empty shared agent network was removed")
 
 
 def occupied_network_cell(stack: Stack) -> Cell | None:
@@ -233,6 +322,11 @@ def live_signer(
     report.add(recreated)
     if recreated.verdict is Verdict.FAILED:
         return 1
+    container = service_container(stack)
+    report.add(l3_networks_cell(stack, container), l3_mounts_cell(stack, container))
+    if report.failed():
+        return 1
+    report.add(shared_network_cell(stack))
     output, log, cleanup = run_smoke(stack, known)
     report.add(l4a_cell(output, log, known), *cleanup)
     standin_cells(stack, known, report, origin)
