@@ -171,7 +171,8 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
 def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrides_no_model(
     configuration, realm
 ):
-    """The workload clients of #183; no app lists tools or overrides the model (N2)."""
+    """The workload clients of #183; no app declares a `tools` table (songmaker's MCP server
+    lists them) or overrides the model (N2)."""
     service_accounts = {
         client["clientId"] for client in realm["clients"] if client.get("serviceAccountsEnabled")
     }

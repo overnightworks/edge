@@ -567,7 +567,7 @@ class UnitProbe(Probe):
 
     def cell_p09(self) -> None:
         """The key the service signs with, as uid 1000 reads it: a mode that group or others hold
-        stops the start, whether or not the owner could read it."""
+        stops the start, and so does a mode nobody holds (0000), which the owner cannot read."""
         key = self.scratch_secrets.signing_private
         content = key.read_text(encoding="utf-8")
         body = [line for line in content.splitlines() if not line.startswith("-----")]
@@ -595,12 +595,9 @@ class UnitProbe(Probe):
             aside = source.with_name(f"{source.name}.aside")
             source.rename(aside)
             try:
-                started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+                self.compose("up", "--detach", SERVICE, check=False, timeout=300)
                 created = self.service_containers()
-                expect(
-                    started.returncode != 0 or not created,
-                    f"P11a: the service started without {source.name}",
-                )
+                expect(not created, f"P11a: a service container exists without {source.name}")
                 expect(not source.exists(), f"P11a: {source.name} appeared at its source")
                 strangers = self.paths_of_others()
                 expect(not strangers, f"P11a: paths not owned by the operator: {strangers}")
