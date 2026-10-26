@@ -166,7 +166,7 @@ def restore(settings: Settings, app: str, snapshot_id: str, target: Path) -> Non
 
 
 def snapshots(settings: Settings) -> str:
-    return _restic(settings, "restic snapshots", ["snapshots"]).decode()
+    return _restic(settings, "restic snapshots", ["snapshots", "--host", RESTIC_HOSTNAME]).decode()
 
 
 def unlock(settings: Settings) -> None:

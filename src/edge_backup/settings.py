@@ -26,7 +26,7 @@ RESTORE_IMAGES = {
 }
 
 # Fixed so restic sees one host and the same source paths every run (parent snapshots, forget).
-RESTIC_HOSTNAME = "edge-backup"
+RESTIC_HOSTNAME = "hal"
 READINESS_TIMEOUT = timedelta(minutes=10)
 READINESS_POLL_SECONDS = 15
 # One readiness probe (docker info/ps/inspect, pg_isready); a hung daemon must not outlast the wait.
