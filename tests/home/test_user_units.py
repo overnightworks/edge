@@ -244,6 +244,7 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
 def test_the_repository_units_replace_the_edge_backup_links_and_enable_both_hal_backup_timers(
     tmp_path: Path,
 ) -> None:
+    """#410 sentences 1 and 4: the old edge-backup names are gone and both hal-backup timers run."""
     repository_units = Path(__file__).parents[2] / "systemd"
     home = tmp_path / "home"
     user_units = home / ".config" / "systemd" / "user"
