@@ -1,8 +1,0 @@
-claim_id = "109065a1e64e4821b8bb99ffbff8d790"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "96ddac7d97330799eab33c40e6cfc1573a8b4e3c"
-branch = "claude/issue-423-global-stop-messages"
-scope = ["docs/architecture.md", "docs/stack.md", "src/edge/emergency.py", "tests/test_edge_global_stop.py", "tests/test_hal_stack_commands.py"]
-opened_commit = "c0a3ca44dc8ad81f196ff374f6eb0492bdaf85cd"
-whole_reason = "A message, the tests that pin its exact text and the two documents that quote it change together, or CI pins a sentence the code no longer prints."
