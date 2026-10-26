@@ -19,7 +19,7 @@ class FakeDocker:
     """Answers `docker ps` and `docker inspect`; an inspect with any format but the allowed one answers the canary line."""
 
     def __init__(self) -> None:
-        self.containers: list[tuple[str, str, str, int, bool]] = []  # name, status, health, exit code, in a compose project
+        self.containers: list[tuple[str, str, str, int, bool]] = []  # name, status, health, exit code, in a compose project (the project is called edge)
         self.unreadable = False
         self.removed_while_inspected: list[str] = []  # each inspect call takes one name: it fails and that container is gone
         self.inspect_calls: list[list[str]] = []
@@ -40,7 +40,7 @@ class FakeDocker:
             self.containers = [container for container in self.containers if container[0] != gone]
             return None
         listed = [container for container in self.containers if container[0] in argv[4:]]
-        return "".join(f"/{n}\t{s}\t{h}\t{c}\t{'compose' if p else ''}\n" for n, s, h, c, p in listed)
+        return "".join(f"/{n}\t{s}\t{h}\t{c}\t{'edge' if p else ''}\n" for n, s, h, c, p in listed)
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def rules_found(docker: FakeDocker, reboot_file: Path) -> set[tuple[str, str]]:
 def test_a_broken_compose_container_is_a_finding_named_by_its_state(docker, reboot_file, status, health, exit_code, rule) -> None:
     docker.add("edge-step-ca-1", status, health, exit_code)
 
-    assert rules_found(docker, reboot_file) == {(rule, "edge-step-ca-1")}
+    assert rules_found(docker, reboot_file) == {(rule, "edge")}
 
 
 @pytest.mark.parametrize(
@@ -108,7 +108,7 @@ def test_a_container_removed_during_the_inspection_is_no_finding_and_the_rest_is
     docker.add("edge-broken-1", "running", "unhealthy")
     docker.removed_while_inspected = ["edge-job-1"]
 
-    assert rules_found(docker, reboot_file) == {("container-unhealthy", "edge-broken-1")}
+    assert rules_found(docker, reboot_file) == {("container-unhealthy", "edge")}
 
 
 def test_the_only_container_removed_during_the_inspection_leaves_a_clean_machine(docker, reboot_file) -> None:
@@ -134,7 +134,7 @@ def test_many_containers_are_inspected_in_one_call_and_healthy_ones_appear_only_
     findings, report = platform_check.inspect(docker, NOW, reboot_file)
 
     assert len(docker.inspect_calls) == 1
-    assert [f.subject for f in findings] == ["edge-broken-1"]
+    assert [f.subject for f in findings] == ["edge"]
     assert "edge-service-0-1" not in report
     assert "davon in Ordnung 5" in report
 
@@ -145,7 +145,7 @@ def test_a_wider_projection_than_the_named_fields_would_show_in_the_report_and_t
     findings, report = platform_check.inspect(docker, NOW, reboot_file)
 
     assert docker.inspect_calls[0][3] == ALLOWED_PLATFORM_INSPECT_FORMAT
-    assert [f.subject for f in findings] == ["edge-step-ca-1"]
+    assert [f.subject for f in findings] == ["edge"]
     assert INSPECT_CANARY not in report
 
 

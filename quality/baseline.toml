@@ -10,7 +10,7 @@
 "probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1052
 "probe/switches/probe.py" = 812
-"src/home_tools/secrets_view.py" = 860
+"src/home_tools/secrets_view.py" = 855
 "src/home_tools/tidy_home.py" = 1064
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089
@@ -19,7 +19,7 @@
 "tests/test_edge_backup.py" = 1235
 "tests/test_edge_cloudflare_read.py" = 906
 "tests/test_edge_external.py" = 2858
-"tests/test_edge_host_check.py" = 818
+"tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1737
 "tests/test_keycloak_probe.py" = 1040
 "tests/test_realm_reconcile.py" = 999

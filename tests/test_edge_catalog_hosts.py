@@ -399,7 +399,6 @@ def test_a_catalog_without_a_cloudflare_map_has_no_zone(broken):
 REDIRECT = {
     "hosts": ["@", "www"],
     "target": "https://auth.edge-fixture.invalid/",
-    "keep": [{"path": "/impressum", "target": "https://app.edge-fixture.invalid"}],
 }
 
 
@@ -441,27 +440,10 @@ def test_the_redirected_names_are_the_zones_apex_and_labels_and_none_without_a_r
         ({**REDIRECT, "target": "http://auth.edge-fixture.invalid/"}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": 'https://a.invalid/"'}, "cloudflare.redirect.target"),
         ({**REDIRECT, "target": "https://a.invalid/?x=1"}, "cloudflare.redirect.target"),
-        ({**REDIRECT, "keep": "/impressum"}, "cloudflare.redirect.keep[0]"),
-        ({**REDIRECT, "keep": [{"path": "/impressum"}]}, "cloudflare.redirect.keep[0]"),
-        (
-            {**REDIRECT, "keep": [{"path": "/Impressum", "target": "https://a.invalid"}]},
-            "cloudflare.redirect.keep[0].path",
-        ),
-        (
-            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a.invalid:70000"}]},
-            "cloudflare.redirect.keep[0].target",
-        ),
-        (
-            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a_b.invalid"}]},
-            "cloudflare.redirect.keep[0].target",
-        ),
-        (
-            {**REDIRECT, "keep": [{"path": "/impressum", "target": "https://a.invalid/x"}]},
-            "cloudflare.redirect.keep[0].target",
-        ),
-        (
-            {**REDIRECT, "keep": REDIRECT["keep"] * 2},
+        pytest.param(
+            {**REDIRECT, "keep": []},
             "cloudflare.redirect.keep",
+            id="#429 cell 1: keep is an unknown key",
         ),
     ],
 )
@@ -531,32 +513,6 @@ def test_the_apex_may_be_a_host_and_redirected_while_it_serves_pages():
             for files in ("/_legal", "/", "_legal/", "/_Legal/", "/_legal//", ["/_legal/"])
         ],
         pytest.param(
-            {**REDIRECT, "serve": {**SERVE, "pages": ["/impressum"]}},
-            [APEX_HOST],
-            "cloudflare.redirect.keep[0].path",
-            id="a kept path that is a page",
-        ),
-        pytest.param(
-            {
-                **REDIRECT,
-                "serve": SERVE,
-                "keep": [{"path": "/_legal/x", "target": "https://a.invalid"}],
-            },
-            [APEX_HOST],
-            "cloudflare.redirect.keep[0].path",
-            id="a kept path under the files prefix",
-        ),
-        pytest.param(
-            {
-                **REDIRECT,
-                "serve": SERVE,
-                "keep": [{"path": "/_legal", "target": "https://a.invalid"}],
-            },
-            [APEX_HOST],
-            "cloudflare.redirect.keep[0].path",
-            id="a kept path equal to the files prefix without its slash",
-        ),
-        pytest.param(
             {**REDIRECT, "serve": {**SERVE, "pages": ["/_legal"]}},
             [APEX_HOST],
             "cloudflare.redirect.serve.pages",
@@ -569,16 +525,16 @@ def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, k
     assert refusal(with_redirect(redirect, *entries)).startswith(f"{key}:")
 
 
-def test_the_repositorys_catalog_redirects_the_apex_and_www_and_keeps_the_legal_pages():
+def test_the_repositorys_catalog_redirects_the_apex_and_www_and_serves_the_legal_pages():
+    """#429 cell 5: the real fleet serves the four pages and the files prefix, with no keep."""
     redirect = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]
     assert redirect == {
         "hosts": ["@", "www"],
         "target": "https://auth.hallucinai.de/",
-        "serve": {"pages": ["/nutzungsbedingungen"], "files": "/_rechtliches/"},
-        "keep": [
-            {"path": path, "target": "https://songmaker.hallucinai.de"}
-            for path in ("/impressum", "/datenschutz")
-        ],
+        "serve": {
+            "pages": ["/impressum", "/datenschutz", "/nutzungsbedingungen", "/favicon.ico"],
+            "files": "/_rechtliches/",
+        },
     }
 
 

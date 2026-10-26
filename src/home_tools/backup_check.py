@@ -121,3 +121,11 @@ def inspect(home: Path, now: datetime) -> tuple[list[Finding], str]:
     findings = _run_findings(status, local_now) + _staleness_findings(status, local_now)
     status_lines = [f"Letzter Lauf: {status.state}, {status.last_attempt:%d.%m.%Y %H:%M}", f"Apps: {len(status.last_successful_backups)}"]
     return findings, render_findings_report("backup", now, status_lines, findings)
+
+
+def last_successful_backup(home: Path) -> datetime | None:
+    """The most recent successful backup of any app, or None when the status cannot be read or no app was ever backed up."""
+    status, _problem = _read(home)
+    if status is None:
+        return None
+    return max((moment for moment in status.last_successful_backups.values() if moment is not None), default=None)

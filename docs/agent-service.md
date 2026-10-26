@@ -228,3 +228,10 @@ the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the run
 `CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict
 other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. The cells print counts and event names, never a log line. Its loopback capture (the
 (a) parts) is not driven yet.
+`--cell signer` (`signer.py`) is the live signer proof without the live stack. It starts the service with the
+scratch signing key, the scratch CA and songmaker's `mcp_origin` from `service.toml`, and a TLS front for that origin on `mcp`
+(a Traefik of compose.yaml's pin, its certificate issued by the scratch CA). P12: a run naming one tool reaches the front
+before any CLI start, and `mcp_signer.py` behind it verifies the capability against the scratch `public.pem`. P12b: with
+no stand-in behind the front it answers 502, the run fails without text and no CLI starts, and the front saw no other host.
+P28: two `--force-recreate`s of the service each start, and P12 holds again. P26: every compose call resolves only the
+project's networks. It runs in the unit probe's throwaway project and prints verdicts, counts and names, never a capability.
