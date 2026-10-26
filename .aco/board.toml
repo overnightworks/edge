@@ -1,3 +1,12 @@
 body_contract = "block"
 merge_method = "squash"
-dependency_paths = [".github/workflows/", "compose.yaml"]
+dependency_paths = [
+  ".github/workflows/",
+  "agent-service/image/Dockerfile",
+  "compose.yaml",
+  "probe/agent-service/compose.probe.yaml",
+  "probe/keycloak/compose.probe.yaml",
+  "probe/step-ca/compose.probe.yaml",
+  "scripts/system-proof/Dockerfile",
+  "src/edge_backup/images/Dockerfile",
+]
