@@ -1,7 +1,0 @@
-claim_id = "7f6ff432750c470082169fb2f513c563"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "71583e3f08e937431984ace21a1cb8f85ce7cc22"
-branch = "claude/issue-433-110-a0-the-unit-gate-helpers-move-from-a"
-scope = ["src/edge/apply.py", "src/edge/unit_plans.py"]
-opened_commit = "c93a0e07b7fd5b5f524685d6b34475ae62e88acd"
