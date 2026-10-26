@@ -30,7 +30,7 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
     """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
 
     container_listing = ""
-    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, "compose" or nothing per line
+    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, compose project or nothing per line
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "journalctl":
@@ -89,7 +89,7 @@ REPORT_DISPLAY = "~/.local/state/home/check-report.md"
 
 def restarting_containers(runner, *names: str) -> None:
     """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
-    runner.platform_listing = "".join(f"/{name}\trestarting\t\t0\tcompose\n" for name in names or ("edge-a-1",))
+    runner.platform_listing = "".join(f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",))
 
 
 def no_container_restarts(runner) -> None:
@@ -99,7 +99,7 @@ def no_container_restarts(runner) -> None:
 def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, leave_pasted_image, runner) -> None:
     """#415 Z1: the popup title is the state in a phrase, its body the sentences and the report."""
     leave_pasted_image(clean_home)
-    restarting_containers(runner, "presentator-live-presentator-1")
+    restarting_containers(runner, "presentator-live")
 
     code = home_check(clean_home, runner)
 
@@ -108,7 +108,7 @@ def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification
     assert report.startswith("# home check ")
     assert "| pasted-images |" in report
     assert runner.notifications == [ACTION_TITLE]
-    assert runner.notification_bodies == [f"presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar.\nAlles im Einzelnen: {REPORT_DISPLAY}"]
+    assert runner.notification_bodies == [f"presentator-live startet ständig neu und ist darum nicht erreichbar.\nAlles im Einzelnen: {REPORT_DISPLAY}"]
 
 
 def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(clean_home, runner) -> None:
@@ -121,9 +121,9 @@ def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(
 
 
 def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_the_report_when_fixed(clean_home, runner) -> None:
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
     home_check(clean_home, runner)
-    runner.platform_listing = "/edge-step-ca-1\trunning\thealthy\t0\tcompose\n"
+    runner.platform_listing = "/edge-step-ca-1\trunning\thealthy\t0\tedge\n"
 
     code = home_check(clean_home, runner)
 
@@ -133,19 +133,19 @@ def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_th
 
 
 def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_inspect_fields(clean_home, runner) -> None:
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tcompose\n"
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
 
     home_check(clean_home, runner)
 
     layout = Layout(clean_home)
     carried = [layout.check_report_file.read_text(), layout.check_findings_file.read_text(), *runner.notifications, *runner.notification_bodies]
     assert not any(INSPECT_CANARY in text for text in carried)
-    assert "container-unhealthy | edge-step-ca-1" in carried[0]
+    assert "container-unhealthy | edge" in carried[0]
 
 
 def test_many_new_actions_give_one_notification_naming_each(clean_home, runner) -> None:
     """#415 Z4: several actions that appear together give one mail naming each."""
-    runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tcompose\n" for n in range(4))
+    runner.platform_listing = "".join(f"/edge-{n}-1\texited\t\t1\tproject-{n}\n" for n in range(4))
 
     home_check(clean_home, runner)
 
@@ -211,7 +211,7 @@ def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_is_remembered
 
 def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clean_home, runner) -> None:
     """#415 Z4: a second action that appears mails and the title names both areas."""
-    restarting_containers(runner, "edge-a-1")
+    restarting_containers(runner, "edge-a")
     home_check(clean_home, runner)
     write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
 
@@ -223,7 +223,7 @@ def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clea
 def test_an_action_that_goes_while_another_stays_notifies_the_one_that_stays(clean_home, runner) -> None:
     """#415 Z4: an action that goes mails even while another one stays."""
     write_backup_status(clean_home, last_backup=datetime.now().astimezone() - timedelta(days=9))
-    restarting_containers(runner, "edge-a-1")
+    restarting_containers(runner, "edge-a")
     home_check(clean_home, runner)
     no_container_restarts(runner)
 
@@ -242,11 +242,11 @@ def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
 
 def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, runner) -> None:
     """#415 Z4: an action that comes back after a clean run mails again."""
-    restarting_containers(runner, "edge-a-1")
+    restarting_containers(runner, "edge-a")
     home_check(clean_home, runner)
     no_container_restarts(runner)
     home_check(clean_home, runner)
-    restarting_containers(runner, "edge-a-1")
+    restarting_containers(runner, "edge-a")
 
     home_check(clean_home, runner)
 
@@ -488,7 +488,7 @@ def test_the_first_news_is_mailed_once_with_the_title_as_subject_and_the_passwor
 
 
 def a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image) -> None:
-    restarting_containers(runner, "presentator-live-presentator-1")
+    restarting_containers(runner, "presentator-live")
     (clean_home / ".secrets" / "gitlab").unlink()
     leave_pasted_image(clean_home)
 
@@ -496,6 +496,7 @@ def a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, lea
 def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_number(clean_home, leave_pasted_image, runner, mail_stub) -> None:
     """#415 Z2, Z6: mail A; the tidy file, the secret and the counts stay in the report."""
     a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image)
+    write_backup_status(clean_home, last_backup=datetime.now().astimezone().replace(hour=14, minute=15))
 
     home_check(clean_home, runner)
 
@@ -503,28 +504,63 @@ def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_num
     stamp = body.split("So steht der PC (")[1].split(")")[0]
     assert body == f"""Handlungsbedarf
 
-1. presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar. (neu)
-   Nächster Schritt: Sag einem Agenten „presentator-live-presentator-1: bitte schau nach“.
+1. presentator-live startet ständig neu und ist darum nicht erreichbar. (neu)
+   Nächster Schritt: Sag einem Agenten „presentator-live startet ständig neu, schau nach“.
 
 So steht der PC ({stamp})
 
 Dienste: Handlungsbedarf
-Sicherung: in Ordnung
+Sicherung: in Ordnung, zuletzt heute 14:15
 Commit-Schutz: in Ordnung
-Geheimnisse: Hinweis – Zugangsdaten fehlen noch.
+Geheimnisse: Hinweis – Zugangsdaten für .bashrc fehlen noch
 Server-Logs: in Ordnung
-Aufräumen: Hinweis – Es gibt etwas aufzuräumen.
+Aufräumen: Hinweis – es gibt etwas aufzuräumen
 
 Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
-
 Alles im Einzelnen: {REPORT_DISPLAY}
 """
+
+
+def mailed_area_lines(clean_home, runner, mail_stub) -> list[str]:
+    restarting_containers(runner, "presentator-live")
+    home_check(clean_home, runner)
+    body = message_of(mail_stub.sent[0]).get_content()
+    return body.split("\n\n")[3].splitlines()
+
+
+@pytest.mark.parametrize(
+    ("read_by", "line"),
+    [('["hopin"]', "Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch"), ("[]", "Geheimnisse: Hinweis – Zugangsdaten fehlen noch")],
+    ids=["names the app that reads it", "names nobody when the manifest has no reader"],
+)
+def test_a_missing_secret_names_the_app_that_reads_it_and_never_the_secret(clean_home, runner, mail_stub, use_manifest, read_by, line) -> None:
+    """#415 Z2, Z6: the area line says whose credentials are missing from the manifest's read_by."""
+    use_manifest(TEST_MANIFEST.replace('read_by = [".bashrc"]', f"read_by = {read_by}"))
+    (clean_home / ".secrets" / "gitlab").unlink()
+
+    assert any(found.startswith(line) for found in mailed_area_lines(clean_home, runner, mail_stub))
+    assert "gitlab" not in message_of(mail_stub.sent[0]).get_content()
+
+
+def test_the_logs_note_reads_as_in_the_picture(clean_home, runner, mail_stub) -> None:
+    """#415 Z2: the area line is the clause of the picture, lower case after the dash and without a final period."""
+    runner.container_listing = "/songmaker-api-1\tjson-file\tsongmaker\n"
+
+    assert "Server-Logs: Hinweis – noch nicht überall nach 30 Tagen gelöscht" in mailed_area_lines(clean_home, runner, mail_stub)
+
+
+@pytest.mark.parametrize(("days_ago", "said"), [(0, "heute"), (1, "gestern")], ids=["today", "yesterday"])
+def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner, mail_stub, days_ago, said) -> None:
+    """#415 Z2: a healthy backup area still shows the last success, read from the status the backup check reads."""
+    write_backup_status(clean_home, last_backup=(datetime.now().astimezone() - timedelta(days=days_ago)).replace(hour=14, minute=15))
+
+    assert f"Sicherung: in Ordnung, zuletzt {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
 
 
 @pytest.mark.parametrize("sees_notes", [True, False], ids=["with notes", "clean"])
 def test_an_action_that_goes_is_mailed_as_no_longer_current_and_the_title_is_the_new_state(clean_home, leave_pasted_image, runner, mail_stub, sees_notes) -> None:
     """#415 Z4, mail C: the action goes and the PC is clean or only notes remain; one mail says so."""
-    restarting_containers(runner, "presentator-live-presentator-1")
+    restarting_containers(runner, "presentator-live")
     if sees_notes:
         leave_pasted_image(clean_home)
     home_check(clean_home, runner)
@@ -534,7 +570,7 @@ def test_an_action_that_goes_is_mailed_as_no_longer_current_and_the_title_is_the
 
     news = message_of(mail_stub.sent[1])
     assert news["Subject"] == ("PC-Check: in Ordnung – nur Hinweise" if sees_notes else "PC-Check: alles in Ordnung")
-    assert "Nicht mehr aktuell\n\n- presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar." in news.get_content()
+    assert "Nicht mehr aktuell\n\n- presentator-live startet ständig neu und ist darum nicht erreichbar." in news.get_content()
     assert "Handlungsbedarf\n\n1." not in news.get_content()
 
 
@@ -564,20 +600,20 @@ def test_a_note_that_appears_or_goes_sends_no_mail(clean_home, leave_pasted_imag
 
 def test_a_restarting_container_that_then_exits_is_a_new_item(clean_home, runner, mail_stub) -> None:
     """#415 Z5: the rule is part of the identity, so restarting then exited mails again and marks the item new."""
-    restarting_containers(runner, "edge-a-1")
+    restarting_containers(runner, "edge-a")
     home_check(clean_home, runner)
-    runner.platform_listing = "/edge-a-1\texited\t\t1\tcompose\n"
+    runner.platform_listing = "/edge-a-1\texited\t\t1\tedge-a\n"
 
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[1]).get_content()
-    assert "1. edge-a-1 hat sich mit einem Fehler beendet. (neu)" in body
-    assert "- edge-a-1 startet ständig neu" in body
+    assert "1. edge-a hat sich mit einem Fehler beendet. (neu)" in body
+    assert "- edge-a startet ständig neu" in body
 
 
 def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
     """#415 Z7: 21 actions give 20 items, one more-line and the six area lines."""
-    runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tcompose\n" for n in range(21))
+    runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tproject-{n:03}\n" for n in range(21))
 
     home_check(clean_home, runner)
 
@@ -595,7 +631,7 @@ def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_r
     secret_path = "secrets\tloose-mode\t~/.secrets/songmaker/token"
     home_file = "tidy\tpasted-images\tEingefügtes Bild.png"
     account = mail.load_account(Layout(tmp_path / "home"))
-    body = check.mail_body(frozenset({hostile_container, secret_path, home_file}), None, REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54))
+    body = check.mail_body(frozenset({hostile_container, secret_path, home_file}), None, REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54), check.MailFacts())
 
     run_command(mail.sendmail_command(account, Layout(tmp_path / "home").secrets_dir, mail.compose(account, "s", body)))
 

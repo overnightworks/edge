@@ -15,10 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view, tidy_home
@@ -193,26 +194,33 @@ class RuleReport:
     level: Level
     sentence: str
     next_step: str = ""
+    area_note: str = ""
+    """What the area line says after the level when the rule is a note; the sentence without its final period when empty."""
 
 
 AGENT_STEP = "Sag einem Agenten „{area}: bitte schau nach“."
-CONTAINER_STEP = "Sag einem Agenten „{subject}: bitte schau nach“."
+
+
+def _container_report(sentence: str, problem: str) -> RuleReport:
+    return RuleReport(Level.ACTION, sentence, f"Sag einem Agenten „{{subject}} {problem}, schau nach“.")
+
+
 ACTION, NOTE = Level.ACTION, Level.NOTE
 HOME_NEXT = "Führe `home next` aus."
 BACKUP_NOW = "Führe `hal backup` aus."
 SETUP_APPLY = "Führe `hal setup --apply` aus."
 HOOK_BROKEN = RuleReport(ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY)
 LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP)
-LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.")
-SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.")
-# The sentence of a rule names only what the mail may carry: a container or an app by name, never a secret, a path or a home file (#415 Z6).
+LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.", area_note="noch nicht überall nach 30 Tagen gelöscht")
+SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.", area_note="ein Ordner bei den Geheimnissen ist nicht in Form")
+# The sentence of a rule names only what the mail may carry: a Compose project or an app by name, never a secret, a path or a home file (#415 Z6).
 RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
-    ("platform", "container-restarting"): RuleReport(ACTION, "{subject} startet ständig neu und ist darum nicht erreichbar.", CONTAINER_STEP),
-    ("platform", "container-dead"): RuleReport(ACTION, "{subject} ist abgestürzt.", CONTAINER_STEP),
-    ("platform", "container-unhealthy"): RuleReport(ACTION, "{subject} läuft, meldet sich aber krank.", CONTAINER_STEP),
-    ("platform", "container-exited"): RuleReport(ACTION, "{subject} hat sich mit einem Fehler beendet.", CONTAINER_STEP),
+    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu"),
+    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt"),
+    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank"),
+    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet"),
     ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP),
-    ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus."),
+    ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
     ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW),
     ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW),
     ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW),
@@ -221,7 +229,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "hook-file"): HOOK_BROKEN,
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
-    ("hook", "hidden-hook"): RuleReport(NOTE, "Ein Repo-eigener Commit-Schritt wird verdeckt."),
+    ("hook", "hidden-hook"): RuleReport(NOTE, "Ein Repo-eigener Commit-Schritt wird verdeckt.", area_note="ein Repo-eigener Commit-Schritt wird verdeckt"),
     ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "Ein Geheimnis ist für andere lesbar.", HOME_NEXT),
     ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "Ein Geheimnis liegt hinter einem Verweis.", HOME_NEXT),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
@@ -229,12 +237,12 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ),
     ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT),
     ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT),
-    ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten fehlen noch."),
+    ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten{readers} fehlen noch."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
     ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
-    ("secrets", FindingRule.PRESENCE_UNKNOWN.value): RuleReport(NOTE, "Ob ein Geheimnis da ist, lässt sich nicht sehen."),
-    ("secrets", FindingRule.VERIFICATION_UNREACHABLE.value): RuleReport(NOTE, "Eine Anmeldung ließ sich gerade nicht prüfen."),
-    ("secrets", FindingRule.UNKNOWN_FILE.value): RuleReport(NOTE, "Es gibt unbekannte Dateien bei den Geheimnissen."),
+    ("secrets", FindingRule.PRESENCE_UNKNOWN.value): RuleReport(NOTE, "Ob ein Geheimnis da ist, lässt sich nicht sehen.", area_note="ob ein Geheimnis da ist, lässt sich nicht sehen"),
+    ("secrets", FindingRule.VERIFICATION_UNREACHABLE.value): RuleReport(NOTE, "Eine Anmeldung ließ sich gerade nicht prüfen.", area_note="eine Anmeldung ließ sich gerade nicht prüfen"),
+    ("secrets", FindingRule.UNKNOWN_FILE.value): RuleReport(NOTE, "Es gibt unbekannte Dateien bei den Geheimnissen.", area_note="es gibt unbekannte Dateien bei den Geheimnissen"),
     ("logs", "container-json-file"): LOGS_NOT_ROTATED,
     ("logs", "docker-default-driver"): LOGS_NOT_ROTATED,
     ("logs", "rsyslog-file"): LOGS_NOT_ROTATED,
@@ -243,7 +251,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
 }
 # Nothing `home tidy` finds is broken: its rules clean or list, so the whole area is a note.
-TIDY_REPORT = RuleReport(NOTE, "Es gibt etwas aufzuräumen.")
+TIDY_REPORT = RuleReport(NOTE, "Es gibt etwas aufzuräumen.", area_note="es gibt etwas aufzuräumen")
 BROKEN_CHECK_REPORT = RuleReport(ACTION, "Die Prüfung {area} lief nicht.", "Führe `home check` aus.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
@@ -266,6 +274,7 @@ class Item:
     report: RuleReport
     sentence: str
     next_step: str
+    area_note: str
 
     @property
     def level(self) -> Level:
@@ -278,18 +287,22 @@ def _rule_report(check_name: str, rule: str) -> RuleReport | None:
     return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS.get((check_name, rule))
 
 
-def _item(identity: str) -> Item:
+NO_READERS: Mapping[str, str] = MappingProxyType({})
+
+
+def _item(identity: str, readers: Mapping[str, str]) -> Item:
     check_name, rule, subject = [*identity.split("\t", 2), ""][:3]
     report = _rule_report(check_name, rule)
     assert report is not None, identity
-    words = {"subject": subject, "area": AREA_LABELS[check_name]}
-    return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words))
+    words = {"subject": subject, "area": AREA_LABELS[check_name], "readers": f" für {readers[subject]}" if readers.get(subject) else ""}
+    note = (report.area_note or report.sentence).removesuffix(".")
+    return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words), note.format(**words))
 
 
-def _items(identities: frozenset[str]) -> list[Item]:
+def _items(identities: frozenset[str], readers: Mapping[str, str] = NO_READERS) -> list[Item]:
     """In the order of the mail: area, then the rule and subject the identity starts with."""
     area_order = {name: position for position, (name, _) in enumerate(AREAS)}
-    return sorted((_item(identity) for identity in identities), key=lambda item: (area_order[item.check], item.identity))
+    return sorted((_item(identity, readers) for identity in identities), key=lambda item: (area_order[item.check], item.identity))
 
 
 def _actions(identities: frozenset[str] | None) -> frozenset[str]:
@@ -339,10 +352,26 @@ def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> lis
     return _capped([f"- {item.sentence}" for item in _items(gone)])
 
 
-def _area_line(items: list[Item], check_name: str) -> str:
+@dataclass(frozen=True)
+class MailFacts:
+    """What the mail says beyond the findings: who reads each secret (a manifest fact) and when the last backup succeeded."""
+
+    readers: Mapping[str, str] = NO_READERS
+    last_backup: datetime | None = None
+
+
+def _when(moment: datetime, now: datetime) -> str:
+    local, today = moment.astimezone(), now.astimezone().date()
+    day = {today: "heute", today - timedelta(days=1): "gestern"}.get(local.date(), f"{local:%d.%m.%Y}")
+    return f"{day} {local:%H:%M}"
+
+
+def _area_line(items: list[Item], check_name: str, facts: MailFacts, now: datetime) -> str:
     level = _area_level(items, check_name)
-    notes = [item for item in items if item.check == check_name and item.level is Level.NOTE]
-    detail = f" – {notes[0].sentence}" if level is Level.NOTE else ""
+    notes = dict.fromkeys(item.area_note for item in items if item.check == check_name and item.level is Level.NOTE)
+    detail = f" – {'; '.join(notes)}" if level is Level.NOTE else ""
+    if check_name == "backup" and level is Level.OK and facts.last_backup:
+        detail = f", zuletzt {_when(facts.last_backup, now)}"
     return f"{AREA_LABELS[check_name]}: {level.label}{detail}"
 
 
@@ -352,19 +381,18 @@ def notification_body(current: frozenset[str], report_file: str) -> str:
     return "\n".join([*sentences, f"Alles im Einzelnen: {report_file}"])
 
 
-def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_file: str, now: datetime) -> str:
+def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_file: str, now: datetime, facts: MailFacts) -> str:
     """The actions with one step each, what is no longer an action, and one line per area; no number, no secret, no home file."""
-    items = _items(current)
+    items = _items(current, facts.readers)
     sections = []
     if actions := _action_lines(current, previous):
         sections.append("Handlungsbedarf\n\n" + "\n\n".join(actions))
     if gone := _gone_lines(current, previous):
         sections.append("Nicht mehr aktuell\n\n" + "\n".join(gone))
-    area_lines = "\n".join(_area_line(items, name) for name, _ in AREAS)
+    area_lines = "\n".join(_area_line(items, name, facts, now) for name, _ in AREAS)
     sections.append(f"So steht der PC ({now:%d.%m.%Y %H:%M})\n\n{area_lines}")
-    if any(item.level is Level.NOTE for item in items):
-        sections.append("Hinweise eilen nicht; home next zeigt, was davon du tun kannst.")
-    sections.append(f"Alles im Einzelnen: {report_file}")
+    hint = "Hinweise eilen nicht; home next zeigt, was davon du tun kannst.\n" if any(item.level is Level.NOTE for item in items) else ""
+    sections.append(f"{hint}Alles im Einzelnen: {report_file}")
     return "\n\n".join(sections) + "\n"
 
 
@@ -398,6 +426,16 @@ def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | Non
     return delivered
 
 
+def _mail_facts(ctx: CheckContext) -> MailFacts:
+    """A manifest that cannot be read leaves the app names out; the secrets check reports that failure itself."""
+    try:
+        manifest = secrets_view.load_manifest(secrets_view.MANIFEST_PATH)
+    except secrets_view.ManifestError:
+        manifest = ()
+    readers = {entry.name: ", ".join(entry.read_by) for entry in manifest}
+    return MailFacts(readers, backup_check.last_successful_backup(ctx.layout.home))
+
+
 def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> bool:
     """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
     home = ctx.layout.home
@@ -405,7 +443,7 @@ def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozen
     summary = title(current)
     outcomes = [
         _desktop_delivered(ctx, summary, notification_body(current, report_file)),
-        _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now)),
+        _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, _mail_facts(ctx))),
     ]
     set_up = [outcome for outcome in outcomes if outcome is not None]
     return bool(set_up) and all(set_up)

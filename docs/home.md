@@ -129,25 +129,24 @@ Betreff: PC-Check: Handlungsbedarf – Dienste
 
 Handlungsbedarf
 
-1. presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar. (neu)
-   Nächster Schritt: Sag einem Agenten „presentator-live-presentator-1: bitte schau nach“.
+1. presentator-live startet ständig neu und ist darum nicht erreichbar. (neu)
+   Nächster Schritt: Sag einem Agenten „presentator-live startet ständig neu, schau nach“.
 
 So steht der PC (26.10.2026 14:54)
 
 Dienste: Handlungsbedarf
-Sicherung: in Ordnung
+Sicherung: in Ordnung, zuletzt heute 14:15
 Commit-Schutz: in Ordnung
-Geheimnisse: Hinweis – Zugangsdaten fehlen noch.
+Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch
 Server-Logs: in Ordnung
-Aufräumen: Hinweis – Es gibt etwas aufzuräumen.
+Aufräumen: Hinweis – es gibt etwas aufzuräumen
 
 Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
-
 Alles im Einzelnen: ~/.local/state/home/check-report.md
 ```
 
-Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur Container
-und Apps (`platform`, `backup`); bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
+Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
+Containers, Apps (aus `read_by` des Manifests) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
@@ -205,7 +204,7 @@ plus Gegenstand (Containername, Appname); sein Alter gehört nie dazu. Lässt si
 eigener Fund, nie ein sauberer Lauf.
 
 - **`platform`, Container.** Jeder Container mit nicht leerem Compose-Projekt-Label (`docker inspect --format` mit
-  benannten Feldern, ein Aufruf für alle): `container-unhealthy`, `container-restarting`, `container-dead` und
+  benannten Feldern, darunter das Projekt, ein Aufruf für alle; der Fund trägt den Projektnamen): `container-unhealthy`, `container-restarting`, `container-dead` und
   `container-exited` mit Code ungleich 0 (alle Handlungsbedarf). Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
   ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein abgeschalteter Dienst, der mit 137 oder 143
   endete, erscheint; das ist hingenommen. `docker-unreadable`, wenn Docker nicht lesbar ist.
