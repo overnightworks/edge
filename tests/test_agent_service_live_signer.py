@@ -91,9 +91,9 @@ def recreated_service(
             }
             return completed(json.dumps([container]))
         if command[:3] == ["docker", "network", "ls"]:
-            if failed_listing:
-                return completed("", returncode=1)
             key = next(a for a in command if "compose.network=" in a).rpartition("=")[2]
+            if failed_listing and key == "agent":
+                return completed("", returncode=1)
             return completed("" if key == "agent" and shared is None else f"id-{key}\n")
         if command[:3] == ["docker", "network", "inspect"]:
             return completed(json.dumps([network(command[3].removeprefix("id-"))]))
@@ -501,6 +501,13 @@ def test_l3b_a_failed_network_listing_is_not_taken_for_an_absent_shared_network(
     with pytest.raises(LiveSmokeFailed, match="docker network ls"):
         run_signer(stack)
 
+    shared_listings = [
+        command
+        for command in stack.asked
+        if command[:3] == ["docker", "network", "ls"]
+        and any(argument.endswith("compose.network=agent") for argument in command)
+    ]
+    assert shared_listings
     assert not any(command[:3] == ["docker", "network", "rm"] for command in stack.asked)
 
 
