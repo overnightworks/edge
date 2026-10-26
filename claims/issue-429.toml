@@ -1,8 +1,0 @@
-claim_id = "5608d83433264bee998dec0eab6f8759"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "9ded08ff806c98abb222d19d4b9a139914a0f3b0"
-branch = "claude/issue-429-s3b-legal-pages"
-scope = ["docs/architecture.md", "docs/external.md", "docs/stack.md", "external/cloudflare.tf", "external/tests/cloudflare.tftest.hcl", "external/tests/fixtures/cloudflare-redirect-keep.yaml", "external/tests/fixtures/cloudflare-redirect-without-serve.yaml", "external/tests/fixtures/cloudflare-redirect.yaml", "external/tests/live.tftest.hcl", "fleet.yaml", "quality/baseline.toml", "src/edge/catalog.py", "tests/test_edge_catalog_hosts.py", "tests/test_edge_host_check.py"]
-opened_commit = "3e8137d0818d5923e1702a924fc35666b434dc2b"
-whole_reason = "Dropping the catalog key keep, its validator, the OpenTofu rule loop, the live declaration and the pins that name them goes live in one apply; split, a key is refused with no caller or a rule reads a key nobody can set."
