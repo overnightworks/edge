@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import time
 from typing import TYPE_CHECKING
 
@@ -13,12 +14,23 @@ if TYPE_CHECKING:
     from egress import Probe
 
 # `hal_agent_<app>` of compose.yaml, as the probe's copy names them: `<project>_agent_<app>`.
+# P36 drives only these, which keep one app from another.
 AGENT_NETWORKS = ("agent_songmaker", "agent_presentator")
-# Every network the service joins: the shared one beside the per-app ones. P36 drives only
-# the per-app ones, which keep one app from another.
-SERVICE_AGENT_NETWORKS = ("agent", *AGENT_NETWORKS)
 CALLER_PORT = 8000
 READY_SECONDS = 90
+
+
+def service_networks(probe: Probe, project: str) -> tuple[str, ...]:
+    """Every network the target joins, from the probe copy's resolved configuration, without the
+    project's prefix (every name of the copy is the project's own)."""
+    configuration = json.loads(probe.compose("config", "--format", "json").stdout)
+    prefix = f"{project}_"
+    names = [
+        configuration["networks"][key]["name"]
+        for key in configuration["services"][probe.target.compose_service]["networks"]
+    ]
+    expect(all(name.startswith(prefix) for name in names), f"a network outside {prefix}*: {names}")
+    return tuple(name.removeprefix(prefix) for name in names)
 
 
 def cell_p36(

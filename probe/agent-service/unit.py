@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Probe of the agent service unit (#201 U1-U11, #214 U15): `agent-service` of compose.yaml,
-with its real `service.toml`, in a throwaway compose project of its own and a scratch HOME that
-holds a dummy login (never a real token).
+"""Probe of the agent service unit (#201 U1-U11, #214 U15, #346 P09 and P11a): `agent-service` of
+compose.yaml, with its real `service.toml`, in a throwaway compose project of its own and a
+scratch HOME that holds a dummy login (never a real token).
 
     flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
         python3 probe/agent-service/unit.py --scratch DIR
@@ -11,8 +11,8 @@ drives U14 instead (#214 S4): the operator's `agent-smoke` against the service w
 issuer on the `agent-songmaker` network, so the tokens verify and the CLI meets the real upstream
 with the dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
 `agent-service/live_smoke.py` there, past its sign-in. `--cell containment` (containment.py) adds a
-signing key and a fake app that lists tools (app_tools.py) and drives agent-runtime#440's cells
-B1 and B2 through `agent-smoke --tool`. The image
+fake app that lists tools (app_tools.py), certified by the scratch CA of scratch_secrets.py, and
+drives agent-runtime#440's cells B1 and B2 through `agent-smoke --tool`. The image
 `edge-agent-service:0.7.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
@@ -75,6 +75,9 @@ INIT_COMMAND = "docker-init"
 OWNER_ONLY = 0o700
 TOKEN_MODE = 0o600
 LOOSE_TOKEN_MODE = 0o644
+KEY_MODE = 0o600
+LOOSE_KEY_MODE = 0o640
+UNREADABLE_KEY_MODE = 0o000
 LOOSE_WORKING_ROOT_MODE = "0750"
 INSIDE_IMPORTS = "import errno, hashlib, json, os, re, shutil, signal, subprocess, sys, time\n"
 
@@ -294,6 +297,8 @@ class UnitProbe(Probe):
         self.cell_u6_refusal()
         self.cell_u10()
         self.cell_u11()
+        self.cell_p09()
+        self.cell_p11a()
         self.cell_u15()
 
     def wait_until_listening(self) -> None:
@@ -524,11 +529,7 @@ class UnitProbe(Probe):
             started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
             expect(started.returncode != 0, "U10: the service started without a login directory")
             expect(not directory.exists(), "U10: the missing login directory was created")
-            strangers = [
-                str(path)
-                for path in (directory.parent.parent, *directory.parent.parent.rglob("*"))
-                if path.lstat().st_uid != os.getuid()
-            ]
+            strangers = self.paths_of_others()
             expect(not strangers, f"U10: paths not owned by the operator: {strangers}")
             reason = (started.stderr or started.stdout).strip().splitlines()[-1]
         finally:
@@ -553,6 +554,63 @@ class UnitProbe(Probe):
             "U11",
             "a token at mode 0644 stops the start; the log names profiles.claude.token_file "
             f"and {token_path()}, never the content",
+        )
+
+    def paths_of_others(self) -> list[str]:
+        """Paths under the scratch HOME's `.secrets` that the operator does not own."""
+        secrets_directory = self.token.parent.parent.parent
+        return [
+            str(path)
+            for path in (secrets_directory, *secrets_directory.rglob("*"))
+            if path.lstat().st_uid != os.getuid()
+        ]
+
+    def cell_p09(self) -> None:
+        """The key the service signs with, as uid 1000 reads it: a mode that group or others hold
+        stops the start, whether or not the owner could read it."""
+        key = self.scratch_secrets.signing_private
+        content = key.read_text(encoding="utf-8")
+        body = [line for line in content.splitlines() if not line.startswith("-----")]
+        for mode in (LOOSE_KEY_MODE, UNREADABLE_KEY_MODE):
+            key.chmod(mode)
+            try:
+                logs = self.refused_start(f"P09 {mode:04o}", ["signing.key_file"])
+            finally:
+                key.chmod(KEY_MODE)
+                self.compose("down", "--timeout", "10")
+            expect(
+                not any(line in logs for line in body), f"P09 {mode:04o}: the log holds key bytes"
+            )
+        self.hold(
+            "P09",
+            f"a signing key at mode {LOOSE_KEY_MODE:04o} or {UNREADABLE_KEY_MODE:04o} stops the "
+            "start; the log names signing.key_file and holds no key byte "
+            "(a wrong owner needs root: not driven)",
+        )
+
+    def cell_p11a(self) -> None:
+        """A missing signing key or CA root source: no service is created, and nothing appears
+        at the source or under `.secrets` that the operator does not own."""
+        for source in (self.scratch_secrets.signing_private, self.scratch_secrets.root):
+            aside = source.with_name(f"{source.name}.aside")
+            source.rename(aside)
+            try:
+                started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+                created = self.service_containers()
+                expect(
+                    started.returncode != 0 or not created,
+                    f"P11a: the service started without {source.name}",
+                )
+                expect(not source.exists(), f"P11a: {source.name} appeared at its source")
+                strangers = self.paths_of_others()
+                expect(not strangers, f"P11a: paths not owned by the operator: {strangers}")
+            finally:
+                aside.rename(source)
+                self.compose("down", "--timeout", "10")
+        self.hold(
+            "P11a",
+            "with the signing key or the CA root moved aside, the service is not created; "
+            "nothing appeared at either source or under ~/.secrets",
         )
 
     def cell_u15(self) -> None:
