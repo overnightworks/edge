@@ -463,8 +463,8 @@ CHECK_EXAMPLES = """\
 Beispiele:
   home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 
-Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn sich die Menge der Funde seit dem letzten Lauf
-geändert hat. Bericht: ~/.local/state/home/check-report.md
+Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn ein Handlungsbedarf neu auftaucht
+oder verschwindet; Hinweise allein melden nichts. Bericht: ~/.local/state/home/check-report.md
 Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwarteter Fehler.
 """
 

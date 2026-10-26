@@ -81,39 +81,73 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 
 `home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
 `home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
-Bericht nach `~/.local/state/home/check-report.md`. Eine
-Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
-wenn sich die Menge der Funde seit dem letzten Lauf geändert hat **und** es
-Funde gibt oder eine zerbrochene Prüfung wieder läuft. Ein Fund ist dabei Regel plus Gegenstand: Derselbe Fund, der nur
-älter oder größer wird, nervt nicht erneut. Zerbricht eine Prüfung oder läuft
-sie wieder, meldet das ebenfalls; ihre Funde zählen dabei weder als neu noch
-als weg, der Titel nennt die Prüfung. Die Benachrichtigung nennt im
-Titel die Zahl der Funde und darunter, wie viele neu und wie viele weg sind,
-samt Pfad zum Bericht:
+Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
-```
-home check 15.10.2026 09:00 | 3 Funde
-1 neu, 2 weg. Bericht: ~/.local/state/home/check-report.md
-```
+**Stufen.** Jeder Fund hat genau eine Stufe. *In Ordnung*: nichts gefunden. *Hinweis*: kann warten, nichts geht heute
+kaputt, nichts liegt offen. *Handlungsbedarf*: etwas ist jetzt kaputt, ungeschützt oder unsichtbar. Der Stand eines
+Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner sechs Bereiche (Dienste, Sicherung,
+Commit-Schutz, Geheimnisse, Server-Logs, Aufräumen). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
+`check.py`; ein Test lässt jede Regel der Prüfungen ohne Stufe scheitern.
 
-Die Benachrichtigung trägt den Knopf „Bericht öffnen“; ein Klick öffnet den
+| Prüfung | Handlungsbedarf | Hinweis |
+|---|---|---|
+| `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable` | `reboot-pending` |
+| `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
+| `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
+| `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
+| `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
+| `tidy` | – | jede Regel |
+
+Ein zerbrochener Lauf einer Prüfung ist Handlungsbedarf („Die Prüfung … lief nicht“, Schritt `home check`).
+
+**Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
+wenn ein Handlungsbedarf neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
+wieder laufender Lauf einer Prüfung ist so einer. Ändern sich nur Hinweise, kommt nichts. Ein Fund ist Regel plus
+Gegenstand: Derselbe Fund, der nur älter oder größer wird, nervt nicht erneut; wechselt ein Container von „startet
+neu“ zu „beendet“, ist das ein neuer Punkt.
+
+Betreff und Titel der Benachrichtigung sagen den Stand des PCs in einem Satzteil: „PC-Check: Handlungsbedarf –
+Dienste, Sicherung“ (mit den Bereichen im Handlungsbedarf), „PC-Check: in Ordnung – nur Hinweise“ oder „PC-Check:
+alles in Ordnung“. Der Text der Benachrichtigung sind die Sätze der Handlungsbedarfe und der Pfad des Berichts. Die
+Benachrichtigung trägt den Knopf „Bericht öffnen“; ein Klick öffnet den
 Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
 losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
 der Timer-Dienst sofort enden.
 
-Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`.
-Ein Lauf ohne Funde benachrichtigt nur, wenn eine zerbrochene Prüfung wieder
-läuft; den sauberen Stand merkt er sich, sodass ein wiederkehrender Fund
-wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die zuletzt
-gemeldete Fundmenge stehen — auch bei einem sauberen Lauf nach einer wieder
-laufenden Prüfung —, und der nächste Lauf meldet, was dann noch von ihr
-abweicht.
+Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`. Der saubere Stand wird ebenfalls
+gemerkt, sodass ein wiederkehrender Handlungsbedarf wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die
+zuletzt gemeldete Fundmenge stehen, und der nächste Lauf meldet, was dann noch von ihr abweicht.
 
 **Die Mail.** Sie geht über `msmtp`, als du, mit dem Konto aus `~/.secrets/smtp/account.toml`, und nur, wenn diese Datei
 existiert; fehlt sie, schickt `home check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
-Einträge). Betreff ist die erste Zeile des Berichts. Der Text hat die Zeile der Benachrichtigung, die Zahl der Funde je
-Prüfung, die neuen Funde der Prüfungen `platform` und `backup` als Regel plus Gegenstand (höchstens 20, dann „… und N
-weitere“) und den Pfad des Berichts auf dem PC; kein anderer Gegenstand, kein Dateiname, nie der Bericht selbst. Ein
+Einträge). Der Text hat oben jeden Handlungsbedarf als Satz mit genau einem nächsten Schritt (neue Punkte mit „(neu)“,
+höchstens 20, dann „… und N weitere, siehe Bericht“), darunter was nicht mehr ansteht, dann eine Zeile je Bereich und
+den Pfad des Berichts:
+
+```
+Betreff: PC-Check: Handlungsbedarf – Dienste
+
+Handlungsbedarf
+
+1. presentator-live-presentator-1 startet ständig neu und ist darum nicht erreichbar. (neu)
+   Nächster Schritt: Sag einem Agenten „presentator-live-presentator-1: bitte schau nach“.
+
+So steht der PC (26.10.2026 14:54)
+
+Dienste: Handlungsbedarf
+Sicherung: in Ordnung
+Commit-Schutz: in Ordnung
+Geheimnisse: Hinweis – Zugangsdaten fehlen noch.
+Server-Logs: in Ordnung
+Aufräumen: Hinweis – Es gibt etwas aufzuräumen.
+
+Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
+
+Alles im Einzelnen: ~/.local/state/home/check-report.md
+```
+
+Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur Container
+und Apps (`platform`, `backup`); bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
@@ -166,17 +200,17 @@ zerbrochen, nie als sauber.
 ### Die Prüfungen `backup` und `platform`
 
 Beide lesen nur und ändern nichts. Was sie lesen, ist fest: nie ein Container-Log, nie die Umgebung eines Containers, nie
-`~/.secrets` oder `~/backups`. Bericht, Benachrichtigung und Mail tragen nur Namen, Zustände und Zeiten. Ein Fund ist Regel
+`~/.secrets` oder `~/backups`. Der Bericht trägt nur Namen, Zustände und Zeiten. Ein Fund ist Regel
 plus Gegenstand (Containername, Appname); sein Alter gehört nie dazu. Lässt sich die Quelle nicht lesen, ist das ein
 eigener Fund, nie ein sauberer Lauf.
 
 - **`platform`, Container.** Jeder Container mit nicht leerem Compose-Projekt-Label (`docker inspect --format` mit
   benannten Feldern, ein Aufruf für alle): `container-unhealthy`, `container-restarting`, `container-dead` und
-  `container-exited` mit Code ungleich 0. Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
+  `container-exited` mit Code ungleich 0 (alle Handlungsbedarf). Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
   ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein abgeschalteter Dienst, der mit 137 oder 143
   endete, erscheint; das ist hingenommen. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
-  Datum“). Es meldet einmal und nervt nicht.
+  Datum“); ein Hinweis, der nie eine Mail auslöst.
 - **`backup`.** `~/.local/state/edge/backup-status.json` (Schema 2, nur die dokumentierten Felder): `backup-failed`,
   wenn der letzte Lauf `failed` ist; `backup-crashed`, wenn `running` länger als 6 Stunden her ist; `backup-stale` je
   App, wenn `last_successful_backup` älter als 8 Tage ist oder fehlt; `backup-status-unreadable`, wenn die Datei
