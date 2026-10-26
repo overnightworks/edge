@@ -6,8 +6,8 @@
 # rsyslog, postfix (preseeded to "No configuration", so /etc/postfix/main.cf is absent as on the PC, where its sendmail
 # logs a fatal every night) and kerneloops are Ubuntu's own packages as the PC has them, for the cells R0-R7 (#422): the
 # apply purges rsyslog, and the proof checks what that leaves. docker.io is the engine itself, with the root:docker socket the
-# agents' refusal cells (A1-8, A1-9) need and the cell DK1 drives; busybox-static makes the rootfs it imports, so no
-# image is pulled at proof time. The base stays 24.04 until the system step runs on 26.04's sudo-rs (#374).
+# agents' refusal cells (A1-8, A1-9) need and the cells DK1-DK7 drive; docker-compose-v2 is the `docker compose` of DK6;
+# busybox-static makes the rootfs it imports, so no image is pulled at proof time. The base stays 24.04 until the system step runs on 26.04's sudo-rs (#374).
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,6 +20,7 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
         ca-certificates \
         curl \
         dbus \
+        docker-compose-v2 \
         docker.io \
         expect \
         git \
