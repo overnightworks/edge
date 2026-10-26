@@ -1,0 +1,8 @@
+claim_id = "be97f9c960254054a9ed334a66dfe6f1"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "e99efa1a03a056f3ce745958720e543dfddb8384"
+branch = "claude/issue-432-docker-log-driver-journald"
+scope = ["docs/architecture.md", "docs/home.md", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "src/home_tools/logs_check.py", "src/home_tools/setup.py", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/test_setup.py"]
+opened_commit = "0b9a4dcf1c741398ce39bd5f96b233b3439f8924"
+whole_reason = "One converge block in the system step, its one-owner constant, the help that warns of the restart, and the proof cells and docs that drive and state it; split, the proof would test a playbook it does not run or the docs would describe a restart that is not built."
