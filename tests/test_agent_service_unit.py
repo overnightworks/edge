@@ -22,8 +22,6 @@ from edge.realm.declared import declared_realm
 ROOT = Path(__file__).resolve().parents[1]
 
 SERVICE = "agent-service"
-OPERATOR_UID_GID = "1000:1000"
-LOGIN_SOURCE = "${HOME}/.secrets/agent-service/claude"
 OWNER_ONLY_TMPFS = ("uid=1000", "gid=1000", "mode=0700", "nosuid", "nodev", "noexec")
 SIZE_BOUND = re.compile(r"size=\d+[kmg]")
 
@@ -56,7 +54,7 @@ def binds(service) -> dict[str, dict]:
 
 def test_the_service_is_hardened_and_never_pulled(service):
     """U13: a fixed user, an init, a read-only root, no capability, no privilege gain, no core."""
-    assert service["user"] == OPERATOR_UID_GID
+    assert service["user"] == "1000:1000"
     assert service["init"] is True
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
@@ -97,7 +95,7 @@ def test_the_login_is_a_read_only_directory_bind_that_is_never_created(binds):
     the start instead of becoming root's directory."""
     login = binds["/run/agent-service/login/claude"]
 
-    assert login["source"] == LOGIN_SOURCE
+    assert login["source"] == "${HOME}/.secrets/agent-service/claude"
     assert login["read_only"] is True
     assert login["bind"] == {"create_host_path": False}
 
