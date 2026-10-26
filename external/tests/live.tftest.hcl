@@ -78,22 +78,25 @@ run "the_live_catalog_renders_songmakers_host_with_its_deny_and_the_apex_redirec
   assert {
     condition = (
       [for rule in cloudflare_ruleset.apex_redirect[0].rules : rule.action_parameters.from_value.target_url.value] == [
-        "https://songmaker.${local.fleet.cloudflare.zone}/impressum",
-        "https://songmaker.${local.fleet.cloudflare.zone}/datenschutz",
+        "https://${local.fleet.cloudflare.zone}/impressum",
+        "https://${local.fleet.cloudflare.zone}/datenschutz",
         "https://${local.fleet.cloudflare.zone}/nutzungsbedingungen",
+        "https://${local.fleet.cloudflare.zone}/favicon.ico",
         "https://auth.${local.fleet.cloudflare.zone}/",
       ]
       && alltrue([
         for rule in cloudflare_ruleset.apex_redirect[0].rules :
         rule.action_parameters.from_value.status_code == 302 && !rule.action_parameters.from_value.preserve_query_string
       ])
+      && length(cloudflare_ruleset.apex_redirect[0].rules) == 5
       && length(cloudflare_ruleset.apex_redirect[0].rules) <= 10
-      && strcontains(cloudflare_ruleset.apex_redirect[0].rules[3].expression, "starts_with(http.request.uri.path, \"/_rechtliches/\")")
+      && !anytrue([for rule in cloudflare_ruleset.apex_redirect[0].rules : strcontains(rule.action_parameters.from_value.target_url.value, "songmaker")])
+      && strcontains(cloudflare_ruleset.apex_redirect[0].rules[4].expression, "starts_with(http.request.uri.path, \"/_rechtliches/\")")
       && alltrue([
         for rule in cloudflare_ruleset.apex_redirect[0].rules :
         startswith(rule.expression, "ssl and ") && strcontains(rule.expression, "lower(http.host) eq \"${local.fleet.cloudflare.zone}\"") && strcontains(rule.expression, "starts_with(lower(http.host), \"www.${local.fleet.cloudflare.zone}:\")")
       ])
     )
-    error_message = "the apex redirect is not /impressum and /datenschutz to songmaker, the terms page to the apex, then everything else but the apex's served paths to auth, 302 without the query, for the apex and www"
+    error_message = "the apex redirect is not the three legal pages and /favicon.ico to the apex's exact paths, then everything else but the apex's served paths to auth, 302 without the query, for the apex and www"
   }
 }
