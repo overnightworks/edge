@@ -199,6 +199,8 @@ class RuleReport:
     """What the area line says after the level when the rule is a note; the sentence without its final period when empty."""
     resolved: str = ""
     """What the mail says once an action is gone, as a sentence that reads true on its own."""
+    describes_shared_state: bool = False
+    """Whether the sentence describes one state however many subjects or rules show it, so a current action with the same sentence still denies a recovery."""
     hides_state: bool = False
     """Whether the rule means its check cannot read the state it checks, so no other action of that check may be reported as done."""
 
@@ -215,7 +217,9 @@ HOME_NEXT = "Führe `home next` aus."
 BACKUP_NOW = "Führe `hal backup` aus."
 SETUP_APPLY = "Führe `hal setup --apply` aus."
 HOOK_BROKEN = RuleReport(
-    ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY, resolved="Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder."
+    ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY,
+    resolved="Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder.",
+    describes_shared_state=True,
 )
 LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP, resolved="Der Check kann die Logs wieder vollständig sehen.", hides_state=True)
 LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.", area_note="noch nicht überall nach 30 Tagen gelöscht")
@@ -229,9 +233,9 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen.", hides_state=True),
     ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
     ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
-    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr."),
+    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr.", describes_shared_state=True),
     ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt.", hides_state=True),
-    ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr."),
+    ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr.", describes_shared_state=True),
     ("hook", "hooks-path"): HOOK_BROKEN,
     ("hook", "hook-file"): HOOK_BROKEN,
     ("hook", "quality"): HOOK_BROKEN,
@@ -253,7 +257,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "container-json-file"): LOGS_NOT_ROTATED,
     ("logs", "docker-default-driver"): LOGS_NOT_ROTATED,
     ("logs", "rsyslog-file"): LOGS_NOT_ROTATED,
-    ("logs", "journal-age"): RuleReport(ACTION, "Es gibt Logs, die älter als 30 Tage sind.", SETUP_APPLY, resolved="Es gibt keine Logs mehr, die älter als 30 Tage sind."),
+    ("logs", "journal-age"): RuleReport(ACTION, "Es gibt Logs, die älter als 30 Tage sind.", SETUP_APPLY, resolved="Es gibt keine Logs mehr, die älter als 30 Tage sind.", describes_shared_state=True),
     ("logs", "journal-unreadable"): LOGS_UNSEEN,
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
 }
@@ -363,10 +367,10 @@ def _action_lines(current: frozenset[str], previous: frozenset[str] | None) -> l
 
 
 def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
-    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or with the same sentence, and no current action of its check that cannot be read."""
+    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or, for a shared state, with the same sentence, and no current action of its check that cannot be read."""
     current_actions = _items(_actions(current))
     held_back = {(item.check, _split(item.identity)[2]) for item in current_actions}
-    held_sentences = {item.sentence for item in current_actions}
+    held_sentences = {item.sentence for item in current_actions if item.report.describes_shared_state}
     unreadable_checks = {item.check for item in current_actions if item.report.hides_state}
     gone = [
         item

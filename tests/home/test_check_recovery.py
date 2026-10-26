@@ -45,12 +45,22 @@ def test_an_action_is_not_mailed_as_done_while_something_current_contradicts_it(
             "Erledigt\n\n- Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder.\n\n",
         ),
         (
+            {"secrets\tloose-mode\tGMAIL", "secrets\tloose-mode\tGITHUB"},
+            {"secrets\tloose-mode\tGITHUB"},
+            "- Ein Geheimnis ist nicht mehr für andere lesbar.",
+        ),
+        (
+            {"secrets\tverification-failed\tGMAIL", "secrets\tverification-failed\tGITHUB"},
+            {"secrets\tverification-failed\tGITHUB"},
+            "- Die Prüfung einer Anmeldung meldet keinen Fehler mehr.",
+        ),
+        (
             {"secrets\tmissing-password\tPASSWORD"},
             {"secrets\tpresence-unknown\tPASSWORD"},
             "- Das Passwort der Sicherung wird nicht mehr als fehlend gemeldet.",
         ),
     ],
-    ids=["one of two containers recovers", "one of two backups recovers", "two hook rules give one line", "missing password turns unobservable"],
+    ids=["one of two containers recovers", "one of two backups recovers", "two hook rules give one line", "one of two lenient secrets recovers", "one of two failed verifications recovers", "missing password turns unobservable"],
 )
 def test_the_recovery_of_a_subject_is_mailed_while_another_subject_stays_broken(previous, current, erledigt) -> None:
     """#415 Z4: a mail that comes because an action went says what went, once, and claims no presence it did not see."""
