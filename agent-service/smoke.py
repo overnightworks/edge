@@ -57,7 +57,9 @@ class QuietParser(argparse.ArgumentParser):
     """A rejected argument is never printed: a token typed as an option must not reach a log."""
 
     def error(self, message: str) -> NoReturn:
-        self.exit(2, "smoke: unusable arguments; the options are --timeout, --cancel, --tool and --offer\n")
+        self.exit(
+            2, "smoke: unusable arguments; the options: --timeout, --cancel, --tool, --offer\n"
+        )
 
 
 @dataclass(frozen=True)
