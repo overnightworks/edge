@@ -199,6 +199,8 @@ class RuleReport:
     """What the area line says after the level when the rule is a note; the sentence without its final period when empty."""
     resolved: str = ""
     """What the mail says once an action is gone, as a sentence that reads true on its own."""
+    hides_state: bool = False
+    """Whether the rule means its check cannot read the state it checks, so no other action of that check may be reported as done."""
 
 
 AGENT_STEP = "Sag einem Agenten „{area}: bitte schau nach“."
@@ -215,7 +217,7 @@ SETUP_APPLY = "Führe `hal setup --apply` aus."
 HOOK_BROKEN = RuleReport(
     ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY, resolved="Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder."
 )
-LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP, resolved="Der Check kann die Logs wieder vollständig sehen.")
+LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP, resolved="Der Check kann die Logs wieder vollständig sehen.", hides_state=True)
 LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.", area_note="noch nicht überall nach 30 Tagen gelöscht")
 SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.", area_note="ein Ordner bei den Geheimnissen ist nicht in Form")
 # The sentence of a rule names only what the mail may carry: a Compose project or an app by name, never a secret, a path or a home file (#415 Z6).
@@ -224,11 +226,11 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt", "{subject} meldet sich nicht mehr als abgestürzt."),
     ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich nicht mehr krank."),
     ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} meldet keinen Fehlerabbruch mehr."),
-    ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen."),
+    ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen.", hides_state=True),
     ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
     ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
     ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr."),
-    ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt."),
+    ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt.", hides_state=True),
     ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr."),
     ("hook", "hooks-path"): HOOK_BROKEN,
     ("hook", "hook-file"): HOOK_BROKEN,
@@ -241,7 +243,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
         ACTION, "Ein ausgemusterter Schlüssel ist noch nicht als widerrufen bestätigt.", HOME_NEXT, resolved="Ein ausgemusterter Schlüssel ist als widerrufen bestätigt."
     ),
     ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT, resolved="Die Prüfung einer Anmeldung meldet keinen Fehler mehr."),
-    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT, resolved="Das Passwort der Sicherung ist wieder da."),
+    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT, resolved="Das Passwort der Sicherung wird nicht mehr als fehlend gemeldet."),
     ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten{readers} fehlen noch."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
     ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
@@ -361,15 +363,15 @@ def _action_lines(current: frozenset[str], previous: frozenset[str] | None) -> l
 
 
 def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
-    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or under the same sentence, and no current action of its check that cannot be read."""
+    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or with the same sentence, and no current action of its check that cannot be read."""
     current_actions = _items(_actions(current))
     held_back = {(item.check, _split(item.identity)[2]) for item in current_actions}
-    held_reports = {item.report for item in current_actions}
-    unreadable_checks = {item.check for item in current_actions if _split(item.identity)[1].endswith("unreadable")}
+    held_sentences = {item.sentence for item in current_actions}
+    unreadable_checks = {item.check for item in current_actions if item.report.hides_state}
     gone = [
         item
         for item in _items(_actions(previous) - current)
-        if (item.check, _split(item.identity)[2]) not in held_back and item.report not in held_reports and item.check not in unreadable_checks
+        if (item.check, _split(item.identity)[2]) not in held_back and item.sentence not in held_sentences and item.check not in unreadable_checks
     ]
     return _capped([f"- {sentence}" for sentence in dict.fromkeys(item.resolved for item in gone)])
 
