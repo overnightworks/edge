@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from edge import catalog, compose, core, switches
+from edge import barrier, catalog, compose, core, switches
 
 
 class Action(StrEnum):
@@ -96,6 +96,36 @@ def plan_switches(
 
 DIGEST_SEPARATOR = "@"
 KEPT_IMAGE_OWNER = "the upgrade is yours (block 6; Keycloak with a dump first, K11b)"
+
+
+def unit_gates(
+    units: Sequence[catalog.Unit], switched_off: Mapping[str, str | None]
+) -> dict[str, core.Gate]:
+    """Each catalogued unit's gate for its followers: on while enabled and not switched off,
+    whether or not it is up (#89)."""
+    return {unit.key: _gate(unit, switched_off) for unit in units}
+
+
+def _gate(unit: catalog.Unit, switched_off: Mapping[str, str | None]) -> core.Gate:
+    if unit.key in switched_off:
+        return core.Gate.SWITCHED_OFF
+    if not unit.enabled:
+        return core.Gate.OFF
+    return core.Gate.ON
+
+
+def switched_off_units(
+    fleet: Fleet, read: Mapping[str, switches.Mark | None], repository: Path
+) -> dict[str, str | None]:
+    """Each unit switched off by its marker (its time) or by a barrier a stop left (None)."""
+    switched_off = {}
+    for unit in fleet.units:
+        mark = read[unit.key]
+        services = fleet.profile_services[unit.key]
+        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit)
+        if barrier.switched_off(mark, ingress):
+            switched_off[unit.key] = mark.since if mark else None
+    return switched_off
 
 
 @dataclass(frozen=True)
