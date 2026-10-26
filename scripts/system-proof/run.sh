@@ -1,6 +1,6 @@
 #!/bin/bash
 # The container proof of `hal setup`'s system step (#40, cells 1-13), of its secrets step (S1) and of the agents'
-# account (#331, cells A1-1 to A1-9), of the mail of `home check` (#390, cells D1-D8): a throwaway Ubuntu 24.04 with systemd as PID 1, never the live PC, never the
+# account (#331, cells A1-1 to A1-9), of the mail of `home check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7): a throwaway Ubuntu 24.04 with systemd as PID 1, never the live PC, never the
 # real /etc or ~/.secrets. Cells 14-17 are unit tests (tests/test_next.py).
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>
@@ -91,9 +91,9 @@ prepared=$(start_container prepared)
 stage "$prepared" install
 stage "$prepared" prepared
 
-judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9 and D1-D8 printed a held line and none printed a failed one
+judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7 and T1-T5, T5b printed a held line and none printed a failed one
     local cells=$1 cell missing=()
-    for cell in {1..13} S1 A1-{1..9} D{1..8}; do
+    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} T{1..5} T5b; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then

@@ -3,9 +3,13 @@
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
 # python3 and python3-apt supply Ansible's interpreter and apt module binding in this fixture.
 # openssl and python3-aiosmtpd are for the mail cells (D1-D8): a test CA and a mail sink; msmtp itself comes from the apply.
+# rsyslog, postfix (preseeded to "No configuration", so /etc/postfix/main.cf is absent as on the PC, where its sendmail
+# logs a fatal every night) and kerneloops are Ubuntu's own packages as the PC has them, for the cells R0-R7 (#422): the
+# apply purges rsyslog, and the proof checks what that leaves. The base stays 24.04 until the system step runs on 26.04's sudo-rs (#374).
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-set-selections
 # Ansible dates the cache by its success stamp or the lists directory, so empty indexes must also be stale.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -15,11 +19,14 @@ RUN apt-get update \
         expect \
         git \
         gnupg \
+        kerneloops \
         openssl \
         polkitd \
+        postfix \
         python3 \
         python3-aiosmtpd \
         python3-apt \
+        rsyslog \
         sudo \
         systemd \
         systemd-sysv \
