@@ -513,11 +513,14 @@ LISTENERS_PROGRAM = (
 
 
 def network_ids(stack: Stack, name: str) -> list[str]:
-    return stack.run([
+    listed = stack.run([
         "docker", "network", "ls", "-q",
         "--filter", f"label=com.docker.compose.project={stack.project}",
         "--filter", f"label=com.docker.compose.network={name}",
-    ]).stdout.split()  # fmt: skip
+    ])  # fmt: skip
+    if listed.returncode != 0:
+        raise LiveSmokeFailed(f"docker network ls for {name} failed")
+    return listed.stdout.split()
 
 
 def inspect_network(stack: Stack, reference: str) -> dict:
@@ -559,7 +562,11 @@ def service_network_names(stack: Stack) -> list[str]:
     return list(stack.configuration["services"][SERVICE]["networks"])
 
 
-def egress_targets(stack: Stack) -> EgressTargets:
+def egress_targets(
+    stack: Stack,
+    resolve_provider: Callable[[str], str] = socket.gethostbyname,
+    discover_lan: Callable[[], str] = lan_address,
+) -> EgressTargets:
     """The host looks up the addresses, because the container has no DNS and no Docker."""
     egress = project_network(stack, "egress")
     agent_networks = {
@@ -568,11 +575,11 @@ def egress_targets(stack: Stack) -> EgressTargets:
         if name != "egress"
     }
     return EgressTargets(
-        provider=socket.gethostbyname(PROVIDER_HOST),
+        provider=resolve_provider(PROVIDER_HOST),
         reach={
             "docker0": gateways_of(inspect_network(stack, "bridge"))[0],
             "internet": gateways_of(project_network(stack, "internet"))[0],
-            "lan": lan_address(),
+            "lan": discover_lan(),
             **{f"{name}_free": unused_address(net) for name, net in agent_networks.items()},
             "egress_free": unused_address(egress),
         },

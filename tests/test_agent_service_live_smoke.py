@@ -353,11 +353,8 @@ TARGETS = live_smoke.EgressTargets(
 )
 
 
-def test_the_targets_cover_every_network_the_resolved_service_joins_but_name_none_by_literal(
-    monkeypatch,
-):
-    monkeypatch.setattr(live_smoke.socket, "gethostbyname", lambda _: "160.79.104.10")
-    monkeypatch.setattr(live_smoke, "lan_address", lambda: "192.168.1.5")
+def test_the_targets_cover_every_network_the_resolved_service_joins_but_name_none_by_literal():
+    """#351 F2 / E7: the targets follow the resolved service's networks, none named by literal."""
 
     def docker(command: list[str]) -> subprocess.CompletedProcess:
         if "config" in command:
@@ -371,7 +368,11 @@ def test_the_targets_cover_every_network_the_resolved_service_joins_but_name_non
         config = [{"Subnet": subnet, "Gateway": gateway}]
         return completed(json.dumps([{"IPAM": {"Config": config}, "Containers": {}}]))
 
-    targets = live_smoke.egress_targets(FakeStack(answer=docker))
+    targets = live_smoke.egress_targets(
+        FakeStack(answer=docker),
+        resolve_provider=lambda _: "160.79.104.10",
+        discover_lan=lambda: "192.168.1.5",
+    )
 
     assert {"mcp_free", "agent-songmaker_free", "agent-presentator_free"} <= set(targets.reach)
     assert "agent_free" not in targets.reach
