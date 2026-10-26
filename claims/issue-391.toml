@@ -1,0 +1,8 @@
+claim_id = "d0e98277f29b47f990792f956cf1a54d"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "e99efa1a03a056f3ce745958720e543dfddb8384"
+branch = "claude/issue-391-agent-runtime-0-8-0"
+scope = ["agent-service/image/requirements.txt", "agent-service/live_smoke.py", "agent-service/service.toml", "agent-service/setup", "agent-service/smoke.py", "compose.yaml", "docs/agent-service.md", "probe/agent-service/image.py", "probe/agent-service/refusals.py", "probe/agent-service/unit.py", "tests/live_smoke_fakes.py", "tests/test_agent_service_image.py", "tests/test_agent_service_live_smoke.py", "tests/test_agent_service_setup.py", "tests/test_agent_service_smoke.py", "tests/test_agent_service_unit.py"]
+opened_commit = "4f724a24650dbf044d9cf8ac68bdb8d12af81ba5"
+whole_reason = "The lock, the image name, the background key and their pins go live in one recreate: split, the 0.8.0 service exits 2 or compose runs another image than the lock names; the offer cell proves the route that recreate opens."
