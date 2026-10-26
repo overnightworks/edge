@@ -157,7 +157,8 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     groups = declared.identities[observe.GROUP.name]
 
     assert issuer.path == f"/realms/{realm['realm']}"
-    assert (jwks.scheme, jwks.hostname) == ("https", issuer.hostname)
+    assert jwks.scheme == "https"
+    assert jwks.hostname == issuer.hostname
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
     assert (
@@ -212,7 +213,8 @@ def test_songmakers_mcp_origin_is_the_host_traefik_mcp_answers_to_on_mcp(configu
         "songmaker"
     ]
 
-    assert (origin.scheme, origin.hostname) == ("https", "songmaker.mcp.internal")
+    assert origin.scheme == "https"
+    assert origin.hostname == "songmaker.mcp.internal"
     assert origin.hostname in compose["services"]["traefik-mcp"]["networks"]["mcp"]["aliases"]
     assert f"Host(`{origin.hostname}`)" in router["rule"]
     assert "mcp" in compose["services"][SERVICE]["networks"]
