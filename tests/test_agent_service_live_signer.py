@@ -52,7 +52,10 @@ class FakeStandIn:
         return 0
 
 
-def recreated_service(joined, mounted, shared, open_network, mcp_members):
+def recreated_service(
+    joined, mounted, shared, open_network, mcp_members,
+    bridged_network=None, resolved_file=None, failed_listing=False,
+):  # fmt: skip
     """The docker answers about the recreated service: its resolved configuration, its container
     and the project's networks. `mcp_members` gives the MCP network's members when asked."""
     joined = tuple(SERVICE_NETWORKS.values()) if joined is None else joined
@@ -63,7 +66,11 @@ def recreated_service(joined, mounted, shared, open_network, mcp_members):
         return {
             "Name": SERVICE_NETWORKS.get(key, NETWORK),
             "Internal": key != open_network,
-            "Options": {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"},
+            "Options": {
+                "com.docker.network.bridge.gateway_mode_ipv4": (
+                    "nat-unprotected" if key == bridged_network else "isolated"
+                )
+            },
             "Containers": {member: {} for member in present},
         }
 
@@ -71,6 +78,8 @@ def recreated_service(joined, mounted, shared, open_network, mcp_members):
         if "config" in command:
             document = resolved_configuration()
             document["networks"]["mcp-songmaker"] = {"name": NETWORK}
+            if resolved_file:
+                document["secrets"][next(iter(SECRET_FILES))]["file"] = resolved_file
             return completed(json.dumps(document))
         if command[:2] == ["docker", "inspect"]:
             container = {
@@ -82,6 +91,8 @@ def recreated_service(joined, mounted, shared, open_network, mcp_members):
             }
             return completed(json.dumps([container]))
         if command[:3] == ["docker", "network", "ls"]:
+            if failed_listing:
+                return completed("", returncode=1)
             key = next(a for a in command if "compose.network=" in a).rpartition("=")[2]
             return completed("" if key == "agent" and shared is None else f"id-{key}\n")
         if command[:3] == ["docker", "network", "inspect"]:
@@ -118,6 +129,9 @@ def signer_docker(
         recreated.get("shared"),
         recreated.get("open_network"),
         mcp_members,
+        bridged_network=recreated.get("bridged_network"),
+        resolved_file=recreated.get("resolved_file"),
+        failed_listing=recreated.get("failed_listing", False),
     )
 
     def answer(command: list[str]) -> subprocess.CompletedProcess:
@@ -440,6 +454,9 @@ def test_l3a_holds_when_networks_and_mount_sources_equal_the_resolved_configurat
         ({"joined": (*SERVICE_NETWORKS.values(), "hal_agent")}, "L3 networks"),
         ({"open_network": "agent-presentator"}, "L3 networks"),
         ({"open_network": "mcp"}, "L3 networks"),
+        ({"bridged_network": "agent-presentator"}, "L3 networks"),
+        ({"bridged_network": "mcp"}, "L3 networks"),
+        ({"resolved_file": "/elsewhere/root_ca.crt"}, "L3 mounts"),
         (
             {"mounted": ("/home/x/.secrets/agent-service/signing", "/other/root_ca.crt")},
             "L3 mounts",
@@ -475,6 +492,15 @@ def test_l3b_a_shared_network_with_members_fails_and_nothing_is_removed():
 
     assert code == 1
     assert any(line.startswith("L3 shared network") and "FAILED" in line for line in printed)
+    assert not any(command[:3] == ["docker", "network", "rm"] for command in stack.asked)
+
+
+def test_l3b_a_failed_network_listing_is_not_taken_for_an_absent_shared_network():
+    stack = standin_stack(failed_listing=True)
+
+    with pytest.raises(LiveSmokeFailed, match="docker network ls"):
+        run_signer(stack)
+
     assert not any(command[:3] == ["docker", "network", "rm"] for command in stack.asked)
 
 

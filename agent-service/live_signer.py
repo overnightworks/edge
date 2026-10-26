@@ -7,7 +7,7 @@ It proves what the service signs for one tool, through songmaker's own client an
 gateway, with no paid turn: both runs fail before any CLI starts. You sign in as for
 `live_smoke.py`. The command recreates the service and judges the recreate (L3): the service's
 networks are the resolved ones and each is internal and isolated, and its two secret mounts come
-from the files `service.toml` names. It then removes the shared `hal_agent` network once it is
+from the files `compose.yaml` names. It then removes the shared `hal_agent` network once it is
 empty, and refuses while it has a member. Then it runs `agent-smoke` with one tool:
 L4a with no backend behind the gateway (the run must end `failed` with no text, the gateway
 having refused), L4b with the capture verifier `mcp_signer.py` at songmaker-web's place on the MCP
@@ -149,7 +149,7 @@ def l3_networks_cell(stack: Stack, container: dict) -> Cell:
 
 def l3_mounts_cell(stack: Stack, container: dict) -> Cell:
     """Each secret is mounted from the file the resolved configuration names, and that file is
-    the one the secrets manifest names: the private file alone, never its folder."""
+    the one SECRET_SOURCES names: the private file alone, never its folder."""
     declared = stack.configuration["secrets"]
     seen = {
         mount["Destination"]: mount["Source"]
