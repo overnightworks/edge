@@ -1220,7 +1220,7 @@ cell_r1() {
         [[ ! -e $conffile ]] || missing+=("$conffile")
     done <"$PACKAGE_CONFFILES"
     verdict R1 "rsyslog is purged: no package, no unit, no conffile of it left (${missing[*]:-none})" \
-        '! dpkg -s rsyslog >/dev/null 2>&1 && ! systemctl cat rsyslog.service >/dev/null 2>&1 && [[ ${#missing[@]} -eq 0 ]]'
+        '[ -s "$PACKAGE_CONFFILES" ] && ! dpkg -s rsyslog >/dev/null 2>&1 && ! systemctl cat rsyslog.service >/dev/null 2>&1 && ! systemctl cat syslog.service >/dev/null 2>&1 && [[ ${#missing[@]} -eq 0 ]]'
     verdict R1 "syslog.socket is inactive" '[[ $(systemctl is-active syslog.socket) == inactive ]]'
     verdict R1 "the six files and every archive are gone, and none was copied to the backups" \
         'no_planted_file_exists && [[ -z $(find /var/backups/home-setup -name "*.log*" -o -name "syslog*" -o -name "mail.err*" 2>/dev/null) ]]'
@@ -1317,7 +1317,7 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
     done <"$PACKAGE_CONFFILES"
     logger "$line"
     verdict R5 "apt install rsyslog restores a package dpkg finds unchanged, and its conffiles (${missing[*]:-none missing})" \
-        '[[ -z $(dpkg --verify rsyslog) ]] && [[ ${#missing[@]} -eq 0 ]] && [ -e /etc/rsyslog.d/50-default.conf ]'
+        '[ -s "$PACKAGE_CONFFILES" ] && [[ -z $(dpkg --verify rsyslog) ]] && [[ ${#missing[@]} -eq 0 ]] && [ -e /etc/rsyslog.d/50-default.conf ]'
     verdict R5 "a logged line lands in /var/log/syslog" \
         'for _ in {1..30}; do grep -q "$line" /var/log/syslog 2>/dev/null && break; sleep 1; done; grep -q "$line" /var/log/syslog'
     return
@@ -1325,7 +1325,7 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) plant_rsyslog_files record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cell_dk1; cells_retention; cells_polkit; marker_on ;;
+    fresh) plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cell_dk1; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
     after-unmarked-reboot) cell_8; cell_r5 ;;
     prepared) prepare_today; cell_2 ;;
