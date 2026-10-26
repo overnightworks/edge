@@ -168,10 +168,10 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
-def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_no_tools(
+def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrides_no_model(
     configuration, realm
 ):
-    """The workload clients of #183; no app lists tools or an MCP origin yet."""
+    """The workload clients of #183; no app lists tools or overrides the model (N2)."""
     service_accounts = {
         client["clientId"] for client in realm["clients"] if client.get("serviceAccountsEnabled")
     }
@@ -179,7 +179,7 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_lists_n
     assert configuration["apps"]
     for app in configuration["apps"].values():
         assert app["workload_client"] in service_accounts
-        assert not {"tools", "mcp_origin", "purposes", "models"} & app.keys()
+        assert not {"tools", "purposes", "models"} & app.keys()
 
 
 def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
@@ -203,3 +203,46 @@ def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_m
     configuration,
 ):
     assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
+
+
+def test_songmakers_mcp_origin_is_the_host_traefik_mcp_answers_to_on_mcp(configuration):
+    """E1, T1: the origin's host is traefik-mcp's alias on `mcp` and the route's router host."""
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    origin = urlsplit(configuration["apps"]["songmaker"]["mcp_origin"])
+    router = yaml.safe_load((ROOT / "mcp/dynamic/songmaker.yml").read_text())["http"]["routers"][
+        "songmaker"
+    ]
+
+    assert (origin.scheme, origin.hostname) == ("https", "songmaker.mcp.internal")
+    assert origin.hostname in compose["services"]["traefik-mcp"]["networks"]["mcp"]["aliases"]
+    assert f"Host(`{origin.hostname}`)" in router["rule"]
+    assert "mcp" in compose["services"][SERVICE]["networks"]
+    assert "mcp-songmaker" not in compose["services"][SERVICE]["networks"]
+
+
+def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_paths(
+    service, configuration
+):
+    """E3, B1, T1: `key_file` and `ca_file` are the service's secret targets, and each secret's
+    source is the path the secrets manifest names for it, so the folder is never mounted."""
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    manifest = tomllib.loads((ROOT / "src/home_tools/secrets_manifest.toml").read_text())
+    paths = {entry["name"]: entry["paths"] for entry in manifest["secret"]}
+    key_secret, ca_secret = "agent_service_signing_key", "step_ca_root_certificate"
+
+    assert set(service["secrets"]) == {key_secret, ca_secret}
+    assert configuration["signing"] == {"key_file": f"/run/secrets/{key_secret}"}
+    assert configuration["mcp"] == {"ca_file": f"/run/secrets/{ca_secret}"}
+    assert [compose["secrets"][key_secret]["file"].replace("${HOME}", "~")] == [
+        path.removesuffix("*") for path in paths["agent-service/signing-key"]
+    ]
+    assert [compose["secrets"][ca_secret]["file"].replace("${HOME}", "~")] == paths[
+        "step-ca/root_ca.crt"
+    ]
+    assert "agent-service" in {
+        reader
+        for entry in manifest["secret"]
+        if entry["name"] == "step-ca/root_ca.crt"
+        for reader in entry["read_by"]
+    }
+    assert not any("signing" in str(volume["source"]) for volume in service["volumes"])
