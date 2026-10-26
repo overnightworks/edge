@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "96ddac7d97330799eab33c40e6cfc1573a8b4e3c"
 branch = "claude/issue-415-plain-mail"
-scope = ["docs/home.md", "scripts/system-proof/drive.sh", "src/home_tools/backup_check.py", "src/home_tools/check.py", "src/home_tools/hook_check.py", "src/home_tools/logs_check.py", "src/home_tools/platform_check.py", "src/home_tools/report.py", "src/home_tools/secrets_view.py", "src/home_tools/tidy_home.py", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_check_levels.py"]
+scope = ["docs/home.md", "quality/baseline.toml", "scripts/system-proof/drive.sh", "src/home_tools/backup_check.py", "src/home_tools/check.py", "src/home_tools/hook_check.py", "src/home_tools/logs_check.py", "src/home_tools/platform_check.py", "src/home_tools/report.py", "src/home_tools/secrets_view.py", "src/home_tools/tidy_home.py", "systemd/home-check.service", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_check_levels.py", "tests/home/test_cli.py"]
 opened_commit = "b1203224842f994c0db0e0779335dd9a821e76f1"
 whole_reason = "The level of a rule, its sentence, the subject and the trigger are one table: a rule without a level or a test that still pins the old subject makes the mail say „in Ordnung“ or „Handlungsbedarf“ wrongly, so the six check modules, the mail builder, the tests that pin it and the doc move together."
