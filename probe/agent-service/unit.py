@@ -63,6 +63,7 @@ from issuer import ISSUER_SERVICE, LISTENING, IssuerProbe, wait_for_listening
 from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
 from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
+from signer import SignerProbe
 
 from edge import compose
 
@@ -716,9 +717,15 @@ class Cell(StrEnum):
     UNIT = "unit"
     SMOKE = "smoke"
     CONTAINMENT = "containment"
+    SIGNER = "signer"
 
 
-PROBES = {Cell.UNIT: UnitProbe, Cell.SMOKE: SmokeProbe, Cell.CONTAINMENT: ContainmentProbe}
+PROBES = {
+    Cell.UNIT: UnitProbe,
+    Cell.SMOKE: SmokeProbe,
+    Cell.CONTAINMENT: ContainmentProbe,
+    Cell.SIGNER: SignerProbe,
+}
 
 
 def main() -> int:
