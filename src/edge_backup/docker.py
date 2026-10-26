@@ -17,9 +17,9 @@ SERVICE_LABEL = "com.docker.compose.service"
 VOLUME_LABEL = "com.docker.compose.volume"
 # `docker compose run` leaves one-off containers with the same project and service labels.
 ONEOFF_LABEL = "com.docker.compose.oneoff"
-RESTORE_SERVER = "edge-backup-restore-test"
-# Marks a throwaway server as edge-backup's own: only a container carrying it is ever removed.
-RESTORE_OWNER_LABEL = "edge-backup.role"
+RESTORE_SERVER = "hal-backup-restore-test"
+# Marks a throwaway server as hal backup's own: only a container carrying it is ever removed.
+RESTORE_OWNER_LABEL = "hal-backup.role"
 RESTORE_OWNER_ROLE = "restore-test"
 RESTORE_DATABASE = "restore_test"
 # The image's superuser; `docker exec` runs as root, which is no role in the server.

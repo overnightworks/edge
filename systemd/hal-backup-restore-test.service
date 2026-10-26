@@ -1,5 +1,5 @@
 [Unit]
-Description=edge-backup: restore the latest snapshots and prove they are good
+Description=hal backup: restore the latest snapshots and prove they are good
 Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]

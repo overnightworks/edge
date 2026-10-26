@@ -236,7 +236,7 @@ def run_edge_backup(
     command: list[str], timeout: int, stdin: str | None = None, *, say: Say
 ) -> subprocess.CompletedProcess[str]:
     """Run hal backup or hal restore to its end, in a session of its own, so the terminal's Ctrl-C
-    reaches only this step. On the timeout or the first Ctrl-C it is stopped as the `edge-backup`
+    reaches only this step. On the timeout or the first Ctrl-C it is stopped as the `hal-backup`
     systemd unit is (`KillMode=control-group` default): SIGTERM to its whole group, then
     `STOP_GRACE_SECONDS` to remove its staging and restore container."""
     try:

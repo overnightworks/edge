@@ -728,7 +728,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             name="restic/password",
             kind=SecretKind.HUMAN_PASSWORD,
             paths=(PurePosixPath(".secrets/restic/password"),),
-            read_by=("edge-backup.service", "edge-backup-restore-test.service"),
+            read_by=("hal-backup.service", "hal-backup-restore-test.service"),
             recreate=RESTIC_RECREATE,
             purpose="hal backup verschlüsselt damit die restic-Backups; ohne es sind sie unlesbar.",
         ),
@@ -760,7 +760,7 @@ def test_the_packaged_manifest_carries_the_ruled_contract_of_each_issue_42_entry
 
 
 def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, probe: FakeProbe, capsys) -> None:
-    """#42 M1/M4: every planted file is known, none is an unknown file, and edge-backup.service lists restic/password."""
+    """#42 M1/M4: every planted file is known, none is an unknown file, and hal-backup.service lists restic/password."""
     home = tmp_path / "home"
     plant_secrets(home)
 
@@ -772,7 +772,7 @@ def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, 
     assert findings_of(view, "unknown-file") == {}
     assert rows_of(view)["github/token"][-1] == "Widerruf: https://github.com/settings/tokens"
     assert "| ssh/id_ed25519 | ssh/id_ed25519.ppk |" in by_service
-    assert "| edge-backup.service | restic/password |" in by_service
+    assert "| hal-backup.service | restic/password |" in by_service
 
 
 def never_asked(*_: object) -> object:

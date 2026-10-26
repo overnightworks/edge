@@ -1,5 +1,5 @@
 [Unit]
-Description=edge-backup: encrypted restic backup of the declared apps
+Description=hal backup: encrypted restic backup of the declared apps
 Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]

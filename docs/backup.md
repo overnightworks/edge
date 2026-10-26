@@ -71,7 +71,7 @@ The one-time setup is: `uv sync` (builds the `.venv` the units run); a restic pa
 `~/.secrets/restic/password` (random, mode 0600, directory 0700); `hal backup --init` (creates
 `~/backups/restic` once, mode 700); `loginctl enable-linger "$USER"` so the user timers run without a
 login session; and `~/git/edge/bin/hal setup --apply`, which links the units in `systemd/`
-(`edge-backup{,-restore-test}.{service,timer}`) into `~/.config/systemd/user/`, reloads systemd and
+(`hal-backup{,-restore-test}.{service,timer}`) into `~/.config/systemd/user/`, reloads systemd and
 enables the user timers. The units expect the checkout at `~/git/edge`.
 
 Keep a copy of the password in the password manager or on paper. **Without it the repository cannot be
@@ -81,16 +81,16 @@ read by anyone, ever:** losing the key loses every backup, and restic has no rec
 
 | Timer | When | Does |
 |---|---|---|
-| `edge-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --keep-tag pre-apply --prune` and `check`, only when every app backed up |
-| `edge-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
+| `hal-backup.timer` | Sunday 03:00, `Persistent=true` | dump, count, back up; then `forget --keep-weekly 4 --keep-monthly 3 --keep-tag pre-apply --prune` and `check`, only when every app backed up |
+| `hal-backup-restore-test.timer` | first Sunday of the month 05:00, `Persistent=true` | restore the last successful backup's snapshot, load and verify it; then `check --read-data-subset=10%` |
 
 A missed run (PC off) runs at the next boot. If Docker or the app's database is not up yet, the backup
 waits up to 10 minutes, then fails. One host lock (`~/.local/state/edge/backup.lock`) serialises every
 `hal backup` or `hal restore` run: run by hand during a backup or restore test, `hal restore --list`,
 `hal restore` or any other verb waits silently until that run ends.
 
-To run now, start the same units the timers take (`systemctl --user start edge-backup.service` and
-`edge-backup-restore-test.service`); the last journal line of the unit is the verdict.
+To run now, start the same units the timers take (`systemctl --user start hal-backup.service` and
+`hal-backup-restore-test.service`); the last journal line of the unit is the verdict.
 `hal restore --list` lists the repository.
 
 ### One app, and the pre-apply snapshot

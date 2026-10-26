@@ -1216,8 +1216,8 @@ def _unit(name: str) -> configparser.ConfigParser:
 @pytest.mark.parametrize(
     ("unit", "calendar", "command"),
     [
-        ("edge-backup", "Sun *-*-* 03:00:00", ["backup"]),
-        ("edge-backup-restore-test", "Sun *-*-01..07 05:00:00", ["restore", "--test"]),
+        ("hal-backup", "Sun *-*-* 03:00:00", ["backup"]),
+        ("hal-backup-restore-test", "Sun *-*-01..07 05:00:00", ["restore", "--test"]),
     ],
 )
 def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
