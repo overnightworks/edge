@@ -1,0 +1,7 @@
+claim_id = "b447e070aeaf4b86b53bdb60b92069a8"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "633cf61386d5e4a9c987c6a8fd0bfa26e2d00521"
+branch = "fix/deps-compose"
+scope = [".aco/board.toml"]
+opened_commit = "f159136741a821dbbff2a4bff96a2aba7f5f7cd6"
