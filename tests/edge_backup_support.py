@@ -15,6 +15,7 @@ import pytest
 from edge_backup import host
 from edge_backup.cli import DEFAULT_APPS
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE, RESTORE_SERVER
+from edge_backup.settings import RESTIC_HOSTNAME
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
 DUMP = b"PGDMP custom archive"
@@ -270,6 +271,7 @@ class Machine:
             {
                 "id": snapshot_id,
                 "app": app,
+                "host": argv[argv.index("--hostname") + 1],
                 "db": {
                     path.name: path.read_bytes()
                     for path in staging.iterdir()
@@ -285,10 +287,21 @@ class Machine:
     def _snapshots(self, argv, **_) -> bytes:
         if "--json" in argv:
             tag = argv[argv.index("--tag") + 1]
-            tagged = [s for s in self.snapshots if s.get("app", "songmaker") == tag]
+            host_name = argv[argv.index("--host") + 1]
+            tagged = [
+                s
+                for s in self.snapshots
+                if s.get("app", "songmaker") == tag and s.get("host", RESTIC_HOSTNAME) == host_name
+            ]
             listed = tagged[-1:] if "--latest" in argv else tagged
             return json.dumps([{"id": s["id"]} for s in listed]).encode()
-        return f"{len(self.snapshots)} snapshots\n".encode()
+        shown = [
+            s
+            for s in self.snapshots
+            if "--host" not in argv
+            or s.get("host", RESTIC_HOSTNAME) == argv[argv.index("--host") + 1]
+        ]
+        return "".join(f"{s['id']} {s.get('host', RESTIC_HOSTNAME)}\n" for s in shown).encode()
 
     def _restore(self, argv, **_) -> bytes:
         snapshot_id = argv[argv.index("restore") + 1].split(":")[0]
