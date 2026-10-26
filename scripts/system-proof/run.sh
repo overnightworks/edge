@@ -57,9 +57,9 @@ wait_for_boot() {  # wait_for_boot <container>: until systemd reports running or
 
 start_container() {  # start_container <name>: systemd as PID 1, the tester's password set for this run only
     local name=$1 container
-    # The engine inside stores its images in an anonymous volume: overlay does not work on overlay. cleanup removes it with the container.
+    # The engine inside stores its images and its snapshots in anonymous volumes: overlay does not work on overlay. cleanup removes it with the container.
     container=$(docker run --detach --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
-        --volume /var/lib/docker \
+        --volume /var/lib/docker --volume /var/lib/containerd \
         --name "home-tools-system-proof-$name-$$" "$image")
     echo "$container" >>"$evidence/containers.txt"
     wait_for_boot "$container"
