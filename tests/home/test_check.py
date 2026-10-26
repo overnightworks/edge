@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import email.message
-import email.policy
-import json
 import os
 import shutil
-import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, TEST_MANIFEST, INSPECT_CANARY, PASSWORD_CANARY, FakeProbe, RunnerWithRealGitAndQuality, Sandbox, SentMail, MailStub, set_up_mail
+from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, FakeProbe, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
 
-from home_tools import backup_check, check, cli, logs_check, mail
+from home_tools import check, mail
 from home_tools.tidy_home import Layout, run_command
+
+
+pytestmark = pytest.mark.usefixtures("quiet_pc")
 
 
 @pytest.fixture
@@ -26,74 +25,11 @@ def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> 
     return furnish_clean_home(sandbox.home)
 
 
-class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
-    """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
-
-    container_listing = ""
-    platform_listing = ""  # what `docker inspect` answers the platform check: name, state, health, exit code, compose project or nothing per line
-
-    def __call__(self, argv: Sequence[str]) -> str | None:
-        if argv[0] == "journalctl":
-            return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
-        if argv[:2] == ["docker", "inspect"] and argv[3] != logs_check.INSPECT_FORMAT:
-            self.calls.append(list(argv))
-            return self.platform_listing if argv[3] == ALLOWED_PLATFORM_INSPECT_FORMAT else CANARY_INSPECT_LINE
-        if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
-            self.calls.append(list(argv))
-            return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
-        if argv[0] == "sh":
-            self.calls.append(list(argv))
-            return run_command(argv)
-        return super().__call__(argv)
-
-
-@pytest.fixture(autouse=True)
-def quiet_platform(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The platform check looks at this machine's reboot flag; the tests look at a path that holds none."""
-    monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
-
-
-def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | None = None) -> None:
-    last_backup = last_backup or datetime.now().astimezone()
-    document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
-    document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
-    status_file = home / backup_check.STATUS_FILE
-    status_file.parent.mkdir(parents=True, exist_ok=True)
-    status_file.write_text(json.dumps(document))
-
-
-@pytest.fixture(autouse=True)
-def good_backup(clean_home: Path) -> None:
-    """These tests are about the check's reporting and news; a backup that ran today keeps its check clean (its own tests: test_backup_check.py)."""
-    write_backup_status(clean_home)
-
-
 @pytest.fixture
 def runner() -> RunnerWithCleanLogs:
     return RunnerWithCleanLogs()
 
-
-@pytest.fixture(autouse=True)
-def hook_installed(sandbox: Sandbox, clean_home: Path) -> None:
-    """These tests are about the check's reporting and news; a set-up hook keeps its check clean (its own tests: test_hook_check.py)."""
-    assert cli.main(["setup", "--apply"], home=clean_home) == 0
-
-
-def home_check(home: Path, runner, probe: FakeProbe | None = None) -> int:
-    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe())
-
-
 ACTION_TITLE = "PC-Check: Handlungsbedarf – Dienste"
-REPORT_DISPLAY = "~/.local/state/home/check-report.md"
-
-
-def restarting_containers(runner, *names: str) -> None:
-    """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
-    runner.platform_listing = "".join(f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",))
-
-
-def no_container_restarts(runner) -> None:
-    runner.platform_listing = ""
 
 
 def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, leave_pasted_image, runner) -> None:
@@ -459,15 +395,6 @@ def test_a_symlinked_findings_memory_is_refused_and_never_carried_into_the_state
     assert not any("leaked-secret" in path.read_text() for path in state_files)
 
 
-@pytest.fixture
-def mail_stub(clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MailStub:
-    return set_up_mail(clean_home, tmp_path, monkeypatch)
-
-
-def message_of(sent: SentMail) -> email.message.EmailMessage:
-    return email.message_from_string(sent.stdin, policy=email.policy.default)  # type: ignore[return-value]
-
-
 def test_the_first_news_is_mailed_once_with_the_title_as_subject_and_the_password_read_by_msmtp(clean_home, runner, mail_stub, capsys) -> None:
     """#390 C1, T1 and C9, R1 and #415 Z1: one mail per news, and the password canary reaches no output channel."""
     restarting_containers(runner)
@@ -485,76 +412,6 @@ def test_the_first_news_is_mailed_once_with_the_title_as_subject_and_the_passwor
     captured = capsys.readouterr()
     outputs = [captured.out, captured.err, layout.check_report_file.read_text(), layout.check_findings_file.read_text(), sent.stdin, *sent.arguments]
     assert not any(PASSWORD_CANARY in text for text in outputs)
-
-
-def a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image) -> None:
-    restarting_containers(runner, "presentator-live")
-    (clean_home / ".secrets" / "gitlab").unlink()
-    leave_pasted_image(clean_home)
-
-
-def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_number(clean_home, leave_pasted_image, runner, mail_stub) -> None:
-    """#415 Z2, Z6: mail A; the tidy file, the secret and the counts stay in the report."""
-    a_pc_with_a_service_down_a_missing_secret_and_litter(clean_home, runner, leave_pasted_image)
-    write_backup_status(clean_home, last_backup=datetime.now().astimezone().replace(hour=14, minute=15))
-
-    home_check(clean_home, runner)
-
-    body = message_of(mail_stub.sent[0]).get_content()
-    stamp = body.split("So steht der PC (")[1].split(")")[0]
-    assert body == f"""Handlungsbedarf
-
-1. presentator-live startet ständig neu und ist darum nicht erreichbar. (neu)
-   Nächster Schritt: Sag einem Agenten „presentator-live startet ständig neu, schau nach“.
-
-So steht der PC ({stamp})
-
-Dienste: Handlungsbedarf
-Sicherung: in Ordnung, zuletzt heute 14:15
-Commit-Schutz: in Ordnung
-Geheimnisse: Hinweis – Zugangsdaten für .bashrc fehlen noch
-Server-Logs: in Ordnung
-Aufräumen: Hinweis – es gibt etwas aufzuräumen
-
-Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
-Alles im Einzelnen: {REPORT_DISPLAY}
-"""
-
-
-def mailed_area_lines(clean_home, runner, mail_stub) -> list[str]:
-    restarting_containers(runner, "presentator-live")
-    home_check(clean_home, runner)
-    body = message_of(mail_stub.sent[0]).get_content()
-    return body.split("\n\n")[3].splitlines()
-
-
-@pytest.mark.parametrize(
-    ("read_by", "line"),
-    [('["hopin"]', "Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch"), ("[]", "Geheimnisse: Hinweis – Zugangsdaten fehlen noch")],
-    ids=["names the app that reads it", "names nobody when the manifest has no reader"],
-)
-def test_a_missing_secret_names_the_app_that_reads_it_and_never_the_secret(clean_home, runner, mail_stub, use_manifest, read_by, line) -> None:
-    """#415 Z2, Z6: the area line says whose credentials are missing from the manifest's read_by."""
-    use_manifest(TEST_MANIFEST.replace('read_by = [".bashrc"]', f"read_by = {read_by}"))
-    (clean_home / ".secrets" / "gitlab").unlink()
-
-    assert any(found.startswith(line) for found in mailed_area_lines(clean_home, runner, mail_stub))
-    assert "gitlab" not in message_of(mail_stub.sent[0]).get_content()
-
-
-def test_the_logs_note_reads_as_in_the_picture(clean_home, runner, mail_stub) -> None:
-    """#415 Z2: the area line is the clause of the picture, lower case after the dash and without a final period."""
-    runner.container_listing = "/songmaker-api-1\tjson-file\tsongmaker\n"
-
-    assert "Server-Logs: Hinweis – noch nicht überall nach 30 Tagen gelöscht" in mailed_area_lines(clean_home, runner, mail_stub)
-
-
-@pytest.mark.parametrize(("days_ago", "said"), [(0, "heute"), (1, "gestern")], ids=["today", "yesterday"])
-def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner, mail_stub, days_ago, said) -> None:
-    """#415 Z2: a healthy backup area still shows the last success, read from the status the backup check reads."""
-    write_backup_status(clean_home, last_backup=(datetime.now().astimezone() - timedelta(days=days_ago)).replace(hour=14, minute=15))
-
-    assert f"Sicherung: in Ordnung, zuletzt {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
 
 
 @pytest.mark.parametrize("sees_notes", [True, False], ids=["with notes", "clean"])

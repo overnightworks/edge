@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -287,6 +288,7 @@ def _rule_report(check_name: str, rule: str) -> RuleReport | None:
     return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS.get((check_name, rule))
 
 
+APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 NO_READERS: Mapping[str, str] = MappingProxyType({})
 
 
@@ -368,8 +370,8 @@ def _when(moment: datetime, now: datetime) -> str:
 
 def _area_line(items: list[Item], check_name: str, facts: MailFacts, now: datetime) -> str:
     level = _area_level(items, check_name)
-    notes = dict.fromkeys(item.area_note for item in items if item.check == check_name and item.level is Level.NOTE)
-    detail = f" – {'; '.join(notes)}" if level is Level.NOTE else ""
+    notes = [item.area_note for item in items if item.check == check_name and item.level is Level.NOTE]
+    detail = f" – {notes[0]}" if level is Level.NOTE else ""
     if check_name == "backup" and level is Level.OK and facts.last_backup:
         detail = f", zuletzt {_when(facts.last_backup, now)}"
     return f"{AREA_LABELS[check_name]}: {level.label}{detail}"
@@ -427,12 +429,15 @@ def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | Non
 
 
 def _mail_facts(ctx: CheckContext) -> MailFacts:
-    """A manifest that cannot be read leaves the app names out; the secrets check reports that failure itself."""
+    """A manifest that cannot be read leaves the app names out; the secrets check reports that failure itself.
+
+    `read_by` is free text, so only a reader that is a bare app or service name reaches the mail (no file, path or secret name).
+    """
     try:
         manifest = secrets_view.load_manifest(secrets_view.MANIFEST_PATH)
     except secrets_view.ManifestError:
         manifest = ()
-    readers = {entry.name: ", ".join(entry.read_by) for entry in manifest}
+    readers = {entry.name: ", ".join(reader for reader in entry.read_by if APP_NAME.fullmatch(reader)) for entry in manifest}
     return MailFacts(readers, backup_check.last_successful_backup(ctx.layout.home))
 
 

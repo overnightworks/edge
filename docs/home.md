@@ -146,7 +146,7 @@ Alles im Einzelnen: ~/.local/state/home/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
-Containers, Apps (aus `read_by` des Manifests) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
+Containers, Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
