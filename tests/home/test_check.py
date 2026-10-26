@@ -427,8 +427,9 @@ def test_an_action_that_goes_is_mailed_as_no_longer_current_and_the_title_is_the
 
     news = message_of(mail_stub.sent[1])
     assert news["Subject"] == ("PC-Check: in Ordnung – nur Hinweise" if sees_notes else "PC-Check: alles in Ordnung")
-    assert "Nicht mehr aktuell\n\n- presentator-live startet ständig neu und ist darum nicht erreichbar." in news.get_content()
+    assert "Erledigt\n\n- presentator-live läuft wieder." in news.get_content()
     assert "Handlungsbedarf\n\n1." not in news.get_content()
+    assert "startet ständig neu" not in news.get_content()
 
 
 def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_the_mail(clean_home, runner, mail_stub, use_manifest) -> None:
@@ -465,7 +466,7 @@ def test_a_restarting_container_that_then_exits_is_a_new_item(clean_home, runner
 
     body = message_of(mail_stub.sent[1]).get_content()
     assert "1. edge-a hat sich mit einem Fehler beendet. (neu)" in body
-    assert "- edge-a startet ständig neu" in body
+    assert "Erledigt" not in body
 
 
 def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
@@ -519,7 +520,7 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
     home_check(clean_home, runner)
 
     assert len(mail_stub.sent) == 1
-    assert "Nicht mehr aktuell\n\n- Die Prüfung Aufräumen lief nicht." in message_of(mail_stub.sent[0]).get_content()
+    assert "Erledigt\n\n- Die Prüfung Aufräumen läuft wieder." in message_of(mail_stub.sent[0]).get_content()
 
 
 def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, runner, capsys) -> None:

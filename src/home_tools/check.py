@@ -197,47 +197,51 @@ class RuleReport:
     next_step: str = ""
     area_note: str = ""
     """What the area line says after the level when the rule is a note; the sentence without its final period when empty."""
+    resolved: str = ""
+    """What the mail says once an action is gone, as a sentence that reads true on its own."""
 
 
 AGENT_STEP = "Sag einem Agenten „{area}: bitte schau nach“."
 
 
-def _container_report(sentence: str, problem: str) -> RuleReport:
-    return RuleReport(Level.ACTION, sentence, f"Sag einem Agenten „{{subject}} {problem}, schau nach“.")
+def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
+    return RuleReport(Level.ACTION, sentence, f"Sag einem Agenten „{{subject}} {problem}, schau nach“.", resolved=resolved)
 
 
 ACTION, NOTE = Level.ACTION, Level.NOTE
 HOME_NEXT = "Führe `home next` aus."
 BACKUP_NOW = "Führe `hal backup` aus."
 SETUP_APPLY = "Führe `hal setup --apply` aus."
-HOOK_BROKEN = RuleReport(ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY)
-LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP)
+HOOK_BROKEN = RuleReport(
+    ACTION, "Der Schutz, der jeden Commit auf Geheimnisse prüft, greift nicht.", SETUP_APPLY, resolved="Der Schutz, der jeden Commit auf Geheimnisse prüft, greift wieder."
+)
+LOGS_UNSEEN = RuleReport(ACTION, "Der Check kann die Logs nicht vollständig sehen.", AGENT_STEP, resolved="Der Check kann die Logs wieder vollständig sehen.")
 LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tagen gelöscht.", area_note="noch nicht überall nach 30 Tagen gelöscht")
 SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.", area_note="ein Ordner bei den Geheimnissen ist nicht in Form")
 # The sentence of a rule names only what the mail may carry: a Compose project or an app by name, never a secret, a path or a home file (#415 Z6).
 RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
-    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu"),
-    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt"),
-    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank"),
-    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet"),
-    ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP),
+    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu", "{subject} läuft wieder."),
+    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt", "{subject} läuft wieder."),
+    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich wieder gesund."),
+    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} läuft wieder."),
+    ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen."),
     ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
-    ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW),
-    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW),
-    ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW),
-    ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP),
+    ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
+    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die letzte Sicherung hat geklappt."),
+    ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt."),
+    ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr."),
     ("hook", "hooks-path"): HOOK_BROKEN,
     ("hook", "hook-file"): HOOK_BROKEN,
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
     ("hook", "hidden-hook"): RuleReport(NOTE, "Ein Repo-eigener Commit-Schritt wird verdeckt.", area_note="ein Repo-eigener Commit-Schritt wird verdeckt"),
-    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "Ein Geheimnis ist für andere lesbar.", HOME_NEXT),
-    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "Ein Geheimnis liegt hinter einem Verweis.", HOME_NEXT),
+    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "Ein Geheimnis ist für andere lesbar.", HOME_NEXT, resolved="Ein Geheimnis ist nicht mehr für andere lesbar."),
+    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "Ein Geheimnis liegt hinter einem Verweis.", HOME_NEXT, resolved="Ein Geheimnis liegt nicht mehr hinter einem Verweis."),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
-        ACTION, "Ein ausgemusterter Schlüssel ist noch nicht als widerrufen bestätigt.", HOME_NEXT
+        ACTION, "Ein ausgemusterter Schlüssel ist noch nicht als widerrufen bestätigt.", HOME_NEXT, resolved="Ein ausgemusterter Schlüssel ist als widerrufen bestätigt."
     ),
-    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT),
-    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT),
+    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT, resolved="Eine Anmeldung gilt wieder."),
+    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT, resolved="Das Passwort der Sicherung ist wieder da."),
     ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten{readers} fehlen noch."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
     ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
@@ -247,13 +251,13 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "container-json-file"): LOGS_NOT_ROTATED,
     ("logs", "docker-default-driver"): LOGS_NOT_ROTATED,
     ("logs", "rsyslog-file"): LOGS_NOT_ROTATED,
-    ("logs", "journal-age"): RuleReport(ACTION, "Es gibt Logs, die älter als 30 Tage sind.", SETUP_APPLY),
+    ("logs", "journal-age"): RuleReport(ACTION, "Es gibt Logs, die älter als 30 Tage sind.", SETUP_APPLY, resolved="Es gibt keine Logs mehr, die älter als 30 Tage sind."),
     ("logs", "journal-unreadable"): LOGS_UNSEEN,
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
 }
 # Nothing `home tidy` finds is broken: its rules clean or list, so the whole area is a note.
 TIDY_REPORT = RuleReport(NOTE, "Es gibt etwas aufzuräumen.", area_note="es gibt etwas aufzuräumen")
-BROKEN_CHECK_REPORT = RuleReport(ACTION, "Die Prüfung {area} lief nicht.", "Führe `home check` aus.")
+BROKEN_CHECK_REPORT = RuleReport(ACTION, "Die Prüfung {area} lief nicht.", "Führe `home check` aus.", resolved="Die Prüfung {area} läuft wieder.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
     ("platform", "Dienste"),
@@ -276,6 +280,7 @@ class Item:
     sentence: str
     next_step: str
     area_note: str
+    resolved: str
 
     @property
     def level(self) -> Level:
@@ -298,7 +303,7 @@ def _item(identity: str, readers: Mapping[str, str]) -> Item:
     assert report is not None, identity
     words = {"subject": subject, "area": AREA_LABELS[check_name], "readers": f" für {readers[subject]}" if readers.get(subject) else ""}
     note = (report.area_note or report.sentence).removesuffix(".")
-    return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words), note.format(**words))
+    return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words), note.format(**words), report.resolved.format(**words))
 
 
 def _items(identities: frozenset[str], readers: Mapping[str, str] = NO_READERS) -> list[Item]:
@@ -349,9 +354,16 @@ def _action_lines(current: frozenset[str], previous: frozenset[str] | None) -> l
     return _capped(lines)
 
 
+def _check_and_subject(identity: str) -> tuple[str, str]:
+    check_name, _rule, subject = [*identity.split("\t", 2), ""][:3]
+    return check_name, subject
+
+
 def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
-    gone = _actions(previous) - current
-    return _capped([f"- {item.sentence}" for item in _items(gone)])
+    """A subject that still has another action (a restarting container that now exited) is not reported as done."""
+    still_named = {_check_and_subject(identity) for identity in current}
+    gone = frozenset(identity for identity in _actions(previous) - current if _check_and_subject(identity) not in still_named)
+    return _capped([f"- {item.resolved}" for item in _items(gone)])
 
 
 @dataclass(frozen=True)
@@ -390,7 +402,7 @@ def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_f
     if actions := _action_lines(current, previous):
         sections.append("Handlungsbedarf\n\n" + "\n\n".join(actions))
     if gone := _gone_lines(current, previous):
-        sections.append("Nicht mehr aktuell\n\n" + "\n".join(gone))
+        sections.append("Erledigt\n\n" + "\n".join(gone))
     area_lines = "\n".join(_area_line(items, name, facts, now) for name, _ in AREAS)
     sections.append(f"So steht der PC ({now:%d.%m.%Y %H:%M})\n\n{area_lines}")
     hint = "Hinweise eilen nicht; home next zeigt, was davon du tun kannst.\n" if any(item.level is Level.NOTE for item in items) else ""
