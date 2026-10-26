@@ -220,14 +220,14 @@ LOGS_NOT_ROTATED = RuleReport(NOTE, "Logs werden noch nicht überall nach 30 Tag
 SECRET_UNFIT_FOLDER = RuleReport(NOTE, "Ein Ordner bei den Geheimnissen ist nicht in Form.", area_note="ein Ordner bei den Geheimnissen ist nicht in Form")
 # The sentence of a rule names only what the mail may carry: a Compose project or an app by name, never a secret, a path or a home file (#415 Z6).
 RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
-    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu", "{subject} läuft wieder."),
-    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt", "{subject} läuft wieder."),
-    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich wieder gesund."),
-    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} läuft wieder."),
+    ("platform", "container-restarting"): _container_report("{subject} startet ständig neu und ist darum nicht erreichbar.", "startet ständig neu", "{subject} startet nicht mehr ständig neu."),
+    ("platform", "container-dead"): _container_report("{subject} ist abgestürzt.", "ist abgestürzt", "{subject} meldet sich nicht mehr als abgestürzt."),
+    ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich nicht mehr krank."),
+    ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} meldet keinen Fehlerabbruch mehr."),
     ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen."),
     ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
     ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
-    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die letzte Sicherung hat geklappt."),
+    ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr."),
     ("backup", "backup-status-unreadable"): RuleReport(ACTION, "Ob die Sicherung läuft, ist unbekannt.", BACKUP_NOW, resolved="Ob die Sicherung läuft, ist wieder bekannt."),
     ("backup", "backup-crashed"): RuleReport(ACTION, "Die Sicherung hängt.", AGENT_STEP, resolved="Die Sicherung hängt nicht mehr."),
     ("hook", "hooks-path"): HOOK_BROKEN,
@@ -240,7 +240,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
         ACTION, "Ein ausgemusterter Schlüssel ist noch nicht als widerrufen bestätigt.", HOME_NEXT, resolved="Ein ausgemusterter Schlüssel ist als widerrufen bestätigt."
     ),
-    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT, resolved="Eine Anmeldung gilt wieder."),
+    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "Eine Anmeldung gilt nicht mehr; was sie nutzt, scheitert.", HOME_NEXT, resolved="Die Prüfung einer Anmeldung meldet keinen Fehler mehr."),
     ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen.", HOME_NEXT, resolved="Das Passwort der Sicherung ist wieder da."),
     ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Zugangsdaten{readers} fehlen noch."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
@@ -297,8 +297,14 @@ APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 NO_READERS: Mapping[str, str] = MappingProxyType({})
 
 
+def _split(identity: str) -> tuple[str, str, str]:
+    """The check, the rule and the subject of a remembered identity."""
+    check_name, rule, subject = [*identity.split("\t", 2), "", ""][:3]
+    return check_name, rule, subject
+
+
 def _item(identity: str, readers: Mapping[str, str]) -> Item:
-    check_name, rule, subject = [*identity.split("\t", 2), ""][:3]
+    check_name, rule, subject = _split(identity)
     report = _rule_report(check_name, rule)
     assert report is not None, identity
     words = {"subject": subject, "area": AREA_LABELS[check_name], "readers": f" für {readers[subject]}" if readers.get(subject) else ""}
@@ -354,16 +360,18 @@ def _action_lines(current: frozenset[str], previous: frozenset[str] | None) -> l
     return _capped(lines)
 
 
-def _check_and_subject(identity: str) -> tuple[str, str]:
-    check_name, _rule, subject = [*identity.split("\t", 2), ""][:3]
-    return check_name, subject
-
-
 def _gone_lines(current: frozenset[str], previous: frozenset[str] | None) -> list[str]:
-    """A subject that still has another action (a restarting container that now exited) is not reported as done."""
-    still_named = {_check_and_subject(identity) for identity in current}
-    gone = frozenset(identity for identity in _actions(previous) - current if _check_and_subject(identity) not in still_named)
-    return _capped([f"- {item.resolved}" for item in _items(gone)])
+    """An action is reported as done only when nothing now contradicts it: no current action on the same subject or under the same sentence, and no current action of its check that cannot be read."""
+    current_actions = _items(_actions(current))
+    held_back = {(item.check, _split(item.identity)[2]) for item in current_actions}
+    held_reports = {item.report for item in current_actions}
+    unreadable_checks = {item.check for item in current_actions if _split(item.identity)[1].endswith("unreadable")}
+    gone = [
+        item
+        for item in _items(_actions(previous) - current)
+        if (item.check, _split(item.identity)[2]) not in held_back and item.report not in held_reports and item.check not in unreadable_checks
+    ]
+    return _capped([f"- {sentence}" for sentence in dict.fromkeys(item.resolved for item in gone)])
 
 
 @dataclass(frozen=True)
