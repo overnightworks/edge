@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from containment import LOGIN_REFUSED
-from egress import LABEL, NotDriven, expect
+from egress import LABEL, NotDriven, ProbeFailed, expect
 from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe
 from live_signer import PROOF_TOOL, STANDIN_ALIAS, failed_without_text, mcp_origin
 from live_smoke import event_names, other_lines
@@ -195,7 +195,7 @@ class SignerProbe(IssuerProbe):
         self.compose("rm", "--stop", "--force", SIGNER_SERVICE)
         if with_signer:
             self.compose("up", "--detach", "--no-deps", SIGNER_SERVICE)
-            self.wait_for_line(SIGNER_SERVICE, lambda log: LISTENING_LINE in log.split())
+            self.wait_for_line(lambda log: LISTENING_LINE in log.split())
         front_before = len(access_records(self.container_log(FRONT_SERVICE)))
         refused_before = self.container_log(SERVICE).count(LOGIN_REFUSED)
         tokens = self.tokens()
@@ -230,13 +230,22 @@ class SignerProbe(IssuerProbe):
             ]  # fmt: skip
             return bool(verdicts)
 
-        self.wait_for_line(SIGNER_SERVICE, printed)
+        self.wait_for_line(printed)
         return verdicts[0]
 
-    def wait_for_line(self, service: str, found: Callable[[str], bool]) -> None:
+    def signer_log(self) -> str:
+        """The signer's log, also once it has exited: it ends after its first verdict."""
+        container = self.compose("ps", "--all", "-q", SIGNER_SERVICE).stdout.strip()
+        expect(bool(container), f"{SIGNER_SERVICE} has no container")
+        logs = self.run(["docker", "logs", container], check=False)
+        if logs.returncode != 0:
+            raise ProbeFailed(f"docker logs {container} exited {logs.returncode}")
+        return logs.stdout + logs.stderr
+
+    def wait_for_line(self, found: Callable[[str], bool]) -> None:
         deadline = time.monotonic() + WAIT_SECONDS
         while time.monotonic() < deadline:
-            if found(self.container_log(service)):
+            if found(self.signer_log()):
                 return
             time.sleep(0.5)
-        raise NotDriven(f"{service} printed nothing awaited in {WAIT_SECONDS} seconds")
+        raise NotDriven(f"{SIGNER_SERVICE} printed nothing awaited in {WAIT_SECONDS} seconds")
