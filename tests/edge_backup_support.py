@@ -14,7 +14,7 @@ import pytest
 
 from edge_backup import host
 from edge_backup.cli import DEFAULT_APPS
-from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
+from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE, RESTORE_SERVER
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
 DUMP = b"PGDMP custom archive"
@@ -220,7 +220,7 @@ class Machine:
         return b"sha256:0\n"
 
     def _containers(self, argv, **_) -> bytes:
-        if any("edge-backup-restore-test" in argument for argument in argv):
+        if any(RESTORE_SERVER in argument for argument in argv):
             ours = f"label={RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}" in argv
             foreign = [] if ours or not self.foreign_server_name else ["f0re1gn"]
             return "\n".join([*self._owned_servers(), *foreign]).encode()

@@ -241,6 +241,34 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
     assert machine.step.is_verified()
 
 
+def test_the_repository_units_replace_the_edge_backup_links_and_enable_both_hal_backup_timers(
+    tmp_path: Path,
+) -> None:
+    """#410 sentences 1 and 4: the old edge-backup names are gone and both hal-backup timers run."""
+    repository_units = Path(__file__).parents[2] / "systemd"
+    home = tmp_path / "home"
+    user_units = home / ".config" / "systemd" / "user"
+    wants = user_units / TIMERS_WANTS
+    wants.mkdir(parents=True)
+    old_names = [
+        f"edge-backup{stem}.{kind}"
+        for stem in ("", "-restore-test")
+        for kind in ("service", "timer")
+    ]
+    for old_name in old_names:
+        (user_units / old_name).symlink_to(repository_units / old_name)
+        if old_name.endswith(".timer"):
+            (wants / old_name).symlink_to(repository_units / old_name)
+    systemctl = FakeSystemctl(user_units)
+    step = UserUnits(Layout(home), repository_units, systemctl)
+
+    step.apply()
+
+    assert sorted(path.name for path in user_units.rglob("edge-backup*")) == []
+    assert {"hal-backup.timer", "hal-backup-restore-test.timer"} <= systemctl.active
+    assert step.is_verified()
+
+
 def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> None:
     changes = retire(machine, TIMER, None)
 

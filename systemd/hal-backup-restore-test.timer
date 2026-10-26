@@ -1,5 +1,5 @@
 [Unit]
-Description=edge-backup restore test monthly, first Sunday 05:00
+Description=hal backup restore test monthly, first Sunday 05:00
 
 [Timer]
 # Two hours after the weekly backup; the host lock serialises them if the backup runs long.

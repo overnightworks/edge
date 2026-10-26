@@ -1,5 +1,5 @@
 [Unit]
-Description=edge-backup weekly, Sunday 03:00
+Description=hal backup weekly, Sunday 03:00
 
 [Timer]
 OnCalendar=Sun *-*-* 03:00:00
