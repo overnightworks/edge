@@ -68,6 +68,8 @@ from edge.unit_plans import (
     plan_switches,
     read_fleet,
     switch,
+    switched_off_units,
+    unit_gates,
     unobserved,
 )
 from edge.waiting import Waiting, fetched
@@ -148,8 +150,8 @@ def _plan(
 ) -> Plan:
     fleet = read_fleet(engine, repository)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
-    switched_off = _switched_off(fleet, read, repository)
-    gates = _gates(fleet.units, switched_off)
+    switched_off = switched_off_units(fleet, read, repository)
+    gates = unit_gates(fleet.units, switched_off)
     followers = core.follower_units(fleet.config, gates)
     running_services = (
         service
@@ -193,36 +195,6 @@ def _plan(
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
     return Plan(fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans)
-
-
-def _gates(
-    units: Sequence[catalog.Unit], switched_off: Mapping[str, str | None]
-) -> dict[str, core.Gate]:
-    """Each catalogued unit's gate for its followers: on while enabled and not switched off,
-    whether or not it is up (#89)."""
-    return {unit.key: _gate(unit, switched_off) for unit in units}
-
-
-def _gate(unit: catalog.Unit, switched_off: Mapping[str, str | None]) -> core.Gate:
-    if unit.key in switched_off:
-        return core.Gate.SWITCHED_OFF
-    if not unit.enabled:
-        return core.Gate.OFF
-    return core.Gate.ON
-
-
-def _switched_off(
-    fleet: Fleet, read: Mapping[str, switches.Mark | None], repository: Path
-) -> dict[str, str | None]:
-    """Each unit switched off by its marker (its time) or by a barrier a stop left (None)."""
-    switched_off = {}
-    for unit in fleet.units:
-        mark = read[unit.key]
-        services = fleet.profile_services[unit.key]
-        ingress = barrier.Barrier.of_unit(fleet.config, services, repository, unit)
-        if barrier.switched_off(mark, ingress):
-            switched_off[unit.key] = mark.since if mark else None
-    return switched_off
 
 
 def apply_closed(
