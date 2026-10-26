@@ -332,3 +332,83 @@ def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
     else:
         assert migrated.status["unattributed"]["last_snapshot_id"] == legacy_id
         assert app_history(migrated.status).get("last_snapshot_id") != legacy_id
+
+
+OLD_HOST = "edge-backup"
+
+
+def _hand_over_to_the_old_host(machine: Machine, snapshot: dict) -> None:
+    snapshot["host"] = OLD_HOST
+
+
+def test_restore_refuses_a_recorded_snapshot_of_the_old_host_without_naming_it_as_newest(
+    edge_backup, machine, home
+):
+    edge_backup("backup")
+    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+    target = home / "restored"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(target))
+
+    assert outcome.exit_code == 3
+    [line] = outcome.err.splitlines()
+    assert "fehlt im Repository" in line
+    assert "der neueste Snapshot" not in line
+    assert not target.exists()
+
+
+def test_restore_names_the_newest_snapshot_of_the_new_host_never_an_old_one(
+    edge_backup, machine, home
+):
+    edge_backup("backup")
+    edge_backup("backup")
+    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(home / "restored"))
+
+    assert outcome.exit_code == 3
+    assert f"der neueste Snapshot ist {machine.snapshots[0]['id'][:8]}" in outcome.err
+
+
+@pytest.mark.parametrize("command", [["restore"], ["restore", "--test"]])
+def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
+    edge_backup, machine, home, command
+):
+    edge_backup("backup")
+    edge_backup("backup")
+    _hand_over_to_the_old_host(machine, machine.snapshots[0])
+    target = ["--target", str(home / "restored")] if command == ["restore"] else []
+
+    outcome = edge_backup(*command, "songmaker", "--snapshot", machine.snapshots[0]["id"], *target)
+
+    assert outcome.exit_code == 3
+    assert "nennt keinen einzelnen Snapshot" in outcome.err
+    assert not (home / "restored").exists()
+
+
+def test_the_restore_test_takes_the_new_hosts_snapshot_after_one_backup_on_it(edge_backup, machine):
+    edge_backup("backup")
+    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+    edge_backup("backup")
+
+    outcome = edge_backup("restore", "--test")
+
+    assert outcome.exit_code == 0, outcome.err
+
+
+def test_no_restic_command_names_the_old_host(edge_backup, machine, home):
+    edge_backup("backup")
+    edge_backup("restore", "--test")
+    edge_backup(
+        "restore",
+        "songmaker",
+        "--snapshot",
+        machine.snapshots[-1]["id"],
+        "--target",
+        str(home / "restored"),
+    )
+
+    restic_calls = [argv for label, argv in machine.calls if label.startswith("restic ")]
+    assert restic_calls
+    assert not [argv for argv in restic_calls if OLD_HOST in argv]
+    assert all(argv[argv.index("--host") + 1] == "hal" for argv in restic_calls if "--host" in argv)

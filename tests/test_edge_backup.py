@@ -64,7 +64,7 @@ def test_backup_forgets_by_host_and_app_tag_then_checks(edge_backup, machine):
 
     assert machine.labels()[-2:] == ["restic forget", "restic check"]
     forget = machine.argv_of("restic forget")
-    expected_scope = ["--host", "edge-backup", "--tag", "songmaker", "--group-by", "host,tags"]
+    expected_scope = ["--host", "hal", "--tag", "songmaker", "--group-by", "host,tags"]
     assert forget[forget.index("forget") + 1 :] == [
         *expected_scope,
         *["--keep-weekly", "4", "--keep-monthly", "3", "--keep-tag", "pre-apply", "--prune"],
@@ -134,7 +134,7 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
     assert backup[backup.index("--tag") + 1] == "radio,pre-apply"
     forget = machine.argv_of("restic forget")
     assert forget[forget.index("forget") + 1 :] == [
-        *["--host", "edge-backup", "--tag", "radio,pre-apply", "--group-by", "host,tags"],
+        *["--host", "hal", "--tag", "radio,pre-apply", "--group-by", "host,tags"],
         *["--keep-last", "10", "--prune"],
     ]
 
@@ -928,7 +928,7 @@ def test_restic_runs_without_network_privileges_or_a_writable_root(edge_backup, 
 
     backup = machine.argv_of("restic backup")
     assert backup[backup.index("--network") + 1] == "none"
-    assert backup[backup.index("--hostname") + 1] == "edge-backup"
+    assert backup[backup.index("--hostname") + 1] == "hal"
     assert {"--read-only", "--rm"} <= set(backup)
     assert backup[backup.index("--cap-drop") + 1] == "ALL"
     assert any(m.endswith("target=/backup/songmaker/audio,readonly") for m in backup)

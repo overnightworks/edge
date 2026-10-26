@@ -115,7 +115,15 @@ snapshot (`--keep-tag pre-apply`). Restore one with `hal restore <app> --snapsho
 
 ### What a backup holds, and its limit
 
-Each snapshot (tag = app name, host `edge-backup`) holds `db/db.dump` (`pg_dump --format=custom`,
+Every restic command that selects snapshots (`forget`, `snapshots --json`) is scoped to host `hal`: `forget`
+never thins an older snapshot of another host, and `hal restore` and `hal restore --test`
+see only host `hal`. Snapshots that an earlier version wrote under host
+`edge-backup` are invisible to hal and stay in the repository; they are deleted once
+(`restic forget --host edge-backup --prune`, by a delegated agent) after every app has a `hal`
+snapshot and `hal restore --test` has passed once (operator ruling 26.10.2026). Until then `hal restore`
+refuses an app whose recorded snapshot is such an old one, and `hal backup` closes the gap.
+
+Each snapshot (tag = app name, host `hal`) holds `db/db.dump` (`pg_dump --format=custom`,
 transactional), `db/manifest.json` (the number of audio files counted just before the scan) and, for an
 app with audio, `audio/` (the volume, read live). No service is stopped or started, so the backup is
 crash-consistent: a file written during the scan may be missing or partial. The restore test catches
@@ -210,8 +218,8 @@ first 8 or more characters of its ID:
 hal restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
 ```
 
-An ID that is unknown, ambiguous or another app's is refused with one German
-line. The target holds
+An ID that is unknown, ambiguous, another app's or from another host is refused
+with one German line. The target holds
 `db/db.dump` and `audio/`. Loading them into the live app is a deliberate
 manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the
@@ -304,7 +312,7 @@ printed ID brings the old Keycloak back.
 ### Stale locks
 
 The host lock frees itself when the process ends. A restic lock left by a killed run is removed
-with `hal backup --unlock`, but only once it is stale: every container is host `edge-backup` with
+with `hal backup --unlock`, but only once it is stale: every container is host `hal` with
 restic as PID 1, so restic counts the lock stale only after 30 minutes. Until then `unlock` leaves it,
 and a new run waits up to 5 minutes for it, then fails. No command ever runs with `--no-lock`.
 
