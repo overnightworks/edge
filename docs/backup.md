@@ -91,7 +91,7 @@ waits up to 10 minutes, then fails. One host lock (`~/.local/state/edge/backup.l
 
 To run now, start the same units the timers take (`systemctl --user start hal-backup.service` and
 `hal-backup-restore-test.service`); the last journal line of the unit is the verdict.
-`hal restore --list` lists the snapshots of host `hal` only.
+`hal restore --list` lists the snapshots of host `hal` only. Both `forget` runs leave other hosts' snapshots alone.
 
 ### One app, and the pre-apply snapshot
 
@@ -121,7 +121,8 @@ see only host `hal`, and so does `hal restore --list`. Snapshots that an earlier
 `edge-backup` are invisible to hal and stay in the repository; they are deleted once
 (`restic forget --host edge-backup --prune`, by a delegated agent) after every app has a `hal`
 snapshot and `hal restore --test` has passed once (operator ruling 26.10.2026). Until then `hal restore`
-refuses an app whose recorded snapshot is such an old one, and `hal backup` closes the gap.
+refuses an app whose recorded snapshot is such an old one, and `hal backup` closes the gap. Until their
+removal the old snapshots, pre-apply ones included, are kept beyond "4 weekly, 3 monthly".
 
 Each snapshot (tag = app name, host `hal`) holds `db/db.dump` (`pg_dump --format=custom`,
 transactional), `db/manifest.json` (the number of audio files counted just before the scan) and, for an

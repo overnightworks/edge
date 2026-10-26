@@ -337,15 +337,17 @@ def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
 OLD_HOST = "edge-backup"
 
 
-def _hand_over_to_the_old_host(machine: Machine, snapshot: dict) -> None:
+def _hand_over_to_the_old_host(snapshot: dict) -> None:
     snapshot["host"] = OLD_HOST
 
 
 def test_restore_refuses_a_recorded_snapshot_of_the_old_host_without_naming_it_as_newest(
     edge_backup, machine, home
 ):
+    """#414 sentence 4 (E3): a recorded old-host snapshot is refused like a missing one."""
+
     edge_backup("backup")
-    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+    _hand_over_to_the_old_host(machine.snapshots[-1])
     target = home / "restored"
 
     outcome = edge_backup("restore", "songmaker", "--target", str(target))
@@ -360,9 +362,11 @@ def test_restore_refuses_a_recorded_snapshot_of_the_old_host_without_naming_it_a
 def test_restore_names_the_newest_snapshot_of_the_new_host_never_an_old_one(
     edge_backup, machine, home
 ):
+    """#414 sentence 4 (E3): the newest snapshot named is always one of host hal."""
+
     edge_backup("backup")
     edge_backup("backup")
-    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+    _hand_over_to_the_old_host(machine.snapshots[-1])
 
     outcome = edge_backup("restore", "songmaker", "--target", str(home / "restored"))
 
@@ -374,9 +378,11 @@ def test_restore_names_the_newest_snapshot_of_the_new_host_never_an_old_one(
 def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
     edge_backup, machine, home, command
 ):
+    """#414 sentence 4 (E3): an old-host ID given to --snapshot is refused like an unknown one."""
+
     edge_backup("backup")
     edge_backup("backup")
-    _hand_over_to_the_old_host(machine, machine.snapshots[0])
+    _hand_over_to_the_old_host(machine.snapshots[0])
     target = ["--target", str(home / "restored")] if command == ["restore"] else []
 
     outcome = edge_backup(*command, "songmaker", "--snapshot", machine.snapshots[0]["id"], *target)
@@ -387,8 +393,10 @@ def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
 
 
 def test_the_restore_test_takes_the_new_hosts_snapshot_after_one_backup_on_it(edge_backup, machine):
+    """#414 sentence 4 (E3): after one hal backup the restore test takes the new snapshot."""
+
     edge_backup("backup")
-    _hand_over_to_the_old_host(machine, machine.snapshots[-1])
+    _hand_over_to_the_old_host(machine.snapshots[-1])
     edge_backup("backup")
 
     outcome = edge_backup("restore", "--test")
@@ -397,6 +405,8 @@ def test_the_restore_test_takes_the_new_hosts_snapshot_after_one_backup_on_it(ed
 
 
 def test_no_restic_command_names_the_old_host(edge_backup, machine, home):
+    """#414 sentence 1: no restic argv names edge-backup, and every --host is hal."""
+
     edge_backup("backup")
     edge_backup("restore", "--test")
     edge_backup(
@@ -415,9 +425,11 @@ def test_no_restic_command_names_the_old_host(edge_backup, machine, home):
 
 
 def test_an_old_host_snapshot_does_not_appear_in_the_restore_list(edge_backup, machine):
+    """#414 ruling 1 (head, 26.10.2026): the restore list shows only host hal."""
+
     edge_backup("backup")
     edge_backup("backup")
-    _hand_over_to_the_old_host(machine, machine.snapshots[0])
+    _hand_over_to_the_old_host(machine.snapshots[0])
 
     outcome = edge_backup("restore", "--list")
 
