@@ -1,8 +1,0 @@
-claim_id = "934c20d6174a4dad927cdfb652fee2cc"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "1253b77aad9847ae06fe7359a278d79161268b72"
-branch = "claude/issue-544-s7e-3-restore-lines-english"
-scope = ["src/edge_backup/docker.py", "src/edge_backup/runner.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_files.py", "tests/test_edge_backup_restore_safety.py", "tests/test_edge_backup_sqlite.py", "tests/test_hal_backup.py"]
-opened_commit = "0a77073dbbe95c0320fef54c7f97acbcdd99d0cc"
-whole_reason = "Two production owners of the restore lines and the label, and the six test modules that pin them; the wording moves with its pins."
