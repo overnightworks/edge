@@ -990,3 +990,25 @@ def test_an_offline_while_online_waits_for_yes_wins(hal, fakes, stopped_tunnel, 
     assert marks.global_mark() is not None
     assert "start" not in systemd.verbs()
     assert not systemd.active
+
+
+def test_start_of_an_unknown_unit_keeps_its_old_cannot_plan_line(hal, fakes):
+    result = hal("start", "x", answers=("yes",))
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert result.err.startswith(
+        f"{emergency.START}: cannot plan, x is not a unit of fleet.yaml (units: "
+    )
+    assert result.err.count("\n") == 1
+
+
+def test_online_with_a_fleet_that_cannot_be_read_keeps_its_old_cannot_plan_line(
+    hal, fakes, stopped_tunnel
+):
+    write_fleet(fakes.repository, "not: [valid")
+
+    result = hal("online", answers=("yes",))
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert result.err.startswith(f"{emergency.START_ALL}: cannot plan, ")
+    assert result.err.count("\n") == 1

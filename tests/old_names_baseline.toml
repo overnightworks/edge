@@ -5,7 +5,7 @@
 "agent-service/setup" = 1
 "compose.yaml" = 1
 "docs/architecture.md" = 130
-"docs/design/hal-output.html" = 19
+"docs/design/hal-output.html" = 18
 "docs/external.md" = 11
 "docs/home.md" = 5
 "docs/keycloak.md" = 6
