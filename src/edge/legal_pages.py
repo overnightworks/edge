@@ -83,15 +83,20 @@ class Frame:
 
 
 def is_published_in(frame: Frame, blocks: Sequence[Block], block: Block, page_text: str) -> bool:
-    """Whether the block's whole rendered text stands in the page unchanged, up to the next tag
-    after it, so that a paragraph cut from its end is a change."""
-    ordered = _in_page_order(blocks, block.page)
-    rendered = [(one, _render(frame, one)) for one in ordered]
-    own = _render(frame, block)
-    marked = [(one, _Rendered(_SLOT if one is block else text.body, "")) for one, text in rendered]
-    _, _, after = _page(frame, block.page, marked).partition(_SLOT)
-    first_tag_end = after.find(">") + 1
-    return own.body + after[:first_tag_end] in page_text
+    """Whether the block's whole rendered text stands in the page unchanged and ends where a block
+    or the frame's own text begins, so that a paragraph cut from its end is a change; the
+    block's neighbours do not matter."""
+    own = _render(frame, block).body
+    _, _, after = _page(frame, block.page, [(block, _Rendered(_SLOT, ""))]).partition(_SLOT)
+    boundaries = tuple(frame.templates[kind.value].partition("$")[0] for kind in BlockKind) + (
+        after[: after.find(">") + 1],
+    )
+    position = page_text.find(own)
+    while position != -1:
+        if page_text.startswith(boundaries, position + len(own)):
+            return True
+        position = page_text.find(own, position + 1)
+    return False
 
 
 def frame_page_path(page: str) -> str:

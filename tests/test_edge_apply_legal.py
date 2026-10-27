@@ -202,6 +202,16 @@ def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     assert 'id="agent-dienst"' not in world.built_page("datenschutz")
 
 
+def test_the_plan_names_no_block_when_only_the_following_block_left(world):
+    """L3."""
+    world.switch()
+    write_fleet(world.repository, WITHOUT_AGENT)
+
+    _, out, _ = world.switch(answer="no")
+
+    assert "legal: datenschutz changes: no block" in out
+
+
 def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):
     """L3."""
     switch_off(world.state, unit="legal")
