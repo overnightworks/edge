@@ -9,14 +9,13 @@
 [file_lines]
 "probe/keycloak/probe.py" = 2839
 "probe/step-ca/probe.py" = 1052
-"probe/switches/probe.py" = 787
 "src/home_tools/secrets_view.py" = 855
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089
 "tests/test_edge_apply.py" = 4607
 "tests/test_edge_backup.py" = 1235
 "tests/test_edge_cloudflare_read.py" = 906
-"tests/test_edge_external.py" = 2858
+"tests/test_edge_external.py" = 2792
 "tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1737
 "tests/test_keycloak_probe.py" = 1039

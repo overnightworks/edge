@@ -100,8 +100,7 @@ not "applied or nothing to do". They deviate in exactly three ways:
   commands until H5e renames them; a number in such a line is edge's, not hal's process exit. Type
   `hal stop <unit or app>` / `hal start <unit or app>` for `edge stop|start <unit or app>`, `hal offline` for
   `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
-  `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c2, so run it as
-  `~/git/edge/bin/edge external check --hosts`.
+  `edge apply [--closed]`, and `hal check hosts` for the host check.
 
 `hal setup` deviates in one way:
 
@@ -127,7 +126,7 @@ laeuft kein tofu, und der Exit ist der des lokalen Teils. Ein Ctrl-C (SIGINT) vo
 endet mit Exit 1 und "interrupted, nothing published"; waehrend der Publish-Phase gelten deren
 Unterbrechungsregeln, und ihr Exit bleibt, sobald sie ihr Urteil festgehalten hat. Kommt eine
 Unterbrechung ohne festgehaltenen Exit aus ihr heraus, endet es mit Exit 1 und der Zeile
-"run `edge external check --hosts`". Ein SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess
+"run `hal check hosts`". Ein SIGTERM (`kill`) vor der Publish-Phase beendet den Prozess
 wie bei `--closed`: nichts wird veroeffentlicht.
 
 **Der lokale Teil.** Er bringt jede Einheit in den Zustand, den `enabled` sagt. An:

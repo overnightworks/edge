@@ -62,7 +62,7 @@ services:
 SETUP_QUESTION = "Type 'yes' to run `step-ca/init` now"
 PLAN_QUESTION = "Type 'yes' to apply exactly this plan"
 NOTHING_PUBLISHED = "edge apply: nothing published"
-INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `edge external check --hosts`"
+INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `hal check hosts`"
 
 
 @dataclass
