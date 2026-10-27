@@ -34,7 +34,7 @@ from edge_backup_support import (
 )
 
 from edge_backup import cli, host
-from edge_backup.apps import AppsError, Audio, DumpKind, PostgresMajor, parse_apps
+from edge_backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
 from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
@@ -981,6 +981,7 @@ def test_the_keycloak_record_is_db_only_on_major_17_next_to_songmakers_audio():
     songmaker, keycloak = parse_apps(cli.DEFAULT_APPS.read_text())
 
     songmaker_db, keycloak_db = songmaker.database, keycloak.database
+    assert isinstance(songmaker_db, PostgresDatabase)
     assert (songmaker.name, songmaker.compose_project, songmaker_db.db_service) == (
         ("songmaker", "songmaker", "postgres")
     )
