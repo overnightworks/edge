@@ -162,11 +162,10 @@ alike; nothing else is skipped. `db/manifest.json` also names the `files` counte
 (`find`, no network, a read-only root, your user), written only when a files volume is declared.
 The database copy and the volume scan run seconds apart, so a run the app delivers in between may be
 missing from the snapshot. Churn during the scan is loud or caught, and the next run retries: the count
-fails the app in the phase `manifest` on any vanished or unreadable entry; restic exit 3 (a path vanished)
-fails it in the phase `backup`. A directory the count cannot enter fails the phase `manifest`; restic,
-not the count, finds a file whose contents it cannot read. A run removed whole before the count leaves
-a snapshot that is short by that run but consistent with its manifest: the restore test compares the
-file count only, so it passes and cannot detect the loss.
+fails the app in the phase `manifest` on a vanished entry or a directory it cannot enter; restic exit 3
+(a path vanished or a file it cannot read) fails it in the phase `backup`.
+A run removed whole before the count leaves a snapshot that is short by that run but consistent with its
+manifest: the restore test compares the file count only, so it passes and cannot detect the loss.
 
 Keycloak's dump holds its realm signing keys, the credential hashes and the client secrets. In the
 repository it exists only encrypted. In plain text it exists in exactly three places, each mode 0700:
