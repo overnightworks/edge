@@ -206,8 +206,10 @@ eigener Fund, nie ein sauberer Lauf.
 - **`platform`, Container.** Jeder Container mit nicht leerem Compose-Projekt-Label (`docker inspect --format` mit
   benannten Feldern, darunter das Projekt, ein Aufruf für alle; der Fund trägt den Projektnamen): `container-unhealthy`, `container-restarting`, `container-dead` und
   `container-exited` mit Code ungleich 0 (alle Handlungsbedarf). Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
-  ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein abgeschalteter Dienst, der mit 137 oder 143
-  endete, erscheint; das ist hingenommen. `docker-unreadable`, wenn Docker nicht lesbar ist.
+  ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein Container einer App, die mit `hal stop`
+  abgeschaltet ist (eine Datei unter `~/.local/state/edge/stopped/`; nur der Name wird gelesen), ist mit jedem Code ungleich 0
+  kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
+  Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
   Datum“); ein Hinweis, der nie eine Mail auslöst.
 - **`platform`, Festplatte.** Nur die Platte, auf der `/` liegt (`shutil.disk_usage`: was ein unprivilegierter Prozess

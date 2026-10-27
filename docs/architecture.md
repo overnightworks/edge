@@ -655,7 +655,7 @@ The operator asked: „wer verwaltet das Home / die Dienste? ggf eine UI-Seite, 
 | Kind | When | How | Effect |
 |---|---|---|---|
 | **Planned change** | anything meant to last: a service on or off, a new name, a new group | a PR to the catalog or the code, merge, then `edge apply` (section 3) | the code is the truth; `home check` is clean afterwards |
-| **Emergency switch** | something is wrong *now* | one `edge` command in the operator's terminal; no code change | acts within seconds; what it does is the state table below. **`home check` reports every active switch as drift** until reality and code agree again |
+| **Emergency switch** | something is wrong *now* | one `edge` command in the operator's terminal; no code change | acts within seconds; what it does is the state table below. `home check` leaves a switched-off app's stopped containers out of its findings, and the switch stays until `edge start` |
 
 ### The state table: the one owner of every guard
 
@@ -711,7 +711,7 @@ Each mismatch is a red finding, for example a recorded switch without its barrie
 - **Honest results (P15, [edge#50](https://github.com/overnightworks/edge/issues/50)).** A partial failure is reported as partial, never as "applied"; a closed state is reported only after it was observed; a second `edge apply` with nothing changed changes nothing.
 - **Reboots.** The boot row rests on three pieces: `restart: unless-stopped` on every long-running service (section 3's catalog check flags any other policy); Docker's rule that an explicitly stopped container stays stopped (a switched-off unit is stopped that way, #60 rule 7; no boot service exists); and the cloudflared drop-in from `hal setup`, which tests the global marker (`ConditionPathExists=!<marker>`).
 
-Example: `edge stop hopin` at 22:10 gives the finding `emergency-switch hopin: stopped 16.10. 22:10, catalog says enabled` on every `home check` and a yellow light on the LOOK page, for as long as the switch is recorded.
+Example: `edge stop hopin` at 22:10 records the switch, and `home check` no longer reports hopin's stopped containers as a failure; the switch stays recorded until `edge start`.
 
 **Who owns what.**
 - **edge** owns everything that serves or guards a service: the tunnel, Traefik, Keycloak, the services, the deploy watchers, backup, monitoring.
