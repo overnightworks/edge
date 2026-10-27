@@ -15,7 +15,16 @@ import pytest
 
 from edge_backup import host, sqlite_copy
 from edge_backup.cli import DEFAULT_APPS
-from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE, RESTORE_SERVER
+from edge_backup.docker import (
+    FILE_COUNT_LABEL,
+    RESTORE_OWNER_LABEL,
+    RESTORE_OWNER_ROLE,
+    RESTORE_SERVER,
+    SERVER_REMOVAL_LABEL,
+    SERVER_START_LABEL,
+    SQLITE_CHECK_LABEL,
+    SQLITE_COPY_LABEL,
+)
 from edge_backup.settings import RESTIC_HOSTNAME
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
@@ -181,19 +190,19 @@ class Machine:
             "docker inspect": self._state,
             "docker volume ls": self._volumes,
             "pg_dump": self._pg_dump,
-            "Zählen der Dateien": self._scan,
+            FILE_COUNT_LABEL: self._scan,
             "Lesen des SQLite-Besitzers": self._sqlite_owner,
-            "Kopie der SQLite-Datenbank": self._sqlite_copy,
-            "Prüfung der SQLite-Kopie": self._sqlite_check,
+            SQLITE_COPY_LABEL: self._sqlite_copy,
+            SQLITE_CHECK_LABEL: self._sqlite_check,
             "restic backup": self._backup,
             "restic snapshots": self._snapshots,
             "restic restore": self._restore,
-            "Start der Wegwerf-Datenbank": self._start_server,
+            SERVER_START_LABEL: self._start_server,
             "pg_isready": self._pg_isready,
             "pg_restore --list": self._pg_restore,
             "pg_restore": self._pg_restore,
             "psql": self._psql,
-            "Entfernen der Wegwerf-Datenbank": self._silent,
+            SERVER_REMOVAL_LABEL: self._silent,
             "restic init": self._silent,
             "restic forget": self._silent,
             "restic check": self._silent,
@@ -283,9 +292,7 @@ class Machine:
 
     def _sqlite_copy(self, argv, *, discard_stderr, **_) -> bytes:
         if self.sqlite_copy is None or self.sqlite_copy_fails:
-            return self._sqlite_failure(
-                "Kopie der SQLite-Datenbank", sqlite_copy.VERDICT_EXIT, discard_stderr
-            )
+            return self._sqlite_failure(SQLITE_COPY_LABEL, sqlite_copy.VERDICT_EXIT, discard_stderr)
         return self.sqlite_copy
 
     def _sqlite_check(self, argv, *, discard_stderr, **_) -> bytes:
@@ -294,7 +301,7 @@ class Machine:
         match re.fullmatch(rb"SQLite rows=(\d+)", copied.read_bytes()):
             case None:
                 return self._sqlite_failure(
-                    "Prüfung der SQLite-Kopie", sqlite_copy.VERDICT_EXIT, discard_stderr
+                    SQLITE_CHECK_LABEL, sqlite_copy.VERDICT_EXIT, discard_stderr
                 )
             case found:
                 return found[1] + b"\n"
@@ -322,7 +329,7 @@ class Machine:
             return b""
         kept = [name for name in names if not _skipped(name, skip)]
         if any(set(map(str, Path(name).parents)) & self.unreadable_directories for name in kept):
-            return exit_with("Zählen der Dateien", 1)
+            return exit_with(FILE_COUNT_LABEL, 1)
         return b"".join(name.encode() + b"\0" for name in kept)
 
     def _backup(self, argv, **_) -> bytes:
@@ -411,7 +418,7 @@ class Machine:
 
     def _start_server(self, argv, **_) -> bytes:
         if self.foreign_server_name or self._owned_servers():
-            return exit_with("Start der Wegwerf-Datenbank", 125)
+            return exit_with(SERVER_START_LABEL, 125)
         self.server_accepting = False
         self.created_servers.append(RESTORE_SERVER_ID)
         return self.server_start_output
@@ -512,11 +519,11 @@ def mode_of(path: Path) -> int:
 
 
 def removed_servers(machine: Machine) -> list[str]:
-    return [argv[-1] for label, argv in machine.calls if label == "Entfernen der Wegwerf-Datenbank"]
+    return [argv[-1] for label, argv in machine.calls if label == SERVER_REMOVAL_LABEL]
 
 
 def no_restore_server_left(machine: Machine) -> bool:
-    started = machine.labels().count("Start der Wegwerf-Datenbank")
+    started = machine.labels().count(SERVER_START_LABEL)
     return started == removed_servers(machine).count(RESTORE_SERVER_ID)
 
 
