@@ -145,22 +145,22 @@ def test_no_secret_value_reaches_the_output_or_the_report_and_no_secret_file_is_
 
 
 def symlink_the_report_file(layout: Layout, report_file: Path) -> None:
-    layout.state_dir.mkdir(parents=True)
+    report_file.parent.mkdir(parents=True)
     report_file.symlink_to(layout.secrets_dir / "gitlab")
 
 
 def hard_link_the_report_file(layout: Layout, report_file: Path) -> None:
-    layout.state_dir.mkdir(parents=True)
+    report_file.parent.mkdir(parents=True)
     os.link(layout.secrets_dir / "gitlab", report_file)
 
 
 def symlink_the_state_directory(layout: Layout, report_file: Path) -> None:
-    layout.state_dir.parent.mkdir(parents=True)
-    layout.state_dir.symlink_to(layout.secrets_dir)
+    report_file.parent.parent.mkdir(parents=True)
+    report_file.parent.symlink_to(layout.secrets_dir)
 
 
 def symlink_an_ancestor_of_the_state_directory(layout: Layout, report_file: Path) -> None:
-    local = layout.state_dir.parent.parent
+    local = report_file.parent.parent.parent
     local.mkdir()
     (local / "state").symlink_to(layout.secrets_dir)
 
