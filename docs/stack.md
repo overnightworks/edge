@@ -113,7 +113,8 @@ not "applied or nothing to do". They deviate in exactly three ways:
 `fleet.yaml` ist der Katalog. Ein Eintrag mit `run` und ohne `repo` ist eine Einheit dieses
 Repositorys; sein Schluessel ist der Name des Compose-Profils (`docs/naming.md`). `run.enabled: false`
 schaltet das Profil ab; `run.setup` nennt optional den Befehl, der den Schluessel macht (`step-ca/init`,
-`keycloak/go-live`). Wer die Aenderung in welchem Zustand darf, steht in der Zustandstabelle von
+`keycloak/go-live`); `run.build` nennt das Rezeptverzeichnis des einen gebauten Images der Einheit
+(`agent-service/image`), das `hal apply` in einem Recreate tauscht. Wer die Aenderung in welchem Zustand darf, steht in der Zustandstabelle von
 [architecture.md](architecture.md) (Abschnitt 8) und wird hier nicht wiederholt.
 
 **Zwei Teile.** Das blosse `edge apply` fuehrt den lokalen Teil (`edge apply --closed`) aus und, nur
@@ -162,7 +163,9 @@ Reihenfolge, und wie der Eintrag in `applied.json` gefuehrt wird:
 
 **Images.** Laeuft ein Dienst einer Einheit, die nicht ausgeschaltet wird, auf einem anderen Image, als
 `compose.yaml` jetzt nennt, nennt der Plan es und tauscht es nie; der Lauf bleibt `nothing to change`.
-Das Upgrade ist Sache des Betreibers (Keycloak erst mit Dump).
+Das Upgrade ist Sache des Betreibers (Keycloak erst mit Dump). Ausnahme ist der gebaute Dienst einer
+Einheit mit `run.build` (`agent-service`): `hal apply` erzeugt ihn nach dem Ja des Plans neu, wenn
+sein Image, seine Definition oder sein Tag-Inhalt abweicht; laufende Anfragen enden dabei.
 
 **Setup.** Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Der
 Vertrag von `<setup> --check`: fragt nichts, druckt kein Geheimnis, legt nichts an, braucht keinen

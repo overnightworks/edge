@@ -45,10 +45,12 @@ through a recreate. There is no model override: the model is the app's.
 
 `GET /offer` answers, for the person and app of its two tokens, the models of `[cli.claude] models` that the person's subscription group can run, each `ready` on route `cli`; it is computed from the configuration, opens no login and starts no run. Every profile carries `background = false`: no profile admits a background run (the service refuses to start without the key), and which identity runs an app's background agents is agent-runtime#479's question.
 
-A change to `service.toml`, `compose.yaml` or the image reaches the running service only by
-recreating it, which ends every run in flight:
+A change to `compose.yaml` or the image reaches the running service through `hal apply`: its plan
+names the recreate, which ends every run in flight, and the one `yes` covers it. A change to
+`service.toml` alone is not seen by apply yet (the file is bound from the checkout), so it still
+needs the hand recreate
 `docker compose --profile agent-service up -d --force-recreate agent-service`, in the live checkout
-after `git -C ~/git/edge pull --ff-only` and, for an image change, a fresh build.
+after `git -C ~/git/edge pull --ff-only`.
 
 ## The login
 

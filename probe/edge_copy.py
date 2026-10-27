@@ -15,18 +15,23 @@ loaded by path.
 
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import json
+import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from edge import catalog, checkout, compose
 
 APPLY_SECONDS = 600
+NOT_RUNNABLE = 3  # a probe's exit when its preconditions fail, before it touches anything
 HAL_OK, HAL_FAILURE = 0, 3  # hal's exits: 3 is every outcome of the stack that is not "done"
 DISCARD_OUTPUT = "/dev/null"
 REMOTE = "origin.git"
@@ -332,3 +337,60 @@ def run_edge(
         f"{output[-200:]}",
     )
     return output
+
+
+def scratch_directory(text: str) -> Path:
+    """The `--scratch` argument as an absolute path of an existing directory the operator can
+    write to; anything else is refused where the command line is read."""
+    path = Path(text).resolve()
+    if not path.is_dir() or not os.access(path, os.W_OK):
+        raise argparse.ArgumentTypeError(f"{text} is not a writable directory")
+    return path
+
+
+def compose_engine(environment: Mapping[str, str], copy: Path) -> compose.Compose:
+    """edge's own Compose reader, over the copy and the probe's environment."""
+
+    def run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command, capture_output=True, text=True, env=environment, cwd=copy,
+            check=False, timeout=timeout,
+        )  # fmt: skip
+
+    return compose.Compose(run, copy)
+
+
+def _raise_interrupt(_signal: int, _frame: object) -> None:
+    raise KeyboardInterrupt
+
+
+def run_probe(
+    scratch: Path,
+    create: Callable[[Path], Any],
+    prove: Callable[[Any], int],
+    passed: str,
+    blocker: Callable[[], str | None] = lambda: None,
+) -> int:
+    """A probe's run in `scratch`: refuse a scratch that is not empty or a blocker the probe
+    names, create the probe, prove it, and tear it down even when `timeout` ends the proof with
+    SIGTERM. The exit code is the proof's, or 1 when the teardown fails; `passed` is printed on
+    success."""
+    if any(scratch.iterdir()):
+        print("PROBE FAILED: --scratch is not empty")
+        return NOT_RUNNABLE
+    reason = blocker()
+    if reason is not None:
+        print(f"PROBE FAILED: {reason}")
+        return NOT_RUNNABLE
+    probe = create(scratch)
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+    exit_code = prove(probe)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    try:
+        probe.teardown()
+    except (ProbeFailed, subprocess.TimeoutExpired) as failure:
+        print(f"PROBE FAILED: teardown, {failure}")
+        exit_code = 1
+    if exit_code == 0:
+        print(passed)
+    return exit_code

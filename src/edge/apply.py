@@ -15,9 +15,12 @@ and nothing starts, and one that starts with its unit is recorded once the unit 
 A unit is a compose profile: on starts its services, off removes their containers. A live service of
 a unit that is enabled and not switched off or on whose compose definition changed is recreated
 alone after the followers, under the switch lock, one plan line each (#376). Volumes are never
-touched. A live service of a unit not planned off whose container runs another image than
-compose.yaml now names is named after the unit lines and keeps running: its image is never swapped
-here, and the line alone asks nothing (#91). A unit that would be switched on, or is enabled and
+touched. The built service of a unit with `run.build` (agent-service) whose container, in any
+state, runs another image or definition than compose.yaml and its tag name now is recreated alone
+after the followers, one plan line, and its running requests end (#482). A live service of any
+other unit not planned off whose container runs another image than compose.yaml now names is named
+after the unit lines and keeps running: its image is never swapped here, and the line alone asks
+nothing (#91). A unit that would be switched on, or is enabled and
 already runs, and is not set up is asked about separately; on `yes` its own setup command runs in
 the operator's terminal (key material is made there, never here) and `--check` must then pass
 before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
@@ -59,6 +62,7 @@ from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
+from edge.built_image import BuiltRecreate
 from edge.legal_section import LegalError
 from edge.legal_step import RECORD_FILE, LegalPlan, plan_legal
 from edge.realm import reconcile
@@ -70,9 +74,8 @@ from edge.unit_plans import (
     Progress,
     Recreate,
     UnitPlan,
-    plan_kept_images,
-    plan_recreates,
     plan_switches,
+    plan_unit_services,
     read_fleet,
     switch,
     switched_off_units,
@@ -116,6 +119,7 @@ class Plan:
     read: Mapping[str, switches.Mark | None]
     core: list[core.CorePlan]
     followers: list[core.FollowerPlan]
+    built: list[BuiltRecreate]
     recreates: list[Recreate]
     plans: list[UnitPlan]
     images: list[KeptImage]
@@ -130,13 +134,21 @@ class Plan:
             and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
             and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
+            and not self.built
             and not self.recreates
             and self.app_plans.changes_nothing
             and self.legal.changes_nothing
         )
 
     def describe(self) -> list[str]:
-        plans = (*self.core, *self.followers, *self.recreates, *self.plans, *self.images)
+        plans = (
+            *self.core,
+            *self.followers,
+            *self.built,
+            *self.recreates,
+            *self.plans,
+            *self.images,
+        )
         return [
             *self.legal.describe(),
             *(plan.describe() for plan in plans),
@@ -180,21 +192,7 @@ def _plan(
     follower_plans = core.plan_followers(
         fleet.config, containers, hashes, repository, record, gates
     )
-    images = plan_kept_images(
-        fleet.units, fleet.profile_services, fleet.config, containers, plans, followers
-    )
-    recreates, moved_images = plan_recreates(
-        fleet.units,
-        fleet.profile_services,
-        fleet.config,
-        containers,
-        hashes,
-        plans,
-        followers,
-        images,
-        engine.image_id,
-    )
-    images += moved_images
+    unit_services = plan_unit_services(fleet, containers, hashes, plans, followers, gates, engine)
     realm = reconcile.plan_realm(
         engine,
         reconcile.Observer(engine),
@@ -202,12 +200,22 @@ def _plan(
         fleet.config,
         repository,
         gates.get(reconcile.REALM_UNIT),
-        reconcile.restart_of(plans, recreates),
+        reconcile.restart_of(plans, unit_services.recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
     legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
-        fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans, legal
+        fleet,
+        read,
+        core_plans,
+        follower_plans,
+        unit_services.built,
+        unit_services.recreates,
+        plans,
+        unit_services.images,
+        realm,
+        app_plans,
+        legal,
     )
 
 
@@ -475,8 +483,9 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """The core, the followers, then the services of the units that run on; the failure line of
-        the first step that fails."""
+        """The core, the followers, then the services to recreate (a live service of a unit that
+        runs on, the built service in any container state); the failure line of the first step
+        that fails."""
         return self._recreate_core(engine, planned, marks, progress) or self._recreate_services(
             engine, planned, marks, progress
         )
@@ -497,7 +506,7 @@ class CorePhase:
         ]
         return recreator.followers(
             followers, self.record, lambda: self._followed(config, progress)
-        ) or recreator.unit_services(planned.recreates)
+        ) or recreator.unit_services([*planned.built, *planned.recreates])
 
     def _recreate_core(
         self,
