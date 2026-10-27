@@ -561,12 +561,9 @@ def test_loopback_listeners_counts_127_and_ipv6_loopback(containment, names, cou
 def test_b5_is_not_driven_when_the_working_root_or_tmp_skipped_something(containment):
     for reason in ("replaced", "refused", "login excluded", "too deep"):
         skipped = {"/work": mount(containment, skips={reason: 1}), "/tmp": mount(containment)}
+        seen = look(containment, mounts=skipped)
         with pytest.raises(containment.NotDriven):
-            containment.expect_comparable(
-                look(containment, mounts=skipped),
-                look(containment, mounts=skipped),
-                roots(containment),
-            )
+            containment.expect_comparable(seen, seen, roots(containment))
 
 
 def test_b5_is_not_driven_when_any_skip_changed(containment):
@@ -575,8 +572,9 @@ def test_b5_is_not_driven_when_any_skip_changed(containment):
     after = look(
         containment, mounts={**base, "/dev/shm": mount(containment, skips={"vanished": 1})}
     )
+    working_roots = roots(containment)
     with pytest.raises(containment.NotDriven):
-        containment.expect_comparable(before, after, roots(containment))
+        containment.expect_comparable(before, after, working_roots)
 
 
 @pytest.mark.parametrize(
@@ -599,8 +597,9 @@ def test_b5_is_not_driven_from_an_unclean_before_state(containment, changes):
             for key, value in changes.items()
         },
     )
+    working_roots = roots(containment)
     with pytest.raises(containment.NotDriven):
-        containment.expect_clean_before(unclean, roots(containment))
+        containment.expect_clean_before(unclean, working_roots)
 
 
 def test_b5_refused_token_is_not_driven(containment):
