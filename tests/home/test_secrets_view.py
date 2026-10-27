@@ -72,8 +72,8 @@ WILDCARD_ENTRY = (
     'loosest_mode = 0o644\nloosest_mode_reason = "a container reads the folder"\n'
 )
 RESTIC_RECREATE = (
-    "Aus deinem Passwortmanager zurückholen. "
-    "Nie neu erzeugen, solange unter ~/backups/restic Backups liegen: ein neues Passwort macht sie unlesbar."
+    "Restore it from your password manager. "
+    "Never recreate it while backups exist under ~/backups/restic: a new password makes them unreadable."
 )
 RETIRED_ENTRY = """
 [[secret]]
@@ -730,23 +730,23 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             paths=(PurePosixPath(".secrets/restic/password"),),
             read_by=("hal-backup.service", "hal-backup-restore-test.service"),
             recreate=RESTIC_RECREATE,
-            purpose="hal backup verschlüsselt damit die restic-Backups; ohne es sind sie unlesbar.",
+            purpose="hal backup encrypts the restic backups with it; without it they are unreadable.",
         ),
         SecretEntry(
             name="cloudflared/tunnel",
             kind=SecretKind.TOOL_LOGIN,
             paths=(PurePosixPath(".secrets/cloudflared/{tunnel_id}.json"),),
             read_by=("cloudflared tunnel run (von Hand; credentials-file in /etc/cloudflared/config.yml)",),
-            recreate="`cloudflared tunnel create` (neuer Tunnel) oder die Datei aus /etc/cloudflared kopieren",
-            elsewhere="/etc/cloudflared (root), die Kopie, die der laufende Tunnel über LoadCredential liest",
+            recreate="`cloudflared tunnel create` (new tunnel) or copy the file from /etc/cloudflared",
+            elsewhere="/etc/cloudflared (root), the copy the running tunnel reads via LoadCredential",
         ),
         SecretEntry(
             name="claude-measure-token",
             kind=SecretKind.TOKEN,
             paths=(PurePosixPath(".secrets/claude-measure-token"),),
             read_by=("agent-runtime#115, Messläufe 0b2/0e",),
-            recreate="`claude setup-token` im Browser",
-            purpose="Die Messläufe starten Claude damit unter einem eigenen, widerrufbaren Login.",
+            recreate="`claude setup-token` in the browser",
+            purpose="The measurement runs start Claude with it under their own revocable login.",
             optional=True,
         ),
     ],
