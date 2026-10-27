@@ -72,9 +72,8 @@ def render_baseline(counts: Counts) -> str:
     return "\n\n".join(sections) + "\n"
 
 
-def find_violations(baseline: Counts, counts: Counts) -> list[str]:
+def find_violations(baseline: Counts, counts: Counts, tracked: frozenset[str]) -> list[str]:
     violations = []
-    tracked = set(tracked_files())
     for pattern_name in OLD_NAME_PATTERNS:
         allowed = baseline.get(pattern_name, {})
         current = counts[pattern_name]
@@ -99,8 +98,9 @@ def find_violations(baseline: Counts, counts: Counts) -> list[str]:
 
 
 def test_old_names_only_shrink() -> None:
+    """#475 acceptance 1: the baseline generated at the tip passes against the tree."""
     counts = count_old_names()
-    violations = find_violations(load_baseline(), counts)
+    violations = find_violations(load_baseline(), counts, frozenset(tracked_files()))
     assert not violations, (
         "Old operator-facing names must only shrink (#207):\n"
         + "\n".join(violations)
@@ -110,4 +110,51 @@ def test_old_names_only_shrink() -> None:
 
 
 def test_every_pattern_is_listed_in_the_baseline() -> None:
+    """#475 acceptance 1: the baseline has a section for every pattern."""
     assert set(load_baseline()) == set(OLD_NAME_PATTERNS)
+
+
+def violations_for(baseline: Counts, counts: Counts, tracked: set[str]) -> list[str]:
+    complete_counts = {name: {} for name in OLD_NAME_PATTERNS} | counts
+    return find_violations(baseline, complete_counts, frozenset(tracked))
+
+
+def test_a_grown_count_is_named_by_file_and_pattern() -> None:
+    """#475 acceptance 2: one more `edge apply` fails and names the file and pattern."""
+    violations = violations_for(
+        {"edge-verb": {"docs/a.md": 1}}, {"edge-verb": {"docs/a.md": 2}}, {"docs/a.md"}
+    )
+
+    assert violations == ["docs/a.md: edge-verb grew from 1 to 2"]
+
+
+def test_a_hit_in_a_new_file_is_named_by_file_and_pattern() -> None:
+    """#475 acceptance 4: a pattern hit in a file the baseline lacks fails."""
+    violations = violations_for({}, {"home-tools": {"docs/new.md": 3}}, {"docs/new.md"})
+
+    assert violations == ["docs/new.md: new file with 3 x home-tools (baseline has none)"]
+
+
+def test_an_untightened_baseline_entry_is_named_by_file_and_pattern() -> None:
+    """#475 acceptance 3: removing a counted hit without tightening the baseline fails."""
+    violations = violations_for(
+        {"home-verb": {"docs/a.md": 2}}, {"home-verb": {"docs/a.md": 1}}, {"docs/a.md"}
+    )
+
+    assert violations == ["docs/a.md: tighten home-verb baseline from 2 to 1"]
+
+
+def test_a_stale_baseline_entry_for_a_missing_file_is_named_by_file_and_pattern() -> None:
+    """#475 done-when: a baseline entry naming a file that no longer exists fails."""
+    violations = violations_for({"edge-script": {"docs/gone.md": 1}}, {}, set())
+
+    assert violations == [
+        "docs/gone.md: edge-script baseline entry names a file that no longer exists"
+    ]
+
+
+def test_rendered_baseline_round_trips_through_toml() -> None:
+    """#475 acceptance 1: the pasted baseline parses back to the counts it was rendered from."""
+    counts = {name: {} for name in OLD_NAME_PATTERNS} | {"home-tools": {"docs/a b.md": 4}}
+
+    assert tomllib.loads(render_baseline(counts)) == counts
