@@ -13,7 +13,7 @@
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089
 "tests/test_edge_apply.py" = 4607
-"tests/test_edge_backup.py" = 1235
+"tests/test_edge_backup.py" = 1232
 "tests/test_edge_cloudflare_read.py" = 906
 "tests/test_edge_external.py" = 2792
 "tests/test_edge_host_check.py" = 817

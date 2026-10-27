@@ -1,17 +1,19 @@
 """The steps behind `hal backup` and `hal restore`: each returns when it succeeded and raises
-`StepFailed` with one German line when it did not. `hal.backup_commands` owns the lock, the
+`StepFailed` when it did not. `hal.backup_commands` owns the lock, the
 signal and the exit."""
 
 import argparse
 import json
 from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 
 from edge_backup import host, restic, runner
 from edge_backup.apps import App, AppsError, parse_apps
-from edge_backup.runner import Run, StepFailed
+from edge_backup.runner import Interrupted, Run, StepFailed
 from edge_backup.settings import Settings
 from edge_backup.status import ExitCategory, first_attempt
+from hal_output import Glyph, Verdict, write_row, write_verdict
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -26,20 +28,59 @@ def init(settings: Settings, _: argparse.Namespace) -> None:
 
 
 def backup(settings: Settings, arguments: argparse.Namespace) -> None:
+    """With `--json` only the snapshot is printed; otherwise a row per app, one for the
+    repository and the verdict."""
     _require_declared(arguments)
+    started = host.monotonic()
+    rows = not arguments.json
 
     def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-        runner.backup(settings, apps, run, only=arguments.app, pre_apply=arguments.pre_apply)
+        try:
+            runner.backup(
+                settings,
+                apps,
+                run,
+                only=arguments.app,
+                pre_apply=arguments.pre_apply,
+                report=write_row if rows else lambda _: None,
+            )
+        except StepFailed as failure:
+            if failure.app is not None:
+                _name_failed_apps(failure, run, rows=rows)
+            raise
 
     def announce(run: Run) -> None:
-        if arguments.pre_apply:
-            snapshot = run.snapshot_of(arguments.app)
-            if arguments.json:
-                print(json.dumps({"snapshot": snapshot}))
-            else:
-                print(f"hal backup: pre-apply-Snapshot {snapshot}")
+        if arguments.json:
+            print(json.dumps({"snapshot": run.snapshot_of(arguments.app)}))
+        else:
+            noun = Noun.APP if run.backed_up_apps == 1 else Noun.APPS
+            write_verdict(
+                Verdict(
+                    Glyph.DONE,
+                    "backup done",
+                    ((run.backed_up_apps, noun),),
+                    elapsed_seconds=host.monotonic() - started,
+                )
+            )
 
     _recorded(settings, arguments, step, announce)
+
+
+class Noun(StrEnum):
+    APP = "app"
+    APPS = "apps"
+
+
+def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
+    """The rows show each reason, so the error line counts; `--json` has no rows, so its error
+    line carries the reason, which the realm step reads."""
+    failed = run.failed_apps
+    total = run.backed_up_apps + len(failed)
+    noun = Noun.APP if total == 1 else Noun.APPS
+    failure.error_line = (
+        f"{len(failed)} of {total} {noun} not backed up" if rows else f"{failure.app}: {failure}"
+    )
+    failure.next_step = f"hal backup {failed[0]}"
 
 
 def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
@@ -97,9 +138,9 @@ def _recorded(
     except StepFailed as failure:
         run.failed(failure.category, failure.app, failure.phase)
         raise
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as interrupt:
         run.failed(ExitCategory.INTERRUPTED)
-        raise
+        raise Interrupted(run.interrupted_app) from interrupt
     except BaseException:
         run.failed(ExitCategory.INTERNAL)
         raise
@@ -118,7 +159,7 @@ def _apps(path: Path) -> tuple[App, ...]:
         return parse_apps(path.read_text(encoding="utf-8"))
     except OSError as error:
         raise StepFailed(
-            ExitCategory.CONFIGURATION, f"apps.toml ist nicht lesbar: {error.strerror}"
+            ExitCategory.CONFIGURATION, f"apps.toml is not readable: {error.strerror}"
         ) from error
     except AppsError as error:
         raise StepFailed(ExitCategory.CONFIGURATION, str(error)) from error
