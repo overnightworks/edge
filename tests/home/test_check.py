@@ -757,7 +757,7 @@ def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_fig
     """#460 D1, D2, D3: the sentence and step, no GB figure in the mail, the figures in the report."""
     fake_disk.free_share = 0.09
 
-    home_check(clean_home, runner)
+    home_check(clean_home, runner, disk=fake_disk)
 
     (sent,) = mail_stub.sent
     news = message_of(sent)
@@ -771,12 +771,12 @@ def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_fig
 def test_a_disk_that_stays_low_sends_no_second_mail_and_one_that_clears_is_mailed_as_done(clean_home, runner, mail_stub, fake_disk) -> None:
     """#460 D1 and #415 Z4, Z5: once on appearing, once on going, however much less is free in between."""
     fake_disk.free_share = 0.09
-    home_check(clean_home, runner)
+    home_check(clean_home, runner, disk=fake_disk)
     fake_disk.free_share = 0.07
-    home_check(clean_home, runner)
+    home_check(clean_home, runner, disk=fake_disk)
     fake_disk.free_share = 0.30
 
-    home_check(clean_home, runner)
+    home_check(clean_home, runner, disk=fake_disk)
 
     first, done = mail_stub.sent
     assert "weniger als 10 % frei" in message_of(first).get_content()
@@ -785,10 +785,11 @@ def test_a_disk_that_stays_low_sends_no_second_mail_and_one_that_clears_is_maile
 
 
 def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_area_line(clean_home, runner, mail_stub, fake_disk) -> None:
+    """#460 D2 (cell E-4): a low disk and a restarting container are two numbered items under one area line."""
     fake_disk.free_share = 0.09
     restarting_containers(runner, "edge-a")
 
-    home_check(clean_home, runner)
+    home_check(clean_home, runner, disk=fake_disk)
 
     body = message_of(mail_stub.sent[0]).get_content()
     assert "1. " in body
@@ -803,7 +804,7 @@ def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_oth
     fake_disk.unreadable = True
     leave_pasted_image(clean_home)
 
-    code = home_check(clean_home, runner)
+    code = home_check(clean_home, runner, disk=fake_disk)
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 3

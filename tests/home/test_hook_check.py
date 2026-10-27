@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import FakeProbe, Sandbox
+from conftest import FakeDisk, FakeProbe, Sandbox
 
 from home_tools import cli, hook_check
 from home_tools.hook_check import HookCheckUnavailable
@@ -293,12 +293,12 @@ def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_c
     delete_quality(machine)
     layout = machine.layout
 
-    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(), probe=FakeProbe())
+    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(), probe=FakeProbe(), disk_space=FakeDisk())
     report = layout.check_report_file.read_text()
     assert code == 1
     assert "# home hook " in report
     assert f"| quality | {layout.quality_executable} |" in report
 
-    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(broken=["worktree"]), probe=FakeProbe())
+    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(broken=["worktree"]), probe=FakeProbe(), disk_space=FakeDisk())
     assert code == 3
     assert "Prüfung hook fehlgeschlagen (HookCheckUnavailable)" in layout.check_report_file.read_text()

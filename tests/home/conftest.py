@@ -103,12 +103,10 @@ class FakeDisk:
         return platform_check.DiskSpace(self.TOTAL, round(self.TOTAL * self.free_share))
 
 
-@pytest.fixture(autouse=True)
-def fake_disk(monkeypatch: pytest.MonkeyPatch) -> FakeDisk:
-    """A runner's disk may be over 90 % full, and a nearly full disk is an action: every `home check` test reads a roomy fake."""
-    disk = FakeDisk()
-    monkeypatch.setattr(check, "DISK_SPACE", disk)
-    return disk
+@pytest.fixture
+def fake_disk() -> FakeDisk:
+    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `home check` test hands in this roomy fake."""
+    return FakeDisk()
 
 
 @pytest.fixture(autouse=True)
@@ -488,8 +486,8 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     assert cli.main(["setup", "--apply"], home=clean_home) == 0
 
 
-def home_check(home: Path, runner, probe: FakeProbe | None = None) -> int:
-    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe())
+def home_check(home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None) -> int:
+    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
 
 REPORT_DISPLAY = "~/.local/state/home/check-report.md"
