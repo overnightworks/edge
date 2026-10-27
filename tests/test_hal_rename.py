@@ -90,6 +90,11 @@ def rename(world: World, apply: bool = True, old: str = "old", new: str = "fresh
     return rename_commands.rename(world, old, new, apply)
 
 
+def squeezed(text: str) -> str:
+    """Each line with its column padding collapsed, so a test reads the words, not the widths."""
+    return "\n".join(" ".join(line.split()) for line in text.splitlines())
+
+
 @pytest.fixture
 def repository(home: Path) -> Path:
     """`~/git/old` with two worktrees and a Claude memory directory."""
@@ -111,10 +116,9 @@ def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
     assert code == ExitCode.OK
     assert tree_state(home) == before
     assert origin_of(repository) == SSH.format("old")
-    output = capsys.readouterr().out
-    assert f"move {repository} -> {home / 'git' / 'fresh'}" in output
-    assert "--apply" in output
-    assert f"uv sync in {home / 'git' / 'fresh'}" in output
+    output = squeezed(capsys.readouterr().out)
+    assert "~ clone move ~/git/old → ~/git/fresh" in output
+    assert "~ venv uv sync in ~/git/fresh" in output
     assert fakes.uv_calls == []
 
 
@@ -214,9 +218,11 @@ def test_a_refusal_for_running_processes_names_each_and_says_to_end_the_session(
     rename(world)
 
     lines = capsys.readouterr().err.splitlines()
-    assert lines[0].endswith(f"pid 4242 (claude) runs in {repository}: end that session first")
+    assert lines[0].endswith(
+        f"pid 4242 (claude) runs in {repository}: end that session first · nothing changed"
+    )
     assert lines[1].endswith(
-        f"pid 4243 (node) runs in {repository / 'src'}: end that session first"
+        f"pid 4243 (node) runs in {repository / 'src'}: end that session first · nothing changed"
     )
 
 
@@ -265,7 +271,12 @@ def test_a_unit_or_link_into_a_moved_clone_is_reported_and_left_alone(
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
-    assert re.search(f" {reference} (points into|names) a moved clone", capsys.readouterr().out)
+    assert re.search(
+        f"! unit( link)? +check +~/{path} (points into|names) a moved clone"
+        if "systemd" in path
+        else f"! link +check +~/{path} points into a moved clone",
+        capsys.readouterr().out,
+    )
     assert (str(reference.readlink()) if kind == "link" else reference.read_text()) == content
     assert (home / "git" / "fresh").is_dir()
 
@@ -289,7 +300,7 @@ def test_what_does_not_point_into_a_moved_clone_is_not_reported(home, world, rep
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert "finding" not in capsys.readouterr().out
+    assert "check" not in capsys.readouterr().out
 
 
 def test_a_uv_tool_installed_from_a_moved_clone_is_reported(world, repository, fakes, capsys):
@@ -304,8 +315,8 @@ def test_a_uv_tool_installed_from_a_moved_clone_is_reported(world, repository, f
     out = capsys.readouterr().out
     assert code == ExitCode.FINDINGS
     assert (
-        f"installed from a moved clone: agent-coordination v4.2.0 [required: file://{repository}]"
-        in out
+        "! uv tool check installed from a moved clone: agent-coordination v4.2.0 "
+        f"[required: file://{repository}]" in squeezed(out)
     )
     assert "ansible-core" not in out
 
@@ -404,7 +415,7 @@ def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree_but_not
 
     git = home / "git"
     assert code == ExitCode.OK
-    assert "repair 3 worktrees of" in capsys.readouterr().out
+    assert "✓ worktrees repaired 3 in ~/git/fresh-worktrees" in squeezed(capsys.readouterr().out)
     for worktree in (
         git / "fresh" / ".claude" / "worktrees" / "agent-1",
         git / "fresh-worktrees" / "feature" / "topic",
@@ -432,14 +443,16 @@ def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it_unt
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
-    assert f"finding: worktree {outside} lies outside the moved trees" in capsys.readouterr().out
+    assert f"! worktree check {outside} lies outside the moved trees" in squeezed(
+        capsys.readouterr().out
+    )
     assert plain_git(home / "git" / "fresh", "worktree", "repair", str(outside)).returncode == 0
     assert plain_git(outside, "status", "--porcelain").stdout == ""
     if registration == "ghost":
         ghost = home / "git" / "fresh" / ".git" / "worktrees" / "ghost"
         (outside / ".git").write_text(f"gitdir: {ghost}\n")
     assert rename(world) == repeat
-    assert ("finding" in capsys.readouterr().out) == (registration == "ghost")
+    assert ("check" in capsys.readouterr().out) == (registration == "ghost")
 
 
 def symlinked(home: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
@@ -662,7 +675,9 @@ def test_a_failure_in_a_middle_step_names_it_and_what_is_done_and_not_done(
     assert any(line.startswith("not done: repair 2 worktrees") for line in lines)
     assert any(line.startswith("not done: move ") and "projects" in line for line in lines)
     assert lines[-1] == "next: hal rename fresh old --apply"
-    assert f"finding: unit {unit} points into a moved clone" in captured.out
+    assert "! unit check ~/.config/systemd/user/old.service points into a moved clone" in squeezed(
+        captured.out
+    )
     assert origin_of(home / "git" / "fresh") == SSH.format("old")
 
 
@@ -762,7 +777,7 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
     out = capsys.readouterr().out
     assert code == ExitCode.OK
     assert fakes.uv_calls == rewrites(home / "git" / "fresh") * 2
-    assert out.splitlines()[-1] == "nothing to move; ran 1 uv syncs"
+    assert out.splitlines()[-1] == "✓ renamed old → fresh · 1 steps"
     assert "nothing to do" not in out
 
 
@@ -795,3 +810,99 @@ def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home
     assert code == ExitCode.OK
     assert origin_of(home / "git" / "fresh") == SSH.format("fresh")
     assert "current" not in capsys.readouterr().err
+
+
+@pytest.fixture
+def through_cli(world, monkeypatch, capsys):
+    """`hal rename` through `hal.cli.main`, returning the exit code and the two streams."""
+    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
+
+    def run(*arguments: str):
+        code = cli.main(["rename", *arguments])
+        captured = capsys.readouterr()
+        return code, squeezed(captured.out), squeezed(captured.err)
+
+    return run
+
+
+@pytest.fixture
+def everything(home, locked) -> None:
+    """The clone with two worktrees, memory and a lock file, and a deploy checkout."""
+    make_clone(home / "old-live", HTTPS.format("old"))
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        "~ clone move ~/git/old → ~/git/fresh",
+        "~ worktrees move ~/git/old-worktrees → ~/git/fresh-worktrees",
+        "~ worktrees repair 2 in ~/git/fresh-worktrees",
+        "~ origin set url git@github.com:overnightworks/fresh.git",
+        "~ origin set url https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
+        "~ memory move Claude project memory of the clone",
+        "~ venv uv sync in ~/git/fresh",
+    ],
+)
+def test_the_plan_shows_one_row_for_each_kind_of_step(everything, through_cli, row):
+    code, out, _ = through_cli("old", "fresh")
+
+    assert code == ExitCode.OK
+    assert row in out.splitlines()
+
+
+def test_the_plan_ends_with_its_verdict_and_the_command_that_applies_it(everything, through_cli):
+    code, out, _ = through_cli("old", "fresh")
+
+    assert code == ExitCode.OK
+    assert out.splitlines()[-2:] == [
+        "· plan only, nothing changed",
+        "next: hal rename old fresh --apply",
+    ]
+
+
+def test_a_repository_without_a_clone_has_nothing_to_do(home, through_cli):
+    code, out, err = through_cli("old", "fresh")
+
+    assert (code, out, err) == (ExitCode.OK, "· nothing to do, no clone of old to move", "")
+
+
+def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
+    home, repository, through_cli
+):
+    link = home / ".local" / "bin" / "tool"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(repository / "bin" / "tool")
+
+    code, out, _ = through_cli("old", "fresh")
+
+    assert code == ExitCode.FINDINGS
+    assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
+
+
+def test_an_apply_prints_each_step_as_done_and_ends_with_the_count(everything, through_cli):
+    code, out, err = through_cli("old", "fresh", "--apply")
+
+    assert code == ExitCode.OK
+    assert out.splitlines() == [
+        "✓ clone moved ~/git/old → ~/git/fresh",
+        "✓ worktrees moved ~/git/old-worktrees → ~/git/fresh-worktrees",
+        "✓ origin url set git@github.com:overnightworks/fresh.git",
+        "✓ worktrees repaired 2 in ~/git/fresh-worktrees",
+        "✓ memory moved Claude project memory of the clone",
+        "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
+        "✓ venv uv synced in ~/git/fresh",
+        "✓ renamed old → fresh · 7 steps",
+    ]
+    assert err == ""
+
+
+def test_a_refusal_says_why_nothing_changed_and_offers_no_next_step(repository, fakes, through_cli):
+    fakes.known.clear()
+
+    code, out, err = through_cli("old", "fresh", "--apply")
+
+    assert code == ExitCode.REFUSED
+    assert out == ""
+    assert (
+        err == "error: cannot rename, GitHub does not know overnightworks/fresh · nothing changed"
+    )

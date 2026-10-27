@@ -16,7 +16,9 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from hal import rename_rows
 from hal.grammar import Asks, Command, ExitCode
+from hal.rename_rows import Finding, StepKind, StepRow
 from hal_output import printable, write_error
 from home_tools.layout import Layout, registered_worktrees
 
@@ -65,7 +67,7 @@ class Move:
 class Step:
     description: str
     run: Callable[[], None]
-    is_sync: bool = False
+    row: StepRow
 
 
 @dataclass(frozen=True)
@@ -112,7 +114,7 @@ class Relocation:
 @dataclass(frozen=True)
 class Plan:
     steps: tuple[Step, ...]
-    findings: tuple[str, ...]
+    findings: tuple[Finding, ...]
     refusals: tuple[str, ...]
 
 
@@ -474,38 +476,41 @@ def _points_into(disk: Disk, link: Path, roots: Iterable[Path]) -> bool:
     return any(target.is_relative_to(root) for root in roots)
 
 
-def _unit_findings(disk: Disk, directory: Path, roots: Sequence[Path], home: Path) -> list[str]:
+def _unit_findings(disk: Disk, directory: Path, roots: Sequence[Path], home: Path) -> list[Finding]:
     """A unit link is read, never followed: its target is only read for what it names."""
     found = []
     for entry in disk.walk(directory):
         if _points_into(disk, entry, roots):
-            found.append(f"unit link {entry} points into a moved clone")
+            found.append(Finding("unit link", f"{entry} points into a moved clone"))
         elif disk.is_link(entry):
             if _mentions(disk.target_text(entry), roots, home):
-                found.append(f"unit link {entry} names a moved clone")
+                found.append(Finding("unit link", f"{entry} names a moved clone"))
         elif disk.is_file(entry) and _mentions(disk.read_text(entry), roots, home):
-            found.append(f"unit {entry} points into a moved clone")
+            found.append(Finding("unit", f"{entry} points into a moved clone"))
     return found
 
 
 def _findings(
     world: World, disk: Disk, roots: Sequence[Path], relocations: Sequence[Relocation]
-) -> list[str]:
+) -> list[Finding]:
     found = _unit_findings(disk, world.home / ".config" / "systemd" / "user", roots, world.home)
     found += [
-        f"link {link} points into a moved clone"
+        Finding("link", f"{link} points into a moved clone")
         for directory in (world.home / ".local" / "bin", world.home, world.home / "srv")
         for link in disk.entries(directory)
         if _points_into(disk, link, roots)
     ]
     found += [
-        f"uv tool installed from a moved clone: {line.strip()}"
+        Finding("uv tool", f"installed from a moved clone: {line.strip()}")
         for line in world.uv_tools().splitlines()
         if _mentions(line, roots)
     ]
     found += [
-        f"worktree {path} lies outside the moved trees and may still point at the old clone: "
-        f"git -C {relocation.site.clone.target} worktree repair {path}"
+        Finding(
+            "worktree",
+            f"{path} lies outside the moved trees and may still point at the old clone: "
+            f"git -C {relocation.site.clone.target} worktree repair {path}",
+        )
         for relocation in relocations
         for path in relocation.outside
         if not _names_clone(disk, path, relocation.site.clone.target)
@@ -584,13 +589,17 @@ def _process_refusals(world: World, disk: Disk, relocations: Sequence[Relocation
     ]
 
 
-def _move_step(disk: Disk, move: Move) -> Step:
-    return Step(f"move {move.source} -> {move.target}", disk.move_action(move))
+def _move_step(disk: Disk, move: Move, site: Site) -> Step:
+    kinds = {site.clone: StepKind.MOVE_CLONE, site.worktrees: StepKind.MOVE_WORKTREES}
+    row = StepRow.of_move(kinds.get(move, StepKind.MOVE_MEMORY), move.source, move.target)
+    return Step(f"move {move.source} -> {move.target}", disk.move_action(move), row)
 
 
-def _origin_step(disk: Disk, path: Path, url: str) -> Step:
+def _origin_step(disk: Disk, path: Path, url: str, deploy: bool = False) -> Step:
     return Step(
-        f"origin of {path} -> {url}", disk.git_action(path, "remote", "set-url", "origin", url)
+        f"origin of {path} -> {url}",
+        disk.git_action(path, "remote", "set-url", "origin", url),
+        StepRow.of_origin(url, path if deploy else None),
     )
 
 
@@ -600,6 +609,7 @@ def _repair_step(disk: Disk, relocation: Relocation) -> Step:
     return Step(
         f"repair {len(worktrees)} worktrees of {clone}",
         disk.git_action(clone, "worktree", "repair", *worktrees),
+        StepRow.of_repair(relocation.site.worktrees.target, len(worktrees)),
     )
 
 
@@ -633,7 +643,7 @@ def _sync_step(world: World, disk: Disk, sync: Sync) -> Step:
             ("venv", "--allow-existing", *python),
             ("sync", "--locked", "--reinstall"),
         ),
-        is_sync=True,
+        StepRow(StepKind.SYNC, f"in {sync.project}"),
     )
 
 
@@ -643,7 +653,9 @@ def _steps(
     """The work still to do, in the order that is safe: every move first, because a worktree
     of one clone can lie inside another clone's `-worktrees`."""
     steps = [
-        _move_step(disk, move) for relocation in relocations for move in relocation.clone_moves
+        _move_step(disk, move, relocation.site)
+        for relocation in relocations
+        for move in relocation.clone_moves
     ]
     steps += [
         _origin_step(disk, relocation.site.clone.target, relocation.new_url)
@@ -654,11 +666,13 @@ def _steps(
         _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
     ]
     steps += [
-        _move_step(disk, relocation.memory_move)
+        _move_step(disk, relocation.memory_move, relocation.site)
         for relocation in relocations
         if relocation.memory_move
     ]
-    steps += [_origin_step(disk, checkout.path, checkout.new_url) for checkout in deploy]
+    steps += [
+        _origin_step(disk, checkout.path, checkout.new_url, deploy=True) for checkout in deploy
+    ]
     steps += [
         _sync_step(world, disk, sync) for relocation in relocations for sync in relocation.syncs
     ]
@@ -685,17 +699,14 @@ def _reason(error: subprocess.CalledProcessError | OSError) -> str:
     return " / ".join((stderr or "").strip().splitlines()) or str(error)
 
 
-def _execute(steps: Sequence[Step]) -> Halfway | None:
+def _execute(steps: Sequence[Step], home: Path) -> Halfway | None:
     for index, step in enumerate(steps):
         try:
             step.run()
         except (subprocess.CalledProcessError, OSError) as error:
             return Halfway(step, _reason(error), tuple(steps[:index]), tuple(steps[index + 1 :]))
+        rename_rows.write_done_row(step.row, home)
     return None
-
-
-def _say(line: str) -> None:
-    print(printable(line))
 
 
 def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
@@ -709,35 +720,23 @@ def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
     print(f"next: hal rename {new} {old} --apply", file=sys.stderr)
 
 
-def _summary(steps: Sequence[Step]) -> str:
-    syncs = sum(step.is_sync for step in steps)
-    moved = len(steps) - syncs
-    if moved:
-        return f"ran {moved} steps and {syncs} uv syncs"
-    return f"nothing to move; ran {syncs} uv syncs"
-
-
 def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
     plan = make_plan(world, old, new)
     if plan.refusals:
-        for reason in plan.refusals:
-            write_error(f"refusing, nothing changed: {reason}")
+        rename_rows.write_refusals(plan.refusals)
         return ExitCode.REFUSED
     if not (plan.steps or plan.findings):
-        _say(f"nothing to do: no clone of {old} to move")
+        rename_rows.write_nothing_to_do(old)
         return ExitCode.OK
-    for step in plan.steps:
-        _say(step.description)
-    halfway = _execute(plan.steps) if apply else None
-    if plan.steps and not apply:
-        _say("nothing changed; --apply does the above")
-    for finding in plan.findings:
-        _say(f"finding: {finding}")
+    if not apply:
+        rename_rows.write_plan(plan.steps, plan.findings, old, new, world.home)
+        return ExitCode.FINDINGS if plan.findings else ExitCode.OK
+    halfway = _execute(plan.steps, world.home)
+    rename_rows.write_findings(plan.findings, world.home)
     if halfway:
         _report_halfway(halfway, old, new)
         return ExitCode.FAILURE
-    if apply and plan.steps:
-        _say(_summary(plan.steps))
+    rename_rows.write_renamed(old, new, len(plan.steps))
     return ExitCode.FINDINGS if plan.findings else ExitCode.OK
 
 

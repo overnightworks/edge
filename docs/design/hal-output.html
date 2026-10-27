@@ -788,9 +788,12 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
       <figcaption><span class="tag new">neu</span> <code>hal rename</code> zeigt erst, und Ctrl-C mitten im Apply</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal rename songmaker-web songmaker</span>
 <span class="b">  ~</span> clone           move           <span class="d">~/git/songmaker-web → ~/git/songmaker</span>
+<span class="b">  ~</span> worktrees       move           <span class="d">~/git/songmaker-web-worktrees → ~/git/songmaker-worktrees</span>
 <span class="b">  ~</span> worktrees       repair 3       <span class="d">in ~/git/songmaker-worktrees</span>
-<span class="b">  ~</span> origin          set url        <span class="d">github.com/overnightworks/songmaker.git</span>
+<span class="b">  ~</span> origin          set url        <span class="d">git@github.com:overnightworks/songmaker.git</span>
+<span class="b">  ~</span> origin          set url        <span class="d">https://github.com/overnightworks/songmaker.git · deploy checkout ~/songmaker-live</span>
 <span class="b">  ~</span> memory          move           <span class="d">Claude project memory of the clone</span>
+<span class="b">  ~</span> venv            uv sync        <span class="d">in ~/git/songmaker</span>
 <span class="w">· plan only, nothing changed</span>
 <span class="c">next:</span> hal rename songmaker-web songmaker --apply
 
@@ -799,6 +802,7 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
 ^C
 <span class="rw">error:</span> interrupted while recreating traefik · its state may be partial
 <span class="c">next:</span> hal apply</pre>
+      <p class="was">Die URL steht so, wie git sie speichert, nicht gekürzt wie im ersten Bild.</p>
       <p class="was">heute: <code>edge apply --closed: interrupted while changing traefik (recreate traefik); its state may be partial, run `edge apply --closed` to see</code></p>
     </figure>
   </div>
