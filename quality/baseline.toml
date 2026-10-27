@@ -7,7 +7,7 @@
 "Keycloak.admin_api" = 29
 
 [file_lines]
-"probe/keycloak/probe.py" = 2839
+"probe/keycloak/probe.py" = 2841
 "probe/step-ca/probe.py" = 1052
 "probe/switches/probe.py" = 812
 "src/home_tools/secrets_view.py" = 855
@@ -21,7 +21,7 @@
 "tests/test_edge_external.py" = 2858
 "tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1737
-"tests/test_keycloak_probe.py" = 1039
+"tests/test_keycloak_probe.py" = 1040
 "tests/test_realm_reconcile.py" = 999
 
 [function_lines."probe/keycloak/probe.py"]
@@ -29,7 +29,7 @@
 "Probe.go_live_creates_the_admin" = 104
 "Probe.only_logins_and_failed_logins_are_stored" = 65
 "Probe.public_issuer_and_paths" = 86
-"Probe.the_realm_step" = 147
+"Probe.the_realm_step" = 148
 
 [function_lines."src/edge/external/cli.py"]
 "apply_command" = 70
