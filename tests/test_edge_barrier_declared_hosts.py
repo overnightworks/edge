@@ -74,7 +74,7 @@ def closed_apply(core_files, hal, repository, applying):  # noqa: F811
         pytest.param(True, "A", "switched off", True, id="B4 running"),
         pytest.param(False, "A", "switched off", True, id="B4 disabled but running"),
         pytest.param(False, "gone", "nothing of it runs", False, id="B5"),
-        pytest.param(True, "B", "barrier raised", True, id="B6 repair"),
+        pytest.param(True, "B", "barrier back", True, id="B6 repair"),
     ],
 )
 def test_stop_bars_the_apex_a_unit_declares_and_proves_it(stack, enabled, situation, line, barred):

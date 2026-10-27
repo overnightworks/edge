@@ -20,7 +20,7 @@ APPLY_WOULD_START_IT = "hal apply would start it again"
 class SwitchEvent(StrEnum):
     SWITCHED_OFF = "switched off"
     ALREADY_OFF = "already off"
-    BARRIER_RAISED = "barrier raised"
+    BARRIER_RAISED = "barrier back"
     DISABLED = "disabled"
     PARTIAL = "partial"
 

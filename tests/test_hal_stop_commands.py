@@ -37,7 +37,9 @@ from test_hal_stack_commands import (
 
 from edge import cli as stack
 from edge import switches
+from edge.switch_events import SwitchEvent
 from hal.grammar import ExitCode
+from hal_output import EVENT_WIDTH
 
 # --- hal stop <unit> -------------------------------------------------------------------------
 
@@ -127,7 +129,7 @@ def test_stop_of_a_switched_off_unit_names_the_barrier_it_put_back(hal, fakes): 
     result = hal("stop", "probe")
 
     assert result.exit_code == ExitCode.OK
-    assert squeezed(result.out) == "✓ probe barrier raised off since 17.10. 22:10"
+    assert squeezed(result.out) == "✓ probe barrier back off since 17.10. 22:10"
 
 
 def test_stop_of_a_disabled_unit_that_nothing_runs_says_so(hal, fakes):  # noqa: F811
@@ -339,3 +341,8 @@ def test_stop_without_a_terminal_switches_off_and_never_reads_stdin(hal, fakes):
     assert result.exit_code == ExitCode.OK
     assert "✓ step-ca" in result.out
     assert fakes.marker() is not None
+
+
+@pytest.mark.parametrize("event", list(SwitchEvent))
+def test_every_stop_event_fits_the_event_column_so_the_facts_align(event: SwitchEvent) -> None:
+    assert len(event) <= EVENT_WIDTH
