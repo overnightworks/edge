@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "ef62d45bae6dd5eba50d05f1aed2b594ac47af76"
 branch = "claude/issue-568-s2g3b-wizard-stderr"
-scope = ["docs/home.md", "src/hal_output/__init__.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py", "tests/old_names_baseline.toml", "tests/test_hal_output.py"]
+scope = ["docs/home.md", "quality/baseline.toml", "src/hal_output/__init__.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py", "tests/old_names_baseline.toml", "tests/test_hal_output.py"]
 opened_commit = "36264a7c9567ce545f75bf1f64df8b4133aa002b"
 whole_reason = "The wizard's stderr contract (the write_error option, five lines and their typed causes) and every pin of it (tests, the old-names baseline, the doc sentence) move in one commit, or the pins and the ratchet go red."
