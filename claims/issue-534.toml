@@ -1,0 +1,7 @@
+claim_id = "f48fe38be1394371a00f682cdb8758c1"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "525536cd07fb8ddf863001a7e9a5c9219d4dd71e"
+branch = "claude/issue-534-s5-0-plan-module"
+scope = ["src/edge/apply.py", "src/edge/plan.py"]
+opened_commit = "70e8395e92c955663080b429712afbbda89e09d6"
