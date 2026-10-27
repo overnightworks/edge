@@ -209,7 +209,7 @@ def _owners_of_ids(
     frame: Frame, page: str, rendered: Sequence[tuple[Block, _Rendered]]
 ) -> dict[str, str]:
     """Every id of the assembled page with its owner (the frame or a block file); a clash raises."""
-    owners = {identifier: FRAME_OWNER for identifier in _ids(_page(frame, page, []))}
+    owners = dict.fromkeys(_ids(_page(frame, page, [])), FRAME_OWNER)
     for block, one in rendered:
         for identifier in _ids(one.body):
             if identifier in owners:
