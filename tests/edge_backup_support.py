@@ -100,8 +100,8 @@ class Machine:
     """The files of a kept volume by Docker volume name; songmaker's audio volume holds `audio`."""
     volumes_by_label: dict[str, list[str]] = field(default_factory=dict)
     """What `docker volume ls` answers for a compose volume name, whatever the project."""
-    unreadable_files: set[str] = field(default_factory=set)
-    """Entries of a kept volume the operator cannot read: a count that meets one exits 1."""
+    unreadable_directories: set[str] = field(default_factory=set)
+    """Directories of a kept volume the operator cannot traverse: a count that enters one exits 1."""
     clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
@@ -318,8 +318,10 @@ class Machine:
                 for path in root.rglob("*")
                 if path.is_file() and not path.is_symlink()
             }
+        if skip is not None and "-mindepth" not in argv and fnmatch.fnmatchcase("scanned", skip):
+            return b""
         kept = [name for name in names if not _skipped(name, skip)]
-        if self.unreadable_files & set(kept):
+        if any(set(map(str, Path(name).parents)) & self.unreadable_directories for name in kept):
             return exit_with("Zählen der Dateien", 1)
         return b"".join(name.encode() + b"\0" for name in kept)
 

@@ -148,7 +148,6 @@ def test_a_files_volume_that_matches_no_single_volume_fails_that_app_in_readines
 ):
     """#468 M7: the other apps back up and nothing is staged for the failing one."""
     builds.volumes_by_label["builds"] = volumes
-    builds.other_volumes["presentator"] = []
     apps = declare_apps(home, SONGMAKER_TOML + FILES_TOML)
 
     outcome = edge_backup("backup", *apps)
@@ -251,10 +250,11 @@ def test_an_unreadable_entry_fails_the_app_in_manifest_and_backs_up_nothing(
 ):
     """#468 M11: the other apps back up, and the last good snapshot stays."""
     apps = declare_apps(home, SONGMAKER_TOML + FILES_TOML)
-    assert edge_backup("backup", *apps).exit_code == 0
-    before = app_history(_status(home), "presentator")["last_snapshot_id"]
-    builds.unreadable_files = {"run2/out"}
-    builds.volume_files["presentator_builds"] |= {"run2/out": b"x"}
+    first = edge_backup("backup", *apps)
+    assert first.exit_code == 0
+    before = app_history(first.status, "presentator")["last_snapshot_id"]
+    builds.unreadable_directories = {"run2/out"}
+    builds.volume_files["presentator_builds"] |= {"run2/out/deck.pdf": b"x"}
     builds.snapshots.clear()
 
     outcome = edge_backup("backup", *apps)
@@ -268,13 +268,9 @@ def test_an_unreadable_entry_fails_the_app_in_manifest_and_backs_up_nothing(
     assert app_history(outcome.status, "presentator")["last_snapshot_id"] == before
 
 
-def _status(home) -> dict:
-    return json.loads((home / ".local/state/edge/backup-status.json").read_text())
-
-
-def test_an_unreadable_entry_the_skip_matches_does_not_fail_the_backup(edge_backup, builds, home):
-    """#468 A3: an entry the skip leaves out is never read."""
-    builds.unreadable_files = {"staged-top/partial", "run1/staged-talk/partial"}
+def test_an_unreadable_directory_the_skip_matches_does_not_fail_the_backup(edge_backup, builds, home):
+    """#468 A3: a directory the skip leaves out is never entered."""
+    builds.unreadable_directories = {"staged-top", "run1/staged-talk"}
 
     _, outcome = _backup(edge_backup, home)
 
