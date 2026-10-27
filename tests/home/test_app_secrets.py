@@ -349,7 +349,7 @@ def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
 
     assert (code, lines[-2]) == (
         0,
-        "  ! secrets         missing         opentofu/passphrase, hopin/session-secret",
+        "  ! secrets         missing        opentofu/passphrase, hopin/session-secret",
     )
     assert not sandbox.layout.secrets_dir.exists()
 
@@ -362,7 +362,7 @@ def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after
 
     secrets_rows = [line for line in lines if "secrets  " in line]
     assert secrets_rows == [
-        "  ! secrets         missing         opentofu/passphrase, hopin/session-secret",
+        "  ! secrets         missing        opentofu/passphrase, hopin/session-secret",
         "  ✓ secrets         stored",
     ]
     assert lines.index(secrets_rows[0]) + 1 < lines.index(secrets_rows[1])  # the wizard spoke between them
@@ -395,7 +395,7 @@ def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
 
     assert code == 1
     assert captured.out.splitlines()[-1] == (
-        "  ✗ secrets         failed          not every secret is set up; the lines above say which one is open"
+        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open"
     )
     assert captured.err.splitlines() == ["error: setup stopped at secrets", f"next: {RERUN}"]
 
@@ -445,7 +445,7 @@ def put_secret(sandbox: Sandbox, name: str, mode: int = 0o600) -> Path:
     ("entries", "present", "expected"),
     [
         pytest.param(
-            LIVE, [], "  ! secrets         missing         live", id="a live entry that is absent"
+            LIVE, [], "  ! secrets         missing        live", id="a live entry that is absent"
         ),
         pytest.param(
             LIVE, ["live"], "  · secrets         complete", id="a live entry with its file"
@@ -459,7 +459,7 @@ def put_secret(sandbox: Sandbox, name: str, mode: int = 0o600) -> Path:
         pytest.param(
             BY_HAND,
             [],
-            "  ! secrets         missing         by-hand (by hand)",
+            "  ! secrets         missing        by-hand (by hand)",
             id="an entry only a person can create",
         ),
         pytest.param(
@@ -471,7 +471,7 @@ def put_secret(sandbox: Sandbox, name: str, mode: int = 0o600) -> Path:
         pytest.param(
             LIVE + BY_HAND,
             [],
-            "  ! secrets         missing         live, by-hand (by hand)",
+            "  ! secrets         missing        live, by-hand (by hand)",
             id="a generated and a by-hand entry",
         ),
     ],
@@ -514,7 +514,7 @@ def test_hal_setup_dry_run_names_an_entry_whose_presence_cannot_be_told_and_does
 
     assert (code, lines[-2]) == (
         ExitCode.OK,
-        "  ! secrets         missing         closed/entry (unknown)",
+        "  ! secrets         missing        closed/entry (unknown)",
     )
 
 
@@ -544,7 +544,7 @@ def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
 
     code, lines, _ = hal_secrets(LIVE + secret_entry("absent"))
 
-    assert (code, lines[-2]) == (ExitCode.OK, "  ! secrets         missing         absent")
+    assert (code, lines[-2]) == (ExitCode.OK, "  ! secrets         missing        absent")
     assert {path: stat.S_IMODE(path.stat().st_mode) for path in modes_before} == modes_before
     assert not (unreadable.parent / "absent").exists()
     unreadable.chmod(0o600)

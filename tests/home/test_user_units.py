@@ -174,7 +174,7 @@ def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
 
     lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
-    assert "  \u2713 timers          changed         2 timers \u00b7 systemd reloaded" in lines
+    assert "  \u2713 timers          changed        2 timers \u00b7 systemd reloaded" in lines
 
 
 def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
@@ -186,7 +186,7 @@ def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
 
     lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
-    assert "  \u2713 timers          changed         1 timer" in lines
+    assert "  \u2713 timers          changed        1 timer" in lines
 
 
 def test_an_unchanged_timers_row_is_bare(

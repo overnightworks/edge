@@ -138,12 +138,12 @@ def write_row(row: Row) -> None:
     fact = printable(row.fact).rstrip()
     columns = f"{subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}"
     if row.glyph is Glyph.UNCHANGED:
-        line = f"  {row.glyph.value} {columns}  {fact}".rstrip()
+        line = f"  {row.glyph.value} {columns} {fact}".rstrip()
         print(_styled(line, _DIM, stdout))
         return
     glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
     line = f"  {glyph} {columns}"
-    print(f"{line}  {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+    print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
 
 
 def write_verdict(verdict: Verdict) -> None:

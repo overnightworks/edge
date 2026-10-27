@@ -26,7 +26,7 @@ ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
 
 
 # The sandbox's unit directory is empty: the timers have nothing to change, and no secret is open.
-SUDO_ANNOUNCEMENT = "  › system          needs sudo      tunnel, polkit, journal, mail, agent account"
+SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"
 FRESH_APPLY = [
     "  ✓ commit hook     changed",
     "  · timers          unchanged",
@@ -44,9 +44,9 @@ REPEATED_APPLY = [
     "✓ setup done · 4 unchanged · 47s",
 ]
 UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 4 unchanged · 47s"]
-NOT_CHECKED = "  ! system          not checked     needs sudo at a terminal"
+NOT_CHECKED = "  ! system          not checked    needs sudo at a terminal"
 NOT_CHECKED_WITHOUT_ANSIBLE = (
-    "  ! system          not checked     needs Ansible, which `hal setup --apply` installs first"
+    "  ! system          not checked    needs Ansible, which `hal setup --apply` installs first"
 )
 NOT_RUN = {
     TIMERS: "  · timers          not run",
@@ -181,7 +181,7 @@ def test_failing_quality_install_leaves_hooks_path_untouched_and_exits_nonzero(
     assert (code, lines) == (
         1,
         [
-            "  ✗ commit hook     failed          uv could not install quality",
+            "  ✗ commit hook     failed         uv could not install quality",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
@@ -202,7 +202,7 @@ def test_failing_engines_install_stops_before_hooks_and_activation(
     assert (code, lines) == (
         1,
         [
-            "  ✗ commit hook     failed          the quality engines did not install",
+            "  ✗ commit hook     failed         the quality engines did not install",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
@@ -224,7 +224,7 @@ def test_failing_activation_is_a_failed_last_step(sandbox: Sandbox, capsys: pyte
     assert (code, lines) == (
         1,
         [
-            "  ✗ commit hook     failed          git could not set core.hooksPath",
+            "  ✗ commit hook     failed         git could not set core.hooksPath",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
@@ -327,7 +327,7 @@ def test_unwritable_hook_directory_fails_the_hook_step_by_name_and_skips_activat
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert code == 1
-    assert lines[0].startswith("  ✗ commit hook     failed          could not write the hook files:")
+    assert lines[0].startswith("  ✗ commit hook     failed         could not write the hook files:")
     assert error.splitlines() == ["error: setup stopped at commit hook", f"next: {RERUN}"]
     assert global_hooks_path(sandbox) == ""
 
@@ -477,9 +477,9 @@ def test_as_the_agent_the_operators_steps_are_skipped_without_sudo_and_the_exit_
         0,
         [
             hook,
-            "  · timers          skipped         the operator's step",
-            "  · system          skipped         the operator's step",
-            "  · secrets         skipped         the operator's step",
+            "  · timers          skipped        the operator's step",
+            "  · system          skipped        the operator's step",
+            "  · secrets         skipped        the operator's step",
             closing,
         ],
     )
@@ -604,7 +604,7 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
-            "  ✗ system          not started     needs sudo in your own terminal window",
+            "  ✗ system          not started    needs sudo in your own terminal window",
             NOT_RUN[SECRETS],
         ],
     )
@@ -628,7 +628,7 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
             FRESH_APPLY[0],
             FRESH_APPLY[1],
             SUDO_ANNOUNCEMENT,
-            "  ✗ system          failed          Ansible did not finish · its output above says why",
+            "  ✗ system          failed         Ansible did not finish · its output above says why",
             NOT_RUN[SECRETS],
         ],
     )
@@ -650,7 +650,7 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
     assert (code, lines[2:]) == (
         1,
         [
-            "  ✗ system          failed          Ansible's check did not finish · its output above says why",
+            "  ✗ system          failed         Ansible's check did not finish · its output above says why",
             NOT_RUN[SECRETS],
         ],
     )
@@ -758,6 +758,6 @@ def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_
 
     assert (code, lines[2]) == (
         ExitCode.FAILURE,
-        "  ✗ system          not started     needs sudo in your own terminal window",
+        "  ✗ system          not started    needs sudo in your own terminal window",
     )
     assert error.splitlines()[0] == "error: setup stopped at system · /etc unchanged"
