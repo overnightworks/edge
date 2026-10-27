@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "999ee26f21588f4495e30c04fb14a7235ddc28cc"
 branch = "claude/issue-456-probe-admin-remint"
-scope = ["probe/keycloak/admin.py", "probe/keycloak/logout_actions_cell.py", "probe/keycloak/probe.py", "tests/test_keycloak_probe.py", "tests/test_keycloak_probe_admin.py", "tests/test_keycloak_probe_logout_record.py"]
+scope = ["probe/keycloak/admin.py", "probe/keycloak/logout_actions_cell.py", "probe/keycloak/probe.py", "quality/baseline.toml", "tests/test_keycloak_probe.py", "tests/test_keycloak_probe_admin.py", "tests/test_keycloak_probe_logout_record.py"]
 opened_commit = "347f9a7f6334d19c3bf64192d604e0b1b092ace3"
 whole_reason = "One owner moves: the admin's token freshness goes from the hand-picked admin_now calls into Admin. The probe and its logout cell change together; tests/test_keycloak_probe.py:784 would turn CI red otherwise, and the logout-record fake's admin_now goes because T3 demands it. Admin may move to its own module if probe.py's line budget demands it."
