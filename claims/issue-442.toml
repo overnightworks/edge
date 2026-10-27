@@ -1,0 +1,8 @@
+claim_id = "62afe17c8b8b449db46a77931df35203"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "77181456ec8d9bc9090deb02f5e596dd837b0de1"
+branch = "claude/issue-442-hal-legal-check"
+scope = ["docs/architecture.md", "src/edge/legal_section.py", "src/edge/legal_step.py", "src/hal/cli.py", "src/hal/legal_commands.py", "tests/test_hal_legal.py", "tests/test_legal_section.py"]
+opened_commit = "bd38e40ba84f7fe26c122f989475f6850c48be22"
+whole_reason = "Three production modules and the registration line of one verb, about 90 lines; the verb has no use without the shared block-making function and the hint belongs to the same refusal."
