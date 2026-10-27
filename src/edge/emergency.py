@@ -15,7 +15,7 @@ import os
 import sys
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -27,12 +27,14 @@ from edge import (
     catalog,
     compose,
     setup,
+    switch_events,
     switches,
     terminal,
     tunnel,
     unit_plans,
 )
 from edge.apply import ApplyExit
+from edge.switch_events import BarrierPart, CannotPlan, Closing, Interruption, StopPart
 
 STOP = "edge stop"
 START = "edge start"
@@ -47,15 +49,11 @@ def _complain(command: str, line: str) -> None:
     print(f"{command}: {line}", file=sys.stderr)
 
 
-def _read_fleet(
-    command: str, engine: compose.Compose, repository: Path, remedy: str = ""
-) -> unit_plans.Fleet | None:
-    """The fleet; None, after saying why and the `remedy`, when it cannot be planned."""
+def _read_fleet(engine: compose.Compose, repository: Path) -> unit_plans.Fleet | CannotPlan:
     try:
         return unit_plans.read_fleet(engine, repository)
     except (compose.ComposeError, catalog.CatalogError) as error:
-        _complain(command, f"cannot plan, {error}{remedy}")
-        return None
+        return CannotPlan(str(error))
 
 
 def _apps_of(fleet: unit_plans.Fleet, repository: Path) -> tuple[catalog.App, ...]:
@@ -65,42 +63,34 @@ def _apps_of(fleet: unit_plans.Fleet, repository: Path) -> tuple[catalog.App, ..
 
 
 def _read_subject(
-    command: str, engine: compose.Compose, repository: Path, key: str, remedy: str = ""
-) -> tuple[unit_plans.Fleet, catalog.Unit | catalog.App] | None:
-    """The fleet and the unit or app named; None, after saying why and the `remedy`, when it
-    cannot be planned."""
-    fleet = _read_fleet(command, engine, repository, remedy)
-    if fleet is None:
-        return None
+    engine: compose.Compose, repository: Path, key: str
+) -> tuple[unit_plans.Fleet, catalog.Unit | catalog.App] | CannotPlan:
+    fleet = _read_fleet(engine, repository)
+    if isinstance(fleet, CannotPlan):
+        return fleet
     unit = next((unit for unit in fleet.units if unit.key == key), None)
     if unit:
         return fleet, unit  # an invalid app entry never stands between an operator and a unit
     try:
         every = _apps_of(fleet, repository)
     except catalog.CatalogError as error:
-        _complain(command, f"cannot plan, {error}{remedy}")
-        return None
+        return CannotPlan(str(error))
     app = next((app for app in every if app.key == key), None)
     if app is None:
         known = ", ".join(sorted(unit.key for unit in fleet.units))
         named_apps = ", ".join(sorted(app.key for app in every))
-        _complain(
-            command,
-            f"cannot plan, {key} is not a unit of fleet.yaml (units: {known}; apps: {named_apps})",
-        )
-        return None
+        return CannotPlan(f"{key} is not a unit of fleet.yaml (units: {known}; apps: {named_apps})")
     return fleet, app
 
 
 @dataclass(frozen=True)
 class Target:
     """What a stop switches off: a unit of the compose project, or an app, which is one of its
-    own. `stopped` names what a stop stopped, for its report."""
+    own."""
 
     key: str
     enabled: bool
     ingress: barrier.Barrier
-    stopped: str
     running: Callable[[], bool]
     stop: Callable[[], None]
 
@@ -123,7 +113,6 @@ def _target_of(
             subject.key,
             subject.enabled,
             barrier.Barrier.of_app(fleet.config, repository, subject, verifier),
-            f"containers of {subject.key} stopped; volumes stay",
             lambda: any(compose.is_live(one.state) for one in project.containers()),
             project.stop,
         )
@@ -132,7 +121,6 @@ def _target_of(
         key,
         subject.enabled,
         barrier.Barrier.of_unit(fleet.config, services, repository, subject, verifier),
-        f"services {', '.join(services)} stopped; volumes stay",
         lambda: compose.has_running_container(engine.states(), services),
         lambda: engine.stop(key, services),
     )
@@ -150,32 +138,30 @@ def stop_unit(
     engine = engine or compose.Compose(repository=repository)
     runtime = runtime or apps.AppRuntime.of(Path.home(), marks.directory)
     recorded = _record_app_first(marks, key, now, repository)
-    remedy = f"; the switch is recorded; run `{STOP} {key}` again" if recorded else ""
     try:
-        read = _read_subject(STOP, engine, repository, key, remedy)
-        if read is None:
+        read = _read_subject(engine, repository, key)
+        if isinstance(read, CannotPlan):
+            switch_events.report_cannot_plan(key, read, recorded)
             return ApplyExit.CANNOT_PLAN
         fleet, subject = read
         target = _target_of(subject, fleet, engine, repository, verifier, runtime)
         running = target.running()
     except (compose.ComposeError, barrier.BarrierError) as error:
-        _complain(STOP, f"cannot plan, {error}{remedy}")
+        switch_events.report_cannot_plan(key, CannotPlan(str(error)), recorded)
         return ApplyExit.CANNOT_PLAN
     if not running and not target.enabled:
-        _say(STOP, f"{key} is disabled in the catalog and nothing of it runs")
+        switch_events.report_disabled(key)
         return ApplyExit.APPLIED_OR_NOTHING
     try:
         off = None if running else _confirmed_off(marks, target, now)
     except KeyboardInterrupt:
         return _report_close(
-            marks, target, _recorded(marks, key, now), None, "interrupted while waiting to stop it"
+            key,
+            Closing(record_failure=_recorded(marks, key, now), interruption=Interruption.WAITING),
         )
     if off:
         since, repaired = off
-        line = f"{key} is already switched off (since {switches.describe_since(since)})"
-        if repaired:
-            line += "; its barrier was missing and stands again"
-        _say(STOP, line)
+        switch_events.report_already_off(key, since, repaired)
         return ApplyExit.APPLIED_OR_NOTHING
     return _close(marks, target, now)
 
@@ -225,102 +211,62 @@ def _confirmed_off(
         return None
 
 
-def _recorded(marks: switches.Switches, key: str, now: datetime) -> switches.SwitchError | None:
+def _recorded(marks: switches.Switches, key: str, now: datetime) -> str | None:
     try:
         marks.record(key, now)
     except switches.SwitchError as error:
-        return error
+        return str(error)
     return None
 
 
-def _close_ingress(ingress: barrier.Barrier, key: str) -> tuple[str | None, str | None]:
-    """(barrier failure, stop failure) of closing the ingress; the stop failure is an interrupt."""
-    if not ingress.names:
-        _say(STOP, f"{key}: no host behind Traefik, so no barrier")
+def _close_ingress(ingress: barrier.Barrier, closing: Closing) -> Closing:
     try:
         ingress.close()
     except barrier.BarrierError as error:
-        return str(error), None
+        return replace(closing, barrier=BarrierPart.NOT_PROVEN, barrier_failure=str(error))
     except KeyboardInterrupt:
-        return None, "interrupted while closing the ingress"
-    return None, None
+        return replace(closing, interruption=Interruption.RAISING_THE_BARRIER)
+    return replace(closing, barrier=BarrierPart.UP if ingress.names else BarrierPart.NO_HOST)
+
+
+def _stop_target(target: Target, closing: Closing) -> Closing:
+    try:
+        target.stop()
+        if target.running():
+            return replace(
+                closing, stop=StopPart.NOT_STOPPED, stop_failure="a container of it still runs"
+            )
+    except compose.ComposeError as error:
+        return replace(
+            closing, stop=StopPart.NOT_STOPPED, stop_failure=f"could not stop it, {error}"
+        )
+    except KeyboardInterrupt:
+        return replace(closing, interruption=Interruption.STOPPING)
+    return replace(closing, stop=StopPart.STOPPED)
 
 
 def _close(marks: switches.Switches, target: Target, now: datetime) -> int:
     key = target.key
-    lock_failure: switches.SwitchError | None = None
-    stop_failure: str | None = None
     with ExitStack() as held:
-        record_failure = _recorded(marks, key, now)
+        closing = Closing(record_failure=_recorded(marks, key, now))
         try:
             held.enter_context(marks.lock())
             # a start that cleared the marker meanwhile must not undo this
-            record_failure = _recorded(marks, key, now)
+            closing = replace(closing, record_failure=_recorded(marks, key, now))
         except switches.SwitchError as error:
-            lock_failure = error
+            closing = replace(closing, lock_failure=str(error))
         except KeyboardInterrupt:
-            stop_failure = "interrupted while waiting to stop it"
-        barrier_failure: str | None = None
-        if stop_failure is None:
-            barrier_failure, stop_failure = _close_ingress(target.ingress, key)
-        if stop_failure is None:
-            try:
-                target.stop()
-                if target.running():
-                    stop_failure = "a container of it still runs"
-            except compose.ComposeError as error:
-                stop_failure = f"could not stop it, {error}"
-            except KeyboardInterrupt:
-                stop_failure = "interrupted while stopping it"
-    stop_failure = " and ".join(filter(None, [barrier_failure, stop_failure])) or None
-    return _report_close(marks, target, record_failure, lock_failure, stop_failure)
+            closing = replace(closing, interruption=Interruption.LOCKING)
+        if closing.interruption is None:
+            closing = _close_ingress(target.ingress, closing)
+        if closing.interruption is None:
+            closing = _stop_target(target, closing)
+    return _report_close(key, closing)
 
 
-def _recorded_time(marks: switches.Switches, key: str) -> str:
-    try:
-        return switches.describe_since(marks.since(key) or switches.UNKNOWN_SWITCH_TIME)
-    except switches.SwitchError:
-        return switches.UNKNOWN_SWITCH_TIME
-
-
-def _report_close(
-    marks: switches.Switches,
-    target: Target,
-    record_failure: switches.SwitchError | None,
-    lock_failure: switches.SwitchError | None,
-    stop_failure: str | None,
-) -> int:
-    key = target.key
-    if record_failure and stop_failure:
-        _complain(
-            STOP,
-            f"partial: the switch could not be recorded ({record_failure}) and {stop_failure}; "
-            f"run `{STOP} {key}` again",
-        )
-        return ApplyExit.REFUSED
-    if record_failure:
-        _complain(
-            STOP,
-            f"partial: {key} is stopped, but the switch could not be recorded "
-            f"({record_failure}); `edge apply` would start it again",
-        )
-        return ApplyExit.REFUSED
-    if stop_failure:
-        _complain(
-            STOP,
-            f"partial: the switch is recorded (since {_recorded_time(marks, key)}); "
-            f"{stop_failure}; run `{STOP} {key}` again",
-        )
-        return ApplyExit.REFUSED
-    if lock_failure:
-        _complain(
-            STOP,
-            f"partial: the switch is recorded and {key} is stopped, but the lock could not be "
-            f"taken ({lock_failure}); a start in progress may reopen it; run `{STOP} {key}` again",
-        )
-        return ApplyExit.REFUSED
-    _say(STOP, f"{key} is switched off ({target.stopped})")
-    return ApplyExit.APPLIED_OR_NOTHING
+def _report_close(key: str, closing: Closing) -> int:
+    switch_events.report_closing(key, closing)
+    return ApplyExit.APPLIED_OR_NOTHING if closing.complete else ApplyExit.REFUSED
 
 
 def start_unit(
@@ -338,8 +284,9 @@ def start_unit(
     engine = engine or compose.Compose(repository=repository)
     runtime = runtime or apps.AppRuntime.of(Path.home(), marks.directory)
     try:
-        planned = _read_subject(START, engine, repository, key)
-        if planned is None:
+        planned = _read_subject(engine, repository, key)
+        if isinstance(planned, CannotPlan):
+            _complain(START, f"cannot plan, {planned.cause}")
             return ApplyExit.CANNOT_PLAN
         fleet, subject = planned
         target = _target_of(subject, fleet, engine, repository, verifier, runtime)
@@ -728,8 +675,9 @@ def start_all(
     if terminal.refused_without_terminal(START_ALL):
         return ApplyExit.REFUSED
     engine = engine or compose.Compose(repository=repository)
-    fleet = _read_fleet(START_ALL, engine, repository)
-    if fleet is None:
+    fleet = _read_fleet(engine, repository)
+    if isinstance(fleet, CannotPlan):
+        _complain(START_ALL, f"cannot plan, {fleet.cause}")
         return ApplyExit.CANNOT_PLAN
     try:
         read = marks.global_mark()

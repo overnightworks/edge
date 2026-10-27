@@ -289,7 +289,9 @@ def test_hal_stop_writes_the_marker_and_stops_the_containers_without_a_terminal(
     exit_code, out, _ = hal.stop()
 
     assert exit_code == 0
-    assert "hopin is switched off (containers of hopin stopped; volumes stay)" in out
+    assert "✓ hopin" in out
+    assert "switched off" in out
+    assert "stopped · volumes kept" in out
     assert switches.Switches(app_world.state).mark(KEY) is not None
     assert {row["State"] for row in app_world.docker.rows} == {"exited"}
 
@@ -339,7 +341,8 @@ def test_hal_stop_on_a_malformed_catalog_or_an_unsafe_app_key_cannot_plan_and_wr
     exit_code, _, err = hal.stop(key)
 
     assert exit_code == emergency.ApplyExit.CANNOT_PLAN
-    assert "edge stop: cannot plan" in err
+    assert "error: cannot plan" in err
+    assert f"next: hal stop {key}" in err
     assert [path for path in app_world.state.rglob("*") if path.is_file()] == []
     assert not outside.exists()
 
@@ -349,11 +352,14 @@ def test_hal_stop_that_cannot_plan_after_recording_the_switch_says_it_is_recorde
     another = "  other: {repo: {default_branch: master}, run: {enabled: maybe}}\n"
     write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{FLEET}{another}")
 
-    exit_code, _, err = hal.stop()
+    exit_code, out, err = hal.stop()
 
     assert exit_code == emergency.ApplyExit.CANNOT_PLAN
-    assert "edge stop: cannot plan, services.other.run.enabled: must be true or false" in err
-    assert "the switch is recorded; run `edge stop hopin` again" in err
+    assert "partial" in out
+    assert "switch recorded · nothing stopped" in out
+    assert "error: cannot plan, services.other.run.enabled: must be true or false" in err
+    assert "next: hal stop hopin" in err
+    assert "switched off" not in out + err
     assert switches.Switches(app_world.state).mark(KEY) is not None
 
 
@@ -365,7 +371,9 @@ def test_hal_stop_of_a_disabled_app_with_nothing_running_says_so(app_world, hal)
     exit_code, out, _ = hal.stop()
 
     assert exit_code == 0
-    assert "hopin is disabled in the catalog and nothing of it runs" in out
+    assert "· hopin" in out
+    assert "disabled" in out
+    assert "nothing of it runs" in out
     assert switches.Switches(app_world.state).mark(KEY) is None
 
 
