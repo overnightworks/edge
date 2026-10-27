@@ -35,7 +35,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode
 
-from hal_output import Glyph, Row, write_row
+from hal_output import Glyph, Row, printable, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -65,10 +65,12 @@ NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
 ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
-OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
-PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
-NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
-UNSENDABLE_PASTE = "ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft"
+INDENT = "    "
+OPEN_PROMPT = f"{INDENT}Enter opens the page in your browser: "
+PASTE_PROMPT = f"{INDENT}paste the token (hidden, empty skips): "
+OPENED = "opened"
+NO_BROWSER = "no browser opened · open it yourself:"
+UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
 EXPOSED_INPUT_REFUSAL = "abgebrochen: dieses Terminal kann die Eingabe nicht verbergen; nichts gelesen. Ein anderes Terminal nehmen."
 
 PASTE_AGAIN = "paste again or leave empty"
@@ -164,11 +166,11 @@ def _utc_now() -> datetime:
 def _judge(provider: Provider, response: Response, now: datetime) -> Verdict:
     label = PROVIDER_LABELS[provider]
     if response.status != 200:
-        return Verdict(Outcome.REFUSED, f"{label} antwortet {response.status}")
+        return Verdict(Outcome.REFUSED, f"{label} answers {response.status}")
     if provider is Provider.CLOUDFLARE:
         status = _cloudflare_token_status(response.body)
         if status != CLOUDFLARE_ACTIVE:
-            return Verdict(Outcome.REFUSED, f"{label} meldet das Token als {status or 'unbekannt'}, nicht {CLOUDFLARE_ACTIVE}")
+            return Verdict(Outcome.REFUSED, f"{label} reports the token as {status or 'unknown'}, not {CLOUDFLARE_ACTIVE}")
         try:
             not_before = _cloudflare_not_before(response.body)
         except ValueError:  # the message may quote the answer, so the refusal says nothing of it
@@ -186,9 +188,9 @@ def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch, clo
     try:
         response = fetch(request)
     except ValueError:  # http.client refuses a header it cannot send with a message that quotes the value
-        return Verdict(Outcome.REFUSED, f"der Wert lässt sich {PROVIDER_LABELS[source.provider]} nicht als Token senden")
+        return Verdict(Outcome.REFUSED, f"the value cannot be sent to {PROVIDER_LABELS[source.provider]} as a token")
     if response is None:
-        return Verdict(Outcome.UNREACHABLE, f"{PROVIDER_LABELS[source.provider]} nicht erreichbar; später noch einmal")
+        return Verdict(Outcome.UNREACHABLE, f"{PROVIDER_LABELS[source.provider]} unreachable; try again later")
     return _judge(source.provider, response, clock())
 
 
@@ -239,7 +241,7 @@ def _levels(home: Path, directory: Path) -> tuple[Path, ...]:
 
 
 def _refused_below(unfit: SecretFinding) -> str:
-    return f"{unfit.subject} {unfit.detail}: erst {unfit.fix}"
+    return f"{unfit.subject} {unfit.detail}: first {unfit.fix}"
 
 
 def _private_directories(home: Path, directory: Path) -> None:
@@ -297,7 +299,7 @@ def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: Dis
                 sync(fresh_file.fileno())
             os.link(fresh, target)
         except FileExistsError:
-            raise StoreRefused(f"{HOME_PREFIX}{place} ist inzwischen vorhanden und bleibt unverändert") from None
+            raise StoreRefused(f"{HOME_PREFIX}{place} appeared meanwhile and stays unchanged") from None
         finally:
             fresh.unlink(missing_ok=True)
 
@@ -320,16 +322,12 @@ def github_page(entry: SecretEntry, source: TokenSource) -> str:
     return f"{GITHUB_TOKEN_PAGE}?{urlencode(fields, quote_via=quote)}"
 
 
-def _github_briefing(entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
+def _github_briefing(_entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
     return [
-        f"Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org {source.resource}.",
-        f"Der Link füllt vor: Name {entry.name}, Resource owner {source.resource}, Ablauf {source.expires_in_days} Tage,"
-        " die Beschreibung und diese Rechte:",
-        *(f"  - {right.replace(':', ': ', 1)}" for right in source.scope),
-        "Von Hand, das kann kein Link vorgeben:",
-        "  [ ] Repository access: All repositories",
-        "  [ ] die Rechte im Formular mit der Liste oben vergleichen",
-        "  [ ] Generate token, dann den Wert kopieren",
+        f"prefilled: {', '.join(right.replace(':', ' ', 1) for right in source.scope)}",
+        "[ ] Repository access: All repositories",
+        "[ ] compare the rights in the form with the line above",
+        "[ ] Generate token, copy the value",
     ]
 
 
@@ -341,27 +339,26 @@ def cloudflare_page(_entry: SecretEntry, _source: TokenSource) -> str:
 def _cloudflare_briefing(entry: SecretEntry, source: TokenSource, now: datetime) -> list[str]:
     ends = (now + timedelta(days=source.expires_in_days)).date()
     return [
-        "Seite: Cloudflare, My Profile › API Tokens. Login: dein Cloudflare-Konto.",
-        "Cloudflare füllt nichts vor; von Hand:",
-        "  [ ] Create Token › Custom token › Get started",
-        f"  [ ] Token name: {entry.name}",
-        *(f"  [ ] Permissions: {right}" for right in source.scope),
-        "  [ ] Account Resources: Include › dein Konto",
-        f"  [ ] Zone Resources: Include › Specific zone › {source.resource}",
-        f"  [ ] TTL: leave the start date empty, set only the End Date {ends:%d.%m.%Y}",
-        "  [ ] Continue to summary › Create Token, dann den Wert kopieren",
+        "[ ] Create Token › Custom token › Get started",
+        f"[ ] Token name: {entry.name}",
+        *(f"[ ] Permissions: {right}" for right in source.scope),
+        "[ ] Account Resources: Include › your account",
+        f"[ ] Zone Resources: Include › Specific zone › {source.resource}",
+        f"[ ] TTL: leave the start date empty, set only the End Date {ends:%d.%m.%Y}",
+        "[ ] Continue to summary › Create Token, copy the value",
     ]
 
 
 @dataclass(frozen=True)
 class ProviderGuide:
+    how: str
     page: Callable[[SecretEntry, TokenSource], str]
     briefing: Callable[[SecretEntry, TokenSource, datetime], list[str]]
 
 
 GUIDES = {
-    Provider.GITHUB: ProviderGuide(github_page, _github_briefing),
-    Provider.CLOUDFLARE: ProviderGuide(cloudflare_page, _cloudflare_briefing),
+    Provider.GITHUB: ProviderGuide("the link fills name, owner, expiry and rights", github_page, _github_briefing),
+    Provider.CLOUDFLARE: ProviderGuide(f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} fills in nothing", cloudflare_page, _cloudflare_briefing),
 }
 
 
@@ -374,6 +371,7 @@ class WizardEvent(StrEnum):
     VERIFIED = "verified"
     GENERATED = "generated"
     STORED = "stored"
+    NEW_TOKEN = "new token"
     REJECTED = "rejected"
     SKIPPED = "skipped"
     NOT_CHECKED = "not checked"
@@ -382,8 +380,9 @@ class WizardEvent(StrEnum):
 
 
 def _say(*lines: str) -> None:
+    """Indented lines under an announce row; text from a manifest or a provider is made safe to show."""
     for line in lines:
-        print(line)
+        print(f"{INDENT}{printable(line)}")
 
 
 def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
@@ -450,11 +449,19 @@ def _accepted_paste(entry: SecretEntry, source: TokenSource, boundaries: Boundar
 
 def _offer_page(terminal: Terminal, page: str) -> None:
     terminal.ask(OPEN_PROMPT)
-    _say(f"Geöffnet: {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
+    _say(f"{OPENED} {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
+
+
+def _announce(entry: SecretEntry, how: str) -> None:
+    """The row that opens a walk for a token, then why it is needed."""
+    _write_entry_row(Glyph.ANNOUNCE, entry.name, WizardEvent.NEW_TOKEN, how)
+    if entry.purpose:
+        _say(f"why: {entry.purpose}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
     guide = GUIDES[source.provider]
+    _announce(entry, guide.how)
     _say(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(entry, source, boundaries)
@@ -463,7 +470,8 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
-    _say(f"Anlegen: {entry.recreate}")
+    _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
+    _say(f"create: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
@@ -533,9 +541,6 @@ def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, 
 
 
 def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
-    _say("", f"== {entry.name} ({entry.kind.label}, fehlt)")
-    if entry.purpose:
-        _say(f"Wofür: {entry.purpose}")
     if not entry.written_by_setup:
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.recreate}")
         return Step.BY_HAND
@@ -547,7 +552,6 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     elif entry.kind is SecretKind.UNVERIFIED_TOKEN:
         stored = _set_up_unverified_token(entry, layout, boundaries)
     else:
-        _say("Wird zufällig erzeugt und nie gezeigt.")
         stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))
     return Step.STORED if stored else Step.STILL_MISSING
 

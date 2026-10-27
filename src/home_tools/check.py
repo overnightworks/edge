@@ -179,10 +179,10 @@ def _parse_identities(text: str) -> frozenset[str]:
 
 
 def _is_remembered(identity: str) -> bool:
-    """Check name, then either the failure marker or the rule and subject of a finding with a level, each separated by a tab."""
+    """Check name, then either the failure marker or the rule and subject of a finding with a level, each separated by a tab; the subject may be empty."""
     name, _, finding = identity.partition("\t")
-    rule, _, subject = finding.partition("\t")
-    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(subject and rule != CHECK_FAILED_IDENTITY and _rule_report(name, rule)))
+    rule, separator, _ = finding.partition("\t")
+    return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(separator and rule != CHECK_FAILED_IDENTITY and _rule_report(name, rule)))
 
 
 def _remember(layout: Layout, identities: frozenset[str]) -> None:
