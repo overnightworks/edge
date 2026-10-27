@@ -343,12 +343,13 @@ def memory_text(text: str) -> Callable[[Path], None]:
     [
         (memory_text('["platform\\t'), "JSONDecodeError"),
         (memory_text('["platform\\tleaked-secret"]'), "ValueError"),
+        (memory_text('["platform\\tcontainer-dead"]'), "ValueError"),
         (memory_text('["platform\\tno-such-rule\\tx"]'), "ValueError"),
         (memory_text('["platform\\tcheck-failed\\tx"]'), "ValueError"),
         (memory_text('{"platform": 1}'), "ValueError"),
         (os.mkfifo, "ValueError"),
     ],
-    ids=["cut off", "not a finding identity", "a rule without a level", "a failure marker with a subject", "not a list", "a fifo that never gets a writer"],
+    ids=["cut off", "not a finding identity", "a finding without the subject separator", "a rule without a level", "a failure marker with a subject", "not a list", "a fifo that never gets a writer"],
 )
 def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     clean_home, runner, capsys, plant_memory: Callable[[Path], None], refusal: str
