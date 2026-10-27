@@ -1329,7 +1329,8 @@ docker_started_at() {
 }
 
 daemon_json_is() {  # daemon_json_is <JSON text>: the file means the same as the text
-    python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != json.loads(sys.argv[2]))' "$DAEMON_JSON" "$1"
+    local expected_text=$1
+    python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != json.loads(sys.argv[2]))' "$DAEMON_JSON" "$expected_text"
     return
 }
 
@@ -1348,8 +1349,9 @@ cell_dk1() {  # first in `fresh`, before any apply: the engine runs, answers, re
 }
 
 # The PC's daemon.json as nvidia-ctk wrote it: 128 bytes, four-space layout, no final newline.
-write_the_pcs_daemon_json() {
-    printf '{\n    "runtimes": {\n        "nvidia": {\n            "args": [],\n            "path": "nvidia-container-runtime"\n        }\n    }\n}' >"$1"
+write_the_pcs_daemon_json() {  # write_the_pcs_daemon_json <path>
+    local target=$1
+    printf '{\n    "runtimes": {\n        "nvidia": {\n            "args": [],\n            "path": "nvidia-container-runtime"\n        }\n    }\n}' >"$target"
     return
 }
 
@@ -1359,10 +1361,11 @@ backups_of_daemon_json() {
 }
 
 engine_on_json_file_with() {  # engine_on_json_file_with <file: a path, or "" for none>: Docker restarted on json-file, daemon.json as given, no drop-in
+    local source_file=$1
     rm -rf "$DOCKER_DROP_IN_DIR"
     systemctl daemon-reload
     rm -f "$DAEMON_JSON"
-    [[ -z $1 ]] || cp "$1" "$DAEMON_JSON"
+    [[ -z $source_file ]] || cp "$source_file" "$DAEMON_JSON"
     # Several restarts within a minute would hit the unit's start limit, which the proof's own setup must not trigger.
     systemctl reset-failed docker
     systemctl restart docker
@@ -1393,7 +1396,7 @@ cell_dk3_before_the_first_apply() {  # the play would still write everything, an
 }
 
 cell_dk3() {  # after cell 1, so Docker and edge's files are in place and a write would be seen
-    local code before started
+    local code started
     cell_dk3_case "log-opts" '{"log-opts": {"max-size": "10m"}}' '`log-opts`' dry
     cell_dk3_case "log-driver json-file" '{"log-driver": "json-file"}' "other than $WANTED_DRIVER"
     cell_dk3_case "a top level that is not an object" '[]' "is not a JSON object"
@@ -1411,7 +1414,7 @@ cell_dk3() {  # after cell 1, so Docker and edge's files are in place and a writ
 }
 
 cell_dk2_merge() {  # the PC's file keeps runtimes and gains the one line; the old bytes are in the backup
-    local code pc="$EVIDENCE/dk2-pc-daemon.json" backups_before backup changed_lines
+    local code pc="$EVIDENCE/dk2-pc-daemon.json" backup changed_lines
     write_the_pcs_daemon_json "$pc"
     verdict DK2 "the PC-shaped fixture is exactly 128 bytes" '[ "$(stat -c %s "$pc")" -eq 128 ]'
     engine_on_json_file_with "$pc"
@@ -1497,6 +1500,7 @@ cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: c
         created) engine_on_json_file_with "" ;;
         merged) engine_on_json_file_with "$pc" ;;
         earlier) engine_on_json_file_with ""; printf '{"log-driver": "%s"}' "$WANTED_DRIVER" >"$DAEMON_JSON" ;;
+        *) echo "cell_dk7_case: unknown state $state" >&2; return 1 ;;
     esac
     if [[ $failure = flag ]]; then install_the_conflicting_flag; else install_a_docker_that_reports_json_file; fi
     backups_before=$(backups_of_daemon_json)
@@ -1506,7 +1510,7 @@ cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: c
     if [[ $failure = wrong-driver ]]; then
         verdict DK7 "$name: the apply saw Docker start and name json-file, not the journal" 'in_log "dk7-$state-$failure" "Docker reports json-file"'
     fi
-    verdict DK7 "$name: daemon.json is JSON-equal to the state before this slice" 'daemon_json_is "$expected"'
+    verdict DK7 "$name: daemon.json is JSON-equal to the state before this slice" "daemon_json_is '$expected'"
     verdict DK7 "$name: no backup was deleted" '[ -z "$(comm -23 <(echo "$backups_before") <(backups_of_daemon_json))" ]'
     verdict DK7 "$name: Docker is active and answering" 'systemctl is-active --quiet docker && docker info >/dev/null 2>&1'
     rm -rf "$DOCKER_DROP_IN_DIR"
