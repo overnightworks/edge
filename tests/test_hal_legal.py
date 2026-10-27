@@ -57,23 +57,22 @@ def snapshot(*roots: Path) -> dict[str, bytes | None]:
     }
 
 
-def test_both_files_are_valid_and_named(checkout, app, capsys):
+@pytest.mark.parametrize(
+    ("terms", "pages"),
+    [
+        pytest.param(True, "datenschutz, nutzungsbedingungen", id="both files"),
+        pytest.param(False, "datenschutz", id="the terms are optional"),
+    ],
+)
+def test_valid_files_print_one_row_naming_their_pages(checkout, app, capsys, terms, pages):
     """L1."""
     put(app, PRIVACY)
-    put(app, TERMS, VALID_TERMS)
+    if terms:
+        put(app, TERMS, VALID_TERMS)
 
     code, out, _ = run(capsys, checkout, KEY, app)
 
-    assert (code, out) == (0, f"legal: {KEY}: {PRIVACY}, {TERMS} are valid\n")
-
-
-def test_the_terms_are_optional(checkout, app, capsys):
-    """L1."""
-    put(app, PRIVACY)
-
-    code, out, _ = run(capsys, checkout, KEY, app)
-
-    assert (code, out) == (0, f"legal: {KEY}: {PRIVACY} are valid\n")
+    assert (code, out) == (0, f"  ✓ {KEY:<14}  {'legal valid':<13}  {pages}\n")
 
 
 @pytest.mark.parametrize("terms", [False, True])
@@ -220,4 +219,7 @@ def test_a_run_never_reads_stdin(checkout, app, tmp_path, monkeypatch):
         "legal", "--repository", str(checkout), KEY, str(app),
     )  # fmt: skip
 
-    assert (result.returncode, result.stdout) == (0, f"legal: {KEY}: {PRIVACY} are valid\n")
+    assert (result.returncode, result.stdout) == (
+        0,
+        f"  ✓ {KEY:<14}  {'legal valid':<13}  datenschutz\n",
+    )
