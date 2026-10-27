@@ -1,8 +1,0 @@
-claim_id = "ebf37a85ede84582a79b353e91688ad0"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "6a8578a930a6c4bfd1808bfa7fc7041a102499dd"
-branch = "claude/issue-498-s2d-sudo-announcement"
-scope = ["docs/design/hal-output.html", "docs/home.md", "scripts/system-proof/drive.sh", "src/hal_output/__init__.py", "src/home_tools/setup.py", "src/home_tools/system_step.py", "tests/home/test_app_secrets.py", "tests/home/test_setup.py", "tests/test_hal_output.py"]
-opened_commit = "ae106bb39c6871010b504cc233c3a2bde496bef3"
-whole_reason = "One announcement row: its glyph, its event, its seam on the system step, and every pin of the apply output move together."
