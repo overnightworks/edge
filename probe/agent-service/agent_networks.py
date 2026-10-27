@@ -36,8 +36,8 @@ def service_networks(probe: Probe, project: str) -> tuple[str, ...]:
 def cell_p36(
     probe: Probe, *, project: str, label: str, service_port: int, service_listens: bool
 ) -> None:
-    """One caller per agent network: neither reaches the other's port, each reaches the target by
-    its name, and the target is a member of both networks."""
+    """One caller per agent network: each of the three reaches neither of the others' ports, each
+    reaches the target by its name, and the target is a member of all agent networks."""
     names = {network: f"{project}-caller-{network}" for network in AGENT_NETWORKS}
     addresses = {
         network: start_caller(probe, project, label, network, name)
