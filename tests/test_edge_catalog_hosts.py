@@ -1,5 +1,6 @@
 """The catalog's host shape (#131): one reader, one decision about `run.enabled`."""
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -581,3 +582,31 @@ def test_the_repositorys_catalog_has_hopin_enabled_and_public():
         "/health",
         ("/auth/backchannel-logout",),
     )
+
+
+def test_the_repositorys_catalog_has_presentator_disabled_and_publishes_nothing():
+    fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
+
+    (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "presentator"]
+
+    assert (app.enabled, app.default_branch) == (False, "main")
+    assert [one for one in catalog.hosts(fleet) if one.service == "presentator"] == []
+
+
+def test_enabling_presentator_publishes_both_hosts_with_the_back_channel_denied():
+    fleet = copy.deepcopy(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
+    fleet["services"]["presentator"]["run"]["enabled"] = True
+
+    hosts = [one for one in catalog.hosts(fleet) if one.service == "presentator"]
+
+    assert [one.fqdn for one in hosts] == [
+        "presentator.hallucinai.de",
+        "presentator-talk.hallucinai.de",
+    ]
+    for one in hosts:
+        assert (one.exposure, one.ready, one.deny_public) == (
+            catalog.Exposure.PUBLIC,
+            "/health",
+            ("/auth/backchannel-logout",),
+        )
+        assert one.reason

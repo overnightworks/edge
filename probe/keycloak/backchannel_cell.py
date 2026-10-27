@@ -1,7 +1,7 @@
 """Cell BC1 of probe.py, and the back-channel settings of the app clients (cell T8): Keycloak calls
-songmaker's and HopIn's logout over an internal network and trusts `Forwarded` only from the
-keycloak network, so a forged one from a container on the back-channel network is not believed.
-What else that container reaches is recorded, not judged."""
+songmaker's, HopIn's and presentator's logout over an internal network and trusts `Forwarded` only
+from the keycloak network, so a forged one from a container on the back-channel network is not
+believed. What else that container reaches is recorded, not judged."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ SESSION_REQUIRED_KEY = "backchannel.logout.session.required"
 REFRESH_TOKENS_KEY = "use.refresh.tokens"
 
 
-def logout_url(app: str) -> str:
+def logout_url(app: str, port: int = 8080) -> str:
     return (
         f"http://{app}.{DOMAIN}"  # NOSONAR(S5332) internal back-channel network, ruled shape
-        ":8080/auth/backchannel-logout"
+        f":{port}/auth/backchannel-logout"
     )
 
 
@@ -35,6 +35,10 @@ RULED_SETTINGS = {
         LOGOUT_URL_KEY: logout_url("hopin"),
         SESSION_REQUIRED_KEY: "false",
         REFRESH_TOKENS_KEY: "false",
+    },
+    "presentator": {
+        LOGOUT_URL_KEY: logout_url("presentator", 8000),
+        SESSION_REQUIRED_KEY: "false",
     },
 }
 
