@@ -353,7 +353,9 @@ def _dump(settings: Settings, target: _PostgresTarget | _SqliteTarget, staging: 
         case _PostgresTarget(database=database, container=container):
             docker.dump_database(database, container, staging / DUMP_NAME)
         case _SqliteTarget(database=database, volume=volume):
-            docker.copy_sqlite(settings, volume, database, staging / SQLITE_COPY_NAME)
+            _resolved(
+                lambda: docker.copy_sqlite(settings, volume, database, staging / SQLITE_COPY_NAME)
+            )
 
 
 def _manifest(

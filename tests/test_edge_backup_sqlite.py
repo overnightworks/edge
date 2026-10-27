@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -51,23 +52,29 @@ def _copied(source: Path, target: Path) -> Path:
 
 
 def test_a_copy_holds_the_rows_of_the_source_and_passes_the_check(tmp_path):
+    """#461 A2: the copy holds the source's rows and passes the check."""
     copied = _copied(_database(tmp_path / "source.sqlite3", rows=5), tmp_path / "copy.sqlite3")
 
     assert sqlite_copy.check(copied, "users") == 5
 
 
 def test_a_copy_taken_while_a_writer_commits_and_checkpoints_is_a_committed_prefix(tmp_path):
+    """#461 A2 M7: a copy under a committing writer is a committed prefix."""
     source = _database(tmp_path / "source.sqlite3", rows=0)
     writer = subprocess.Popen([sys.executable, "-I", "-c", WRITER, str(source), "300"])
     counts = []
-    while writer.poll() is None or not counts:
-        counts.append(sqlite_copy.check(_copied(source, tmp_path / "copy.sqlite3"), "users"))
-    assert writer.wait() == 0
+    try:
+        while writer.poll() is None or not counts:
+            counts.append(sqlite_copy.check(_copied(source, tmp_path / "copy.sqlite3"), "users"))
+    finally:
+        writer.kill()
+        assert writer.wait() in (0, -signal.SIGKILL)
 
     assert all(count % 20 == 0 for count in counts)
 
 
 def test_a_missing_database_fails_and_creates_nothing(tmp_path):
+    """#461 A3 M8: a missing file fails the copy and creates nothing."""
     with pytest.raises(sqlite3.OperationalError):
         sqlite_copy.copy(tmp_path / "missing.sqlite3")
 
@@ -77,15 +84,16 @@ def test_a_missing_database_fails_and_creates_nothing(tmp_path):
 def test_a_copy_of_a_cleanly_closed_database_leaves_at_most_empty_sidecars_that_a_writer_removes(
     tmp_path,
 ):
-    source = _database(tmp_path / "source.sqlite3")
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["source.sqlite3"]
+    """#461 A9 M19: a clean database leaves at most empty sidecars."""
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    source = _database(volume / "source.sqlite3")
+    assert sorted(path.name for path in volume.iterdir()) == ["source.sqlite3"]
 
-    assert (
-        sqlite_copy.check(_copied(source, tmp_path.parent / f"{tmp_path.name}.copy"), "users") == 3
-    )
+    assert sqlite_copy.check(_copied(source, tmp_path / "copy.sqlite3"), "users") == 3
 
     base = source.stat()
-    left = {path.name: path.stat() for path in tmp_path.iterdir() if path != source}
+    left = {path.name: path.stat() for path in volume.iterdir() if path != source}
     assert left.keys() <= {"source.sqlite3-wal", "source.sqlite3-shm"}
     assert all(
         sidecar.st_uid == base.st_uid
@@ -96,19 +104,21 @@ def test_a_copy_of_a_cleanly_closed_database_leaves_at_most_empty_sidecars_that_
     writer = sqlite3.connect(source, isolation_level=None)
     writer.execute("INSERT INTO users (name) VALUES ('later')")
     writer.close()
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["source.sqlite3"]
+    assert sorted(path.name for path in volume.iterdir()) == ["source.sqlite3"]
 
 
 def test_the_owner_is_the_uid_and_gid_of_the_file(tmp_path):
+    """#461 M5: the owner answers the file's uid:gid."""
     source = _database(tmp_path / "source.sqlite3")
 
     assert sqlite_copy.owner(source) == f"{os.getuid()}:{os.getgid()}"
 
 
 def test_a_corrupt_copy_fails_the_check(tmp_path):
+    """#461 A4 M9: a corrupt copy fails the integrity check."""
     copied = _copied(_database(tmp_path / "source.sqlite3", rows=500), tmp_path / "copy.sqlite3")
     data = bytearray(copied.read_bytes())
-    data[len(data) // 2 : len(data) // 2 + 4096] = os.urandom(4096)
+    data[len(data) // 2 : len(data) // 2 + 4096] = b"\xff" * 4096
     copied.write_bytes(data)
 
     with pytest.raises(sqlite3.DatabaseError):
@@ -116,12 +126,14 @@ def test_a_corrupt_copy_fails_the_check(tmp_path):
 
 
 def test_the_check_of_a_database_with_no_rows_answers_zero(tmp_path):
+    """#461 M13: an empty table counts zero."""
     copied = _copied(_database(tmp_path / "source.sqlite3", rows=0), tmp_path / "copy.sqlite3")
 
     assert sqlite_copy.check(copied, "users") == 0
 
 
 def test_the_check_never_modifies_the_copy(tmp_path):
+    """#461 A9 M12: the check leaves the copy unmodified."""
     copied = _copied(_database(tmp_path / "source.sqlite3"), tmp_path / "copy.sqlite3")
     before = copied.read_bytes()
 
@@ -138,6 +150,7 @@ def _run_script(*arguments: str) -> subprocess.CompletedProcess[bytes]:
 
 
 def test_the_script_prints_a_count_and_nothing_else(tmp_path):
+    """#461 M15: the check prints the count and no row value."""
     copied = _copied(_database(tmp_path / "source.sqlite3", rows=4), tmp_path / "copy.sqlite3")
 
     result = _run_script("check", str(copied), "users")
@@ -147,6 +160,7 @@ def test_the_script_prints_a_count_and_nothing_else(tmp_path):
 
 
 def test_the_script_copies_the_bytes_to_stdout(tmp_path):
+    """#461 A2: the script's copy arrives as bytes on stdout."""
     source = _database(tmp_path / "source.sqlite3", rows=2)
 
     result = _run_script("copy", str(source))
@@ -158,9 +172,10 @@ def test_the_script_copies_the_bytes_to_stdout(tmp_path):
 
 
 def test_the_script_fails_quietly_on_a_missing_file(tmp_path):
+    """#461 A3 M8 M15: a missing file exits with the verdict, silently."""
     result = _run_script("copy", str(tmp_path / "missing.sqlite3"))
 
-    assert (result.returncode, result.stdout) == (1, b"")
+    assert (result.returncode, result.stdout) == (sqlite_copy.VERDICT_EXIT, b"")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -180,6 +195,7 @@ def _record_with(*extra_lines: str, without: str | None = None) -> str:
 
 
 def test_a_sqlite_record_parses_into_the_sqlite_variant():
+    """#461 A1 M1: a SQLite record parses into its variant."""
     [app] = parse_apps(SQLITE_TOML)
 
     assert app.database == SqliteDatabase("database", "presentator.sqlite3")
@@ -200,11 +216,13 @@ def test_a_sqlite_record_parses_into_the_sqlite_variant():
     ],
 )
 def test_a_sqlite_record_refuses_the_postgres_keys(key_line):
+    """#461 A1 M2: a SQLite record refuses the Postgres keys."""
     with pytest.raises(AppsError, match=key_line.split(" ")[0]):
         parse_apps(_record_with(key_line))
 
 
 def test_a_sqlite_record_refuses_audio_references():
+    """#461 A1 M2: a SQLite record refuses audio references."""
     toml = SQLITE_TOML + 'audio_reference_table = "generations"\n'
 
     with pytest.raises(AppsError, match="audio_reference_table"):
@@ -213,6 +231,7 @@ def test_a_sqlite_record_refuses_audio_references():
 
 @pytest.mark.parametrize("missing", ["database_volume", "database_file"])
 def test_a_sqlite_record_needs_its_volume_and_file(missing):
+    """#461 A1: a SQLite record needs its volume and file."""
     with pytest.raises(AppsError, match=missing):
         parse_apps(_record_with(without=missing))
 
@@ -221,6 +240,7 @@ def test_a_sqlite_record_needs_its_volume_and_file(missing):
     "file_name", ["", "a/b.sqlite3", "../db", ".hidden", "a?b", "a%2fb", "a#b", "x" * 129]
 )
 def test_a_sqlite_record_refuses_a_file_name_that_is_not_one_plain_segment(file_name):
+    """#461 A1 M3: the file name is one plain segment."""
     toml = SQLITE_TOML.replace("presentator.sqlite3", file_name)
 
     with pytest.raises(AppsError, match="database_file"):
@@ -228,6 +248,7 @@ def test_a_sqlite_record_refuses_a_file_name_that_is_not_one_plain_segment(file_
 
 
 def test_a_postgres_record_refuses_the_sqlite_keys():
+    """#461 A1 M2: a Postgres record refuses the SQLite keys."""
     with pytest.raises(AppsError, match="database_file"):
         parse_apps(
             SONGMAKER_TOML.replace("[app.songmaker]\n", '[app.songmaker]\ndatabase_file = "x"\n')
@@ -247,6 +268,7 @@ def _sqlite_apps(home) -> tuple[str, str]:
 def test_a_sqlite_backup_stages_the_copy_and_a_manifest_with_the_rows(
     edge_backup, machine, home, declared
 ):
+    """#461 A5 M10: a backup stages the copy and a manifest with rows."""
     outcome = edge_backup("backup", *declared)
 
     assert outcome.exit_code == 0, outcome.err
@@ -266,6 +288,7 @@ def test_a_sqlite_backup_stages_the_copy_and_a_manifest_with_the_rows(
 def test_the_copy_runs_hardened_as_the_database_owner_with_exactly_the_one_volume(
     edge_backup, machine, home
 ):
+    """#461 A6 M5: the copy runs hardened with exactly the one volume."""
     machine.other_volumes["presentator"] = ["presentator_database"]
     edge_backup("backup", *_sqlite_apps(home))
 
@@ -295,6 +318,7 @@ def test_the_copy_runs_hardened_as_the_database_owner_with_exactly_the_one_volum
 
 
 def test_the_owner_is_read_through_a_read_only_mount_as_the_operator(edge_backup, machine, home):
+    """#461 A6 M5: the owner is read through a read-only mount."""
     machine.other_volumes["presentator"] = ["presentator_database"]
     edge_backup("backup", *_sqlite_apps(home))
 
@@ -308,20 +332,26 @@ def test_the_owner_is_read_through_a_read_only_mount_as_the_operator(edge_backup
 def test_an_owner_that_is_root_or_unreadable_is_refused_before_any_copy(
     edge_backup, machine, home, owner
 ):
+    """#461 M6: a root or unreadable owner fails that app before any copy."""
     machine.other_volumes["presentator"] = ["presentator_database"]
     machine.sqlite_owner = owner
 
-    outcome = edge_backup("backup", *_sqlite_apps(home))
+    outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML + SONGMAKER_TOML))
 
     assert outcome.exit_code == 3
     assert "Kopie der SQLite-Datenbank" not in machine.labels()
-    assert machine.snapshots == []
+    assert [s["app"] for s in machine.snapshots] == ["songmaker"]
+    assert (outcome.status["failing_app"], outcome.status["exit_category"]) == (
+        "presentator",
+        "configuration",
+    )
 
 
 @pytest.mark.parametrize("volumes", [[], ["presentator_database", "other_database"]])
 def test_zero_or_two_matching_volumes_fail_that_app_and_the_others_still_back_up(
     edge_backup, machine, home, volumes
 ):
+    """#461 M4: zero or two volumes fail only that app."""
     machine.other_volumes["presentator"] = volumes
 
     outcome = edge_backup("backup", *declare_apps(home, SONGMAKER_TOML + SQLITE_TOML))
@@ -336,6 +366,7 @@ def test_zero_or_two_matching_volumes_fail_that_app_and_the_others_still_back_up
 def test_a_missing_database_file_fails_that_app_and_the_others_still_back_up(
     edge_backup, machine, home, declared
 ):
+    """#461 A3 M8: a missing file fails only that app."""
     machine.sqlite_copy = None
 
     outcome = edge_backup("backup", *declared)
@@ -350,6 +381,7 @@ def test_a_missing_database_file_fails_that_app_and_the_others_still_back_up(
 
 
 def test_a_staged_copy_that_fails_the_check_never_reaches_restic(edge_backup, machine, home):
+    """#461 A4 M9: a failed check never reaches restic."""
     machine.other_volumes["presentator"] = ["presentator_database"]
     machine.sqlite_copy = b"torn"
 
@@ -364,6 +396,27 @@ def test_a_staged_copy_that_fails_the_check_never_reaches_restic(edge_backup, ma
     assert machine.snapshots == []
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [{"sqlite_copy": None}, {"sqlite_copy_fails": True}, {"sqlite_copy": b"torn"}],
+    ids=["owner", "copy", "check"],
+)
+def test_a_failing_sqlite_run_shows_no_path_or_row_value_in_stderr(
+    edge_backup, machine, home, failure
+):
+    """#461 M5 M15: the script's stderr is discarded, so no path or row value is shown."""
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    machine.sqlite_diagnostic = "unable to open /data/presentator.sqlite3: row secret-name"
+    for field_name, value in failure.items():
+        setattr(machine, field_name, value)
+
+    outcome = edge_backup("backup", *_sqlite_apps(home))
+
+    assert outcome.exit_code == 3
+    assert "presentator.sqlite3" not in outcome.err
+    assert "secret-name" not in outcome.err
+
+
 @pytest.fixture
 def backed_up(edge_backup, machine, home):
     machine.other_volumes["presentator"] = ["presentator_database"]
@@ -373,6 +426,7 @@ def backed_up(edge_backup, machine, home):
 
 
 def test_the_restore_test_passes_on_the_manifests_count(edge_backup, machine, backed_up):
+    """#461 A5 M11: the restore test passes on the manifest's count."""
     outcome = edge_backup("restore", "--test", *backed_up)
 
     assert outcome.exit_code == 0, outcome.err
@@ -382,6 +436,7 @@ def test_the_restore_test_passes_on_the_manifests_count(edge_backup, machine, ba
 def test_the_restore_test_mounts_no_volume_and_the_restored_directory_read_only(
     edge_backup, machine, backed_up
 ):
+    """#461 A6 M12: the restore test mounts no volume."""
     edge_backup("restore", "--test", *backed_up)
 
     argv = machine.argv_of("Prüfung der SQLite-Kopie")
@@ -412,6 +467,7 @@ def _change_snapshot(machine: Machine, **replacements: bytes) -> None:
 def test_the_restore_test_fails_on_a_different_count_a_missing_rows_or_a_bad_copy(
     edge_backup, machine, backed_up, tamper
 ):
+    """#461 A5 M11: a different count, missing rows or a bad copy fail."""
     tamper(machine)
 
     outcome = edge_backup("restore", "--test", *backed_up)
@@ -427,6 +483,7 @@ def test_the_restore_test_fails_on_a_different_count_a_missing_rows_or_a_bad_cop
 def test_an_empty_table_passes_unless_the_record_requires_rows(
     edge_backup, machine, home, require_rows, exit_code
 ):
+    """#461 M13: an empty table passes unless rows are required."""
     machine.other_volumes["presentator"] = ["presentator_database"]
     machine.sqlite_copy = b"SQLite rows=0"
     toml = SQLITE_TOML + ("require_rows = true\n" if require_rows else "")
@@ -436,10 +493,12 @@ def test_an_empty_table_passes_unless_the_record_requires_rows(
     assert edge_backup("restore", "--test", *apps).exit_code == exit_code
 
 
+@pytest.mark.parametrize("exit_code", [1, 125])
 def test_a_container_that_will_not_run_is_a_failed_command_not_a_verification(
-    edge_backup, machine, backed_up
+    edge_backup, machine, backed_up, exit_code
 ):
-    machine.failing["Prüfung der SQLite-Kopie"] = 125
+    """#461 M11: only the script's verdict exit is a verification failure, not a crash."""
+    machine.failing["Prüfung der SQLite-Kopie"] = exit_code
 
     outcome = edge_backup("restore", "--test", *backed_up)
 
@@ -457,6 +516,7 @@ def test_a_container_that_will_not_run_is_a_failed_command_not_a_verification(
 def test_the_sqlite_image_is_checked_and_pulled_only_for_a_sqlite_app(
     edge_backup, machine, home, toml, pulled
 ):
+    """#461 M14: the sqlite image is checked only for a SQLite app."""
     machine.missing_images = {SQLITE_IMAGE}
     machine.other_volumes["presentator"] = ["presentator_database"]
 
@@ -468,6 +528,7 @@ def test_the_sqlite_image_is_checked_and_pulled_only_for_a_sqlite_app(
 
 
 def test_the_status_of_a_sqlite_app_has_no_path_and_the_same_keys(edge_backup, machine, home):
+    """#461 M15: the status file holds no path."""
     machine.other_volumes["presentator"] = ["presentator_database"]
 
     outcome = edge_backup("backup", *_sqlite_apps(home))
@@ -484,11 +545,13 @@ def test_the_status_of_a_sqlite_app_has_no_path_and_the_same_keys(edge_backup, m
     ],
 )
 def test_a_schema_one_manifest_reads_with_or_without_rows(manifest):
+    """#461 A7 M10: a schema-1 manifest reads with or without rows."""
     parsed = Manifest.from_json(manifest)
 
     assert Manifest.from_json(parsed.as_json()) == parsed
 
 
 def test_a_manifest_of_another_schema_is_refused():
+    """#461 M10: another manifest schema is refused."""
     with pytest.raises(VerificationError):
         Manifest.from_json('{"schema": 2, "app": "songmaker", "audio_files": null}')

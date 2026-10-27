@@ -9,6 +9,9 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
+# The script's verdict that the database or copy is bad; CPython's own exit 1 stays a crash.
+VERDICT_EXIT = 3
+
 
 def owner(database: Path) -> str:
     """`uid:gid` of the file, whose user must run the copy to take part as a WAL reader."""
@@ -49,7 +52,7 @@ def main(arguments: list[str]) -> int:
             case _:
                 return 2
     except (sqlite3.Error, OSError):
-        return 1
+        return VERDICT_EXIT
     return 0
 
 

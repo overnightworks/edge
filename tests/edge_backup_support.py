@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from edge_backup import host
+from edge_backup import host, sqlite_copy
 from edge_backup.cli import DEFAULT_APPS
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE, RESTORE_SERVER
 from edge_backup.settings import RESTIC_HOSTNAME
@@ -136,6 +136,10 @@ class Machine:
     sqlite_copy: bytes | None = SQLITE_COPY
     """What the SQLite file copies to (`SQLite rows=N`); None: the file is missing."""
     sqlite_owner: bytes = b"1001:1001\n"
+    sqlite_copy_fails: bool = False
+    """The copy run fails although the owner answered, as when the volume turns unreadable."""
+    sqlite_diagnostic: str = ""
+    """What the script's Python would print to stderr when it fails, as it quotes paths and rows."""
     private_modes: dict[str, int] = field(default_factory=dict)
     """Modes of the staging and restore directories and files, seen while restic used them."""
 
@@ -259,22 +263,31 @@ class Machine:
     def _pg_dump(self, argv, **_) -> bytes:
         return DUMP
 
-    def _sqlite_owner(self, argv, **_) -> bytes:
+    def _sqlite_owner(self, argv, *, discard_stderr, **_) -> bytes:
+        if self.sqlite_copy is None:
+            return self._sqlite_failure("Lesen des SQLite-Besitzers", 1, discard_stderr)
         return self.sqlite_owner
 
-    def _sqlite_copy(self, argv, **_) -> bytes:
-        if self.sqlite_copy is None:
-            return exit_with("Kopie der SQLite-Datenbank", 1)
+    def _sqlite_copy(self, argv, *, discard_stderr, **_) -> bytes:
+        if self.sqlite_copy is None or self.sqlite_copy_fails:
+            return self._sqlite_failure("Kopie der SQLite-Datenbank", 1, discard_stderr)
         return self.sqlite_copy
 
-    def _sqlite_check(self, argv, **_) -> bytes:
-        """The script's `check` over a staged or restored directory: rows, or its exit 1."""
+    def _sqlite_check(self, argv, *, discard_stderr, **_) -> bytes:
+        """The script's `check` over a staged or restored directory: rows, or its verdict exit."""
         copied = Path(mount_source(argv, "/data")) / Path(argv[-2]).name
         match re.fullmatch(rb"SQLite rows=(\d+)", copied.read_bytes()):
             case None:
-                return exit_with("Prüfung der SQLite-Kopie", 1)
+                return self._sqlite_failure(
+                    "Prüfung der SQLite-Kopie", sqlite_copy.VERDICT_EXIT, discard_stderr
+                )
             case found:
                 return found[1] + b"\n"
+
+    def _sqlite_failure(self, label: str, exit_code: int, discard_stderr: bool) -> bytes:
+        if not discard_stderr:
+            print(self.sqlite_diagnostic, file=sys.stderr)
+        return exit_with(label, exit_code)
 
     def _scan(self, argv, **_) -> bytes:
         """`find /audio -type f -print0` over the live volume or a restored directory."""

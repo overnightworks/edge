@@ -34,7 +34,6 @@ RESTORE_ROLE = "postgres"
 _SCANNED_AUDIO = "/audio"
 _SQLITE_SCRIPT = "/sqlite_copy.py"
 _SQLITE_DATA = "/data"
-SCRIPT_VERDICT_EXIT = 1
 _OWNER = re.compile(r"(\d+):(\d+)\n")
 _READY_STATES = frozenset({"running", "running healthy"})
 # What `docker run --detach` prints: the full ID, never a name or a shortened one.
@@ -193,7 +192,8 @@ def copy_sqlite(settings: Settings, volume: str, database: SqliteDatabase, targe
 def check_sqlite(settings: Settings, directory: Path, file: str, table: str) -> int:
     """The row count of a copy whose integrity check answers `ok`; it mounts no volume.
 
-    The script's exit 1 is its verdict on the copy; any other failure is a run that did not happen.
+    The script's `VERDICT_EXIT` is its verdict on the copy; any other failure is a run that did
+    not happen.
     """
     try:
         output = host.run(
@@ -206,7 +206,7 @@ def check_sqlite(settings: Settings, directory: Path, file: str, table: str) -> 
             discard_stderr=True,
         )
     except host.HostCommandError as error:
-        if error.exit_code == SCRIPT_VERDICT_EXIT:
+        if error.exit_code == sqlite_copy.VERDICT_EXIT:
             raise VerificationError("die SQLite-Kopie besteht die Prüfung nicht") from error
         raise
     try:

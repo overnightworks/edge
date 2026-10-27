@@ -64,8 +64,8 @@ class RestoreTest:
 
 @dataclass(frozen=True)
 class PostgresDatabase:
+    dump: ClassVar[DumpKind] = DumpKind.PG_DUMP_CUSTOM
     db_service: str
-    dump: DumpKind
     db_user: str
     db_name: str
     postgres_major: PostgresMajor
@@ -133,7 +133,6 @@ def _parse_app(name: str, record: object) -> App:
         restore_test_record = _table(restore_test_label, record["restore_test"])
         database = PostgresDatabase(
             db_service=_plain(label, record, "db_service"),
-            dump=dump,
             db_user=_plain(label, record, "db_user"),
             db_name=_plain(label, record, "db_name"),
             postgres_major=_postgres_major(label, record),
