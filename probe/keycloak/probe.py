@@ -1291,12 +1291,11 @@ class Probe:
     def service_account_is_back_with_its_role_and_no_group(self, admin: Admin) -> None:
         account = admin.service_account_user(ENABLED_SERVICE_ACCOUNT_CLIENT)
         roles = admin.get(f"/{REALM}/users/{account['id']}/role-mappings/realm")
+        names, groups = [role["name"] for role in roles], admin.group_paths(account["id"])
         expect(
-            AGENT_WORKLOAD_ROLE in [role["name"] for role in roles]
-            and admin.group_paths(account["id"]) == [],
-            f"{ENABLED_SERVICE_ACCOUNT_CLIENT}'s service account has roles "
-            f"{[role['name'] for role in roles]} and groups {admin.group_paths(account['id'])} "
-            "after the apply",
+            AGENT_WORKLOAD_ROLE in names and groups == [],
+            f"{ENABLED_SERVICE_ACCOUNT_CLIENT}'s service account has roles {names} and groups "
+            f"{groups} after the apply",
         )
 
     def console_changes_survive(self, admin: Admin, member_id: str) -> None:
@@ -1904,10 +1903,8 @@ class Probe:
             "(404) and an encoded slash (400)",
         )
 
-    def changed_yaml_applies(self, admin: Admin, member_id: str) -> None:
-        changed = self.stack.copy_config(self.stack.scratch / "config-changed")
-        realm_file = changed / REALM_FILE
-        text = realm_file.read_text()
+    @staticmethod
+    def changed_realm_text(text: str) -> str:
         expect(LIFESPAN_SETTING in text, "realm.yaml no longer sets 300 s as expected")
         text = text.replace(LIFESPAN_SETTING, CHANGED_LIFESPAN_SETTING)
         # The change swaps one group tree for another group and drops a client: the apply adds the
@@ -1923,10 +1920,13 @@ class Probe:
             f"realm.yaml no longer lists the client {DROPPED_CLIENT}",
         )
         text = text[:client_start] + text[client_end:]
-        role_start = text.find(DROPPED_ROLE_BLOCK)
-        expect(role_start >= 0, f"realm.yaml no longer lists the role {DROPPED_ROLE}")
-        text = text.replace(DROPPED_ROLE_BLOCK, EMPTY_REALM_ROLES)
-        realm_file.write_text(text)
+        expect(DROPPED_ROLE_BLOCK in text, f"realm.yaml no longer lists the role {DROPPED_ROLE}")
+        return text.replace(DROPPED_ROLE_BLOCK, EMPTY_REALM_ROLES)
+
+    def changed_yaml_applies(self, admin: Admin, member_id: str) -> None:
+        changed = self.stack.copy_config(self.stack.scratch / "config-changed")
+        realm_file = changed / REALM_FILE
+        realm_file.write_text(self.changed_realm_text(realm_file.read_text()))
         self.stack.must_apply("changed apply", config_dir=changed)
         realm = admin.get(f"/{REALM}")
         expect(
@@ -1950,11 +1950,7 @@ class Probe:
         role_holders = admin.get(f"/{REALM}/roles/{DROPPED_ROLE}/users")
         expect(
             sorted(holder["username"] for holder in role_holders)
-            == [
-                "service-account-hopin",
-                "service-account-presentator",
-                "service-account-songmaker",
-            ],
+            == sorted(f"service-account-{client.client_id}" for client in APP_CLIENTS),
             f"the role {DROPPED_ROLE}, dropped from realm.yaml, or its service accounts did not "
             f"survive the apply: {role_holders}",
         )
@@ -2139,16 +2135,14 @@ class Probe:
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
             f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
             f"with groups {groups}, and an access token with {SUBSCRIPTION_GROUP} and the "
-            f"{AGENT_SERVICE} audience; no code challenge, a suffixed callback, "
-            "http, the password grant and the offline_access scope are refused; the end-session "
-            f"page asks before logging out for {client.logout_redirect} and refuses an "
-            "unregistered address and the origin root; the client's logout, optional scopes, base "
-            "URL, console listing and "
-            "refresh token are as ruled"
-            f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
-            f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
-            f"client_id and azp {name}, no group and the realm's access token lifespan to "
-            "live (W1 to W3)",
+            f"{AGENT_SERVICE} audience; no code challenge, a suffixed callback, http, the password "
+            "grant and the offline_access scope are refused; the end-session page asks before "
+            f"logging out for {client.logout_redirect} and refuses an unregistered address and "
+            "the origin root; the client's logout, optional scopes, base URL, console listing and "
+            "refresh token are as ruled; a person's token has the "
+            f"{AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} role, and its "
+            f"client_credentials token has {AGENT_WORKLOAD_ROLE}, client_id and azp {name}, no "
+            "group and the realm's access token lifespan to live (W1 to W3)",
         )
 
     @staticmethod
