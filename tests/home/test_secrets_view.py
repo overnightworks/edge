@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, plant_secrets, symlinked_folder_fix
+from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeDisk, FakeProbe, plant_secrets, symlinked_folder_fix
 
 from home_tools import cli, secrets_view
 from home_tools.secrets_setup import BY_HAND_STEP, Boundaries, Terminal
@@ -183,7 +183,7 @@ def test_a_linked_report_file_is_replaced_and_never_written_through_into_the_sec
     secrets_before = secret_contents(layout)
     plant_link(layout, report_file)
 
-    cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW)
+    cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW, disk_space=FakeDisk())
 
     assert not report_file.is_symlink()
     assert report_file.stat().st_nlink == 1
@@ -199,7 +199,7 @@ def test_a_symlink_on_the_way_to_the_state_directory_is_refused_and_never_carrie
     secrets_before = secret_contents(layout)
     plant_link(layout, state_file_of(layout, command))
 
-    code = cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW)
+    code = cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW, disk_space=FakeDisk())
 
     assert code == 3
     assert capsys.readouterr().err.startswith("home: unerwarteter Fehler (")

@@ -91,7 +91,7 @@ Commit-Schutz, Geheimnisse, Server-Logs, Aufräumen). Die Stufe und der Satz je 
 
 | Prüfung | Handlungsbedarf | Hinweis |
 |---|---|---|
-| `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable` | `reboot-pending` |
+| `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
 | `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
@@ -210,6 +210,10 @@ eigener Fund, nie ein sauberer Lauf.
   endete, erscheint; das ist hingenommen. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
   Datum“); ein Hinweis, der nie eine Mail auslöst.
+- **`platform`, Festplatte.** Nur die Platte, auf der `/` liegt (`shutil.disk_usage`: was ein unprivilegierter Prozess
+  noch nutzen kann): `disk-low` (Handlungsbedarf), wenn weniger als 10 % frei sind; genau 10 % ist kein Fund. Der Fund
+  hat den Gegenstand `/`, der freie Platz gehört nicht zur Identität. Die Mail nennt keine Zahl, der Bericht GB frei,
+  GB gesamt und den Anteil. Lässt sich die Platte nicht lesen, läuft die Prüfung `platform` nicht.
 - **`backup`.** `~/.local/state/edge/backup-status.json` (Schema 2, nur die dokumentierten Felder): `backup-failed`,
   wenn der letzte Lauf `failed` ist; `backup-crashed`, wenn `running` länger als 6 Stunden her ist; `backup-stale` je
   App, wenn `last_successful_backup` älter als 8 Tage ist oder fehlt; `backup-status-unreadable`, wenn die Datei

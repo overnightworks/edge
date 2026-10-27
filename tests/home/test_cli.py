@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from conftest import FakeDisk
 
 from home_tools import cli
 from home_tools.tidy_home import Layout
@@ -93,7 +94,7 @@ def test_an_unexpected_error_exits_3_with_one_german_line_never_1(
     state_dir.parent.mkdir(parents=True)
     state_dir.write_text("a file where the state directory belongs")
 
-    code = cli.main([subcommand], home=clean_home, run=runner, probe=probe)
+    code = cli.main([subcommand], home=clean_home, run=runner, probe=probe, disk_space=FakeDisk())
 
     error = capsys.readouterr().err
     assert code == 3

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from home_tools import check, secrets_setup, secrets_view, setup, system_step, tidy_home
 from home_tools import next as next_steps
+from home_tools.platform_check import DiskSpaceReader, read_disk_space
 from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
 from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
@@ -31,6 +32,7 @@ class Ports:
     now: datetime
     system: system_step.Boundaries
     unit_directory: Path
+    disk_space: DiskSpaceReader
 
 
 SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
@@ -59,6 +61,7 @@ def build_layout_and_ports(
     now: datetime | None = None,
     secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
+    disk_space: DiskSpaceReader | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
     # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
@@ -71,6 +74,7 @@ def build_layout_and_ports(
         now or datetime.now(),
         system,
         edge_units_directory(layout),
+        disk_space or read_disk_space,
     )
 
 
@@ -111,9 +115,10 @@ def main(
     now: datetime | None = None,
     secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
+    disk_space: DiskSpaceReader | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
-    layout, ports = build_layout_and_ports(home, run, probe, now, secrets_setup_boundaries, system_boundaries)
+    layout, ports = build_layout_and_ports(home, run, probe, now, secrets_setup_boundaries, system_boundaries, disk_space)
     try:
         # A subcommand that reads the config as one of its sources turns an invalid one into its own line, never exit 2.
         config = Config() if args.reads_config_as_a_source else load_config(layout)
