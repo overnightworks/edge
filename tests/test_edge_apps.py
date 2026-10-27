@@ -338,15 +338,15 @@ def test_an_interrupt_during_the_health_wait_names_it_and_records_nothing(
 
 
 @pytest.mark.parametrize(
-    ("break_it", "now"),
+    "break_it",
     [
-        (lambda docker: docker.rows[0].update(State="exited", Health=""), "exited"),
-        (lambda docker: docker.rows[0].update(Health="unhealthy"), "running (unhealthy)"),
+        lambda docker: docker.rows[0].update(State="exited", Health=""),
+        lambda docker: docker.rows[0].update(Health="unhealthy"),
     ],
     ids=["stopped by hand", "unhealthy"],
 )
 def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts_again(
-    world, origin, break_it, now
+    world, origin, break_it
 ):
     sha = deploy(world, origin, FIRST)
     break_it(world.docker)

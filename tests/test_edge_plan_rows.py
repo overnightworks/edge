@@ -36,7 +36,6 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
         "kind": kind,
         "recorded_tag": None,
         "unfinished": None,
-        "containers": ("hopin running (healthy)",),
     }
     return AppPlan(**{**fields, **overrides})  # type: ignore[arg-type]
 
@@ -84,8 +83,8 @@ def test_an_app_plan_is_one_row_with_the_glyph_of_its_kind(
     assert rows_of(plans=plans) == (expected,)
 
 
-def test_an_app_switched_off_while_its_containers_exist_is_a_remove_row() -> None:
-    off = OffPlan(APP, ("hopin running (healthy)",))
+def test_an_app_switched_off_is_a_remove_row() -> None:
+    off = OffPlan(APP)
 
     assert rows_of(offs=(off,)) == (
         Row(Glyph.REMOVE, "hopin", PlanEvent.SWITCH_OFF, "volumes kept · ~/srv/hopin kept"),
@@ -119,7 +118,7 @@ def test_a_skipped_tag_is_a_row_with_the_tag_and_its_reason() -> None:
 def test_the_rows_stand_in_the_order_the_work_runs_notes_then_switch_offs_then_the_rest() -> None:
     rows = rows_of(
         plans=(app_plan(AppKind.ON),),
-        offs=(OffPlan(App("legal", False, "master"), ()),),
+        offs=(OffPlan(App("legal", False, "master")),),
         kept=(StaysStoppedNote("other", None),),
     )
 
