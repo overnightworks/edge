@@ -1,8 +1,0 @@
-claim_id = "9b0ac8ec2f0c437397ea5121b0014e47"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "66530c23bbaacb496ffd1d79f2f8288d5faa5d20"
-branch = "claude/issue-495-s2e-colour"
-scope = ["docs/design/hal-output.html", "docs/home.md", "scripts/system-proof/drive.sh", "scripts/system-proof/terminal.exp", "src/hal_output/__init__.py", "tests/test_hal_output.py"]
-opened_commit = "1cbba0b1f328794cf608aef490e48aca31b7826b"
-whole_reason = "The renderer's colour rule, its tests, the one probe cell that proves it on a pty and the picture's note change together."
