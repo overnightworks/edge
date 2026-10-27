@@ -136,7 +136,6 @@ class AppPlan:
     kind: AppKind
     recorded_tag: str | None  # None on the first deployment
     unfinished: str | None  # the tag or head an update did not reach, None when none
-    containers: tuple[str, ...]  # as `ps` shows them
 
 
 @dataclass(frozen=True)
@@ -144,7 +143,6 @@ class OffPlan:
     """An app the catalog disables while containers of its project exist."""
 
     app: catalog.App
-    containers: tuple[str, ...]  # as `ps` shows them
 
 
 @dataclass(frozen=True)
@@ -241,13 +239,11 @@ def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
 
 
 def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
-    """None when no container of the project exists. It names the containers as `ps` shows
-    them (service and state, never a container name that Compose interpolated)."""
+    """None when no container of the project exists."""
     engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
-    if not (containers := engine.containers()):
+    if not engine.containers():
         return None
-    shown = tuple(container.describe() for container in containers)
-    return OffPlan(app, shown)
+    return OffPlan(app)
 
 
 def _plan_one(
@@ -294,7 +290,6 @@ def _plan_one(
         kind=_kind_of(recorded, sha),
         recorded_tag=recorded.tag if recorded else None,
         unfinished=_unfinished_update(recorded, sha, release.tag, head),
-        containers=tuple(container.describe() for container in containers),
     )
     return plan, choice.skipped
 

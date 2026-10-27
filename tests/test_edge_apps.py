@@ -156,7 +156,6 @@ def test_a_newer_release_is_an_update_that_names_the_last_successful_deployment(
     [planned] = plan.plans
     assert (planned.kind, planned.release.tag, planned.sha) == (apps.AppKind.UPDATE, SECOND, sha)
     assert (planned.recorded_tag, planned.unfinished) == (FIRST, None)
-    assert planned.containers == ("hopin running (healthy)",)
     assert world.run(plan) == [None]
     assert world.deployed()["tag"] == SECOND
 
@@ -210,7 +209,7 @@ def test_a_new_tag_that_fails_health_stays_partial_with_the_record_on_the_old_on
     assert world.deployed()["tag"] == SECOND
     [planned] = world.plan().plans
     assert (planned.release.tag, planned.sha, planned.recorded_tag) == (THIRD, sha, SECOND)
-    assert (planned.unfinished, planned.containers) == (THIRD, ("hopin running (unhealthy)",))
+    assert planned.unfinished == THIRD
 
 
 def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_nothing_to_change(
@@ -262,7 +261,7 @@ def test_a_build_that_fails_leaves_the_old_containers_and_the_next_plan_says_unf
     assert world.docker.rows[0]["Name"] == "hopin-hopin-1"
     [planned] = world.plan().plans
     assert (planned.release.tag, planned.sha, planned.recorded_tag) == (SECOND, sha, FIRST)
-    assert (planned.unfinished, planned.containers) == (SECOND, ("hopin running (healthy)",))
+    assert planned.unfinished == SECOND
 
 
 @pytest.mark.parametrize("verb", ["build", "pull", "create", "start"])
@@ -358,7 +357,6 @@ def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts
         FIRST,
         sha,
     )
-    assert planned.containers == (f"hopin {now}",)
 
 
 def test_an_app_whose_container_name_compose_interpolates_plans_start_again_and_update(
@@ -393,8 +391,7 @@ def test_an_app_whose_container_name_compose_interpolates_plans_start_again_and_
 
     assert world.docker.rows[0]["Name"] == resolved
     assert "hopin running (unhealthy)" in failure
-    shown = [*start_again[0].containers, *update[0].containers, failure]
-    assert resolved not in " ".join(shown)
+    assert resolved not in failure
 
 
 @pytest.mark.parametrize(
@@ -535,14 +532,13 @@ def switch_off(world: World) -> OffDocker:
     return fake
 
 
-def test_an_app_switched_off_while_running_is_planned_off_with_its_containers(world):
+def test_an_app_switched_off_while_running_is_planned_off(world):
     switch_off(world)
 
     plan = world.plan()
 
     assert not plan.changes_nothing
-    [off] = plan.offs
-    assert off.containers == (f"{KEY} running (healthy)", "leftover exited")
+    assert len(plan.offs) == 1
 
 
 def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(world):
@@ -621,7 +617,6 @@ def test_an_update_interrupted_after_part_of_the_containers_was_replaced_is_repa
     [planned] = world.plan().plans
 
     assert (planned.recorded_tag, planned.unfinished) == (FIRST, SECOND)
-    assert all(row["Service"] in " ".join(planned.containers) for row in docker.rows)
     assert world.run() == [None]
     assert sorted(row["Service"] for row in docker.rows) == ["web", "worker"]
     assert world.deployed()["tag"] == SECOND
