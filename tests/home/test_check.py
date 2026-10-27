@@ -247,6 +247,8 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
         "  ✓ server logs     ok",
     ]
     assert "| failed: secrets" in report.splitlines()[0]
+    assert "# secrets" in report.splitlines()
+    assert "# home secrets" not in report
     assert "check secrets failed (PermissionError)" in report
     assert "container-unhealthy | edge" in report
     error_lines = error.splitlines()

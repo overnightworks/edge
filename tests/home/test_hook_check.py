@@ -297,6 +297,7 @@ def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_c
     report = layout.check_report_file.read_text()
     assert code == 1
     assert "# hook " in report
+    assert "| Rule | Subject | Finding | Fix |" in report.splitlines()
     assert f"| quality | {layout.quality_executable} |" in report
 
     code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(broken=["worktree"]), probe=FakeProbe(), disk_space=FakeDisk())
