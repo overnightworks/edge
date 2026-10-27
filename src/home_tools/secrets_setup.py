@@ -65,9 +65,8 @@ NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
 ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
-INDENT = DETAIL_INDENT
-OPEN_PROMPT = f"{INDENT}Enter opens the page in your browser: "
-PASTE_PROMPT = f"{INDENT}paste the token (hidden, empty skips): "
+OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
+PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
 OPENED = "opened"
 NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
