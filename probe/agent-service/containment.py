@@ -192,7 +192,8 @@ def b3_verdicts(window: Snapshot, frame: Snapshot, later: Snapshot) -> Verdicts:
     return {
         "B3 (during)": (
             bool(plain and session) and apart,
-            f"{len(plain)} markers in the CLI's group, {len(session)} in a session of their own",
+            f"{len(plain)} records in the CLI's group, {len(session)} in a session of their own "
+            f"(a marker is one record per parent it had)",
         ),
         "B3 (frame)": (
             bool(frame.session_markers()),
