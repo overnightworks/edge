@@ -24,7 +24,7 @@ def write_account(home: Path, text: str) -> None:
 
 def message() -> EmailMessage:
     news = EmailMessage()
-    news["Subject"] = "home check | 2 Funde"
+    news["Subject"] = "hal check | 2 Funde"
     news.set_content("2 neu, 0 weg.\n")
     return news
 
@@ -130,7 +130,7 @@ def test_the_packaged_manifest_declares_the_account_and_the_password_for_home_ch
     entries = {entry.name: entry for entry in load_manifest(MANIFEST_PATH) if entry.name.startswith("smtp/")}
 
     assert {name: (entry.kind, entry.read_by, entry.optional, entry.loosest_mode) for name, entry in entries.items()} == {
-        "smtp/password": (SecretKind.TOKEN, ("home check",), False, 0o600),
-        "smtp/account.toml": (SecretKind.CONFIGURATION, ("home check",), False, 0o600),
+        "smtp/password": (SecretKind.TOKEN, ("hal check",), False, 0o600),
+        "smtp/account.toml": (SecretKind.CONFIGURATION, ("hal check",), False, 0o600),
     }
     assert "songmaker" in entries["smtp/password"].recreate

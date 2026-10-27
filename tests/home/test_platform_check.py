@@ -1,4 +1,4 @@
-"""`home check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3; #460 D1-D4; #466 S-1..S-7) against a fake docker, a reboot flag file and a fake disk."""
+"""`hal check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3; #460 D1-D4; #466 S-1..S-7) against a fake docker, a reboot flag file and a fake disk."""
 
 from __future__ import annotations
 
