@@ -1,7 +1,7 @@
 # The agent service
 
 Reference and runbook for the operator and for an engineer changing the agent service. The code is
-the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `agent-presentator`, `egress` and `mcp` networks),
+the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `agent-presentator`, `agent-hopin`, `egress` and `mcp` networks),
 `agent-service/service.toml`, `agent-service/image/` (the image recipe), `agent-service/live_smoke.py`,
 `agent-service/live_signer.py` and the probes under `probe/agent-service/`. The egress gateway it leaves through is in
 [internal-ca.md](internal-ca.md); the platform picture is [architecture.md](architecture.md).
@@ -165,7 +165,7 @@ access to the app.
 ## An app's side
 
 An app reaches the service by joining its own agent network, `hal_agent_<app>` (`hal_agent_songmaker`,
-`hal_agent_presentator`), as an external network. The names are fixed, so the project's rename does not
+`hal_agent_presentator`, `hal_agent_hopin`), as an external network. The names are fixed, so the project's rename does not
 move them, and no app sees another's network:
 
 ```yaml
