@@ -19,6 +19,7 @@ import ssl
 import sys
 import time
 from pathlib import Path
+from typing import IO
 
 PORT = 8444
 CERTIFICATE = "/app/cert.pem"
@@ -48,19 +49,19 @@ def bearer_signature(authorization: str | None) -> str | None:
     return segments[SIGNATURE_SEGMENT]
 
 
-def current_mode() -> str:
-    return MODE_FILE.read_text(encoding="utf-8").strip()
+def current_mode(mode_file: Path) -> str:
+    return mode_file.read_text(encoding="utf-8").strip()
 
 
-def canary_text(signature: str | None) -> str | None:
+def canary_text(signature: str | None, mode_file: Path) -> str | None:
     """The signature to plant in `step`'s description: only in canary mode, only with a bearer."""
-    return signature if current_mode() == CANARY_MODE else None
+    return signature if current_mode(mode_file) == CANARY_MODE else None
 
 
-def log_line(line: str) -> None:
+def log_line(log: IO[str], line: str) -> None:
     """One write per line, so that threads cannot interleave two lines."""
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+    log.write(line + "\n")
+    log.flush()
 
 
 def called_tool(message: dict) -> str:
@@ -79,6 +80,8 @@ def offered_tools(planted: str | None) -> list[dict]:
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    server: ThreadingServer
+
     def log_message(self, *_: object) -> None:
         """The access log of http.server is not the closed vocabulary below."""
 
@@ -87,17 +90,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
             return
         message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        if message["method"] == CALL_TOOL_METHOD and current_mode() == HOLD_MODE:
+        if (
+            message["method"] == CALL_TOOL_METHOD
+            and current_mode(self.server.mode_file) == HOLD_MODE
+        ):
             self.hold_call(message)
             return
         method = message["method"] if message["method"] in KNOWN_METHODS else OTHER_METHOD
         signature = bearer_signature(self.headers.get("Authorization"))
-        planted = canary_text(signature) if method == LIST_TOOLS_METHOD else None
+        planted = (
+            canary_text(signature, self.server.mode_file) if method == LIST_TOOLS_METHOD else None
+        )
         tools = offered_tools(planted) if method == LIST_TOOLS_METHOD else []
         names = ",".join(tool["name"] for tool in tools) or "-"
         log_line(
+            self.server.log,
             f"method={method} offered={names} canary={int(planted is not None)} "
-            f"bearer={int(signature is not None)}"
+            f"bearer={int(signature is not None)}",
         )
         self.answer(method, message.get("id"), tools)
 
@@ -105,12 +114,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """A call of `step` gets no answer: the request ends when the peer closes its end."""
         tool = called_tool(message)
         if tool != HELD_TOOL:
-            log_line(f"method={CALL_TOOL_METHOD} tool={tool}")
+            log_line(self.server.log, f"method={CALL_TOOL_METHOD} tool={tool}")
             self.answer(OTHER_METHOD, message.get("id"), [])
             return
-        log_line(f"method={CALL_TOOL_METHOD} tool={tool} held")
+        log_line(self.server.log, f"method={CALL_TOOL_METHOD} tool={tool} held")
         self.read_until_closed()
-        log_line(f"method={CALL_TOOL_METHOD} tool={tool} released at={time.time():.3f}")
+        released = f"method={CALL_TOOL_METHOD} tool={tool} released at={time.time():.3f}"
+        log_line(self.server.log, released)
 
     def read_until_closed(self) -> None:
         """Both the orderly end (nothing more to read) and a reset connection are the close."""
@@ -155,16 +165,20 @@ class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int]) -> None:
+    def __init__(self, address: tuple[str, int], mode_file: Path, log: IO[str]) -> None:
+        self.mode_file = mode_file
+        self.log = log
         super().__init__(address, Handler)
 
 
 class HttpsServer(ThreadingServer):
     """A threading HTTP server whose listening socket speaks TLS from the moment it is bound."""
 
-    def __init__(self, address: tuple[str, int], context: ssl.SSLContext) -> None:
+    def __init__(
+        self, address: tuple[str, int], mode_file: Path, log: IO[str], context: ssl.SSLContext
+    ) -> None:
         self.tls_context = context
-        super().__init__(address)
+        super().__init__(address, mode_file, log)
 
     def server_bind(self) -> None:
         super().server_bind()  # NOSONAR(S5332) TLS: HttpsServer wraps its socket at bind
@@ -174,7 +188,8 @@ class HttpsServer(ThreadingServer):
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    HttpsServer(("0.0.0.0", PORT), context).serve_forever()  # NOSONAR(S5332) TLS via HttpsServer
+    server = HttpsServer(("0.0.0.0", PORT), MODE_FILE, sys.stdout, context)  # NOSONAR(S5332) TLS
+    server.serve_forever()
     return 0
 
 

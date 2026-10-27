@@ -15,11 +15,13 @@ from scratch_secrets import issue_certificate
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
+HELD_LINE = "method=tools/call tool=step held"
+RELEASED_PREFIX = "method=tools/call tool=step released at="
 APP_LINE = re.compile(
     r"(?:method=(?:initialize|notifications/initialized|tools/list|other) "
     r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01])"
-    r"|method=tools/call tool=step held"
-    r"|method=tools/call tool=step released at=\d+\.\d{3}"
+    rf"|{re.escape(HELD_LINE)}"
+    rf"|{re.escape(RELEASED_PREFIX)}\d+\.\d{{3}}"
     r"|method=tools/call tool=other"
 )
 APP_HANDSHAKE = (

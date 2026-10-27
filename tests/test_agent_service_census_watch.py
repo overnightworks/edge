@@ -88,11 +88,14 @@ def test_the_watch_reports_when_the_group_and_the_tree_were_first_seen_gone(cens
 
 
 def test_the_watch_reports_only_booleans_wall_times_and_a_count(census, tmp_path):
+    """#469 acceptance: the watch reports only booleans, wall times and a sample count."""
     scene = Scene(tmp_path, [(RUNNING, 1)])
     assert set(scene.watch(census, deadline=0)) == REPORT_KEYS
 
 
 def test_the_watch_that_sees_nothing_runs_to_its_deadline(census, tmp_path):
+    """Matrix row 6: a watch that never sees the group or the tree runs to its deadline and reports
+    neither."""
     scene = Scene(tmp_path, [(IDLE, 0)])
     report = scene.watch(census, deadline=0.05)
     assert report["group_seen"] is report["tree_seen"] is False
@@ -101,6 +104,7 @@ def test_the_watch_that_sees_nothing_runs_to_its_deadline(census, tmp_path):
 
 
 def test_a_group_that_never_empties_has_no_time(census, tmp_path):
+    """Matrix row 5: a group that never empties has no time, and B9 (b) fails on it."""
     scene = Scene(tmp_path, [(RUNNING, 1), (RUNNING, 0)])
     report = scene.watch(census, deadline=0.05)
     assert (report["group_seen"], report["group_gone_at"]) == (True, None)
@@ -108,6 +112,7 @@ def test_a_group_that_never_empties_has_no_time(census, tmp_path):
 
 
 def test_the_stop_file_ends_the_watch_at_once(census, tmp_path):
+    """B9 (b), (c): the host's stop file ends the watch at once."""
     scene = Scene(tmp_path, [(IDLE, 0)])
     scene.stop.touch()
     assert scene.watch(census, deadline=60)["samples"] == 1
@@ -116,14 +121,16 @@ def test_the_stop_file_ends_the_watch_at_once(census, tmp_path):
 def test_the_cli_group_is_a_child_of_the_lowest_process_below_init_that_leads_its_group(
     census, tmp_path
 ):
-    """A detached process below init (a later pid) is no CLI; the service's own group is none."""
+    """B9 (b): a detached process below init (a later pid) is no CLI; the service's own group is
+    none."""
     detached = {**IDLE, 30: (1, 30), 31: (30, 31)}
     scene = Scene(tmp_path, [(detached, 0), (detached, 0)])
     assert scene.watch(census, deadline=0.01)["group_seen"] is False
 
 
 def test_the_watch_mode_runs_through_the_census_entry_point(census, tmp_path):
-    """`run` dispatches the mode: a one-sample watch on the fake /proc answers with its report."""
+    """B9 (b), (c): `run` dispatches the mode, and a one-sample watch on the fake /proc answers
+    with its report."""
     scene = Scene(tmp_path, [(RUNNING, 1)])
     settings = {
         "key": KEY.hex(), "mode": "watch", "proc": str(scene.proc),

@@ -12,7 +12,7 @@ import struct
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 from probe_support import probe_imports
@@ -47,13 +47,11 @@ def tools() -> Iterator[ModuleType]:
 
 
 @pytest.fixture
-def served(tools, tmp_path, monkeypatch) -> Iterator[tuple[int, LogQueue, Path]]:
+def served(tools, tmp_path) -> Iterator[tuple[int, LogQueue, Path]]:
     mode_file = tmp_path / "mode"
     mode_file.write_text("hold", encoding="utf-8")
-    monkeypatch.setattr(tools, "MODE_FILE", mode_file)
     log = LogQueue()
-    monkeypatch.setattr(tools, "sys", SimpleNamespace(stdout=log))
-    server = tools.ThreadingServer(("127.0.0.1", 0))
+    server = tools.ThreadingServer(("127.0.0.1", 0), mode_file, log)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server.server_address[1], log, mode_file
@@ -107,7 +105,7 @@ def test_a_step_call_is_held_until_the_peer_closes_and_then_logs_its_release(ser
 
 
 def test_another_request_is_answered_while_a_call_is_held(served):
-    """A held call blocks no other request: a listing during the hold is answered."""
+    """B9 (d): a held call blocks no other request: a listing during the hold is answered."""
     port, log, _ = served
     held = post(port, call("step"))
     assert log.next_line() == "method=tools/call tool=step held"
@@ -119,6 +117,7 @@ def test_another_request_is_answered_while_a_call_is_held(served):
 
 
 def test_a_released_time_has_three_decimals(served):
+    """B9 (d): the released time has the three decimals APP_LINE expects."""
     port, log, _ = served
     post(port, call("step")).close()
     log.next_line()
@@ -131,7 +130,8 @@ def test_a_released_time_has_three_decimals(served):
     "params", [{"name": "bare"}, {"name": "extra"}, {}, "text", None], ids=lambda p: str(p)
 )
 def test_a_call_of_another_tool_is_answered_not_found_and_logged_as_other(served, params):
-    """In hold mode, any tools/call that is not `step` is answered 'Method not found'."""
+    """Matrix row 11: in hold mode, a tools/call that is not `step` is answered 'Method not
+    found'."""
     port, log, _ = served
     answer = answered(post(port, {"method": "tools/call", "params": params}))
     assert b"Method not found" in answer
@@ -140,7 +140,8 @@ def test_a_call_of_another_tool_is_answered_not_found_and_logged_as_other(served
 
 @pytest.mark.parametrize("mode", ["relay", "canary"])
 def test_a_call_outside_hold_mode_is_logged_as_any_other_method(served, mode):
-    """Only hold mode knows `tools/call`: elsewhere it is `method=other`, answered as before."""
+    """Matrix row 11: only hold mode knows `tools/call`; elsewhere it is `method=other`,
+    answered as before."""
     port, log, mode_file = served
     mode_file.write_text(mode, encoding="utf-8")
     assert b"Method not found" in answered(post(port, call("step")))
@@ -148,6 +149,7 @@ def test_a_call_outside_hold_mode_is_logged_as_any_other_method(served, mode):
 
 
 def test_the_step_schema_takes_an_integer_n(served):
+    """B9 driven: R2's prompt sets `n` to 1, so `step` takes an integer n."""
     port, _, _ = served
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=LINE_SECONDS)
     connection.request("POST", "/mcp", json.dumps({"id": 1, "method": "tools/list"}))
@@ -157,6 +159,7 @@ def test_the_step_schema_takes_an_integer_n(served):
 
 
 def test_every_new_line_belongs_to_the_closed_vocabulary(tools):
+    """Matrix row 11: every line the hold adds belongs to the closed vocabulary."""
     with probe_imports():
         import fake_app
 

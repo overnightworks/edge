@@ -3,8 +3,11 @@
 in a throwaway compose project, running the login directory it is given, read-only, with the
 stand-in issuer, a bootstrapped entrypoint and `max_parallel_cli_runs = 1` in a scratch
 service.toml. It drives the A1d conditions of agent-runtime#440 (config, U2, U3, U6, U7, U8 and I6
-against the container's own image) and the B8 S00 census of every writable mount, and prints only
-verdicts, counts and role names. An agent runs it only with a dummy login made with `mktemp`.
+against the container's own image), the B8 S00 census of every writable mount and B9's R2: one
+run on the default model through the run client (run_client.py), whose call of `step` the fake app
+(fake_app.py) holds until the client closes its stream, watched from inside the container. It
+prints only verdicts, counts and role names. An agent runs it only with a dummy login made with
+`mktemp`.
 
     python3 probe/agent-service/cells_12b.py --login-directory DIR
 
@@ -71,6 +74,7 @@ from login_checks import (
     wait_until,
 )
 from refusals import SMOKE_SERVICE
+from run_client import CLOSE_COMMAND
 from service_log import BOOTSTRAP, classify_log
 from smoke import Tokens
 from unit import SERVICE, ServiceConditions, login_directory
@@ -100,8 +104,11 @@ class ClientProcess:
         self.reader.start()
 
     def read(self) -> None:
-        for line in self.process.stdout:
-            self.lines.append(line.rstrip("\n"))
+        try:
+            for line in self.process.stdout:
+                self.lines.append(line.rstrip("\n"))
+        except ValueError:  # `finish` closed the output while it was still being read
+            return
 
     def alive(self) -> bool:
         return self.process.poll() is None
@@ -112,7 +119,7 @@ class ClientProcess:
     def say_close(self) -> None:
         """A client that already ended has nothing left to close: its output tells the rest."""
         with contextlib.suppress(BrokenPipeError):
-            self.process.stdin.write("close\n")
+            self.process.stdin.write(f"{CLOSE_COMMAND}\n")
             self.process.stdin.flush()
 
     def finish(self, seconds: float) -> None:
@@ -141,6 +148,8 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         self.working_root_entries: int | None = None  # S00's count, B9 (c)'s baseline
         self.login = login
         self.gate = gate
+        self.clock = time.monotonic  # the R2 waits read these, so a test runs them on a fake clock
+        self.sleep = time.sleep
         super().__init__(scratch)
         text = self.configuration.read_text(encoding="utf-8")
         expect("[runs]" not in text, "service.toml has a [runs] table")
@@ -283,7 +292,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         )  # fmt: skip
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, env=self.environment, cwd=REPO, close_fds=True,
+            text=True, errors="replace", env=self.environment, cwd=REPO, close_fds=True,
         )  # fmt: skip
         self.windows.append(process)
         process.stdin.write(f"{tokens.person}\n{tokens.workload}\n")
@@ -317,18 +326,22 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         watching: Future[Watched] | None = None
         called = False
         with ThreadPoolExecutor(max_workers=1) as pool:
-            if self.wait_for_start(client):
-                watching = pool.submit(census.watch, WATCH_SECONDS)
-                outcome = wait_for_call(time.monotonic, time.sleep, app_since, client.alive)
-                called = outcome is CallWait.HELD
-            self.close_stream(client)
-            client.finish(CLIENT_READ_SECONDS)
-            if called:
-                wait_until(
-                    lambda: app_call(app_since()).released_at is not None,
-                    RELEASE_SECONDS, time.monotonic, time.sleep,
-                )  # fmt: skip
-            self.stop_watch()
+            try:
+                if self.wait_for_start(client):
+                    watching = pool.submit(census.watch, WATCH_SECONDS)
+                    outcome = wait_for_call(self.clock, self.sleep, app_since, client.alive)
+                    called = outcome is CallWait.HELD
+            finally:  # a failed read must not leave the stream open or the watch running
+                try:
+                    self.close_stream(client)
+                    client.finish(CLIENT_READ_SECONDS)
+                    if called:
+                        wait_until(
+                            lambda: app_call(app_since()).released_at is not None,
+                            RELEASE_SECONDS, self.clock, self.sleep,
+                        )  # fmt: skip
+                finally:
+                    self.stop_watch()
             watched = self.collect(watching)
         report = client.report()
         self.texts.extend(["\n".join(client.lines), "\n".join(self.app_lines())])
@@ -348,7 +361,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
     def wait_for_start(self, client: ClientProcess) -> bool:
         wait_until(
             lambda: client.report().started or not client.alive(),
-            START_SECONDS, time.monotonic, time.sleep,
+            START_SECONDS, self.clock, self.sleep,
         )  # fmt: skip
         return client.report().started
 

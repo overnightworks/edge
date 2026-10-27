@@ -29,6 +29,7 @@ R2_TOOLS = {"step": "read_only"}
 CLOSE_COMMAND = "close"
 STATUS_SECONDS = 30  # twice the close's own bounds, 14.6 s after the loss
 STATUS_POLL_SECONDS = 0.5
+MINIMUM_SOCKET_SECONDS = 0.1  # a socket timeout of 0 would make the read non-blocking
 SMOKE_DIRECTORY = "/opt/smoke"
 RUN_ID = re.compile(r"[0-9a-f-]{36}")
 MAXIMUM_BODY_BYTES = 65536
@@ -39,6 +40,8 @@ CLIENT_LINE = re.compile(
     r"|status (?P<state>[a-z_]+) (?P<loss>[a-z_]+)"
     r"|broke off (?P<broke_off>\w+)"
 )
+RUN_STARTED = "run_started"  # the wire's RunStarted `type`: checked by `vocabulary_from`
+RUNNING = "running"  # the wire's RunState.RUNNING: checked by `vocabulary_from`
 NO_LOSS = "none"
 REFUSED = "refused"
 OTHER = "other"
@@ -61,12 +64,15 @@ def vocabulary_from(wire) -> Vocabulary:
     of each event class of the `RunEvent` union."""
     classes = wire.RunEvent.__args__[0].__args__
     names = (cls.model_fields["type"].annotation.__args__[0] for cls in classes)
-    return Vocabulary(
+    vocabulary = Vocabulary(
         events=frozenset(names),
         states=frozenset(member.value for member in wire.RunState),
         losses=frozenset(member.value for member in wire.ClientLoss),
         codes=frozenset(member.value for member in wire.RejectionCode),
     )
+    if RUN_STARTED not in vocabulary.events or RUNNING not in vocabulary.states:
+        raise ValueError("the wire package no longer has the values the host judges against")
+    return vocabulary
 
 
 def answer_line(status: int, code: object, vocabulary: Vocabulary) -> str:
@@ -176,7 +182,7 @@ class RunClient:
         end = self.clock() + STATUS_SECONDS
         while True:
             try:
-                ended, line = self.status_once()
+                ended, line = self.status_once(max(end - self.clock(), MINIMUM_SOCKET_SECONDS))
             except (OSError, http.client.HTTPException, ValueError, KeyError) as problem:
                 self.say(broke_off_line(problem))
                 return 1
@@ -185,8 +191,10 @@ class RunClient:
                 return 0
             self.pause(STATUS_POLL_SECONDS)
 
-    def status_once(self) -> tuple[bool, str]:
+    def status_once(self, seconds: float) -> tuple[bool, str]:
+        """One read of the status; a socket that stalls for `seconds` ends it."""
         connection = self.connect()
+        connection.timeout = seconds  # read when the connection opens its socket
         try:
             connection.request("GET", f"/runs/{self.run_id}", None, self.headers)
             response = connection.getresponse()
@@ -203,7 +211,7 @@ def refusal_code(response: http.client.HTTPResponse) -> object:
     """The `code` of the service's typed refusal, or None when the body is not one."""
     try:
         document = json.loads(response.read(MAXIMUM_BODY_BYTES))
-        return document["code"] if isinstance(document, dict) else None
+        return document.get("code") if isinstance(document, dict) else None
     except ValueError:
         return None
 

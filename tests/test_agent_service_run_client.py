@@ -4,8 +4,10 @@ the close on the host's command and the status read, on a fake connection and fa
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
+import socket
 import threading
 from collections.abc import Iterator
 from types import ModuleType, SimpleNamespace
@@ -143,6 +145,7 @@ def test_the_close_command_shuts_the_stream_down_and_stamps_t0(run_client, vocab
 
 
 def test_a_close_after_the_stream_ended_says_nothing(run_client, vocabulary):
+    """Matrix row 16: a close after the stream ended prints no `closed` line."""
     service = FakeService(FakeResponse(200), FakeResponse(200, ENDED))
     _, lines, client = started(run_client, vocabulary, service, stream(service, STARTED))
     client.close_on_command(service.connect())
@@ -150,7 +153,8 @@ def test_a_close_after_the_stream_ended_says_nothing(run_client, vocabulary):
 
 
 def test_every_line_is_of_the_closed_vocabulary_and_carries_no_marker(run_client, vocabulary):
-    """Frame texts, an unknown event, a refusal message and unknown status values never print."""
+    """Matrix row 9: frame texts, an unknown event, a refusal message and unknown status values
+    never print."""
     service = FakeService(
         FakeResponse(200),
         FakeResponse(200, {"state": MARKER, "client_lost": MARKER, "ended_at": MARKER}),
@@ -177,18 +181,21 @@ def test_every_line_is_of_the_closed_vocabulary_and_carries_no_marker(run_client
         (FakeResponse(400, {"code": MARKER, "message": MARKER}), "answer 400 other"),
         (FakeResponse(500, raw=MARKER.encode()), "answer 500"),
         (FakeResponse(502, [MARKER]), "answer 502"),
+        (FakeResponse(400, {"message": MARKER}), "answer 400"),
     ],
-    ids=["busy", "unknown code", "no JSON", "no object"],
+    ids=["busy", "unknown code", "no JSON", "no object", "no code"],
 )
 def test_a_refused_run_prints_its_status_and_code_only_and_is_not_retried(
     run_client, vocabulary, response, line
 ):
+    """Matrix row 8: a refused run prints its status and code only and is posted once."""
     service = FakeService(response)
     code, lines, _ = started(run_client, vocabulary, service, stream(service))
     assert (code, lines, service.requests) == (1, [line], [("POST", "/runs")])
 
 
 def test_a_stream_that_ended_by_itself_is_followed_until_the_run_ended(run_client, vocabulary):
+    """B9 (a): a stream that ended by itself is followed by status reads until the run ended."""
     service = FakeService(
         FakeResponse(200), FakeResponse(200, RUNNING), FakeResponse(200, RUNNING),
         FakeResponse(200, ENDED),
@@ -201,6 +208,7 @@ def test_a_stream_that_ended_by_itself_is_followed_until_the_run_ended(run_clien
 
 
 def test_the_last_read_is_printed_when_the_run_did_not_end_in_time(run_client, vocabulary):
+    """B9 (a): the last status read is printed when the run did not end within STATUS_SECONDS."""
     still = {"state": "running", "client_lost": "disconnected", "ended_at": None}
     service = FakeService(FakeResponse(200), *[FakeResponse(200, still)] * 100)
     clock = Clock()
@@ -210,6 +218,7 @@ def test_the_last_read_is_printed_when_the_run_did_not_end_in_time(run_client, v
 
 
 def test_a_refused_status_read_prints_its_code(run_client, vocabulary):
+    """Matrix row 4: a refused status read prints `refused` and its code."""
     service = FakeService(FakeResponse(200), FakeResponse(403, {"code": "forbidden"}))
     _, lines, _ = started(run_client, vocabulary, service, stream(service, STARTED))
     assert lines[-1] == "status refused forbidden"
@@ -218,6 +227,8 @@ def test_a_refused_status_read_prints_its_code(run_client, vocabulary):
 def test_a_broken_stream_prints_the_exception_type_and_still_reads_the_status(
     run_client, vocabulary
 ):
+    """Matrix row 9: a broken stream prints the exception type alone and the status is still
+    read."""
     service = FakeService(FakeResponse(200), FakeResponse(200, ENDED))
 
     def breaks(_response):
@@ -232,19 +243,21 @@ def test_a_broken_stream_prints_the_exception_type_and_still_reads_the_status(
 
 
 def test_a_status_read_that_fails_prints_the_exception_type_alone(run_client, vocabulary):
+    """Matrix row 9: a failed status read prints the exception type alone."""
     service = FakeService(FakeResponse(200), TimeoutError(MARKER))
     code, lines, _ = started(run_client, vocabulary, service, stream(service, STARTED))
     assert (code, lines[-1]) == (1, "broke off TimeoutError")
 
 
 def test_a_run_that_never_started_has_no_status_to_read(run_client, vocabulary):
+    """Matrix row 8: a run that never started has no run id and so no status to read."""
     service = FakeService(FakeResponse(200))
     code, lines, _ = started(run_client, vocabulary, service, stream(service))
     assert (code, lines) == (1, ["answer 200"])
 
 
 def test_the_vocabulary_is_read_from_the_wire_package(run_client):
-    """The closed sets come from the wire package's enums and event classes."""
+    """#469 Decision 3: the closed sets come from the wire package's enums and event classes."""
     import enum
 
     def event_class(name):
@@ -274,3 +287,54 @@ def test_the_vocabulary_is_read_from_the_wire_package(run_client):
 class _Literal(SimpleNamespace):
     def __init__(self, name: str) -> None:
         super().__init__(__args__=(name,))
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [{"events": frozenset({"failed"})}, {"states": frozenset({"cancelled"})}],
+    ids=["run_started", "running"],
+)
+def test_a_wire_without_a_value_the_host_judges_by_fails_loud(run_client, vocabulary, missing):
+    """#469 Decision 3: the host's `run_started` and `running` are checked against the wire."""
+    wire_sets = vocabulary._replace(**missing)
+
+    def event_class(name):
+        return SimpleNamespace(model_fields={"type": SimpleNamespace(annotation=_Literal(name))})
+
+    def members(values):
+        return [SimpleNamespace(value=value) for value in values]
+
+    class Members:
+        def __init__(self, values):
+            self.values = members(values)
+
+        def __iter__(self):
+            return iter(self.values)
+
+    union = SimpleNamespace(
+        __args__=(SimpleNamespace(__args__=tuple(event_class(n) for n in wire_sets.events)),)
+    )
+    wire = SimpleNamespace(
+        RunEvent=union,
+        RunState=Members(wire_sets.states),
+        ClientLoss=Members(wire_sets.losses),
+        RejectionCode=Members(wire_sets.codes),
+    )
+    with pytest.raises(ValueError, match="wire package"):
+        run_client.vocabulary_from(wire)
+
+
+def test_a_status_read_that_stalls_ends_at_its_socket_timeout(run_client, vocabulary):
+    """#469 STATUS: a service that never answers a status read does not hold the client past it."""
+    with socket.socket() as silent:
+        silent.bind(("127.0.0.1", 0))
+        silent.listen()
+        port = silent.getsockname()[1]
+        client = run_client.RunClient(
+            connect=lambda: http.client.HTTPConnection("127.0.0.1", port),
+            frames=lambda _: [], vocabulary=vocabulary, body=b"{}", headers={},
+            stdin=io.StringIO(), out=io.StringIO(),
+        )  # fmt: skip
+        client.run_id = RUN_ID
+        with pytest.raises(OSError):
+            client.status_once(0.2)

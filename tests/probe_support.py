@@ -38,12 +38,14 @@ def login_probe_modules() -> Iterator[SimpleNamespace]:
         import cells_12b
         import census_client
         import egress
+        import fake_app
         import image
         import login_checks
 
         yield SimpleNamespace(
-            cells=cells_12b, checks=login_checks, census=census_client, egress=egress, image=image
-        )
+            cells=cells_12b, checks=login_checks, census=census_client, egress=egress,
+            fake_app=fake_app, image=image,
+        )  # fmt: skip
 
 
 def make_login(directory: Path, content: bytes = TOKEN.encode() + b"\n") -> Path:

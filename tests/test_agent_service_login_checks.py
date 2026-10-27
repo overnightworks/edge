@@ -379,6 +379,8 @@ def test_a_run_that_held_every_cell_reports_held_and_the_timing(probe):
         ({"client": {"state": "running", "loss": "none"}}, "B9 (a)", "FAILED"),
         ({"client": {"state": "refused", "loss": "forbidden"}}, "B9 (a)", "NOT DRIVEN"),
         ({"client": {"state": None, "loss": None}}, "B9 (a)", "NOT DRIVEN"),
+        ({"client": {"state": "other", "loss": "other"}}, "B9 (a)", "NOT DRIVEN"),
+        ({"client": {"state": "cancelled", "loss": "other"}}, "B9 (a)", "NOT DRIVEN"),
         ({"watch": {"group_gone_at": None}}, "B9 (b)", "FAILED"),
         ({"watch": {"group_gone_at": T0 - 0.1}}, "B9 (b)", "FAILED"),
         ({"watch": {"tree_gone_at": None}}, "B9 (c)", "FAILED"),
@@ -409,12 +411,15 @@ def test_each_b9_cell_fails_or_is_not_driven_as_agent_runtime_440_says(
 
 
 def test_a_log_with_no_error_holds_e_and_its_evidence_counts_the_records(probe):
+    """Matrix row 7: a log with no ERROR record holds B9 (e), and its evidence counts the
+    records."""
     verdict = b9_result(probe, log=(0, 0, 2, 1, 1, 1, 4, ())).verdicts[4]
     assert verdict.outcome == "held"
     assert verdict.evidence == "0 other ERROR records, 0 login-refused, 4 bare lines"
 
 
 def test_not_driven_covers_the_five_cells_with_one_reason(probe):
+    """Matrix rows 2 and 8: not driven covers B9 (a)-(e) with one reason."""
     verdicts = probe.checks.b9_not_driven("no call reached the fake app")
     assert [v.cell for v in verdicts] == [f"B9 ({letter})" for letter in "abcde"]
     assert {(v.outcome, v.evidence) for v in verdicts} == {
@@ -438,11 +443,13 @@ def test_a_client_line_enters_a_report_only_after_it_fullmatched(probe):
 
 
 def test_a_refusal_keeps_its_status_and_code(probe):
+    """Matrix row 8: a refusal keeps its status and code, and the run did not start."""
     report = probe.checks.read_client_output(["answer 409 busy"])
     assert (report.answer, report.answer_code, report.started) == (409, "busy", False)
 
 
 def test_the_app_call_is_read_from_its_lines(probe):
+    """B9 (d): the call is read from the app's lines: held, then released with its time."""
     lines = [
         "method=initialize offered=- canary=0 bearer=1",
         "method=tools/call tool=step held",
@@ -493,10 +500,22 @@ def test_the_wait_for_a_call_ends_on_a_held_line_a_dead_client_or_the_time(
 
 
 def test_the_start_wait_is_bounded_by_its_seconds(probe):
+    """Matrix row 15: the wait for run_started is bounded by its seconds on a fake clock."""
     time = FakeTime()
     assert not probe.checks.wait_until(lambda: False, 30, lambda: time.now, time.sleep)
     assert time.now == 30
     assert probe.checks.wait_until(lambda: True, 30, lambda: time.now, time.sleep)
+
+
+def test_a_condition_that_held_only_after_the_deadline_does_not_count(probe):
+    """#469 R2_CALL_SECONDS: a read that overran the bound does not turn the wait into a success."""
+    time = FakeTime()
+
+    def slow_read() -> bool:
+        time.now += 31
+        return True
+
+    assert not probe.checks.wait_until(slow_read, 30, lambda: time.now, time.sleep)
 
 
 class FakeProcess:
@@ -539,6 +558,8 @@ def test_close_written_to_a_client_that_exited_is_no_failure(probe):
 
 
 def test_a_client_that_outlives_its_read_time_is_killed_and_what_it_printed_counts(probe):
+    """Matrix rows 14 and 15: a client that outlives its read time is killed, and what it printed
+    counts."""
     process = FakeProcess(outlives=True)
     client = probe.cells.ClientProcess(process)
     client.say_close()

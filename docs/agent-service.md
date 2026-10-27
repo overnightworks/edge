@@ -225,9 +225,10 @@ directory with a dummy token.
 Between S00 and S1 it drives R2 (agent-runtime#440 B9 (a)-(e)), only when every frame cell held. The fake app
 (`app_tools.py`, in mode `hold`) holds a call of `step` until its connection closes. One run is posted once by
 `run_client.py` in `agent-smoke`, which prints only a closed vocabulary of lines; the host writes `close` on
-the client's stdin when the app logs the held call, or ends the wait when no call came within the time bound.
-`tree_census.py`'s `watch` mode samples the CLI group and the run tree every 10 ms, and the host reads
-`GET /runs/{id}` and the service log. B9 (a)-(e) and an observed timing line, with no bound claimed, follow. A
+the client's stdin when the app logs the held call, or, when no call came within the time bound, writes it then
+and ends the wait.
+`tree_census.py`'s `watch` mode samples the CLI group and the run tree every 10 ms, the client reads
+`GET /runs/{id}` and the host the service log. B9 (a)-(e) and an observed timing line, with no bound claimed, follow. A
 dummy login makes no call: B9 (a)-(e) are then NOT DRIVEN ("no call reached the fake app") and the command
 exits 1 by design. With the real login R2 is one paid model turn, which is why it is posted once and `busy` is
 not retried.

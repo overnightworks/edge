@@ -529,12 +529,6 @@ def test_the_command_says_it_waits_for_another_holder_and_starts_after_the_relea
 # --- R2 and B9 (#469) --------------------------------------------------------------------------
 
 PERSON, WORKLOAD = "person-token-value", "workload-token-value"
-HELD_LINE = "method=tools/call tool=step held"
-HANDSHAKE = (
-    "method=initialize offered=- canary=0 bearer=1",
-    "method=notifications/initialized offered=- canary=0 bearer=1",
-)
-LISTING = "method=tools/list offered=step,bare,extra canary=0 bearer=1"
 FRAME_FAILED = "a frame cell did not hold"
 
 
@@ -585,7 +579,7 @@ def watched(probe, **change):
     return probe.census.Watched(**{**fields, **change})
 
 
-def r2_probe(probe, monkeypatch, tmp_path, timeline, *, watch=None, failed=(), root_entries=0):
+def r2_probe(probe, tmp_path, timeline, *, watch=None, failed=(), root_entries=0):
     run = object.__new__(probe.cells.LoginProbe)
     run.held, run.failed, run.not_driven = [], list(failed), []
     run.texts, run.minted, run.windows = [], [], []
@@ -603,9 +597,7 @@ def r2_probe(probe, monkeypatch, tmp_path, timeline, *, watch=None, failed=(), r
     run.start_client = lambda tokens: (
         run.windows.append("client") or FakeClient(timeline, probe.checks.read_client_output)
     )
-    monkeypatch.setattr(
-        probe.cells, "time", SimpleNamespace(monotonic=lambda: timeline.now, sleep=timeline.sleep)
-    )
+    run.clock, run.sleep = lambda: timeline.now, timeline.sleep
     return run
 
 
@@ -616,12 +608,10 @@ def cells_of(run) -> dict[str, str]:
     }
 
 
-def test_a_frame_failure_posts_nothing_and_leaves_b9_not_driven(
-    probe, monkeypatch, tmp_path, capsys
-):
+def test_a_frame_failure_posts_nothing_and_leaves_b9_not_driven(probe, tmp_path, capsys):
     """Matrix row 2: R2 is posted only after every frame cell held."""
     timeline = Timeline(lambda *_: [])
-    run = r2_probe(probe, monkeypatch, tmp_path, timeline, failed=["S00 (token)"])
+    run = r2_probe(probe, tmp_path, timeline, failed=["S00 (token)"])
     run.cell_b9()
     assert "client" not in run.windows
     assert run.not_driven == [f"B9 ({letter})" for letter in "abcde"]
@@ -640,13 +630,13 @@ def test_a_frame_failure_posts_nothing_and_leaves_b9_not_driven(
     ids=["busy", "refused", "no run_started", "run ended before a call", "no call in time"],
 )
 def test_a_run_that_reaches_no_call_is_not_driven_and_is_posted_and_closed_once(
-    probe, monkeypatch, tmp_path, capsys, lines, alive_for, reason, closes
+    probe, tmp_path, capsys, lines, alive_for, reason, closes
 ):
     """Matrix rows 8, 14 and 15: one POST, one close, no retry, and the bound on the paid turn
     is the fake clock's R2_CALL_SECONDS."""
     timeline = Timeline(lambda *_: lines, exits_at=alive_for)
     posts = []
-    run = r2_probe(probe, monkeypatch, tmp_path, timeline)
+    run = r2_probe(probe, tmp_path, timeline)
     run.start_client = lambda tokens: (
         posts.append(tokens) or FakeClient(timeline, probe.checks.read_client_output)
     )
@@ -662,16 +652,16 @@ def test_a_run_that_reaches_no_call_is_not_driven_and_is_posted_and_closed_once(
 
 
 def test_a_dummy_run_prints_what_the_app_and_the_watch_saw_and_holds_nothing_of_b9(
-    probe, monkeypatch, tmp_path, capsys
+    probe, tmp_path, capsys
 ):
     """Matrix row 1: the login project reached the app (handshake, one listing); no call."""
     reads = []  # the first read is the baseline before R2; the app logs its lines after it
     timeline = Timeline(
         lambda *_: ["answer 200", "event run_started", "event failed", "status failed none"],
-        app_lines=lambda now: [*HANDSHAKE, LISTING] if reads.append(now) or len(reads) > 1 else [],
+        app_lines=lambda now: app_start(probe) if reads.append(now) or len(reads) > 1 else [],
         exits_at=0.0,
     )
-    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=watched(probe, group_seen=False))
+    run = r2_probe(probe, tmp_path, timeline, watch=watched(probe, group_seen=False))
     run.cell_b9()
     output = capsys.readouterr().out
     assert (
@@ -686,11 +676,20 @@ def test_a_dummy_run_prints_what_the_app_and_the_watch_saw_and_holds_nothing_of_
     )  # fmt: skip
 
 
-def hold_and_release(now: float) -> list[str]:
+def app_start(probe) -> list[str]:
+    """The app's lines of the login project reaching it: the handshake and one listing."""
+    return [*probe.fake_app.APP_HANDSHAKE, probe.fake_app.APP_LISTING.format(canary=0)]
+
+
+def hold_and_release(probe):
     """The app holds the call from 1 s, and releases it 0.5 s after the close at 2 s."""
-    held = [HELD_LINE] if now >= 1.0 else []
-    released = ["method=tools/call tool=step released at=1002.500"] if now >= 2.5 else []
-    return [*HANDSHAKE, LISTING, *held, *released]
+
+    def lines(now: float) -> list[str]:
+        held = [probe.fake_app.HELD_LINE] if now >= 1.0 else []
+        released = [f"{probe.fake_app.RELEASED_PREFIX}1002.500"] if now >= 2.5 else []
+        return [*app_start(probe), *held, *released]
+
+    return lines
 
 
 def closed_run(now: float, closed: bool) -> list[str]:
@@ -699,34 +698,32 @@ def closed_run(now: float, closed: bool) -> list[str]:
     ]  # fmt: skip
 
 
-def test_a_call_that_is_closed_at_t0_gives_the_b9_verdicts_and_the_timing(
-    probe, monkeypatch, tmp_path, capsys
-):
+def test_a_call_that_is_closed_at_t0_gives_the_b9_verdicts_and_the_timing(probe, tmp_path, capsys):
     """Matrix row 3: (a)-(e) from the client's lines, the watch's times, the app's release."""
     lines = [
         "answer 200", "event run_started", "closed at=1002.000", "status cancelled disconnected",
     ]  # fmt: skip
-    timeline = Timeline(lambda now, closed: lines if closed else lines[:2], hold_and_release)
-    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=watched(probe))
+    timeline = Timeline(lambda now, closed: lines if closed else lines[:2], hold_and_release(probe))
+    run = r2_probe(probe, tmp_path, timeline, watch=watched(probe))
     run.cell_b9()
     output = capsys.readouterr().out
     assert cells_of(run) == {f"B9 ({letter})": "held" for letter in "abcde"}
     assert "B9 timing (observed, no bound): max(t_reap, t_tree, t_up) - t0 = 1.00 s" in output
     assert len(timeline.closed_times) == 1
     assert any(PERSON in text for text in run.texts) is False
-    assert any("method=tools/call tool=step held" in text for text in run.texts)
+    assert any(probe.fake_app.HELD_LINE in text for text in run.texts)
 
 
-def test_a_watch_that_failed_leaves_the_group_and_the_tree_not_driven(
-    probe, monkeypatch, tmp_path, capsys
-):
+def test_a_watch_that_failed_leaves_the_group_and_the_tree_not_driven(probe, tmp_path, capsys):
+    """Matrix row 6: a watch that failed leaves B9 (b) and (c) NOT DRIVEN and prints nothing of its
+    failure."""
     lines = ["answer 200", "event run_started", "closed at=1002.000", "status cancelled dropped"]
-    timeline = Timeline(lambda now, closed: lines, hold_and_release)
+    timeline = Timeline(lambda now, closed: lines, hold_and_release(probe))
 
     def failing(_seconds):
         raise probe.egress.ProbeFailed(MARKER)
 
-    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=failing)
+    run = r2_probe(probe, tmp_path, timeline, watch=failing)
     run.cell_b9()
     assert cells_of(run)["B9 (b)"] == cells_of(run)["B9 (c)"] == "not driven"
     assert cells_of(run)["B9 (a)"] == cells_of(run)["B9 (d)"] == "held"
@@ -750,6 +747,7 @@ def test_s1_fails_when_a_minted_token_is_in_the_clients_output(probe, capsys):
 
 
 def test_the_fake_app_is_started_with_the_local_log_driver_or_nothing_starts(probe):
+    """#469 acceptance: the fake app starts with the local log driver, or nothing starts."""
     config = resolved()
     assert "agent-app" in probe.cells.STARTED
     del config["services"]["agent-app"]["logging"]
@@ -762,3 +760,20 @@ def test_the_fake_app_is_started_with_the_local_log_driver_or_nothing_starts(pro
             configuration=(CONFIGURATION, Path("/scratch/service.toml")),
         )
     assert str(raised.value) == probe.checks.Refusal.LOG_DRIVER
+
+
+def test_a_failed_log_read_still_closes_the_stream_and_stops_the_watch(probe, tmp_path):
+    """#469 R2: a wait that raises leaves neither the stream open nor the watch running."""
+    reads = []
+
+    def failing_app_lines(now):
+        if reads.append(now) or len(reads) > 1:
+            raise probe.egress.ProbeFailed("docker logs exited 1")
+        return []
+
+    timeline = Timeline(lambda *_: ["answer 200", "event run_started"], failing_app_lines)
+    run = r2_probe(probe, tmp_path, timeline, watch=watched(probe))
+    with pytest.raises(probe.egress.ProbeFailed):
+        run.drive_r2()
+    assert len(timeline.closed_times) == 1
+    assert (tmp_path / "stop").exists()

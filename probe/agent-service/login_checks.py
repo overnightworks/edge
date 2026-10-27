@@ -25,9 +25,18 @@ from typing import NamedTuple, Protocol, TextIO
 
 from census_client import Mount, Watched
 from egress import ProbeFailed
+from fake_app import HELD_LINE, RELEASED_PREFIX
 from image import ProbeFailed as ImageProbeFailed
 from live_smoke import redacted
-from run_client import CLIENT_LINE, STATUS_SECONDS
+from run_client import (
+    CLIENT_LINE,
+    NO_LOSS,
+    OTHER,
+    REFUSED,
+    RUN_STARTED,
+    RUNNING,
+    STATUS_SECONDS,
+)
 from service_log import LogClasses
 from tree_census import Skip
 
@@ -43,9 +52,6 @@ RELEASE_SECONDS = 5  # above the service's 2.0 s settle of the forwards, with ro
 WATCH_SECONDS = 120  # R2_CALL_SECONDS + the hold + the reap (102.1 s), below the census's 240 s
 CLIENT_READ_SECONDS = STATUS_SECONDS + 10  # after it the host kills the client
 B9_CELLS = ("B9 (a)", "B9 (b)", "B9 (c)", "B9 (d)", "B9 (e)")
-HELD_LINE = "method=tools/call tool=step held"
-RELEASED_PREFIX = "method=tools/call tool=step released at="
-RUN_STARTED_EVENT = "run_started"
 
 
 class Refusal(StrEnum):
@@ -440,7 +446,7 @@ class ClientReport(NamedTuple):
 
     @property
     def started(self) -> bool:
-        return RUN_STARTED_EVENT in self.events
+        return RUN_STARTED in self.events
 
 
 def read_client_output(lines: Iterable[str]) -> ClientReport:
@@ -484,13 +490,15 @@ def wait_until(
     clock: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> bool:
-    """True as soon as `condition` holds, False when `seconds` have passed first."""
+    """True as soon as `condition` holds within `seconds`, False when they have passed first,
+    also when the condition itself held only after them."""
     end = clock() + seconds
-    while not condition():
+    while True:
+        if condition():
+            return clock() <= end
         if clock() >= end:
             return False
         sleep(CALL_POLL_SECONDS)
-    return True
 
 
 class CallWait(StrEnum):
@@ -534,10 +542,12 @@ def b9_not_driven(reason: str) -> tuple[Verdict, ...]:
 
 def _loss_verdict(client: ClientReport) -> Verdict:
     cell = B9_CELLS[0]
-    if client.state is None or client.state == "refused":
+    if client.state is None or client.state == REFUSED:
         return Verdict(cell, Outcome.NOT_DRIVEN, f"status read: {client.state or 'none'}")
     evidence = f"client_lost {client.loss}, state {client.state}"
-    if client.state == "running" or client.loss == "none":
+    if OTHER in (client.state, client.loss):
+        return Verdict(cell, Outcome.NOT_DRIVEN, "status read: a value outside the wire's sets")
+    if client.state == RUNNING or client.loss == NO_LOSS:
         return Verdict(cell, Outcome.FAILED, evidence)
     return Verdict(cell, Outcome.HELD, evidence)
 
