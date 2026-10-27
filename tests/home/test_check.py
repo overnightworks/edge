@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -312,6 +312,26 @@ def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2
     assert "container-unhealthy | edge" in report
     assert error.startswith(f"home: {manifest}: ")
     assert error.count("\n") == 1
+
+
+class RunnerWithEmptyDockerInfo(RunnerWithCleanLogs):
+    """`docker info` prints nothing, so the logs check finds a default driver with an empty subject."""
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        return "" if argv[:2] == ["docker", "info"] else super().__call__(argv)
+
+
+def test_a_finding_without_a_subject_survives_the_memory_and_the_next_run_exits_as_its_findings_say(clean_home, capsys) -> None:
+    runner = RunnerWithEmptyDockerInfo()
+    layout = Layout(clean_home)
+
+    first = home_check(clean_home, runner)
+    remembered = layout.check_findings_file.read_text()
+    second = home_check(clean_home, runner)
+
+    assert (first, second) == (1, 1)
+    assert "logs\\tdocker-default-driver\\t" in remembered
+    assert "unerwarteter Fehler" not in capsys.readouterr().err
 
 
 def memory_text(text: str) -> Callable[[Path], None]:
