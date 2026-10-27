@@ -84,7 +84,8 @@ def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
 
 
 def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
-    """A row per app, one for the repository and the verdict."""
+    """A row per app, one for the repository and the verdict. With `--snapshot` (one app) the
+    error line carries the reason, which the realm step reads."""
     _require_declared(arguments)
     started = host.monotonic()
 
@@ -103,7 +104,11 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
                 failed = run.failed_apps
                 total = run.proven_apps + len(failed)
                 noun = Noun.APP if total == 1 else Noun.APPS
-                failure.error_line = f"{len(failed)} of {total} {noun} not proven"
+                failure.error_line = (
+                    f"{failure.app}: {failure}"
+                    if arguments.snapshot
+                    else f"{len(failed)} of {total} {noun} not proven"
+                )
                 failure.next_step = f"hal restore --test {failed[0]}"
             raise
 

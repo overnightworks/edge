@@ -189,7 +189,6 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     outcome = edge_backup(*declare_shipped_apps(), "backup")
 
     rows = outcome.out.splitlines()
-    print(outcome.out)
     assert outcome.exit_code == 3
     assert rows == [
         f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
