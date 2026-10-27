@@ -20,6 +20,7 @@ PROBE_MODULES = (
     "egress",
     "issuer",
     "refusals",
+    "service_log",
     "smoke",
     "tree_census",
 )
@@ -538,13 +539,9 @@ def test_b5_log_lines_follow_the_probes_handler_format(containment):
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger = logging.getLogger("agent_runtime_service.run_events")
-    logger.propagate = False
+    logger = logging.Logger("agent_runtime_service.run_events")
     logger.addHandler(handler)
-    try:
-        logger.error("The runner of run %s failed: CliLoginRefusedError at %s", "r1", "3")
-    finally:
-        logger.removeHandler(handler)
+    logger.error("The runner of run %s failed: CliLoginRefusedError at %s", "r1", "3")
     assert containment.classify_log(stream.getvalue()).run_ids == frozenset({"r1"})
 
 
