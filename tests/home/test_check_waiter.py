@@ -61,7 +61,7 @@ def stubs(tmp_path: Path) -> WaiterStubs:
 
 
 def test_a_click_on_the_action_opens_the_report(stubs, tmp_path) -> None:
-    """#29 rule 1: the click on 'Open report' opens the report file, after the unit reported delivery."""
+    """#29 rule 1: the click on 'Bericht öffnen' opens the report file, after the unit reported delivery."""
     stubs.notify_send_prints("open")
 
     result = stubs.run(tmp_path / "report.md")
