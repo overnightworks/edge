@@ -28,6 +28,8 @@ from live_smoke_fakes import (  # noqa: E402
     offered_model,
 )
 
+JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.c2lnbmF0dXJl"
+
 # --- the report -------------------------------------------------------------------------------
 
 
@@ -121,6 +123,7 @@ def test_a_clean_run_holds_l2_l3_l6_l7_l8_and_l9_and_only_observes_l4():
 
 
 def test_the_offer_is_asked_right_after_the_recreate_and_before_the_paid_turn():
+    """L8, cell 8: the offer comes after the recreate and before the paid turn."""
     stack = FakeStack(answer=healthy_service, cancelling=held_cancel())
 
     run_smoke_cells(stack)
@@ -130,18 +133,23 @@ def test_the_offer_is_asked_right_after_the_recreate_and_before_the_paid_turn():
     assert "--offer" not in smoke_runs[1]
 
 
-def offer_answering(output: str, returncode: int = 0):
+def offer_answering(output: str, returncode: int = 0, stderr: str = ""):
     def answer(command):
         if "agent-smoke" in command and "--offer" in command:
-            return completed(output, returncode=returncode)
+            return completed(output, returncode=returncode, stderr=stderr)
         return healthy_service(command)
 
     return answer
 
 
+def smoke_cell(prefix: str, output: str, returncode: int = 0, stderr: str = "") -> Cell:
+    answer = offer_answering(output, returncode, stderr)
+    stack = FakeStack(answer=answer, cancelling=held_cancel())
+    return next(cell for cell in run_smoke_cells(stack) if cell.name.startswith(prefix))
+
+
 def offer_cell(output: str, returncode: int = 0) -> Cell:
-    stack = FakeStack(answer=offer_answering(output, returncode), cancelling=held_cancel())
-    return next(cell for cell in run_smoke_cells(stack) if cell.name.startswith("L8"))
+    return smoke_cell("L8", output, returncode)
 
 
 @pytest.mark.parametrize(
@@ -157,12 +165,14 @@ def offer_cell(output: str, returncode: int = 0) -> Cell:
     ids=["one missing", "one more", "not ready", "api route", "background", "unsorted"],
 )
 def test_the_offer_cell_holds_only_for_exactly_the_three_configured_models_ready(lines):
+    """L8, cell 8: only the three configured models, each ready, hold."""
     output = "".join(offer_line(model) + "\n" for model in lines)
 
     assert offer_cell(output).verdict is Verdict.FAILED
 
 
 def test_a_refused_offer_fails_l8_and_the_figure_carries_the_refusal():
+    """L8, cell 8: a refused offer fails and shows the refusal."""
     cell = offer_cell("refused with 403 forbidden: not a member\n", returncode=1)
 
     assert cell.verdict is Verdict.FAILED
@@ -170,9 +180,31 @@ def test_a_refused_offer_fails_l8_and_the_figure_carries_the_refusal():
 
 
 def test_the_offer_cell_removes_every_secret_from_its_figure():
+    """L8, cell 10: no known secret in the offer figure."""
     cell = offer_cell(f"refused with 401 unauthorized: {TOKENS.person}\n", returncode=1)
 
     assert all(secret not in cell.figure for secret in KNOWN.values())
+
+
+def test_a_jwt_in_the_offer_output_is_not_printed_in_the_offer_figure():
+    """L8, cell 10: an unfamiliar JWT in the offer output never reaches the figure."""
+    cell = offer_cell(f"refused with 401 unauthorized: {JWT}\n", returncode=1)
+
+    assert JWT not in cell.figure
+
+
+def test_a_jwt_only_in_the_offer_stderr_fails_l9():
+    """L9, cell 10: the offer's stderr is searched for a JWT shape."""
+    cell = smoke_cell("L9", "", stderr=JWT)
+
+    assert cell.verdict is Verdict.FAILED
+
+
+def test_a_secret_only_in_the_offer_stderr_fails_l6():
+    """L6, cell 10: the offer's stderr is searched for a known secret."""
+    cell = smoke_cell("L6", "", stderr=TOKENS.person)
+
+    assert cell.verdict is Verdict.FAILED
 
 
 def test_the_tokens_go_to_the_smoke_on_stdin_and_on_no_command_line():
@@ -219,11 +251,10 @@ def test_a_secret_in_any_searched_place_fails_l6_and_names_the_place(place):
     assert all(secret not in cell.figure for secret in KNOWN.values())
 
 
-JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.c2lnbmF0dXJl"
-
-
 @pytest.mark.parametrize("place", ["docker inspect", "logs", "smoke"])
 def test_a_jwt_shaped_string_in_any_searched_place_fails_l9_only(place):
+    """L9, cell 10: a JWT in any searched place fails L9 only."""
+
     def leaking(command):
         if place == "docker inspect" and "inspect" in command:
             return completed(f'"Env": ["X={JWT}"]')
@@ -242,6 +273,7 @@ def test_a_jwt_shaped_string_in_any_searched_place_fails_l9_only(place):
 
 
 def test_two_dotted_parts_are_no_jwt():
+    """L9, cell 10: two dotted parts are no JWT shape."""
     _, l9 = live_smoke.leak_cells(FakeStack(answer=healthy_service), KNOWN, "eyJhbGciOiJ.eyJzdWI")
 
     assert l9.verdict is Verdict.HELD

@@ -137,6 +137,7 @@ def test_a_successful_run_prints_the_event_types_and_the_text_and_exits_0():
 
 
 def test_the_offer_option_asks_for_the_offer_once_and_prints_a_line_per_model():
+    """A1, cell 8: the offer option asks once and prints a line per model."""
     answer = offer_answer(offered("claude/haiku"), offered("claude/opus", ready=False))
 
     exit_code, out, connection = drive(answer, "--offer")
@@ -153,12 +154,14 @@ def test_the_offer_option_asks_for_the_offer_once_and_prints_a_line_per_model():
 
 
 def test_an_offer_without_a_model_prints_that_and_exits_0():
+    """A1, cell 8: an empty offer is said so."""
     exit_code, out, _ = drive(offer_answer(), "--offer")
 
     assert (exit_code, out.splitlines()) == (0, ["the offer lists no model"])
 
 
 def test_a_refused_offer_prints_the_refusal_and_exits_1():
+    """A1, cell 8: a refused offer prints the refusal."""
     refusal = json.dumps({"code": "forbidden", "message": "not a member"}).encode()
 
     exit_code, out, _ = drive(FakeResponse(403, refusal), "--offer")
@@ -172,6 +175,7 @@ def test_a_refused_offer_prints_the_refusal_and_exits_1():
     ids=["no json", "entry without its fields", "connection error"],
 )
 def test_an_offer_that_cannot_be_read_fails_as_broken_off(answer):
+    """A1, cell 8: an unreadable offer fails in one line."""
     exit_code, out, _ = drive(answer, "--offer")
 
     assert exit_code == 1

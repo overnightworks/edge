@@ -277,8 +277,8 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
 
 def offer_cell(returncode: int, output: str, known: Secrets) -> Cell:
     """The offer lists exactly the configured models, each ready on the subscription route and
-    admitting no background run."""
-    output = known.redact(output)
+    admitting no background run. Its figure shows neither a known secret nor a JWT-shaped string."""
+    output = JWT_SHAPE.sub("[jwt]", known.redact(output))
     wanted = [
         offer_line({
             "id": model, "route": SUBSCRIPTION_ROUTE, "ready": True, "background": False
@@ -745,7 +745,9 @@ def smoke_cells(
     cancelled = cancelled_turn(stack, known.tokens)
     report.add(*cancel_cells(stack, before, cancelled, known, pause))
     report.add(*cleanup_cell(cancelled.cleanup, known))
-    smoke_outputs = offer.process.stdout + paid.process.stdout + paid.process.stderr
+    smoke_outputs = "".join(
+        (offer.process.stdout, offer.process.stderr, paid.process.stdout, paid.process.stderr)
+    )
     report.add(*leak_cells(stack, known, smoke_outputs + cancelled.output))
 
 
