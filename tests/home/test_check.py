@@ -788,7 +788,7 @@ def test_a_bare_hal_check_with_an_invalid_manifest_keeps_the_rows_and_names_the_
 
     exit_code, out, err = hal_check()
 
-    assert exit_code == 3
+    assert exit_code == 2
     assert "  ✗ secrets         not checked" in out
     assert "all well" not in out
     assert err.startswith(f"error: {manifest}: ")
@@ -802,7 +802,7 @@ def test_a_bare_hal_check_with_an_invalid_config_names_the_file_and_checks_nothi
 
     exit_code, out, err = hal_check()
 
-    assert (exit_code, out) == (3, "")
+    assert (exit_code, out) == (2, "")
     assert err.startswith(f"error: {config_file}: ")
     assert err.count("\n") == 1
 
