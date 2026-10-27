@@ -139,14 +139,14 @@ SECRETS_EVENTS = StepEvents(
 )
 
 
-def verdict_of(outcomes: Sequence[Outcome], apply: bool) -> Verdict:
+def verdict_of(outcomes: Sequence[Outcome], apply: bool, elapsed_seconds: float) -> Verdict:
     tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
     counts = tuple((tallies[tally], tally) for tally in Tally)
     if apply:
-        return Verdict(Glyph.DONE, "setup done", counts)
+        return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds)
     if tallies[Tally.OPEN]:
-        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}")
-    return Verdict(Glyph.DONE, "setup up to date", counts)
+        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}", elapsed_seconds)
+    return Verdict(Glyph.DONE, "setup up to date", counts, elapsed_seconds=elapsed_seconds)
 
 
 class ExecutionRole(Enum):
@@ -558,6 +558,7 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     except UnresolvableRunningUser as error:
         write_error(str(error))
         return 1
+    started = ports.clock()
     steps = _steps(layout, ports)
     outcomes: list[Outcome] = []
     rows = list(SetupRow)
@@ -569,7 +570,7 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
             return 1
         write_row(outcome.row(row))
         outcomes.append(outcome)
-    verdict = verdict_of(outcomes, apply)
+    verdict = verdict_of(outcomes, apply, ports.clock() - started)
     write_verdict(verdict)
     return 0
 

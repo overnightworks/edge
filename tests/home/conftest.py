@@ -381,6 +381,18 @@ class FakeSystem:
         return system_step.Boundaries(lambda: self.terminal, self.playbook, lambda: self.user)
 
 
+class FakeClock:
+    """A monotonic clock that moves `step` seconds on every reading, so a run that reads it at its start and its end took `step`."""
+
+    def __init__(self, step: float = 47.9) -> None:
+        self.step = step
+        self._reading = -step
+
+    def __call__(self) -> float:
+        self._reading += self.step
+        return self._reading
+
+
 @dataclass(frozen=True)
 class Sandbox:
     """A throwaway HOME whose global git config, `uv`, scanner and system step are stubs; nothing reaches the operator's own or sudo."""
@@ -429,6 +441,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
+    monkeypatch.setattr(cli, "MONOTONIC_CLOCK", FakeClock())
     return Sandbox(home, global_git_config, uv_calls, system)
 
 

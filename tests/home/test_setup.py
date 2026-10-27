@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import Sandbox
+from conftest import FakeClock, Sandbox
 
 import home_tools
 from hal import cli as hal_cli
@@ -32,7 +32,7 @@ FRESH_APPLY = [
     SUDO_ANNOUNCEMENT,
     "  ✓ system          changed",
     "  · secrets         complete",
-    "✓ setup done · 2 changed, 2 unchanged",
+    "✓ setup done · 2 changed, 2 unchanged · 47s",
 ]
 REPEATED_APPLY = [
     "  · commit hook     unchanged",
@@ -40,9 +40,9 @@ REPEATED_APPLY = [
     SUDO_ANNOUNCEMENT,
     "  · system          unchanged",
     "  · secrets         complete",
-    "✓ setup done · 4 unchanged",
+    "✓ setup done · 4 unchanged · 47s",
 ]
-UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 4 unchanged"]
+UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 4 unchanged · 47s"]
 NOT_CHECKED = "  ! system          not checked    needs sudo at a terminal"
 NOT_CHECKED_WITHOUT_ANSIBLE = (
     "  ! system          not checked    needs Ansible, which `hal setup --apply` installs first"
@@ -67,6 +67,19 @@ def run_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *flags: str)
     return code, captured.out.splitlines(), captured.err
 
 
+def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#500: setup measures from its start to its verdict with the monotonic clock of its ports."""
+
+    code = main(["setup"], home=sandbox.home, clock=FakeClock(65))
+
+    assert (code, capsys.readouterr().out.splitlines()[-1]) == (
+        0,
+        "~ setup plan · 2 open, 2 unchanged · 1m05s · run hal setup --apply",
+    )
+
+
 def global_hooks_path(sandbox: Sandbox) -> str:
     completed = subprocess.run(["git", "config", "--global", "--get", "core.hooksPath"], capture_output=True, text=True, check=False)
     return completed.stdout.strip()
@@ -87,7 +100,7 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
             "  · timers          unchanged",
             NOT_CHECKED_WITHOUT_ANSIBLE,
             "  · secrets         complete",
-            "~ setup plan · 2 open, 2 unchanged · run hal setup --apply",
+            "~ setup plan · 2 open, 2 unchanged · 47s · run hal setup --apply",
         ],
     )
     assert uv_installs(sandbox) == []
@@ -219,7 +232,7 @@ def test_apply_reinstalls_a_deleted_quality_executable_despite_matching_uv_metad
         [
             "  ✓ commit hook     changed",
             *REPEATED_APPLY[1:-1],
-            "✓ setup done · 1 changed, 3 unchanged",
+            "✓ setup done · 1 changed, 3 unchanged · 47s",
         ],
     )
     assert len(uv_installs(sandbox)) == 3
@@ -429,9 +442,9 @@ def test_as_the_agent_the_operators_steps_are_skipped_without_sudo_and_the_exit_
 
     hook = "  ✓ commit hook     changed" if flags else "  ~ commit hook     will change"
     closing = (
-        "✓ setup done · 1 changed, 3 skipped"
+        "✓ setup done · 1 changed, 3 skipped · 47s"
         if flags
-        else "~ setup plan · 1 open, 3 skipped · run hal setup --apply"
+        else "~ setup plan · 1 open, 3 skipped · 47s · run hal setup --apply"
     )
     assert (code, lines) == (
         0,
@@ -493,7 +506,7 @@ def test_the_playbook_ships_inside_the_package() -> None:
                 *UP_TO_DATE[:2],
                 "  ~ system          will change",
                 UP_TO_DATE[3],
-                "~ setup plan · 1 open, 3 unchanged · run hal setup --apply",
+                "~ setup plan · 1 open, 3 unchanged · 47s · run hal setup --apply",
             ],
             False,
         ),
@@ -531,7 +544,7 @@ def test_without_a_terminal_the_dry_run_says_not_checked_and_never_starts_ansibl
             *UP_TO_DATE[:2],
             NOT_CHECKED,
             UP_TO_DATE[3],
-            "~ setup plan · 1 open, 3 unchanged · run hal setup --apply",
+            "~ setup plan · 1 open, 3 unchanged · 47s · run hal setup --apply",
         ],
     )
     assert playbook_runs(sandbox) == ["apply"]

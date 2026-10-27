@@ -468,7 +468,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
     <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der übrigen Zeilen (S2d) kommen in späteren Schritten; die <code>timers</code>-Zeile trägt ihren Fakt seit S2c (<code>3 timers · systemd reloaded</code>, nur bei <code>changed</code>), die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste gibt es nicht mehr.</p>
+  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit steht seit S2f im Urteil, nach den Zahlen und vor dem Hinweis (ganze Sekunden, abgerundet; <code>&lt;1s</code>, <code>1m05s</code>, <code>1h02m</code>); die Fakten der übrigen Zeilen (S2d) kommen in einem späteren Schritt; die <code>timers</code>-Zeile trägt ihren Fakt seit S2c (<code>3 timers · systemd reloaded</code>, nur bei <code>changed</code>), die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste gibt es nicht mehr.</p>
   <div class="pair">
     <div class="stack">
       <figure>
@@ -478,7 +478,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2</span> Agent-Lauf: der Schritt des Operators bleibt aus (nur <code>timers</code> ist im Plan benannt, die übrigen Zeilen sind meine Annahme)</figcaption>
@@ -487,7 +487,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped · 47s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2</span> Geheimnis fehlt, vor dem Assistenten (Namen erfunden)</figcaption>
@@ -504,12 +504,12 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="b">  ~</span> commit hook     will change
 <span class="y">  !</span> system          not checked    <span class="d">needs sudo at a terminal</span>
-<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · run hal setup --apply</span></pre>
+<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · 3s · run hal setup --apply</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2, Vorschlag</span> Probelauf, alles aktuell</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
-<span class="w">✓ setup up to date</span> <span class="d">· 4 unchanged</span></pre>
+<span class="w">✓ setup up to date</span> <span class="d">· 4 unchanged · 21s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu S2, kaputt</span> nicht gestartet: abgelehnt, bevor sich etwas geändert hat</figcaption>
