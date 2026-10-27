@@ -1,10 +1,12 @@
 """`hal rename OLD NEW` through `hal.cli.main`: the rows it prints for its plan, its apply, its
 findings and its refusals."""
 
+import io
+import sys
+
 import pytest
 from rename_support import HTTPS, make_clone, squeezed
 
-import hal_output
 from hal import cli
 from hal.grammar import ExitCode
 
@@ -89,14 +91,24 @@ def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
     assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
 
 
+class Terminal(io.StringIO):
+    """A stream a person watches."""
+
+    def isatty(self) -> bool:
+        return True
+
+
 def test_the_next_line_of_a_plan_is_coloured_like_every_command_on_a_terminal(
-    everything, through_cli, monkeypatch
+    everything, cli_world, monkeypatch
 ):
-    monkeypatch.setattr(hal_output, "_colour_on", lambda stream: True)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    out = Terminal()
+    monkeypatch.setattr(sys, "stdout", out)
 
-    _, out, _ = through_cli("old", "fresh")
+    cli.main(["rename", "old", "fresh"])
 
-    assert out.splitlines()[-1] == "\x1b[36mnext:\x1b[0m hal rename old fresh --apply"
+    assert out.getvalue().splitlines()[-1] == "\x1b[36mnext:\x1b[0m hal rename old fresh --apply"
 
 
 def test_an_apply_with_a_finding_ends_with_a_needs_you_verdict_that_counts_it(
