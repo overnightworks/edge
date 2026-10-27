@@ -268,7 +268,9 @@ def test_an_unreadable_entry_fails_the_app_in_manifest_and_backs_up_nothing(
     assert app_history(outcome.status, "presentator")["last_snapshot_id"] == before
 
 
-def test_an_unreadable_directory_the_skip_matches_does_not_fail_the_backup(edge_backup, builds, home):
+def test_an_unreadable_directory_the_skip_matches_does_not_fail_the_backup(
+    edge_backup, builds, home
+):
     """#468 A3: a directory the skip leaves out is never entered."""
     builds.unreadable_directories = {"staged-top", "run1/staged-talk"}
 

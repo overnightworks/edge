@@ -101,7 +101,7 @@ class Machine:
     volumes_by_label: dict[str, list[str]] = field(default_factory=dict)
     """What `docker volume ls` answers for a compose volume name, whatever the project."""
     unreadable_directories: set[str] = field(default_factory=set)
-    """Directories of a kept volume the operator cannot traverse: a count that enters one exits 1."""
+    """Directories of a kept volume the operator cannot traverse: a count entering one exits 1."""
     clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
