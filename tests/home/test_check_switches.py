@@ -71,5 +71,5 @@ def test_a_switch_directory_that_cannot_be_read_breaks_the_platform_check_and_le
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 3
-    assert "Prüfung platform fehlgeschlagen" in report
+    assert "check platform failed" in report
     assert "| missing | gitlab |" in report

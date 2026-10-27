@@ -37,6 +37,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 
 from edge import (
@@ -119,6 +120,12 @@ class AppRuntime:
         return cls(home / "srv", DeploymentRecord(state_directory / "deployed"))
 
 
+class AppKind(StrEnum):
+    ON = "on"  # no deployment is recorded
+    START_AGAIN = "start again"  # the recorded commit is the planned one
+    UPDATE = "update"  # the recorded commit is another one
+
+
 @dataclass(frozen=True)
 class AppPlan:
     app: catalog.App
@@ -126,8 +133,34 @@ class AppPlan:
     sha: str
     services: tuple[str, ...]
     url: str
-    line: str
     ingress: barrier.Barrier
+    kind: AppKind
+    recorded_tag: str | None  # None on the first deployment
+    unfinished: str | None  # the tag or head an update did not reach, None when none
+    replaces_running: bool  # running containers are replaced on the first deployment
+    containers: tuple[str, ...]  # as `ps` shows them
+
+    @property
+    def line(self) -> str:
+        key, tag = self.app.key, self.release.tag
+        now = "; now: " + (", ".join(self.containers) or "no container")
+        if self.kind is AppKind.ON:
+            replacing = (
+                ", replacing the running containers; named volumes kept"
+                if self.replaces_running
+                else ""
+            )
+            return (
+                f"{key}: on at {tag} ({self.sha}) from origin {self.app.default_branch}, "
+                f"into ~/srv/{key}{replacing}"
+            )
+        if self.kind is AppKind.START_AGAIN:
+            return f"{key}: start again at {tag} ({self.sha}, recorded){now}"
+        unfinished = f"; the update to {self.unfinished} did not finish" if self.unfinished else ""
+        return (
+            f"{key}: update to {tag} ({self.sha}); "
+            f"last successful deployment {self.recorded_tag}{unfinished}{now}"
+        )
 
 
 @dataclass(frozen=True)
@@ -135,14 +168,42 @@ class OffPlan:
     """An app the catalog disables while containers of its project exist."""
 
     app: catalog.App
-    line: str
+    containers: tuple[str, ...]  # as `ps` shows them
+    volumes: tuple[str, ...]  # each named volume once, with its count when several share it
+
+    @property
+    def line(self) -> str:
+        shown = ", ".join(self.containers)
+        volumes = ", ".join(self.volumes) or "none"
+        key = self.app.key
+        return f"{key}: off (containers {shown}; named volumes {volumes} stay; ~/srv/{key} stays)"
+
+
+@dataclass(frozen=True)
+class StaysStoppedNote:
+    key: str
+    since: str | None  # None when only the barrier stands
+
+    @property
+    def line(self) -> str:
+        return stays_stopped_line(self.key, self.since)
+
+
+@dataclass(frozen=True)
+class SkippedNote:
+    key: str
+    text: str
+
+    @property
+    def line(self) -> str:
+        return f"{self.key}: {self.text}"
 
 
 @dataclass(frozen=True)
 class AppsPlan:
     runtime: AppRuntime
     plans: tuple[AppPlan, ...] = ()
-    notes: tuple[str, ...] = ()
+    kept: tuple[StaysStoppedNote | SkippedNote, ...] = ()
     offs: tuple[OffPlan, ...] = ()
     catalogued: tuple[catalog.App, ...] = ()  # every app of the catalog, for its barriers
     switched_off_still_running: tuple[str, ...] = ()  # the refusal of each, by apply
@@ -150,6 +211,10 @@ class AppsPlan:
     @property
     def changes_nothing(self) -> bool:
         return not self.plans and not self.offs
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        return tuple(note.line for note in self.kept)
 
     def describe(self) -> list[str]:
         return [*self.notes, *(off.line for off in self.offs), *(plan.line for plan in self.plans)]
@@ -184,8 +249,8 @@ def plan_apps(
     plans, notes, still_running = [], [], []
     for app in enabled:
         ingress = _ingress_of(app, fleet, repository)
-        if line := _stays_stopped_line(app.key, marks, ingress):
-            notes.append(line)
+        if stopped := _stays_stopped_note(app.key, marks, ingress):
+            notes.append(stopped)
             if _runs(app, runtime):
                 still_running.append(
                     f"{app.key} is switched off but still runs; nothing switched; "
@@ -193,7 +258,7 @@ def plan_apps(
                 )
             continue
         planned, skipped = _plan_one(app, organisation, runtime, ingress)
-        notes += [f"{app.key}: {line}" for line in skipped]
+        notes += [SkippedNote(app.key, text) for text in skipped]
         if planned:
             plans.append(planned)
     return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every, tuple(still_running))
@@ -206,12 +271,14 @@ def _ingress_of(app: catalog.App, fleet: Fleet, repository: Path) -> barrier.Bar
         raise AppError(f"services.{app.key}: {error}") from error
 
 
-def _stays_stopped_line(key: str, marks: switches.Switches, ingress: barrier.Barrier) -> str | None:
-    """The line for an app its marker or its standing barrier keeps off; None when it is on."""
+def _stays_stopped_note(
+    key: str, marks: switches.Switches, ingress: barrier.Barrier
+) -> StaysStoppedNote | None:
+    """The note for an app its marker or its standing barrier keeps off; None when it is on."""
     mark = marks.mark(key)
     if not barrier.switched_off(mark, ingress):
         return None
-    return stays_stopped_line(key, mark.since if mark else None)
+    return StaysStoppedNote(key, mark.since if mark else None)
 
 
 def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
@@ -232,12 +299,8 @@ def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
     engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
     if not (containers := engine.containers()):
         return None
-    volumes = ", ".join(_counted(engine.volumes())) or "none"
-    shown = ", ".join(container.describe() for container in containers)
-    return OffPlan(
-        app,
-        f"{app.key}: off (containers {shown}; named volumes {volumes} stay; ~/srv/{app.key} stays)",
-    )
+    shown = tuple(container.describe() for container in containers)
+    return OffPlan(app, shown, tuple(_counted(engine.volumes())))
 
 
 def _plan_one(
@@ -274,8 +337,20 @@ def _plan_one(
         raise AppError(f"services.{app.key}: {error}") from error
     if recorded and recorded.sha == sha and head == sha and _settled(containers, services):
         return None, choice.skipped
-    line = _describe(app, release, sha, recorded, head, containers)
-    return AppPlan(app, release, sha, services, url, line, ingress), choice.skipped
+    plan = AppPlan(
+        app=app,
+        release=release,
+        sha=sha,
+        services=services,
+        url=url,
+        ingress=ingress,
+        kind=_kind_of(recorded, sha),
+        recorded_tag=recorded.tag if recorded else None,
+        unfinished=_unfinished_update(recorded, sha, release.tag, head),
+        replaces_running=recorded is None and bool(containers),
+        containers=tuple(container.describe() for container in containers),
+    )
+    return plan, choice.skipped
 
 
 def _refuse_moved_tag(
@@ -295,31 +370,19 @@ def _refuse_moved_tag(
         )
 
 
-def _describe(
-    app: catalog.App,
-    release: releases.Release,
-    sha: str,
-    recorded: Deployment | None,
-    head: str | None,
-    containers: Sequence[app_compose.AppContainer],
-) -> str:
-    key, tag = app.key, release.tag
-    now = "; now: " + (", ".join(c.describe() for c in containers) or "no container")
+def _kind_of(recorded: Deployment | None, sha: str) -> AppKind:
     if recorded is None:
-        replacing = ", replacing the running containers; named volumes kept" if containers else ""
-        return (
-            f"{key}: on at {tag} ({sha}) from origin {app.default_branch}, "
-            f"into ~/srv/{key}{replacing}"
-        )
-    if recorded.sha == sha:
-        return f"{key}: start again at {tag} ({sha}, recorded){now}"
-    unfinished = ""
-    if head is not None and head != recorded.sha:
-        unfinished = f"; the update to {tag if head == sha else head} did not finish"
-    return (
-        f"{key}: update to {tag} ({sha}); last successful deployment {recorded.tag}"
-        f"{unfinished}{now}"
-    )
+        return AppKind.ON
+    return AppKind.START_AGAIN if recorded.sha == sha else AppKind.UPDATE
+
+
+def _unfinished_update(
+    recorded: Deployment | None, sha: str, tag: str, head: str | None
+) -> str | None:
+    """The tag or head an interrupted update was heading for, None when none was interrupted."""
+    if recorded is None or recorded.sha == sha or head is None or head == recorded.sha:
+        return None
+    return tag if head == sha else head
 
 
 def _settled(containers: Sequence[app_compose.AppContainer], services: Sequence[str]) -> bool:

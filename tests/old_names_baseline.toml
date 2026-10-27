@@ -7,7 +7,7 @@
 "docs/architecture.md" = 125
 "docs/design/hal-output.html" = 19
 "docs/external.md" = 10
-"docs/home.md" = 5
+"docs/home.md" = 2
 "docs/keycloak.md" = 6
 "docs/naming.md" = 1
 "docs/stack.md" = 41
@@ -41,9 +41,8 @@
 "src/edge/waiting.py" = 3
 "src/hal/version.py" = 1
 "src/home_tools/secrets_manifest.toml" = 26
-"src/home_tools/secrets_setup.py" = 3
 "step-ca/init" = 4
-"tests/home/test_next.py" = 2
+"tests/home/test_next.py" = 1
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 1
 "tests/test_edge_apply.py" = 51

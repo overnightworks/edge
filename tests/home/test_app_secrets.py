@@ -18,7 +18,7 @@ from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
 from home_tools.cli import main
-from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, STILL_OPEN, UNSENDABLE_PASTE, Boundaries, Terminal, Verdict
+from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, Verdict
 from home_tools.setup import RERUN
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 
@@ -234,7 +234,7 @@ def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(turn_home: Sandb
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal())
 
     assert code == 1
-    assert STILL_OPEN + "cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token" in output
+    assert "noch offen" not in output
     assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
 
 
@@ -377,7 +377,7 @@ def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_e
     folder_modes = {
         name: stat.S_IMODE((sandbox.home / name).parent.stat().st_mode) for name in SECRET_FILES
     }
-    assert (code, lines[-2]) == (0, "  ✓ secrets         stored")
+    assert (code, lines[-3]) == (0, "  ✓ secrets         stored")
     assert modes == {SECRET_FILES[0]: 0o600, SECRET_FILES[1]: 0o644}
     assert folder_modes == {name: 0o700 for name in SECRET_FILES}
     assert "erzeugt und gespeichert: ~/.secrets/hopin/session-secret (644)" in lines
@@ -570,7 +570,8 @@ def test_hal_setup_apply_sets_up_the_missing_secrets_and_a_repeated_apply_change
 
     second_code, second_lines, _ = hal_secrets(entries, "--apply")
 
-    assert (first_code, first_lines[-2]) == (ExitCode.OK, "  ✓ secrets         stored")
+    assert (first_code, first_lines[-3]) == (ExitCode.OK, "  ✓ secrets         stored")
+    assert first_lines[-1] == "next: hal apply"
     assert [mode for _, _, mode, _ in after_first] == [0o600, 0o644]
     assert (second_code, second_lines[-2]) == (ExitCode.OK, "  · secrets         complete")
     assert [
