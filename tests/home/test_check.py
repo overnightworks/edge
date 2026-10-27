@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, FakeProbe, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
+from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
 
 from home_tools import check, mail
 from home_tools.layout import Layout, run_command
@@ -224,13 +224,6 @@ def test_a_note_joins_the_report_but_sends_nothing(clean_home, runner) -> None:
     assert "# home secrets " in report
     assert "| missing | gitlab |" in report
     assert runner.notifications == []
-
-
-class ProbeThatCannotStart(FakeProbe):
-    """`gh` is there but not executable: starting the probe raises, and the secrets checker breaks on it."""
-
-    def __call__(self, argv: Sequence[str]) -> int | None:
-        raise PermissionError(argv[0])
 
 
 def home_check_with_a_secrets_check_that_breaks(home: Path, runner) -> int:

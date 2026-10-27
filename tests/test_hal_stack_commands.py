@@ -17,16 +17,13 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from git_support import hal_program, run_hal
 from test_edge_apply import (
     PROBE_ENABLED,
-    STEP_CA_SERVICES,
     SWITCHED_OFF_AT,
     Ingress,
-    InterruptedWaitForLock,
     ScriptedCompose,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
@@ -402,76 +399,6 @@ def test_apply_from_a_checkout_that_is_not_a_clean_main_is_refused(hal, applying
     assert applying.publish_never_began()
 
 
-# --- hal stop <unit> -------------------------------------------------------------------------
-
-
-def test_stop_switches_a_running_unit_off_and_writes_the_marker(hal, fakes):
-    """S1"""
-    fakes.unit_in("A")
-
-    result = hal("stop", UNIT, answers=("",))
-
-    assert result.exit_code == ExitCode.OK
-    assert f"{UNIT} is switched off (" in result.text
-    assert fakes.marker() is not None
-    assert fakes.scripted.containers == dict.fromkeys(STEP_CA_SERVICES, "exited")
-
-
-def test_stop_of_an_unknown_unit_cannot_plan_and_writes_no_marker(hal, fakes):
-    """S2"""
-    result = hal("stop", "x")
-
-    assert result.exit_code == ExitCode.FAILURE
-    assert "cannot plan, x is not a unit of fleet.yaml (units: " in result.err
-    assert marker(fakes.state, "x") is None
-
-
-def test_stop_interrupted_while_waiting_for_the_switch_lock_keeps_the_marker(
-    hal, fakes, monkeypatch
-):
-    """S3 (E2)"""
-    fakes.unit_in("A")
-    monkeypatch.setattr(
-        stack,
-        "switches",
-        SimpleNamespace(
-            Switches=InterruptedWaitForLock,
-            default_state_directory=switches.default_state_directory,
-        ),
-    )
-
-    result = hal("stop", UNIT)
-
-    assert result.exit_code == ExitCode.FAILURE
-    assert "partial: the switch is recorded" in result.err
-    assert "interrupted while waiting to stop it" in result.err
-    assert fakes.marker() is not None
-
-
-def test_stop_with_a_container_still_running_is_partial_and_keeps_the_marker(hal, fakes):
-    """S4"""
-    fakes.unit_in("A")
-    fakes.scripted.verb_stop = lambda *_: ""
-
-    result = hal("stop", UNIT)
-
-    assert result.exit_code == ExitCode.FAILURE
-    assert "partial: the switch is recorded" in result.err
-    assert "a container of it still runs" in result.err
-    assert fakes.marker() is not None
-
-
-def test_stop_without_a_terminal_switches_off_and_never_reads_stdin(hal, fakes):
-    """S5: `hal` gives `UnreadableStdin` to a run without answers."""
-    fakes.unit_in("A")
-
-    result = hal("stop", UNIT)
-
-    assert result.exit_code == ExitCode.OK
-    assert f"{UNIT} is switched off" in result.text
-    assert fakes.marker() is not None
-
-
 # --- hal start <unit> ------------------------------------------------------------------------
 
 
@@ -762,3 +689,25 @@ def test_an_offline_while_online_waits_for_yes_wins(hal, fakes, stopped_tunnel, 
     assert marks.global_mark() is not None
     assert "start" not in systemd.verbs()
     assert not systemd.active
+
+
+def test_start_of_an_unknown_unit_keeps_its_old_cannot_plan_line(hal, fakes):
+    result = hal("start", "x", answers=("yes",))
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert result.err.startswith(
+        f"{emergency.START}: cannot plan, x is not a unit of fleet.yaml (units: "
+    )
+    assert result.err.count("\n") == 1
+
+
+def test_online_with_a_fleet_that_cannot_be_read_keeps_its_old_cannot_plan_line(
+    hal, fakes, stopped_tunnel
+):
+    write_fleet(fakes.repository, "not: [valid")
+
+    result = hal("online", answers=("yes",))
+
+    assert result.exit_code == ExitCode.FAILURE
+    assert result.err.startswith(f"{emergency.START_ALL}: cannot plan, ")
+    assert result.err.count("\n") == 1

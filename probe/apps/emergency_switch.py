@@ -17,6 +17,12 @@ from edge_copy import HAL_FAILURE, HAL_OK, expect
 
 from edge import checkout
 
+
+def squeezed(text: str) -> str:
+    """The text with every run of blanks as one space, so a check names no column width."""
+    return " ".join(text.split())
+
+
 BARRIER_HEADER = "X-Edge-Barrier"
 SLOW_BUILD_SECONDS = 120  # long enough for `hal stop` to record while the build runs
 STOP_SECONDS = 60
@@ -116,13 +122,13 @@ class EmergencySwitch:
         self.set_hosts(True)
         before = probe.only()["id"]
         out = self.hal_without_terminal("stop", probe.key)
-        expect(f"{probe.key} is switched off (containers of {probe.key} stopped" in out, out[-300:])
+        expect(f"✓ {probe.key} switched off" in squeezed(out), out[-300:])
         expect(self.marker.exists() and self.barrier_file.exists(), "D1: marker or barrier missing")
         expect(self.barrier_mark() == probe.key, "D1: Traefik does not answer the barrier's 404")
         rows = probe.containers()
         expect([r["id"] for r in rows] == [before] and rows[0]["state"] == "exited", f"D1: {rows}")
         again = self.hal_without_terminal("stop", probe.key)
-        expect(f"{probe.key} is already switched off (since" in again, f"D1 again: {again[-300:]}")
+        expect(f"· {probe.key} already off since" in squeezed(again), f"D1 again: {again[-300:]}")
         expect(self.barrier_mark() == probe.key, "D1: the repeated stop lost the barrier")
         print("D1 held: hal stop without a terminal wrote the marker and a proven barrier, stopped")
 
@@ -173,7 +179,7 @@ class EmergencySwitch:
         asked = time.monotonic()
         out = self.hal_without_terminal("stop", probe.key)
         stopped_in = time.monotonic() - asked
-        expect(f"{probe.key} is switched off" in out, f"D4: {out[-300:]}")
+        expect(f"✓ {probe.key} switched off" in squeezed(out), f"D4: {out[-300:]}")
         expect(self.barrier_mark() == probe.key, "D4: Traefik does not answer the barrier's 404")
         barrier_bytes = self.barrier_file.read_bytes()
         text = self.failed(running)
