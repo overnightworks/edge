@@ -71,6 +71,8 @@ service accounts are the only users `realm.yaml` lists, each holding the realm r
 holds such an app's client secret can therefore get a workload token for that app, which is the
 design; the secret stays the app's own file. hopin has no service account.
 
+Every login app follows the same shape. It gets its own client in `realm.yaml`, with its secret in its own file under `~/.secrets/keycloak/clients/`. Its `backchannel.logout.url` is `http://<app>.hallucinai.de:<port>/auth/backchannel-logout`, with `backchannel.logout.session.required: "false"`; the host is an alias the app's web service gives itself. The call travels over the app's own internal network `hal_backchannel_<app>`, which only `keycloak` joins on edge's side and the app joins as an external network, so no app sees another's. The public host lists the path in `deny_public` (`fleet.yaml`). The client gets a refresh token only if the app uses one, which `use.refresh.tokens: "false"` switches off.
+
 A sign-out in Keycloak ends the songmaker session: Keycloak calls songmaker's back-channel logout
 (`http://songmaker.hallucinai.de:8080/auth/backchannel-logout`; the name is an alias songmaker
 gives its web service) over the internal network `hal_backchannel_songmaker`, which only `keycloak` joins on edge's side and songmaker joins as an
