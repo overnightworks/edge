@@ -14,6 +14,7 @@ from hal_output import printable, write_error
 
 # The tree this code lives in, looked up when the command runs: an installed wheel has none.
 CODE_TREE = Path(__file__).resolve().parents[2]
+ORIGIN = f"origin/{checkout.MAIN}"
 NO_CHECKOUT = "no checkout (installed from a wheel)"
 
 
@@ -30,44 +31,38 @@ def run(arguments: argparse.Namespace) -> ExitCode:
         return ExitCode.OK
     runner = _echoing(checkout.run_git) if arguments.verbose else checkout.run_git
     try:
-        lines = describe(checkout.Git(tree, runner))
+        line = describe(checkout.Git(tree, runner))
     except checkout.GitError as error:
         write_error(f"cannot read the checkout {printable(str(tree))}, {error}", "hal version -v")
         return ExitCode.FAILURE
-    print("\n".join(lines))
+    print(printable(line))
     return ExitCode.OK
 
 
-def describe(git: checkout.Git) -> list[str]:
-    """The lines `hal version` prints for a checkout; raises GitError."""
+def describe(git: checkout.Git) -> str:
+    """The line `hal version` prints for a checkout; raises GitError."""
     commit = git.short()
     branch = git.branch()
-    return [
-        f"commit: {commit}",
-        f"branch: {printable(branch) if branch else f'detached at {commit}'}",
-        f"tree: {_tree(git.changed_paths())}",
-        f"origin/{checkout.MAIN}: {_standing(git)}",
-    ]
+    where = branch if branch else f"detached at {commit}"
+    return " · ".join([f"hal {commit}", where, _tree(git.changed_paths()), _standing(git)])
 
 
 def _tree(changed: Sequence[str]) -> str:
-    if not changed:
-        return "clean"
-    return f"{len(changed)} changed path{'s' if len(changed) > 1 else ''}"
+    return f"{len(changed)} changed" if changed else "clean"
 
 
 def _standing(git: checkout.Git) -> str:
     if not git.has_fetched_main():
-        return "never fetched"
+        return f"{ORIGIN} never fetched"
     ahead, behind = git.divergence(checkout.ORIGIN_MAIN)
     standing = checkout.standing_of(ahead, behind)
     if standing is checkout.Standing.CURRENT:
-        return "current"
+        return f"up to date with {ORIGIN}"
     if standing is checkout.Standing.BEHIND:
-        return f"{behind} behind"
+        return f"{behind} behind {ORIGIN}"
     if standing is checkout.Standing.AHEAD:
-        return f"{ahead} ahead"
-    return f"diverged ({ahead} ahead, {behind} behind)"
+        return f"{ahead} ahead of {ORIGIN}"
+    return f"diverged from {ORIGIN} ({ahead} ahead, {behind} behind)"
 
 
 def _echoing(runner: checkout.Runner) -> checkout.Runner:
