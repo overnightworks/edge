@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "5badb30b12b6a48f1790afb03f34680336bd72c4"
 branch = "claude/issue-564-s2g3a-walk-detail-tones"
-scope = ["docs/home.md", "src/hal_output/__init__.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py", "tests/test_hal_output.py"]
+scope = ["docs/design/hal-output.html", "docs/home.md", "src/hal_output/__init__.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py", "tests/test_hal_output.py"]
 opened_commit = "3da5124ea41e2d9437f90e35ce23bf636f72e34d"
 whole_reason = "One detail-line helper in hal_output, its one caller in the walk, their tests and the doc sample; split, the helper would have no caller or the walk would print outside hal_output."
