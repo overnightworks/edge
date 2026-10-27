@@ -23,7 +23,7 @@ from git_support import (
     run_hal,
 )
 
-from hal import backup_commands, cli, legal_commands, stack_commands
+from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
 
 LOCK = SOURCE.parent / "uv.lock"
@@ -226,14 +226,16 @@ def test_ctrl_c_while_git_runs_exits_130_without_a_traceback(tmp_path):
         and command not in stack_commands.COMMANDS
         and command not in backup_commands.COMMANDS
         and command not in legal_commands.COMMANDS
+        and command not in check_commands.COMMANDS
     ],
     ids=lambda command: command.name,
 )
 def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     """G-11. The stack's commands are left out: run here they would reach the real system manager;
     their stdin cells run on fakes in test_hal_stack_commands. The backup commands would reach the
-    real repository; their stdin cell runs on the fake host in test_edge_backup.
-    `hal legal` needs a key, so it is run with its own arguments in test_hal_legal."""
+    real repository; their stdin cell runs on the fake host in test_edge_backup. `hal check` would
+    run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal` needs a key;
+    its stdin cell runs with its own arguments in test_hal_legal."""
     tree = main_checkout(tmp_path)
 
     arguments = ("former", "current") if command.name == "rename" else ()

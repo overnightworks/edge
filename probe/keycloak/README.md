@@ -5,7 +5,7 @@ directory, no live data) from this checkout. It runs beside the live edge, which
 Traefik entrypoints listen on two free loopback ports it picks (a copy of `traefik.yml` in the
 scratch directory), its admin front end is `http://localhost:<admin port>`, and its keycloak
 network takes a free /24 from 172.31.200.0 up. Both modes need an empty or new `--scratch`
-directory and always tear the stack down. While a probe runs, `edge-check` reports its Keycloak as
+directory and always tear the stack down. While a probe runs, `hal check exposure` reports its Keycloak as
 `invalid-edge-name`, by design of the `edge.name: PROBE` label that keeps the live Traefik away.
 
     flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
