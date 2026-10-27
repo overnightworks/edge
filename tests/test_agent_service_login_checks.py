@@ -487,7 +487,7 @@ def test_the_wait_for_a_call_ends_on_a_held_line_a_dead_client_or_the_time(
     time = FakeTime()
     polls = probe.checks.CALL_POLL_SECONDS
 
-    def lines():
+    def lines(_left):
         return [HELD] if appears_after is not None and time.slept >= appears_after else []
 
     outcome = probe.checks.wait_for_call(
@@ -502,16 +502,16 @@ def test_the_wait_for_a_call_ends_on_a_held_line_a_dead_client_or_the_time(
 def test_the_start_wait_is_bounded_by_its_seconds(probe):
     """Matrix row 15: the wait for run_started is bounded by its seconds on a fake clock."""
     time = FakeTime()
-    assert not probe.checks.wait_until(lambda: False, 30, lambda: time.now, time.sleep)
+    assert not probe.checks.wait_until(lambda _left: False, 30, lambda: time.now, time.sleep)
     assert time.now == 30
-    assert probe.checks.wait_until(lambda: True, 30, lambda: time.now, time.sleep)
+    assert probe.checks.wait_until(lambda _left: True, 30, lambda: time.now, time.sleep)
 
 
 def test_a_condition_that_held_only_after_the_deadline_does_not_count(probe):
     """#469 R2_CALL_SECONDS: a read that overran the bound does not turn the wait into a success."""
     time = FakeTime()
 
-    def slow_read() -> bool:
+    def slow_read(_left) -> bool:
         time.now += 31
         return True
 
@@ -566,3 +566,18 @@ def test_a_client_that_outlives_its_read_time_is_killed_and_what_it_printed_coun
     client.finish(1)
     assert (process.written, process.killed) == (["close\n"], True)
     assert client.report().answer == 200
+
+
+def test_a_log_read_stalling_past_the_deadline_ends_the_wait_at_the_deadline(probe):
+    """#469 R2_CALL_SECONDS: each read gets the seconds left, and its timeout is the deadline."""
+    time = FakeTime()
+    granted = []
+
+    def stalling_read(left) -> bool:
+        granted.append(left)
+        time.now += left
+        raise subprocess.TimeoutExpired("docker logs", left)
+
+    assert not probe.checks.wait_until(stalling_read, 30, lambda: time.now, time.sleep)
+    assert granted == [30]
+    assert time.now == 30

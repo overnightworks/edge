@@ -319,8 +319,8 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         app_before = len(self.app_lines())
         self.write_mode(Mode.HOLD)
 
-        def app_since() -> list[str]:
-            return self.app_lines()[app_before:]
+        def app_since(seconds: int) -> list[str]:
+            return self.app_lines(seconds)[app_before:]
 
         client = self.start_client(tokens)
         watching: Future[Watched] | None = None
@@ -337,7 +337,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
                     client.finish(CLIENT_READ_SECONDS)
                     if called:
                         wait_until(
-                            lambda: app_call(app_since()).released_at is not None,
+                            lambda left: app_call(app_since(left)).released_at is not None,
                             RELEASE_SECONDS, self.clock, self.sleep,
                         )  # fmt: skip
                 finally:
@@ -345,7 +345,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             watched = self.collect(watching)
         report = client.report()
         self.texts.extend(["\n".join(client.lines), "\n".join(self.app_lines())])
-        lines = app_since()
+        lines = self.app_lines()[app_before:]
         self.observe(lines, report, watched)
         if not called:
             return b9_not_driven(self.no_call_reason(report))
@@ -360,7 +360,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
 
     def wait_for_start(self, client: ClientProcess) -> bool:
         wait_until(
-            lambda: client.report().started or not client.alive(),
+            lambda _left: client.report().started or not client.alive(),
             START_SECONDS, self.clock, self.sleep,
         )  # fmt: skip
         return client.report().started

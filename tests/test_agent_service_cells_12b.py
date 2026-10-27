@@ -592,7 +592,7 @@ def r2_probe(probe, tmp_path, timeline, *, watch=None, failed=(), root_entries=0
         key=b"\x02", watch=lambda seconds: watch(seconds) if callable(watch) else watch
     )
     run.container_log = lambda service: ""
-    run.app_lines = lambda: timeline.app(timeline.now)
+    run.app_lines = lambda seconds=300: timeline.app(timeline.now)
     run.write_mode = lambda mode: run.windows.append(("mode", mode))
     run.start_client = lambda tokens: (
         run.windows.append("client") or FakeClient(timeline, probe.checks.read_client_output)

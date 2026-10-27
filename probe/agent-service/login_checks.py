@@ -485,17 +485,22 @@ def app_call(lines: Iterable[str]) -> AppCall:
 
 
 def wait_until(
-    condition: Callable[[], bool],
+    condition: Callable[[int], bool],
     seconds: float,
     clock: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> bool:
     """True as soon as `condition` holds within `seconds`, False when they have passed first,
-    also when the condition itself held only after them."""
+    also when the condition itself held only after them. The condition gets the whole seconds
+    left (at least one) to bound its own reads; a read that times out counts as the deadline
+    passed."""
     end = clock() + seconds
     while True:
-        if condition():
-            return clock() <= end
+        try:
+            if condition(max(int(end - clock()), 1)):
+                return clock() <= end
+        except subprocess.TimeoutExpired:
+            return False
         if clock() >= end:
             return False
         sleep(CALL_POLL_SECONDS)
@@ -510,17 +515,18 @@ class CallWait(StrEnum):
 def wait_for_call(
     clock: Callable[[], float],
     sleep: Callable[[float], None],
-    app_lines: Callable[[], list[str]],
+    app_lines: Callable[[int], list[str]],
     client_alive: Callable[[], bool],
 ) -> CallWait:
     """Polls the app's lines (those since R2 began) until a `held` line appears, the client
     exits, or `R2_CALL_SECONDS` have passed."""
     done = wait_until(
-        lambda: app_call(app_lines()).held or not client_alive(), R2_CALL_SECONDS, clock, sleep
-    )
+        lambda left: app_call(app_lines(left)).held or not client_alive(),
+        R2_CALL_SECONDS, clock, sleep,
+    )  # fmt: skip
     if not done:
         return CallWait.TIMED_OUT
-    return CallWait.HELD if app_call(app_lines()).held else CallWait.CLIENT_EXITED
+    return CallWait.HELD if app_call(app_lines(R2_CALL_SECONDS)).held else CallWait.CLIENT_EXITED
 
 
 class B9Evidence(NamedTuple):
