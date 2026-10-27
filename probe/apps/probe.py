@@ -97,6 +97,8 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "d4": "v2026.10.24.5",
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
+    "h1_no_check": "v2026.10.26.3",
+    "h1_disabled": "v2026.10.26.4",
 }
 # A service that no release of the app names
 GHOST = f"services:\n  ghost:\n    image: {BUSYBOX}\n    command: [sleep, '3600']\n"
@@ -223,10 +225,11 @@ class Probe:
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
         services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
         covered: bool = True, pull_always: bool = False, compose_file: str | None = None,
-        slow_build: int = 0,
+        slow_build: int = 0, unchecked: tuple[str, ...] = (), check_disabled: bool = False,
     ) -> str:  # fmt: skip
         """A commit carrying the app at `tag`, pushed and tagged; its sha. `compose_file` replaces
-        the generated compose.yaml with that text, or leaves it out when empty."""
+        the generated compose.yaml with that text, or leaves it out when empty. The `unchecked`
+        services carry no healthcheck, or `healthcheck: disable: true` with `check_disabled`."""
         site = self.work / "site"
         site.mkdir(exist_ok=True)
         (site / "version").write_text(f"{tag}\n")
@@ -247,7 +250,9 @@ class Probe:
             if image_volume and covered
             else "    volumes: [data:/data]\n"
         )
-        text = self.compose_text(tag, services, interpolates, extra)
+        text = self.compose_text(
+            tag, services, interpolates, extra, dict.fromkeys(unchecked, check_disabled)
+        )
         if compose_file is None:
             (self.work / "compose.yaml").write_text(text)
         elif compose_file:
@@ -269,8 +274,9 @@ class Probe:
         return sha
 
     def compose_text(
-        self, tag: str, services: tuple[str, ...], interpolates: bool, extra: str
-    ) -> str:
+        self, tag: str, services: tuple[str, ...], interpolates: bool, extra: str,
+        unchecked: dict[str, bool],
+    ) -> str:  # fmt: skip
         blocks = []
         for name in services:
             routing = (
@@ -282,12 +288,17 @@ class Probe:
                 '    environment:\n      PROBE_VALUE: "${PROBE_UNSET:?${PROBE_SENTINEL}}"\n'
                 if interpolates and name == "web" else ""
             )  # fmt: skip
+            if name not in unchecked:
+                check = (
+                    '    healthcheck:\n      test: ["CMD", "wget", "-q", "-O", "/dev/null", '
+                    '"http://127.0.0.1:8080/health"]\n      interval: 2s\n      timeout: 2s\n'
+                    "      retries: 3\n      start_period: 1s\n"
+                )
+            else:
+                check = "    healthcheck:\n      disable: true\n" if unchecked[name] else ""
             blocks.append(
                 f"  {name}:\n    build: .\n    restart: unless-stopped\n{environment}"
-                f"{extra}    labels:\n{routing}      probe.tag: {tag}\n"
-                '    healthcheck:\n      test: ["CMD", "wget", "-q", "-O", "/dev/null", '
-                '"http://127.0.0.1:8080/health"]\n      interval: 2s\n      timeout: 2s\n'
-                "      retries: 3\n      start_period: 1s\n"
+                f"{extra}    labels:\n{routing}      probe.tag: {tag}\n{check}"
             )
         return "services:\n" + "".join(blocks) + "volumes:\n  data: {}\n  vault: {}\n"
 
@@ -711,6 +722,27 @@ class Probe:
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
+    def cell_h1_helper_without_healthcheck(self) -> None:
+        """A running service without a healthcheck, or with `disable: true`, is settled: Docker
+        reports it no health, and the app is recorded and then quiet in the plan."""
+        self.set_enabled(True)
+        for tag, disabled in ((TAGS["h1_no_check"], False), (TAGS["h1_disabled"], True)):
+            self.release(
+                tag, services=("web", "helper"), unchecked=("helper",), check_disabled=disabled
+            )
+            self.apply()
+            rows = {row["service"]: row for row in self.containers()}
+            expect(sorted(rows) == ["helper", "web"], f"H1: containers {rows}")
+            expect(
+                rows["helper"]["state"] == "running" and rows["helper"]["health"] == "",
+                f"H1: the helper is {rows['helper']}",
+            )
+            expect(rows["web"]["health"] == "healthy", "H1: web is not healthy")
+            expect(self.deployed()["tag"] == tag, "H1: the app was not recorded")
+            out = self.apply(typed=b"no\n")
+            expect("nothing to change" in out, f"H1: the next plan said: {out[-200:]}")
+        print("H1 held: a running helper without a healthcheck (absent, disabled) is recorded")
+
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
@@ -736,6 +768,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
+        probe.cell_h1_helper_without_healthcheck()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

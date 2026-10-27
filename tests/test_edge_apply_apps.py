@@ -220,6 +220,10 @@ def test_a_disabled_app_is_neither_fetched_nor_run(app_world):
 
 
 RELEASE = "v2026.10.22.1"
+TWO_SERVICES = (
+    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
+    "  worker:\n    build: .\n    restart: unless-stopped\n"
+)
 
 
 @dataclass
@@ -378,6 +382,22 @@ def test_hal_start_starts_the_stopped_containers_ends_the_switch_and_says_so(app
     assert "edge start: hopin is on" in out
     assert switches.Switches(app_world.state).mark(KEY) is None
     assert {row["Health"] for row in app_world.docker.rows} == {"healthy"}
+
+
+def test_hal_start_waits_for_health_only_where_a_container_has_a_healthcheck(app_world, hal):
+    app_world.docker.without_health = frozenset({"worker"})
+    app_world.origin.release(RELEASE, {"compose.yaml": TWO_SERVICES})
+    assert app_world.apply()[0] == 0
+    hal.stop()
+
+    exit_code, out, _ = hal.start()
+
+    assert exit_code == 0
+    assert "edge start: hopin is on" in out
+    assert {row["Service"]: row["Health"] for row in app_world.docker.rows} == {
+        "web": "healthy",
+        "worker": "",
+    }
 
 
 def test_hal_start_is_refused_while_the_app_is_disabled_and_changes_nothing(app_world, hal):
