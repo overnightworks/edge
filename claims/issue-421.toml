@@ -1,0 +1,8 @@
+claim_id = "d46a51d80553449898edfc26ae84adb9"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "f5c46e6bfe0feb81f0bede8b626846d54b3d8993"
+branch = "claude/issue-421-hal-check-exposure"
+scope = [".github/workflows/ci.yml", "README.md", "docs/architecture.md", "docs/backup.md", "docs/stack.md", "edge-check.toml", "probe/keycloak/README.md", "probe/step-ca/probe.py", "pyproject.toml", "quality/baseline.toml", "quality/config.toml", "src/edge_check/allow-list.toml", "src/edge_check/allowlist.py", "src/edge_check/cli.py", "src/edge_check/inspection.py", "src/hal/check_commands.py", "src/hal/cli.py", "tests/test_edge_check.py", "tests/test_hal_check.py", "tests/test_hal_cli.py", "tests/test_step_ca_init.py"]
+opened_commit = "4e7efa1bce6f30193f20c05ba65bb1d683471ceb"
+whole_reason = "One atomic surface: a verb replaces a command, so the console script, the probe and the CI smoke that run it, the root file and its allowlist entry, every text and every test that names it move together, or something names a missing command or the root-layout gate goes red."
