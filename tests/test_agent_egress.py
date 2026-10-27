@@ -607,4 +607,11 @@ def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_network
     probe = Probe()
     agent_networks.cell_p36(probe, project="p", label="l", service_port=80, service_listens=True)
     assert probe.held == "P36"
-    assert len(refused_pairs) == len(set(refused_pairs)) == 6
+    callers = {network: f"p-caller-{network}" for network in agent_networks.AGENT_NETWORKS}
+    assert set(refused_pairs) == {
+        (callers[caller], f"ip-{callers[other]}")
+        for caller in callers
+        for other in callers
+        if caller != other
+    }
+    assert len(refused_pairs) == 6
