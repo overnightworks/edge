@@ -41,7 +41,7 @@ Apps), ist es Exit 3. Exit 0 keine Befunde, 1 Befunde, 3 nicht pruefbar, 130 unt
 Ausgabe). Mit `--json` ist stdout genau ein Objekt `{"hosts": [{problem, subject, detail, next}]}`
 (bei Exit 3 leer, die Ursache als `error: hal check: hosts: cannot check, …` auf stderr). `hal check
 hosts` liest Cloudflare; `hal check exposure` bleibt lokal, und `--allow-list` gehoert nur zu
-`exposure`. Der `edge external apply`-Abschluss sieht weiter Exit 2 fuer "nicht pruefbar".
+`exposure`; ein nacktes `hal check` ist die taegliche Pruefung (`docs/home.md`). Der `edge external apply`-Abschluss sieht weiter Exit 2 fuer "nicht pruefbar".
 
 Zusaetzlich fragt der Check jeden deklarierten Host mit Record einmal mit `GET /` ueber HTTPS, ohne
 Anmeldedaten, Cookies und Weiterleitungen (10 s je blockierender Operation; die Wildcard unter

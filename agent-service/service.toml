@@ -40,3 +40,7 @@ mcp_origin = "https://songmaker.mcp.internal"
 # The copresenter sees only the talk, so presentator lists no tools and no MCP origin.
 [apps.presentator]
 workload_client = "presentator"
+
+# HopIn's game master lists no tools and no MCP origin either.
+[apps.hopin]
+workload_client = "hopin"

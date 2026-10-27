@@ -464,6 +464,7 @@ def test_an_interrupted_cancelled_turn_ends_its_child_and_removes_its_container(
 REACH = {
     "docker0": "172.17.0.1", "internet": "172.31.251.1", "lan": "192.168.1.5",
     "agent-songmaker_free": "172.31.248.2", "agent-presentator_free": "172.31.249.2",
+    "agent-hopin_free": "172.31.247.2",
     "mcp_free": "172.31.250.2", "egress_free": "172.31.252.2",
 }  # fmt: skip
 TARGETS = live_smoke.EgressTargets(
@@ -492,7 +493,12 @@ def test_the_targets_cover_every_network_the_resolved_service_joins_but_name_non
         discover_lan=lambda: "192.168.1.5",
     )
 
-    assert {"mcp_free", "agent-songmaker_free", "agent-presentator_free"} <= set(targets.reach)
+    assert {
+        "mcp_free",
+        "agent-songmaker_free",
+        "agent-presentator_free",
+        "agent-hopin_free",
+    } <= set(targets.reach)
     assert "agent_free" not in targets.reach
     assert "10.0.1.1" in targets.agent_gateways
     assert targets.reach["mcp_free"] == "10.0.1.254"

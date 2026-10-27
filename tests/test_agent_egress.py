@@ -17,7 +17,7 @@ import sys
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -66,7 +66,13 @@ def test_every_network_of_the_agent_attachments_is_internal_and_isolated(compose
     """E16: the service and the stand-in join only networks with no route out or host address."""
     joined = {name: compose["networks"][name] for name in attachments["networks"]}
 
-    assert set(joined) == {"agent-songmaker", "agent-presentator", "egress", "mcp"}
+    assert set(joined) == {
+        "agent-songmaker",
+        "agent-presentator",
+        "agent-hopin",
+        "egress",
+        "mcp",
+    }
     for network in joined.values():
         assert network["internal"] is True
         assert network["driver_opts"] == ISOLATED_MODE
@@ -558,3 +564,54 @@ def test_a_failed_listing_or_inspection_fails_the_cell_never_reads_as_down(
     probe.environment = {}
     with pytest.raises(unit.ProbeFailed):
         probe.service_state()
+
+
+@pytest.fixture
+def agent_networks(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    for directory in (PROBE, ROOT / "probe", ROOT / "agent-service"):
+        monkeypatch.syspath_prepend(str(directory))  # it imports its sibling modules by name
+    yield from probe_module("agent_networks")
+
+
+def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_networks):
+    target = "agent-service-1"
+    refused_pairs = []
+
+    class Probe:
+        def __init__(self):
+            self.target = SimpleNamespace(compose_service=target)
+            self.image = "image"
+
+        def run(self, command):
+            return SimpleNamespace(stdout=f"ip-{command[-1]}\n")
+
+        def client_in_namespace_of(self, beside, action, *arguments):
+            if action == "resolve":
+                return {"addresses": []}
+            if arguments[0] == "127.0.0.1":
+                return {"result": "connected"}
+            if arguments[0] == target:
+                return {"result": "connected"}
+            refused_pairs.append((beside, arguments[0]))
+            return {"result": "ENETUNREACH"}
+
+        def container(self, name):
+            return "id"
+
+        def inspect_network(self, network):
+            return {"Containers": {"id": {}}}
+
+        def hold(self, cell, text):
+            self.held = cell
+
+    probe = Probe()
+    agent_networks.cell_p36(probe, project="p", label="l", service_port=80, service_listens=True)
+    assert probe.held == "P36"
+    callers = {network: f"p-caller-{network}" for network in agent_networks.AGENT_NETWORKS}
+    assert set(refused_pairs) == {
+        (callers[caller], f"ip-{callers[other]}")
+        for caller in callers
+        for other in callers
+        if caller != other
+    }
+    assert len(refused_pairs) == 6

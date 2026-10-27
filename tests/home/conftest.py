@@ -289,6 +289,13 @@ class FakeProbe:
         return self.code
 
 
+class ProbeThatCannotStart(FakeProbe):
+    """`gh` is there but not executable: starting the probe raises, and the secrets checker breaks on it."""
+
+    def __call__(self, argv: Sequence[str]) -> int | None:
+        raise PermissionError(argv[0])
+
+
 @pytest.fixture
 def probe() -> FakeProbe:
     return FakeProbe()

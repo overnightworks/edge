@@ -108,6 +108,11 @@ users:
     serviceAccountClientId: presentator
     realmRoles:
       - agent-workload
+  - username: service-account-hopin
+    enabled: true
+    serviceAccountClientId: hopin
+    realmRoles:
+      - agent-workload
 clients:
   # Audience only: the agent service accepts tokens issued for it and never signs anyone in.
   - clientId: agent-service
@@ -125,7 +130,7 @@ clients:
   # songmaker's back-channel logout over the internal network hal_backchannel_songmaker. songmaker
   # ignores the session id and ends every session of the person, so the call does not require one.
   # Its service account is the workload identity for the agent service (the token's azp must equal
-  # the people's); the same holds for presentator. hopin names no agent use, so it has none.
+  # the people's); the same holds for presentator and hopin.
   - clientId: songmaker
     name: songmaker
     enabled: true
@@ -146,7 +151,7 @@ clients:
       backchannel.logout.url: "http://songmaker.hallucinai.de:8080/auth/backchannel-logout"
       backchannel.logout.session.required: "false"
       oauth2.device.authorization.grant.enabled: "true"
-    defaultClientScopes: &agent_workload_scopes
+    defaultClientScopes: &songmaker_presentator_scopes
       - basic
       - profile
       - email
@@ -157,8 +162,10 @@ clients:
       - groups
       - agent-service-audience
     optionalClientScopes: []
-  # hopin signs people in the same way as songmaker and is logged out the same way (#254). It uses
-  # no refresh token, so it gets none: an app gets one only if it uses one.
+  # hopin signs people in the same way as songmaker and is logged out the same way (#254). It holds
+  # a refresh token per session, named as on so a merge cannot keep an earlier off, and its service
+  # account is a workload of the agent service. It reads no email, web origin or acr, so it has
+  # none of those scopes.
   - clientId: hopin
     name: hopin
     enabled: true
@@ -167,7 +174,7 @@ clients:
     standardFlowEnabled: true
     implicitFlowEnabled: false
     directAccessGrantsEnabled: false
-    serviceAccountsEnabled: false
+    serviceAccountsEnabled: true
     frontchannelLogout: false
     baseUrl: "https://hopin.hallucinai.de/"
     alwaysDisplayInConsole: false
@@ -178,11 +185,14 @@ clients:
       pkce.code.challenge.method: "S256"
       backchannel.logout.url: "http://hopin.hallucinai.de:8080/auth/backchannel-logout"
       backchannel.logout.session.required: "false"
-      use.refresh.tokens: "false"
+      use.refresh.tokens: "true"
     defaultClientScopes:
       - basic
       - profile
       - groups
+      - roles
+      - service_account
+      - agent-service-audience
     optionalClientScopes: []
   # One client for presentator's two hosts (agent-presentator#242). It is logged out like hopin, on
   # presentator's own port, over its own back-channel network.
@@ -206,5 +216,5 @@ clients:
       pkce.code.challenge.method: "S256"
       backchannel.logout.url: "http://presentator.hallucinai.de:8000/auth/backchannel-logout"
       backchannel.logout.session.required: "false"
-    defaultClientScopes: *agent_workload_scopes
+    defaultClientScopes: *songmaker_presentator_scopes
     optionalClientScopes: []
