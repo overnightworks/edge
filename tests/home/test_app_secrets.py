@@ -12,21 +12,13 @@ import pytest
 from conftest import FakeProbe, Sandbox, plant_secrets
 from test_secrets_setup import FakeDisk, FakeTerminal
 from test_secrets_view import findings_of
-from test_setup import SECRETS, line, run_hal_setup
+from test_setup import run_hal_setup
 
 from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
 from home_tools.cli import main
-from home_tools.secrets_setup import (
-    OPEN_PROMPT,
-    PASTE_PROMPT,
-    STILL_OPEN,
-    UNSENDABLE_PASTE,
-    Boundaries,
-    Terminal,
-    Verdict,
-)
+from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, STILL_OPEN, UNSENDABLE_PASTE, Boundaries, Terminal, Verdict
 from home_tools.setup import RERUN
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 
@@ -113,11 +105,7 @@ def test_apply_generates_hopins_session_secret_unseen_at_0644_in_a_0700_folder_a
     ids=["0644 is the declared loosest mode", "0666 is loose"],
 )
 def test_hopins_session_secret_is_loose_only_beyond_0644(
-    packaged_home: Sandbox,
-    probe: FakeProbe,
-    capsys: pytest.CaptureFixture[str],
-    mode: int,
-    loose_subjects: set[str],
+    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str], mode: int, loose_subjects: set[str]
 ) -> None:
     secret = packaged_home.home / HOPIN_SESSION_SECRET
     secret.write_text("planted")
@@ -133,10 +121,7 @@ def test_by_service_lists_the_session_secret_under_hopin(
 ) -> None:
     main(["secrets", "--by-service"], home=packaged_home.home, probe=probe, now=NOW)
 
-    assert (
-        "| hopin | keycloak/clients/*, hopin/session-secret, cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token |"
-        in capsys.readouterr().out
-    )
+    assert "| hopin | keycloak/clients/*, hopin/session-secret, cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token |" in capsys.readouterr().out
 
 
 def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
@@ -144,9 +129,8 @@ def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
 ) -> None:
     main(["next"], home=packaged_home.home, probe=probe, now=NOW)
 
-    assert (
-        f"home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/{HOPIN_SESSION_SECRET} (644)"
-        in (capsys.readouterr().out)
+    assert f"home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/{HOPIN_SESSION_SECRET} (644)" in (
+        capsys.readouterr().out
     )
 
 
@@ -170,47 +154,23 @@ def never_verified(_source: object, _value: str) -> Verdict:
     pytest.fail("a TURN value is stored unverified and never sent to a provider")
 
 
-def run_turn_setup(
-    sandbox: Sandbox,
-    capsys: pytest.CaptureFixture[str],
-    terminal: FakeTerminal,
-    disk: FakeDisk | None = None,
-) -> tuple[int, str]:
+def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeDisk | None = None) -> tuple[int, str]:
     boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeDisk()).sync)
-    code = main(
-        ["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW
-    )
+    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
 
 
-@pytest.mark.parametrize(
-    "name", ["cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token"]
-)
-def test_the_packaged_manifest_holds_hopins_turn_values_as_unverified_tokens_the_container_reads(
-    name: str,
-) -> None:
+@pytest.mark.parametrize("name", ["cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token"])
+def test_the_packaged_manifest_holds_hopins_turn_values_as_unverified_tokens_the_container_reads(name: str) -> None:
     entry = packaged_entry(name)
 
-    assert (entry.kind, entry.read_by, entry.optional, entry.verifier, entry.source) == (
-        SecretKind.UNVERIFIED_TOKEN,
-        ("hopin",),
-        False,
-        None,
-        None,
-    )
+    assert (entry.kind, entry.read_by, entry.optional, entry.verifier, entry.source) == (SecretKind.UNVERIFIED_TOKEN, ("hopin",), False, None, None)
     assert entry.paths == (PurePosixPath(f".secrets/{name}"),)
-    assert (
-        entry.loosest_mode,
-        bool(entry.loosest_mode_reason),
-        bool(entry.purpose),
-        entry.written_by_setup,
-    ) == (0o644, True, True, True)
+    assert (entry.loosest_mode, bool(entry.loosest_mode_reason), bool(entry.purpose), entry.written_by_setup) == (0o644, True, True, True)
 
 
-UNVERIFIED_ENTRY = (
-    '[[secret]]\nname = "turn"\nkind = "unverified-token"\nread_by = []\nrecreate = "r"\n'
-)
+UNVERIFIED_ENTRY = '[[secret]]\nname = "turn"\nkind = "unverified-token"\nread_by = []\nrecreate = "r"\n'
 
 
 @pytest.mark.parametrize(
@@ -221,9 +181,7 @@ UNVERIFIED_ENTRY = (
     ],
     ids=["a provider source", "two paths"],
 )
-def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(
-    tmp_path: Path, keys: str
-) -> None:
+def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(tmp_path: Path, keys: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(UNVERIFIED_ENTRY + keys)
 
@@ -240,15 +198,8 @@ def test_apply_asks_the_turn_values_hidden_in_order_and_stores_them_at_0644_in_a
 
     key_id, api_token = (turn_home.home / relative for relative in (TURN_KEY_ID, TURN_API_TOKEN))
     assert code == 0
-    assert (key_id.read_text(), api_token.read_text()) == (
-        "FAKE-TURN-KEY-ID-0001",
-        "FAKE-TURN-API-TOKEN-0002",
-    )
-    assert [stat.S_IMODE(path.stat().st_mode) for path in (key_id, api_token, key_id.parent)] == [
-        0o644,
-        0o644,
-        0o700,
-    ]
+    assert (key_id.read_text(), api_token.read_text()) == ("FAKE-TURN-KEY-ID-0001", "FAKE-TURN-API-TOKEN-0002")
+    assert [stat.S_IMODE(path.stat().st_mode) for path in (key_id, api_token, key_id.parent)] == [0o644, 0o644, 0o700]
     assert terminal.prompts.count(PASTE_PROMPT) == 2
     assert "FAKE-TURN" not in output
     assert output.count("gespeichert, nicht geprüft: ") == 2
@@ -257,24 +208,17 @@ def test_apply_asks_the_turn_values_hidden_in_order_and_stores_them_at_0644_in_a
 def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboard(
     turn_home: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    terminal = FakeTerminal(
-        pastes=["FAKE-TURN-KEY-ID-0001", "FAKE-TURN-API-TOKEN-0002"], browser_opens=False
-    )
+    terminal = FakeTerminal(pastes=["FAKE-TURN-KEY-ID-0001", "FAKE-TURN-API-TOKEN-0002"], browser_opens=False)
 
     _, output = run_turn_setup(turn_home, capsys, terminal)
 
     assert packaged_entry("cloudflare/turn-hopin/key-id").recreate in output
     assert OPEN_PROMPT in terminal.prompts
     assert set(terminal.opened) == {CLOUDFLARE_DASHBOARD}
-    assert (
-        f"Kein Browser ließ sich öffnen; die Seite von Hand öffnen: {CLOUDFLARE_DASHBOARD}"
-        in output
-    )
+    assert f"Kein Browser ließ sich öffnen; die Seite von Hand öffnen: {CLOUDFLARE_DASHBOARD}" in output
 
 
-def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(
-    turn_home: Sandbox, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     """#388 matrix cell 15a: cancelling at the open prompt opens nothing and writes no value."""
     terminal = FakeTerminal(enter=KeyboardInterrupt)
 
@@ -283,26 +227,18 @@ def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(
     assert code == 130
     assert terminal.opened == []
     assert PASTE_PROMPT not in terminal.prompts
-    assert not any(
-        (turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN)
-    )
+    assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
 
 
-def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(
-    turn_home: Sandbox, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal())
 
     assert code == 1
     assert STILL_OPEN + "cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token" in output
-    assert not any(
-        (turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN)
-    )
+    assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
 
 
-def test_a_non_ascii_turn_paste_is_refused_unshown_and_unwritten(
-    turn_home: Sandbox, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_non_ascii_turn_paste_is_refused_unshown_and_unwritten(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     canary = "FAKE-TURN-\u00e4-0003"
 
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal(pastes=[canary]))
@@ -316,9 +252,7 @@ def test_a_non_ascii_turn_paste_is_refused_unshown_and_unwritten(
 def test_an_interrupt_between_the_two_turn_values_keeps_the_first_and_the_rerun_asks_only_the_second(
     turn_home: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, _ = run_turn_setup(
-        turn_home, capsys, FakeTerminal(pastes=["FAKE-TURN-KEY-ID-0001", KeyboardInterrupt])
-    )
+    code, _ = run_turn_setup(turn_home, capsys, FakeTerminal(pastes=["FAKE-TURN-KEY-ID-0001", KeyboardInterrupt]))
     assert code == 130
     assert (turn_home.home / TURN_KEY_ID).read_text() == "FAKE-TURN-KEY-ID-0001"
     assert not (turn_home.home / TURN_API_TOKEN).exists()
@@ -331,16 +265,10 @@ def test_an_interrupt_between_the_two_turn_values_keeps_the_first_and_the_rerun_
     assert (turn_home.home / TURN_API_TOKEN).read_text() == "FAKE-TURN-API-TOKEN-0002"
 
 
-def test_the_view_shows_the_stored_turn_values_as_not_verified(
-    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]) -> None:
     main(["secrets"], home=packaged_home.home, probe=probe, now=NOW)
 
-    rows = {
-        line
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))
-    }
+    rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
     assert all("Token, ungeprüft" in row and "nicht geprüft" in row for row in rows)
 
@@ -411,7 +339,7 @@ def test_the_secrets_step_is_verified_when_the_manifest_has_no_missing_secret(
     run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
     code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
 
-    assert (code, lines[-2]) == (0, line("·", SECRETS, "complete"))
+    assert (code, lines[-2]) == (0, "  · secrets         complete")
 
 
 def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
@@ -421,9 +349,22 @@ def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
 
     assert (code, lines[-2]) == (
         0,
-        line("!", SECRETS, "missing", "opentofu/passphrase, hopin/session-secret"),
+        "  ! secrets         missing        opentofu/passphrase, hopin/session-secret",
     )
     assert not sandbox.layout.secrets_dir.exists()
+
+
+def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after_it(
+    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
+
+    secrets_rows = [line for line in lines if "secrets  " in line]
+    assert secrets_rows == [
+        "  ! secrets         missing        opentofu/passphrase, hopin/session-secret",
+        "  ✓ secrets         stored",
+    ]
+    assert lines.index(secrets_rows[0]) + 1 < lines.index(secrets_rows[1])  # the wizard spoke between them
 
 
 def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_entry_lands_0644_in_a_0700_folder(
@@ -435,7 +376,7 @@ def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_e
     folder_modes = {
         name: stat.S_IMODE((sandbox.home / name).parent.stat().st_mode) for name in SECRET_FILES
     }
-    assert (code, lines[-2]) == (0, line("✓", SECRETS, "stored"))
+    assert (code, lines[-2]) == (0, "  ✓ secrets         stored")
     assert modes == {SECRET_FILES[0]: 0o600, SECRET_FILES[1]: 0o644}
     assert folder_modes == {name: 0o700 for name in SECRET_FILES}
     assert "erzeugt und gespeichert: ~/.secrets/hopin/session-secret (644)" in lines
@@ -452,8 +393,8 @@ def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
     captured = capsys.readouterr()
 
     assert code == 1
-    assert captured.out.splitlines()[-1] == line(
-        "✗", SECRETS, "failed", "not every secret is set up; the lines above say which one is open"
+    assert captured.out.splitlines()[-1] == (
+        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open"
     )
     assert captured.err.splitlines() == ["error: setup stopped at secrets", f"next: {RERUN}"]
 
@@ -503,33 +444,33 @@ def put_secret(sandbox: Sandbox, name: str, mode: int = 0o600) -> Path:
     ("entries", "present", "expected"),
     [
         pytest.param(
-            LIVE, [], line("!", SECRETS, "missing", "live"), id="a live entry that is absent"
+            LIVE, [], "  ! secrets         missing        live", id="a live entry that is absent"
         ),
         pytest.param(
-            LIVE, ["live"], line("·", SECRETS, "complete"), id="a live entry with its file"
+            LIVE, ["live"], "  · secrets         complete", id="a live entry with its file"
         ),
         pytest.param(
-            OPTIONAL, [], line("·", SECRETS, "complete"), id="an optional entry that is absent"
+            OPTIONAL, [], "  · secrets         complete", id="an optional entry that is absent"
         ),
         pytest.param(
-            RETIRED, [], line("·", SECRETS, "complete"), id="a retired entry that is absent"
+            RETIRED, [], "  · secrets         complete", id="a retired entry that is absent"
         ),
         pytest.param(
             BY_HAND,
             [],
-            line("!", SECRETS, "missing", "by-hand (by hand)"),
+            "  ! secrets         missing        by-hand (by hand)",
             id="an entry only a person can create",
         ),
         pytest.param(
             LIVE + OPTIONAL + RETIRED,
             ["live"],
-            line("·", SECRETS, "complete"),
+            "  · secrets         complete",
             id="every kind, the live one present",
         ),
         pytest.param(
             LIVE + BY_HAND,
             [],
-            line("!", SECRETS, "missing", "live, by-hand (by hand)"),
+            "  ! secrets         missing        live, by-hand (by hand)",
             id="a generated and a by-hand entry",
         ),
     ],
@@ -572,7 +513,7 @@ def test_hal_setup_dry_run_names_an_entry_whose_presence_cannot_be_told_and_does
 
     assert (code, lines[-2]) == (
         ExitCode.OK,
-        line("!", SECRETS, "missing", "closed/entry (unknown)"),
+        "  ! secrets         missing        closed/entry (unknown)",
     )
 
 
@@ -602,7 +543,7 @@ def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
 
     code, lines, _ = hal_secrets(LIVE + secret_entry("absent"))
 
-    assert (code, lines[-2]) == (ExitCode.OK, line("!", SECRETS, "missing", "absent"))
+    assert (code, lines[-2]) == (ExitCode.OK, "  ! secrets         missing        absent")
     assert {path: stat.S_IMODE(path.stat().st_mode) for path in modes_before} == modes_before
     assert not (unreadable.parent / "absent").exists()
     unreadable.chmod(0o600)
@@ -628,9 +569,9 @@ def test_hal_setup_apply_sets_up_the_missing_secrets_and_a_repeated_apply_change
 
     second_code, second_lines, _ = hal_secrets(entries, "--apply")
 
-    assert (first_code, first_lines[-2]) == (ExitCode.OK, line("✓", SECRETS, "stored"))
+    assert (first_code, first_lines[-2]) == (ExitCode.OK, "  ✓ secrets         stored")
     assert [mode for _, _, mode, _ in after_first] == [0o600, 0o644]
-    assert (second_code, second_lines[-2]) == (ExitCode.OK, line("·", SECRETS, "complete"))
+    assert (second_code, second_lines[-2]) == (ExitCode.OK, "  · secrets         complete")
     assert [
         (
             path.stat().st_ino,
@@ -685,6 +626,6 @@ def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_re
     code, lines, error = hal_secrets("secret = 5\n")
 
     assert code == ExitCode.FAILURE
-    assert lines[-1].startswith(line("✗", SECRETS, "failed"))
+    assert lines[-1].startswith("  ✗ secrets         failed")
     assert error.splitlines()[0] == "error: setup stopped at secrets"
     assert "unexpected error" not in error

@@ -173,6 +173,7 @@ class Step:
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
     `open_fact` names what a dry run that found something to change shows on its row.
     `details` are the lines printed under the row of an applied step.
+    `before_apply` is the row printed before an apply that waits on the operator (the wizard), or nothing.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
     `may_leave_system_partial` marks the step that runs as root, whose failed apply leaves /etc half written.
@@ -189,6 +190,7 @@ class Step:
     needs_first: Callable[[], str] = lambda: ""
     open_fact: Callable[[], str] = lambda: ""
     details: Callable[[], list[str]] = lambda: []
+    before_apply: Callable[[], Outcome | None] = lambda: None
     events: StepEvents = field(default_factory=StepEvents)
     listed_by_next: bool = True
     operators_only: bool = False
@@ -279,6 +281,7 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         SECRETS_WHY,
         SECRETS_LEFT_OPEN,
         open_fact=open_names,
+        before_apply=lambda: Outcome(SetupEvent.MISSING, open_names()) if open_secrets() else None,
         events=SECRETS_EVENTS,
         listed_by_next=False,
         operators_only=True,
@@ -527,6 +530,8 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply:
             outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
             continue
         try:
+            if apply and (announced := step.before_apply()):
+                write_row(announced.row(row))
             outcomes.append(step.run(apply))
             if apply:
                 details.extend(step.details())
