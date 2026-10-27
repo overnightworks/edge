@@ -40,6 +40,9 @@ _SAME_PAGE_LINK = re.compile(rf"#(?P<id>{_LINKED_ID.pattern})")
 class LegalError(Exception):
     """A legal section or frame is refused, or a page cannot be built; one line."""
 
+    def __init__(self, message: str):
+        super().__init__(f"legal: {message}")
+
 
 @dataclass(frozen=True)
 class Link:

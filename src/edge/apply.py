@@ -26,6 +26,10 @@ enabled in the catalog, declares a setup, and its containers still run while it 
 the run is refused: nothing is asked or published.
 An app (an entry with `repo`) is planned last, in the same plan and under the same `yes`: its
 newest release tag is checked out, built, started and recorded once healthy (`apps.py`).
+While `services.legal` is enabled the three legal pages are built from `legal/frame` and
+`legal/sections` through the validator (`legal_step.py`); a refused section is exit 2, and the
+plan names each page that is new or changes. After `yes` the pages are written to `legal/built/`
+before any unit switches, which the legal unit serves.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -54,6 +58,8 @@ from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
+from edge.legal_section import LegalError
+from edge.legal_step import LegalPlan, plan_legal
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
@@ -99,6 +105,7 @@ CANNOT_PLAN_ERRORS = (
     switches.SwitchError,
     AppError,
     checkout.GitError,
+    LegalError,
 )
 
 
@@ -113,6 +120,7 @@ class Plan:
     images: list[KeptImage]
     realm: reconcile.RealmPlan
     app_plans: AppsPlan
+    legal: LegalPlan
 
     @property
     def changes_nothing(self) -> bool:
@@ -123,11 +131,13 @@ class Plan:
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
             and not self.recreates
             and self.app_plans.changes_nothing
+            and self.legal.changes_nothing
         )
 
     def describe(self) -> list[str]:
         plans = (*self.core, *self.followers, *self.recreates, *self.plans, *self.images)
         return [
+            *self.legal.describe(),
             *(plan.describe() for plan in plans),
             *self.realm.lines,
             *self.app_plans.describe(),
@@ -194,7 +204,10 @@ def _plan(
         reconcile.restart_of(plans, recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
-    return Plan(fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans)
+    legal = plan_legal(repository, fleet)
+    return Plan(
+        fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans, legal
+    )
 
 
 def apply_closed(
@@ -711,7 +724,9 @@ def _confirm_and_switch(
     progress = Progress()
     withheld: dict[str, str] = {}
     try:
-        if failure := core_phase.run(engine, planned, marks, progress):
+        if failure := planned.legal.write(progress) or core_phase.run(
+            engine, planned, marks, progress
+        ):
             print(
                 f"{COMMAND}: partial, {failure}; no unit switched; run `{COMMAND}` again",
                 file=sys.stderr,

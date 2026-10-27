@@ -163,7 +163,7 @@ def test_an_id_used_by_two_blocks_is_refused_naming_both_files():
     message = refusal([other, app("alpha")])
 
     assert message == (
-        'legal/sections/alpha/datenschutz.html: line 1: id "alpha" is already used by '
+        'legal: legal/sections/alpha/datenschutz.html: line 1: id "alpha" is already used by '
         "legal/sections/allgemein/datenschutz.html"
     )
 
@@ -211,7 +211,7 @@ def test_a_link_to_another_apps_id_is_refused_naming_its_owner():
     message = refusal([general(), linking, app("zeta", sections=SECTIONS)])
 
     assert message == (
-        "legal/sections/alpha/datenschutz.html: line 2: link to #zeta-eins on /datenschutz "
+        "legal: legal/sections/alpha/datenschutz.html: line 2: link to #zeta-eins on /datenschutz "
         "(an id of legal/sections/zeta/datenschutz.html) is not allowed "
         "(own ids and the stable ids only)"
     )
@@ -247,7 +247,7 @@ def test_a_template_with_an_unknown_field_is_refused_naming_its_file(name):
     with pytest.raises(LegalError) as refused:
         build_pages(Frame(FRAME.pages, templates), blocks)
 
-    assert str(refused.value) == f"legal/frame/blocks/{name}.html: unknown field $unknown"
+    assert str(refused.value) == f"legal: legal/frame/blocks/{name}.html: unknown field $unknown"
 
 
 def test_a_template_with_a_stray_dollar_sign_is_refused():

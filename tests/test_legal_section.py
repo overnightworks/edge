@@ -59,7 +59,7 @@ def test_a_section_in_the_grammar_hands_its_bytes_on_unchanged():
 def test_a_refusal_names_the_file_and_the_line_and_the_rule():
     text = '<h2 id="hopin">HopIn</h2>\n<img src="x">\n'
 
-    assert refusal(text) == f"{PATH}: line 2: <img> is not allowed ({ALLOWED})"
+    assert refusal(text) == f"legal: {PATH}: line 2: <img> is not allowed ({ALLOWED})"
 
 
 @pytest.mark.parametrize(
@@ -148,7 +148,7 @@ def test_a_section_inside_a_section_is_refused():
     ],
 )
 def test_a_text_that_is_not_in_canonical_form_is_refused_at_the_first_differing_line(text, line):
-    assert refusal(text) == f"{PATH}: line {line}: {CANONICAL_RULE}"
+    assert refusal(text) == f"legal: {PATH}: line {line}: {CANONICAL_RULE}"
 
 
 def test_the_three_character_references_are_the_canonical_way_to_write_them():
