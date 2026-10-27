@@ -45,8 +45,8 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 ([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--apply]` moves a
 renamed repository's clones on this PC ([docs/naming.md](docs/naming.md), P1).
 The five stack commands and `hal setup` deviate from the grammar until overnightworks/edge#207
-H5a2 (Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints `hal setup:` lines and
-ends 0 or 3.
+H5a2 (Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints four rows, a verdict
+and, when it stops, an `error:`/`next:` pair, and ends 0 or 3.
 
 ## Adding a tool: the label rule
 

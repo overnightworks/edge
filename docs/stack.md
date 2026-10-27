@@ -105,8 +105,10 @@ not "applied or nothing to do". They deviate in exactly three ways:
 
 `hal setup` deviates in one way:
 
-- **E4:** `hal setup` prints `hal setup:` lines, not `error:`/`next:`, and ends with 0 when nothing
-  failed and with 3 for a failed step or a refused system step (`home setup` keeps 1).
+- **E4:** `hal setup` prints four rows and a verdict, and a stop as an `error:`/`next:` pair
+  ([docs/home.md](home.md), `hal setup`); it ends with 0 when nothing failed and with 3 for a failed
+  step or a refused system step (`home setup` keeps 1). Ansible's own stream and its BECOME prompt
+  stay until the password step of #296.
 
 ## Dienste an und aus
 
