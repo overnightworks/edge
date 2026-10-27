@@ -1,8 +1,0 @@
-claim_id = "6c4cc3b901d94cd08e51e82a1a324b98"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "5988e13bccea7899f34d1465669137d5620e7ac4"
-branch = "claude/issue-521-a1-typed-realm-app-plans"
-scope = ["src/edge/apps.py", "src/edge/realm/reconcile.py", "tests/test_edge_apps.py", "tests/test_realm_reconcile.py"]
-opened_commit = "c01dc7643f79a0a95da9160de75103113078b08a"
-whole_reason = "One refactor: the realm and app plans store facts instead of rendered lines, so the plan rows can be built from them."
