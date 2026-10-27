@@ -711,8 +711,7 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert "volumes step-ca, traefik-mcp-acme stay" in out
-    assert "step-ca is off" in out
+    assert all(part in out for part in ("volumes step-ca, traefik-mcp-acme stay", "step-ca is off"))
 
 
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
@@ -2129,7 +2128,7 @@ def test_stop_records_the_time_in_a_private_marker_before_closing(
 
     assert exit_code == 0
     assert seen_at_stop == [NOW.isoformat(timespec="seconds")]
-    assert "step-ca is switched off" in out
+    assert all(part in out for part in ("✓ step-ca", "switched off"))
     assert stat.S_IMODE((state / "stopped").stat().st_mode) == 0o700
     assert stat.S_IMODE((state / "stopped" / "step-ca").stat().st_mode) == 0o600
 
@@ -2159,7 +2158,7 @@ def test_stop_of_a_unit_without_a_host_says_there_is_no_barrier_and_writes_none(
     exit_code, out, _ = stop()
 
     assert exit_code == 0
-    assert "no host behind Traefik, so no barrier" in out
+    assert "no host, so no barrier · stopped" in out
     assert not (repository / "dynamic" / "switch-step-ca.yml").exists()
 
 
@@ -2172,10 +2171,10 @@ def test_a_stop_that_fails_leaves_the_switch_and_says_partial(stop, scripted, re
 
     assert exit_code == 1
     assert marker(state) is not None
-    assert "partial: the switch is recorded (since " in err
-    assert "run `edge stop step-ca` again" in err
-    assert "last line" in err
-    assert "switched off" not in out
+    assert all(part in out for part in ("partial", "switch recorded"))
+    assert "error: step-ca is only partly off" in err
+    assert all(part in err for part in ("next: hal stop step-ca", "last line"))
+    assert "switched off" not in out + err
 
 
 def test_a_container_that_still_runs_after_the_stop_is_partial(stop, scripted, repository, state):
@@ -2187,7 +2186,7 @@ def test_a_container_that_still_runs_after_the_stop_is_partial(stop, scripted, r
 
     assert exit_code == 1
     assert "a container of it still runs" in err
-    assert "switched off" not in out
+    assert "switched off" not in out + err
 
 
 def test_a_switch_that_cannot_be_written_still_closes_the_unit(stop, scripted, repository, state):
@@ -2196,14 +2195,14 @@ def test_a_switch_that_cannot_be_written_still_closes_the_unit(stop, scripted, r
     state.mkdir(parents=True)
     state.chmod(0o500)
     try:
-        exit_code, _, err = stop()
+        exit_code, out, _ = stop()
     finally:
         state.chmod(0o700)
 
     assert exit_code == 1
     assert scripted.containers["step-ca"] == "exited"
-    assert "step-ca is stopped, but the switch could not be recorded" in err
-    assert "`edge apply` would start it again" in err
+    assert "stopped, hal apply would start it again" in out
+    assert "switch not recorded" in out
 
 
 def test_stop_stops_a_switched_off_unit_again_when_something_of_it_runs(
@@ -2458,11 +2457,11 @@ def test_an_unreadable_marker_directory_still_closes_a_running_unit(
     state.mkdir(parents=True)
     (state / "stopped").write_text("not a directory")
 
-    exit_code, _, err = stop()
+    exit_code, out, _ = stop()
 
     assert exit_code == 1
     assert scripted.containers["step-ca"] == "exited"
-    assert "partial" in err
+    assert "partial" in out
 
 
 def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
@@ -2471,11 +2470,11 @@ def test_an_interrupt_while_waiting_for_the_lock_is_partial_exit_1(
     """#60 rule 2 partial: an interrupt exits 1 with the recorded switch, not a traceback."""
     put_unit_in("A", scripted, repository, state)
 
-    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
+    exit_code, out, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
-    assert "partial: the switch is recorded" in err
-    assert "interrupted while waiting to stop it" in err
+    assert "interrupted while locking · switch recorded" in out
+    assert "interrupted while locking" in err
     assert marker(state) is not None
 
 
@@ -2486,11 +2485,11 @@ def test_an_interrupt_for_an_enabled_unit_with_nothing_running_still_records_the
     put_unit_in("A", scripted, repository, state)
     scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
 
-    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
+    exit_code, out, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
-    assert "partial: the switch is recorded" in err
-    assert "interrupted while waiting to stop it" in err
+    assert "interrupted while locking · switch recorded" in out
+    assert "interrupted while locking" in err
     assert marker(state) is not None
 
 
@@ -2500,11 +2499,11 @@ def test_an_interrupt_while_a_switched_off_unit_waits_for_the_lock_is_partial_ex
     """#60 rule 2 partial from B with nothing running: Ctrl-C behind a start's `up` exits 1."""
     put_unit_in("B", scripted, repository, state)
 
-    exit_code, _, err = stop(marks=InterruptedWaitForLock(state))
+    exit_code, out, err = stop(marks=InterruptedWaitForLock(state))
 
     assert exit_code == 1
-    assert "partial: the switch is recorded (since 17.10. 22:10); interrupted" in err
-    assert "run `edge stop step-ca` again" in err
+    assert "interrupted while waiting · switch recorded" in out
+    assert "next: hal stop step-ca" in err
 
 
 def test_an_interrupt_after_a_start_cleared_the_marker_still_records_the_switch(
@@ -2525,10 +2524,10 @@ def test_an_interrupt_after_a_start_cleared_the_marker_still_records_the_switch(
 
     monkeypatch.setattr(scripted, "verb_ps", start_finishes_then_interrupt)
 
-    exit_code, _, err = stop()
+    exit_code, out, _ = stop()
 
     assert exit_code == 1
-    assert "partial: the switch is recorded" in err
+    assert "switch recorded" in out
     assert marker(state) is not None
 
 
@@ -2543,7 +2542,8 @@ def test_stop_of_a_disabled_stopped_unit_with_a_marker_changes_nothing(
     exit_code, out, _ = stop()
 
     assert exit_code == 0
-    assert "step-ca is disabled in the catalog and nothing of it runs" in out
+    assert all(part in out for part in ("· step-ca", "disabled"))
+    assert "nothing of it runs" in out
     assert (state / "stopped" / "step-ca").stat().st_ino == inode
 
 
@@ -2552,12 +2552,12 @@ def test_a_lock_that_cannot_be_taken_does_not_blame_the_record(stop, scripted, r
     put_unit_in("A", scripted, repository, state)
     (state / "switch.lock").mkdir(parents=True)
 
-    exit_code, _, err = stop()
+    exit_code, out, _ = stop()
 
     assert exit_code == 1
     assert scripted.containers["step-ca"] == "exited"
-    assert "the switch is recorded" in err
-    assert "could not be recorded" not in err
+    assert "switch recorded" in out
+    assert "not recorded" not in out
 
 
 def test_a_stop_of_a_switched_off_unit_looks_again_under_the_lock(
@@ -2614,7 +2614,7 @@ def test_stop_writes_the_barrier_before_the_stop_and_reports_only_what_was_verif
     assert exit_code == 0
     assert events == ["stop with barrier verified"]
     assert ingress.asked == ["barrier"]
-    assert "probe is switched off" in out
+    assert all(part in out for part in ("✓ probe", "barrier up · stopped"))
     assert ingress.barrier_file().exists()
     assert marker(state, "probe") == NOW.isoformat(timespec="seconds")
 
@@ -2628,8 +2628,8 @@ def test_a_barrier_traefik_rejects_is_partial_and_still_stops_the_unit(
     exit_code, out, err = stop("probe")
 
     assert exit_code == 1
-    assert "switched off" not in out
-    assert "partial" in err
+    assert "switched off" not in out + err
+    assert "barrier not proven · stopped" in out
     assert (
         "Traefik did not answer the barrier's 404 (X-Edge-Barrier: probe) "
         "for hello.probe.test within 15 s" in err
@@ -2645,10 +2645,10 @@ def test_a_stop_while_traefik_is_down_is_partial_with_everything_kept(
     """#61 rule 3: Traefik down, exit 1, containers stopped, marker and barrier kept."""
     ingress.down = True
 
-    exit_code, _, err = stop("probe")
+    exit_code, out, _ = stop("probe")
 
     assert exit_code == 1
-    assert "partial" in err
+    assert "barrier not proven" in out
     assert scripted.containers == {"hello": "exited"}
     assert marker(state, "probe") is not None
     assert ingress.barrier_file().exists()
@@ -2664,7 +2664,7 @@ def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_i
     exit_code, out, _ = stop("probe")
 
     assert exit_code == 0
-    assert "already switched off" in out
+    assert all(part in out for part in ("barrier back", "off since 17.10. 22:10"))
     assert ingress.barrier_file().exists()
     assert ingress.asked == ["barrier"]
     assert scripted.changing_verbs() == []
@@ -2681,9 +2681,9 @@ def test_stop_names_the_barrier_it_repaired_and_only_then(
 
     _, repaired, _ = stop("probe")
 
-    assert "its barrier was missing" not in standing
-    assert "is already switched off (since" in repaired
-    assert "its barrier was missing and stands again" in repaired
+    assert "barrier back" not in standing
+    assert "already off" in standing
+    assert "barrier back" in repaired
 
 
 @pytest.mark.parametrize(
@@ -2700,7 +2700,7 @@ def test_stop_repairs_a_barrier_file_that_differs_or_cannot_be_decoded(
     exit_code, out, _ = stop("probe")
 
     assert exit_code == 0
-    assert "stands again" in out
+    assert "barrier back" in out
     assert ingress.barrier_file().read_bytes() != damaged
 
 
@@ -2726,7 +2726,8 @@ def test_a_lost_barrier_that_cannot_be_proven_makes_the_second_stop_partial(
     exit_code, out, err = stop("probe")
 
     assert exit_code == 1
-    assert "already switched off" not in out
+    assert "already off" not in out
+    assert "barrier not proven" in out
     assert "Traefik did not answer the barrier's 404" in err
 
 
@@ -3946,8 +3947,7 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_o
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert held in out
-    assert "nothing to change" in out
+    assert all(part in out for part in (held, "nothing to change"))
     assert scripted.changing_verbs() == []
     assert follower_entry(state) == entry
 

@@ -9,9 +9,10 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
 default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
-Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has two
-areas, `exposure` (local) and `hosts` (reads Cloudflare, see docs/external.md), one per run:
-`hal check` and `hal check exposure` are the same run.
+Run `hal check exposure` (human table) or `hal check exposure --json` (the same findings for
+machines). It has two areas, `exposure` (local) and `hosts` (reads Cloudflare, see
+docs/external.md), one per run. A bare `hal check` is not an area: it is the daily check, which also
+mails and pops up what is new (docs/home.md), and takes no `--json`.
 
 It runs `docker ps --all`, `docker inspect` and `ss -H -ltnupe` (fixed arguments, no shell, nothing
 written) and reports, by `problem`:
@@ -40,7 +41,7 @@ listed is unreadable too).
 ### The allow-list
 
 `src/edge_check/allow-list.toml` (or `hal check exposure --allow-list PATH`; a bare `hal check
---allow-list` is a usage error) names the known listeners beyond loopback. The default ships in the
+--allow-list` is a usage error, since only `exposure` takes it) names the known listeners beyond loopback. The default ships in the
 package, so it is found whatever the current directory. Docker publications are never
 allow-listed. Each `[[allow]]` entry needs a `reason` and a `port`, an `owner` (process name, or the
 system unit under `system.slice`), or both, plus `protocol` (`tcp` or `udp`); any other key is an error.
@@ -249,9 +250,15 @@ path or file name.
 a failed app does not stop the others), a `repository` row (`pruned` after forget and check, `not pruned`
 when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
+`hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`
+per app, `✓ repository  checked` (`✗ repository  not checked  <reason>` when the check failed after an app
+failed) and, on success, `✓ restore test done · N apps · <time>`; a failed app ends with `error: 1 of N apps
+not proven` and `next: hal restore --test <app>`; with `--snapshot` (one app, the realm step's call) it ends with
+`error: <app>: <reason>` instead.
+
 Exit 0: every phase succeeded. Exit 3: a run failed; `error: 1 of N apps not backed up` with
 `next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
-(`hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
+(`hal restore --list`, the real `hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
 example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 
 ### Restore one app
