@@ -15,3 +15,6 @@ crash.log
 # The legal pages `edge apply` builds (legal/built/.gitkeep stays tracked)
 /legal/built/*
 !/legal/built/.gitkeep
+
+# What `edge apply` last wrote there, beside the pages nginx serves
+/legal/built-record.json

@@ -7,21 +7,22 @@ plan time, before the question, and nothing is written on one.
 
 import os
 import tempfile
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from edge import catalog, checkout
+from edge import catalog, checkout, legal_record
 from edge.legal_pages import (
     TEMPLATES,
     Block,
     BlockKind,
     Frame,
+    PageFingerprint,
     build_pages,
+    fingerprint_pages,
     frame_page_path,
     frame_template_path,
-    is_published_in,
 )
 from edge.legal_section import PAGES, LegalError, parse_fragment, parse_general
 from edge.unit_plans import Fleet, Progress
@@ -41,7 +42,8 @@ class LegalPlan:
     repository: Path
     pages: Mapping[str, str]  # empty while the step does not run
     changed: Mapping[str, str]  # the pages that differ from `legal/built`: "new" or "changes"
-    changed_blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # files by page
+    changed_blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # lines by page
+    fingerprints: Mapping[str, PageFingerprint] = field(default_factory=dict)
 
     @property
     def changes_nothing(self) -> bool:
@@ -53,7 +55,7 @@ class LegalPlan:
         if not self.changed:
             return ["legal: unchanged"]
         return [
-            f"legal: {page} {change}: {_named(self.changed_blocks.get(page, ()))}"
+            f"legal: {page} {change}{_named(self.changed_blocks.get(page, ()))}"
             for page, change in self.changed.items()
         ]
 
@@ -61,11 +63,16 @@ class LegalPlan:
         """Write the changed pages; the failure line, or None. The progress names this step only
         while it runs."""
         progress.unit, progress.step = LEGAL_UNIT, "write the legal pages"
+        failed = ""
         try:
             for page in self.changed:
+                failed = f"{BUILT_DIRECTORY}/{page}.html"
                 _replace(self.repository / BUILT_DIRECTORY, page, self.pages[page])
+            if self.changed:
+                failed = legal_record.RECORD_FILE
+                legal_record.write(self.repository, self.fingerprints)
         except OSError as error:
-            return f"legal: could not write {BUILT_DIRECTORY}/{page}.html ({error.strerror})"
+            return f"legal: could not write {failed} ({error.strerror})"
         finally:
             progress.unit = progress.step = ""
         return None
@@ -88,27 +95,23 @@ def plan_legal(
         for page, text in pages.items()
         if (change := _change(repository / BUILT_DIRECTORY / f"{page}.html", text))
     }
-    blocks = {page: _changed_blocks(repository, frame, page, all_blocks) for page in changed}
-    return LegalPlan(repository, pages, changed, blocks)
+    fingerprints = fingerprint_pages(frame, all_blocks, pages)
+    named = {page: _changes_of(repository, page, fingerprints[page]) for page in changed}
+    return LegalPlan(repository, pages, changed, named, fingerprints)
 
 
-def _changed_blocks(
-    repository: Path, frame: Frame, page: str, blocks: Sequence[Block]
-) -> tuple[str, ...]:
-    """The files of the page's blocks whose text the built page does not hold yet."""
+def _changes_of(repository: Path, page: str, current: PageFingerprint) -> tuple[str, ...]:
+    """What the new build changes on the page against the record of the last write."""
     try:
-        built = (repository / BUILT_DIRECTORY / f"{page}.html").read_text()
+        built = (repository / BUILT_DIRECTORY / f"{page}.html").read_bytes()
     except FileNotFoundError:
-        built = ""
-    return tuple(
-        block.path
-        for block in blocks
-        if block.page == page and not is_published_in(frame, blocks, block, built)
-    )
+        built = None
+    previous = None if built is None else legal_record.read_page(repository, built, page)
+    return legal_record.changes(page, previous, current)
 
 
-def _named(files: Sequence[str]) -> str:
-    return ", ".join(files) if files else "no block (the frame or a block that left)"
+def _named(lines: tuple[str, ...]) -> str:
+    return f": {', '.join(lines)}" if lines else ""
 
 
 def read_frame(repository: Path) -> Frame:

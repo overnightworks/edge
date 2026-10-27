@@ -6,6 +6,7 @@ the services and then the apps, each group sorted by anchor; the frame decides w
 stands. Every id stands once in the assembled page, and every link to an id has a target there.
 """
 
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -58,7 +59,6 @@ _MONTHS = (
 )
 _ID_ATTRIBUTE = re.compile(r'\sid="([^"]*)"')
 FRAME_OWNER = "frame"
-_SLOT = "\x00"
 
 
 class BlockKind(StrEnum):
@@ -77,45 +77,26 @@ class Block:
 
 
 @dataclass(frozen=True)
+class BlockFingerprint:
+    """One rendered block of a page: a general heading or a whole service or app block."""
+
+    path: str
+    anchor: str
+    kind: BlockKind
+    sha256: str
+
+
+@dataclass(frozen=True)
+class PageFingerprint:
+    page_sha256: str
+    frame_sha256: str  # the page's skeleton with no block in it
+    blocks: tuple[BlockFingerprint, ...]
+
+
+@dataclass(frozen=True)
 class Frame:
     pages: Mapping[str, str]  # the page skeletons by page
     templates: Mapping[str, str]  # the block templates by name, `TEMPLATES`
-
-
-def is_published_in(frame: Frame, blocks: Sequence[Block], block: Block, page_text: str) -> bool:
-    """Whether the block's whole rendered text stands in the page unchanged and ends where a block
-    or the frame's own text begins, so that a paragraph or heading cut from its end is a change;
-    a general block's own headings are no boundary."""
-    own = _render(frame, block).body
-    _, _, after = _page(frame, block.page, [(block, _Rendered(_SLOT, ""))]).partition(_SLOT)
-    others = (other for other in blocks if other.page == block.page and other is not block)
-    boundaries = (
-        *(_opening_tag(frame, other) for other in others),
-        *_generic_block_starts(frame, block),
-        _opening_tag_of(after),
-    )
-    position = page_text.find(own)
-    while position != -1:
-        if page_text.startswith(boundaries, position + len(own)):
-            return True
-        position = page_text.find(own, position + 1)
-    return False
-
-
-def _generic_block_starts(frame: Frame, block: Block) -> list[str]:
-    """What opens a block of any name; a general block's own headings look the same, so it knows
-    only the blocks that stand in the catalog."""
-    if block.kind is BlockKind.GENERAL:
-        return []
-    return [frame.templates[kind.value].partition("$")[0] for kind in BlockKind]
-
-
-def _opening_tag(frame: Frame, block: Block) -> str:
-    return _opening_tag_of(_render(frame, block).body)
-
-
-def _opening_tag_of(text: str) -> str:
-    return text[: text.find(">") + 1]
 
 
 def frame_page_path(page: str) -> str:
@@ -135,6 +116,38 @@ def build_pages(frame: Frame, blocks: Sequence[Block]) -> dict[str, str]:
         for block in page_blocks:
             _check_links(block, owners)
     return {page: _page(frame, page, rendered[page]) for page in PAGES}
+
+
+def fingerprint_pages(
+    frame: Frame, blocks: Sequence[Block], pages: Mapping[str, str]
+) -> dict[str, PageFingerprint]:
+    """What each page of `pages` is made of, for telling the next build's changes from it."""
+    return {
+        page: PageFingerprint(
+            _sha256(pages[page]),
+            _sha256(_page(frame, page, [])),
+            tuple(
+                BlockFingerprint(block.path, anchor, block.kind, _sha256(body))
+                for block in _in_page_order(blocks, page)
+                for anchor, body in _anchored_bodies(frame, block)
+            ),
+        )
+        for page in PAGES
+    }
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _anchored_bodies(frame: Frame, block: Block) -> list[tuple[str, str]]:
+    """A general block's headings each on their own, any other block as a whole."""
+    if block.kind is BlockKind.GENERAL:
+        return [
+            (heading.id, _fill_heading(frame, "general", heading))
+            for heading in block.parsed.headings
+        ]
+    return [(_anchor(block), _render(frame, block).body)]
 
 
 @dataclass(frozen=True)
@@ -166,11 +179,13 @@ def _heading_fields(heading: Heading, subs: str = "") -> dict[str, str]:
     return {"id": heading.id, "title": heading.title, "content": heading.content, "subs": subs}
 
 
+def _fill_heading(frame: Frame, name: str, heading: Heading, subs: str = "") -> str:
+    return _fill(frame.templates[name], frame_template_path(name), **_heading_fields(heading, subs))
+
+
 def _render(frame: Frame, block: Block) -> _Rendered:
     def fill(name: str, heading: Heading, subs: str = "") -> str:
-        return _fill(
-            frame.templates[name], frame_template_path(name), **_heading_fields(heading, subs)
-        )
+        return _fill_heading(frame, name, heading, subs)
 
     parsed = block.parsed
     if block.kind is BlockKind.GENERAL:
