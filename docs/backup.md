@@ -9,8 +9,9 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
 default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
-Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has one
-area today, `exposure`: `hal check` and `hal check exposure` are the same run.
+Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has two
+areas, `exposure` (local) and `hosts` (reads Cloudflare, see docs/external.md), one per run:
+`hal check` and `hal check exposure` are the same run.
 
 It runs `docker ps --all`, `docker inspect` and `ss -H -ltnupe` (fixed arguments, no shell, nothing
 written) and reports, by `problem`:
