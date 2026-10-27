@@ -14,9 +14,9 @@ from test_keycloak_probe import (
 
 
 def stack_that_records(
-    probe: ModuleType, scratch: Path, steps: list[str], write_appkit=None
+    module: ModuleType, scratch: Path, steps: list[str], write_appkit=None
 ) -> object:
-    stack = probe.Stack(scratch, write_appkit=write_appkit or (lambda: steps.append("write")))
+    stack = module.Stack(scratch, write_appkit=write_appkit or (lambda: steps.append("write")))
 
     def compose(*arguments: str, **_: object) -> subprocess.CompletedProcess[str]:
         steps.append(f"compose {arguments[0]}")
@@ -27,7 +27,7 @@ def stack_that_records(
 
 
 def test_the_stack_writes_the_appkit_files_before_compose_up(
-    probe: ModuleType,
+    probe: ModuleType,  # noqa: F811
     tmp_path: Path,
     docker_host: DockerHost,  # noqa: F811
 ) -> None:
@@ -39,7 +39,7 @@ def test_the_stack_writes_the_appkit_files_before_compose_up(
 
 
 def test_a_failing_write_stops_the_stack_before_compose_up_loudly(
-    probe: ModuleType,
+    probe: ModuleType,  # noqa: F811
     tmp_path: Path,
     docker_host: DockerHost,  # noqa: F811
 ) -> None:
@@ -59,7 +59,7 @@ def test_a_failing_write_stops_the_stack_before_compose_up_loudly(
     ("exit_code", "outcome"), [(0, "written"), (2, "appkit step failed")], ids=["ok", "refused"]
 )
 def test_the_default_write_runs_the_step_through_the_repositorys_own_uv_run(
-    probe: ModuleType,
+    probe: ModuleType,  # noqa: F811
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     exit_code: int,
