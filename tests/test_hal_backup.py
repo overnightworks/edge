@@ -339,6 +339,21 @@ def test_a_failed_restore_test_of_one_snapshot_keeps_its_reason_in_the_error_lin
     ]
 
 
+def test_a_failed_check_after_the_failed_app_of_one_snapshot_still_names_the_app_in_the_error_line(
+    edge_backup, machine
+):
+    edge_backup("backup")
+    machine.failing["restic check"] = 1
+
+    outcome = edge_backup(
+        *declare_shipped_apps(), "restore", "--test", "keycloak", "--snapshot", "0" * 12
+    )
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines()[0].startswith("error: keycloak: ")
+    assert outcome.err.splitlines()[1] == "next: hal restore --test keycloak"
+
+
 def test_a_restore_test_that_cannot_start_prints_only_the_error_pair(edge_backup, machine, home):
     edge_backup(*declare_two_apps(home), "backup")
     (home / ".secrets/restic/password").unlink()

@@ -78,7 +78,7 @@ def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
     total = run.backed_up_apps + len(failed)
     noun = Noun.APP if total == 1 else Noun.APPS
     failure.error_line = (
-        f"{len(failed)} of {total} {noun} not backed up" if rows else f"{failure.app}: {failure}"
+        f"{len(failed)} of {total} {noun} not backed up" if rows else f"{failed[0]}: {failure}"
     )
     failure.next_step = f"hal backup {failed[0]}"
 
@@ -105,7 +105,7 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
                 total = run.proven_apps + len(failed)
                 noun = Noun.APP if total == 1 else Noun.APPS
                 failure.error_line = (
-                    f"{failure.app}: {failure}"
+                    f"{failed[0]}: {failure}"
                     if arguments.snapshot
                     else f"{len(failed)} of {total} {noun} not proven"
                 )
