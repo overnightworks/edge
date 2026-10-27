@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wie hal spricht</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+  /* Layout: one sheet in the house mockup style (docs/design/keycloak-theme.html), pairs of
+     terminals "heute | neu" side by side from 1000 px, stacked below. Terminals stay dark in
+     both page themes, as a real terminal does. */
+  :root {
+    --canvas: #E9ECEE;
+    --canvas-2: #DFE3E6;
+    --screen: #FFFFFF;
+    --ink: #14181D;
+    --ink-soft: #5C6774;
+    --ink-faint: #8A94A0;
+    --line: #D2D8DD;
+    --mark: #0C6C77;
+    --busy: #9A6200;
+    --warn: #AC2222;
+    --good: #2B7A43;
+    --shadow: 0 1px 2px rgba(20, 24, 29, .06), 0 8px 24px -12px rgba(20, 24, 29, .28);
+    --term: #12161B;
+    --term-edge: #12161B;
+    --t-fg: #D6DCE2;
+    --t-dim: #7F8995;
+    --t-hi: #F4F6F8;
+    --t-green: #7CD08A;
+    --t-red: #FF7B72;
+    --t-yellow: #E7C266;
+    --t-blue: #84B6F3;
+    --t-cyan: #6DD3DF;
+    --t-note: #C3B2F7;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --canvas: #101317;
+      --canvas-2: #171B21;
+      --screen: #1C2128;
+      --ink: #E8ECF0;
+      --ink-soft: #9BA5B1;
+      --ink-faint: #737E8B;
+      --line: #2C333C;
+      --mark: #56C3CD;
+      --busy: #E0A63F;
+      --warn: #EE7070;
+      --good: #6CC383;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 28px -14px rgba(0, 0, 0, .8);
+      --term: #0A0D10;
+      --term-edge: #2C333C;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --canvas: #101317;
+    --canvas-2: #171B21;
+    --screen: #1C2128;
+    --ink: #E8ECF0;
+    --ink-soft: #9BA5B1;
+    --ink-faint: #737E8B;
+    --line: #2C333C;
+    --mark: #56C3CD;
+    --busy: #E0A63F;
+    --warn: #EE7070;
+    --good: #6CC383;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 28px -14px rgba(0, 0, 0, .8);
+    --term: #0A0D10;
+    --term-edge: #2C333C;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding-block: 32px 72px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+  @media (min-width: 760px) {
+    .sheet { padding-block: 44px 88px; }
+  }
+  a { color: var(--mark); text-underline-offset: 3px; }
+  :focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+  code { font-family: var(--mono); font-size: .9em; overflow-wrap: anywhere; }
+  p, li { max-width: 70ch; }
+
+  /* ---------- top ---------- */
+  .top { display: flex; flex-direction: column; gap: 14px; }
+  .eyebrow {
+    font: 600 12px/1.2 var(--cond);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 600;
+    letter-spacing: -.02em;
+    line-height: 1.08;
+    text-wrap: balance;
+  }
+  h1 .cmd { font-family: var(--mono); font-weight: 600; letter-spacing: -.03em; color: var(--mark); }
+  .lede { margin: 0; font-size: 17px; color: var(--ink-soft); max-width: 66ch; }
+  .lede b { color: var(--ink); font-weight: 600; }
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    align-self: flex-start;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--screen);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .switch input { width: 18px; height: 18px; accent-color: var(--mark); margin: 0; }
+  .switch code { color: var(--ink); }
+
+  /* ---------- sections ---------- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .head { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 18px; }
+  h2 {
+    margin: 0;
+    font-size: clamp(21px, 2.6vw, 26px);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  h2 code { font-size: .92em; color: var(--mark); }
+  h3 { margin: 0; font: 600 13px/1.3 var(--cond); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+  .sub { margin: 0; color: var(--ink-soft); }
+
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (min-width: 1000px) {
+    .pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }
+  .stack { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+  figure { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; color: var(--ink-soft); }
+  .tag {
+    font: 600 11px/1 var(--cond);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 4px 7px 3px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+  }
+  .tag.today { color: var(--warn); }
+  .tag.new { color: var(--mark); }
+  .tag.fail { color: var(--busy); }
+
+  /* ---------- terminal ---------- */
+  .term {
+    margin: 0;
+    background: var(--term);
+    color: var(--t-fg);
+    border: 1px solid var(--term-edge);
+    border-radius: 8px;
+    padding: 14px 16px 16px;
+    font: 12px/1.6 var(--mono);
+    font-variant-ligatures: none;
+    overflow-x: auto;
+    white-space: pre;
+    tab-size: 8;
+    box-shadow: var(--shadow);
+  }
+  .term .p { color: var(--t-dim); }
+  .term .u { color: var(--t-hi); }
+  .term .g { color: var(--t-green); }
+  .term .r { color: var(--t-red); }
+  .term .y { color: var(--t-yellow); }
+  .term .b { color: var(--t-blue); }
+  .term .c { color: var(--t-cyan); }
+  .term .d { color: var(--t-dim); }
+  .term .w { color: var(--t-hi); font-weight: 600; }
+  .term .rw { color: var(--t-red); font-weight: 600; }
+  .term .hd { color: var(--t-hi); font-weight: 600; }
+  .term .sys { color: var(--t-fg); background: rgba(255, 255, 255, .06); border-radius: 3px; }
+  .term .live { color: var(--t-cyan); opacity: .78; }
+  .term .n {
+    color: var(--t-note);
+    font: italic 400 11.5px/1 var(--sans);
+    white-space: nowrap;
+  }
+  .term .nm { color: var(--t-note); }
+  .nocolor .term .g, .nocolor .term .r, .nocolor .term .y, .nocolor .term .b,
+  .nocolor .term .c, .nocolor .term .live, .nocolor .term .rw { color: var(--t-fg); }
+  .nocolor .term .d, .nocolor .term .w, .nocolor .term .hd, .nocolor .term .u { color: var(--t-fg); }
+  .spin { display: inline-block; }
+  @media (prefers-reduced-motion: no-preference) {
+    .spin::after { content: "⠋"; animation: spin 1s steps(1) infinite; }
+    @keyframes spin {
+      0% { content: "⠋"; } 12.5% { content: "⠙"; } 25% { content: "⠹"; } 37.5% { content: "⠸"; }
+      50% { content: "⠼"; } 62.5% { content: "⠴"; } 75% { content: "⠦"; } 87.5% { content: "⠧"; }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin::after { content: "⠼"; }
+  }
+
+  .why { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--ink-soft); }
+  .why li { max-width: 66ch; }
+  .why b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- anatomy and glyphs ---------- */
+  .anatomy { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (min-width: 1000px) {
+    .anatomy { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  }
+  .glyphs {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+    gap: 8px;
+  }
+  .glyphs li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--screen);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 14px;
+    min-width: 0;
+  }
+  .glyphs .gl {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: var(--term);
+    font: 600 16px/1 var(--mono);
+  }
+  .glyphs b { font-weight: 600; }
+  .glyphs span.t { color: var(--ink-soft); }
+  .gl.g { color: var(--t-green); } .gl.r { color: var(--t-red); } .gl.y { color: var(--t-yellow); }
+  .gl.d { color: var(--t-dim); } .gl.b { color: var(--t-blue); } .gl.c { color: var(--t-cyan); }
+  .nocolor .gl { color: var(--t-fg); }
+
+  .readers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .reader { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  @media (min-width: 760px) {
+    .reader { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: center; }
+  }
+  .reader .who { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+  .reader .who b { font-weight: 600; }
+  .reader .who span { color: var(--ink-soft); font-size: 13px; }
+  .reader .term { padding: 10px 14px; box-shadow: none; }
+
+  /* ---------- grid of small commands ---------- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  @media (min-width: 1000px) {
+    .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }
+  .grid .term { box-shadow: none; }
+  .was { font-size: 12.5px; color: var(--ink-soft); margin: 0; }
+  .was code { color: var(--ink); background: var(--canvas-2); padding: 1px 4px; border-radius: 3px; }
+
+  /* ---------- what disappears ---------- */
+  .gone { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--screen); }
+  .gone table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 620px; }
+  .gone th, .gone td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .gone tr:last-child td { border-bottom: 0; }
+  .gone th { font: 600 11.5px/1.2 var(--cond); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-soft); background: var(--canvas-2); }
+  .gone td:first-child code { color: var(--warn); }
+  .gone td:nth-child(2) code { color: var(--good); }
+  .gone td:last-child { color: var(--ink-soft); }
+
+  /* ---------- decisions ---------- */
+  .decisions { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  @media (min-width: 1000px) {
+    .decisions { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }
+  .decisions li {
+    background: var(--screen);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    max-width: none;
+  }
+  .decisions li.push { border-color: var(--busy); }
+  .decisions .k { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .decisions .k b { font-weight: 600; font-size: 15px; }
+  .decisions .tag.push { color: var(--busy); }
+  .decisions p { margin: 0; font-size: 14px; color: var(--ink-soft); max-width: none; }
+  .decisions p q { color: var(--ink); font-style: italic; quotes: "„" "“"; }
+
+  .src { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 14px; }
+  .src p { margin: 0 0 6px; max-width: 100ch; }
+</style>
+
+</head>
+<body>
+<div class="sheet" id="sheet">
+
+<header class="top">
+  <div class="eyebrow"><span>edge</span><span>Bild, kein Bau</span></div>
+  <h1>Wie <span class="cmd">hal</span> spricht</h1>
+  <p class="lede">Eine Zeile pro Sache, immer im selben Schnitt: <b>Zeichen · Objekt · Ereignis · Fakt.</b>
+    Unverändertes wird grau und still, Geändertes grün, was dich braucht gelb, Kaputtes rot.
+    Kein Satz, kein Werkzeug-Rohtext, keine Passwortabfrage von Ansible. Am Terminal liest du Zeilen,
+    im Journal liegt dasselbe Ereignis im Flotten-Logformat.</p>
+  <label class="switch" for="nocolor"><input type="checkbox" id="nocolor"><span>Ohne Farbe ansehen, wie mit <code>NO_COLOR</code> oder in einer Pipe</span></label>
+</header>
+
+<section aria-labelledby="s-line">
+  <div class="head">
+    <h2 id="s-line">Eine Zeile, immer gleich</h2>
+    <p class="sub">Jeder Befehl, jedes Skript, jedes Setup. Die Spalten fluchten, also findet das Auge die rote Zeile sofort.</p>
+  </div>
+  <div class="anatomy">
+<pre class="term" aria-label="Aufbau einer Zeile"><span class="g">  ✓</span> hopin           updated        <span class="d">v2026.10.26.1 → v2026.10.27.1 · 1m42s</span>
+<span class="nm">  │ │               │              └ Fakt: Werte, ein paar Wörter, grau</span>
+<span class="nm">  │ │               └ Ereignis: was geschah · im Plan: was geschehen wird</span>
+<span class="nm">  │ └ Objekt: so, wie du es tippst (Einheit, App, Schritt)</span>
+<span class="nm">  └ Zeichen: der Zustand auf einen Blick</span>
+
+<span class="c">  ›</span> sign in         open link      <span class="d">confirm code WZUW-XUGZ</span>
+    https://auth.hallucinai.de/realms/hallucinai/device?user_code=WZUW-XUGZ
+<span class="nm">    └ Link oder Befehl zum Kopieren: eigene Zeile, nie gekürzt</span>
+
+<span class="hd">core</span>                                  <span class="n">← Gruppe, ab etwa sechs Zeilen</span>
+<span class="b">  ~</span> traefik         recreate       <span class="d">traefik.yml changed</span>
+<span class="w">✓ done</span> <span class="d">· 7 changed · 2m14s</span>                <span class="n">← jede Ausgabe endet mit einem Urteil</span></pre>
+    <ul class="glyphs" aria-label="Die acht Zeichen">
+      <li><span class="gl g">✓</span><span><b>erledigt</b> <span class="t">oder Prüfung gehalten</span></span></li>
+      <li><span class="gl r">✗</span><span><b>fehlgeschlagen</b> <span class="t">mit Grund</span></span></li>
+      <li><span class="gl y">!</span><span><b>braucht dich</b> <span class="t">läuft, aber …</span></span></li>
+      <li><span class="gl d">·</span><span><b>unverändert</b> <span class="t">oder übersprungen</span></span></li>
+      <li><span class="gl g">+</span><span><b>Plan: neu</b> <span class="t">anlegen, starten</span></span></li>
+      <li><span class="gl b">~</span><span><b>Plan: ändern</b> <span class="t">neu erstellen, updaten</span></span></li>
+      <li><span class="gl r">-</span><span><b>Plan: weg</b> <span class="t">stoppen, entfernen</span></span></li>
+      <li><span class="gl c">›</span><span><b>jetzt</b> <span class="t">live, oder du bist dran</span></span></li>
+    </ul>
+  </div>
+  <h3>Ein Ereignis, drei Leser</h3>
+  <div class="readers">
+    <div class="reader">
+      <div class="who"><b>Terminal</b><span>du schaust zu: Farbe, Live-Zeile</span></div>
+<pre class="term"><span class="g">  ✓</span> songmaker       backed up      <span class="d">4f2a91c0 · 2.1 GiB · 3m12s</span></pre>
+    </div>
+    <div class="reader">
+      <div class="who"><b>Pipe, Datei, Agent</b><span>kein Terminal: dieselben Wörter, keine Farbe</span></div>
+<pre class="term">  ✓ songmaker       backed up      4f2a91c0 · 2.1 GiB · 3m12s</pre>
+    </div>
+    <div class="reader">
+      <div class="who"><b>Timer, Journal</b><span><code>LOG_FORMAT=json</code> in der Unit: Flotten-Format aus #4</span></div>
+<pre class="term"><span class="d">Nov 01 03:03:15 pc hal[4711]:</span> {"timestamp":"2026-11-01T02:03:15Z","level":"info","logger":"hal.backup","service":"hal","event":"backed up","subject":"songmaker","snapshot":"4f2a91c0","bytes":2254857830,"seconds":192}</pre>
+    </div>
+    <div class="reader">
+      <div class="who"><b>Später lesen</b><span><code>hal logs</code> (#4, noch nicht gebaut)</span></div>
+<pre class="term"><span class="d">01.11. 03:03</span>  <span class="g">✓</span> songmaker     backed up      <span class="d">4f2a91c0 · 2.1 GiB · 3m12s</span></pre>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s-setup">
+  <div class="head">
+    <h2 id="s-setup"><code>hal setup --apply</code>: das Passwort fragt dein System, nicht Ansible</h2>
+    <p class="sub">Links dein Lauf von heute, rechts derselbe Lauf neu, einmal gut, einmal kaputt.</p>
+  </div>
+  <div class="pair">
+    <figure>
+      <figcaption><span class="tag today">heute</span> echt, gekürzt nur bei …</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+…
+Aktivierung: unchanged
+User units: changed
+  hal-backup-restore-test.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal restore --test
+  hal-backup-restore-test.service: Result=success
+  hal-backup.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal backup
+  hal-backup.service: Result=success
+  home-check.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/home check
+  home-check.service: Result=success
+Ansible: unchanged
+BECOME password:
+
+PLAY [Install edge's cloudflared files, the stop-only polkit rule and the journal retention timer] ***
+
+TASK [Read cloudflared's config for the tunnel id] *****************************
+[ERROR]: Task failed: Timed out waiting for become success or become password prompt.
+>>> Standard Error
+[sudo: [sudo via ansible, key=…] password:] Passwort:
+Origin: /home/felix-hummert/git/edge/src/home_tools/system/playbook.yml:76:7
+
+fatal: [localhost]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Timed out waiting for become success or become password prompt. ..."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0
+
+hal setup: Ansible did not finish; its output above says why, and no verified run is recorded
+hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind nicht gelaufen</pre>
+    </figure>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> derselbe Rechner (sudo-rs), es läuft durch</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> timers          relinked       <span class="d">3 timers · systemd reloaded</span>
+<span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
+<span class="sys">[sudo: authenticate] Passwort:</span>  <span class="n">← der Prompt deines sudo</span>
+<span class="live">  <span class="spin"></span> system          Read the default log driver Docker reports · 9s</span>  <span class="n">← nur live</span>
+<span class="d">  · system          unchanged</span>
+<span class="d">  · secrets         complete</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag fail">neu, kaputt</span> Docker antwortet nicht: hal merkt es vor dem Passwort</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> timers          relinked       <span class="d">3 timers · systemd reloaded</span>
+<span class="r">  ✗</span> system          not started    <span class="d">Docker does not answer `docker info`</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at system · /etc unchanged
+<span class="c">next:</span> systemctl status docker</pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b><code>BECOME password:</code> verschwindet ganz.</b> hal startet den System-Schritt als einen <code>sudo</code>-Aufruf. Es fragt das sudo deines Systems, mit seinem eigenen Prompt, wie bei jedem sudo. Ansible muss keinen Prompt mehr erkennen, also läuft es mit sudo und sudo-rs gleich. Klassisches sudo fragt <code>[sudo] Passwort für felix-hummert:</code>.</li>
+    <li><b>Das Passwort geht nie durch hal.</b> sudo liest es selbst vom Terminal. Kein Log und kein <code>-v</code> kann es zeigen.</li>
+    <li><b>Ansibles Aufgaben</b> stehen live in einer Zeile (aktuelle Aufgabe, Zeit) und verschwinden danach. Die ganze Ausgabe zeigt <code>-v</code>.</li>
+    <li><b>Docker-Neustart</b> wird nur angesagt, wenn er kommt: <code>docker info</code> zeigt den Log-Treiber ohne sudo. Dann steht vor dem Passwort <code>! docker  restarts  all containers stop · 2 stay down</code> (die zwei ohne Restart-Policy). Antwortet Docker gar nicht, endet der Schritt dort, ohne Passwort.</li>
+    <li><b>Scheitert der Play selbst,</b> ist sein Grund der Fakt der roten Zeile. Die <code>fail_msg</code> im Playbook werden dafür kurz, ohne <code>; nothing was written</code>: was geschrieben wurde, sagt die <code>error:</code>-Zeile.</li>
+    <li><b>Vier Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
+    <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  not started  sudo refused</code> und <code>error:</code> mit <code>/etc unchanged</code>.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-apply">
+  <div class="head">
+    <h2 id="s-apply"><code>hal apply</code>: Plan, yes, Ergebnis in einer Reihenfolge</h2>
+    <p class="sub">Dein Lauf von heute: neue Rechtsseiten, vier Neuerstellungen, agent-service bleibt nicht oben, Keycloak antwortet nicht, hopin geht auf die neue Version.</p>
+  </div>
+  <div class="pair">
+    <figure>
+      <figcaption><span class="tag today">heute</span> echt, Anfang des Plans abgeschnitten</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+…
+  legal: datenschutz new: legal/sections/allgemein/datenschutz.html#verantwortlicher new, legal/sections/allgemein/datenschutz.html#cloudflare new, ... (10 entries on one line)
+  legal: nutzungsbedingungen new: legal/sections/allgemein/nutzungsbedingungen.html#recht new, legal/sections/songmaker/nutzungsbedingungen.html#songmaker new
+  traefik: recreate (its compose definition changed; traefik.yml changed)
+  agent-egress: recreate (its compose definition changed)
+  traefik-mcp: recreate (its compose definition changed)
+  legal: recreate legal (its compose definition changed)
+  agent-service: on (services agent-egress, agent-service)
+  agent-service: agent-service runs edge-agent-service:0.7.0-2.1.302, compose.yaml names edge-agent-service:0.8.0-2.1.302; edge apply never swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; Keycloak with a dump first, K11b)
+  keycloak: keycloak runs quay.io/keycloak/keycloak:26.8.1@sha256:79c6…, compose.yaml names quay.io/keycloak/keycloak:26.8.1@sha256:a78d…; edge apply never swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; Keycloak with a dump first, K11b)
+  realm: Keycloak could not be read; not checked (the realm observer failed (`docker compose run` exited 1: realm-observer: Keycloak does not answer /realms/master/protocol/openid-connect/token (unreachable)))
+  hopin: update to v2026.10.27.1 (79a51b4002833a0a46e729ce46193eb6ff53a383); last successful deployment v2026.10.26.1; now: hopin running (healthy)
+Type 'yes' to apply exactly this plan: yes
+edge apply --closed: traefik is recreated and runs the checked-out traefik.yml
+edge apply --closed: the core is current
+edge apply --closed: agent-egress is recreated and runs the checked-out agent-service/egress/traefik.yml
+edge apply --closed: traefik-mcp is recreated and runs the checked-out traefik-mcp.yml
+edge apply --closed: legal is recreated
+edge apply --closed: partial, realm: Keycloak could not be read; not checked (...); run `edge apply --closed` again
+edge apply --closed: hopin is on at v2026.10.27.1
+edge apply --closed: partial, agent-service is not on after the change
+edge apply: nothing published</pre>
+    </figure>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> derselbe Lauf · Zeiten sind Beispielwerte</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
+<span class="g">  +</span> legal           2 new pages    <span class="d">datenschutz, nutzungsbedingungen</span>
+<span class="hd">core</span>
+<span class="b">  ~</span> traefik         recreate       <span class="d">traefik.yml changed</span>
+<span class="b">  ~</span> agent-egress    recreate       <span class="d">definition changed</span>
+<span class="b">  ~</span> traefik-mcp     recreate       <span class="d">definition changed</span>
+<span class="hd">units</span>
+<span class="b">  ~</span> legal           recreate       <span class="d">definition changed</span>
+<span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
+<span class="y">  !</span> agent-service   old image      <span class="d">0.7.0-2.1.302 · compose.yaml 0.8.0-2.1.302</span>
+<span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
+<span class="y">  !</span> keycloak        realm skipped  <span class="d">does not answer</span>
+<span class="hd">apps</span>
+<span class="b">  ~</span> hopin           update         <span class="d">v2026.10.26.1 → v2026.10.27.1</span>
+<span class="hd">cloudflare</span>
+<span class="d">  · publish         later          own plan after a clean local run</span>
+Type <span class="w">yes</span> to apply 7 changes: yes
+<span class="g">  ✓</span> legal           pages written  <span class="d">datenschutz, nutzungsbedingungen</span>
+<span class="hd">core</span>
+<span class="g">  ✓</span> traefik         recreated      <span class="d">barriers proven · 9s</span>
+<span class="g">  ✓</span> agent-egress    recreated      <span class="d">4s</span>
+<span class="g">  ✓</span> traefik-mcp     recreated      <span class="d">3s</span>
+<span class="hd">units</span>
+<span class="g">  ✓</span> legal           recreated      <span class="d">2s</span>
+<span class="r">  ✗</span> agent-service   not running    <span class="d">exited within 5s of the start</span>
+<span class="y">  !</span> keycloak        realm skipped  <span class="d">does not answer</span>
+<span class="hd">apps</span>
+<span class="live">  <span class="spin"></span> hopin           build at v2026.10.27.1 · 48s</span>  <span class="n">← nur live</span>
+<span class="g">  ✓</span> hopin           updated        <span class="d">v2026.10.27.1 · healthy · 1m42s</span>
+<span class="rw">error:</span> 1 of 7 failed, 1 skipped · Cloudflare not touched
+<span class="c">next:</span> docker logs --tail 50 edge-agent-service-1</pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> der häufigste Fall: nichts zu tun</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
+<span class="y">  !</span> agent-service   old image      <span class="d">0.7.0-2.1.302 · compose.yaml 0.8.0-2.1.302</span>
+<span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
+<span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Kein <code>edge apply --closed:</code> vor jeder Zeile.</b> Du hast <code>hal apply</code> getippt; die Zeilen brauchen keinen Absender.</li>
+    <li><b>Nach Kategorie gruppiert, darin in der Reihenfolge, in der hal arbeitet:</b> erst die Rechtsseiten, dann core, die Einheiten mit dem Realm, die Apps, zuletzt Cloudflare. So steht das Ergebnis Zeile für Zeile wie der Plan. Die Plan-Zeichen <code>+ ~ -</code> kennst du von tofu.</li>
+    <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes.</li>
+    <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
+    <li><b>Rechtsseiten:</b> Zahl und Namen; die zwölf neuen Abschnitte zeigt <code>-v</code>.</li>
+    <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>.</li>
+    <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-smoke">
+  <div class="head">
+    <h2 id="s-smoke">Die Skripte: <code>live_smoke.py</code> im selben Schnitt</h2>
+    <p class="sub">Dein Lauf von heute. Gleiche Fakten, zwei Wörter pro Zelle, Gruppen wie im Code, am Ende ein Urteil.</p>
+  </div>
+  <div class="pair">
+    <figure>
+      <figcaption><span class="tag today">heute</span> echt</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">python3 agent-service/live_smoke.py</span>
+Open https://auth.hallucinai.de/realms/hallucinai/device?user_code=WZUW-XUGZ and confirm the code WZUW-XUGZ
+recreate held: the service listens
+L8 the offer held: exit 0; claude/haiku: route cli, ready True, background False | claude/opus: route cli, ready True, background False | claude/sonnet: route cli, ready True, background False
+L2 the paid turn held: exit 0; events ['run_started', 'assistant_text', 'succeeded']; ok | ok
+L3 admission through the gateway held: run_started seen
+L7 memory held: idle memory.current 63156224; memory.peak after the turn 177790976
+L4 the cancelled turn observed: smoke exit 0; CLI processes before (0) 0, while held (1 or more) 1, left after the cancel (0) 0; ERROR lines since (0) 0; holding the stream open 3 s | closing the stream before the answer
+L6 no secret anywhere held: docker inspect 0 (0); the service log 0 (0); the smoke output 0 (0)
+L9 no JWT-shaped string anywhere held: docker inspect 0 (0); the service log 0 (0); the smoke output 0 (0)
+E6 no TCP to the internet held: 1.1.1.1:443 ENETUNREACH, 160.79.104.10:443 ENETUNREACH
+E7 no route out held: default routes []; gateways of agent [] and egress []; TCP to docker0 172.17.0.1:22 ENETUNREACH, ...
+E8 no IPv6 held: IPv6 interfaces ['lo']; TCP over IPv6 ENETUNREACH
+E9 no UDP held: 1.1.1.1:443 ENETUNREACH, 1.1.1.1:53 ENETUNREACH
+E10 names held: example.com resolves to []; agent-egress to ['172.31.252.10']
+E12 the gateway's listeners held: listening: ['tcp 172.31.252.10:443']</pre>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> derselbe Lauf, gestartet mit <code>uv run</code> · Dauern sind Beispielwerte</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">uv run agent-service/live_smoke.py</span>
+<span class="c">  ›</span> sign in         open link      <span class="d">confirm code</span> <span class="w">WZUW-XUGZ</span>
+    https://auth.hallucinai.de/realms/hallucinai/device?user_code=WZUW-XUGZ
+<span class="g">  ✓</span> sign in         confirmed      <span class="d">38s</span>
+<span class="hd">service</span>
+<span class="g">  ✓</span> recreate        listens
+<span class="g">  ✓</span> L8 offer        <span class="d">haiku, opus, sonnet · route cli · ready · no background</span>
+<span class="g">  ✓</span> L2 paid turn    <span class="d">answered "ok" · ended succeeded</span>
+<span class="g">  ✓</span> L3 admission    <span class="d">run started through the gateway</span>
+<span class="g">  ✓</span> L7 memory       <span class="d">60 MiB idle · 170 MiB peak</span>
+<span class="d">  · L4 cancel       observed: CLI 0 → 1 → 0 · 0 ERROR lines · held 3 s</span>
+<span class="hd">leaks</span>
+<span class="g">  ✓</span> L6 secrets      <span class="d">0 in docker inspect, service log, smoke output</span>
+<span class="g">  ✓</span> L9 JWTs         <span class="d">0 in docker inspect, service log, smoke output</span>
+<span class="hd">egress</span>
+<span class="g">  ✓</span> E6 TCP out      <span class="d">1.1.1.1:443, 160.79.104.10:443 unreachable</span>
+<span class="g">  ✓</span> E7 routes       <span class="d">no default route · docker0 172.17.0.1:22 unreachable</span>
+<span class="g">  ✓</span> E8 IPv6         <span class="d">lo only · TCP over IPv6 unreachable</span>
+<span class="g">  ✓</span> E9 UDP          <span class="d">1.1.1.1:443, 1.1.1.1:53 unreachable</span>
+<span class="g">  ✓</span> E10 names       <span class="d">example.com unresolved · agent-egress 172.31.252.10</span>
+<span class="g">  ✓</span> E12 listeners   <span class="d">only tcp 172.31.252.10:443</span>
+<span class="w">✓ 13 held, 1 observed</span> <span class="d">· 4m10s</span></pre>
+    </figure>
+  </div>
+  <ul class="why">
+    <li><b>Die Zell-Namen L2, E6 bleiben:</b> Doku und der Bericht an den Kopf nennen sie so. Der lange Satz dahinter wird zwei Wörter; das Ereignis entfällt, denn ✓ heißt gehalten.</li>
+    <li><b>Der Code WZUW-XUGZ ist kein Geheimnis:</b> das Geräte-Login zeigt ihn, damit du ihn im Browser wiedererkennst; er nützt nur mit deinem Login und verfällt nach Minuten. Das Token danach erscheint nie, auch nicht mit <code>-v</code>. Der Link steht auf eigener Zeile und wird nie gekürzt.</li>
+    <li><b>Zahlen in Worten:</b> 63156224 Bytes werden 60 MiB. Die Schreibweise „(0) 0“ (erwartet, gefunden) fällt weg: ✓ heißt gefunden wie erwartet. Eine rote Zelle nennt beides: <code>✗ L6 secrets  1 in service log, expected 0</code>.</li>
+    <li><b>Neu ist die Urteilszeile.</b> Heute steht das Urteil nur im Exit-Code. Die genauen Zahlen für die Akte gibt <code>--json</code>, geschwärzt wie heute.</li>
+    <li><b>Dasselbe gilt für <code>live_signer.py</code> und die Setups</b> (<code>keycloak/go-live</code>, <code>step-ca/init</code>, <code>agent-service/setup</code>): ihre Schritte werden Zeilen, das lange Warum jedes Schritts steht nur vor einer Eingabe. Gestartet wird mit <code>uv run</code> statt <code>python3</code>, damit sie über denselben Eigentümer drucken wie hal.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-rest">
+  <div class="head">
+    <h2 id="s-rest">Alle anderen Befehle</h2>
+    <p class="sub">Derselbe Schnitt überall. Unter jedem Bild steht, was heute kommt. Zahlen ohne Quelle im Code sind Beispielwerte.</p>
+  </div>
+  <div class="grid">
+    <figure>
+      <figcaption><span class="tag new">neu</span> <code>hal stop</code> braucht kein Terminal, <code>hal start</code> fragt</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal stop hopin</span>
+<span class="g">  ✓</span> hopin           switched off   <span class="d">barrier up · stopped · volumes kept</span>
+
+<span class="p">$</span> <span class="u">hal start hopin</span>
+<span class="g">  +</span> hopin           start          <span class="d">off since 27.10. 14:02</span>
+Type <span class="w">yes</span> to start hopin: yes
+<span class="g">  ✓</span> hopin           on             <span class="d">healthy · barrier removed · 14s</span></pre>
+      <p class="was">heute: <code>edge stop: hopin is switched off (containers of hopin stopped; volumes stay)</code></p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> <code>hal offline</code> / <code>hal online</code>, mit dem Prompt des Systems (am Desktop ein Fenster)</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal offline</span>
+<span class="g">  ✓</span> tunnel          stopped        <span class="d">off the internet · apps keep running locally</span>
+
+<span class="p">$</span> <span class="u">hal online</span>
+<span class="g">  ✓</span> barriers        proven         <span class="d">hopin, keycloak, legal</span>
+<span class="g">  +</span> tunnel          open           <span class="d">off since 27.10. 14:05</span>
+Type <span class="w">yes</span> to reopen the tunnel: yes
+<span class="c">  ›</span> tunnel          needs password <span class="d">systemd asks (polkit)</span>
+<span class="sys">==== AUTHENTICATING FOR org.freedesktop.systemd1.manage-units ====</span>
+<span class="n">  … zwei Zeilen von polkit: wofür, als wer</span>
+<span class="sys">Passwort:</span>
+<span class="sys">==== AUTHENTICATION COMPLETE ====</span>
+<span class="g">  ✓</span> tunnel          open           <span class="d">cloudflared active</span></pre>
+      <p class="was">heute u. a.: <code>edge start --all: host check not built yet (#50 SW3)</code></p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> <code>hal backup</code> und <code>hal restore --test</code> am Terminal</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal backup</span>
+<span class="g">  ✓</span> songmaker       backed up      <span class="d">4f2a91c0 · 2.1 GiB · 3m12s</span>
+<span class="g">  ✓</span> keycloak        backed up      <span class="d">9b07e1d2 · 4.2 MiB · 21s</span>
+<span class="g">  ✓</span> repository      pruned         <span class="d">4 weekly, 3 monthly kept · checked · 1m05s</span>
+<span class="w">✓ backup done</span> <span class="d">· 2 apps · 4m38s</span>
+
+<span class="p">$</span> <span class="u">hal restore --test</span>
+<span class="g">  ✓</span> songmaker       restore proven <span class="d">4f2a91c0 · 1284 songs · audio present · 2m40s</span>
+<span class="g">  ✓</span> keycloak        restore proven <span class="d">9b07e1d2 · realm rows present · 31s</span>
+<span class="g">  ✓</span> repository      checked        <span class="d">10 % of the data read · 6m02s</span>
+<span class="w">✓ restore test done</span> <span class="d">· 2 apps · 9m13s</span></pre>
+      <p class="was">heute: bei Erfolg keine Zeile, nur Exit 0</p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag fail">neu, kaputt</span> eine App fällt aus, die andere läuft weiter</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal backup</span>
+<span class="r">  ✗</span> songmaker       not backed up  <span class="d">database not ready after 10 min</span>
+<span class="g">  ✓</span> keycloak        backed up      <span class="d">9b07e1d2 · 4.2 MiB · 21s</span>
+<span class="d">  · repository      not pruned     a backup failed</span>
+<span class="rw">error:</span> 1 of 2 apps not backed up · songmaker's last good backup 25.10. 03:04
+<span class="c">next:</span> hal backup songmaker</pre>
+      <p class="was">heute: <code>error: hal backup: fehlgeschlagen: nach 10 Minuten nicht bereit: die Datenbank von songmaker ist nicht bereit</code></p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> <code>hal check exposure</code>: heute 272 Zeilen für einen Prozess</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal check exposure</span>
+<span class="y">  !</span> python3         listens        <span class="d">272 UDP ports beyond loopback · pid 93017</span>
+<span class="y">! 1 finding</span> <span class="d">· 272 listeners · --json lists each</span></pre>
+      <p class="was">heute: 272 mal <code>listener-beyond-loopback  python3  udp  *  32985</code>, je ein Port</p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> ein fehlendes Geheimnis in <code>hal setup --apply</code></figcaption>
+<pre class="term"><span class="y">  !</span> secrets         1 missing      <span class="d">cloudflare/fleet-write</span>
+<span class="c">  ›</span> cloudflare/fleet-write  new token  <span class="d">browser opened, tick each box</span>
+    https://dash.cloudflare.com/profile/api-tokens
+    [ ] Create Token › Custom token › Get started
+    [ ] Token name: cloudflare/fleet-write
+    [ ] Permissions: Account › Cloudflare Tunnel › Edit
+<span class="n">    … sechs weitere Rechte, je eine Zeile</span>
+    [ ] Account Resources: Include › your account
+    [ ] Zone Resources: Include › Specific zone › hallucinai.de
+    [ ] TTL: leave the start date empty, End Date 28.10.2027
+    [ ] Continue to summary › Create Token, copy the value
+    paste the token (hidden, empty skips):
+<span class="g">  ✓</span> cloudflare/fleet-write  verified   <span class="d">~/.secrets/cloudflare/fleet-write (600)</span></pre>
+      <p class="was">heute: <code>== cloudflare/fleet-write (Token, fehlt)</code> … <code>Token einfügen (unsichtbar; leer überspringt):</code></p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> kleine Befehle und ein Tippfehler</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal version</span>
+hal c280a80 <span class="d">· main · clean · up to date with origin/main</span>
+
+<span class="p">$</span> <span class="u">hal legal hopin ~/git/hopin</span>
+<span class="g">  ✓</span> hopin           legal valid    <span class="d">datenschutz, nutzungsbedingungen</span>
+
+<span class="p">$</span> <span class="u">hal check exposure -q</span>
+<span class="rw">error:</span> unknown option -q
+<span class="c">next:</span> hal check exposure --help</pre>
+      <p class="was">heute: <code>hal version</code> vier Zeilen <code>commit: c280a80</code>, <code>branch: main</code>, …</p>
+    </figure>
+    <figure>
+      <figcaption><span class="tag new">neu</span> <code>hal rename</code> zeigt erst, und Ctrl-C mitten im Apply</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal rename songmaker-web songmaker</span>
+<span class="b">  ~</span> clone           move           <span class="d">~/git/songmaker-web → ~/git/songmaker</span>
+<span class="b">  ~</span> worktrees       repair 3       <span class="d">in ~/git/songmaker-worktrees</span>
+<span class="b">  ~</span> origin          set url        <span class="d">github.com/overnightworks/songmaker.git</span>
+<span class="b">  ~</span> memory          move           <span class="d">Claude project memory of the clone</span>
+<span class="w">· plan only, nothing changed</span>
+<span class="c">next:</span> hal rename songmaker-web songmaker --apply
+
+<span class="p">$</span> <span class="u">hal apply</span>   <span class="n">… nach dem yes</span>
+<span class="live">  <span class="spin"></span> traefik         recreate · 4s</span>
+^C
+<span class="rw">error:</span> interrupted while recreating traefik · its state may be partial
+<span class="c">next:</span> hal apply</pre>
+      <p class="was">heute: <code>edge apply --closed: interrupted while changing traefik (recreate traefik); its state may be partial, run `edge apply --closed` to see</code></p>
+    </figure>
+  </div>
+</section>
+
+<section aria-labelledby="s-log">
+  <div class="head">
+    <h2 id="s-log">Ohne Terminal: Timer, Journal, Agent</h2>
+    <p class="sub">Derselbe kaputte Backup-Lauf wie oben, diesmal Sonntag 03:00 vom Timer. Die Unit setzt <code>LOG_FORMAT=json</code>, also schreibt hal das Flotten-Format aus dem Flottenstandard.</p>
+  </div>
+  <div class="pair">
+    <figure>
+      <figcaption><span class="tag new">neu</span> roh im Journal; die Zeilen von systemd kommen von systemd</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">journalctl --user -u hal-backup -S today</span>
+<span class="d">Nov 01 03:00:01 pc systemd[2087]:</span> Starting hal-backup.service - hal backup: encrypted restic backup of the declared apps...
+<span class="d">Nov 01 03:10:04 pc hal[4711]:</span> <span class="r">{"timestamp":"2026-11-01T02:10:04Z","level":"error","logger":"hal.backup","service":"hal","event":"not backed up","subject":"songmaker","reason":"database not ready after 10 min"}</span>
+<span class="d">Nov 01 03:10:26 pc hal[4711]:</span> {"timestamp":"2026-11-01T02:10:26Z","level":"info","logger":"hal.backup","service":"hal","event":"backed up","subject":"keycloak","snapshot":"9b07e1d2","bytes":4404019,"seconds":21}
+<span class="d">Nov 01 03:10:26 pc hal[4711]:</span> {"timestamp":"2026-11-01T02:10:26Z","level":"info","logger":"hal.backup","service":"hal","event":"not pruned","subject":"repository","reason":"a backup failed"}
+<span class="d">Nov 01 03:10:26 pc hal[4711]:</span> <span class="r">{"timestamp":"2026-11-01T02:10:26Z","level":"error","logger":"hal.backup","service":"hal","event":"backup failed","failed":1,"apps":2,"next":"hal backup songmaker"}</span>
+<span class="d">Nov 01 03:10:26 pc systemd[2087]:</span> hal-backup.service: Main process exited, code=exited, status=3/NOTIMPLEMENTED
+<span class="d">Nov 01 03:10:26 pc systemd[2087]:</span> hal-backup.service: Failed with result 'exit-code'.</pre>
+    </figure>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> gelesen mit <code>hal logs</code> (#4, L1, noch nicht gebaut)</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal logs hal-backup --since today</span>
+<span class="d">01.11. 03:10</span>  <span class="r">✗</span> songmaker     not backed up  <span class="d">database not ready after 10 min</span>
+<span class="d">01.11. 03:10</span>  <span class="g">✓</span> keycloak      backed up      <span class="d">9b07e1d2 · 4.2 MiB · 21s</span>
+<span class="d">01.11. 03:10</span>  <span class="d">· repository    not pruned     a backup failed</span>
+<span class="d">01.11. 03:10</span>  <span class="rw">error:</span> 1 of 2 apps not backed up <span class="d">· next: hal backup songmaker</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> ein Agent ruft hal ohne Terminal: dieselben Zeilen, keine Farbe</figcaption>
+<pre class="term">$ hal stop hopin
+  ✓ hopin           switched off   barrier up · stopped · volumes kept</pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Die Stufe wird die Priorität im Journal:</b> <code>journalctl --user -u hal-backup -p err</code> zeigt nur die zwei roten Zeilen, Grafana filtert später genauso.</li>
+    <li><b>JSON liest du nie roh.</b> Das Journal ist das Archiv; Grafana und die Apps lesen und schreiben dasselbe Format. Zum Lesen gibt es die Zeilenform mit Uhrzeit.</li>
+    <li><b>Keine „started“-Zeile:</b> systemd sagt schon, wann der Lauf beginnt und wie er endet. hal schreibt nur, was geschah.</li>
+    <li><b><code>--json</code> bleibt das Ergebnis für Programme</b> (<code>hal check exposure --json</code>, <code>hal backup --pre-apply --json</code>), unverändert.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-gone">
+  <div class="head">
+    <h2 id="s-gone">Was aus deinen Zeilen wird</h2>
+    <p class="sub">Jede Zeile, die du heute gesehen hast und die keinen Sinn ergab.</p>
+  </div>
+  <div class="gone">
+    <table>
+      <thead><tr><th>heute</th><th>neu</th><th>weil</th></tr></thead>
+      <tbody>
+        <tr><td><code>BECOME password:</code></td><td><code>› system  needs sudo</code>, dann der Prompt deines sudo</td><td>Ansible fragt nicht mehr; dein System fragt, wie bei jedem sudo</td></tr>
+        <tr><td><code>[sudo: [sudo via ansible, key=…] password:] Passwort:</code> und der Timeout</td><td>nichts</td><td>kein Prompt-Erkennen, also kein Spezialfall</td></tr>
+        <tr><td><code>PLAY […] ***</code>, <code>TASK […] ***</code>, <code>PLAY RECAP ***</code></td><td>eine Live-Zeile, danach das Ergebnis</td><td>Rohtext nur mit <code>-v</code></td></tr>
+        <tr><td><code>hal-backup.service: ExecStart=…</code>, <code>Result=success</code></td><td><code>✓ timers  relinked  3 timers</code></td><td>sechs Zeilen für „hat geklappt“</td></tr>
+        <tr><td><code>Hook-Dateien</code>, <code>Geheimnisse</code>, <code>Schritt „System“ ist fehlgeschlagen</code></td><td><code>commit hook</code>, <code>secrets</code>, <code>error: setup stopped at system</code></td><td>eine Sprache pro Lauf</td></tr>
+        <tr><td><code>its output above says why</code></td><td>der Grund als Fakt der roten Zeile</td><td>die Info steht da, statt auf Rohtext zu zeigen</td></tr>
+        <tr><td><code>edge apply --closed:</code> vor jeder Zeile</td><td>nichts</td><td>du hast <code>hal apply</code> getippt</td></tr>
+        <tr><td><code>partial, …; run `edge apply --closed` again</code></td><td><code>✗</code>-Zeile, <code>error:</code>, <code>next: hal apply</code></td><td>Ort, Bedeutung und nächster Schritt getrennt</td></tr>
+        <tr><td><code>(block 6; Keycloak with a dump first, K11b)</code>, <code>(#50 SW3)</code></td><td>nichts</td><td>interne Kürzel sagen dir nichts</td></tr>
+        <tr><td><code>Type 'yes' to apply exactly this plan:</code></td><td><code>Type yes to apply 7 changes:</code></td><td>die Zahl sagt, was „this plan“ ist</td></tr>
+        <tr><td><code>would change</code>, <code>not checked (needs …)</code></td><td><code>~ system  2 changes</code>, <code>› system  needs sudo</code></td><td>Plan-Zeichen statt Zustandssätzen</td></tr>
+        <tr><td><code>idle memory.current 63156224</code>, <code>(0) 0</code></td><td><code>60 MiB idle</code>, <code>0 in …</code></td><td>Zahlen, die man liest, ohne zu rechnen</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="s-decide">
+  <div class="head">
+    <h2 id="s-decide">Entscheidungen, und wo ich dir widerspreche</h2>
+    <p class="sub">Gelb umrandet: Widerspruch oder eine Antwort, die anders ausfällt als gefragt.</p>
+  </div>
+  <ul class="decisions">
+    <li class="push">
+      <div class="k"><b>Std-Logformat: ja, aber nicht am Terminal</b><span class="tag push">Widerspruch</span></div>
+      <p>Du fragst <q>sollten ausgaben nicht ein std log format haben?</q> Der Standard ist das Ereignis, nicht die Zeile: Zeit, Stufe, Befehl, Objekt, Fakt. Am Terminal kosten Zeitstempel und Stufe auf jeder Zeile die halbe Breite und verstecken den einen Fakt; die Zeit siehst du live, die Stufe zeigt das Zeichen. Im Journal sammelt eine Maschine, dort schreibt hal das Flotten-Format aus dem Flottenstandard. Ein Ereignis, drei Leser, dieselben Wörter.</p>
+    </li>
+    <li class="push">
+      <div class="k"><b>Keine Spezialfall-Texte, die Ursache geht</b><span class="tag push">Antwort</span></div>
+      <p>Du fragst <q>das sind spezialfälle?</q> Ja, und so eine Ausgabe ist falsch. Statt sudo-rs zu erklären, startet hal den System-Schritt als einen <code>sudo</code>-Aufruf (der Play läuft als root) statt über Ansibles Passwortabfrage. Das läuft auf jedem System gleich. Fehler zeigen allgemein die eine Zeile, die das Werkzeug als Grund nennt.</p>
+    </li>
+    <li class="push">
+      <div class="k"><b>Ein Warum nur vor Passwort, yes, Eingabe oder Folge</b><span class="tag push">Widerspruch</span></div>
+      <p>Am 24.10. wolltest du zu jedem Schritt <q>wieso</q>. Genau das wurde der Text hinter Change und Check, der dich wahnsinnig macht. Ein Warum steht nur, wo es dich etwas kostet: vor dem Passwort, vor dem yes, vor einer Eingabe wie dem Token, bei einer Folge wie dem Docker-Neustart, und nur wenn sie eintritt. Alles andere steht in <code>--help</code>.</p>
+    </li>
+    <li class="push">
+      <div class="k"><b><code>next:</code> statt <code>note:</code> und <code>help:</code></b><span class="tag push">Widerspruch</span></div>
+      <p>Die Regel vom 24.10. nennt <code>error:</code>/<code>note:</code>/<code>help:</code>. <code>note:</code>-Zeilen wiederholen, was die Zeilen darüber schon zeigen, und <code>help:</code> ist vager als <code>next:</code>, das hal schon hat und das sagt, was folgt: ein Befehl. Also: rote Zeile am Ort, eine <code>error:</code>-Zeile, eine <code>next:</code>-Zeile.</p>
+    </li>
+    <li class="push">
+      <div class="k"><b>Kompakt heißt: kein Satz. Nicht: weniger Fakten.</b><span class="tag push">Grenze</span></div>
+      <p>Snapshot, Version, Adresse, Dauer bleiben stehen, auch wenn die Zeile länger wird. Weg fällt alles, was kein Fakt ist: Füllwörter, Absender, Rohtext, Wiederholungen.</p>
+    </li>
+    <li class="push">
+      <div class="k"><b>Nach Kategorie, in der Reihenfolge der Arbeit</b><span class="tag push">Grenze</span></div>
+      <p>Sortieren nach Kategorie: ja, im Plan von <code>hal apply</code> und im Smoke. Darin gilt die Reihenfolge, in der hal arbeitet, nicht das Alphabet der Apps: sie ist eine Sicherheitsregel, und so steht das Ergebnis Zeile für Zeile wie der Plan. Köpfe erst ab etwa sechs Zeilen: bei drei wäre ein Kopf pro Gruppe mehr Rahmen als Inhalt.</p>
+    </li>
+    <li>
+      <div class="k"><b>Ein Zeilenstandard für alles</b></div>
+      <p>hal, home, die Skripte und die Setups: Zeichen, Objekt, Ereignis, Fakt. Ein Eigentümer im Code druckt; sonst druckt niemand (ruff T20).</p>
+    </li>
+    <li>
+      <div class="k"><b>Das Passwort fragt immer das System</b></div>
+      <p>sudo und polkit mit ihren eigenen Prompts; hal sagt vorher in einer Zeile, wofür. Das Passwort geht nie durch hal, also zeigt es kein Log und kein <code>-v</code>.</p>
+    </li>
+    <li>
+      <div class="k"><b>Farben, die auf jedem System gehen</b></div>
+      <p>Die 16 Grundfarben deines Terminals, passend zu jedem Theme. Aus bei <code>NO_COLOR</code>, in Pipe und Journal. Die Bedeutung tragen immer auch Zeichen und Wort: probier oben den Schalter.</p>
+    </li>
+    <li>
+      <div class="k"><b>Englisch im Terminal und im Log</b></div>
+      <p>Die Werkzeuge darunter sprechen Englisch, eine zitierte Werkzeugzeile mischt so nie Sprachen, und kurze feste Wörter passen in Spalten. Deutsch bleiben der Prompt deines Systems und die Mails. <code>home</code> zieht mit, weil <code>hal setup</code> seine Zeilen zeigt.</p>
+    </li>
+    <li>
+      <div class="k"><b>Jede Aktion endet mit einem Urteil</b></div>
+      <p>Eine Zeile mit <code>✓</code> oder <code>error:</code>, Zahlen und Dauer, auch in den Skripten; heute steht das Urteil dort oft nur im Exit-Code. Eine einzelne Zeile ist selbst das Urteil. Die Exit-Codes bleiben.</p>
+    </li>
+    <li>
+      <div class="k"><b><code>-v</code> überall, kein <code>-q</code></b></div>
+      <p><code>-v</code> zeigt die Rohausgabe eingerückt unter ihrer Zeile, geschwärzt. <code>-q</code> hat keinen Nutzer, der Normalfall ist schon still. <code>--json</code> bleibt, wo ein Programm liest. Interne Kürzel fliegen raus, die Zell-Namen L2 und E6 bleiben.</p>
+    </li>
+    <li>
+      <div class="k"><b>80 Spalten, Links ganz</b></div>
+      <p>Jede Zeile passt in 80 Spalten. Ist ein Fakt länger, kürzt ihn das Terminal mit <code>…</code>, <code>-v</code> zeigt ihn ganz. Was du öffnen oder kopieren sollst, ein Link oder ein Befehl, steht eingerückt auf eigener Zeile und wird nie gekürzt. Dauern heißen <code>47s</code> und <code>3m12s</code>, nie <code>3:12</code>: das liest sich wie eine Uhrzeit.</p>
+    </li>
+    <li>
+      <div class="k"><b>Skripte im venv des Checkouts</b></div>
+      <p>Damit die Skripte über denselben Eigentümer drucken wie hal, startest du sie mit <code>uv run agent-service/live_smoke.py</code> statt <code>python3 …</code>; <code>hal apply</code> startet die Setups mit seinem eigenen Python. Ein hal-Befehl pro Skript wäre die Alternative, er brächte neue Befehle ohne Not.</p>
+    </li>
+  </ul>
+</section>
+
+
+</div>
+
+<script>
+  (function () {
+    var box = document.getElementById("nocolor");
+    var sheet = document.getElementById("sheet");
+    var key = "hal-output-nocolor";
+    function apply(on) { sheet.classList.toggle("nocolor", on); }
+    try {
+      if (localStorage.getItem(key) === "1") { box.checked = true; apply(true); }
+    } catch (error) { /* storage blocked: the page works without it */ }
+    box.addEventListener("change", function () {
+      apply(box.checked);
+      try { localStorage.setItem(key, box.checked ? "1" : "0"); } catch (error) { /* ignore */ }
+    });
+  })();
+</script>
+</body>
+</html>
