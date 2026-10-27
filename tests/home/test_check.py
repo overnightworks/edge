@@ -259,6 +259,8 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
     error_lines = error.splitlines()
     assert error_lines[0] == "error: 1 of 5 areas could not check · news sent"
     assert error_lines[1].startswith("next: ")
+    assert "`" not in error_lines[1]
+    assert not error_lines[1].endswith(".")
     assert len(error_lines) == 2
     assert len(runner.notifications) == 1
 
