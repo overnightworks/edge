@@ -1,0 +1,7 @@
+claim_id = "35b99fcf1d154c3c8c6ac9d842987b25"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "5253bcd1778efd4bec774c7e78d70f89321d2913"
+branch = "claude/issue-475-h5r-a-ratchet-stops-new-home-edge-comman"
+scope = ["tests/old_names_baseline.toml", "tests/test_old_names.py"]
+opened_commit = "aedcdad556dc0de888a9c17b0e095d2982e933cf"
