@@ -14,7 +14,7 @@ with the dummy login. U17 (refusals.py) asks the refusals before any run; U16 th
 fake app that lists tools (app_tools.py), certified by the scratch CA of scratch_secrets.py, and
 drives agent-runtime#440's cells B1 and B2 through `agent-smoke --tool`. `--cell signer` (signer.py)
 drives #413's P12 and P28 against a signing stand-in. The image
-`edge-agent-service:0.7.0-2.1.302` must exist (docs/agent-service.md, "The image"). The probe
+compose.yaml names must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
 its own (egress.py) and is set on every command. Needs an existing, empty, writable --scratch
 directory. Exit 0: every cell held, 1: a cell failed.

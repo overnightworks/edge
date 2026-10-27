@@ -1,4 +1,4 @@
-# The agent service's configuration (agent-runtime v0.7.0). Every path is a mount target of the
+# The agent service's configuration. Every path is a mount target of the
 # `agent-service` service in compose.yaml; tests/test_agent_service_unit.py holds the two equal.
 
 [identity]
@@ -30,6 +30,7 @@ models = ["opus", "sonnet", "haiku"]
 [profiles.claude]
 provider = "claude"
 token_file = "/run/agent-service/login/claude/token"
+background = false
 
 # The workload clients of keycloak/realm.yaml; songmaker lists tools, so it names its MCP origin.
 [apps.songmaker]
