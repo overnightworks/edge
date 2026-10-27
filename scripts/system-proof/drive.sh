@@ -1143,7 +1143,7 @@ SHIM
     stop_mail_sink
     verdict D4 "a sink without STARTTLS gets no mail, no AUTH, and the news is kept" \
         'sink_events sink-d4 | grep -qx "CONNECT ssl=False" &&
-         [ -z "$(sink_events sink-d4 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d4 "msmtp fehlgeschlagen ($MAIL_HOST:25)" && ! mail_run_has_set'
+         [ -z "$(sink_events sink-d4 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d4 "mail failed: msmtp could not deliver via $MAIL_HOST:25" && ! mail_run_has_set'
 
     set_up_mail_account 587
     start_mail_sink sink-d5 starttls 587 untrusted
@@ -1151,7 +1151,7 @@ SHIM
     stop_mail_sink
     verdict D5 "a certificate the system does not trust is refused despite msmtprc files that switch the check off: no AUTH, news kept" \
         'sink_events sink-d5 | grep -qx "CONNECT ssl=False" && sink_events sink-d5 | grep -qx STARTTLS &&
-         [ -z "$(sink_events sink-d5 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d5 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+         [ -z "$(sink_events sink-d5 | grep -e "^AUTH" -e "^CREDENTIALS" -e "^SUBJECT")" ] && in_log cell-d5 "mail failed: msmtp could not deliver via" && ! mail_run_has_set'
 
     set_up_mail_account 465
     start_mail_sink sink-d6 implicit 465 trusted
@@ -1164,7 +1164,7 @@ SHIM
     start_mail_sink sink-d7 reject 587 trusted
     mail_run cell-d7
     stop_mail_sink
-    verdict D7 "a rejected AUTH is one failure line and keeps the news" 'sink_events sink-d7 | grep -qx AUTH && sink_events sink-d7 | grep -qx "CREDENTIALS user_matches=True password_matches=True" && ! sink_events sink-d7 | grep -q "^SUBJECT " && in_log cell-d7 "msmtp fehlgeschlagen ($MAIL_HOST:587)" && ! mail_run_has_set'
+    verdict D7 "a rejected AUTH is one failure line and keeps the news" 'sink_events sink-d7 | grep -qx AUTH && sink_events sink-d7 | grep -qx "CREDENTIALS user_matches=True password_matches=True" && ! sink_events sink-d7 | grep -q "^SUBJECT " && in_log cell-d7 "mail failed: msmtp could not deliver via $MAIL_HOST:587" && ! mail_run_has_set'
     start_mail_sink sink-d7-good starttls 587 trusted
     mail_run cell-d7-again
     stop_mail_sink
@@ -1174,7 +1174,7 @@ SHIM
     started=$SECONDS
     mail_run cell-d8
     stop_mail_sink
-    verdict D8 "a sink that never greets ends the run within 45 s and keeps the news" 'sink_events sink-d8 | grep -qx "CONNECT stall" && [ $((SECONDS - started)) -le 45 ] && in_log cell-d8 "msmtp fehlgeschlagen" && ! mail_run_has_set'
+    verdict D8 "a sink that never greets ends the run within 45 s and keeps the news" 'sink_events sink-d8 | grep -qx "CONNECT stall" && [ $((SECONDS - started)) -le 45 ] && in_log cell-d8 "mail failed: msmtp could not deliver via" && ! mail_run_has_set'
     rm -f /etc/msmtprc /home/tester/.msmtprc /usr/local/bin/msmtp
     plant_fake_secrets >/dev/null
     return
