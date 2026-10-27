@@ -1,0 +1,8 @@
+claim_id = "81bdcdbc1e7a49fb974fbb9f39372785"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "91736150dfc0c35194efb89186551df07f252f10"
+branch = "claude/issue-448-339-c5-b5-hundred-runs"
+scope = ["docs/agent-service.md", "probe/agent-service/census_client.py", "probe/agent-service/containment.py", "probe/agent-service/issuer.py", "probe/agent-service/unit.py", "tests/test_agent_service_containment.py"]
+opened_commit = "2d3bcb0342eb0ba3f70ee06d542d074ca85de270"
+whole_reason = "B5 is one cell whose verdict needs its four observations from one run; the census client and log reader are the two owners it extends, the unit.py and docs lines keep the cell list true, and the tests pin its verdicts."
