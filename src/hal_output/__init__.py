@@ -1,7 +1,30 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of an error. It imports nothing else of this repository."""
+to show, and the form of a row, a verdict and an error. It imports nothing else of this repository."""
 
 import sys
+from dataclasses import dataclass
+from enum import Enum, StrEnum
+
+SUBJECT_WIDTH = 14
+EVENT_WIDTH = 13
+
+
+class Glyph(Enum):
+    DONE = "✓"
+    FAILED = "✗"
+    NEEDS_YOU = "!"
+    UNCHANGED = "·"
+    CHANGE = "~"
+
+
+@dataclass(frozen=True)
+class Row:
+    """One thing a command did or found. The caller owns its event enum; `fact` is one fixed sentence or a name."""
+
+    glyph: Glyph
+    subject: str
+    event: StrEnum
+    fact: str = ""
 
 
 def printable(text: str) -> str:
@@ -13,8 +36,19 @@ def printable(text: str) -> str:
     )
 
 
+def write_row(row: Row) -> None:
+    """The row on stdout; text from outside is escaped before it is padded, so the columns keep their width."""
+    subject, event, fact = printable(row.subject), printable(str(row.event)), printable(row.fact)
+    print(f"  {row.glyph.value} {subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}  {fact}".rstrip())
+
+
+def write_verdict(glyph: Glyph, summary: str, detail: str) -> None:
+    """The last line of a command, on stdout: its verdict, computed by the caller, and the detail after a `·`."""
+    print(f"{glyph.value} {printable(summary)} · {printable(detail)}")
+
+
 def write_error(message: str, next_step: str | None = None) -> None:
     """`error: <message>` and, when there is a way on, `next: <command>` on stderr."""
     print(f"error: {printable(message)}", file=sys.stderr)
     if next_step:
-        print(f"next: {next_step}", file=sys.stderr)
+        print(f"next: {printable(next_step)}", file=sys.stderr)
