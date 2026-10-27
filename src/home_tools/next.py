@@ -18,7 +18,9 @@ from typing import TYPE_CHECKING
 
 from home_tools import hook_check, secrets_setup, secrets_view, setup, tidy_home
 from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.tidy_home import ClosedBy, Config, Layout, Tally
+from home_tools.tidy_home import Config
+from home_tools.layout import Layout
+from home_tools.report import ClosedBy, Tally
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports

@@ -28,7 +28,8 @@ from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
 from home_tools.report import Level, findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe, FindingRule, SecretKind
-from home_tools.tidy_home import CommandRunner, Config, Layout
+from home_tools.tidy_home import Config
+from home_tools.layout import CommandRunner, Layout
 
 MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
 

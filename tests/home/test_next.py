@@ -21,7 +21,7 @@ from conftest import (
 )
 
 from home_tools import cli, system_step
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 NOW = datetime(2026, 10, 17, 9, 0)
 

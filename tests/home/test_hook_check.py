@@ -16,7 +16,7 @@ from conftest import FakeDisk, FakeProbe, Sandbox
 from home_tools import cli, hook_check
 from home_tools.hook_check import HookCheckUnavailable
 from home_tools.setup import HOOK_NAMES
-from home_tools.tidy_home import Layout, run_command
+from home_tools.layout import Layout, run_command
 
 NOW = datetime(2026, 10, 16, 12, 0)
 

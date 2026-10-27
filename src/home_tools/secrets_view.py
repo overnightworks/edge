@@ -31,8 +31,8 @@ from functools import reduce
 from operator import and_
 from pathlib import Path, PurePosixPath
 
-from home_tools.report import findings_count, markdown_table, write_state_file
-from home_tools.tidy_home import ClosedBy, Layout, Tally
+from home_tools.layout import Layout
+from home_tools.report import ClosedBy, Tally, findings_count, markdown_table, write_state_file
 from home_tools.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
