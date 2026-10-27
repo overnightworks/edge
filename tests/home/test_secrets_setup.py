@@ -19,6 +19,8 @@ from home_tools.secrets_setup import (
     CLOUDFLARE_TOKEN_PAGE,
     EXPOSED_INPUT_REFUSAL,
     NO_BROWSER,
+    OPEN_PROMPT,
+    PASTE_PROMPT,
     TERMINAL_BOUNDARIES,
     Boundaries,
     Outcome,
@@ -145,7 +147,7 @@ class FakeTerminal:
 class FakeVerifier:
     """Accepts PASTED_VALUE and refuses anything else, unless told otherwise; runs `side_effect` on each call."""
 
-    refusal: Verdict = Verdict(Outcome.REFUSED, "Anbieter antwortet 401")
+    refusal: Verdict = Verdict(Outcome.REFUSED, "Provider answers 401")
     side_effect: Callable[[], None] = lambda: None
     checked: list[tuple[str, int]] = field(default_factory=list)
 
@@ -221,33 +223,6 @@ def files_under(home: Path) -> set[str]:
     return {str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()}
 
 
-def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_without_a_next_line(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
-) -> None:
-    """#36 rule 2 / rule 5: the walk takes the missing entries one at a time in manifest order and prints no ending of its own."""
-    terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-
-    code = home_secrets_setup(home, boundaries)
-
-    output = capsys.readouterr().out
-    assert code == 0
-    headers = [line for line in output.splitlines() if line.startswith("== ")]
-    assert headers == [
-        "== cloudflare/read (Token, fehlt)",
-        "== github/read (Token, fehlt)",
-        "== opentofu/passphrase (Dienstpasswort, fehlt)",
-    ]
-    assert [urlsplit(page).netloc for page in terminal.opened] == ["dash.cloudflare.com", "github.com"]
-    assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
-    assert files_under(home) == set(EVERY_FILE)
-    assert not [line for line in output.splitlines() if line.startswith("next:")]
-    assert [line for line in squeezed(output) if line[:1] in tuple("✓✗!·")] == [
-        "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
-        "✓ github/read verified ~/.secrets/github/read (600)",
-        "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
-    ]
-
-
 def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:
     """#36 rule 2.5: every secret is written 0600 in directories kept 0700."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
@@ -260,9 +235,13 @@ def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, termi
     assert {name: (home / name).read_text() for name in TOKEN_FILES} == dict.fromkeys(TOKEN_FILES, PASTED_VALUE)
 
 
-def test_no_value_reaches_stdout_stderr_or_a_log(home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, caplog) -> None:
+@pytest.mark.parametrize("browser_opens", [True, False], ids=["the browser opens", "no browser opens"])
+def test_no_value_reaches_stdout_stderr_or_a_log(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, caplog, browser_opens: bool
+) -> None:
     """#36 rule 3 / #10 line 3: no pasted or generated value reaches the screen, a prompt, a page or a log."""
     caplog.set_level(logging.DEBUG)
+    terminal.browser_opens = browser_opens
     terminal.pastes = [WRONG_VALUE, PASTED_VALUE, PASTED_VALUE]
 
     home_secrets_setup(home, boundaries)
@@ -357,7 +336,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
 
 @pytest.mark.parametrize(
     "refusal",
-    [Verdict(Outcome.REFUSED, "GitHub antwortet 401"), Verdict(Outcome.UNREACHABLE, "GitHub nicht erreichbar; später noch einmal")],
+    [Verdict(Outcome.REFUSED, "GitHub answers 401"), Verdict(Outcome.UNREACHABLE, "GitHub unreachable; try again later")],
     ids=["the provider refuses it", "the provider cannot be reached"],
 )
 def test_a_value_the_provider_does_not_confirm_is_never_written(
@@ -493,7 +472,7 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
 
     assert code == 1
     output = capsys.readouterr().out
-    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in squeezed(output)
+    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read appeared meanwhile and stays unchanged" in squeezed(output)
     assert PASTED_VALUE not in output
     assert rival.read_text() == "FAKE-RIVAL-VALUE"
     assert files_under(home) == set(EVERY_FILE)
@@ -515,7 +494,7 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
     output = capsys.readouterr().out
     assert refused in squeezed(output)
     assert PASTED_VALUE not in output
@@ -549,7 +528,7 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     output = capsys.readouterr().out
     assert code == 1
     assert [line for line in squeezed(output) if "not stored" in line] == [
-        f"✗ {name} not stored {reason}: erst {fix}" for name in ("cloudflare/read", "github/read", "opentofu/passphrase")
+        f"✗ {name} not stored {reason}: first {fix}" for name in ("cloudflare/read", "github/read", "opentofu/passphrase")
     ]
     assert not [line for line in output.splitlines() if line.startswith("next:")]
     assert (terminal.opened, terminal.prompts) == ([], [])
@@ -573,6 +552,10 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert code == 1
     assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
     assert "! locked/token not checked its folder cannot be read" in lines
+    assert [line for line in lines if line.startswith("›")] == [
+        "› cloudflare/read new token Cloudflare fills in nothing",
+        "› github/read new token the link fills name, owner, expiry and rights",
+    ]
     assert not any("github/old" in line for line in lines)
     assert "· ssh/key.ppk skipped optional" in lines
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
@@ -601,25 +584,42 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     assert files_under(home) == set()
 
 
-def test_the_briefing_names_the_page_the_login_and_every_right_to_tick(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
+def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a_generated_entry_only_its_row(
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
-    """#36 rule 2.1: the briefing names the page, the login and every right to tick."""
+    """#531 picture s-s2g / #36 rules 2 and 5: the walk takes the missing entries in manifest order; a token entry announces itself,
+    says why, briefs and names the page; a generated one prints its row only; the walk prints no ending of its own."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home, boundaries)
+    code = home_secrets_setup(home, boundaries)
 
-    output = capsys.readouterr().out
-    cloudflare, github = output.split("== github/read")[0], output.split("== github/read")[1].split("== opentofu")[0]
-    assert "Wofür: liest Cloudflare" in cloudflare
-    assert "Login: dein Cloudflare-Konto." in cloudflare
-    assert "  [ ] Permissions: Zone › DNS › Read" in cloudflare
-    assert "  [ ] Zone Resources: Include › Specific zone › example.invalid" in cloudflare
-    assert "  [ ] TTL: leave the start date empty, set only the End Date 16.11.2026" in cloudflare
-    assert f"Geöffnet: {CLOUDFLARE_TOKEN_PAGE}" in cloudflare
-    assert "  - organization_secrets: read" in github
-    assert "  [ ] Repository access: All repositories" in github
-    assert "Wird zufällig erzeugt und nie gezeigt." in output
+    github = github_entry()
+    assert code == 0
+    assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
+    assert files_under(home) == set(EVERY_FILE)
+    assert squeezed(capsys.readouterr().out) == [
+        "› cloudflare/read new token Cloudflare fills in nothing",
+        "why: liest Cloudflare",
+        "[ ] Create Token › Custom token › Get started",
+        "[ ] Token name: cloudflare/read",
+        "[ ] Permissions: Zone › DNS › Read",
+        "[ ] Account Resources: Include › your account",
+        "[ ] Zone Resources: Include › Specific zone › example.invalid",
+        "[ ] TTL: leave the start date empty, set only the End Date 16.11.2026",
+        "[ ] Continue to summary › Create Token, copy the value",
+        f"opened {CLOUDFLARE_TOKEN_PAGE}",
+        "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
+        "› github/read new token the link fills name, owner, expiry and rights",
+        "why: liest GitHub",
+        "prefilled: metadata read, organization_secrets read",
+        "[ ] Repository access: All repositories",
+        "[ ] compare the rights in the form with the line above",
+        "[ ] Generate token, copy the value",
+        f"opened {github_page(github, github.source)}",
+        "✓ github/read verified ~/.secrets/github/read (600)",
+        "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
+    ]
+    assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
 
 
 def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
@@ -631,10 +631,10 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
 
     code = home_secrets_setup(home, boundaries)
 
-    lines = capsys.readouterr().out.splitlines()
+    lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
     assert code == 0
     assert f"{NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
-    assert not any(line.startswith("Geöffnet:") for line in lines)
+    assert not any(line.startswith("opened ") for line in lines)
     assert files_under(home) == set(EVERY_FILE)
 
 
