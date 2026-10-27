@@ -483,8 +483,9 @@ class CorePhase:
         marks: switches.Switches,
         progress: Progress,
     ) -> str | None:
-        """The core, the followers, then the services of the units that run on; the failure line of
-        the first step that fails."""
+        """The core, the followers, then the services to recreate (a live service of a unit that
+        runs on, the built service in any container state); the failure line of the first step
+        that fails."""
         return self._recreate_core(engine, planned, marks, progress) or self._recreate_services(
             engine, planned, marks, progress
         )

@@ -1,6 +1,7 @@
-"""The recreate of a live service that is not a core service, alone and under the switch lock:
-a follower whose file or definition changed, a service of a unit that runs on whose definition
-changed, the built service whose image or definition changed (#89, #376)."""
+"""The recreate of a service that is not a core service, alone and under the switch lock:
+a follower whose file or definition changed, a live service of a unit that runs on whose
+definition changed, the built service whose image or definition changed in whatever state its
+container is (#89, #376)."""
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
