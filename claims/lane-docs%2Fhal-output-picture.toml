@@ -1,0 +1,7 @@
+claim_id = "87453a3f0d0f431ea9a30d3ac2964edf"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "81e6b1f2c13a54b130d53be2b4d8f6e5eaddbb29"
+branch = "docs/hal-output-picture"
+scope = ["docs/design/hal-output.html"]
+opened_commit = "c86461db05430d997027765c80a440fd97395c92"
