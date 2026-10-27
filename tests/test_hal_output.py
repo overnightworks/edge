@@ -147,6 +147,8 @@ def test_on_a_terminal_a_verdict_is_bold_in_its_glyphs_colour_with_dim_counts(
 def test_on_a_terminal_a_verdict_without_counts_carries_no_empty_dim_escape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """#495: a verdict without counts has no empty dim escape."""
+
     out, _err = put_on_terminals(monkeypatch)
     write_verdict(Verdict(Glyph.DONE, "setup", ((0, Event.CHANGED),), "run hal"))
 
@@ -157,6 +159,8 @@ def test_on_a_terminal_a_verdict_without_counts_carries_no_empty_dim_escape(
 def test_a_stream_without_a_working_isatty_prints_plain(
     monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
 ) -> None:
+    """#495: a stream without a working isatty prints plain."""
+
     class Broken(io.StringIO):
         def isatty(self) -> bool:
             raise failure
