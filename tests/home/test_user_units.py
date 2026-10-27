@@ -170,7 +170,7 @@ def setup_apply_lines(
 def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
     sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    sandboxed_machine.write_unit("home-check.timer", "OnCalendar=daily\n")
+    sandboxed_machine.write_unit("hal-check.timer", "OnCalendar=daily\n")
 
     lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
@@ -249,20 +249,36 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
     assert machine.step.is_verified()
 
 
-def test_the_repository_units_replace_the_edge_backup_links_and_enable_both_hal_backup_timers(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("old_prefix", "old_names", "new_timers"),
+    [
+        pytest.param(
+            "edge-backup",
+            [
+                f"edge-backup{stem}.{kind}"
+                for stem in ("", "-restore-test")
+                for kind in ("service", "timer")
+            ],
+            {"hal-backup.timer", "hal-backup-restore-test.timer"},
+            id="edge-backup-to-hal-backup",
+        ),
+        pytest.param(
+            "home-check",
+            ["home-check.service", "home-check.timer"],
+            {"hal-check.timer"},
+            id="home-check-to-hal-check",
+        ),
+    ],
+)
+def test_the_repository_units_replace_the_old_links_and_enable_the_hal_timers(
+    tmp_path: Path, old_prefix: str, old_names: list[str], new_timers: set[str]
 ) -> None:
-    """#410 sentences 1 and 4: the old edge-backup names are gone and both hal-backup timers run."""
+    """The old unit names are gone and the hal timers run."""
     repository_units = Path(__file__).parents[2] / "systemd"
     home = tmp_path / "home"
     user_units = home / ".config" / "systemd" / "user"
     wants = user_units / TIMERS_WANTS
     wants.mkdir(parents=True)
-    old_names = [
-        f"edge-backup{stem}.{kind}"
-        for stem in ("", "-restore-test")
-        for kind in ("service", "timer")
-    ]
     for old_name in old_names:
         (user_units / old_name).symlink_to(repository_units / old_name)
         if old_name.endswith(".timer"):
@@ -272,8 +288,8 @@ def test_the_repository_units_replace_the_edge_backup_links_and_enable_both_hal_
 
     step.apply()
 
-    assert sorted(path.name for path in user_units.rglob("edge-backup*")) == []
-    assert {"hal-backup.timer", "hal-backup-restore-test.timer"} <= systemctl.active
+    assert sorted(path.name for path in user_units.rglob(f"{old_prefix}*")) == []
+    assert new_timers <= systemctl.active
     assert step.is_verified()
 
 

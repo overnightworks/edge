@@ -591,7 +591,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         help="set up quality, the engines and the global commit hook, then the user units, the system step and the secrets",
         description=(
             "Shows what is missing, or with --apply sets up quality, the engines and the hook."
-            " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
+            " Then it links, reloads and enables the checkout's user units (the backup and hal-check timers),"
             " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
             " The system step makes the journal Docker's default log driver and restarts Docker while its default"
