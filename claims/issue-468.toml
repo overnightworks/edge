@@ -1,8 +1,0 @@
-claim_id = "9aef8c98ff304fbf8d43bb8cb23cbe27"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "c280a80b7636519550108f5baf16ed0ffdb64bda"
-branch = "claude/issue-468-files-volume"
-scope = ["docs/backup.md", "src/edge_backup/apps.py", "src/edge_backup/docker.py", "src/edge_backup/restic.py", "src/edge_backup/runner.py", "src/edge_backup/verify.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_files.py", "tests/test_edge_backup_sqlite.py"]
-opened_commit = "2b9e6be514b73efc9e42d519ce0d0d9a109028b7"
-whole_reason = "One kept volume beside a SQLite copy crosses every layer of the backup's one owner (record, count, restic mount, runner, manifest) and its reference document; any layer left out leaves a key that is parsed but never backed up, or backed up but never verified."
