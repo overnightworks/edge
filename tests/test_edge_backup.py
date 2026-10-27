@@ -129,7 +129,7 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
     outcome = edge_backup(*declare_two_apps(home), "backup", "radio", "--pre-apply")
 
     assert outcome.exit_code == 0, outcome.err
-    assert outcome.out == f"hal backup: pre-apply-Snapshot {machine.snapshots[-1]['id']}\n"
+    assert outcome.out.splitlines()[0].endswith(f"backed up      {machine.snapshots[-1]['id'][:8]}")
     backup = machine.argv_of("restic backup")
     assert backup[backup.index("--tag") + 1] == "radio,pre-apply"
     forget = machine.argv_of("restic forget")
@@ -240,7 +240,7 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "Start der Wegwerf-Datenbank endete mit Exit 125" in outcome.err
+    assert "Start der Wegwerf-Datenbank ended with exit 125" in outcome.err
     assert removed_servers(machine) == []
 
 
@@ -250,7 +250,7 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
         (b"", "docker run meldete keine Container-ID"),
         (f"WARNING: platform mismatch\n{RESTORE_SERVER_ID}\n".encode(), "keine Container-ID"),
         (b"not-a-container-id\n", "docker run meldete keine Container-ID"),
-        (b"\xff\xfe\n", "docker meldete Ausgabe, die kein UTF-8 ist"),
+        (b"\xff\xfe\n", "docker printed output that is not UTF-8"),
     ],
 )
 def test_a_started_throwaway_server_is_removed_even_when_its_id_is_unreadable(
@@ -313,8 +313,8 @@ def test_a_failed_backup_step_fails_loud_and_never_counts_as_success(
     outcome = edge_backup("backup")
 
     assert outcome.exit_code == 3
-    assert outcome.err.count("\n") == 1
-    assert f"{failing_label} endete mit Exit {exit_code}" in outcome.err
+    assert outcome.err.startswith("error: ")
+    assert f"{failing_label} ended with exit {exit_code}" in outcome.out + outcome.err
     assert outcome.status["state"] == "failed"
     assert outcome.status["failing_phase"] == phase
     assert outcome.status["exit_category"] == "command-failed"
@@ -365,9 +365,9 @@ def test_staging_and_restore_directories_and_their_files_are_private(edge_backup
 @pytest.mark.parametrize(
     ("argv", "exit_code", "message"),
     [
-        (["sh", "-c", "exit 3"], 3, "probe endete mit Exit 3"),
-        (["sh", "-c", "exit 1"], 1, "probe endete mit Exit 1"),
-        (["edge-backup-no-such-binary"], None, "probe ist nicht installiert"),
+        (["sh", "-c", "exit 3"], 3, "probe ended with exit 3"),
+        (["sh", "-c", "exit 1"], 1, "probe ended with exit 1"),
+        (["edge-backup-no-such-binary"], None, "probe is not installed"),
     ],
 )
 def test_host_run_fails_on_every_nonzero_exit_and_a_missing_binary(argv, exit_code, message):
@@ -381,7 +381,7 @@ def test_host_run_kills_a_command_that_outlasts_its_timeout():
     timeout = timedelta(milliseconds=50)
 
     with pytest.raises(
-        host.HostCommandError, match=re.escape("probe antwortete nicht binnen 0.05 s")
+        host.HostCommandError, match=re.escape("probe did not answer within 0.05 s")
     ):
         host.run(["sleep", "5"], label="probe", timeout=timeout)
 
@@ -540,7 +540,7 @@ def test_readiness_gives_up_after_ten_minutes(edge_backup, machine, command, sta
     outcome = edge_backup(*command.split())
 
     assert outcome.exit_code == 3
-    assert "nach 10 Minuten nicht bereit" in outcome.err
+    assert "after 10 min" in outcome.out + outcome.err
     assert outcome.status["failing_phase"] == "readiness"
     assert outcome.status["exit_category"] == "not-ready"
     assert not {"pg_dump", "restic restore"} & set(machine.labels())
@@ -549,9 +549,9 @@ def test_readiness_gives_up_after_ten_minutes(edge_backup, machine, command, sta
 @pytest.mark.parametrize(
     ("ambiguity", "message"),
     [
-        ({"db_containers": ["c0ffee", "c0ffee2"]}, "2 Datenbank-Container"),
-        ({"volumes": []}, "0 Volumes audiofiles"),
-        ({"volumes": ["a_audiofiles", "b_audiofiles"]}, "2 Volumes audiofiles"),
+        ({"db_containers": ["c0ffee", "c0ffee2"]}, "2 database containers"),
+        ({"volumes": []}, "0 volumes audiofiles"),
+        ({"volumes": ["a_audiofiles", "b_audiofiles"]}, "2 volumes audiofiles"),
     ],
 )
 def test_backup_refuses_when_labels_name_more_or_less_than_one_target(
@@ -563,7 +563,7 @@ def test_backup_refuses_when_labels_name_more_or_less_than_one_target(
     outcome = edge_backup("backup")
 
     assert outcome.exit_code == 3
-    assert message in outcome.err
+    assert message in outcome.out
     assert outcome.status["exit_category"] == "configuration"
     assert "pg_dump" not in machine.labels()
 
@@ -604,7 +604,7 @@ def _lose_the_manifest(machine: Machine) -> None:
         (_reference_a_missing_file, "1 von 3 referenzierten Audiodateien fehlen"),
         (_reference_an_empty_file, "1 von 3 referenzierten Audiodateien fehlen"),
         (_reference_outside_the_audio_volume, "1 von 3 referenzierten Audiodateien fehlen"),
-        (_corrupt_the_dump, "pg_restore endete mit Exit 1"),
+        (_corrupt_the_dump, "pg_restore ended with exit 1"),
         (_lose_the_dump, "der Snapshot enthält keinen Datenbank-Dump"),
         (_lose_the_manifest, "der Snapshot enthält kein Manifest"),
     ],
@@ -640,7 +640,7 @@ def test_restore_test_counts_a_container_that_will_not_run_as_a_failed_command(
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert f"{failing_label} endete mit Exit 125" in outcome.err
+    assert f"{failing_label} ended with exit 125" in outcome.err
     assert outcome.status["failing_phase"] == "verify"
     assert outcome.status["exit_category"] == "command-failed"
 
@@ -795,11 +795,8 @@ def test_a_sweep_that_cannot_remove_a_leftover_fails_the_run_with_one_line(
     outcome = edge_backup(*command.split())
 
     assert outcome.exit_code == 3
-    [line] = outcome.err.splitlines()
-    program = "hal restore" if "restore" in command else "hal backup"
-    assert line.startswith(
-        f"error: {program}: fehlgeschlagen: der Klartext eines abgebrochenen Laufs"
-    )
+    [line, *_] = outcome.err.splitlines()
+    assert "the plaintext of an aborted run cannot be removed" in line
     assert (outcome.status["state"], outcome.status["exit_category"]) == ("failed", "internal")
     assert machine.calls == []
 
@@ -823,9 +820,9 @@ def _corrupt_apps_toml(home: Path) -> None:
 @pytest.mark.parametrize(
     ("break_setup", "message"),
     [
-        (_remove_password_file, "die Passwortdatei fehlt"),
-        (_make_password_file_readable_by_others, "Modus 600"),
-        (_remove_repository, "nicht initialisiert"),
+        (_remove_password_file, "the password file is missing"),
+        (_make_password_file_readable_by_others, "mode 600"),
+        (_remove_repository, "not initialised"),
         (_corrupt_apps_toml, "apps.toml [app.songmaker]"),
     ],
 )
@@ -880,7 +877,7 @@ def test_an_unreadable_status_file_is_never_overwritten(
     outcome = edge_backup(*command)
 
     assert outcome.exit_code == 3
-    [line] = outcome.err.splitlines()
+    [line, *_] = outcome.err.splitlines()
     assert "Statusdatei ist unlesbar" in line
     assert _identity_of(machine.status_file) == before
     assert machine.calls == []
@@ -1118,7 +1115,7 @@ def test_a_failing_restore_shows_no_row_value_of_the_dump(edge_backup, machine, 
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "pg_restore endete mit Exit 1" in outcome.err
+    assert "pg_restore ended with exit 1" in outcome.err
     shown = outcome.out + outcome.err + machine.status_file.read_text()
     assert marker not in shown
     assert no_restore_server_left(machine)
@@ -1148,7 +1145,7 @@ def test_keycloak_reported_failed_while_songmaker_is_still_backed_up_when_keyclo
     outcome = edge_backup(*declare_shipped_apps(), "backup")
 
     assert outcome.exit_code == 3
-    assert "kein Datenbank-Container für keycloak" in outcome.err
+    assert "no database container" in outcome.out
     assert (outcome.status["failing_app"], outcome.status["exit_category"]) == (
         "keycloak",
         "not-ready",

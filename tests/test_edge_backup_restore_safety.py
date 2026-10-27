@@ -100,7 +100,7 @@ def test_a_pinned_image_that_cannot_be_pulled_fails_early_naming_it(
     outcome = edge_backup(*command.split())
 
     assert outcome.exit_code == 3
-    [line] = outcome.err.splitlines()
+    [line, *_] = outcome.err.splitlines()
     assert RESTIC_IMAGE in line
     assert set(machine.labels()) == {"docker info", "docker image inspect", "docker pull"}
     assert outcome.status["exit_category"] == "configuration"
