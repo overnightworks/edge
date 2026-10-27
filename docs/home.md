@@ -157,7 +157,7 @@ geliefert hat: ein Lauf ohne Sitzung (Linger, 09:00) mit gelieferter Mail genüg
 bleibt sie stehen, ohne Ausgabe. `[notify] enabled = false` schaltet beide ab.
 
 Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
-lesen darf), steht an ihrer Stelle eine Zeile „Prüfung secrets fehlgeschlagen
+lesen darf), steht an ihrer Stelle eine Zeile „check secrets failed
 (…)“, die Funde der anderen Prüfung bleiben im Bericht, die Benachrichtigung
 geht trotzdem raus, und der Lauf endet mit Exit-Code `3` — bei einem
 ungültigen Geheimnis-Manifest mit `2`, und stderr nennt Datei und Schlüssel.
@@ -610,7 +610,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
     back the packaged one.
 - **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
   Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
-  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "msmtp fehlgeschlagen" while
+  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "mail failed: msmtp could not deliver via" while
   `~/.secrets/smtp/account.toml` exists.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
