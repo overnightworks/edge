@@ -27,7 +27,7 @@ import urllib.request
 import uuid
 import warnings
 import webbrowser
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
@@ -321,9 +321,22 @@ def github_page(entry: SecretEntry, source: TokenSource) -> str:
     return f"{GITHUB_TOKEN_PAGE}?{urlencode(fields, quote_via=quote)}"
 
 
+def github_rights_prose(scope: Iterable[str]) -> str:
+    """`name:level` rights as prose, one entry per permission with its levels folded, in first-appearance order."""
+    levels_by_permission: dict[str, list[str]] = {}
+    for right in scope:
+        name, level = right.split(":", 1)
+        levels_by_permission.setdefault(name, []).append(level)
+    entries = []
+    for name, levels in levels_by_permission.items():
+        words = name.replace("_", " ")
+        entries.append(f"{words[:1].upper()}{words[1:]} {' and '.join(levels)}")
+    return ", ".join(entries)
+
+
 def _github_briefing(_entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
     return [
-        f"prefilled: {', '.join(right.replace(':', ' ', 1) for right in source.scope)}",
+        f"prefilled: {github_rights_prose(source.scope)}",
         "[ ] Repository access: All repositories",
         "[ ] compare the rights in the form with the line above",
         "[ ] Generate token, copy the value",
