@@ -74,20 +74,16 @@ class Block:
     parsed: Parsed
     date: date
 
-    def is_published_in(self, page_text: str) -> bool:
-        """Whether every heading of the block stands in the page with its id, title and bytes."""
-        return all(
-            f'id="{heading.id}"' in page_text
-            and heading.title in page_text
-            and heading.content in page_text
-            for heading in (*self.parsed.headings, *self.parsed.subsections)
-        )
-
 
 @dataclass(frozen=True)
 class Frame:
     pages: Mapping[str, str]  # the page skeletons by page
     templates: Mapping[str, str]  # the block templates by name, `TEMPLATES`
+
+
+def is_published_in(frame: Frame, block: Block, page_text: str) -> bool:
+    """Whether the block's whole rendered text, in its order, stands in the page unchanged."""
+    return _render(frame, block).body in page_text
 
 
 def frame_page_path(page: str) -> str:

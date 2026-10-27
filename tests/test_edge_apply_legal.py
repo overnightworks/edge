@@ -165,6 +165,17 @@ def test_the_plan_names_the_block_whose_text_changed_and_no_other(world):
     assert PRIVACY not in out
 
 
+def test_the_plan_names_a_block_whose_title_was_only_shortened(world):
+    """L3."""
+    terms = "legal/sections/allgemein/nutzungsbedingungen.html"
+    world.switch()
+    world.edit(terms, lambda text: text.replace(b"Anwendbares Recht", b"Recht", 1))
+
+    _, out, _ = world.switch(answer="no")
+
+    assert f"legal: nutzungsbedingungen changes: {terms}" in out
+
+
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     """L3."""
     world.switch()

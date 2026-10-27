@@ -21,6 +21,7 @@ from edge.legal_pages import (
     build_pages,
     frame_page_path,
     frame_template_path,
+    is_published_in,
 )
 from edge.legal_section import PAGES, LegalError, parse_fragment, parse_general
 from edge.unit_plans import Fleet, Progress
@@ -80,24 +81,27 @@ def plan_legal(
     all_blocks = read_blocks(
         repository, _catalog_keys(repository), lambda path: _commit_date(git, path)
     )
-    pages = build_pages(read_frame(repository), all_blocks)
+    frame = read_frame(repository)
+    pages = build_pages(frame, all_blocks)
     changed = {
         page: change
         for page, text in pages.items()
         if (change := _change(repository / BUILT_DIRECTORY / f"{page}.html", text))
     }
-    blocks = {page: _changed_blocks(repository, page, all_blocks) for page in changed}
+    blocks = {page: _changed_blocks(repository, frame, page, all_blocks) for page in changed}
     return LegalPlan(repository, pages, changed, blocks)
 
 
-def _changed_blocks(repository: Path, page: str, blocks: Sequence[Block]) -> tuple[str, ...]:
+def _changed_blocks(
+    repository: Path, frame: Frame, page: str, blocks: Sequence[Block]
+) -> tuple[str, ...]:
     """The files of the page's blocks whose text the built page does not hold yet."""
     try:
         built = (repository / BUILT_DIRECTORY / f"{page}.html").read_text()
     except FileNotFoundError:
         built = ""
     return tuple(
-        block.path for block in blocks if block.page == page and not block.is_published_in(built)
+        block.path for block in blocks if block.page == page and not is_published_in(frame, block, built)
     )
 
 
