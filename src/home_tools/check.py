@@ -269,7 +269,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "journal-unreadable"): LOGS_UNSEEN,
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
 }
-BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", "Run `home check`.", resolved="The {area} check runs again.")
+BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", "Run `hal check`.", resolved="The {area} check runs again.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
     ("platform", "Services"),

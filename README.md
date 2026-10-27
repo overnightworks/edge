@@ -84,7 +84,7 @@ barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
 `legal/` the legal unit's frame and sections (imprint, privacy notice, terms; `hal apply` builds the pages into `legal/built/`), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
 their timers. The commands are Python under `src/` (`edge`, `hal`, `home`;
-`hal check` reports what reaches beyond loopback and `hal check hosts` compares Cloudflare with `fleet.yaml`, `hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
+a bare `hal check` is the daily check (it also mails and pops up what is new), `hal check exposure` reports what reaches beyond loopback and `hal check hosts` compares Cloudflare with `fleet.yaml`, `hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
 `bin/hal` and `bin/home` link to), the OpenTofu
 root is `external/`, the probes that prove each service on a throwaway stack are under `probe/`, and
 `tests/` holds the rest.

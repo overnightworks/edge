@@ -5,17 +5,20 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from git_support import hal_program, run_hal
+from git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
 
 from edge.external import cloudflare_read, host_probe, tofu
 from edge_check import inspection
 from edge_check.exposure import Finding, Problem
 from hal import cli
+from home_tools.layout import Layout
 
 CLEAN_LINE = "exposure: nothing reaches beyond loopback\n"
 SSHD_LISTENS_ON_ALL = 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->\n'
@@ -62,14 +65,18 @@ def run_hal_check(fake_host, tmp_path, capsys):
     return run
 
 
-@pytest.mark.parametrize("ss", ["", SSHD_LISTENS_ON_ALL], ids=["clean", "finding"])
-@pytest.mark.parametrize("flags", [(), ("--json",)], ids=["text", "json"])
-def test_a_bare_check_and_the_exposure_area_print_the_same(run_hal_check, ss, flags):
-    """E1, cells 2 and 6."""
-    bare = run_hal_check(*flags, ss=ss)
+@pytest.mark.parametrize("area", ["exposure", "hosts"])
+def test_an_area_runs_without_the_daily_check(area, hosts_home, fake_host, monkeypatch, capsys):
+    """The areas leave the daily check's report and remembered findings alone."""
+    monkeypatch.setattr(cloudflare_read, "CloudflareClient", FakeCloudflare(CLEAN_SNAPSHOT))
+    monkeypatch.setattr(host_probe, "HttpProber", AnsweringProber())
+    fake_host()
 
-    assert bare == run_hal_check("exposure", *flags, ss=ss)
-    assert bare[0] == (1 if ss else 0)
+    assert cli.main(["check", area]) == 0
+    assert capsys.readouterr().err == ""
+    layout = Layout(hosts_home)
+    assert not layout.check_report_file.exists()
+    assert not layout.check_findings_file.exists()
 
 
 def test_a_clean_host_says_so_and_exits_0(run_hal_check):
@@ -146,16 +153,56 @@ def test_an_interrupt_exits_130_with_empty_stdout(fake_host, tmp_path, capsys):
     assert (exit_code, capsys.readouterr().out) == (130, "")
 
 
-def test_the_check_never_reads_stdin(fake_host, monkeypatch, tmp_path):
+def test_the_exposure_check_never_reads_stdin(fake_host, monkeypatch, tmp_path):
     """Cell 8: a real `hal` process whose stdin raises on any touch, as G-11 runs the commands."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     fake_host()
 
-    result = run_hal(tmp_path, hal_program(before=FORBIDDEN_STDIN), "check")
+    result = run_hal(tmp_path, hal_program(before=FORBIDDEN_STDIN), "check", "exposure")
 
     assert (result.returncode, result.stdout) == (0, CLEAN_LINE)
+
+
+@pytest.fixture
+def shimmed_tools(tmp_path) -> Path:
+    """The only PATH of a real bare `hal check`: `git` and `sh` as they are, every other tool a
+    shim that records its call; `systemctl` sees a graphical session and `systemd-run` fails, so
+    the popup is tried and not delivered."""
+    directory = tmp_path / "shims"
+    directory.mkdir()
+    for real in ("git", "sh"):
+        (directory / real).symlink_to(shutil.which(real))
+    for name in ("systemd-run", "systemctl", "journalctl", "notify-send", "msmtp", "docker", "ss"):
+        exit_code = 1 if name in {"systemd-run", "journalctl"} else 0
+        shim = directory / name
+        record = f'echo "{name} $*" >> "{tmp_path / "calls"}"'
+        shim.write_text(f"#!/bin/sh\n{record}\nexit {exit_code}\n")
+        shim.chmod(0o755)
+    return directory
+
+
+def test_a_bare_check_runs_the_daily_check_in_a_real_process_without_reading_stdin(
+    shimmed_tools, monkeypatch, tmp_path
+):
+    """The daily check as `hal check` runs it, on a throwaway HOME: no mail, popup, systemd or
+    Docker beyond the shims."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    result = subprocess.run(
+        hal_command(hal_program(before=FORBIDDEN_STDIN), "check"),
+        cwd=elsewhere(tmp_path), env=hal_environment(PATH=str(shimmed_tools)),
+        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", timeout=60,
+    )  # fmt: skip
+
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert result.returncode in (1, 3)
+    assert "services" in result.stdout
+    assert any(call.startswith("systemd-run") for call in calls)
+    assert (home / ".local/state/home/check-report.md").is_file()
 
 
 @pytest.mark.parametrize("problem", list(Problem))

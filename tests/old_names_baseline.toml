@@ -82,7 +82,7 @@
 "docs/agent-service.md" = 2
 "docs/architecture.md" = 32
 "docs/design/hal-output.html" = 1
-"docs/home.md" = 49
+"docs/home.md" = 48
 "docs/stack.md" = 1
 "scripts/system-proof/Dockerfile" = 1
 "scripts/system-proof/drive.sh" = 5
@@ -90,7 +90,7 @@
 "src/edge_backup/status.py" = 1
 "src/hal/setup_commands.py" = 3
 "src/home_tools/backup_check.py" = 2
-"src/home_tools/check.py" = 7
+"src/home_tools/check.py" = 6
 "src/home_tools/cli.py" = 6
 "src/home_tools/hook_check.py" = 2
 "src/home_tools/logs_check.py" = 2

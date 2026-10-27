@@ -691,7 +691,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
   <ul class="why">
     <li><b>Exit-Codes wie heute:</b> 0 alles gut, 1 Funde (der Timer zählt das als Erfolg), 2 Konfiguration oder Manifest ungültig, 3 ein Bereich konnte nicht prüfen. Bei 3 steht die Fehlerzeile mit <code>next:</code> auf stderr.</li>
     <li><b>Mail und Popup bleiben, wie sie sind</b> (seit heute Englisch). Das Terminal zeigt nur die Kurzform; der Bericht in der Datei ist die Langform.</li>
-    <li><b>Später (nicht H5m5):</b> <code>hal check exposure</code> zeigt nur diesen Bereich, <code>--json</code> gibt es nur mit einem Bereich.</li>
+    <li><code>hal check</code> ohne Bereich ist die tägliche Prüfung; <code>hal check exposure</code> zeigt nur diesen Bereich, <code>--json</code> gibt es nur mit einem Bereich.</li>
     <li><b>Der Bericht zieht nach <code>~/.local/state/hal/</code></b>, sobald der alte Befehl weg ist (H5m6); bis dahin liegt er im alten Zustandsverzeichnis.</li>
   </ul>
 </section>
