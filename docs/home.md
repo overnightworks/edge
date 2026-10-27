@@ -64,7 +64,7 @@ Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
 Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
 „1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
-Schritte der anderen Quellen folgen. Die Konfigurationsdatei liest `home next` nicht.
+Schritte der anderen Quellen folgen.
 Es ändert nichts, fragt nach keinem Passwort und liest keinen
 Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
@@ -72,15 +72,11 @@ Prüfung; `3` nur bei einem unerwarteten Fehler.
 
 ## home check
 
-```
-home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
-```
-
-`home check` fährt jede Prüfung, die nichts ändert — die Ansicht von
+`hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
-Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
+Von Hand getippt liefert ein nacktes `hal check` Neuigkeiten aus wie der Timer: derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
 
 Auf dem Terminal steht davon eine englische Zeile je Bereich in der Reihenfolge der Mail (`ok`, `N action(s)`,
 `N note(s)` mit dem Satz des ersten Funds und `+N more`, oder `not checked`) und ein Urteil, das sagt, ob eine Mail
