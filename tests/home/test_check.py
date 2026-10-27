@@ -208,7 +208,7 @@ def test_a_failed_notification_is_reported_and_sent_again_on_the_next_run(clean_
     home_check(clean_home, runner)
 
     assert failed_code == 1
-    assert "notify-send fehlgeschlagen" in capsys.readouterr().err
+    assert "popup failed: notify-send did not run; the next run reports again\n" in capsys.readouterr().err.splitlines(keepends=True)
     assert len(runner.notifications) == 2
 
 
@@ -253,8 +253,8 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
         "  ✗ secrets         not checked    the check did not run · details in the report",
         "  ✓ server logs     ok",
     ]
-    assert "| fehlgeschlagen: secrets" in report.splitlines()[0]
-    assert "Prüfung secrets fehlgeschlagen (PermissionError)" in report
+    assert "| failed: secrets" in report.splitlines()[0]
+    assert "check secrets failed (PermissionError)" in report
     assert "container-unhealthy | edge" in report
     error_lines = error.splitlines()
     assert error_lines[0] == "error: 1 of 5 areas could not check · news sent"
@@ -313,8 +313,8 @@ def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2
     report = Layout(clean_home).check_report_file.read_text()
     error = capsys.readouterr().err
     assert code == 2
-    assert "| fehlgeschlagen: secrets" in report.splitlines()[0]
-    assert "Prüfung secrets fehlgeschlagen (ManifestError)" in report
+    assert "| failed: secrets" in report.splitlines()[0]
+    assert "check secrets failed (ManifestError)" in report
     assert "container-unhealthy | edge" in report
     assert error.startswith(f"home: {manifest}: ")
     assert error.count("\n") == 1
@@ -533,7 +533,7 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
 
     errors = capsys.readouterr().err
     assert mail_stub.sent == []
-    assert errors.count("home: keine Mail, account.toml:") == 2
+    assert errors.count("mail not sent: account.toml:") == 2
     assert PASSWORD_CANARY not in errors
     assert len(runner.notifications) == 2
 
@@ -570,7 +570,7 @@ def test_the_news_advances_only_when_every_set_up_channel_delivered(clean_home, 
     assert code == 1
     assert (len(runner.notifications), len(mail_stub.sent)) == (int(session_active), int(mail_state != "absent"))
     assert Layout(clean_home).check_findings_file.exists() == advanced
-    assert ("msmtp fehlgeschlagen (smtp.example.test:587)" in errors) == (mail_state == "failing")
+    assert ("mail failed: msmtp could not deliver via smtp.example.test:587; the next run reports again" in errors) == (mail_state == "failing")
     assert "me@example.test" not in errors
     assert (errors == "") == (advanced or not any(channels))
 
@@ -596,7 +596,7 @@ def test_a_failing_send_prints_its_failure_line_but_never_the_password(clean_hom
     home_check(clean_home, runner)
 
     captured = capsys.readouterr()
-    assert "msmtp fehlgeschlagen (smtp.example.test:587)" in captured.err
+    assert "mail failed: msmtp could not deliver via smtp.example.test:587; the next run reports again" in captured.err
     assert PASSWORD_CANARY not in captured.out + captured.err
 
 
@@ -609,7 +609,7 @@ def test_an_account_path_that_is_a_directory_is_an_invalid_account_and_keeps_the
 
     home_check(clean_home, runner)
 
-    assert "home: keine Mail, account.toml:" in capsys.readouterr().err
+    assert "mail not sent: account.toml:" in capsys.readouterr().err
     assert not Layout(clean_home).check_findings_file.exists()
 
 
@@ -624,7 +624,7 @@ def test_a_missing_msmtp_is_one_stderr_line_and_the_news_is_kept(clean_home, run
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert "msmtp fehlgeschlagen" in capsys.readouterr().err
+    assert "mail failed: msmtp could not deliver via" in capsys.readouterr().err
     assert not Layout(clean_home).check_findings_file.exists()
 
 
@@ -724,3 +724,14 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
     assert f"Backup: OK, last backup {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
+
+
+def test_a_failed_popup_without_mail_is_named_in_the_verdict(clean_home, runner, mail_stub, capsys) -> None:
+    """#522: with no mail set up and the popup failed, the verdict says so instead of `no mail set up`."""
+    restarting_containers(runner)
+    (Layout(clean_home).secrets_dir / "smtp" / "account.toml").unlink()
+    runner.notify_delivers = False
+
+    home_check(clean_home, runner)
+
+    assert "popup failed, retries next run" in capsys.readouterr().out.splitlines()[-2]

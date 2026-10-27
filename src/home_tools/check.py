@@ -24,7 +24,7 @@ from types import MappingProxyType
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from hal_output import Glyph, Noun, Row, Verdict, write_error, write_row, write_verdict
+from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
@@ -58,7 +58,7 @@ class CheckResult:
 
 
 def _failure_line(name: str, error: Exception) -> str:
-    return f"Prüfung {name} fehlgeschlagen ({type(error).__name__}): {error}"
+    return f"check {name} failed ({type(error).__name__}): {error}"
 
 
 CheckFindings = tuple[str, frozenset[str]]
@@ -148,7 +148,7 @@ def remembered_identities(results: tuple[CheckResult, ...], previous: frozenset[
 def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     total = sum(len(result.finding_identities) for result in results)
     failed = [result.name for result in results if result.error]
-    failed_clause = f" | fehlgeschlagen: {', '.join(failed)}" if failed else ""
+    failed_clause = f" | failed: {', '.join(failed)}" if failed else ""
     header = f"# home check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
@@ -189,7 +189,7 @@ def _remember(layout: Layout, identities: frozenset[str]) -> None:
     write_state_file(layout.home, layout.check_findings_file, json.dumps(sorted(identities), indent=0) + "\n")
 
 
-NOTIFY_FAILED = "home: notify-send fehlgeschlagen; der nächste Lauf meldet die geänderten Funde erneut.\n"
+NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again\n"
 
 
 @dataclass(frozen=True)
@@ -490,8 +490,8 @@ def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_f
     return "\n\n".join(sections) + "\n"
 
 
-MAIL_FAILED = "home: msmtp fehlgeschlagen ({host}:{port}); der nächste Lauf meldet die geänderten Funde erneut.\n"
-MAIL_ACCOUNT_INVALID = "home: keine Mail, {problem}; der nächste Lauf meldet die geänderten Funde erneut.\n"
+MAIL_FAILED = "mail failed: msmtp could not deliver via {host}:{port}; the next run reports again\n"
+MAIL_ACCOUNT_INVALID = "mail not sent: {problem}; the next run reports again\n"
 GRAPHICAL_SESSION_PROBE = ["systemctl", "--user", "is-active", "--quiet", "graphical-session.target"]
 
 
@@ -500,13 +500,13 @@ def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
     try:
         account = mail.load_account(ctx.layout)
     except mail.AccountInvalid as error:
-        sys.stderr.write(MAIL_ACCOUNT_INVALID.format(problem=error))
+        sys.stderr.write(MAIL_ACCOUNT_INVALID.format(problem=printable(str(error))))
         return False
     if account is None:
         return None
     delivered = ctx.run(mail.sendmail_command(account, ctx.layout.secrets_dir, mail.compose(account, subject, body))) is not None
     if not delivered:
-        sys.stderr.write(MAIL_FAILED.format(host=account.host, port=account.port))
+        sys.stderr.write(MAIL_FAILED.format(host=printable(str(account.host)), port=account.port))
     return delivered
 
 
@@ -540,6 +540,7 @@ class Delivery(StrEnum):
     NEWS_SENT = "news sent"
     MAIL_FAILED = "mail failed, retries next run"
     NO_MAIL = "no mail set up"
+    POPUP_FAILED = "popup failed, retries next run"
     NOTHING_NEW = "nothing new, no mail"
     NOTIFICATIONS_OFF = "notifications off"
 
@@ -554,6 +555,8 @@ class NewsOutcome:
 def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
     if mail_outcome is not None:
         return Delivery.MAIL_SENT if mail_outcome else Delivery.MAIL_FAILED
+    if desktop is False:
+        return Delivery.POPUP_FAILED
     return Delivery.NEWS_SENT if desktop else Delivery.NO_MAIL
 
 

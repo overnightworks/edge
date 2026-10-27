@@ -77,5 +77,5 @@ def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_oth
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 3
-    assert "Prüfung platform fehlgeschlagen (OSError)" in report
+    assert "check platform failed (OSError)" in report
     assert "| missing | gitlab |" in report
