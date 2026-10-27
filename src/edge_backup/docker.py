@@ -31,6 +31,12 @@ RESTORE_OWNER_ROLE = "restore-test"
 RESTORE_DATABASE = "restore_test"
 # The image's superuser; `docker exec` runs as root, which is no role in the server.
 RESTORE_ROLE = "postgres"
+# Host-run labels: they name the step in `<label> ended with exit N` and key the test fakes.
+SQLITE_COPY_LABEL = "SQLite copy"
+SQLITE_CHECK_LABEL = "SQLite copy check"
+FILE_COUNT_LABEL = "file count"
+SERVER_START_LABEL = "throwaway database start"
+SERVER_REMOVAL_LABEL = "throwaway database removal"
 _SCANNED = "/scanned"
 _SQLITE_SCRIPT = "/sqlite_copy.py"
 _SQLITE_DATA = "/data"
@@ -200,7 +206,7 @@ def copy_sqlite(settings: Settings, volume: str, database: SqliteDatabase, targe
             user=f"{owner[1]}:{owner[2]}",
             command=["copy", path],
         ),
-        label="Kopie der SQLite-Datenbank",
+        label=SQLITE_COPY_LABEL,
         stdout=target,
         discard_stderr=True,
     )
@@ -219,7 +225,7 @@ def check_sqlite(settings: Settings, directory: Path, file: str, table: str) -> 
                 Mount(MountKind.BIND, str(directory), _SQLITE_DATA),
                 command=["check", f"{_SQLITE_DATA}/{file}", table],
             ),
-            label="Prüfung der SQLite-Kopie",
+            label=SQLITE_CHECK_LABEL,
             discard_stderr=True,
         )
     except host.HostCommandError as error:
@@ -248,7 +254,7 @@ def count_files(settings: Settings, kind: MountKind, source: str, skip: str | No
             *container_argv(settings, Mount(kind, source, _SCANNED), entrypoint="find"),
             _SCANNED, *pruned, "-type", "f", "-print0",
         ],
-        label="Zählen der Dateien",
+        label=FILE_COUNT_LABEL,
     )  # fmt: skip
     return listing.count(b"\0")
 
@@ -274,7 +280,7 @@ def restore_server(image: str) -> Iterator["RestoreServer"]:
          # trust is safe here: the server has no network and holds only the restored copy.
          "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", f"POSTGRES_DB={RESTORE_DATABASE}",
          image, *_SILENT_SERVER_SETTINGS],
-        label="Start der Wegwerf-Datenbank",
+        label=SERVER_START_LABEL,
     )  # fmt: skip
     try:
         yield RestoreServer(_started_container(started))
@@ -316,7 +322,7 @@ class RestoreServer:
         try:
             return int(output.strip(b"\0\n"))
         except ValueError as error:
-            raise host.UnreadableOutputError(f"die Zeilenzahl von {table} ist unlesbar") from error
+            raise host.UnreadableOutputError(f"the row count of {table} is unreadable") from error
 
     def column_values(self, table: str, column: str) -> list[str]:
         """The non-empty values; identifiers are validated by apps.toml, so quoting suffices."""
@@ -356,7 +362,7 @@ def _started_container(run_output: bytes) -> str:
         case [container_id] if _CONTAINER_ID.fullmatch(container_id):
             return container_id
         case _:
-            raise host.UnreadableOutputError("docker run meldete keine Container-ID")
+            raise host.UnreadableOutputError("docker run reported no container id")
 
 
 def _remove_owned_restore_servers() -> None:
@@ -374,7 +380,7 @@ def _remove_owned_restore_servers() -> None:
 def _remove_restore_server(container_id: str) -> None:
     host.run(
         ["docker", "rm", "--force", "--volumes", container_id],
-        label="Entfernen der Wegwerf-Datenbank",
+        label=SERVER_REMOVAL_LABEL,
     )
 
 
