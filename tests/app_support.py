@@ -28,6 +28,10 @@ COMPOSE = (
     f"services:\n  {KEY}:\n    build: .\n    restart: unless-stopped\n"
     "    healthcheck: {test: [CMD, 'true']}\n"
 )
+TWO_SERVICES = (
+    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
+    "  worker:\n    build: .\n    restart: unless-stopped\n"
+)
 FLEET = (
     f"github:\n  org: {ORGANISATION}\n\nservices:\n  {KEY}:\n"
     "    repo: {default_branch: master}\n    run: {enabled: true}\n"
@@ -130,6 +134,7 @@ class ScriptedDocker:
     directory: Path
     rows: list[dict[str, str]] = field(default_factory=list)
     health_after_start: str = "healthy"
+    without_health: frozenset[str] = frozenset()  # services whose containers start with no health
     failing_verb: str | None = None
     interrupted_verb: str | None = None
     calls: list[tuple[str, tuple[str, ...], bool]] = field(default_factory=list)
@@ -221,7 +226,10 @@ class ScriptedDocker:
     def verb_start(self, _arguments: list[str]) -> str:
         for row in self.rows:
             if row["State"] in ("created", "exited"):
-                row["State"], row["Health"] = "running", self.health_after_start
+                row["State"] = "running"
+                row["Health"] = (
+                    "" if row["Service"] in self.without_health else self.health_after_start
+                )
         return ""
 
     def verb_stop(self, _arguments: list[str]) -> str:

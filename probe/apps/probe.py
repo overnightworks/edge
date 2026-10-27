@@ -97,7 +97,13 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "d4": "v2026.10.24.5",
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
+    "h1": "v2026.10.26.3",
 }
+HEALTHCHECK = (
+    '    healthcheck: {test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"],\n'
+    "      interval: 2s, timeout: 2s, retries: 3, start_period: 1s}\n"
+)
+HEALTHCHECKS = {"helper": "", "sealed": "    healthcheck: {disable: true}\n"}  # by service
 # A service that no release of the app names
 GHOST = f"services:\n  ghost:\n    image: {BUSYBOX}\n    command: [sleep, '3600']\n"
 FORBIDDEN_VERBS = ("online", "offline", "--all")
@@ -285,9 +291,7 @@ class Probe:
             blocks.append(
                 f"  {name}:\n    build: .\n    restart: unless-stopped\n{environment}"
                 f"{extra}    labels:\n{routing}      probe.tag: {tag}\n"
-                '    healthcheck:\n      test: ["CMD", "wget", "-q", "-O", "/dev/null", '
-                '"http://127.0.0.1:8080/health"]\n      interval: 2s\n      timeout: 2s\n'
-                "      retries: 3\n      start_period: 1s\n"
+                f"{HEALTHCHECKS.get(name, HEALTHCHECK)}"
             )
         return "services:\n" + "".join(blocks) + "volumes:\n  data: {}\n  vault: {}\n"
 
@@ -711,6 +715,16 @@ class Probe:
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
+    def cell_h1_service_without_healthcheck(self) -> None:
+        self.set_enabled(True)
+        self.release(TAGS["h1"], services=("web", "helper", "sealed"))
+        self.apply()
+        seen = {row["service"]: (row["state"], row["health"]) for row in self.containers()}
+        expect(seen["helper"] == seen["sealed"] == ("running", ""), f"H1: the helpers are {seen}")
+        expect(self.deployed()["tag"] == TAGS["h1"], "H1: the app was not recorded")
+        expect("nothing to change" in self.apply(typed=b"no\n"), "H1: plan not quiet")
+        print("H1 held: a running service without a healthcheck (absent, disabled) is recorded")
+
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
@@ -736,6 +750,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
+        probe.cell_h1_service_without_healthcheck()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

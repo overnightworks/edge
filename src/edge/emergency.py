@@ -424,7 +424,7 @@ def _started_app(
     runtime: apps.AppRuntime,
     still_off: Callable[[], None],
 ) -> tuple[bool, str | None]:
-    """(whether containers of the app exist, what is not healthy by the deadline) after the start
+    """(whether containers of the app exist, what is not settled by the deadline) after the start
     of what is stopped, under the lock so a stop waits for it, and the wait outside it. A stop that
     came in ends both early; the caller's locked look finds it."""
     try:

@@ -8,9 +8,10 @@ here (E1). Nothing of an app is read, created or printed that is a secret, and n
 Compose is printed (E7).
 
 What was last deployed is the record `<state>/deployed/<key>` (tag, sha, time), written only once
-every container is observed healthy. What runs is observed separately, file-free, from the
-project's containers. "Nothing to change" holds only when the record, the newest release and the
-checkout's HEAD agree and every service has exactly one healthy container.
+every container is observed settled: running, and healthy where it has a healthcheck. What runs is
+observed separately, file-free, from the project's containers. "Nothing to change" holds only when
+the record, the newest release and the checkout's HEAD agree and every service has exactly one
+settled container.
 
 The compose file of the release is held to the contract of `app_contract.py` before anything is
 built, and the images' volumes are checked after build and pull, before `create`. A one-shot service
@@ -322,9 +323,9 @@ def _describe(
 
 
 def _settled(containers: Sequence[app_compose.AppContainer], services: Sequence[str]) -> bool:
-    """Every service has exactly one container, healthy, and no other container exists."""
+    """Every service has exactly one container, settled, and no other container exists."""
     per_service = Counter(container.service for container in containers)
-    return per_service == Counter(services) and all(c.healthy for c in containers)
+    return per_service == Counter(services) and all(c.settled for c in containers)
 
 
 def _is_sha(text: str) -> bool:
@@ -450,8 +451,8 @@ def _wait_until_healthy(
     marks: switches.Switches,
     progress: Progress,
 ) -> str | None:
-    """Wait for the started containers to be healthy, outside the switch lock; the failure line,
-    None when all are healthy. A stop that is seen ends the wait early; the look under the lock
+    """Wait for the started containers to be settled, outside the switch lock; the failure line,
+    None when all are settled. A stop that is seen ends the wait early; the look under the lock
     after it decides what the stop leaves."""
     key, tag = plan.app.key, plan.release.tag
     try:
@@ -517,7 +518,7 @@ def unhealthy_after_waiting(
     watch: compose.Watch,
     still_on: Callable[[], None],
 ) -> str | None:
-    """The containers as last seen when they are not all healthy by the deadline; None when
+    """The containers as last seen when they are not all settled by the deadline; None when
     they are. `still_on` is asked before every look and raises to end the wait early."""
     deadline = watch.clock() + watch.seconds
     while True:
