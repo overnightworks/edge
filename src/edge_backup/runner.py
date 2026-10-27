@@ -142,6 +142,10 @@ class Run:
             self.failed_apps.append(app)
             on_failure(failure)
 
+    @property
+    def first_app_failure(self) -> StepFailed | None:
+        return self._first_app_failure
+
     def raise_first_app_failure(self) -> None:
         if self._first_app_failure is not None:
             raise self._first_app_failure
@@ -285,8 +289,7 @@ def restore_test(
         with run.phase(Phase.CHECK):
             restic.check(settings, read_data=only is None)
     except StepFailed as failure:
-        if run.failed_apps:
-            report(Row(Glyph.FAILED, REPOSITORY, RestoreEvent.NOT_CHECKED, str(failure)))
+        report(Row(Glyph.FAILED, REPOSITORY, RestoreEvent.NOT_CHECKED, str(failure)))
         raise
     report(Row(Glyph.DONE, REPOSITORY, RestoreEvent.CHECKED))
     run.restore_tested(verified)

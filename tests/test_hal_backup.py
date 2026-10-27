@@ -350,7 +350,7 @@ def test_a_failed_check_after_the_failed_app_of_one_snapshot_still_names_the_app
     )
 
     assert outcome.exit_code == 3
-    assert outcome.err.splitlines()[0].startswith("error: keycloak: ")
+    assert outcome.err.splitlines()[0].startswith("error: keycloak: 000000000000 nennt keinen")
     assert outcome.err.splitlines()[1] == "next: hal restore --test keycloak"
 
 
@@ -398,6 +398,20 @@ def test_a_repository_that_fails_its_check_after_a_failed_app_has_its_row_and_th
         "error: 1 of 2 apps not proven",
         "next: hal restore --test keycloak",
     ]
+
+
+def test_a_repository_that_fails_its_check_while_every_app_is_proven_has_its_row(
+    edge_backup, machine
+):
+    edge_backup("backup")
+    machine.failing["restic check"] = 1
+
+    outcome = edge_backup("restore", "--test")
+
+    rows = outcome.out.splitlines()
+    assert outcome.exit_code == 3
+    assert rows[-1].startswith("  ✗ repository      not checked ")
+    assert outcome.err.splitlines()[0].startswith("error: check: restic check ended with exit 1")
 
 
 def test_a_restore_test_interrupted_outside_any_app_says_only_that_it_was_interrupted(
