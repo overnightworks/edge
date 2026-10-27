@@ -585,6 +585,7 @@ def test_the_repositorys_catalog_has_hopin_enabled_and_public():
 
 
 def test_the_repositorys_catalog_has_presentator_disabled_and_publishes_nothing():
+    """#449 A1, A2 (M1): the disabled entry is read, disabled on main, and publishes no host."""
     fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
 
     (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "presentator"]
@@ -594,6 +595,7 @@ def test_the_repositorys_catalog_has_presentator_disabled_and_publishes_nothing(
 
 
 def test_enabling_presentator_publishes_both_hosts_with_the_back_channel_denied():
+    """#449 A1 (M3): enabled, both hosts are public with /health and the back-channel denied."""
     fleet = copy.deepcopy(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     fleet["services"]["presentator"]["run"]["enabled"] = True
 
