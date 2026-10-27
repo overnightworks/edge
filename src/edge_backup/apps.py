@@ -13,7 +13,7 @@ PRE_APPLY_TAG = "pre-apply"
 _PLAIN_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,62}")
 _SQL_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 # A SQLite file name is one path segment, so it stays inside its volume and is safe in a URI.
-_SQLITE_FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
+_SQLITE_FILE_NAME = re.compile(r"\w[\w.-]{0,127}", re.ASCII)
 _COMMON_KEYS = frozenset({"compose_project", "dump", "restore_test"})
 _POSTGRES_KEYS = frozenset({"db_service", "db_user", "db_name", "postgres_major"})
 _SQLITE_KEYS = frozenset({"database_volume", "database_file"})
