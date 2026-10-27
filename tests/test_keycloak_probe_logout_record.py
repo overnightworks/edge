@@ -99,9 +99,6 @@ class ControlProbe:
         )
         self.reported: list[str] = []
 
-    def admin_now(self) -> SimpleNamespace:
-        return self.admin
-
     def keep_secret(self, _name: str, value: str) -> str:
         return value
 
