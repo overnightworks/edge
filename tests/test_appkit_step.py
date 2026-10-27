@@ -172,6 +172,19 @@ def test_a_failed_final_rename_keeps_the_previous_directory(world):
     assert [path.name for path in served.parent.iterdir()] == [served.name]
 
 
+def test_a_failed_restore_keeps_the_previous_copy_and_names_where(world):
+    served = world.served
+    (served / "appkit.css").write_text("previous")
+
+    with pytest.raises(OSError, match="the previous copy is kept in") as caught:
+        appkit_step._replace_directory(
+            appkit_step.installed_static(), served, _rename_failing_on(2, 3)
+        )
+
+    kept = Path(str(caught.value.strerror).rsplit(" ", 1)[1])
+    assert (kept / "appkit.css").read_text() == "previous"
+
+
 def test_a_missing_assets_directory_is_named_at_plan_time(world):
     assets = world.served.parent
     shutil.rmtree(assets)

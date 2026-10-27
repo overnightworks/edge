@@ -109,9 +109,11 @@ def _replace_directory(
     source: Path, directory: Path, rename: Callable[[Path, Path], object] = os.rename
 ) -> None:
     """The files in a temporary directory beside the target, then renamed into place; a damaged
-    directory moves aside first and moves back when the final rename fails."""
+    directory moves aside first and moves back when the final rename fails. When it cannot move
+    back, the temporary directory stays and the error names where the previous copy is."""
     temporary = Path(tempfile.mkdtemp(dir=directory.parent, prefix=_TEMPORARY_PREFIX))
     displaced = temporary / "displaced"
+    previous_copy_is_only_in_temporary = False
     try:
         shutil.copytree(source, temporary / "files", copy_function=_copy_readable)
         _make_readable(temporary / "files")
@@ -121,10 +123,18 @@ def _replace_directory(
             rename(temporary / "files", directory)
         except BaseException:
             if displaced.exists():
-                rename(displaced, directory)
+                try:
+                    rename(displaced, directory)
+                except OSError as restore_error:
+                    previous_copy_is_only_in_temporary = True
+                    raise OSError(
+                        restore_error.errno,
+                        f"{restore_error.strerror}; the previous copy is kept in {displaced}",
+                    ) from restore_error
             raise
     finally:
-        shutil.rmtree(temporary, ignore_errors=True)
+        if not previous_copy_is_only_in_temporary:
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 def _copy_readable(source: str, destination: str) -> str:
