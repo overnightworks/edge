@@ -55,7 +55,7 @@ def _checked_text(raw: dict[str, object], key: str, pattern: re.Pattern[str], ru
 def _checked_port(raw: dict[str, object]) -> int:
     port = raw["port"]
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise AccountInvalid("account.toml: port muss eine Zahl von 1 bis 65535 sein")
+        raise AccountInvalid("account.toml: port must be a number from 1 to 65535")
     return port
 
 
@@ -67,17 +67,17 @@ def load_account(layout: Layout) -> MailAccount | None:
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as error:
-        raise AccountInvalid("account.toml: kein lesbares TOML") from error
+        raise AccountInvalid("account.toml: not readable TOML") from error
     missing = ACCOUNT_KEYS - raw.keys()
     if missing:
-        raise AccountInvalid(f"account.toml: Schlüssel fehlt: {', '.join(sorted(missing))}")
+        raise AccountInvalid(f"account.toml: missing key: {', '.join(sorted(missing))}")
     if raw.keys() - ACCOUNT_KEYS:
-        raise AccountInvalid("account.toml: unbekannter Schlüssel")
+        raise AccountInvalid("account.toml: unknown key")
     return MailAccount(
-        host=_checked_text(raw, "host", HOSTNAME, "muss ein Hostname sein (Buchstaben, Ziffern, Punkt, Minus; kein Minus am Anfang)"),
+        host=_checked_text(raw, "host", HOSTNAME, "must be a hostname (letters, digits, dot, dash; no dash at the start)"),
         port=_checked_port(raw),
-        user=_checked_text(raw, "user", ADDRESS, "muss genau eine Adresse sein"),
-        to=_checked_text(raw, "to", ADDRESS, "muss genau eine Adresse sein"),
+        user=_checked_text(raw, "user", ADDRESS, "must be exactly one address"),
+        to=_checked_text(raw, "to", ADDRESS, "must be exactly one address"),
     )
 
 
