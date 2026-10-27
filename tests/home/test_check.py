@@ -247,10 +247,10 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
     error = captured.err
     assert code == 3
     assert captured.out.splitlines() == [
-        "  ! services        1 action       edge is running but reports being unwell",
+        "  ! services        1 action        edge is running but reports being unwell",
         "  ✓ backup          ok",
         "  ✓ commit hook     ok",
-        "  ✗ secrets         not checked    the check did not run · details in the report",
+        "  ✗ secrets         not checked     the check did not run · details in the report",
         "  ✓ server logs     ok",
     ]
     assert "| fehlgeschlagen: secrets" in report.splitlines()[0]

@@ -72,7 +72,7 @@ def test_valid_files_print_one_row_naming_their_pages(checkout, app, capsys, ter
 
     code, out, _ = run(capsys, checkout, KEY, app)
 
-    assert (code, out) == (0, f"  ✓ {KEY:<14}  {'legal valid':<13}  {pages}\n")
+    assert (code, out) == (0, f"  ✓ {KEY:<14}  {'legal valid':<14}  {pages}\n")
 
 
 @pytest.mark.parametrize("terms", [False, True])
@@ -221,5 +221,5 @@ def test_a_run_never_reads_stdin(checkout, app, tmp_path, monkeypatch):
 
     assert (result.returncode, result.stdout) == (
         0,
-        f"  ✓ {KEY:<14}  {'legal valid':<13}  datenschutz\n",
+        f"  ✓ {KEY:<14}  {'legal valid':<14}  datenschutz\n",
     )

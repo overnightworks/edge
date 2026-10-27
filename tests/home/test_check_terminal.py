@@ -25,8 +25,8 @@ def runner() -> RunnerWithCleanLogs:
 
 
 NOTHING_NEW_VERDICT = f"nothing new, no mail · report {REPORT_DISPLAY}"
-NOTE_ROW = "  · secrets         1 note         Credentials are still missing"
-ACTION_ROW = "  ! services        1 action       edge-a keeps restarting and is therefore unreachable"
+NOTE_ROW = "  · secrets         1 note          Credentials are still missing"
+ACTION_ROW = "  ! services        1 action        edge-a keeps restarting and is therefore unreachable"
 OK_ROWS = {
     "services": "  ✓ services        ok",
     "backup": "  ✓ backup          ok",

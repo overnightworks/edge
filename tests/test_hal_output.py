@@ -34,7 +34,7 @@ def test_a_row_is_two_spaces_a_glyph_the_subject_and_the_event_in_fixed_columns(
 
     assert capsys.readouterr().out.splitlines() == [
         "  ✓ timers          changed",
-        "  · commit hook     unchanged      nothing to do",
+        "  · commit hook     unchanged       nothing to do",
     ]
 
 
@@ -45,7 +45,7 @@ def test_a_row_shows_text_from_outside_as_one_line_of_plain_text(
 
     write_row(Row(Glyph.NEEDS_YOU, "secrets", Event.CHANGED, "a\nb\x1b[31m"))
 
-    assert capsys.readouterr().out == "  ! secrets         changed        a\\nb\\x1b[31m\n"
+    assert capsys.readouterr().out == "  ! secrets         changed         a\\nb\\x1b[31m\n"
 
 
 @pytest.mark.parametrize(
@@ -163,7 +163,7 @@ def test_on_a_terminal_a_row_colours_only_its_glyph_and_dims_its_fact(
     write_row(Row(Glyph.ANNOUNCE, "sudo", Event.CHANGED))
 
     assert out.getvalue().splitlines() == [
-        "  \x1b[32m✓\x1b[0m timers          changed        \x1b[2mthree units\x1b[0m",
+        "  \x1b[32m✓\x1b[0m timers          changed         \x1b[2mthree units\x1b[0m",
         "  \x1b[31m✗\x1b[0m system          changed",
         "  \x1b[33m!\x1b[0m secrets         changed",
         "  \x1b[34m~\x1b[0m commit hook     changed",
@@ -179,7 +179,7 @@ def test_on_a_terminal_an_unchanged_row_is_dim_as_a_whole(
     out, _err = put_on_terminals(monkeypatch)
     write_row(Row(Glyph.UNCHANGED, "commit hook", Event.UNCHANGED, "nothing to do"))
 
-    assert out.getvalue() == ("\x1b[2m  · commit hook     unchanged      nothing to do\x1b[0m\n")
+    assert out.getvalue() == ("\x1b[2m  · commit hook     unchanged       nothing to do\x1b[0m\n")
 
 
 @pytest.mark.parametrize(
@@ -229,7 +229,7 @@ def test_a_stream_without_a_working_isatty_prints_plain(
     monkeypatch.setattr(sys, "stdout", out)
     write_row(Row(Glyph.DONE, "timers", Event.CHANGED, "three units"))
 
-    assert out.getvalue() == "  ✓ timers          changed        three units\n"
+    assert out.getvalue() == "  ✓ timers          changed         three units\n"
 
 
 def test_on_a_terminal_an_error_pair_is_bold_red_error_and_cyan_next(
@@ -278,7 +278,7 @@ def test_a_terminal_that_asks_for_no_colour_gets_the_plain_bytes(
     write_error("stopped", "run it")
 
     assert out.getvalue().splitlines() == [
-        "  · commit hook     unchanged      nothing to do",
+        "  · commit hook     unchanged       nothing to do",
         "✓ setup · 1 changed",
     ]
     assert err.getvalue().splitlines() == ["error: stopped", "next: run it"]
@@ -313,7 +313,7 @@ def test_a_rows_count_carries_the_plural_of_a_noun_event(
 
     write_row(Row(Glyph.NEEDS_YOU, "backup", Finding.ACTION, "a fact", count))
 
-    assert capsys.readouterr().out == f"  ! backup          {shown:<13}  a fact\n"
+    assert capsys.readouterr().out == f"  ! backup          {shown:<14}  a fact\n"
 
 
 def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next_step(

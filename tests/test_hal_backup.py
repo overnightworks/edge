@@ -174,9 +174,9 @@ def test_a_good_backup_prints_a_row_per_app_the_repository_row_and_the_verdict(
     first, second = (snapshot["id"][:8] for snapshot in machine.snapshots[-2:])
     assert (outcome.exit_code, outcome.err) == (0, "")
     assert outcome.out.splitlines() == [
-        f"  ✓ songmaker       backed up      {first}",
-        f"  ✓ radio           backed up      {second}",
-        "  ✓ repository      pruned         checked",
+        f"  ✓ songmaker       backed up       {first}",
+        f"  ✓ radio           backed up       {second}",
+        "  ✓ repository      pruned          checked",
         "✓ backup done · 2 apps · <1s",
     ]
 
@@ -191,9 +191,9 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     rows = outcome.out.splitlines()
     assert outcome.exit_code == 3
     assert rows == [
-        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
-        "  ✗ keycloak        not backed up  no database container after 10 min",
-        "  · repository      not pruned     a backup failed",
+        f"  ✓ songmaker       backed up       {machine.snapshots[-1]['id'][:8]}",
+        "  ✗ keycloak        not backed up   no database container after 10 min",
+        "  · repository      not pruned      a backup failed",
     ]
     assert outcome.err.splitlines() == [
         "error: 1 of 2 apps not backed up",
@@ -313,7 +313,7 @@ def test_a_failed_app_has_its_row_while_the_others_are_proven_and_the_repository
     assert outcome.exit_code == 3
     assert outcome.out.splitlines() == [
         f"  ✓ songmaker       restore proven  {machine.snapshots[-1]['id'][:8]}",
-        "  ✗ keycloak        not proven     kein erfolgreiches Backup von keycloak aufgezeichnet",
+        "  ✗ keycloak        not proven      kein erfolgreiches Backup von keycloak aufgezeichnet",
         "  ✓ repository      checked",
     ]
     assert outcome.err.splitlines() == [
@@ -393,7 +393,7 @@ def test_a_repository_that_fails_its_check_after_a_failed_app_has_its_row_and_th
 
     rows = outcome.out.splitlines()
     assert outcome.exit_code == 3
-    assert rows[-1].startswith("  ✗ repository      not checked    ")
+    assert rows[-1].startswith("  ✗ repository      not checked     ")
     assert outcome.err.splitlines() == [
         "error: 1 of 2 apps not proven",
         "next: hal restore --test keycloak",

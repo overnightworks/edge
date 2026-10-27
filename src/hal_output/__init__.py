@@ -9,7 +9,7 @@ from enum import Enum, StrEnum
 from typing import TextIO
 
 SUBJECT_WIDTH = 14
-EVENT_WIDTH = 13
+EVENT_WIDTH = 14
 
 _RESET = "\x1b[0m"
 _DIM = "2"
