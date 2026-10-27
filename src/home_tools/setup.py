@@ -18,7 +18,7 @@ from shlex import join as shell_join
 from shlex import quote
 from typing import TYPE_CHECKING
 
-from hal_output import Glyph, Row, write_error, write_row, write_verdict
+from hal_output import Glyph, Row, Verdict, write_error, write_row, write_verdict
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
 from home_tools.system_step import (
@@ -136,29 +136,14 @@ SECRETS_EVENTS = StepEvents(
 )
 
 
-@dataclass(frozen=True)
-class SetupVerdict:
-    """The last line of a run, computed from the rows it printed and never read back from their glyphs."""
-
-    glyph: Glyph
-    summary: str
-    counts: tuple[tuple[int, Tally], ...]
-    run_next: str = ""
-
-    @property
-    def detail(self) -> str:
-        counted = ", ".join(f"{number} {tally}" for number, tally in self.counts)
-        return f"{counted} · {self.run_next}" if self.run_next else counted
-
-
-def verdict_of(outcomes: Sequence[Outcome], apply: bool) -> SetupVerdict:
+def verdict_of(outcomes: Sequence[Outcome], apply: bool) -> Verdict:
     tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
-    counts = tuple((tallies[tally], tally) for tally in Tally if tallies[tally])
+    counts = tuple((tallies[tally], tally) for tally in Tally)
     if apply:
-        return SetupVerdict(Glyph.DONE, "setup done", counts)
+        return Verdict(Glyph.DONE, "setup done", counts)
     if tallies[Tally.OPEN]:
-        return SetupVerdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}")
-    return SetupVerdict(Glyph.DONE, "setup up to date", counts)
+        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}")
+    return Verdict(Glyph.DONE, "setup up to date", counts)
 
 
 class ExecutionRole(Enum):
@@ -579,7 +564,7 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
             print(line)
         outcomes.append(outcome)
     verdict = verdict_of(outcomes, apply)
-    write_verdict(verdict.glyph, verdict.summary, verdict.detail)
+    write_verdict(verdict)
     return 0
 
 
