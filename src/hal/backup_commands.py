@@ -101,9 +101,24 @@ def _backup(arguments: argparse.Namespace) -> ExitCode:
 
 
 def _restore(arguments: argparse.Namespace) -> ExitCode:
-    return _run(
-        "hal restore", _restore_step(arguments), arguments, _tell_ended_plainly("hal restore")
+    step = _restore_step(arguments)
+    tell_ended = (
+        _tell_restore_test_ended
+        if step is steps.restore_test
+        else _tell_ended_plainly("hal restore")
     )
+    return _run("hal restore", step, arguments, tell_ended)
+
+
+def _tell_restore_test_ended(ended: Ended) -> None:
+    next_step = "hal restore --test"
+    match ended:
+        case StepFailed():
+            write_error(ended.error_line or str(ended), ended.next_step or next_step)
+        case Interrupted(app=str() as app):
+            write_error(f"interrupted while testing the restore of {app}", next_step)
+        case _:
+            write_error("interrupted", next_step)
 
 
 def _tell_backup_ended(ended: Ended) -> None:

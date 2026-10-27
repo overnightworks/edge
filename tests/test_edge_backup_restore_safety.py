@@ -222,7 +222,7 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
+    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.out
 
 
 def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machine, home):
@@ -374,9 +374,11 @@ def test_restore_names_the_newest_snapshot_of_the_new_host_never_an_old_one(
     assert f"der neueste Snapshot ist {machine.snapshots[0]['id'][:8]}" in outcome.err
 
 
-@pytest.mark.parametrize("command", [["restore"], ["restore", "--test"]])
+@pytest.mark.parametrize(
+    ("command", "stream"), [(["restore"], "err"), (["restore", "--test"], "out")]
+)
 def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
-    edge_backup, machine, home, command
+    edge_backup, machine, home, command, stream
 ):
     """#414 sentence 4 (E3): an old-host ID given to --snapshot is refused like an unknown one."""
 
@@ -388,7 +390,7 @@ def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
     outcome = edge_backup(*command, "songmaker", "--snapshot", machine.snapshots[0]["id"], *target)
 
     assert outcome.exit_code == 3
-    assert "nennt keinen einzelnen Snapshot" in outcome.err
+    assert "nennt keinen einzelnen Snapshot" in getattr(outcome, stream)
     assert not (home / "restored").exists()
 
 

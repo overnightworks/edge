@@ -22,6 +22,8 @@ class Event(StrEnum):
     CHANGED = "changed"
     UNCHANGED = "unchanged"
     SKIPPED = "skipped"
+    RESTORE_PROVEN = "restore proven"
+    NOT_PROVEN = "not proven"
 
 
 def test_a_row_is_two_spaces_a_glyph_the_subject_and_the_event_in_fixed_columns(
@@ -36,6 +38,16 @@ def test_a_row_is_two_spaces_a_glyph_the_subject_and_the_event_in_fixed_columns(
         "  ✓ timers          changed",
         "  · commit hook     unchanged      nothing to do",
     ]
+
+
+def test_a_fourteen_character_event_and_a_short_one_put_their_facts_at_the_same_column(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_row(Row(Glyph.DONE, "app", Event.RESTORE_PROVEN, "one"))
+    write_row(Row(Glyph.NEEDS_YOU, "app", Event.NOT_PROVEN, "two"))
+
+    first, second = capsys.readouterr().out.splitlines()
+    assert first.index("one") == second.index("two")
 
 
 def test_a_row_shows_text_from_outside_as_one_line_of_plain_text(

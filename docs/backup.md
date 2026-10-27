@@ -249,9 +249,15 @@ path or file name.
 a failed app does not stop the others), a `repository` row (`pruned` after forget and check, `not pruned`
 when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
+`hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`
+per app, `✓ repository  checked` (`✗ repository  not checked  <reason>` when the check failed after an app
+failed) and, on success, `✓ restore test done · N apps · <time>`; a failed app ends with `error: 1 of N apps
+not proven` and `next: hal restore --test <app>`; with `--snapshot` (one app, the realm step's call) it ends with
+`error: <app>: <reason>` instead.
+
 Exit 0: every phase succeeded. Exit 3: a run failed; `error: 1 of N apps not backed up` with
 `next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
-(`hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
+(`hal restore --list`, the real `hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
 example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 
 ### Restore one app

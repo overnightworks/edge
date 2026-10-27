@@ -71,6 +71,12 @@ class Noun(StrEnum):
     APPS = "apps"
 
 
+def _app_failure_line(run: Run, failure: StepFailed) -> str:
+    """`<app>: <reason>` of the first app that failed, also after a failed repository check."""
+    first = run.first_app_failure or failure
+    return f"{first.app}: {first}"
+
+
 def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
     """The rows show each reason, so the error line counts; `--json` has no rows, so its error
     line carries the reason, which the realm step reads."""
@@ -78,20 +84,54 @@ def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
     total = run.backed_up_apps + len(failed)
     noun = Noun.APP if total == 1 else Noun.APPS
     failure.error_line = (
-        f"{len(failed)} of {total} {noun} not backed up" if rows else f"{failure.app}: {failure}"
+        f"{len(failed)} of {total} {noun} not backed up"
+        if rows
+        else _app_failure_line(run, failure)
     )
     failure.next_step = f"hal backup {failed[0]}"
 
 
 def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
+    """A row per app, one for the repository and the verdict. With `--snapshot` (one app) the
+    error line carries the reason, which the realm step reads."""
     _require_declared(arguments)
+    started = host.monotonic()
 
     def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-        runner.restore_test(
-            settings, apps, run, only=arguments.app, snapshot_prefix=arguments.snapshot
+        try:
+            runner.restore_test(
+                settings,
+                apps,
+                run,
+                only=arguments.app,
+                snapshot_prefix=arguments.snapshot,
+                report=write_row,
+            )
+        except StepFailed as failure:
+            if run.failed_apps:
+                failed = run.failed_apps
+                total = run.proven_apps + len(failed)
+                noun = Noun.APP if total == 1 else Noun.APPS
+                failure.error_line = (
+                    _app_failure_line(run, failure)
+                    if arguments.snapshot
+                    else f"{len(failed)} of {total} {noun} not proven"
+                )
+                failure.next_step = f"hal restore --test {failed[0]}"
+            raise
+
+    def announce(run: Run) -> None:
+        noun = Noun.APP if run.proven_apps == 1 else Noun.APPS
+        write_verdict(
+            Verdict(
+                Glyph.DONE,
+                "restore test done",
+                ((run.proven_apps, noun),),
+                elapsed_seconds=host.monotonic() - started,
+            )
         )
 
-    _recorded(settings, arguments, step)
+    _recorded(settings, arguments, step, announce)
 
 
 def snapshots(settings: Settings, _: argparse.Namespace) -> None:
