@@ -46,7 +46,7 @@ class Refusal(StrEnum):
     )
     WRITABLE_ROOT = "the service's root file system is not read-only"
     LOG_DRIVER = "a started service does not log through the local driver"
-    SCRATCH_IN_LOGIN = "TMPDIR lies inside the login directory"
+    SCRATCH_IN_LOGIN = "the scratch directory would lie inside the login directory"
 
 
 class LoginFailed(ProbeFailed):
@@ -340,7 +340,8 @@ def token_files(mounts: Mapping[str, Mount]) -> int:
 
 
 UNREAD_REASONS = frozenset(
-    skip.value for skip in (Skip.REPLACED, Skip.REFUSED, Skip.TOO_DEEP, Skip.VANISHED)
+    skip.value
+    for skip in (Skip.REPLACED, Skip.REFUSED, Skip.TOO_DEEP, Skip.VANISHED, Skip.FILE_MOUNT)
 )  # what a skip leaves unread for the token count
 
 
@@ -369,7 +370,13 @@ class Verdict(NamedTuple):
 def s00_verdicts(mounts: Mapping[str, Mount]) -> tuple[Verdict, Verdict]:
     """edge's two frame checks over the S00 census: every directory root was listed, and no file
     outside the login directory holds the token. A token count over entries it could not read
-    is not driven rather than held."""
+    is not driven rather than held, and so is a census that showed no mount at all."""
+    if not mounts:
+        reason = "0 writable mounts were shown"
+        return (
+            Verdict("S00 (roots)", Outcome.NOT_DRIVEN, reason),
+            Verdict("S00 (token)", Outcome.NOT_DRIVEN, reason),
+        )
     unlisted = unlisted_roots(mounts)
     if unlisted:
         roots = Verdict(

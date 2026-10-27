@@ -9,7 +9,7 @@ verdicts, counts and role names. An agent runs it only with a dummy login made w
     python3 probe/agent-service/cells_12b.py --login-directory DIR
 
 The command holds /tmp/probe-stack.lock itself, so it runs without an outer flock. Exit 0: every
-cell held, 1: a cell failed or was not driven, 2: no `--login-directory` was given.
+cell held, 1: a cell failed or was not driven, 2: the arguments were refused.
 """
 
 from __future__ import annotations
