@@ -539,6 +539,68 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
   </ul>
 </section>
 
+<section aria-labelledby="s-check">
+  <div class="head">
+    <h2 id="s-check"><span class="tag new">neu für H5m5</span> <code>hal check</code>: der tägliche Check, eine Zeile je Bereich</h2>
+    <p class="sub">Gesegnet 27.10.2026, eingefroren mit H5m5. Ein bloßes <code>hal check</code> ist der tägliche Check (ab H5m6); der Timer ruft dasselbe um 09:00. Eine Zeile je Bereich, in der Reihenfolge der Mail. Der lange Bericht steht weiter in der Datei, die das Popup öffnet. Namen erfunden.</p>
+  </div>
+  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> fünf Bereiche statt sechs, die Zeile <code>exposure</code> kommt mit H5m7; der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt; der Bericht liegt bis H5m6 noch im alten Zustandsverzeichnis.</p>
+  <p class="s2note"><b>Zeichen:</b> <code>✓</code> alles gut, <code>!</code> du musst etwas tun, <code>·</code> nur ein Hinweis, <code>✗</code> der Bereich konnte nicht prüfen. Hat ein Bereich mehrere Funde, steht der erste da und <code>+N more</code>; alle stehen im Bericht. <code>next:</code> nennt den Schritt des ersten Handlungsbedarfs.</p>
+  <div class="pair">
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> alles gut</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal check</span>
+<span class="g">  ✓</span> services        ok
+<span class="g">  ✓</span> backup          ok
+<span class="g">  ✓</span> commit hook     ok
+<span class="g">  ✓</span> secrets         ok
+<span class="g">  ✓</span> server logs     ok
+<span class="w">✓ all well</span> <span class="d">· 5 areas checked</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> ein Handlungsbedarf und ein Hinweis, neu seit gestern</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal check</span>
+<span class="g">  ✓</span> services        ok
+<span class="y">  !</span> backup          1 action       <span class="d">keycloak was not backed up for too long</span>
+<span class="g">  ✓</span> commit hook     ok
+<span class="d">  · secrets         1 note         Credentials for hopin are still missing</span>
+<span class="g">  ✓</span> server logs     ok
+<span class="y">! 1 action, 1 note</span> <span class="d">· mail sent · report ~/.local/state/hal/check-report.md</span>
+<span class="c">next:</span> hal backup</pre>
+      </figure>
+    </div>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> dieselben Funde am nächsten Tag: nichts Neues, keine Mail</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal check</span>
+<span class="d">  …</span>
+<span class="y">  !</span> backup          2 actions      <span class="d">keycloak was not backed up for too long · +1 more</span>
+<span class="d">  …</span>
+<span class="y">! 2 actions, 1 note</span> <span class="d">· nothing new, no mail · report ~/.local/state/hal/check-report.md</span>
+<span class="c">next:</span> hal backup</pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag fail">neu, kaputt</span> ein Bereich kann nicht prüfen</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal check</span>
+<span class="r">  ✗</span> services        not checked    <span class="d">the check did not run · details in the report</span>
+<span class="g">  ✓</span> backup          ok
+<span class="g">  ✓</span> commit hook     ok
+<span class="g">  ✓</span> secrets         ok
+<span class="g">  ✓</span> server logs     ok
+<span class="rw">error:</span> 1 of 5 areas could not check · mail sent
+<span class="c">next:</span> hal check</pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Exit-Codes wie heute:</b> 0 alles gut, 1 Funde (der Timer zählt das als Erfolg), 2 Konfiguration oder Manifest ungültig, 3 ein Bereich konnte nicht prüfen. Bei 3 steht die Fehlerzeile mit <code>next:</code> auf stderr.</li>
+    <li><b>Mail und Popup bleiben, wie sie sind</b> (seit heute Englisch). Das Terminal zeigt nur die Kurzform; der Bericht in der Datei ist die Langform.</li>
+    <li><b>Später (nicht H5m5):</b> <code>hal check exposure</code> zeigt nur diesen Bereich, <code>--json</code> gibt es nur mit einem Bereich.</li>
+    <li><b>Der Bericht zieht nach <code>~/.local/state/hal/</code></b>, sobald der alte Befehl weg ist (H5m6); bis dahin liegt er im alten Zustandsverzeichnis.</li>
+  </ul>
+</section>
+
 <section aria-labelledby="s-apply">
   <div class="head">
     <h2 id="s-apply"><code>hal apply</code>: Plan, yes, Ergebnis in einer Reihenfolge</h2>
