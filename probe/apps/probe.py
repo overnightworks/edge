@@ -34,6 +34,7 @@ import grp
 import http.client
 import json
 import os
+import re
 import secrets
 import shlex
 import signal
@@ -406,28 +407,19 @@ class Probe:
         listed = self.docker("volume", "ls", "--quiet", "--filter", project).stdout.decode()
         return sorted(listed.split())
 
-    def volume_keys(self) -> list[str]:
-        """The keys in the compose file of those volumes, from the label Compose sets."""
-        project = f"label=com.docker.compose.project={self.key}"
-        key = '{{.Label "com.docker.compose.volume"}}'
-        listed = self.docker("volume", "ls", "--filter", project, "--format", key).stdout.decode()
-        return sorted(listed.split())
-
     def switch_off(self, cell: str) -> str:
         """`enabled: false` applied while containers run: the plan's output, after which no
         container of the project is left, every volume is still there, and the checkout and the
         record stay."""
         volumes, head, record = self.volumes(), self.head(), self.record.read_text()
-        keys = self.volume_keys()
         expect(len(volumes) >= 1 and self.containers() != [], f"{cell}: nothing to switch off")
         self.set_enabled(False)
         out = self.apply()
-        expect(f"{self.key}: off (containers" in out, f"{cell}: the plan said: {out[-400:]}")
         expect(
-            all(key in out for key in keys)
-            and not any(name in out for name in volumes)
-            and "stay" in out,
-            f"{cell}: the plan names no volume that stays: {out[-400:]}",
+            re.search(rf"- {self.key}\s+switch off\s+volumes kept · ~/srv/{self.key} kept", out)
+            is not None
+            and not any(name in out for name in volumes),
+            f"{cell}: the plan said: {out[-400:]}",
         )
         expect(self.containers() == [], f"{cell}: containers left: {self.containers()}")
         expect(self.volumes() == volumes, f"{cell}: the volumes changed: {self.volumes()}")
@@ -562,7 +554,10 @@ class Probe:
         self.release(tag)
         self.record.unlink()
         out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-        expect("replacing the running containers; named volumes kept" in out, out[-300:])
+        expect(
+            re.search(rf"\+ {self.key}\s+switch on\s+{tag} · into ~/srv/{self.key}", out),
+            out[-300:],
+        )
         self.apply()
         expect(self.deployed()["tag"] == tag, "the record was not written")
         expect(len(self.starts()) >= 3 and TAGS["a1"] in self.starts(), "the volume's data is gone")
@@ -597,7 +592,8 @@ class Probe:
             expect(f"update to {tag} did not finish" in out, out[-400:])
             expect("nothing to change" not in out, out[-400:])
             expect(
-                all(row["service"] in out for row in self.containers()), "a container is not shown"
+                re.search(rf"~ {self.key}\s+update\s+{first} → {tag} · update to", out),
+                "the update row is not shown",
             )
             self.apply()
             rows = self.containers()
