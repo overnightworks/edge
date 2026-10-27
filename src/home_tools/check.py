@@ -648,4 +648,3 @@ def check(ctx: CheckContext) -> int:
         return A_CHECK_BROKE_EXIT
     _write_verdict(items, len(AREAS), outcome, f"~/{layout.check_report_file.relative_to(layout.home)}")
     return 1 if current else 0
-

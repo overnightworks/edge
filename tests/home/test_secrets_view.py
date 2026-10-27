@@ -173,6 +173,15 @@ def state_file_of(layout: Layout, command: str) -> Path:
     return {"secrets": layout.secrets_report_file, "check": layout.check_report_file}[command]
 
 
+UNEXPECTED_ERROR_PREFIX = {"secrets": "home: unerwarteter Fehler (", "check": "error: unexpected error ("}
+
+
+def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
+    if command == "check":
+        return home_check(home, runner, probe)
+    return cli.main([command], home=home, run=runner, probe=probe, now=NOW)
+
+
 @pytest.mark.parametrize("plant_link", [symlink_the_report_file, hard_link_the_report_file])
 @pytest.mark.parametrize("command", ["secrets", "check"])
 def test_a_linked_report_file_is_replaced_and_never_written_through_into_the_secrets(
@@ -183,7 +192,7 @@ def test_a_linked_report_file_is_replaced_and_never_written_through_into_the_sec
     secrets_before = secret_contents(layout)
     plant_link(layout, report_file)
 
-    home_check(clean_home, runner, probe) if command == "check" else cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW)
+    run_report_command(command, clean_home, runner, probe)
 
     assert not report_file.is_symlink()
     assert report_file.stat().st_nlink == 1
@@ -199,10 +208,10 @@ def test_a_symlink_on_the_way_to_the_state_directory_is_refused_and_never_carrie
     secrets_before = secret_contents(layout)
     plant_link(layout, state_file_of(layout, command))
 
-    code = home_check(clean_home, runner, probe) if command == "check" else cli.main([command], home=clean_home, run=runner, probe=probe, now=NOW)
+    code = run_report_command(command, clean_home, runner, probe)
 
     assert code == 3
-    assert capsys.readouterr().err.startswith(("home: unerwarteter Fehler (", "error: unexpected error ("))
+    assert capsys.readouterr().err.startswith(UNEXPECTED_ERROR_PREFIX[command])
     assert secret_contents(layout) == secrets_before
 
 
