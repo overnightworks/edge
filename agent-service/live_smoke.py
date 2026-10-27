@@ -8,8 +8,10 @@ printed link, sign in and confirm the code; the run then carries on by itself, n
 The person's and the workload's token live in this process only and reach `agent-smoke`
 on its stdin; no token or secret is on a command line, in a file or in the report.
 The run recreates the service, takes the idle
-memory, runs the paid turn (L2, L3), the memory peak (L7), the cancelled turn (L4, counts only), the
-searches for a leaked secret (L6) and the egress cells of the running container (L5: E6-E10, E12).
+memory, asks the offer (L8: the models of `service.toml`, ready on the subscription, no turn), runs
+the paid turn (L2, L3), the memory peak (L7), the cancelled turn (L4, counts only), the searches for
+a leaked secret (L6) and for a JWT-shaped string (L9), in the same places and the offer's output,
+and the egress cells of the running container (L5: E6-E10, E12).
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
 right after the one turn (an upper bound of the answer phase, it includes the start).
@@ -48,7 +50,7 @@ from typing import Final
 import egress_observe
 from device_sign_in import CLIENT, SignInFailed, sign_in
 from egress_observe import PUBLIC_RESOLVER, UNREACHABLE, lan_address
-from smoke import HOLDING_MESSAGE, Tokens
+from smoke import HOLDING_MESSAGE, Tokens, offer_line
 
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
@@ -66,6 +68,7 @@ EGRESS_SERVICE = "agent-egress"
 LISTENING = "Uvicorn running"
 LISTEN_ATTEMPTS = 120
 SETTLE_SECONDS = 5
+OFFER_SECONDS = 60
 PAID_TURN_SECONDS = 420  # above the 300 s of each socket of smoke.py
 CANCELLED_TURN_SECONDS = 420
 CHILD_END_SECONDS = 10
@@ -221,7 +224,20 @@ def other_lines(output: str) -> str:
     return " | ".join(kept)[:300]
 
 
+JWT_SHAPE: Final = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")
+SUBSCRIPTION_ROUTE: Final = "cli"
+
+
+def jwt_lines(text: str) -> int:
+    return sum(JWT_SHAPE.search(line) is not None for line in text.splitlines())
+
+
 REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MULTILINE)
+
+
+def configured_models() -> list[str]:
+    service = tomllib.loads(SERVICE_TOML.read_text(encoding="utf-8"))
+    return sorted(f"claude/{name}" for name in service["cli"]["claude"]["models"])
 
 
 def subscription_groups() -> list[str]:
@@ -257,6 +273,23 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
             "run_started seen" if admitted else "no run_started: the issuer's keys did not arrive",
         ),
     ]
+
+
+def offer_cell(returncode: int, output: str, known: Secrets) -> Cell:
+    """The offer lists exactly the configured models, each ready on the subscription route and
+    admitting no background run. Its figure shows neither a known secret nor a JWT-shaped string."""
+    output = JWT_SHAPE.sub("[jwt]", known.redact(output))
+    wanted = [
+        offer_line({
+            "id": model, "route": SUBSCRIPTION_ROUTE, "ready": True, "background": False
+        })
+        for model in configured_models()
+    ]  # fmt: skip
+    held = returncode == 0 and output.splitlines() == wanted
+    return Cell(
+        "L8 the offer", Verdict.HELD if held else Verdict.FAILED,
+        f"exit {returncode}; {other_lines(output)}",
+    )  # fmt: skip
 
 
 # --- the service ------------------------------------------------------------------------------
@@ -455,20 +488,28 @@ def leak_cells(stack: Stack, known: Secrets, smoke_outputs: str) -> list[Cell]:
         "the service log": logs.stdout + logs.stderr if logs.returncode == 0 else None,
         "the smoke output": smoke_outputs,
     }
-    counts = {
-        place: None if text is None else lines_holding(text, known.values())
-        for place, text in searched.items()
-    }
     return [
-        Cell(
-            "L6 no secret anywhere",
-            Verdict.HELD if all(count == 0 for count in counts.values()) else Verdict.FAILED,
-            "; ".join(
-                f"{place} {SAMPLE_FAILED if count is None else count} (0)"
-                for place, count in counts.items()
-            ),
-        )
+        search_cell(
+            "L6 no secret anywhere", searched, lambda text: lines_holding(text, known.values())
+        ),
+        search_cell("L9 no JWT-shaped string anywhere", searched, jwt_lines),
     ]
+
+
+def search_cell(
+    name: str, searched: Mapping[str, str | None], count_lines: Callable[[str], int]
+) -> Cell:
+    counts = {
+        place: None if text is None else count_lines(text) for place, text in searched.items()
+    }
+    return Cell(
+        name,
+        Verdict.HELD if all(count == 0 for count in counts.values()) else Verdict.FAILED,
+        "; ".join(
+            f"{place} {SAMPLE_FAILED if count is None else count} (0)"
+            for place, count in counts.items()
+        ),
+    )
 
 
 # --- L5, the egress cells against the running container ---------------------------------------
@@ -687,12 +728,15 @@ def listeners_cell(stack: Stack, service: str) -> Cell:
 def smoke_cells(
     stack: Stack, known: Secrets, report: Report, pause: Callable[[float], None] = time.sleep
 ) -> None:
-    """Recreate, idle memory, the paid turn, the peak, the cancelled turn, the searches."""
+    """Recreate, idle memory, the offer, the paid turn, the peak, the cancelled turn, searches."""
     recreated = recreate_service(stack, known, pause)
     report.add(recreated)
     if recreated.verdict is Verdict.FAILED:
         return
     idle = cgroup_figure(stack, "memory.current")
+    offer = paid_turn(stack, known.tokens, OFFER_SECONDS, ("--offer",))
+    report.add(offer_cell(offer.process.returncode, offer.process.stdout, known))
+    report.add(*cleanup_cell(offer.cleanup, known))
     paid = paid_turn(stack, known.tokens)
     report.add(*turn_cells(paid.process.returncode, paid.process.stdout, known))
     report.add(*cleanup_cell(paid.cleanup, known))
@@ -701,9 +745,10 @@ def smoke_cells(
     cancelled = cancelled_turn(stack, known.tokens)
     report.add(*cancel_cells(stack, before, cancelled, known, pause))
     report.add(*cleanup_cell(cancelled.cleanup, known))
-    report.add(
-        *leak_cells(stack, known, paid.process.stdout + paid.process.stderr + cancelled.output)
+    smoke_outputs = "".join(
+        (offer.process.stdout, offer.process.stderr, paid.process.stdout, paid.process.stderr)
     )
+    report.add(*leak_cells(stack, known, smoke_outputs + cancelled.output))
 
 
 def live_smoke(stack: Stack, known: Secrets, report: Report) -> int:
