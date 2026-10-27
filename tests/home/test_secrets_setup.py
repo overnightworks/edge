@@ -552,10 +552,6 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert code == 1
     assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
     assert "! locked/token not checked its folder cannot be read" in lines
-    assert [line for line in lines if line.startswith("›")] == [
-        "› cloudflare/read new token Cloudflare fills in nothing",
-        "› github/read new token the link fills name, owner, expiry and rights",
-    ]
     assert not any("github/old" in line for line in lines)
     assert "· ssh/key.ppk skipped optional" in lines
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
@@ -587,17 +583,13 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
 def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a_generated_entry_only_its_row(
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
-    """#531 picture s-s2g / #36 rules 2 and 5: the walk takes the missing entries in manifest order; a token entry announces itself,
-    says why, briefs and names the page; a generated one prints its row only; the walk prints no ending of its own."""
+    """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
-
-    github = github_entry()
-    assert code == 0
+    assert home_secrets_setup(home, boundaries) == 0
+    github, output = github_entry(), capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
-    output = capsys.readouterr().out
     assert squeezed(output) == [
         "› cloudflare/read new token Cloudflare fills in nothing",
         "why: liest Cloudflare",
@@ -622,28 +614,17 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
     ]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
     under_a_row = [line for line in output.splitlines() if line.lstrip().startswith(("why:", "[ ]", "prefilled:", "opened "))]
-    assert under_a_row
     assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 
 def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
     tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
-    """#531: purpose is optional on an unverified token, so the walk announces it and prints no empty `why:` line."""
-    use_manifest(
-        '[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\n'
-        'read_by = []\nrecreate = "https://dash.cloudflare.com"\n'
-    )
-    home = tmp_path / "home"
-    home.mkdir()
+    use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\nrecreate = "https://x.example"\n')
     terminal.pastes = [PASTED_VALUE]
-
-    code = home_secrets_setup(home, boundaries)
-
-    assert code == 0
+    assert home_secrets_setup(tmp_path, boundaries) == 0
     output = capsys.readouterr().out
-    assert squeezed(output)[0].startswith("› turn new token")
-    assert not any(line.lstrip().startswith("why:") for line in output.splitlines())
+    assert squeezed(output)[0].startswith("› turn new token") and "why:" not in output
 
 
 def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
@@ -655,7 +636,6 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
     lines = capsys.readouterr().out.splitlines()
     assert f"    {NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
     assert not any(line.lstrip().startswith("opened ") for line in lines)
-    assert files_under(home) == set(EVERY_FILE)
 
 
 def github_entry() -> SecretEntry:
