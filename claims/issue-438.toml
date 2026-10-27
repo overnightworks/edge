@@ -1,0 +1,8 @@
+claim_id = "40604dc0d8fe4b4ca246e6311d127f72"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "f5c46e6bfe0feb81f0bede8b626846d54b3d8993"
+branch = "claude/issue-438-339-c4-b3-b4-wrapper"
+scope = ["docs/agent-service.md", "probe/agent-service/census_client.py", "probe/agent-service/containment.py", "probe/agent-service/unit.py", "sonar-project.properties", "tests/test_agent_service_containment.py"]
+opened_commit = "4767d9b22c82dd317c7c32301d79fb9565b4e14e"
+whole_reason = "B4 is defined as right after B3 while its marker lives, and both need the one wrapper and the one census client, so they prove nothing apart; the other paths are the docs, the coverage exclusion and the tests of that one change."
