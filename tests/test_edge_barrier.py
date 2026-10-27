@@ -455,6 +455,7 @@ def test_the_apex_gets_a_router_on_the_bare_domain_that_no_label_can_take(checko
 
 
 def test_a_routed_unit_with_an_alias_gets_a_router_for_the_alias_host_too(checkout):
+    """#445 R6."""
     barrier_of(checkout, "talker").close()
 
     assert sorted(parsed(checkout)["http"]["routers"]) == [
@@ -464,6 +465,7 @@ def test_a_routed_unit_with_an_alias_gets_a_router_for_the_alias_host_too(checko
 
 
 def test_an_alias_the_provider_would_not_route_gets_no_router(checkout):
+    """#445 R6."""
     barrier_of(checkout, "bad-alias", "bad-name-alias", "hello").close()
 
     assert sorted(parsed(checkout)["http"]["routers"]) == ["switch-probe-hello", "switch-probe-ok"]

@@ -189,8 +189,9 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
     holders: dict[str, list[str]] = {}
     for name, definition in services.items():
         service = f"service {compose.printable(str(name))}"
-        if _label_interpolates(definition):
-            yield f"{service} interpolates a label ($); not yet supported"
+        if (interpolated := _interpolated_label(definition)) is not None:
+            named = f" ({interpolated})" if interpolated in _DECIDING_LABELS else ""
+            yield f"{service} interpolates a label ($){named}; not yet supported"
             continue
         labels = _labels(definition)
         if EDGE_NAME_LABEL not in labels:
@@ -209,7 +210,7 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
         if len(holders.get(host, [])) != 1:
             yield (
                 f"host {compose.printable(host)} needs exactly one service labelled "
-                f"{EDGE_NAME_LABEL} with its name (labels)"
+                f"{EDGE_NAME_LABEL} or {EDGE_ALIAS_LABEL} with it (labels)"
             )
 
 
@@ -261,12 +262,16 @@ def _compose_true(value: object) -> bool:
     return value is True or (isinstance(value, str) and value.lower() in _COMPOSE_TRUE)
 
 
-def _label_interpolates(definition: dict) -> bool:
-    """A `$` in a label's key, or in the value of a label the contract reads, could resolve to
-    another label or host from the `.env` the release tracks."""
-    return any(
-        _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
-        for key, value in _label_pairs(definition)
+def _interpolated_label(definition: dict) -> str | None:
+    """The key of the first label with a `$` in its key, or in its value when the contract reads
+    that label: it could resolve to another label or host from the `.env` the release tracks."""
+    return next(
+        (
+            key
+            for key, value in _label_pairs(definition)
+            if _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
+        ),
+        None,
     )
 
 

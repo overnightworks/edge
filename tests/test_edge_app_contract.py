@@ -85,7 +85,10 @@ def test_b1_b7_a_published_port_or_the_host_network_is_refused_as_the_key_and_no
 @pytest.mark.parametrize(
     ("labels", "refused"),
     [
-        (None, "host hopin needs exactly one service labelled edge.name with its name (labels)"),
+        (
+            None,
+            "host hopin needs exactly one service labelled edge.name or edge.alias with it (labels)",
+        ),
         ('{edge.name: other, traefik.enable: "true"}', "labels a name the entry does not list"),
         ("{edge.name: hopin}", "has edge.name without traefik.enable true (labels)"),
     ],
@@ -117,6 +120,7 @@ def aliased(labels: str) -> str:
     ],
 )
 def test_an_alias_names_a_second_host_of_the_entry_in_either_label_form(fields):
+    """#445 R1."""
     text = compose(fields, HEALTH if fields.startswith("labels: [") else "")
 
     assert app_contract.check(text, KEY, TAG, ("hopin", "talk")) == ("web",)
@@ -133,10 +137,14 @@ def test_an_alias_names_a_second_host_of_the_entry_in_either_label_form(fields):
         ('{edge.name: hopin, edge.alias: "@", traefik.enable: "true"}', "edge.alias"),
         ('{edge.name: hopin, edge.alias: "*", traefik.enable: "true"}', "edge.alias"),
         ('{edge.name: Hopin, edge.alias: talk, traefik.enable: "true"}', "edge.alias"),
-        ('{edge.name: hopin, edge.alias: "${H}", traefik.enable: "true"}', "interpolates a label"),
+        (
+            '{edge.name: hopin, edge.alias: "${H}", traefik.enable: "true"}',
+            "interpolates a label ($) (edge.alias)",
+        ),
     ],
 )
 def test_an_alias_that_breaks_a_rule_is_refused_naming_service_and_label(labels, refused):
+    """#445 R1, R2: the refusal names the service and the label key."""
     message = refusal(compose(aliased(labels)), hosts=("hopin", "talk", "Talk", "@", "*", "Hopin"))
 
     assert "service web" in message
@@ -151,12 +159,14 @@ def test_an_alias_that_breaks_a_rule_is_refused_naming_service_and_label(labels,
     ],
 )
 def test_two_services_holding_one_host_by_name_or_alias_are_refused(second_labels):
+    """#445 R2."""
     text = f"services: {{a: {service(aliased(ALIASED))}, b: {service(aliased(second_labels))}}}"
 
     assert "host talk needs exactly one service" in refusal(text, hosts=("hopin", "talk", "other"))
 
 
 def test_a_host_no_service_holds_by_name_or_alias_is_refused():
+    """#445 R2."""
     message = refusal(compose(aliased(ALIASED)), hosts=("hopin", "talk", "third"))
 
     assert "host third needs exactly one service" in message

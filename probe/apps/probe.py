@@ -3,21 +3,15 @@
 repository switches on an app of a throwaway bare origin at its newest `vYYYY.MM.DD.N` tag, updates
 it, and refuses or ends partial where block A says so.
 
-The cells driven here: A1 the first apply, A2 a second apply, A3 an update that keeps the named
-volume's data, A4 a tag only on a side branch, A7 a declined `yes`, A8 a new tag that never becomes
-healthy (Traefik routes nothing to it), A9 a build that fails, A12 containers without a record, A18
-an interpolation error that carries a sentinel value, A23 an update interrupted after part of the
-containers were replaced, with a second container of one service, B5 an image `VOLUME` that no
-named volume covers (refused after build, before `create`) and the same covered, B8 a service with
-`pull_policy: always`, R3 and R4 (#445) a second host routed by `edge.alias`, and block C,
-`enabled: false`: C1 an app switched off while running, C2 on again at the same tag, C3 off after
-an update that renamed a service and failed its build, C4 off with `compose.yaml` missing or
-invalid at HEAD, C5 off with a leftover container of an unknown
-service after an update dropped one, and the emergency switch (#255 P5): D1 `hal stop` without a
-terminal (marker, barrier answered by the probe's Traefik, containers stopped), D2 a stopped app
-with a newer tag waiting stays stopped, D4 a stop during the build leaves the containers and the
-record, D7 `hal start` and its refusal while disabled; D10, a stop while apply holds the switch
-lock, is a unit test. The exits are hal's: 0 or 3.
+Cells: A1 the first apply, A2 a second, A3 an update that keeps the named volume's data,
+A4 a tag only on a side branch, A7 a declined `yes`, A8 a new tag that never becomes healthy, A9 a
+build that fails, A12 containers without a record, A18 an interpolation error that carries a
+sentinel value, A23 an update interrupted after part of the containers were replaced, B5 an image
+`VOLUME` that no named volume covers and the same covered, B8 a service with `pull_policy: always`,
+and block C, `enabled: false`: C1 an app switched off while running, C2 on again at the same tag, C3
+off after an update that renamed a service and failed its build, C4 off with `compose.yaml` missing
+or invalid at HEAD, C5 off with a leftover container of an unknown service after an update dropped
+one. The D and R cells are in `emergency_switch.py` and `alias_routing.py`. Exits: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -42,7 +36,6 @@ import grp
 import http.client
 import json
 import os
-import re
 import secrets
 import shlex
 import signal
@@ -57,6 +50,7 @@ sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable 
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
+from alias_routing import AliasRouting  # noqa: E402
 from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
 from emergency_switch import EmergencySwitch  # noqa: E402
 
@@ -100,8 +94,6 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
     "h1": "v2026.10.26.3",
-    "alias": "v2026.10.27.1",
-    "alias_dropped": "v2026.10.27.2",
 }
 HEALTHCHECK = (
     '    healthcheck: {test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"],\n'
@@ -124,8 +116,7 @@ class Probe:
         self.scratch = scratch
         suffix = secrets.token_hex(3)
         self.key = f"apps-probe-{suffix}"
-        self.label = f"probe-{suffix}.name"
-        self.alias_label = f"probe-{suffix}.alias"
+        self.label, self.alias_label = (f"probe-{suffix}.{field}" for field in ("name", "alias"))
         self.edge_port, self.admin_port = free_port(), free_port()
         self.home = scratch / "home"
         self.home.mkdir(parents=True)
@@ -234,11 +225,10 @@ class Probe:
         self, tag: str, *, healthy: bool = True, builds: bool = True, interpolates: bool = False,
         services: tuple[str, ...] = ("web",), on: str = "master", image_volume: str | None = None,
         covered: bool = True, pull_always: bool = False, compose_file: str | None = None,
-        slow_build: int = 0, alias: str | None = None,
+        slow_build: int = 0,
     ) -> str:  # fmt: skip
         """A commit carrying the app at `tag`, pushed and tagged; its sha. `compose_file` replaces
-        the generated compose.yaml with that text, or leaves it out when empty; `alias` is a
-        second host label of the web service."""
+        the generated compose.yaml with that text, or leaves it out when empty."""
         site = self.work / "site"
         site.mkdir(exist_ok=True)
         (site / "version").write_text(f"{tag}\n")
@@ -259,7 +249,7 @@ class Probe:
             if image_volume and covered
             else "    volumes: [data:/data]\n"
         )
-        text = self.compose_text(tag, services, interpolates, extra, alias)
+        text = self.compose_text(tag, services, interpolates, extra)
         if compose_file is None:
             (self.work / "compose.yaml").write_text(text)
         elif compose_file:
@@ -281,19 +271,13 @@ class Probe:
         return sha
 
     def compose_text(
-        self,
-        tag: str,
-        services: tuple[str, ...],
-        interpolates: bool,
-        extra: str,
-        alias: str | None = None,
+        self, tag: str, services: tuple[str, ...], interpolates: bool, extra: str
     ) -> str:
         blocks = []
         for name in services:
             routing = (
                 f'      traefik.enable: "true"\n      {self.label}: {self.key}\n'
                 f'      traefik.http.services.{self.key}.loadbalancer.server.port: "8080"\n'
-                f"{f'      {self.alias_label}: {alias}' + chr(10) if alias else ''}"
                 if name == "web" else ""
             )  # fmt: skip
             environment = (
@@ -740,39 +724,6 @@ class Probe:
         expect("nothing to change" in self.apply(typed=b"no\n"), "H1: plan not quiet")
         print("H1 held: a running service without a healthcheck (absent, disabled) is recorded")
 
-    def traefik_errors_since(self, stamp: str) -> list[str]:
-        logged = self.docker("compose", "logs", "--no-color", "--since", stamp, "traefik")
-        lines = logged.stdout.decode().splitlines()
-        return [line for line in lines if re.search(r"\bERR\b", line)]
-
-    def cell_r3_alias_routes_a_second_host(self) -> None:
-        """#445 R3, R4: Traefik routes `Host(name)` and `Host(alias)` to a service labelled with
-        both and only `Host(name)` without the alias, and logs no error doing so."""
-        alias_host = f"{self.key}-talk.{DOMAIN}"
-        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        self.release(TAGS["alias"], alias=f"{self.key}-talk")
-        self.apply()
-        self.serves(TAGS["alias"])
-        self.wait_until(
-            "the alias host answers",
-            lambda: self.ask("/version", host=alias_host)[1] == TAGS["alias"],
-        )
-        expect(
-            self.ask("/version", host=f"other.{DOMAIN}")[0] == 404, "R3: an unknown host answers"
-        )
-        print("R3 held: Host = name and Host = alias reach the app, an unknown host gets 404")
-        self.release(TAGS["alias_dropped"])
-        self.apply()
-        self.serves(TAGS["alias_dropped"])
-        expect(
-            self.ask("/version", host=alias_host)[0] == 404, "R3: the alias routes without a label"
-        )
-        errors = self.traefik_errors_since(stamp)
-        expect(not errors, f"R4: Traefik logged {errors[:2]}")
-        print(
-            "R3 held: without the label only the name routes; R4 held: no ERR line in Traefik's log"
-        )
-
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
@@ -799,7 +750,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
         probe.cell_h1_service_without_healthcheck()
-        probe.cell_r3_alias_routes_a_second_host()
+        AliasRouting(probe, DOMAIN).prove()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

@@ -30,8 +30,8 @@ class Container:
     routed: bool
     """Labelled `traefik.enable=true`, so Traefik would route it."""
     edge_name: str | None
+    edge_alias: str | None
     publications: tuple[Publication, ...]
-    edge_alias: str | None = None
 
 
 def parse_containers(inspect_json: str) -> list[Container]:
