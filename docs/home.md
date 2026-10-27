@@ -534,7 +534,8 @@ sentence, every later row as `not run`, and then `error: setup stopped at <row>`
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
 sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. A second
-`--apply` changes nothing and downloads nothing. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
+`--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
+labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
 `.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
