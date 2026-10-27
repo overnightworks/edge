@@ -1,8 +1,0 @@
-claim_id = "f4f61d31893d4cd6a462c5555e31aab5"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "c280a80b7636519550108f5baf16ed0ffdb64bda"
-branch = "claude/issue-469-r2-b9"
-scope = ["docs/agent-service.md", "probe/agent-service/app_tools.py", "probe/agent-service/cells_12b.py", "probe/agent-service/census_client.py", "probe/agent-service/fake_app.py", "probe/agent-service/issuer.py", "probe/agent-service/login_checks.py", "probe/agent-service/run_client.py", "probe/agent-service/tree_census.py", "tests/probe_support.py", "tests/test_agent_service_cells_12b.py", "tests/test_agent_service_census_client.py", "tests/test_agent_service_census_watch.py", "tests/test_agent_service_fake_app.py", "tests/test_agent_service_login_checks.py", "tests/test_agent_service_run_client.py"]
-opened_commit = "7cf77f771a75e4b9d353d5401282cf6a83742dcf"
-whole_reason = "B9 joins the fake app's hold, the client's close at t0, the in-container watch and the log in one drive; without any one of them no B9 verdict exists, and a dummy run reaches none of them, so they are built and reviewed as one. The guard's files are in scope only so that a ruled guard can land as a card with it."
