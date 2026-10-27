@@ -449,7 +449,10 @@ def test_b5_reports_cc_socks_in_tmp(containment):
         mounts={"/work": mount(containment), "/tmp": mount(containment, "a", "cc-socks-1000")},
     )
     verdicts = containment.b5_verdicts(look(containment), after, RUNS, roots(containment))
-    assert "cc-socks-1000 in /tmp: True" in verdicts["B5 (mounts)"][1]
+    assert (
+        "cc-socks-1000 in /tmp after the runs: present (reported, not asserted)"
+        in (verdicts["B5 (mounts)"][1])
+    )
 
 
 def test_b5_fails_when_a_run_reached_no_terminal(containment):
@@ -521,7 +524,7 @@ def test_b5_log_lines_follow_the_probes_handler_format(containment):
     logger = logging.Logger("agent_runtime_service.run_events")
     logger.addHandler(handler)
     logger.error("The runner of run %s failed: CliLoginRefusedError at %s", "r1", "3")
-    assert containment.classify_log(stream.getvalue()).run_ids == frozenset({"r1"})
+    assert containment.classify_log(stream.getvalue()).run_ids == ("r1",)
 
 
 @pytest.mark.parametrize(
@@ -620,3 +623,17 @@ def test_every_minted_token_is_in_the_s1_list(containment):
     probe.app_lines = lambda: []
     with pytest.raises(containment.ProbeFailed, match="S1"):
         probe.expect_no_token("dummy")
+
+
+def test_b5_prints_what_lets_a_reader_check_the_census(containment):
+    before = look(containment)
+    after = look(
+        containment,
+        log=runner_lines(first=1000, count=3),
+        mounts={"/work": mount(containment), "/tmp": mount(containment, "a")},
+    )
+    verdicts = containment.b5_verdicts(before, after, RUNS, roots(containment))
+    assert "first run r1000" in verdicts["B5 (log)"][1]
+    assert "last run r1002" in verdicts["B5 (log)"][1]
+    assert "/tmp before [a (file)], after [a (file)]" in verdicts["B5 (mounts)"][1]
+    assert "(n-init, n-svc)" in verdicts["B5 (processes)"][1]

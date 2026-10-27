@@ -34,7 +34,7 @@ sys.exit(cli.main(sys.argv[1:]))
 
 class LogClasses(NamedTuple):
     """How many records of each class the service log holds, and the runs whose runner failed on
-    the refused login. `escaped` counts a bare line that continues no record."""
+    the refused login, in log order. `escaped` counts a bare line that continues no record."""
 
     login_refused: int
     other_errors: int
@@ -43,17 +43,18 @@ class LogClasses(NamedTuple):
     uvicorn_warnings: int
     other_warnings: int
     escaped: int
-    run_ids: frozenset[str]
+    run_ids: tuple[str, ...]
 
     def since(self, earlier: LogClasses) -> LogClasses:
         counts = (now - before for now, before in zip(self[:-1], earlier[:-1], strict=True))
-        return LogClasses(*counts, self.run_ids - earlier.run_ids)
+        seen = set(earlier.run_ids)
+        return LogClasses(*counts, tuple(run for run in self.run_ids if run not in seen))
 
 
 def classify_log(text: str) -> LogClasses:
     """Records are a prefixed line and the lines that continue it; INFO lines are ignored."""
     errors = refused = login = agent = uvicorn = other = escaped = 0
-    run_ids: set[str] = set()
+    run_ids: dict[str, None] = {}
     in_record = False
     for line in text.splitlines():
         root, uvicorn_line = ROOT_RECORD.match(line), UVICORN_RECORD.match(line)
@@ -67,7 +68,7 @@ def classify_log(text: str) -> LogClasses:
                 other += not logger.startswith(("agent_runtime", "uvicorn"))
             elif found := RUNNER_LOGIN_REFUSED.match(message):
                 login += 1
-                run_ids.add(found[1])
+                run_ids[found[1]] = None
             else:
                 errors += 1
         elif uvicorn_line:
@@ -77,4 +78,4 @@ def classify_log(text: str) -> LogClasses:
         elif not in_record:
             escaped += 1
         in_record = in_record or bool(root or uvicorn_line)
-    return LogClasses(login, errors, refused, agent, uvicorn, other, escaped, frozenset(run_ids))
+    return LogClasses(login, errors, refused, agent, uvicorn, other, escaped, tuple(run_ids))
