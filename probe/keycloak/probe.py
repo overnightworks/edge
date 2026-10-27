@@ -805,7 +805,7 @@ def wait_until_ready(admin_url: str) -> None:
 # --- Admin API --------------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class Admin:
     token: AdminToken
     admin_url: str
