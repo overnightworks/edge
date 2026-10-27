@@ -724,14 +724,3 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
     assert f"Backup: OK, last backup {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
-
-
-def test_a_failed_popup_without_mail_is_named_in_the_verdict(clean_home, runner, mail_stub, capsys) -> None:
-    """#522: with no mail set up and the popup failed, the verdict says so instead of `no mail set up`."""
-    restarting_containers(runner)
-    (Layout(clean_home).secrets_dir / "smtp" / "account.toml").unlink()
-    runner.notify_delivers = False
-
-    home_check(clean_home, runner)
-
-    assert "popup failed, retries next run" in capsys.readouterr().out.splitlines()[-2]

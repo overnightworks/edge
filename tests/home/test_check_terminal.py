@@ -136,19 +136,21 @@ def test_the_same_findings_on_the_next_run_say_that_nothing_new_went_out(clean_h
 
 
 @pytest.mark.parametrize(
-    ("mail_state", "session_active", "notify_enabled", "counts", "phrase"),
+    ("mail_state", "session_active", "notify_enabled", "popup_delivers", "counts", "phrase"),
     [
-        ("ok", True, True, "1 action", "mail sent"),
-        ("absent", True, True, "1 action, 1 note", "news sent"),
-        ("failing", True, True, "1 action", "mail failed, retries next run"),
-        ("absent", False, True, "1 action, 1 note", "no mail set up"),
-        ("ok", True, False, "1 action", "notifications off"),
+        ("ok", True, True, True, "1 action", "mail sent"),
+        ("absent", True, True, True, "1 action, 1 note", "news sent"),
+        ("failing", True, True, True, "1 action", "mail failed, retries next run"),
+        ("absent", False, True, True, "1 action, 1 note", "no mail set up"),
+        ("ok", True, False, True, "1 action", "notifications off"),
+        ("absent", True, True, False, "1 action, 1 note", "popup failed, retries next run"),
     ],
 )
-def test_the_verdict_says_what_happened_to_the_news(clean_home, runner, mail_stub, capsys, mail_state, session_active, notify_enabled, counts, phrase) -> None:
+def test_the_verdict_says_what_happened_to_the_news(clean_home, runner, mail_stub, capsys, mail_state, session_active, notify_enabled, popup_delivers, counts, phrase) -> None:
     """#493: one phrase per delivery, true to what the channels did (mail that is not set up is a missing secret, so a note)."""
     restarting_containers(runner, "edge-a")
     runner.session_active = session_active
+    runner.notify_delivers = popup_delivers
     if mail_state == "failing":
         mail_stub.exit_with(1)
     if mail_state == "absent":
