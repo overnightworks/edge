@@ -1,15 +1,16 @@
-# edge-check, hal backup and hal restore
+# hal check, hal backup and hal restore
 
-Reference for the operator. It says what the commands guarantee and what they do not; `edge-check
+Reference for the operator. It says what the commands guarantee and what they do not; `hal check
 --help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/edge_check/`, `src/edge_backup/` and `systemd/`
 hold the mechanics. The data layer and the re-setup path they serve: [architecture.md](architecture.md)
 (L5, section 6).
 
-## edge-check
+## hal check
 
 A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
-default (operator step A7) enforces loopback publications; `edge-check` reports what slipped through.
-Run `uv run edge-check` (human table) or `uv run edge-check --json` (the same findings for machines).
+default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
+Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has one
+area today, `exposure`: `hal check` and `hal check exposure` are the same run.
 
 It runs `docker ps --all`, `docker inspect` and `ss -H -ltnupe` (fixed arguments, no shell, nothing
 written) and reports, by `problem`:
@@ -26,19 +27,20 @@ written) and reports, by `problem`:
 Stopped containers count too, since their publications and labels return when they start; only the
 duplicate check looks at running containers alone. docker-proxy's socket for a running container's
 publication is not reported again as a listener, and `docker.service` never belongs on the allow-list.
-`--json` is a deduplicated, stably ordered list of objects with `problem`, `subject`, `protocol`,
+`--json` is one object, `{"exposure": [...]}`, whose list is deduplicated and stably ordered, with objects holding `problem`, `subject`, `protocol`,
 `address`, `port` and `edge_name` (`null` where they do not apply; `port` is a string such as
 `"8000-8010"` for a range).
 
 Exit 0: every publication binds loopback and every listener is loopback or allow-listed. Exit 1: at least
-one finding. Exit 2: it cannot check (allow-list missing or invalid, or `docker`/`ss` failed, timed out
+one finding. Exit 3: it cannot check, with the cause as `error:` on stderr and nothing on stdout (allow-list missing or invalid, or `docker`/`ss` failed, timed out
 after 30 s or printed something unreadable; `docker inspect` answering fewer containers than `docker ps`
 listed is unreadable too).
 
 ### The allow-list
 
-`edge-check.toml` (or `--allow-list PATH`) names the known listeners beyond loopback. The default is
-found next to the project's `pyproject.toml`, not in the current directory. Docker publications are never
+`src/edge_check/allow-list.toml` (or `hal check exposure --allow-list PATH`; a bare `hal check
+--allow-list` is a usage error) names the known listeners beyond loopback. The default ships in the
+package, so it is found whatever the current directory. Docker publications are never
 allow-listed. Each `[[allow]]` entry needs a `reason` and a `port`, an `owner` (process name, or the
 system unit under `system.slice`), or both, plus `protocol` (`tcp` or `udp`); any other key is an error.
 Allow by `owner` alone only when the service opens random ports.

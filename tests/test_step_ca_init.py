@@ -655,21 +655,24 @@ def fake_uv_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_script: 
 @pytest.mark.parametrize(
     ("uv_script", "findings"),
     [
-        ("echo '[]'; exit 0", []),
-        ('echo \'[{"kind": "listener"}]\'; exit 1', [{"kind": "listener"}]),
+        ("echo '{\"exposure\": []}'; exit 0", []),
+        (
+            'echo \'{"exposure": [{"kind": "listener"}]}\'; exit 1',
+            [{"kind": "listener"}],
+        ),
     ],
 )
-def test_the_probe_reads_the_edge_check_findings(
+def test_the_probe_reads_the_exposure_findings(
     probe: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     uv_script: str,
     findings: list,
 ) -> None:
-    """#34 finding 19: the findings of the edge check are read from its JSON."""
+    """#34 finding 19: the exposure findings are read from the JSON of `hal check exposure`."""
     fake_uv_on_path(tmp_path, monkeypatch, uv_script)
 
-    assert probe.Probe(tmp_path / "scratch").edge_check_findings() == findings
+    assert probe.Probe(tmp_path / "scratch").exposure_findings() == findings
 
 
 @pytest.mark.parametrize(
@@ -677,19 +680,20 @@ def test_the_probe_reads_the_edge_check_findings(
     [
         "echo 'no such command' >&2; exit 1",
         "echo 'not json'; exit 0",
-        "echo '[]'; exit 2",
+        "echo '[]'; exit 0",
+        "echo '{\"exposure\": []}'; exit 3",
     ],
 )
-def test_the_probe_fails_loud_when_edge_check_cannot_run(
+def test_the_probe_fails_loud_when_the_exposure_check_cannot_run(
     probe: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_script: str
 ) -> None:
-    """defect:#48 proof (e): a missing edge-check is a failure, not 'no findings'."""
+    """defect:#48 proof (e): a missing exposure check is a failure, not 'no findings'."""
     fake_uv_on_path(tmp_path, monkeypatch, uv_script)
 
     scratch_probe = probe.Probe(tmp_path / "scratch")
 
     with pytest.raises(probe.ProbeFailed):
-        scratch_probe.edge_check_findings()
+        scratch_probe.exposure_findings()
 
 
 # --- step-ca/init --check: the setup contract of `edge apply` (#52 rule 8) ----------------------

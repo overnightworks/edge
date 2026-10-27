@@ -1,4 +1,4 @@
-"""The allow-list of known listeners beyond loopback, read from `edge-check.toml`."""
+"""The allow-list of known listeners beyond loopback, read from `allow-list.toml`."""
 
 import tomllib
 from dataclasses import dataclass
