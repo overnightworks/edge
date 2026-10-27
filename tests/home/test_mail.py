@@ -45,7 +45,7 @@ def test_a_valid_account_file_is_loaded(tmp_path: Path) -> None:
 
 
 INVALID_ACCOUNTS = {
-    "missing key": (VALID_ACCOUNT_TEXT.replace('user = "home@example.test"\n', ""), "Schlüssel fehlt: user"),
+    "missing key": (VALID_ACCOUNT_TEXT.replace('user = "home@example.test"\n', ""), "missing key: user"),
     "string port": (VALID_ACCOUNT_TEXT.replace("587", '"587"'), "port"),
     "port zero": (VALID_ACCOUNT_TEXT.replace("587", "0"), "port"),
     "port too large": (VALID_ACCOUNT_TEXT.replace("587", "65536"), "port"),
@@ -78,7 +78,7 @@ def test_an_extra_password_key_is_refused_without_echoing_it(tmp_path: Path) -> 
     with pytest.raises(AccountInvalid) as refused:
         load_account(layout)
 
-    assert "unbekannter Schlüssel" in str(refused.value)
+    assert "unknown key" in str(refused.value)
     assert "password" not in str(refused.value)
     assert CANARY not in str(refused.value)
 
