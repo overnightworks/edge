@@ -134,8 +134,26 @@ class RealmAction(StrEnum):
 @dataclass(frozen=True)
 class RealmPlan:
     action: RealmAction = RealmAction.NOTHING
-    line: str = ""  # what the plan says, empty when it says nothing
+    why: str = ""  # why the realm is applied or held, for RUN and HELD
+    error: str = ""  # why Keycloak could not be read, for UNREADABLE
+    restart: str = ""  # what this run starts of the Keycloak unit, for NOT_CHECKED
+    gate: core.Gate | None = None  # the Keycloak unit's gate, for HELD
     entry: dict[str, str] = field(default_factory=dict)  # the inputs as planned, for the record
+
+    @property
+    def line(self) -> str:
+        """What the plan says, empty when it says nothing."""
+        match self.action:
+            case RealmAction.NOT_CHECKED:
+                return f"realm: not checked, {self.restart}; the next `hal apply` checks it"
+            case RealmAction.HELD:
+                return f"realm: {self.why}; Keycloak is {self.gate}, so it is not applied"
+            case RealmAction.UNREADABLE:
+                return f"realm: Keycloak could not be read; not checked ({self.error})"
+            case RealmAction.RUN:
+                return f"realm: apply keycloak/*.yaml ({self.why})"
+            case _:
+                return ""
 
     @property
     def settled(self) -> bool:
@@ -195,22 +213,19 @@ def plan_realm(
     if gate is None:
         return RealmPlan()
     if restart:
-        line = f"realm: not checked, {restart}; the next `hal apply` checks it"
-        return RealmPlan(RealmAction.NOT_CHECKED, line)
+        return RealmPlan(RealmAction.NOT_CHECKED, restart=restart)
     inputs = read_inputs(engine, config, repository)
     reading = record.read()
     if gate is not core.Gate.ON:
         if why := _why(reading, inputs, None):
-            line = f"realm: {why}; Keycloak is {gate}, so it is not applied"
-            return RealmPlan(RealmAction.HELD, line)
+            return RealmPlan(RealmAction.HELD, why=why, gate=gate)
         return RealmPlan()
     try:
         observed = observer.checksums()
     except RealmError as error:
-        line = f"realm: Keycloak could not be read; not checked ({error})"
-        return RealmPlan(RealmAction.UNREADABLE, line)
+        return RealmPlan(RealmAction.UNREADABLE, error=str(error))
     if why := _why(reading, inputs, observed):
-        return RealmPlan(RealmAction.RUN, f"realm: apply keycloak/*.yaml ({why})", inputs.entry)
+        return RealmPlan(RealmAction.RUN, why=why, entry=inputs.entry)
     return RealmPlan()
 
 
