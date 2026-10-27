@@ -1,8 +1,0 @@
-claim_id = "1c61d5133c93451f98aa472bcea766ed"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "6066798a9bf68dfe6cf5bb30311abc5dbf340b13"
-branch = "claude/issue-551-s7e-4-apps-status-english"
-scope = ["src/edge_backup/apps.py", "src/edge_backup/status.py", "tests/test_edge_backup.py", "tests/test_edge_backup_apps.py"]
-opened_commit = "4523a31f8f80be75fcad5f99bdf40d4a5896f77a"
-whole_reason = "Two production owners of the backup's refusal texts and the two test modules that pin and cover them; the wording moves with its pins and its coverage."
