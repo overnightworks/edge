@@ -72,9 +72,9 @@ def called_tool(message: dict) -> str:
 
 
 def request_id_of(message: dict) -> int | None:
-    """The id a client numbered its request with; only the number is echoed back."""
+    """The id a client numbered its request with; only a number is echoed back."""
     request_id = message.get("id")
-    return None if request_id is None else int(request_id)
+    return request_id if isinstance(request_id, int) else None
 
 
 def offered_tools(planted: str | None) -> list[dict]:

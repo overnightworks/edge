@@ -158,6 +158,15 @@ def test_the_step_schema_takes_an_integer_n(served):
     assert step["inputSchema"]["properties"] == {"n": {"type": "integer"}}
 
 
+def test_a_nonnumeric_request_id_is_answered_without_echo_or_traceback(served, capfd):
+    port, _, _ = served
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=LINE_SECONDS)
+    connection.request("POST", "/mcp", json.dumps({"id": "request-canary", "method": "tools/list"}))
+    answer = connection.getresponse().read()
+    assert json.loads(answer)["id"] is None
+    assert "request-canary" not in answer.decode() + capfd.readouterr().err
+
+
 def test_every_new_line_belongs_to_the_closed_vocabulary(tools):
     """Matrix row 11: every line the hold adds belongs to the closed vocabulary."""
     with probe_imports():
