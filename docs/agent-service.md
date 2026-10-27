@@ -45,8 +45,6 @@ through a recreate. There is no model override: the model is the app's.
 
 `GET /offer` answers, for the person and app of its two tokens, the models of `[cli.claude] models` that the person's subscription group can run, each `ready` on route `cli`; it is computed from the configuration, opens no login and starts no run. Every profile carries `background = false`: no profile admits a background run (the service refuses to start without the key), and which identity runs an app's background agents is agent-runtime#479's question.
 
-Membership in the subscription group or the api group alone decides who may use an AI feature, in every app (hopin#240); an app adds no AI group of its own.
-
 A change to `service.toml`, `compose.yaml` or the image reaches the running service only by
 recreating it, which ends every run in flight:
 `docker compose --profile agent-service up -d --force-recreate agent-service`, in the live checkout
@@ -157,7 +155,9 @@ a turn leaves this PC for Anthropic, which generates the answer.
 Claude subscription serves only his own use. Every other person reaches the service only through the
 API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
 enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
-gets 403 `not_enabled`. An app's privacy text therefore describes only the API route.
+gets 403 `not_enabled`. An app's privacy text therefore describes only the API route. Which groups may use an AI feature
+is decided by the service's subscription and api groups only, the same in every app; an app adds no AI group of its own.
+Membership in the app (`/apps/<name>`) stays separate access to the app. The api group is not enabled yet (see above).
 
 ## An app's side
 
