@@ -181,6 +181,11 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrid
         assert not {"tools", "purposes", "models"} & app.keys()
 
 
+def test_hopin_is_registered_with_its_realm_client_as_workload_and_no_tools(configuration):
+    """R0 of #506: HopIn reaches the service through its own workload client."""
+    assert configuration["apps"]["hopin"] == {"workload_client": "hopin"}
+
+
 def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
     configuration,
 ):

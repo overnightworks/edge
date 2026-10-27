@@ -75,7 +75,7 @@ ClientHello and dials only `api.anthropic.com:443` (the provider CLI) and `auth.
 JWKS fetch). It holds no key and has no API, ping or metrics. Any other name, or none, matches no router
 and `sniStrict` ends the handshake in the gateway; `agent-service/egress/dynamic/allowed.yml` is the one
 owner of the two names. The service finds the gateway through `extra_hosts` (`x-agent-attachments` in
-`compose.yaml`), not through DNS: the networks `agent-songmaker`, `agent-presentator`, `egress` and `mcp` (the anchor's four) are internal and isolated
+`compose.yaml`), not through DNS: the networks `agent-songmaker`, `agent-presentator`, `agent-hopin`, `egress` and `mcp` (the anchor's five) are internal and isolated
 (`gateway_mode_ipv4: isolated`), so a member has no route out, no host address and no DNS forwarding.
 Only `agent-egress` sits on `internet`, a plain NAT bridge, and listens on `172.31.252.10:443` of
 `egress` alone. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config

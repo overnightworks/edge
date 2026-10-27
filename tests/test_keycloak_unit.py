@@ -303,13 +303,32 @@ def test_only_the_apps_have_a_back_channel_logout_address():
     assert sorted(with_address) == ["hopin", "presentator", "songmaker"]
 
 
-def test_only_hopin_gets_no_refresh_token_because_it_uses_none():
-    """O1 of #254 (24.10.2026): an app gets a refresh token only if it uses one."""
+def test_only_hopin_names_its_refresh_token_setting_as_on():
+    """R1 of #506: HopIn holds a refresh token, named so a merge cannot keep an earlier off."""
     clients = realm_clients()
 
-    assert clients["hopin"]["attributes"]["use.refresh.tokens"] == "false"
+    assert clients["hopin"]["attributes"]["use.refresh.tokens"] == "true"
     assert "use.refresh.tokens" not in clients["songmaker"]["attributes"]
     assert "use.refresh.tokens" not in clients["presentator"].get("attributes", {})
+
+
+def test_hopin_has_a_workload_service_account_in_no_group_and_exactly_its_six_scopes():
+    """#506: the account holds `agent-workload` only; no `email`, `web-origins` or `acr`."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+    account = next(user for user in realm["users"] if user["username"] == "service-account-hopin")
+
+    assert account["serviceAccountClientId"] == "hopin"
+    assert account["realmRoles"] == ["agent-workload"]
+    assert "groups" not in account
+    assert realm_clients()["hopin"]["serviceAccountsEnabled"] is True
+    assert set(realm_clients()["hopin"]["defaultClientScopes"]) == {
+        "basic",
+        "profile",
+        "groups",
+        "roles",
+        "service_account",
+        "agent-service-audience",
+    }
 
 
 def test_only_songmaker_allows_the_device_grant():
@@ -479,7 +498,7 @@ def test_the_bare_auth_address_redirects_to_the_account_page_and_nothing_else_op
 HOPIN_RULED = {
     "backchannel.logout.url": "http://hopin.hallucinai.de:8080/auth/backchannel-logout",
     "backchannel.logout.session.required": "false",
-    "use.refresh.tokens": "false",
+    "use.refresh.tokens": "true",
 }
 PRESENTATOR_RULED = {
     "backchannel.logout.url": "http://presentator.hallucinai.de:8000/auth/backchannel-logout",
@@ -510,7 +529,7 @@ SONGMAKER_RULED = {
         ),
         pytest.param(
             "hopin",
-            HOPIN_RULED | {"use.refresh.tokens": "true"},
+            HOPIN_RULED | {"use.refresh.tokens": "false"},
             {"use.refresh.tokens"},
             id="hopin refresh tokens",
         ),

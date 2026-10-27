@@ -60,7 +60,7 @@ flowchart TB
             KC["Keycloak + its database<br/>auth.hallucinai.de: the login page"]
             CA["step-ca :9000, internal network mcp-ca<br/>internal CA for the MCP origins, *.mcp.internal"]
             TMC["traefik-mcp :443, no host port<br/>the gateway to the MCP origins, certificates from step-ca"]
-            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp-songmaker (traefik-mcp, songmaker; isolated)<br/>agent-songmaker, agent-presentator, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
+            MCPN["internal networks:<br/>mcp-ca (step-ca, traefik-mcp)<br/>mcp (traefik-mcp, the agent service; isolated)<br/>mcp-backends (traefik-mcp, the MCP servers)<br/>mcp-songmaker (traefik-mcp, songmaker; isolated)<br/>agent-songmaker, agent-presentator, agent-hopin, egress (the agent service; isolated)<br/>internet, a NAT bridge: agent-egress alone"]
             BAK["hal backup<br/>restic weekly, restore test monthly<br/>second copy off this disk (D3)"]
             LOOK["Traffic-light page, Gatus<br/>is it OK now?"]
             MON["Prometheus, Grafana, Alertmanager<br/>why, since when? every service"]
@@ -153,7 +153,7 @@ The agent service is an L4 service: the one place that holds the subscription lo
 6. **The library defines its contract, hosts adapt to it** ([agent-runtime#49](https://github.com/overnightworks/agent-runtime/issues/49)).
 
 **What this means for the platform (A1d):**
-- The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker and presentator clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
+- The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker, presentator and hopin clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
 - The container mounts only one read-only directory bind per profile (its login), its configuration file and two tmpfs mounts: `cli_working_directory_root` and `/tmp` (section 4).
 - Its AppArmor/Bubblewrap policy permits writes only below that root.
 - Its egress is exactly two names, through `agent-egress` ([edge#189](https://github.com/overnightworks/edge/issues/189)): an SNI-allowlisting TLS passthrough to the provider endpoint `api.anthropic.com` and the issuer host for the JWKS fetch. The service sits on internal, isolated networks with no route out, no host address and no DNS forwarding. MCP origins stay internal over `mcp`; LiteLLM joins with A2a.
