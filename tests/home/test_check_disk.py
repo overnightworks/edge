@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import RunnerWithCleanLogs, Sandbox, home_check, message_of, restarting_containers
 
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")

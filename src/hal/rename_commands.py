@@ -18,7 +18,7 @@ from pathlib import Path
 
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import printable, write_error
-from home_tools.tidy_home import Layout, registered_worktrees
+from home_tools.layout import Layout, registered_worktrees
 
 OWNER = "overnightworks"
 NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]*")

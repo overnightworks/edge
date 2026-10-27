@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from home_tools import secrets_view
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 
 TUNNEL_CREDENTIAL = PurePosixPath(".secrets/cloudflared/{tunnel_id}.json")

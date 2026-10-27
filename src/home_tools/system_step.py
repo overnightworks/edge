@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 
 from home_tools import secrets_setup
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
 # The agents' own OS account: the play creates it dormant, and `hal setup` skips the operator's steps for exactly this user.

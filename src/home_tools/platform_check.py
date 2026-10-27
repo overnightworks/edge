@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
-from home_tools.tidy_home import CommandRunner
+from home_tools.layout import CommandRunner
 
 REBOOT_REQUIRED_FILE = Path("/var/run/reboot-required")
 CHECKED_FILESYSTEM = Path("/")

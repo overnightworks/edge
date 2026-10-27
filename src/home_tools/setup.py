@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
 from home_tools.system_step import AGENT_USER, Applied, CheckState, StepFailed, SystemStep, UnresolvableRunningUser
-from home_tools.tidy_home import Config, Layout
+from home_tools.tidy_home import Config
+from home_tools.layout import Layout
 from home_tools.user_units import UserUnits
 
 if TYPE_CHECKING:

@@ -17,7 +17,7 @@ from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeDisk, FakeProbe, plan
 from home_tools import cli, secrets_view
 from home_tools.secrets_setup import BY_HAND_STEP, Boundaries, Terminal
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 NOW = datetime(2026, 10, 15, 9, 0)
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH

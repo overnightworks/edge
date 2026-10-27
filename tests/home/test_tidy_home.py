@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import timeit
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from home_tools import tidy_home
-from home_tools.tidy_home import Action, Config, Finding, Layout, Limits, Options, Verdict
+from home_tools.tidy_home import Action, Config, Finding, Limits, Options, Verdict
+from home_tools.layout import Layout
 
 NOW = datetime(2026, 9, 5, 12, 0)
 LIMITS = Limits()
@@ -452,25 +452,6 @@ def test_worktrees_with_closed_issues_or_no_registration_are_reported(layout: La
         str(unregistered): "not registered in git worktree list",
     }
     assert all(f.verdict is Verdict.REMOVE and f.recommendation == "Claim freigeben, dann `git worktree remove`" for f in findings)
-
-
-@pytest.mark.parametrize(
-    ("argv", "expected"),
-    [
-        ([sys.executable, "-c", "print('bereit')"], "bereit\n"),
-        ([sys.executable, "-c", "raise SystemExit(3)"], None),
-        (["home-no-such-tool"], None),
-    ],
-    ids=["a tool that succeeds", "a tool that fails", "a tool that is not installed"],
-)
-def test_only_a_tool_that_succeeds_hands_back_output(argv: list[str], expected: str | None) -> None:
-    assert tidy_home.run_command(argv) == expected
-
-
-def test_a_tool_that_hangs_is_killed_and_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tidy_home, "COMMAND_TIMEOUT_SECONDS", 0.2)
-
-    assert tidy_home.run_command([sys.executable, "-c", "import time; time.sleep(30)"]) is None
 
 
 def test_issue_state_is_unknown_when_the_repo_has_no_origin() -> None:

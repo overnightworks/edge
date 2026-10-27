@@ -14,7 +14,7 @@ from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
 from home_tools.system_step import DOCKER_LOG_DRIVER, LOG_RETENTION_DAYS, RSYSLOG_FILE_NAMES
-from home_tools.tidy_home import CommandRunner
+from home_tools.layout import CommandRunner
 
 LOG_DIRECTORY = Path("/var/log")
 JSON_FILE_DRIVER = "json-file"

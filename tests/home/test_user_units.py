@@ -11,7 +11,7 @@ import pytest
 from home_tools import setup
 from home_tools.cli import build_layout_and_ports, edge_units_directory
 from home_tools.system_step import Applied, CheckState, StepFailed
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 from home_tools.user_units import LoadedUnit, UserUnits
 
 USER_UNITS_STEP = "User units"

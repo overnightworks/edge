@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from home_tools.system_step import Applied, CheckState, StepFailed
-from home_tools.tidy_home import CommandRunner, Layout
+from home_tools.layout import CommandRunner, Layout
 
 SERVICE_SUFFIX = ".service"
 TIMER_SUFFIX = ".timer"

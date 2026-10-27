@@ -16,7 +16,7 @@ from shlex import quote
 
 from home_tools.report import findings_count, markdown_table
 from home_tools.setup import HOOK_NAMES, _has_hook_mode, _is_executable, _recorded_quality_source_matches, render_hook
-from home_tools.tidy_home import CommandRunner, Layout, is_git_repo, registered_worktrees
+from home_tools.layout import CommandRunner, Layout, is_git_repo, registered_worktrees
 
 SETUP_APPLY = "`hal setup --apply`"
 HOOKS_PATH_KEY = "core.hookspath"

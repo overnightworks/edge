@@ -20,17 +20,24 @@ import argparse
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tomllib
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from home_tools.report import findings_count, markdown_table
+from home_tools.layout import (
+    CommandRunner,
+    IssueStateLookup,
+    Layout,
+    is_git_repo,
+    registered_worktrees,
+    run_command,
+)
+from home_tools.report import ClosedBy, Tally, findings_count, markdown_table
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
@@ -203,113 +210,6 @@ def load_limits(raw: dict[str, object]) -> Limits:
 
 
 @dataclass(frozen=True)
-class Layout:
-    """Every path `home` touches, derived from one home directory."""
-
-    home: Path
-
-    @property
-    def git(self) -> Path:
-        return self.home / "git"
-
-    @property
-    def downloads(self) -> Path:
-        return self.home / "Downloads"
-
-    @property
-    def codex_sessions(self) -> Path:
-        return self.home / ".codex" / "sessions"
-
-    @property
-    def readme(self) -> Path:
-        return self.home / "README.md"
-
-    @property
-    def config_file(self) -> Path:
-        return self.home / ".config" / "home" / "config.toml"
-
-    @property
-    def legacy_config_file(self) -> Path:
-        return self.home / ".config" / "tidy-home" / "config.toml"
-
-    @property
-    def pasted_image_dirs(self) -> tuple[Path, ...]:
-        return (self.home, self.git, self.home / "Dokumente", self.home / "Schreibtisch")
-
-    @property
-    def local_dir(self) -> Path:
-        return self.home / ".local"
-
-    @property
-    def data_dir(self) -> Path:
-        return self.local_dir / "share"
-
-    @property
-    def trash_dirs(self) -> tuple[Path, ...]:
-        gnome = self.data_dir / "Trash"
-        vscode_snap = sorted((self.home / "snap" / "code").glob("*/.local/share/Trash"))
-        return (gnome, *vscode_snap)
-
-    @property
-    def state_dir(self) -> Path:
-        return self.local_dir / "state" / "home"
-
-    @property
-    def system_step_record(self) -> Path:
-        """The digest of what the system step rendered at its last verified run; `home next` compares it, never sudo."""
-        return self.state_dir / "system-step.sha256"
-
-    @property
-    def tidy_report_file(self) -> Path:
-        return self.state_dir / "tidy-report.md"
-
-    @property
-    def check_report_file(self) -> Path:
-        return self.state_dir / "check-report.md"
-
-    @property
-    def check_findings_file(self) -> Path:
-        return self.state_dir / "check-findings.txt"
-
-    @property
-    def secrets_dir(self) -> Path:
-        return self.home / ".secrets"
-
-    @property
-    def git_hooks_dir(self) -> Path:
-        return self.data_dir / "home" / "git-hooks"
-
-    @property
-    def quality_executable(self) -> Path:
-        return self.local_dir / "bin" / "quality"
-
-    @property
-    def quality_engines_dir(self) -> Path:
-        return self.data_dir / "quality" / "engines"
-
-    @property
-    def quality_uv_receipt(self) -> Path:
-        return self.data_dir / "uv" / "tools" / "overnightworks-quality" / "uv-receipt.toml"
-
-    @property
-    def ansible_playbook_executable(self) -> Path:
-        return self.local_dir / "bin" / "ansible-playbook"
-
-    @property
-    def ansible_uv_receipt(self) -> Path:
-        return self.data_dir / "uv" / "tools" / "ansible-core" / "uv-receipt.toml"
-
-    @property
-    def edge_tunnel_dir(self) -> Path:
-        """edge's cloudflared unit, its drop-ins and the polkit rule, which the system step installs."""
-        return self.git / "edge" / "tunnel"
-
-    @property
-    def secrets_report_file(self) -> Path:
-        return self.state_dir / "secrets-report.md"
-
-
-@dataclass(frozen=True)
 class Config:
     """The one configuration file of `home`: a table per subcommand that has settings."""
 
@@ -351,21 +251,6 @@ def load_config(layout: Layout) -> Config:
         tidy=load_limits(_require_table("tidy", raw.get("tidy", {}))),
         notify_enabled=_load_notify_enabled(_require_table("notify", raw.get("notify", {}))),
     )
-
-
-IssueStateLookup = Callable[[Path, int], str | None]
-CommandRunner = Callable[[Sequence[str]], str | None]
-
-COMMAND_TIMEOUT_SECONDS = 120
-
-
-def run_command(argv: Sequence[str]) -> str | None:
-    """Run an external command; None when the tool is missing, hangs or fails."""
-    try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=COMMAND_TIMEOUT_SECONDS, check=False)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    return completed.stdout if completed.returncode == 0 else None
 
 
 def github_issue_state(repo: Path, number: int, run: CommandRunner = run_command) -> str | None:
@@ -600,10 +485,6 @@ def unknown_home_entries(layout: Layout) -> list[Finding]:
     ]
 
 
-def is_git_repo(path: Path) -> bool:
-    return (path / ".git").exists()
-
-
 def git_root_litter(layout: Layout) -> list[Finding]:
     """git/ holds repos and <repo>-worktrees, nothing else."""
     findings: list[Finding] = []
@@ -624,11 +505,6 @@ def git_root_litter(layout: Layout) -> list[Finding]:
             )
         )
     return findings
-
-
-def registered_worktrees(repo: Path, run: CommandRunner, resolve_links: bool = True) -> set[Path]:
-    listing = run(["git", "-C", str(repo), "worktree", "list", "--porcelain", "-z"]) or ""
-    return {(Path.resolve if resolve_links else Path)(Path(field.removeprefix("worktree "))) for field in listing.split("\0") if field.startswith("worktree ")}
 
 
 def stale_worktrees(layout: Layout, issue_state: IssueStateLookup, run: CommandRunner) -> list[Finding]:
@@ -737,37 +613,6 @@ class Options:
 class RuleKind(Enum):
     CLEAN = "clean"
     AUDIT = "audit"
-
-
-class ClosedBy(Enum):
-    """Who closes a finding: the operator, as a step only he can take, or an agent that sorts it in as bookkeeping."""
-
-    OPERATOR = "operator"
-    BOOKKEEPING = "bookkeeping"
-
-    @classmethod
-    def counted_by(cls, tally: Tally | None) -> ClosedBy:
-        """A rule is bookkeeping exactly when it says how its findings are counted, so no rule can be one without the other."""
-        return cls.OPERATOR if tally is None else cls.BOOKKEEPING
-
-
-@dataclass(frozen=True)
-class Tally:
-    """How a kind of bookkeeping finding is counted, singular and plural: "1 Download", "13 Downloads"."""
-
-    one: str
-    many: str
-    counted: bool = True
-
-    @classmethod
-    def fact(cls, text: str) -> Tally:
-        """A kind that is found at most once is said without a count: "~/README.md fehlt"."""
-        return cls(text, text, counted=False)
-
-    def of(self, count: int) -> str:
-        if not self.counted:
-            return self.one
-        return f"{count} {self.one if count == 1 else self.many}"
 
 
 class RuleStatus(Enum):
