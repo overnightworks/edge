@@ -25,7 +25,7 @@ Die GitHub-Tokens (`~/.secrets/github/fleet-read`, `fleet-admin`) werden nicht g
 weitergegeben, bis edge#30 X2/X3 die GitHub-Einstellungen als Code bauen; die weiteren Token-Dateien
 folgen mit X5b (home-tools#10).
 
-## `edge external check --hosts [--json]`
+## `hal check hosts [--json]`
 
 Liest nur `~/.secrets/cloudflare/fleet-read` und sendet es im `Authorization`-Header an
 `api.cloudflare.com`: kein `tofu`, kein GitHub-Token, keine State-Passphrase, kein Schreib-Token, kein
@@ -37,9 +37,11 @@ aus `fleet.yaml` des laufenden Checkouts: fehlende oder falsche Records und Apps
 unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand deklariert hat (`apply`
 loescht sie nie; er endet auf demselben Check). Ohne Access auf dem Konto ist das nur dann ein Befund,
 wenn ein Host `bypass` oder `protected` ist; widerspricht sich die Abfrage ("Access aus" erst nach den
-Apps), ist es Exit 2. Exit 0 keine Befunde, 1 Befunde, 2 nicht pruefbar, 130 unterbrochen (nur vor der
-Ausgabe). Mit `--json` ist stdout genau eine Liste von `{problem, subject, detail, next}` (bei Exit 2
-leer, die Ursache auf stderr).
+Apps), ist es Exit 3. Exit 0 keine Befunde, 1 Befunde, 3 nicht pruefbar, 130 unterbrochen (nur vor der
+Ausgabe). Mit `--json` ist stdout genau ein Objekt `{"hosts": [{problem, subject, detail, next}]}`
+(bei Exit 3 leer, die Ursache als `error: hal check: hosts: cannot check, …` auf stderr). `hal check
+hosts` liest Cloudflare; `hal check exposure` bleibt lokal, und `--allow-list` gehoert nur zu
+`exposure`. Der `edge external apply`-Abschluss sieht weiter Exit 2 fuer "nicht pruefbar".
 
 Zusaetzlich fragt der Check jeden deklarierten Host mit Record einmal mit `GET /` ueber HTTPS, ohne
 Anmeldedaten, Cookies und Weiterleitungen (10 s je blockierender Operation; die Wildcard unter
@@ -73,10 +75,10 @@ Allowlist-Umgebung, dieselbe State-Passphrase).
   nennt der naechste `plan`- oder `apply`-Aufruf (`check` raeumt nicht auf).
 - **Unterbrechung.** Strg-C oder SIGTERM geht genau einmal als SIGINT an `tofu`; der Wrapper wartet, bis
   `tofu` sauber beendet ist, weitere Strg-C werden ignoriert, und die Meldung verweist auf
-  `edge external check --hosts`. Die Pruefung laeuft dann nicht von selbst: nichts Ungeprueftes wird
+  `hal check hosts`. Die Pruefung laeuft dann nicht von selbst: nichts Ungeprueftes wird
   behauptet.
 - **Der Host-Check am Ende.** Jeder `apply`, der etwas geaendert haben kann oder nichts zu tun fand,
-  endet auf demselben Check wie `check --hosts` (ohne `--json`; er liest `fleet-read`, das `apply` vor
+  endet auf demselben Check wie `hal check hosts` (ohne `--json`; er liest `fleet-read`, das `apply` vor
   dem Plan prueft: fehlt es oder ist es leer, Exit 2 ohne `tofu`; das Schreib-Token erreicht den Check
   nie). Er vergleicht den tatsaechlichen Zustand mit der Deklaration, nicht mit dem Plan: ein geplanter
   Fix entschuldigt nichts, und ein undeklarierter Record laesst auch einen sonst fertigen `apply` mit

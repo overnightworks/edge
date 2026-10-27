@@ -26,7 +26,7 @@ _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
 _OWNED_SUFFIXES = {_PLAN_SUFFIX, _LOCK_SUFFIX}
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
-UNCHECKED_CONSEQUENCE = "live services may be partly changed; run edge external check --hosts"
+UNCHECKED_CONSEQUENCE = "live services may be partly changed; run hal check hosts"
 
 
 class ApplyExit(IntEnum):
