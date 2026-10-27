@@ -87,7 +87,29 @@ def test_the_containers_carry_their_state_and_health():
         "db created",
         "old exited (healthy)",
     ]
-    assert [container.healthy for container in containers] == [True, False, False]
+    assert [container.settled for container in containers] == [True, False, False]
+
+
+@pytest.mark.parametrize(
+    ("state", "health", "settled"),
+    [
+        ("running", "healthy", True),
+        ("running", "", True),
+        ("running", "starting", False),
+        ("running", "unhealthy", False),
+        ("restarting", "", False),
+        ("exited", "", False),
+        ("created", "", False),
+        ("exited", "healthy", False),
+    ],
+)
+def test_a_container_is_settled_when_it_runs_and_is_healthy_where_it_reports_health(
+    state, health, settled
+):
+    """H2 of #444: health is asked for only where the container reports it."""
+    container = app_compose.AppContainer("n", "i", "web", state, health)
+
+    assert container.settled is settled
 
 
 @pytest.mark.parametrize("answer", ['[{"Service": "x"}]', "[1, 2]", '"text"'])

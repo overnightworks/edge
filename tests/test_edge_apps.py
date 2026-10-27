@@ -15,6 +15,7 @@ from app_support import (
     KEY,
     NOW,
     SENTINEL,
+    TWO_SERVICES,
     Clock,
     Origin,
     ScriptedDocker,
@@ -29,10 +30,6 @@ from edge.unit_plans import Fleet, Progress
 EDGE_FLEET = Fleet({"name": "edge"}, {}, ())
 
 FIRST, SECOND, THIRD = "v2026.10.22.1", "v2026.10.22.2", "v2026.10.22.3"
-TWO_SERVICES = (
-    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
-    "  worker:\n    build: .\n    restart: unless-stopped\n"
-)
 
 
 @pytest.fixture(autouse=True)
@@ -210,6 +207,37 @@ def test_a_new_tag_that_fails_health_stays_partial_with_the_record_on_the_old_on
         f"hopin: update to {THIRD} ({sha}); last successful deployment {SECOND}; "
         f"the update to {THIRD} did not finish; now: hopin running (unhealthy)"
     ]
+
+
+def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_nothing_to_change(
+    world, origin, docker
+):
+    """H1 of #444: a running helper that reports no health is settled."""
+    docker.without_health = frozenset({"worker"})
+
+    deploy(world, origin, FIRST, {"compose.yaml": TWO_SERVICES})
+
+    assert {row["Service"]: row["Health"] for row in docker.rows} == {
+        "web": "healthy",
+        "worker": "",
+    }
+    assert world.plan().describe() == []
+
+
+@pytest.mark.parametrize("helper_state", ["restarting", "exited", "created"])
+def test_a_helper_without_a_healthcheck_that_does_not_run_leaves_the_app_unrecorded(
+    world, origin, docker, helper_state
+):
+    """H2 of #444: a helper that does not run is unsettled even without a healthcheck."""
+    origin.release(FIRST, {"compose.yaml": TWO_SERVICES})
+    docker.without_health = frozenset({"worker"})
+    docker.during["start"] = lambda: docker.rows[1].update(State=helper_state)
+
+    [failure] = world.run()
+
+    assert failure.startswith(f"hopin is not healthy at {FIRST} after 300s (")
+    assert f"worker {helper_state}" in failure
+    assert world.deployed() is None
 
 
 def test_a_build_that_fails_leaves_the_old_containers_and_the_next_plan_says_unfinished(
