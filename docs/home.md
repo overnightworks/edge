@@ -561,8 +561,9 @@ come before the system step, which is the one that asks for sudo:
    another version.
 7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
-   It also installs `msmtp` and `ca-certificates` for the mail of `home check`, and purges `rsyslog`
-   with its six log files.
+   It also installs `msmtp` and `ca-certificates` for the mail of `home check`, purges `rsyslog`
+   with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
+   restarting Docker while it does not report `journald`.
    It asks once for sudo.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
@@ -605,7 +606,7 @@ An extra reload at the end follows only when an edge file or the retired drop-in
 cloudflared is never started, stopped or restarted.
 Whatever is replaced or deleted of these files is copied first to
 `/var/backups/home-setup/<UTC time>/`, outside `/etc/systemd/system`. The retention units
-below and rsyslog's conffiles are home's own and are not backed up.
+below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker/daemon.json` is backed up there too, when it changes.
 
 - **Journal retention.** The same run writes `hal-journal-retention.service` and
   `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
@@ -693,6 +694,24 @@ below and rsyslog's conffiles are home's own and are not backed up.
     whatever else it finds to change.
 
   Or roll back as described.
+- **Docker's log default.** The same run merges `"log-driver": "journald"` into `/etc/docker/daemon.json` (`DOCKER_LOG_DRIVER`
+  in `src/home_tools/system_step.py`, which `home check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
+  written root-owned, mode 644, with sorted keys, so the diff of a file that only holds the runtime is one new line, and it is
+  checked with `dockerd --validate` before it replaces the old one. A file that does not parse, one that is not an object, a
+  `log-opts` key, another `log-driver`, and a Docker that does not answer `docker info` are refused before anything is
+  written, edge's files included; the dry run shows the diff and the restart as changes and writes nothing.
+  Docker restarts whenever `docker info` does not say `journald`, never while it does, so a run interrupted after the write
+  restarts on the next. `live-restore` is off: every container stops with Docker, and one with `unless-stopped` or `always`
+  starts again, one without a restart policy or stopped by hand stays down; the apps are unreachable meanwhile and running work
+  is cut. `hal setup` does not wait for it, so run `--apply` at a quiet time. Existing containers keep `json-file` until they are recreated.
+  **Rescue.** When the restart fails or Docker does not report `journald`, the run writes `daemon.json` back without `log-driver`
+  (`{}` when nothing else remains; the same JSON as before the run, unless the file already carried `journald`), clears the
+  unit's start limit with `systemctl reset-failed docker`, restarts Docker again and fails, saying so. No backup is read and
+  nothing is deleted. **Rollback.** Revert the change, land a reviewed playbook change that removes `log-driver` and restarts
+  Docker, and run `hal setup --apply`; a plain revert removes nothing. **Residual risks:** Docker stays down, and every app
+  with it, when the rescue's restart fails too; and a run interrupted between the write and the rescue with Docker down
+  (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
+  `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
   the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `home check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
@@ -703,8 +722,13 @@ below and rsyslog's conffiles are home's own and are not backed up.
   `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 24.04, so the proof does not run
   the removal's maintainer scripts of the release on the PC nor its systemd; the PC's own facts cover that.
   The container runs a real Docker engine (its images and snapshots live in anonymous volumes that `run.sh` removes with the container);
-  cell DK1 proves it answers with the default `json-file` log driver, runs an imported rootfs offline and starts without
-  `/etc/docker/daemon.json`, and the agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
+  cell DK1 proves, before the first apply, that it answers with the default `json-file` log driver, runs an imported rootfs
+  offline and starts without `/etc/docker/daemon.json`. DK2 proves the merge (no file, and the PC's 128-byte file with its
+  backup), DK3 the refusals and a Docker that does not answer, DK4 the dry run and the restart on need only, DK5 that a
+  running `unless-stopped` container comes back, one stopped by hand stays down and both keep `json-file`, DK6 that a
+  container created afterwards is read by `docker logs`, `docker compose logs` and `journalctl CONTAINER_NAME=`, and DK7 the
+  rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 24.04 package's
+  Docker without a GPU, not the PC's. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
 ### Das Mail-Konto von `home check`
 

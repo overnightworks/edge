@@ -19,6 +19,11 @@ MARKER=/home/tester/.local/state/edge/global-stop
 SHOWN=ExecStart,Type,User,DynamicUser,LoadCredential,Environment,ProtectSystem,ProtectHome,PrivateTmp,NoNewPrivileges,TimeoutStartUSec,Restart
 RETENTION_SERVICE=hal-journal-retention.service
 RETENTION_TIMER=hal-journal-retention.timer
+# Docker's default log driver as the proof expects it, written here once because the proof must not read what it checks.
+WANTED_DRIVER=journald
+DAEMON_JSON=/etc/docker/daemon.json
+BACKUP_DIR=/var/backups/home-setup
+DOCKER_DROP_IN_DIR="$UNIT_DIR/docker.service.d"
 mkdir -p "$EVIDENCE"
 
 verdict() {  # verdict <cell> <what> <condition>: held when the condition, a shell expression, is true
@@ -247,6 +252,8 @@ cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, a
     verdict T1 "the dry run shows the units in its diff and starts nothing" \
         'in_log cell10 "hal-journal-retention.timer" && ! systemctl cat "$RETENTION_TIMER" >/dev/null 2>&1'
     verdict 10 "it shows would change, with the diff" 'in_log cell10 "System: would change" && grep -q "^+++ " "$EVIDENCE/cell10.log"'
+    verdict DK4 "the dry run on a Docker still on json-file shows the log-driver line and the restart as changes, and writes nothing" \
+        'in_log cell10 "+    \"log-driver\": \"journald\"" && grep -A2 "TASK \[Restart Docker\]" "$EVIDENCE/cell10.log" | grep -q "^changed:" && [ ! -e "$DAEMON_JSON" ]'
     return
 }
 
@@ -260,6 +267,10 @@ cell_1() {
     verdict 1 "systemd-analyze verify passes" 'systemd-analyze verify cloudflared.service >"$EVIDENCE/verify.log" 2>&1'
     verdict D1 "the apply installed msmtp and ca-certificates, and msmtp-mta is not there" \
         'dpkg -s msmtp ca-certificates >/dev/null 2>&1 && ! dpkg -s msmtp-mta >/dev/null 2>&1'
+    verdict DK2 "with no daemon.json the apply created exactly the journal as default, root-owned, mode 644" \
+        'daemon_json_is "{\"log-driver\": \"$WANTED_DRIVER\"}" && [ "$(stat -c "%U %a" "$DAEMON_JSON")" = "root 644" ]'
+    verdict DK4 "after the first apply docker info says the journal" '[ "$(docker_default_driver)" = "$WANTED_DRIVER" ]'
+    docker_started_at >"$EVIDENCE/dk4-started-after-cell1.txt"
     return
 }
 
@@ -267,6 +278,8 @@ cell_9() {
     local code
     at_terminal cell9 "$HOME_BIN setup --apply"
     code=$?
+    verdict DK4 "a second apply restarts nothing: Docker's start time is unchanged" \
+        '[ "$(docker_started_at)" = "$(cat "$EVIDENCE/dk4-started-after-cell1.txt")" ]'
     verdict 9 "a second apply: Ansible reports changed=0, System unchanged" \
         '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log" && in_log cell9 "System: unchanged"'
     verdict 9 "Ansible left nothing in the home" '[ ! -e /home/tester/.ansible ]'
@@ -386,6 +399,7 @@ cell_t5() {
         '[ "$(systemctl is-enabled $RETENTION_TIMER 2>&1)" != enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" != active ]'
     at_terminal t5-first "$HOME_BIN setup --apply"
     first=$?
+    journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/t5-docker-unit.txt" 2>&1
     verdict T5 "apply converges: the timer is enabled and active" \
         '[ $first -eq 0 ] && [ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" = active ]'
     at_terminal t5-second "$HOME_BIN setup --apply"
@@ -1294,19 +1308,235 @@ cell_r4() {  # a run interrupted after the purge: the files are there again, one
     return
 }
 
-cell_dk1() {  # the engine runs: it answers, records its drivers, runs an imported rootfs offline and starts from no daemon.json
-    local waited=0 info="$EVIDENCE/dk1-info.txt" code
-    until docker info >"$EVIDENCE/dk1-docker-info.txt" 2>&1; do
-        (( waited++ >= 60 )) && break
+wait_for_engine() {  # the engine answers within 60 s; a socket that is stopped starts here
+    local waited=0
+    systemctl start docker.socket
+    until docker info >"$EVIDENCE/engine-wait.txt" 2>&1; do
+        (( waited++ >= 60 )) && { systemctl status docker --no-pager >"$EVIDENCE/engine-wait-status.txt" 2>&1; return 1; }
         sleep 1
     done
+    return 0
+}
+
+docker_default_driver() {
+    docker info --format '{{.LoggingDriver}}'
+    return
+}
+
+docker_started_at() {
+    systemctl show docker -p ExecMainStartTimestamp --value
+    return
+}
+
+daemon_json_is() {  # daemon_json_is <JSON text>: the file means the same as the text
+    local expected_text=$1
+    python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])) != json.loads(sys.argv[2]))' "$DAEMON_JSON" "$expected_text"
+    return
+}
+
+cell_dk1() {  # first in `fresh`, before any apply: the engine runs, answers, records its drivers, runs an imported rootfs offline and starts from no daemon.json
+    local info="$EVIDENCE/dk1-info.txt" code
+    wait_for_engine
+    docker info >"$EVIDENCE/dk1-docker-info.txt" 2>&1
     docker info --format 'storage driver {{.Driver}}, default log driver {{.LoggingDriver}}' >"$info" 2>&1
     verdict DK1 "docker info answers with the default json-file log driver ($(cat "$info"))" 'grep -q "default log driver json-file" "$info"'
     docker import /usr/local/share/proof-rootfs.tar proof-rootfs >"$EVIDENCE/dk1-import.log" 2>&1
     docker run --rm --network none proof-rootfs /bin/busybox true >"$EVIDENCE/dk1-run.log" 2>&1
     code=$?
     verdict DK1 "a container of the imported rootfs runs with no network and exits 0" '[ $code -eq 0 ]'
-    verdict DK1 "there is no /etc/docker/daemon.json" '[ ! -e /etc/docker/daemon.json ]'
+    verdict DK1 "there is no /etc/docker/daemon.json" '[ ! -e "$DAEMON_JSON" ]'
+    return
+}
+
+# The PC's daemon.json as nvidia-ctk wrote it: 128 bytes, four-space layout, no final newline.
+write_the_pcs_daemon_json() {  # write_the_pcs_daemon_json <path>
+    local target=$1
+    printf '{\n    "runtimes": {\n        "nvidia": {\n            "args": [],\n            "path": "nvidia-container-runtime"\n        }\n    }\n}' >"$target"
+    return
+}
+
+backups_of_daemon_json() {
+    find "$BACKUP_DIR" -path '*/etc/docker/daemon.json' 2>/dev/null | sort
+    return
+}
+
+engine_on_json_file_with() {  # engine_on_json_file_with <file: a path, or "" for none>: Docker restarted on json-file, daemon.json as given, no drop-in
+    local source_file=$1
+    rm -rf "$DOCKER_DROP_IN_DIR"
+    systemctl daemon-reload
+    rm -f "$DAEMON_JSON"
+    [[ -z $source_file ]] || cp "$source_file" "$DAEMON_JSON"
+    # Several restarts within a minute would hit the unit's start limit, which the proof's own setup must not trigger.
+    systemctl reset-failed docker
+    systemctl restart docker
+    wait_for_engine
+    [[ $(docker_default_driver) == json-file ]]
+    return
+}
+
+cell_dk3_case() {  # cell_dk3_case <name> <daemon.json text> <text the refusal names> [dry]: exit 1, nothing moves, Docker is not touched
+    local name=$1 content=$2 names=$3 flag=--apply code before started file_before log="dk3-$1"
+    [[ ${4:-} == dry ]] && flag=
+    printf '%s' "$content" >"$DAEMON_JSON"
+    before=$(snapshot)
+    started=$(docker_started_at)
+    file_before=$(sha256sum <"$DAEMON_JSON")
+    at_terminal "$log" "$HOME_BIN setup $flag"
+    code=$?
+    verdict DK3 "$name: refused with exit 1, naming $names" '[ $code -eq 1 ] && in_log "$log" "$names"'
+    verdict DK3 "$name: daemon.json, edge's files and Docker's start time are unchanged" \
+        '[ "$file_before" = "$(sha256sum <"$DAEMON_JSON")" ] && [ "$before" = "$(snapshot)" ] && [ "$started" = "$(docker_started_at)" ]'
+    rm -f "$DAEMON_JSON"
+    return
+}
+
+cell_dk3_before_the_first_apply() {  # the play would still write everything, and refuses a malformed file first
+    cell_dk3_case "malformed file before the first apply" '{"runtimes": ' "$DAEMON_JSON is not valid JSON"
+    return
+}
+
+cell_dk3() {  # after cell 1, so Docker and edge's files are in place and a write would be seen
+    local code started
+    cell_dk3_case "log-opts" '{"log-opts": {"max-size": "10m"}}' '`log-opts`' dry
+    cell_dk3_case "log-driver json-file" '{"log-driver": "json-file"}' "other than $WANTED_DRIVER"
+    cell_dk3_case "a top level that is not an object" '[]' "is not a JSON object"
+    rm -f "$DAEMON_JSON"
+    snapshot >"$EVIDENCE/dk3-before.txt"
+    started=$(docker_started_at)
+    systemctl stop docker.socket docker.service
+    at_terminal dk3-down "$HOME_BIN setup --apply"
+    code=$?
+    systemctl start docker.socket
+    wait_for_engine
+    verdict DK3 "Docker does not answer: refused with exit 1, naming Docker, nothing written" \
+        '[ $code -eq 1 ] && in_log dk3-down "Docker does not answer" && [ ! -e "$DAEMON_JSON" ] && [ "$(snapshot)" = "$(cat "$EVIDENCE/dk3-before.txt")" ]'
+    return
+}
+
+cell_dk2_merge() {  # the PC's file keeps runtimes and gains the one line; the old bytes are in the backup
+    local code pc="$EVIDENCE/dk2-pc-daemon.json" backup changed_lines
+    write_the_pcs_daemon_json "$pc"
+    verdict DK2 "the PC-shaped fixture is exactly 128 bytes" '[ "$(stat -c %s "$pc")" -eq 128 ]'
+    engine_on_json_file_with "$pc"
+    at_terminal dk2-merge "$HOME_BIN setup --apply"
+    code=$?
+    backup=$(backups_of_daemon_json | tail -1)
+    changed_lines=$(diff --unified=0 "$pc" "$DAEMON_JSON" | grep -c '^[+-][^+-]')
+    verdict DK2 "the PC's file is merged: runtimes equal as JSON, log-driver added, apply exits 0" \
+        '[ $code -eq 0 ] && daemon_json_is "{\"log-driver\": \"$WANTED_DRIVER\", \"runtimes\": {\"nvidia\": {\"args\": [], \"path\": \"nvidia-container-runtime\"}}}"'
+    verdict DK2 "the diff of the file is the one log-driver line" '[ "$changed_lines" -eq 1 ] && grep -qF "\"log-driver\": \"$WANTED_DRIVER\"," <(diff "$pc" "$DAEMON_JSON")'
+    verdict DK2 "the old bytes are in the backup under /var/backups/home-setup" '[ -n "$backup" ] && cmp "$pc" "$backup"'
+    return
+}
+
+cell_dk4_and_dk5() {  # a merged file with Docker still on json-file: one restart into the journal; running and stopped containers
+    local code started backups_before checksum_before
+    engine_on_json_file_with ""
+    printf '{\n    "log-driver": "%s"\n}' "$WANTED_DRIVER" >"$DAEMON_JSON"
+    docker run --detach --restart unless-stopped --network none --name dk5-running proof-rootfs /bin/busybox sleep 100000 >"$EVIDENCE/dk5-run.log" 2>&1
+    docker run --detach --restart unless-stopped --network none --name dk5-stopped proof-rootfs /bin/busybox sleep 100000 >>"$EVIDENCE/dk5-run.log" 2>&1
+    docker stop dk5-stopped >>"$EVIDENCE/dk5-run.log" 2>&1
+    backups_before=$(backups_of_daemon_json)
+    checksum_before=$(sha256sum <"$DAEMON_JSON")
+    started=$(docker_started_at)
+    at_terminal dk4-restart "$HOME_BIN setup --apply"
+    code=$?
+    wait_for_engine
+    verdict DK4 "merged file, Docker on json-file: the apply restarts Docker into the journal" \
+        '[ $code -eq 0 ] && [ "$(docker_default_driver)" = "$WANTED_DRIVER" ] && [ "$started" != "$(docker_started_at)" ]'
+    verdict DK4 "that apply leaves the file and the backups alone" \
+        '[ "$checksum_before" = "$(sha256sum <"$DAEMON_JSON")" ] && [ "$backups_before" = "$(backups_of_daemon_json)" ]'
+    verdict DK5 "after the restart the unless-stopped container runs and the one stopped by hand stays exited" \
+        '[ "$(docker inspect --format "{{.State.Status}}" dk5-running)" = running ] && [ "$(docker inspect --format "{{.State.Status}}" dk5-stopped)" = exited ]'
+    verdict DK5 "both keep json-file" \
+        '[ "$(docker inspect --format "{{.HostConfig.LogConfig.Type}}" dk5-running dk5-stopped | sort -u)" = json-file ]'
+    docker rm --force dk5-running dk5-stopped >/dev/null 2>&1
+    return
+}
+
+cell_dk6() {  # a container created after the restart logs to the journal, and every reader still finds its line
+    local line="dk6-line-$$" compose="$EVIDENCE/dk6-compose.yaml" project=dk6
+    docker run --name dk6-plain --network none proof-rootfs /bin/busybox echo "$line" >"$EVIDENCE/dk6-run.log" 2>&1
+    printf '%s\n' 'services:' '  probe:' '    image: proof-rootfs' '    pull_policy: never' '    network_mode: none' \
+        "    command: [\"/bin/busybox\", \"echo\", \"$line-compose\"]" >"$compose"
+    docker compose --file "$compose" --project-name "$project" up >"$EVIDENCE/dk6-compose-up.log" 2>&1
+    verdict DK6 "a container created after the restart records the journal as its driver" \
+        '[ "$(docker inspect --format "{{.HostConfig.LogConfig.Type}}" dk6-plain)" = "$WANTED_DRIVER" ]'
+    verdict DK6 "its line is in docker logs" '[ "$(docker logs dk6-plain 2>&1)" = "$line" ]'
+    verdict DK6 "its line is in docker compose logs --since" \
+        'docker compose --file "$compose" --project-name "$project" logs --since 10m 2>&1 | grep -qF "$line-compose"'
+    verdict DK6 "its line is in the journal under CONTAINER_NAME" \
+        'journalctl --no-pager --output cat CONTAINER_NAME=dk6-plain 2>&1 | grep -qxF "$line"'
+    docker compose --file "$compose" --project-name "$project" down >/dev/null 2>&1
+    docker rm --force dk6-plain >/dev/null 2>&1
+    return
+}
+
+install_the_conflicting_flag() {  # dockerd refuses a directive given as a flag and in the file, and --validate cannot see the flag
+    local execstart
+    execstart=$(systemctl cat docker.service | grep '^ExecStart=' | tail -1)
+    mkdir -p "$DOCKER_DROP_IN_DIR"
+    printf '%s\n' '[Service]' 'ExecStart=' "$execstart --log-driver json-file" >"$DOCKER_DROP_IN_DIR/proof-log-driver.conf"
+    systemctl daemon-reload
+    return
+}
+
+DOCKER_SHIM=/usr/local/bin/docker
+
+install_a_docker_that_reports_json_file() {  # Docker restarts and starts, yet `docker info` names another default driver
+    local real
+    real=$(command -v docker)
+    printf '%s\n' '#!/bin/sh' \
+        "case \"\$*\" in *LoggingDriver*) echo json-file; exit 0 ;; esac" \
+        "exec $real \"\$@\"" >"$DOCKER_SHIM"
+    chmod 755 "$DOCKER_SHIM"
+    return
+}
+
+cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: created|merged|earlier> <what daemon.json must be after, as JSON> <how Docker fails: flag|wrong-driver>
+    local name=$1 state=$2 expected=$3 failure=${4:-flag} code backups_before pc="$EVIDENCE/dk7-pc-daemon.json"
+    write_the_pcs_daemon_json "$pc"
+    case $state in
+        created) engine_on_json_file_with "" ;;
+        merged) engine_on_json_file_with "$pc" ;;
+        earlier) engine_on_json_file_with ""; printf '{"log-driver": "%s"}' "$WANTED_DRIVER" >"$DAEMON_JSON" ;;
+        *) echo "cell_dk7_case: unknown state $state" >&2; return 1 ;;
+    esac
+    if [[ $failure = flag ]]; then install_the_conflicting_flag; else install_a_docker_that_reports_json_file; fi
+    backups_before=$(backups_of_daemon_json)
+    at_terminal "dk7-$state-$failure" "$HOME_BIN setup --apply"
+    code=$?
+    verdict DK7 "$name: the apply exits 1 naming the rescue" '[ $code -eq 1 ] && in_log "dk7-$state-$failure" "was written back without"'
+    if [[ $failure = wrong-driver ]]; then
+        verdict DK7 "$name: the apply saw Docker start and name json-file, not the journal" 'in_log "dk7-$state-$failure" "Docker reports json-file"'
+    fi
+    verdict DK7 "$name: daemon.json is JSON-equal to the state before this slice" "daemon_json_is '$expected'"
+    verdict DK7 "$name: no backup was deleted" '[ -z "$(comm -23 <(echo "$backups_before") <(backups_of_daemon_json))" ]'
+    verdict DK7 "$name: Docker is active and answering" 'systemctl is-active --quiet docker && docker info >/dev/null 2>&1'
+    rm -rf "$DOCKER_DROP_IN_DIR"
+    rm -f "$DOCKER_SHIM"
+    verdict DK7 "$name: the real engine runs on the restored default driver, so the rescue restarted Docker" '[ "$(docker_default_driver)" = json-file ]'
+    systemctl daemon-reload
+    return
+}
+
+cells_dk7() {
+    cell_dk7_case "file created in this run" created '{}'
+    cell_dk7_case "file merged in this run" merged '{"runtimes": {"nvidia": {"args": [], "path": "nvidia-container-runtime"}}}'
+    cell_dk7_case "file merged by an earlier run, Docker still on json-file" earlier '{}'
+    cell_dk7_case "Docker started but reports json-file" created '{}' wrong-driver
+    engine_on_json_file_with ""
+    at_terminal dk7-converge "$HOME_BIN setup --apply"
+    docker info >/dev/null 2>&1 || journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/dk7-docker-unit.txt" 2>&1
+    return
+}
+
+cells_docker() {
+    cell_dk2_merge
+    cell_dk3
+    cell_dk4_and_dk5
+    cell_dk6
+    cells_dk7
     return
 }
 
@@ -1328,9 +1558,9 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cell_dk1; cells_retention; cells_polkit; marker_on ;;
+    fresh) cell_dk1; plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_dk3_before_the_first_apply; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cells_docker; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
     after-unmarked-reboot) cell_8; cell_r5 ;;
-    prepared) prepare_today; cell_2 ;;
+    prepared) wait_for_engine; prepare_today; cell_2 ;;
     *) echo "unknown stage $1" >&2; exit 2 ;;
 esac
