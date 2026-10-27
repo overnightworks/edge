@@ -17,7 +17,8 @@ from git_support import elsewhere, hal_command, hal_environment, hal_program, ru
 from edge.external import cloudflare_read, host_probe, tofu
 from edge_check import inspection
 from edge_check.exposure import Finding, Problem
-from hal import check_commands, cli
+from hal import cli
+from home_tools.layout import Layout
 
 CLEAN_LINE = "exposure: nothing reaches beyond loopback\n"
 SSHD_LISTENS_ON_ALL = 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->\n'
@@ -66,18 +67,16 @@ def run_hal_check(fake_host, tmp_path, capsys):
 
 @pytest.mark.parametrize("area", ["exposure", "hosts"])
 def test_an_area_runs_without_the_daily_check(area, hosts_home, fake_host, monkeypatch, capsys):
-    """The areas never build the daily check's layout, so they leave its report and news alone."""
-
-    def forbidden():
-        raise AssertionError("the daily check was built")
-
-    monkeypatch.setattr(check_commands, "build_layout_and_ports", forbidden)
+    """The areas leave the daily check's report and remembered findings alone."""
     monkeypatch.setattr(cloudflare_read, "CloudflareClient", FakeCloudflare(CLEAN_SNAPSHOT))
     monkeypatch.setattr(host_probe, "HttpProber", AnsweringProber())
     fake_host()
 
     assert cli.main(["check", area]) == 0
     assert capsys.readouterr().err == ""
+    layout = Layout(hosts_home)
+    assert not layout.check_report_file.exists()
+    assert not layout.check_findings_file.exists()
 
 
 def test_a_clean_host_says_so_and_exits_0(run_hal_check):
