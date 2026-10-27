@@ -67,7 +67,8 @@ jobs:
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal restore --help
-          uv run --isolated --no-project --no-build --with dist/*.whl edge-check --help
+          uv run --isolated --no-project --no-build --with dist/*.whl hal check --help
+          python3 -m zipfile -l dist/edge_check-*.whl | grep -F edge_check/allow-list.toml
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl
