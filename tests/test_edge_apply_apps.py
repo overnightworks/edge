@@ -16,6 +16,7 @@ from app_support import (
     HOSTED_COMPOSE,
     HOSTED_FLEET,
     KEY,
+    TWO_SERVICES,
     Clock,
     ScriptedDocker,
     origin_at,
@@ -378,6 +379,23 @@ def test_hal_start_starts_the_stopped_containers_ends_the_switch_and_says_so(app
     assert "edge start: hopin is on" in out
     assert switches.Switches(app_world.state).mark(KEY) is None
     assert {row["Health"] for row in app_world.docker.rows} == {"healthy"}
+
+
+def test_hal_start_waits_for_health_only_where_a_container_has_a_healthcheck(app_world, hal):
+    """H3 of #444: `hal start` is done once a helper without a healthcheck runs."""
+    app_world.docker.without_health = frozenset({"worker"})
+    app_world.origin.release(RELEASE, {"compose.yaml": TWO_SERVICES})
+    assert app_world.apply()[0] == 0
+    hal.stop()
+
+    exit_code, out, _ = hal.start()
+
+    assert exit_code == 0
+    assert "edge start: hopin is on" in out
+    assert {row["Service"]: row["Health"] for row in app_world.docker.rows} == {
+        "web": "healthy",
+        "worker": "",
+    }
 
 
 def test_hal_start_is_refused_while_the_app_is_disabled_and_changes_nothing(app_world, hal):

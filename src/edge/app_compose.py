@@ -35,8 +35,9 @@ class AppContainer:
     health: str
 
     @property
-    def healthy(self) -> bool:
-        return self.state == _RUNNING and self.health == _HEALTHY
+    def settled(self) -> bool:
+        """Running, and healthy as well where Docker reports a health state (a healthcheck)."""
+        return self.state == _RUNNING and self.health in ("", _HEALTHY)
 
     def describe(self) -> str:
         shown = f"{self.service} {self.state}"
