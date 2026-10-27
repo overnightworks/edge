@@ -6,10 +6,13 @@ paste into tests/old_names_baseline.toml, so the baseline is regenerated, never
 hand-tuned.
 """
 
+import json
 import re
 import subprocess
 import tomllib
 from pathlib import Path
+
+import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PATH = Path(__file__).with_name("old_names_baseline.toml")
@@ -63,11 +66,16 @@ def load_baseline() -> Counts:
         return tomllib.load(baseline_file)
 
 
+def toml_key(name: str) -> str:
+    """A TOML basic string; JSON escapes agree with TOML's except for DEL."""
+    return json.dumps(name, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
 def render_baseline(counts: Counts) -> str:
     sections = []
     for pattern_name, per_file in counts.items():
         lines = [f"[{pattern_name}]"]
-        lines += [f'"{name}" = {hits}' for name, hits in sorted(per_file.items())]
+        lines += [f"{toml_key(name)} = {hits}" for name, hits in sorted(per_file.items())]
         sections.append("\n".join(lines))
     return "\n\n".join(sections) + "\n"
 
@@ -153,8 +161,12 @@ def test_a_stale_baseline_entry_for_a_missing_file_is_named_by_file_and_pattern(
     ]
 
 
-def test_rendered_baseline_round_trips_through_toml() -> None:
+@pytest.mark.parametrize(
+    "path",
+    ["docs/a b.md", 'docs/a"b.md', "docs/a\\b.md", "docs/a\tb\x7f.md", "docs/\u00e4.md"],
+)
+def test_rendered_baseline_round_trips_through_toml(path: str) -> None:
     """#475 acceptance 1: the pasted baseline parses back to the counts it was rendered from."""
-    counts = {name: {} for name in OLD_NAME_PATTERNS} | {"home-tools": {"docs/a b.md": 4}}
+    counts = {name: {} for name in OLD_NAME_PATTERNS} | {"home-tools": {path: 4}}
 
     assert tomllib.loads(render_baseline(counts)) == counts
