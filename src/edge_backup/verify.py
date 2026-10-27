@@ -11,7 +11,7 @@ SQLITE_COPY_NAME = "db.sqlite3"
 
 
 class VerificationError(RuntimeError):
-    """The restored copy is not what was backed up; the German message says how."""
+    """The restored copy is not what was backed up; the message says how."""
 
 
 @dataclass(frozen=True)

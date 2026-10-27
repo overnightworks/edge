@@ -31,7 +31,7 @@ _REQUIRE_ROWS_KEY = "require_rows"
 
 
 class AppsError(ValueError):
-    """`apps.toml` cannot be trusted; the German message names the offending entry."""
+    """`apps.toml` cannot be trusted; the message names the offending entry."""
 
 
 class DumpKind(StrEnum):
@@ -175,7 +175,8 @@ def _dump_kind(label: str, record: dict) -> DumpKind:
     """The `dump` key picks the record's variant, so it is read before the other keys."""
     dump = record.get("dump")
     if not isinstance(dump, str) or dump not in {kind.value for kind in DumpKind}:
-        raise AppsError(f"{label}: dump must be one of {sorted(DumpKind)}, not {dump!r}")
+        allowed = sorted(kind.value for kind in DumpKind)
+        raise AppsError(f"{label}: dump must be one of {allowed}, not {dump!r}")
     return DumpKind(dump)
 
 

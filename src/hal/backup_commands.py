@@ -138,8 +138,8 @@ def _tell_ended_plainly(program: str) -> Callable[[Ended], None]:
     maintenance."""
 
     def tell(ended: Ended) -> None:
-        reason = str(ended) if isinstance(ended, StepFailed) else "abgebrochen"
-        write_error(f"{program}: fehlgeschlagen: {reason}")
+        reason = str(ended) if isinstance(ended, StepFailed) else "interrupted"
+        write_error(f"{program}: failed: {reason}")
 
     return tell
 
