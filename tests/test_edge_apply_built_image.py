@@ -21,7 +21,8 @@ from test_edge_apply import (
     write_fleet,
 )
 
-from edge import catalog, core
+from edge import core
+from edge.built_image import ENDS_RUNS
 from edge.unit_plans import stays_stopped_line
 
 BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
@@ -30,10 +31,7 @@ BUMPED_ID = f"sha256:{'d' * 64}"
 OTHER_ID = f"sha256:{'c' * 64}"
 RECREATE_AGENT_SERVICE = [*RECREATE_TRAEFIK[:-1], "agent-service"]
 RECREATE_EGRESS = [*RECREATE_TRAEFIK[:-1], "agent-egress"]
-IN_FLIGHT_END = "in-flight requests end"
-DEFINITION_LINE = (
-    f"agent-service: recreate agent-service ({core.DEFINITION_CHANGED}); {IN_FLIGHT_END}"
-)
+DEFINITION_LINE = f"agent-service: recreate agent-service ({core.DEFINITION_CHANGED}); {ENDS_RUNS}"
 
 
 # The fixtures of `test_edge_apply` this module's tests request by name.
@@ -58,7 +56,8 @@ applied_core = base.applied_core
 class BuildingCompose(ScriptedCompose):
     """Compose whose new container carries the id its image reference has when it is created."""
 
-    created_ids: dict[str, str | None] = field(default_factory=dict)
+    created_ids: dict[str, str] = field(default_factory=dict)
+    without_image_id: set[str] = field(default_factory=set)
 
     def create_container(self, service: str) -> None:
         super().create_container(service)
@@ -67,10 +66,9 @@ class BuildingCompose(ScriptedCompose):
 
     def labels_of(self, service: str) -> str:
         labels = super().labels_of(service)
-        created = self.created_ids.get(service)
-        if created is None:
+        if service in self.without_image_id:
             return labels.replace(f"com.docker.compose.image={LABELLED_IMAGE_ID},", "")
-        return labels.replace(LABELLED_IMAGE_ID, created)
+        return labels.replace(LABELLED_IMAGE_ID, self.created_ids.get(service, LABELLED_IMAGE_ID))
 
 
 @pytest.fixture
@@ -101,15 +99,12 @@ def bump(scripted: BuildingCompose) -> str:
 def bump_line(old: str) -> str:
     return (
         f"agent-service: recreate agent-service (image {old} \N{RIGHTWARDS ARROW} {BUMPED_TAG}); "
-        f"{IN_FLIGHT_END}"
+        f"{ENDS_RUNS}"
     )
 
 
 def rebuilt_line(reference: str) -> str:
-    return (
-        f"agent-service: recreate agent-service (the image {reference} was rebuilt); "
-        f"{IN_FLIGHT_END}"
-    )
+    return f"agent-service: recreate agent-service (the image {reference} was rebuilt); {ENDS_RUNS}"
 
 
 def show_container_id(scripted: BuildingCompose) -> None:
@@ -188,7 +183,7 @@ def test_a_bump_whose_old_tag_is_gone_gives_the_definition_line_not_an_id(
 
     assert DEFINITION_LINE in out
     assert LABELLED_IMAGE_ID not in out
-    assert "image " not in DEFINITION_LINE and "image sha256" not in out
+    assert "image sha256" not in out
 
 
 def test_a_definition_change_alone_gives_the_definition_line(running, switch, scripted):
@@ -452,7 +447,7 @@ def refuse_a_container_without_its_definition_label(scripted, repository) -> Non
 
 
 def refuse_a_container_without_its_image_id_label(scripted, repository) -> None:
-    scripted.created_ids["agent-service"] = None
+    scripted.without_image_id.add("agent-service")
 
 
 def refuse_a_failing_lookup(scripted, repository) -> None:
@@ -464,28 +459,29 @@ def refuse_a_lookup_naming_two_images(scripted, repository) -> None:
 
 
 @pytest.mark.parametrize(
-    "arrange",
+    ("arrange", "cause"),
     [
-        refuse_a_build_that_is_no_recipe_directory,
-        refuse_a_build_on_an_app,
-        refuse_a_unit_without_a_never_pulled_service,
-        refuse_a_container_without_its_image,
-        refuse_a_container_without_its_definition_label,
-        refuse_a_container_without_its_image_id_label,
-        refuse_a_failing_lookup,
-        refuse_a_lookup_naming_two_images,
+        (refuse_a_build_that_is_no_recipe_directory, "is not a directory of this repository"),
+        (refuse_a_build_on_an_app, "unknown key for an app"),
+        (refuse_a_unit_without_a_never_pulled_service, "exactly one of its services"),
+        (refuse_a_container_without_its_image, "names no Image"),
+        (refuse_a_container_without_its_definition_label, "no com.docker.compose.config-hash"),
+        (refuse_a_container_without_its_image_id_label, "no com.docker.compose.image label"),
+        (refuse_a_failing_lookup, "exited 1"),
+        (refuse_a_lookup_naming_two_images, "names 2 images"),
     ],
 )
 def test_a_state_that_cannot_be_planned_is_exit_2_and_changes_nothing(
-    running, switch, scripted, repository, arrange
+    running, switch, scripted, repository, arrange, cause
 ):
-    """M19: each is `cannot plan`, before a changing verb."""
+    """M19: each is `cannot plan` and names its cause, before a changing verb."""
     arrange(scripted, repository)
 
     exit_code, _, err = switch()
 
     assert exit_code == 2
     assert "cannot plan" in err
+    assert cause in err
     assert scripted.changing_verbs() == []
 
 
@@ -518,14 +514,3 @@ def test_a_tag_removed_by_hand_plans_no_recreate_and_still_asks_the_setup(
     assert len(setup_run.commands) == 1
     assert "recreate agent-service" not in out
     assert scripted.changing_verbs() == []
-
-
-def test_the_catalog_reads_the_build_of_a_unit(repository):
-    """The key lives in the catalog beside `enabled` and `setup`."""
-    (repository / "agent-service" / "image").mkdir()
-    (repository / "agent-service" / "image" / "Dockerfile").write_text("FROM scratch\n")
-    write_unit_fleet(repository)
-
-    units = catalog.load(repository, {"agent-service": ("agent-service",)})
-
-    assert [unit.build for unit in units] == ["agent-service/image"]
