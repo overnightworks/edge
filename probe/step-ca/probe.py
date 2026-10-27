@@ -694,7 +694,7 @@ class Probe(McpNetworks):
         written = marker.read_text()
 
         out = self.edge(copy, "stop", "step-ca", terminal=False)  # 2. B x stop
-        expect("already switched off" in out, f"a second stop said: {out[-120:]}")
+        expect("already off since" in out, f"a second stop said: {out[-120:]}")
         expect(marker.read_text() == written, "a second stop rewrote the marker")
 
         out = self.edge(copy, "apply", "--closed", terminal=True)  # 3. B x apply, enabled
@@ -715,7 +715,7 @@ class Probe(McpNetworks):
         self.volume_names_exist()
 
         out = self.edge(copy, "stop", "step-ca", terminal=False)  # 6. E x stop
-        expect("disabled in the catalog" in out, f"stop in E said: {out[-120:]}")
+        expect("nothing of it runs" in out, f"stop in E said: {out[-120:]}")
         expect(marker.read_text() == written, "stop in E touched the marker")
 
         out = self.edge(copy, "start", "step-ca", terminal=True, exit_code=1)  # 7. E x start
