@@ -48,7 +48,7 @@ class DiskSpace:
         return self.free / self.total
 
     def describe(self) -> str:
-        return f"{self.free // BYTES_PER_GIGABYTE} GB von {self.total // BYTES_PER_GIGABYTE} GB frei ({int(self.free_share * 100)} %)"
+        return f"{self.free // BYTES_PER_GIGABYTE} GB von {self.total // BYTES_PER_GIGABYTE} GB frei ({self.free * 100 // self.total} %)"
 
 
 DiskSpaceReader = Callable[[Path], DiskSpace]

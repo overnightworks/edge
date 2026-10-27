@@ -1,4 +1,4 @@
-"""`home check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3) against a fake docker and a reboot flag file."""
+"""`home check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3; #460 D1-D4) against a fake docker, a reboot flag file and a fake disk."""
 
 from __future__ import annotations
 
@@ -183,6 +183,7 @@ def test_the_reboot_finding_keeps_its_identity_as_the_flag_ages(docker, reboot_f
 
 @pytest.mark.parametrize("free_share", [0.09, 0.0], ids=["9 percent", "none left"])
 def test_less_than_a_tenth_free_on_the_root_disk_is_a_finding_and_only_the_root_disk_is_asked(docker, reboot_file, fake_disk, free_share) -> None:
+    """#460 D1, D4: under a tenth free is a finding, and only the root disk is asked."""
     fake_disk.free_share = free_share
 
     assert rules_found(docker, reboot_file, fake_disk) == {("disk-low", "/")}
@@ -191,12 +192,14 @@ def test_less_than_a_tenth_free_on_the_root_disk_is_a_finding_and_only_the_root_
 
 @pytest.mark.parametrize("free_share", [0.10, 0.25], ids=["exactly 10 percent", "25 percent"])
 def test_a_tenth_free_or_more_is_no_finding(docker, reboot_file, fake_disk, free_share) -> None:
+    """#460 D1: a tenth free or more is no finding."""
     fake_disk.free_share = free_share
 
     assert rules_found(docker, reboot_file, fake_disk) == set()
 
 
 def test_the_report_carries_the_free_and_total_gigabytes_and_the_share(docker, reboot_file, fake_disk) -> None:
+    """#460 D3: the report carries the free and total gigabytes and the share."""
     fake_disk.free_share = 0.19
     _findings, quiet_report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
     fake_disk.free_share = 0.08
@@ -209,9 +212,27 @@ def test_the_report_carries_the_free_and_total_gigabytes_and_the_share(docker, r
 
 
 def test_the_disk_finding_keeps_its_identity_as_the_free_space_shrinks(docker, reboot_file, fake_disk) -> None:
+    """#460 D1 (#340 I1): the finding keeps its identity as the free space shrinks."""
     fake_disk.free_share = 0.09
     first, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
     fake_disk.free_share = 0.07
     later, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
 
     assert [f.identity for f in first] == [f.identity for f in later]
+
+
+def test_the_share_prints_rounded_down_without_a_floating_point_error(docker, reboot_file, fake_disk) -> None:
+    """#460 D3: 29 GB free of 100 GB reads 29 %, never 28 %."""
+    fake_disk.free_share = 0.29
+
+    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+
+    assert "- Festplatte /: 290 GB von 1000 GB frei (29 %)" in report
+
+
+def test_the_real_disk_reader_reports_a_total_and_a_free_figure_in_bytes(tmp_path) -> None:
+    """#460 D1: the reader behind the finding answers for a real path; only its shape is asserted, never how full this disk is."""
+    space = platform_check.read_disk_space(tmp_path)
+
+    assert 0 <= space.free <= space.total
+    assert space.total > 0
