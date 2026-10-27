@@ -479,8 +479,8 @@ def test_a_disabled_app_is_not_fetched_and_has_nothing_to_change(world, reposito
 
 
 class OffDocker:
-    """What the off step asks of Docker: the project's `ps` from the scripted table and the file-free
-    `stop` and `rm -f`, which empty the table. Every other call goes to the scripted Docker,
+    """What the off step asks of Docker: the project's `ps` from the scripted table and the
+    file-free `stop` and `rm -f`, which empty the table. Every other call goes to the scripted Docker,
     which fails the test on a `down`, a `-v` or a file-bound call."""
 
     def __init__(self, scripted: ScriptedDocker) -> None:
