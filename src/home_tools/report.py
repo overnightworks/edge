@@ -28,7 +28,7 @@ class Level(IntEnum):
 
     @property
     def label(self) -> str:
-        return {Level.OK: "in Ordnung", Level.NOTE: "Hinweis", Level.ACTION: "Handlungsbedarf"}[self]
+        return {Level.OK: "OK", Level.NOTE: "Note", Level.ACTION: "Action needed"}[self]
 
 
 @dataclass(frozen=True)

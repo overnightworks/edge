@@ -27,7 +27,7 @@ def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> 
 def runner() -> RunnerWithCleanLogs:
     return RunnerWithCleanLogs()
 
-ACTION_TITLE = "PC-Check: Handlungsbedarf – Dienste"
+ACTION_TITLE = "PC check: action needed – Services"
 
 
 def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, runner) -> None:
@@ -41,7 +41,7 @@ def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification
     assert report.startswith("# home check ")
     assert "| container-restarting |" in report
     assert runner.notifications == [ACTION_TITLE]
-    assert runner.notification_bodies == [f"presentator-live startet ständig neu und ist darum nicht erreichbar.\nAlles im Einzelnen: {REPORT_DISPLAY}"]
+    assert runner.notification_bodies == [f"presentator-live keeps restarting and is therefore unreachable.\nEverything in detail: {REPORT_DISPLAY}"]
 
 
 def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(clean_home, runner) -> None:
@@ -62,7 +62,7 @@ def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_th
 
     assert code == 0
     assert "container-unhealthy" not in Layout(clean_home).check_findings_file.read_text()
-    assert runner.notifications == [ACTION_TITLE, "PC-Check: alles in Ordnung"]
+    assert runner.notifications == [ACTION_TITLE, "PC check: all well"]
 
 
 def test_neither_report_nor_findings_nor_notification_carry_more_than_the_named_inspect_fields(clean_home, runner) -> None:
@@ -83,7 +83,7 @@ def test_many_new_actions_give_one_notification_naming_each(clean_home, runner) 
     home_check(clean_home, runner)
 
     assert len(runner.notifications) == 1
-    assert runner.notification_bodies[0].count("hat sich mit einem Fehler beendet.") == 4
+    assert runner.notification_bodies[0].count("stopped with an error.") == 4
 
 
 def test_a_stale_backup_is_in_the_daily_report(clean_home, runner) -> None:
@@ -114,7 +114,7 @@ def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean
     (waiter,) = runner.notification_calls
     assert waiter[: waiter.index("sh")] == ["systemd-run", "--user", "--collect", "-p", "Type=notify", "-p", "NotifyAccess=all"]
     assert waiter[-1] == str(Layout(clean_home).check_report_file)
-    assert '--action="open=Bericht öffnen"' in waiter[waiter.index("-c") + 1]
+    assert f'--action="{check.OPEN_REPORT_ACTION}"' in waiter[waiter.index("-c") + 1]
 
 
 def test_an_action_that_stays_never_notifies_again_even_as_it_ages(clean_home, runner) -> None:
@@ -126,7 +126,7 @@ def test_an_action_that_stays_never_notifies_again_even_as_it_ages(clean_home, r
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert runner.notifications == ["PC-Check: Handlungsbedarf – Sicherung"]
+    assert runner.notifications == ["PC check: action needed – Backup"]
 
 
 def test_an_unchanged_finding_about_a_secret_name_that_is_not_utf8_is_remembered_and_never_notifies(clean_home, runner) -> None:
@@ -150,7 +150,7 @@ def test_a_second_action_notifies_again_and_the_mail_title_names_both_areas(clea
 
     home_check(clean_home, runner)
 
-    assert runner.notifications == [ACTION_TITLE, "PC-Check: Handlungsbedarf – Dienste, Sicherung"]
+    assert runner.notifications == [ACTION_TITLE, "PC check: action needed – Services, Backup"]
 
 
 def test_an_action_that_goes_while_another_stays_notifies_the_one_that_stays(clean_home, runner) -> None:
@@ -162,7 +162,7 @@ def test_an_action_that_goes_while_another_stays_notifies_the_one_that_stays(cle
 
     home_check(clean_home, runner)
 
-    assert runner.notifications == ["PC-Check: Handlungsbedarf – Dienste, Sicherung", "PC-Check: Handlungsbedarf – Sicherung"]
+    assert runner.notifications == ["PC check: action needed – Services, Backup", "PC check: action needed – Backup"]
 
 
 def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
@@ -260,14 +260,14 @@ def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone
     broken_codes = [home_check_with_a_secrets_check_that_breaks(clean_home, runner) for _ in range(2)]
     home_check(clean_home, runner)
 
-    password = "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen."
+    password = "The backup password is missing; without it nothing can be restored."
     first, broke, recovered = (message_of(mail).get_content() for mail in mail_stub.sent)
     assert broken_codes == [3, 3]
-    assert f"{password} (neu)" in first
-    assert f"{password} (neu)" not in broke
-    assert "Die Prüfung Geheimnisse lief nicht. (neu)" in broke
-    assert "Erledigt\n\n- Die Prüfung Geheimnisse läuft wieder." in recovered
-    assert password not in recovered.split("Erledigt")[1]
+    assert f"{password} (new)" in first
+    assert f"{password} (new)" not in broke
+    assert "The Secrets check did not run. (new)" in broke
+    assert "Done\n\n- The Secrets check runs again." in recovered
+    assert password not in recovered.split("Done")[1]
 
 
 def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(clean_home, runner) -> None:
@@ -276,7 +276,7 @@ def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(
     code = home_check(clean_home, runner)
 
     assert code == 0
-    assert runner.notifications == ["PC-Check: Handlungsbedarf – Geheimnisse", "PC-Check: alles in Ordnung"]
+    assert runner.notifications == ["PC check: action needed – Secrets", "PC check: all well"]
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
@@ -289,7 +289,7 @@ def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(cle
     home_check(clean_home, runner)
 
     assert len(runner.notifications) == 3
-    assert runner.notifications[2] == "PC-Check: alles in Ordnung"
+    assert runner.notifications[2] == "PC check: all well"
 
 
 def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2(clean_home, runner, use_manifest, capsys) -> None:
@@ -384,10 +384,10 @@ def test_an_action_that_goes_is_mailed_as_done_and_the_title_is_the_new_state(cl
     home_check(clean_home, runner)
 
     news = message_of(mail_stub.sent[1])
-    assert news["Subject"] == ("PC-Check: in Ordnung – nur Hinweise" if sees_notes else "PC-Check: alles in Ordnung")
-    assert "Erledigt\n\n- presentator-live startet nicht mehr ständig neu." in news.get_content()
-    assert "Handlungsbedarf\n\n1." not in news.get_content()
-    assert "startet ständig neu" not in news.get_content()
+    assert news["Subject"] == ("PC check: all well – notes only" if sees_notes else "PC check: all well")
+    assert "Done\n\n- presentator-live no longer keeps restarting." in news.get_content()
+    assert "Action needed\n\n1." not in news.get_content()
+    assert "keeps restarting and" not in news.get_content()
 
 
 def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_the_mail(clean_home, runner, mail_stub, use_manifest) -> None:
@@ -398,8 +398,8 @@ def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_
     home_check(clean_home, runner)
 
     news = message_of(mail_stub.sent[0])
-    assert news["Subject"] == "PC-Check: Handlungsbedarf – Geheimnisse"
-    assert "1. Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen. (neu)\n   Nächster Schritt: Führe `home next` aus." in news.get_content()
+    assert news["Subject"] == "PC check: action needed – Secrets"
+    assert "1. The backup password is missing; without it nothing can be restored. (new)\n   Next step: Run `home next`." in news.get_content()
     assert "gitlab" not in news.get_content()
 
 
@@ -424,8 +424,8 @@ def test_a_restarting_container_that_then_exits_is_a_new_item(clean_home, runner
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[1]).get_content()
-    assert "1. edge-a hat sich mit einem Fehler beendet. (neu)" in body
-    assert "Erledigt" not in body
+    assert "1. edge-a stopped with an error. (new)" in body
+    assert "Done" not in body
 
 
 def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
@@ -435,9 +435,9 @@ def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, m
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert body.count("hat sich mit einem Fehler beendet.") == 20
-    assert "… und 1 weitere, siehe Bericht" in body
-    assert body.count("in Ordnung") == 4
+    assert body.count("stopped with an error.") == 20
+    assert "… and 1 more, see report" in body
+    assert body.count("OK") == 4
 
 
 def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_runs_nothing(tmp_path, monkeypatch) -> None:
@@ -477,7 +477,7 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
     home_check(clean_home, runner)
 
     assert len(mail_stub.sent) == 1
-    assert "Erledigt\n\n- Die Prüfung Dienste läuft wieder." in message_of(mail_stub.sent[0]).get_content()
+    assert "Done\n\n- The Services check runs again." in message_of(mail_stub.sent[0]).get_content()
 
 
 def test_a_remembered_tidy_finding_is_dropped_without_a_mail_and_the_run_exits_0(clean_home, runner, mail_stub) -> None:
@@ -651,22 +651,22 @@ def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_num
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    stamp = body.split("So steht der PC (")[1].split(")")[0]
-    assert body == f"""Handlungsbedarf
+    stamp = body.split("How the PC stands (")[1].split(")")[0]
+    assert body == f"""Action needed
 
-1. presentator-live startet ständig neu und ist darum nicht erreichbar. (neu)
-   Nächster Schritt: Sag einem Agenten „presentator-live startet ständig neu, schau nach“.
+1. presentator-live keeps restarting and is therefore unreachable. (new)
+   Next step: Tell an agent: "presentator-live keeps restarting, please look".
 
-So steht der PC ({stamp})
+How the PC stands ({stamp})
 
-Dienste: Handlungsbedarf
-Sicherung: in Ordnung, zuletzt heute 14:15
-Commit-Schutz: in Ordnung
-Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch
-Server-Logs: in Ordnung
+Services: Action needed
+Backup: OK, last backup today 14:15
+Commit protection: OK
+Secrets: Note – Credentials for hopin are still missing
+Server logs: OK
 
-Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
-Alles im Einzelnen: {REPORT_DISPLAY}
+Notes are not urgent; home next shows what you can do.
+Everything in detail: {REPORT_DISPLAY}
 """
 
 
@@ -684,9 +684,9 @@ def mailed_area_lines(clean_home, runner, mail_stub) -> list[str]:
 @pytest.mark.parametrize(
     ("read_by", "line"),
     [
-        ('["hopin"]', "Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch"),
-        ("[]", "Geheimnisse: Hinweis – Zugangsdaten fehlen noch"),
-        ('[".bashrc", "git/gmail-cleanup", "SONAR_TOKEN in x"]', "Geheimnisse: Hinweis – Zugangsdaten fehlen noch"),
+        ('["hopin"]', "Secrets: Note – Credentials for hopin are still missing"),
+        ("[]", "Secrets: Note – Credentials are still missing"),
+        ('[".bashrc", "git/gmail-cleanup", "SONAR_TOKEN in x"]', "Secrets: Note – Credentials are still missing"),
     ],
     ids=["names the app that reads it", "names nobody when the manifest has no reader", "names no file, path or secret"],
 )
@@ -703,12 +703,12 @@ def test_the_logs_note_reads_as_in_the_picture(clean_home, runner, mail_stub) ->
     """#415 Z2: the area line is the clause of the picture, lower case after the dash and without a final period."""
     runner.container_listing = "/songmaker-api-1\tjson-file\tsongmaker\n"
 
-    assert "Server-Logs: Hinweis – noch nicht überall nach 30 Tagen gelöscht" in mailed_area_lines(clean_home, runner, mail_stub)
+    assert "Server logs: Note – not yet deleted everywhere after 30 days" in mailed_area_lines(clean_home, runner, mail_stub)
 
 
-@pytest.mark.parametrize(("days_ago", "said"), [(0, "heute"), (1, "gestern")], ids=["today", "yesterday"])
+@pytest.mark.parametrize(("days_ago", "said"), [(0, "today"), (1, "yesterday")], ids=["today", "yesterday"])
 def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner, mail_stub, days_ago, said) -> None:
     """#415 Z2: a healthy backup area still shows the last success, read from the status the backup check reads."""
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
-    assert f"Sicherung: in Ordnung, zuletzt {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
+    assert f"Backup: OK, last backup {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)

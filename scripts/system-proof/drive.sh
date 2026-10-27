@@ -1106,7 +1106,7 @@ SHIM
         '[ "$(sink_events sink-d3 | grep -x -e STARTTLS -e AUTH | tr "\n" " ")" = "STARTTLS AUTH " ] &&
          sink_events sink-d3 | grep -qx "CREDENTIALS user_matches=True password_matches=True" &&
          sink_events sink-d3 | grep -qx "MAIL FROM home@proof.test" && sink_events sink-d3 | grep -qx "RCPT TO me@proof.test" &&
-         sink_events sink-d3 | grep -q "^SUBJECT PC-Check: "'
+         sink_events sink-d3 | grep -q "^SUBJECT PC check: "'
     verdict D3 "the argv log and the run's output never hold the canary, and the argv asks for STARTTLS" \
         '! grep -qF -- "$MAIL_CANARY" "$EVIDENCE/msmtp-argv.log" "$EVIDENCE/cell-d3.log" && grep -qx -e "--tls-starttls=on" "$EVIDENCE/msmtp-argv.log"'
     verdict D3 "with no graphical session the delivered mail advanced the set, and the rerun sent nothing" \

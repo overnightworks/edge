@@ -13,7 +13,7 @@ from home_tools.layout import Layout
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")
 
-ACTION_TITLE = "PC-Check: Handlungsbedarf – Dienste"
+ACTION_TITLE = "PC check: action needed – Services"
 
 
 @pytest.fixture
@@ -35,8 +35,8 @@ def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_fig
 
     news = message_of(mail_stub.sent[0])
     assert news["Subject"] == ACTION_TITLE
-    assert "1. Auf der Festplatte ist weniger als 10 % frei. (neu)\n   Nächster Schritt: Sag einem Agenten „Die Festplatte ist fast voll, schau nach“.\n" in news.get_content()
-    assert "Dienste: Handlungsbedarf" in news.get_content()
+    assert "1. The disk has less than 10 % free. (new)\n   Next step: Tell an agent: \"The disk is nearly full, please look\".\n" in news.get_content()
+    assert "Services: Action needed" in news.get_content()
     assert "GB" not in news.get_content()
     assert "| disk-low | / | 90 GB von 1000 GB frei (9 %) |" in Layout(clean_home).check_report_file.read_text()
 
@@ -48,9 +48,9 @@ def test_a_disk_that_stays_low_sends_no_second_mail_and_one_that_clears_is_maile
         home_check(clean_home, runner, disk=fake_disk)
 
     first, done = mail_stub.sent
-    assert "weniger als 10 % frei" in message_of(first).get_content()
-    assert message_of(done)["Subject"] == "PC-Check: alles in Ordnung"
-    assert "Erledigt\n\n- Auf der Festplatte sind wieder mindestens 10 % frei." in message_of(done).get_content()
+    assert "less than 10 % free" in message_of(first).get_content()
+    assert message_of(done)["Subject"] == "PC check: all well"
+    assert "Done\n\n- The disk has at least 10 % free again." in message_of(done).get_content()
 
 
 def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_area_line(clean_home, runner, mail_stub, fake_disk) -> None:
@@ -63,9 +63,9 @@ def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_are
     body = message_of(mail_stub.sent[0]).get_content()
     assert "1. " in body
     assert "2. " in body
-    assert "weniger als 10 % frei" in body
-    assert "edge-a startet ständig neu" in body
-    assert body.count("Dienste: Handlungsbedarf") == 1
+    assert "less than 10 % free" in body
+    assert "edge-a keeps restarting" in body
+    assert body.count("Services: Action needed") == 1
 
 
 def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, runner, fake_disk) -> None:
