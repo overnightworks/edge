@@ -232,7 +232,13 @@ dummy login. L4 is proven only live, with the real login; the probe has no L4 ce
 is accepted and fails at the upstream) and B2 (a capability written into a tool description fails
 the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the runner's failure is
 `CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict
-other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. The cells print counts and event names, never a log line. Its loopback capture (the
+other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. B3 and B4 run through a wrapper bound read-only in place of the CLI: it execs the CLI, and
+on `-p` while the probe's flag file is there it first starts marker A in the CLI's process group and
+marker B in a session of its own. B3 holds when, 6 s after the run's terminal frame, A is gone, the
+working root lists nothing and B lives on under init (docs/host.md: a `setsid` process keeps
+running); B4 kills the service's pid as its own user and holds when the container dies once and
+restarts, B is on no host or container process list and the working root and `/tmp` are empty.
+The processes and listings come from `tree_census.py` through `census_client.py`. The cells print counts and event names, never a log line. Its loopback capture (the
 (a) parts) is not driven yet.
 `--cell signer` (`signer.py`) is the live signer proof without the live stack. It starts the service with the
 scratch signing key, the scratch CA and songmaker's `mcp_origin` from `service.toml`, and a TLS front for that origin on `mcp`
