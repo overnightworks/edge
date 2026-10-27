@@ -468,7 +468,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
     <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der <code>timers</code>-Zeile (S2c, S2d: <code>3 timers · systemd reloaded</code>) kommen in späteren Schritten; S2a druckt nur Zeichen, Objekt und Ereignis.</p>
+  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der <code>timers</code>-Zeile (S2c, S2d: <code>3 timers · systemd reloaded</code>) kommen in späteren Schritten; S2a druckt Zeichen, Objekt und Ereignis; die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste stehen bis S2c unter der <code>timers</code>-Zeile.</p>
   <div class="pair">
     <div class="stack">
       <figure>
@@ -476,6 +476,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
 <span class="d">  · commit hook     unchanged</span>
 <span class="g">  ✓</span> timers          changed
+<span class="d">  hal-backup.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal backup</span>
+<span class="d">  hal-backup.service: Result=success</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
 <span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged</span></pre>
@@ -483,7 +485,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
       <figure>
         <figcaption><span class="tag new">neu S2</span> Agent-Lauf: der Schritt des Operators bleibt aus (nur <code>timers</code> ist im Plan benannt, die übrigen Zeilen sind meine Annahme)</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
-<span class="g">  ✓</span> commit hook     updated
+<span class="g">  ✓</span> commit hook     changed
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>

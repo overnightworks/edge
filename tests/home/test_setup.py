@@ -22,42 +22,37 @@ from home_tools.system_step import AGENT_USER, CheckState, PlaybookRun, SystemSt
 
 COMMIT_HOOK, TIMERS, SYSTEM, SECRETS = "commit hook", "timers", "system", "secrets"
 ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
-AGENT_SKIP = "the operator's step"
-
-
-def line(glyph: str, subject: str, event: str, fact: str = "") -> str:
-    return f"  {glyph} {subject:<14}  {event:<13}  {fact}".rstrip()
-
-
-def verdict(glyph: str, summary: str, detail: str) -> str:
-    return f"{glyph} {summary} · {detail}"
 
 
 # The sandbox's unit directory is empty: the timers have nothing to change, and no secret is open.
 FRESH_APPLY = [
-    line("✓", COMMIT_HOOK, "changed"),
-    line("·", TIMERS, "unchanged"),
-    line("✓", SYSTEM, "changed"),
-    line("·", SECRETS, "complete"),
-    verdict("✓", "setup done", "2 changed, 2 unchanged"),
+    "  ✓ commit hook     changed",
+    "  · timers          unchanged",
+    "  ✓ system          changed",
+    "  · secrets         complete",
+    "✓ setup done · 2 changed, 2 unchanged",
 ]
 REPEATED_APPLY = [
-    line("·", COMMIT_HOOK, "unchanged"),
-    line("·", TIMERS, "unchanged"),
-    line("·", SYSTEM, "unchanged"),
-    line("·", SECRETS, "complete"),
-    verdict("✓", "setup done", "4 unchanged"),
+    "  · commit hook     unchanged",
+    "  · timers          unchanged",
+    "  · system          unchanged",
+    "  · secrets         complete",
+    "✓ setup done · 4 unchanged",
 ]
-UP_TO_DATE = [*REPEATED_APPLY[:-1], verdict("✓", "setup up to date", "4 unchanged")]
-NOT_CHECKED = line("!", SYSTEM, "not checked", "needs sudo at a terminal")
-NOT_CHECKED_WITHOUT_ANSIBLE = line(
-    "!", SYSTEM, "not checked", "needs Ansible, which `hal setup --apply` installs first"
+UP_TO_DATE = [*REPEATED_APPLY[:-1], "✓ setup up to date · 4 unchanged"]
+NOT_CHECKED = "  ! system          not checked    needs sudo at a terminal"
+NOT_CHECKED_WITHOUT_ANSIBLE = (
+    "  ! system          not checked    needs Ansible, which `hal setup --apply` installs first"
 )
-RUN_APPLY = f"run {RERUN}"
-
-
-def not_run(*subjects: str) -> list[str]:
-    return [line("·", subject, "not run") for subject in subjects]
+NOT_RUN = {
+    TIMERS: "  · timers          not run",
+    SYSTEM: "  · system          not run",
+    SECRETS: "  · secrets         not run",
+}
+CHANGED_ROW = {
+    COMMIT_HOOK: "  ✓ commit hook     changed",
+    SYSTEM: "  ✓ system          changed",
+}
 
 
 QUALITY_URL = "https://github.com/overnightworks/quality"
@@ -85,11 +80,11 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
     assert (code, lines) == (
         0,
         [
-            line("~", COMMIT_HOOK, "will change"),
-            line("·", TIMERS, "unchanged"),
+            "  ~ commit hook     will change",
+            "  · timers          unchanged",
             NOT_CHECKED_WITHOUT_ANSIBLE,
-            line("·", SECRETS, "complete"),
-            verdict("~", "setup plan", f"2 open, 2 unchanged · {RUN_APPLY}"),
+            "  · secrets         complete",
+            "~ setup plan · 2 open, 2 unchanged · run hal setup --apply",
         ],
     )
     assert uv_installs(sandbox) == []
@@ -135,8 +130,8 @@ def test_failing_quality_install_leaves_hooks_path_untouched_and_exits_nonzero(
     assert (code, lines) == (
         1,
         [
-            line("✗", COMMIT_HOOK, "failed", "uv could not install quality"),
-            *not_run(TIMERS, SYSTEM, SECRETS),
+            "  ✗ commit hook     failed         uv could not install quality",
+            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines()[0] == "error: setup stopped at commit hook"
@@ -156,8 +151,8 @@ def test_failing_engines_install_stops_before_hooks_and_activation(
     assert (code, lines) == (
         1,
         [
-            line("✗", COMMIT_HOOK, "failed", "the quality engines did not install"),
-            *not_run(TIMERS, SYSTEM, SECRETS),
+            "  ✗ commit hook     failed         the quality engines did not install",
+            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -178,8 +173,8 @@ def test_failing_activation_is_a_failed_last_step(sandbox: Sandbox, capsys: pyte
     assert (code, lines) == (
         1,
         [
-            line("✗", COMMIT_HOOK, "failed", "git could not set core.hooksPath"),
-            *not_run(TIMERS, SYSTEM, SECRETS),
+            "  ✗ commit hook     failed         git could not set core.hooksPath",
+            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -195,7 +190,7 @@ def test_apply_repoints_a_hooks_path_that_differs(sandbox: Sandbox, capsys: pyte
 
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines[0]) == (0, line("✓", COMMIT_HOOK, "changed"))
+    assert (code, lines[0]) == (0, "  ✓ commit hook     changed")
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
 
 
@@ -211,9 +206,9 @@ def test_apply_reinstalls_a_deleted_quality_executable_despite_matching_uv_metad
     assert (code, lines) == (
         0,
         [
-            line("✓", COMMIT_HOOK, "changed"),
+            "  ✓ commit hook     changed",
             *REPEATED_APPLY[1:-1],
-            verdict("✓", "setup done", "1 changed, 3 unchanged"),
+            "✓ setup done · 1 changed, 3 unchanged",
         ],
     )
     assert len(uv_installs(sandbox)) == 3
@@ -247,7 +242,7 @@ def test_apply_reinstalls_a_tool_when_uv_recorded_another_requirement(
 
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines[ROWS.index(row)]) == (0, line("✓", row, "changed"))
+    assert (code, lines[ROWS.index(row)]) == (0, CHANGED_ROW[row])
 
 
 @pytest.mark.parametrize("damage", ["lost executable bit", "other content"])
@@ -265,7 +260,7 @@ def test_apply_repairs_a_damaged_hook_file_and_a_following_apply_is_unchanged(
     repaired = run_setup(sandbox, capsys, "--apply")
     again = run_setup(sandbox, capsys, "--apply")
 
-    assert repaired[1][0] == line("✓", COMMIT_HOOK, "changed")
+    assert repaired[1][0] == "  ✓ commit hook     changed"
     assert os.access(hook, os.X_OK)
     assert again[1] == REPEATED_APPLY
 
@@ -280,7 +275,7 @@ def test_unwritable_hook_directory_fails_the_hook_step_by_name_and_skips_activat
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert code == 1
-    assert lines[0].startswith(line("✗", COMMIT_HOOK, "failed", "could not write the hook files: "))
+    assert lines[0].startswith("  ✗ commit hook     failed         could not write the hook files:")
     assert error.splitlines() == ["error: setup stopped at commit hook", f"next: {RERUN}"]
     assert global_hooks_path(sandbox) == ""
 
@@ -292,7 +287,7 @@ def test_dry_run_with_a_non_executable_quality_reports_instead_of_crashing(sandb
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines[0]) == (0, line("~", COMMIT_HOOK, "will change"))
+    assert (code, lines[0]) == (0, "  ~ commit hook     will change")
 
 
 def test_apply_tightens_a_hook_whose_mode_is_wider_than_755(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
@@ -303,7 +298,7 @@ def test_apply_tightens_a_hook_whose_mode_is_wider_than_755(sandbox: Sandbox, ca
 
     repaired = run_setup(sandbox, capsys, "--apply")
 
-    assert repaired[1][0] == line("✓", COMMIT_HOOK, "changed")
+    assert repaired[1][0] == "  ✓ commit hook     changed"
     assert hook.stat().st_mode & 0o777 == 0o755
 
 
@@ -420,15 +415,21 @@ def test_as_the_agent_the_operators_steps_are_skipped_without_sudo_and_the_exit_
     sandbox.system.user = AGENT_USER
     code, lines, _ = run_setup(sandbox, capsys, *flags)
 
-    hook = line("✓", COMMIT_HOOK, "changed") if flags else line("~", COMMIT_HOOK, "will change")
+    hook = "  ✓ commit hook     changed" if flags else "  ~ commit hook     will change"
     closing = (
-        verdict("✓", "setup done", "1 changed, 3 skipped")
+        "✓ setup done · 1 changed, 3 skipped"
         if flags
-        else verdict("~", "setup plan", f"1 open, 3 skipped · {RUN_APPLY}")
+        else "~ setup plan · 1 open, 3 skipped · run hal setup --apply"
     )
     assert (code, lines) == (
         0,
-        [hook, *(line("·", subject, "skipped", AGENT_SKIP) for subject in ROWS[1:]), closing],
+        [
+            hook,
+            "  · timers          skipped        the operator's step",
+            "  · system          skipped        the operator's step",
+            "  · secrets         skipped        the operator's step",
+            closing,
+        ],
     )
     assert sandbox.system.playbook.calls == []
 
@@ -478,9 +479,9 @@ def test_the_playbook_ships_inside_the_package() -> None:
             False,
             [
                 *UP_TO_DATE[:2],
-                line("~", SYSTEM, "will change"),
+                "  ~ system          will change",
                 UP_TO_DATE[3],
-                verdict("~", "setup plan", f"1 open, 3 unchanged · {RUN_APPLY}"),
+                "~ setup plan · 1 open, 3 unchanged · run hal setup --apply",
             ],
             False,
         ),
@@ -518,7 +519,7 @@ def test_without_a_terminal_the_dry_run_says_not_checked_and_never_starts_ansibl
             *UP_TO_DATE[:2],
             NOT_CHECKED,
             UP_TO_DATE[3],
-            verdict("~", "setup plan", f"1 open, 3 unchanged · {RUN_APPLY}"),
+            "~ setup plan · 1 open, 3 unchanged · run hal setup --apply",
         ],
     )
     assert playbook_runs(sandbox) == ["apply"]
@@ -551,8 +552,8 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
-            line("✗", SYSTEM, "not started", "needs sudo in your own terminal window"),
-            *not_run(SECRETS),
+            "  ✗ system          not started    needs sudo in your own terminal window",
+            NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -574,8 +575,8 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
-            line("✗", SYSTEM, "failed", "Ansible did not finish · its output above says why"),
-            *not_run(SECRETS),
+            "  ✗ system          failed         Ansible did not finish · its output above says why",
+            NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -596,10 +597,8 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
     assert (code, lines[2:]) == (
         1,
         [
-            line(
-                "✗", SYSTEM, "failed", "Ansible's check did not finish · its output above says why"
-            ),
-            *not_run(SECRETS),
+            "  ✗ system          failed         Ansible's check did not finish · its output above says why",
+            NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -706,6 +705,6 @@ def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_
 
     assert (code, lines[2]) == (
         ExitCode.FAILURE,
-        line("✗", SYSTEM, "not started", "needs sudo in your own terminal window"),
+        "  ✗ system          not started    needs sudo in your own terminal window",
     )
     assert error.splitlines()[0] == "error: setup stopped at system · /etc unchanged"
