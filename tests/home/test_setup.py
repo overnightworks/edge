@@ -25,9 +25,11 @@ ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
 
 
 # The sandbox's unit directory is empty: the timers have nothing to change, and no secret is open.
+SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"
 FRESH_APPLY = [
     "  ✓ commit hook     changed",
     "  · timers          unchanged",
+    SUDO_ANNOUNCEMENT,
     "  ✓ system          changed",
     "  · secrets         complete",
     "✓ setup done · 2 changed, 2 unchanged",
@@ -35,11 +37,12 @@ FRESH_APPLY = [
 REPEATED_APPLY = [
     "  · commit hook     unchanged",
     "  · timers          unchanged",
+    SUDO_ANNOUNCEMENT,
     "  · system          unchanged",
     "  · secrets         complete",
     "✓ setup done · 4 unchanged",
 ]
-UP_TO_DATE = [*REPEATED_APPLY[:-1], "✓ setup up to date · 4 unchanged"]
+UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 4 unchanged"]
 NOT_CHECKED = "  ! system          not checked    needs sudo at a terminal"
 NOT_CHECKED_WITHOUT_ANSIBLE = (
     "  ! system          not checked    needs Ansible, which `hal setup --apply` installs first"
@@ -108,6 +111,14 @@ def test_apply_installs_pinned_quality_engines_and_both_hooks_then_activates(san
         "0o755",
     ]
     assert global_hooks_path(sandbox) == str(layout.git_hooks_dir)
+
+
+def test_a_dry_run_with_a_terminal_announces_no_sudo(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    """The announcement belongs to an apply: a dry run asks for the password in the check, and prints no `needs sudo` row."""
+    run_setup(sandbox, capsys, "--apply")
+    _, lines, _ = run_setup(sandbox, capsys)
+
+    assert SUDO_ANNOUNCEMENT not in lines
 
 
 def test_second_apply_reports_every_step_unchanged_and_reinstalls_nothing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
@@ -242,7 +253,8 @@ def test_apply_reinstalls_a_tool_when_uv_recorded_another_requirement(
 
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines[ROWS.index(row)]) == (0, CHANGED_ROW[row])
+    assert code == 0
+    assert CHANGED_ROW[row] in lines
 
 
 @pytest.mark.parametrize("damage", ["lost executable bit", "other content"])
@@ -575,6 +587,7 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
+            SUDO_ANNOUNCEMENT,
             "  ✗ system          failed         Ansible did not finish · its output above says why",
             NOT_RUN[SECRETS],
         ],

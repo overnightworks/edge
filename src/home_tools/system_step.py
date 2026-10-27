@@ -179,6 +179,10 @@ class SystemStep:
         except OSError:
             return False
 
+    def will_ask_for_sudo(self) -> bool:
+        """An apply with a terminal runs the play, and Ansible asks for the password there."""
+        return self.boundaries.has_terminal()
+
     def needs_first(self) -> str:
         """What the check needs before it can look, empty when it can: a terminal for sudo, then the engine to check with."""
         if not self.boundaries.has_terminal():

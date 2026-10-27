@@ -51,6 +51,7 @@ SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one i
 SYSTEM_WHY = (
     "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
 )
+SUDO_WILL_BE_ASKED_FOR = "tunnel, polkit, journal, mail, agent account"
 SKIPPED_FOR_THE_AGENT = "the operator's step"
 RERUN = "hal setup --apply"
 
@@ -76,6 +77,7 @@ class SetupEvent(StrEnum):
     FAILED = "failed"
     NOT_STARTED = "not started"
     NOT_RUN = "not run"
+    NEEDS_SUDO = "needs sudo"
 
 
 class Tally(StrEnum):
@@ -108,6 +110,7 @@ EVENT_LOOK: dict[SetupEvent, EventLook] = {
     SetupEvent.COMPLETE: EventLook(Glyph.UNCHANGED, 2, Tally.UNCHANGED),
     SetupEvent.SKIPPED: EventLook(Glyph.UNCHANGED, 1, Tally.SKIPPED),
     SetupEvent.NOT_RUN: EventLook(Glyph.UNCHANGED, 0, None),
+    SetupEvent.NEEDS_SUDO: EventLook(Glyph.ANNOUNCE, 0, None),
 }
 
 
@@ -173,7 +176,7 @@ class Step:
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
     `open_fact` names what a dry run that found something to change shows on its row.
     `apply` may return `UnitsApplied`, which adds the fact the row of a changed step shows.
-    `before_apply` is the row printed before an apply that waits on the operator (the wizard), or nothing.
+    `before_apply` is the row printed before an apply that waits on the operator (the wizard, sudo's password), or nothing.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
     `may_leave_system_partial` marks the step that runs as root, whose failed apply leaves /etc half written.
@@ -458,6 +461,9 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             SYSTEM_WHY,
             "the system step did not finish",
             needs_first=system.needs_first,
+            before_apply=lambda: (
+                Outcome(SetupEvent.NEEDS_SUDO, SUDO_WILL_BE_ASKED_FOR) if system.will_ask_for_sudo() else None
+            ),
             operators_only=True,
             may_leave_system_partial=True,
         ),
