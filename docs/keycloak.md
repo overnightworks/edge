@@ -65,13 +65,14 @@ presentator clients are in `realm.yaml`, each secret the file
 presentator's one client serves `presentator` and `presentator-talk`); the other
 app clients arrive at K13/K14.
 
-songmaker and presentator are also the workload identity of the agent service (A1d, #183): their
-service accounts are the only users `realm.yaml` lists, each holding the realm role
+songmaker, presentator and hopin are also the workload identity of the agent service (A1d, #183,
+#506): their service accounts are the only users `realm.yaml` lists, each holding the realm role
 `agent-workload` and no group, and their default scopes add the `agent-service` audience. Whoever
 holds such an app's client secret can therefore get a workload token for that app, which is the
-design; the secret stays the app's own file. hopin has no service account.
+design; the secret stays the app's own file. hopin's scopes are exactly `basic`, `profile`, `groups`,
+`roles`, `service_account` and `agent-service-audience`: it reads no email, web origin or acr.
 
-Every login app follows the same shape. It gets its own client in `realm.yaml`, with its secret in its own file under `~/.secrets/keycloak/clients/`. Its `backchannel.logout.url` is `http://<app>.hallucinai.de:<port>/auth/backchannel-logout`, with `backchannel.logout.session.required: "false"`; the host is an alias the app's web service gives itself. The call travels over the app's own internal network `hal_backchannel_<app>`, which only `keycloak` joins on edge's side and the app joins as an external network, so no app sees another's. The public host lists the path in `deny_public` (`fleet.yaml`). The client gets a refresh token only if the app uses one, which `use.refresh.tokens: "false"` switches off.
+Every login app follows the same shape. It gets its own client in `realm.yaml`, with its secret in its own file under `~/.secrets/keycloak/clients/`. Its `backchannel.logout.url` is `http://<app>.hallucinai.de:<port>/auth/backchannel-logout`, with `backchannel.logout.session.required: "false"`; the host is an alias the app's web service gives itself. The call travels over the app's own internal network `hal_backchannel_<app>`, which only `keycloak` joins on edge's side and the app joins as an external network, so no app sees another's. The public host lists the path in `deny_public` (`fleet.yaml`). An app that holds a refresh token per session names `use.refresh.tokens: "true"` (hopin); one without the line keeps Keycloak's default.
 
 A sign-out in Keycloak ends the songmaker session: Keycloak calls songmaker's back-channel logout
 (`http://songmaker.hallucinai.de:8080/auth/backchannel-logout`; the name is an alias songmaker
@@ -89,7 +90,7 @@ songmaker redeploys.
 Which console actions send that back-channel logout was measured on Keycloak 26.8.1 (cell LA1 of
 the Keycloak probe). For each action a fresh user signed in to a client with HopIn's ruled
 settings, which match songmaker's logout lines (#254): `backchannel.logout.url` on the internal
-network and `backchannel.logout.session.required: "false"`, plus `use.refresh.tokens: "false"`. The admin call succeeded, and a test relying
+network and `backchannel.logout.session.required: "false"`, plus `use.refresh.tokens: "true"`. The admin call succeeded, and a test relying
 party counted a logout token only when its `sub` was that user's and it arrived within 20 seconds.
 A sign-out of the user's sessions, run first as the control, arrived. For disabling the user,
 deleting the user and removing the user from a group, no matching logout was observed within
@@ -99,9 +100,9 @@ an app ends or erases an account on a sign-out is the app's own (hopin#79 S4).
 HopIn is logged out the same way, over its own internal network `hal_backchannel_hopin`, which
 only `keycloak` joins on edge's side and HopIn joins as an external network: its client has `backchannel.logout.url`
 `http://hopin.hallucinai.de:8080/auth/backchannel-logout` and `session.required: "false"`. HopIn
-uses no refresh token, so its client also has `use.refresh.tokens: "false"` and Keycloak issues it
-none; the rule for every app is that it gets a refresh token only if it uses one (operator ruling
-O1 of #254), so songmaker keeps Keycloak's default until its head has checked.
+holds a refresh token per session in memory (operator ruling of 27.10.2026, #506, which reverses
+hopin#79 finding 28), so its client names `use.refresh.tokens: "true"` instead of leaving the line
+out: a line deleted from the file may survive in a live client that the import merges.
 
 presentator is logged out the same way, over its own internal network `hal_backchannel_presentator`
 (only `keycloak` joins it on edge's side), on presentator's own port: its client has
@@ -175,8 +176,8 @@ only Cloudflare's copy; a browser that already holds the old file keeps it.
 >     an optional scope is ruled the same way but not measured), while a client without scope lists (`agent-service`) keeps its additions;
 >   - a client role on a listed service account (`service-account-songmaker`); its realm roles
 >     and groups stay;
->   - a service account enabled in the console on a declared client (hopin), which removes the
->     service-account user with it (driven without a membership);
+>   - a service account turned off in the console on a declared client (hopin), which the apply
+>     turns on again, keeping its user, its role and no group;
 >   - a flow binding override on a declared client.
 >
 >   A change to a declared object is made in the file, by an agent, never in the console. Deleting
