@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -314,6 +314,26 @@ def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2
     assert error.count("\n") == 1
 
 
+class RunnerWithEmptyDockerInfo(RunnerWithCleanLogs):
+    """`docker info` prints nothing, so the logs check finds a default driver with an empty subject."""
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        return "" if argv[:2] == ["docker", "info"] else super().__call__(argv)
+
+
+def test_a_finding_without_a_subject_survives_the_memory_and_the_next_run_exits_as_its_findings_say(clean_home, capsys) -> None:
+    runner = RunnerWithEmptyDockerInfo()
+    layout = Layout(clean_home)
+
+    first = home_check(clean_home, runner)
+    remembered = layout.check_findings_file.read_text()
+    second = home_check(clean_home, runner)
+
+    assert (first, second) == (1, 1)
+    assert "logs\\tdocker-default-driver\\t" in remembered
+    assert "unerwarteter Fehler" not in capsys.readouterr().err
+
+
 def memory_text(text: str) -> Callable[[Path], None]:
     return lambda path: path.write_text(text)
 
@@ -323,12 +343,13 @@ def memory_text(text: str) -> Callable[[Path], None]:
     [
         (memory_text('["platform\\t'), "JSONDecodeError"),
         (memory_text('["platform\\tleaked-secret"]'), "ValueError"),
+        (memory_text('["platform\\tcontainer-dead"]'), "ValueError"),
         (memory_text('["platform\\tno-such-rule\\tx"]'), "ValueError"),
         (memory_text('["platform\\tcheck-failed\\tx"]'), "ValueError"),
         (memory_text('{"platform": 1}'), "ValueError"),
         (os.mkfifo, "ValueError"),
     ],
-    ids=["cut off", "not a finding identity", "a rule without a level", "a failure marker with a subject", "not a list", "a fifo that never gets a writer"],
+    ids=["cut off", "not a finding identity", "a finding without the subject separator", "a rule without a level", "a failure marker with a subject", "not a list", "a fifo that never gets a writer"],
 )
 def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     clean_home, runner, capsys, plant_memory: Callable[[Path], None], refusal: str
