@@ -273,7 +273,7 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
 def test_the_repository_units_replace_the_old_links_and_enable_the_hal_timers(
     tmp_path: Path, old_prefix: str, old_names: list[str], new_timers: set[str]
 ) -> None:
-    """#410 sentences 1 and 4, #550: the old unit names are gone and the hal timers run."""
+    """The old unit names are gone and the hal timers run."""
     repository_units = Path(__file__).parents[2] / "systemd"
     home = tmp_path / "home"
     user_units = home / ".config" / "systemd" / "user"
