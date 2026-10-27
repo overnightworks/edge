@@ -24,6 +24,7 @@ from edge_backup.docker import (
     SERVER_START_LABEL,
     SQLITE_CHECK_LABEL,
     SQLITE_COPY_LABEL,
+    SQLITE_OWNER_LABEL,
 )
 from edge_backup.settings import RESTIC_HOSTNAME
 
@@ -191,7 +192,7 @@ class Machine:
             "docker volume ls": self._volumes,
             "pg_dump": self._pg_dump,
             FILE_COUNT_LABEL: self._scan,
-            "Lesen des SQLite-Besitzers": self._sqlite_owner,
+            SQLITE_OWNER_LABEL: self._sqlite_owner,
             SQLITE_COPY_LABEL: self._sqlite_copy,
             SQLITE_CHECK_LABEL: self._sqlite_check,
             "restic backup": self._backup,
@@ -286,7 +287,7 @@ class Machine:
     def _sqlite_owner(self, argv, *, discard_stderr, **_) -> bytes:
         if self.sqlite_copy is None:
             return self._sqlite_failure(
-                "Lesen des SQLite-Besitzers", sqlite_copy.VERDICT_EXIT, discard_stderr
+                SQLITE_OWNER_LABEL, sqlite_copy.VERDICT_EXIT, discard_stderr
             )
         return self.sqlite_owner
 

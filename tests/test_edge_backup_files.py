@@ -16,7 +16,7 @@ from edge_backup_support import (
 )
 
 from edge_backup.apps import AppsError, SqliteDatabase, SqliteFiles, parse_apps
-from edge_backup.docker import FILE_COUNT_LABEL
+from edge_backup.docker import FILE_COUNT_LABEL, SQLITE_OWNER_LABEL
 
 BUILDS = {
     "run1/out/talk/index.html": b"x",
@@ -324,11 +324,11 @@ def test_an_owner_run_that_fails_for_another_reason_is_not_called_a_missing_file
 ):
     """#468 M16: docker failing to start the owner run says so."""
     machine.other_volumes["presentator"] = ["presentator_database"]
-    machine.failing["Lesen des SQLite-Besitzers"] = 125
+    machine.failing[SQLITE_OWNER_LABEL] = 125
 
     outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML))
 
-    assert "Lesen des SQLite-Besitzers ended with exit 125" in outcome.out
+    assert f"{SQLITE_OWNER_LABEL} ended with exit 125" in outcome.out
     assert "is missing or unreadable" not in outcome.out
     assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
         "dump",
