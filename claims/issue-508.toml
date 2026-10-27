@@ -1,8 +1,0 @@
-claim_id = "878e91d99110498db2c9e993e48d4102"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "0b7c7381d2931d4814ac8d6c47a57889fa11be1a"
-branch = "claude/issue-508-s9a-version-legal-rows"
-scope = ["README.md", "docs/architecture.md", "src/hal/legal_commands.py", "src/hal/version.py", "tests/old_names_baseline.toml", "tests/test_hal_legal.py", "tests/test_hal_version.py"]
-opened_commit = "4db992b196cb3533680e0626e9b5fbcfdfca1212"
-whole_reason = "Two small commands' output in one slice: each is a few lines, and they share the picture figure and the reviewer's context."
