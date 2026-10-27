@@ -30,11 +30,12 @@ import webbrowser
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode
 
+from hal_output import Glyph, Row, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -66,14 +67,11 @@ ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
 OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
 PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
-SKIPPED = "übersprungen; nichts gespeichert"
 NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
-UNSENDABLE_PASTE = (
-    "abgelehnt: ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft, nichts gespeichert."
-    " Noch einmal einfügen oder leer lassen."
-)
+UNSENDABLE_PASTE = "ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft"
 EXPOSED_INPUT_REFUSAL = "abgebrochen: dieses Terminal kann die Eingabe nicht verbergen; nichts gelesen. Ein anderes Terminal nehmen."
 
+PASTE_AGAIN = "paste again or leave empty"
 PASSPHRASE_BYTES = 48
 VERIFY_TIMEOUT_SECONDS = 20
 RESPONSE_LIMIT_BYTES = 64 * 1024
@@ -370,27 +368,47 @@ GUIDES = {
 # --- the walk ---------------------------------------------------------------
 
 
+class WizardEvent(StrEnum):
+    """What the walk says about one entry, as the event of its row."""
+
+    VERIFIED = "verified"
+    GENERATED = "generated"
+    STORED = "stored"
+    REJECTED = "rejected"
+    SKIPPED = "skipped"
+    NOT_CHECKED = "not checked"
+    BY_HAND = "by hand"
+    NOT_STORED = "not stored"
+
+
 def _say(*lines: str) -> None:
     for line in lines:
         print(line)
 
 
-def stored_line(entry: SecretEntry) -> str:
-    """What the walk says once an entry is stored: a token after its provider confirmed it, an unverified one as such, a service password unseen."""
+def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
+    write_row(Row(glyph, entry_name, event, fact))
+
+
+def stored_row(entry: SecretEntry) -> Row:
+    """The row of a stored entry: a token after its provider confirmed it, an unverified one as such, a service password unseen.
+
+    The path and mode only; the value is never part of a row."""
+    where = f"{HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
     if entry.kind is SecretKind.UNVERIFIED_TOKEN:
-        done = "gespeichert, nicht geprüft"
-    else:
-        done = "geprüft und gespeichert" if entry.source else "erzeugt und gespeichert"
-    return f"{done}: {HOME_PREFIX}{entry.place} ({entry.loosest_mode:o})"
+        return Row(Glyph.DONE, entry.name, WizardEvent.STORED, f"not verified · {where}")
+    if entry.source:
+        return Row(Glyph.DONE, entry.name, WizardEvent.VERIFIED, where)
+    return Row(Glyph.DONE, entry.name, WizardEvent.GENERATED, f"{where} · never shown")
 
 
 def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
     try:
         store_new_secret(layout, entry.place, value, boundaries.sync, entry.loosest_mode)
     except StoreRefused as refused:
-        _say(f"nicht gespeichert: {refused}")
+        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.NOT_STORED, str(refused))
         return False
-    _say(stored_line(entry))
+    write_row(stored_row(entry))
     return True
 
 
@@ -406,23 +424,27 @@ def _is_visible_ascii(value: str) -> bool:
     return all("!" <= character <= "~" for character in value)
 
 
-def _visible_paste(terminal: Terminal) -> str:
+def _visible_paste(entry: SecretEntry, terminal: Terminal) -> str:
     """The first pasted value that is visible ASCII; empty when the operator leaves the prompt empty."""
     while value := _paste_unseen(terminal):
         if _is_visible_ascii(value):
             return value
-        _say(UNSENDABLE_PASTE)
+        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.REJECTED, f"{UNSENDABLE_PASTE} · {PASTE_AGAIN}")
     return ""
 
 
-def _accepted_paste(source: TokenSource, boundaries: Boundaries) -> str | None:
+def _skipped(entry: SecretEntry) -> None:
+    _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "nothing stored")
+
+
+def _accepted_paste(entry: SecretEntry, source: TokenSource, boundaries: Boundaries) -> str | None:
     """The first pasted value the provider accepts; None when the operator leaves the prompt empty."""
-    while value := _visible_paste(boundaries.terminal):
+    while value := _visible_paste(entry, boundaries.terminal):
         verdict = boundaries.verify(source, value)
         if verdict.outcome is Outcome.ACCEPTED:
             return value
-        _say(f"abgelehnt: {verdict.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen.")
-    _say(SKIPPED)
+        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.REJECTED, f"{verdict.detail} · {PASTE_AGAIN}")
+    _skipped(entry)
     return None
 
 
@@ -435,7 +457,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
     guide = GUIDES[source.provider]
     _say(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
-    value = _accepted_paste(source, boundaries)
+    value = _accepted_paste(entry, source, boundaries)
     return value is not None and _stored(entry, layout, boundaries, value)
 
 
@@ -443,9 +465,9 @@ def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Bou
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
     _say(f"Anlegen: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
-    value = _visible_paste(boundaries.terminal)
+    value = _visible_paste(entry, boundaries.terminal)
     if not value:
-        _say(SKIPPED)
+        _skipped(entry)
     return bool(value) and _stored(entry, layout, boundaries, value)
 
 
@@ -515,10 +537,10 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     if entry.purpose:
         _say(f"Wofür: {entry.purpose}")
     if not entry.written_by_setup:
-        _say(f"Dafür gibt es noch keinen Assistenten; von Hand: {entry.recreate}")
+        _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.recreate}")
         return Step.BY_HAND
     if refusal := _store_refusal(layout, entry.place):
-        _say(f"nicht gespeichert: {_refused_below(refusal)}")
+        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.NOT_STORED, _refused_below(refusal))
         return Step.STILL_MISSING
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
@@ -534,10 +556,11 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     """One live entry: kept, skipped or set up; None when it is kept or optional."""
     found = _presence_on_disk(entry, layout)
     if not is_open(entry, found):
-        _say(f"{entry.name}: vorhanden, bleibt unverändert" if found is Presence.PRESENT else f"{entry.name}: fehlt, ist optional; übersprungen")
+        if found is not Presence.PRESENT:
+            _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "optional")
         return None
     if found is Presence.UNKNOWN:
-        _say(f"{entry.name}: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen")
+        _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.NOT_CHECKED, "its folder cannot be read")
         return Step.STILL_MISSING
     return _set_up_or_fail(entry, layout, boundaries, now)
 

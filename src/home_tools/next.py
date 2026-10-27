@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from hal_output import Row
 from home_tools import hook_check, secrets_setup, secrets_view, setup
 from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
 from home_tools.config import Config
@@ -82,11 +83,15 @@ def _setup_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
         yield _setup_apply_step(ports, changed, "; ".join(dict.fromkeys(step.why for step in pending)))
 
 
+def _row_text(row: Row) -> str:
+    return f"{row.subject} {row.event} {row.fact}"
+
+
 def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
     guided = [entry for entry in missing if entry.written_by_setup]
     by_hand = [entry for entry in missing if not entry.written_by_setup]
     if guided:
-        said = [*map(secrets_setup.stored_line, guided), f"then {setup.APPLY_PLAN}"]
+        said = [*(_row_text(secrets_setup.stored_row(entry)) for entry in guided), f"then {setup.APPLY_PLAN}"]
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
