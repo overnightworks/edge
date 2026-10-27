@@ -1,10 +1,12 @@
-"""The appkit step of the closed apply (#514): the installed appkit's static files, served by
-the legal unit from `legal/assets/appkit-<version>/`, on the scripted boundaries of
-`test_edge_apply`."""
+"""The appkit step of the closed apply (#514, #532): the installed appkit's static files, written to
+`appkit-<version>/` in `legal/assets/` (served by the legal unit) and in each Keycloak theme's
+`resources/`, on the scripted boundaries of `test_edge_apply`."""
 
 import os
 import shutil
 import stat
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
@@ -40,8 +42,15 @@ class World:
     switch: Callable[..., tuple[int, str, str]]
 
     @property
-    def served(self) -> Path:
-        return appkit_step.served_directory(self.repository)
+    def targets(self) -> tuple[Path, ...]:
+        return appkit_step.served_directories(self.repository)
+
+    @property
+    def legal(self) -> Path:
+        return self.targets[0]
+
+    def relative(self, target: Path) -> str:
+        return str(target.relative_to(self.repository))
 
 
 @pytest.fixture
@@ -57,25 +66,36 @@ def files_of(directory: Path) -> dict[str, bytes]:
     }
 
 
-def test_a_fresh_checkout_names_the_new_directory_and_writes_it_after_yes(world):
-    seeded = files_of(world.served)
-    shutil.rmtree(world.served)
+def test_a_fresh_checkout_names_the_new_directory_and_writes_every_target_after_yes(world):
+    seeded = [files_of(target) for target in world.targets]
+    for target in world.targets:
+        shutil.rmtree(target)
 
     declined_exit, declined_out, _ = world.switch(answer="no")
 
     assert declined_exit == 1
     assert f"appkit {VERSION}: new" in declined_out
-    assert not world.served.exists()
+    assert not any(target.exists() for target in world.targets)
 
     exit_code, out, err = world.switch()
 
     assert exit_code == 0, err
     assert f"appkit {VERSION}: new" in out
-    assert files_of(world.served) == seeded
+    assert [files_of(target) for target in world.targets] == seeded
+
+
+def test_the_targets_are_the_legal_assets_and_both_theme_resources(world):
+    assert [world.relative(target.parent) for target in world.targets] == [
+        "legal/assets",
+        "keycloak/themes/hallucinai/login/resources",
+        "keycloak/themes/hallucinai/account/resources",
+    ]
+    assert {target.name for target in world.targets} == {f"appkit-{VERSION}"}
 
 
 def test_the_written_directories_and_files_are_readable_by_the_unit(world):
-    shutil.rmtree(world.served)
+    for target in world.targets:
+        shutil.rmtree(target)
     previous = os.umask(0o077)
     try:
         exit_code, _, err = world.switch()
@@ -84,7 +104,9 @@ def test_the_written_directories_and_files_are_readable_by_the_unit(world):
 
     assert exit_code == 0, err
     modes = {
-        path: stat.S_IMODE(path.stat().st_mode) for path in (world.served, *world.served.rglob("*"))
+        path: stat.S_IMODE(path.stat().st_mode)
+        for target in world.targets
+        for path in (target, *target.rglob("*"))
     }
     assert all(mode == (0o755 if path.is_dir() else 0o644) for path, mode in modes.items()), modes
 
@@ -99,44 +121,76 @@ def test_a_second_apply_changes_nothing_and_says_so(world):
     assert "nothing to change" in out
 
 
-def test_a_damaged_directory_is_named_and_repaired(world):
-    original = files_of(world.served)
-    (world.served / "appkit.css").write_text("damaged")
-    (world.served / "stray.txt").write_text("not the wheel's")
+def test_a_damaged_target_is_named_and_the_others_stay_untouched(world):
+    damaged = world.targets[1]
+    original = files_of(damaged)
+    (damaged / "appkit.css").write_text("damaged")
+    (damaged / "stray.txt").write_text("not the wheel's")
 
     _, out, _ = world.switch(answer="no")
 
     assert f"appkit {VERSION}: new" in out
 
-    exit_code, _, err = world.switch()
+    written = []
+
+    def rename(source, destination):
+        written.append(Path(destination))
+        os.rename(source, destination)
+
+    exit_code, _, err = world.switch(rename=rename)
 
     assert exit_code == 0, err
-    assert files_of(world.served) == original
+    assert files_of(damaged) == original
+    assert [path for path in written if path in world.targets] == [damaged]
 
 
-def test_only_the_steps_own_stale_directories_are_removed(world):
-    assets = world.served.parent
-    (assets / "appkit-0.4.0").mkdir()
-    (assets / "appkit-0.4.0" / "appkit.css").write_text("old")
-    (assets / "other").mkdir()
+def test_only_the_steps_own_stale_directories_are_removed_in_every_target(world):
+    stale = []
+    for target in world.targets:
+        (target.parent / "appkit-0.4.0").mkdir()
+        (target.parent / "appkit-0.4.0" / "appkit.css").write_text("old")
+        (target.parent / "other").mkdir(exist_ok=True)
+        stale.append(world.relative(target.parent / "appkit-0.4.0"))
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"appkit {VERSION}: unchanged, removes appkit-0.4.0" in out
-    assert (assets / "appkit-0.4.0").is_dir()
+    assert f"appkit {VERSION}: unchanged, removes {', '.join(sorted(stale))}" in out
+    assert all((world.repository / path).is_dir() for path in stale)
 
     exit_code, _, err = world.switch()
 
     assert exit_code == 0, err
-    assert sorted(path.name for path in assets.iterdir()) == [f"appkit-{VERSION}", "other"]
+    assert not any((world.repository / path).exists() for path in stale)
+    assert all((target.parent / "other").is_dir() and target.is_dir() for target in world.targets)
 
 
-def test_a_write_leaves_no_temporary_directory_beside_the_served_one(world):
-    (world.served / "appkit.css").write_text("damaged")
+def test_a_write_leaves_no_temporary_directory_beside_a_served_one(world):
+    for target in world.targets:
+        (target / "appkit.css").write_text("damaged")
 
     world.switch()
 
-    assert [path.name for path in world.served.parent.iterdir()] == [f"appkit-{VERSION}"]
+    for target in world.targets:
+        assert not [path for path in target.parent.iterdir() if path.name.startswith(".appkit-")]
+
+
+def test_a_failing_target_is_named_and_stops_the_writes_there(world):
+    for target in world.targets:
+        shutil.rmtree(target)
+    failing = world.targets[1]
+
+    def rename(source, destination):
+        if Path(destination) == failing:
+            raise OSError(5, "interrupted")
+        os.rename(source, destination)
+
+    exit_code, _, err = world.switch(rename=rename)
+
+    assert exit_code == 1
+    assert f"appkit: could not write {failing} (interrupted)" in err
+    assert files_of(world.legal) == files_of(appkit_step.installed_static())
+    assert not failing.exists()
+    assert not world.targets[2].exists()
 
 
 def test_a_missing_appkit_is_one_cannot_plan_error(repository):  # noqa: F811
@@ -160,7 +214,7 @@ def _rename_failing_on(*failing_calls: int):
 
 
 def test_a_failed_final_rename_keeps_the_previous_directory(world):
-    served = world.served
+    served = world.legal
     (served / "appkit.css").write_text("previous")
 
     static, rename = appkit_step.installed_static(), _rename_failing_on(2)
@@ -173,7 +227,7 @@ def test_a_failed_final_rename_keeps_the_previous_directory(world):
 
 
 def test_a_failed_restore_keeps_the_previous_copy_and_names_where(world):
-    served = world.served
+    served = world.legal
     (served / "appkit.css").write_text("previous")
 
     static, rename = appkit_step.installed_static(), _rename_failing_on(2, 3)
@@ -186,7 +240,7 @@ def test_a_failed_restore_keeps_the_previous_copy_and_names_where(world):
 
 
 def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
-    served = world.served
+    served = world.legal
     (served / "appkit.css").write_text("previous")
     calls = []
 
@@ -208,7 +262,7 @@ def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
 
 
 def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(world):
-    (world.served / "appkit.css").write_text("previous")
+    (world.legal / "appkit.css").write_text("previous")
     calls = []
 
     def rename(source, destination):
@@ -226,20 +280,63 @@ def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(wo
     assert "the previous copy is kept in " in err
 
 
-def test_a_missing_assets_directory_is_named_at_plan_time(world):
-    assets = world.served.parent
-    shutil.rmtree(assets)
+@pytest.mark.parametrize("which", range(3), ids=["legal assets", "login theme", "account theme"])
+def test_a_missing_target_parent_is_named_at_plan_time(world, which):
+    parent = world.targets[which].parent
+    shutil.rmtree(parent)
 
     exit_code, _, err = world.switch()
 
     assert exit_code == 2
     assert "cannot plan," in err
-    assert str(assets) in err
+    assert str(parent) in err
 
 
 def test_the_seeding_helper_serves_the_installed_files(world, seed_appkit):
-    shutil.rmtree(world.served)
+    for target in world.targets:
+        shutil.rmtree(target)
 
     seed_appkit(world.repository)
 
-    assert files_of(world.served) == files_of(appkit_step.installed_static())
+    assert all(
+        files_of(target) == files_of(appkit_step.installed_static()) for target in world.targets
+    )
+
+
+def test_the_module_writes_every_target_without_the_question(world):
+    for target in world.targets:
+        shutil.rmtree(target)
+
+    finished = subprocess.run(
+        [sys.executable, "-m", "edge.appkit_step", str(world.repository)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    assert all(
+        files_of(target) == files_of(appkit_step.installed_static()) for target in world.targets
+    )
+
+
+def test_the_module_refuses_a_broken_checkout_with_exit_2(world, capsys):
+    shutil.rmtree(world.targets[1].parent)
+
+    exit_code = appkit_step.main([str(world.repository)])
+
+    assert exit_code == 2
+    assert f"{world.targets[1].parent} is missing" in capsys.readouterr().err
+
+
+def test_the_module_names_the_failing_target_with_exit_1(world, capsys):
+    failing = world.targets[2]
+    shutil.rmtree(failing)
+    failing.parent.chmod(0o555)
+    try:
+        exit_code = appkit_step.main([str(world.repository)])
+    finally:
+        failing.parent.chmod(0o755)
+
+    assert exit_code == 1
+    assert f"appkit: could not write {failing}" in capsys.readouterr().err

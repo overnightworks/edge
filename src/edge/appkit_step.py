@@ -1,13 +1,18 @@
 """The appkit step of the closed apply: the installed appkit's static files (tokens and fonts),
-compared with `legal/assets/appkit-<version>/` and written there after the operator's `yes`.
+compared with `appkit-<version>/` in three targets and written there after the operator's `yes`:
+`legal/assets/`, which the legal unit serves at `/_rechtliches/appkit-<version>/`, and the
+`resources/` of the login and the account theme, which Keycloak serves at
+`/resources/<id>/appkit-<version>/`. The version in the path is the version in the lock. The step
+runs whether or not `services.legal` is enabled, and every refusal comes at plan time, before the
+question: nothing is written on one.
 
-The legal unit serves that directory at `/_rechtliches/appkit-<version>/`, so the version in the
-path is the version in the lock. The step runs whether or not `services.legal` is enabled, and
-every refusal comes at plan time, before the question: nothing is written on one.
+`python -m edge.appkit_step <repository>` runs the whole step without the question, for the
+Keycloak probe, whose stack binds the themes from a checkout where no apply runs.
 """
 
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,6 +24,10 @@ from edge.unit_plans import Progress
 
 DISTRIBUTION = "overnightworks-appkit"
 ASSETS_DIRECTORY = "legal/assets"
+THEME_RESOURCES = (
+    "keycloak/themes/hallucinai/login/resources",
+    "keycloak/themes/hallucinai/account/resources",
+)
 APPKIT_UNIT = "appkit"
 _DIRECTORY_PREFIX = "appkit-"
 _TEMPORARY_PREFIX = ".appkit-"
@@ -29,21 +38,25 @@ type Rename = Callable[[Path, Path], object]
 
 
 class AppkitError(Exception):
-    """The step cannot plan: appkit is not installed, or the checkout has no assets directory."""
+    """The step cannot plan: appkit is not installed, or a target's parent is missing."""
 
 
 @dataclass(frozen=True)
 class AppkitPlan:
     version: str
     source: Path
-    directory: Path  # `legal/assets/appkit-<version>/`
-    new: bool  # the directory is missing or differs from the installed files
-    stale: tuple[str, ...]  # this step's other `appkit-*` directories, to be removed
+    repository: Path
+    changed: tuple[Path, ...]  # the targets that are missing or differ from the installed files
+    stale: tuple[str, ...]  # this step's other `appkit-*` directories, relative to the repository
     rename: Rename = os.rename
 
     @property
+    def new(self) -> bool:
+        return bool(self.changed)
+
+    @property
     def changes_nothing(self) -> bool:
-        return not (self.new or self.stale)
+        return not (self.changed or self.stale)
 
     def describe(self) -> list[str]:
         line = f"appkit {self.version}: {'new' if self.new else 'unchanged'}"
@@ -55,13 +68,15 @@ class AppkitPlan:
         """Write the directory and remove the stale ones; the failure line, or None. The progress
         names this step only while it runs."""
         progress.unit, progress.step = APPKIT_UNIT, "write the appkit files"
+        target = self.repository
         try:
-            if self.new:
-                _replace_directory(self.source, self.directory, self.rename)
+            for target in self.changed:
+                _replace_directory(self.source, target, self.rename)
             for name in self.stale:
-                shutil.rmtree(self.directory.parent / name)
+                target = self.repository / name
+                shutil.rmtree(target)
         except OSError as error:
-            return f"appkit: could not write {self.directory} ({error.strerror})"
+            return f"appkit: could not write {target} ({error.strerror})"
         finally:
             progress.unit = progress.step = ""
         return None
@@ -75,20 +90,21 @@ def plan_appkit(
     """What the step would write. The lookup happens here, not at import: `hal.stack_commands`
     imports `edge.apply`, and a machine without a synced environment must still run `hal`."""
     source = installed_static(find_package)
-    directory = served_directory(repository)
-    version = directory.name.removeprefix(_DIRECTORY_PREFIX)
-    if not directory.parent.is_dir():
-        raise AppkitError(f"{directory.parent} is missing, the checkout is broken")
+    targets = served_directories(repository)
+    for parent in dict.fromkeys(target.parent for target in targets):
+        if not parent.is_dir():
+            raise AppkitError(f"{parent} is missing, the checkout is broken")
     stale = tuple(
         sorted(
-            path.name
-            for path in directory.parent.glob(f"{_DIRECTORY_PREFIX}*")
-            if path.is_dir() and path != directory
+            str(path.relative_to(repository))
+            for target in targets
+            for path in target.parent.glob(f"{_DIRECTORY_PREFIX}*")
+            if path.is_dir() and path != target
         )
     )
-    return AppkitPlan(
-        version, source, directory, _bytes_of(source) != _bytes_of(directory), stale, rename
-    )
+    installed = _bytes_of(source)
+    changed = tuple(target for target in targets if installed != _bytes_of(target))
+    return AppkitPlan(metadata.version(DISTRIBUTION), source, repository, changed, stale, rename)
 
 
 def installed_static(find_package: Callable[[str], ModuleType] = import_module) -> Path:
@@ -99,8 +115,9 @@ def installed_static(find_package: Callable[[str], ModuleType] = import_module) 
     return Path(str(appkit.__file__)).parent / "static"
 
 
-def served_directory(repository: Path) -> Path:
-    return repository / ASSETS_DIRECTORY / f"{_DIRECTORY_PREFIX}{metadata.version(DISTRIBUTION)}"
+def served_directories(repository: Path) -> tuple[Path, ...]:
+    name = f"{_DIRECTORY_PREFIX}{metadata.version(DISTRIBUTION)}"
+    return tuple(repository / parent / name for parent in (ASSETS_DIRECTORY, *THEME_RESOURCES))
 
 
 def _bytes_of(directory: Path) -> dict[str, bytes]:
@@ -155,3 +172,20 @@ def _copy_readable(source: str, destination: str) -> str:
 def _make_readable(tree: Path) -> None:
     for directory in (tree, *(path for path in tree.rglob("*") if path.is_dir())):
         os.chmod(directory, _DIRECTORY_MODE)  # NOSONAR python:S2612 read by nginx
+
+
+def main(arguments: list[str]) -> int:
+    """Plan and write without the question; the failure on stderr and exit 1, a refusal exit 2."""
+    (repository,) = arguments
+    try:
+        failure = plan_appkit(Path(repository)).write(Progress())
+    except AppkitError as error:
+        print(f"appkit: cannot plan, {error}", file=sys.stderr)
+        return 2
+    if failure:
+        print(failure, file=sys.stderr)
+    return 1 if failure else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
