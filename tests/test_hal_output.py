@@ -125,7 +125,7 @@ def test_on_a_terminal_an_unchanged_row_is_dim_as_a_whole(
 @pytest.mark.parametrize(
     ("glyph", "style"),
     [
-        (Glyph.DONE, "1;92"),
+        (Glyph.DONE, "1"),
         (Glyph.CHANGE, "1;34"),
         (Glyph.NEEDS_YOU, "1;33"),
         (Glyph.FAILED, "1;31"),
@@ -142,6 +142,30 @@ def test_on_a_terminal_a_verdict_is_bold_in_its_glyphs_colour_with_dim_counts(
     assert out.getvalue() == (
         f"\x1b[{style}m{glyph.value} setup\x1b[0m · \x1b[2m2 changed\x1b[0m · run hal\n"
     )
+
+
+def test_on_a_terminal_a_verdict_without_counts_carries_no_empty_dim_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, _err = put_on_terminals(monkeypatch)
+    write_verdict(Verdict(Glyph.DONE, "setup", ((0, Event.CHANGED),), "run hal"))
+
+    assert out.getvalue() == "\x1b[1m✓ setup\x1b[0m · run hal\n"
+
+
+@pytest.mark.parametrize("failure", [AttributeError, ValueError])
+def test_a_stream_without_a_working_isatty_prints_plain(
+    monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    class Broken(io.StringIO):
+        def isatty(self) -> bool:
+            raise failure
+
+    out = Broken()
+    monkeypatch.setattr(sys, "stdout", out)
+    write_row(Row(Glyph.DONE, "timers", Event.CHANGED, "three units"))
+
+    assert out.getvalue() == "  ✓ timers          changed        three units\n"
 
 
 def test_on_a_terminal_an_error_pair_is_bold_red_error_and_cyan_next(

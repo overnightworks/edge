@@ -21,7 +21,11 @@ _CYAN = "36"
 def _colour_on(stream: TextIO) -> bool:
     """Colour only for a person: the stream is a terminal, `NO_COLOR` is empty or unset, and the
     terminal is not `dumb`."""
-    return stream.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+    try:
+        is_terminal = stream.isatty()
+    except (AttributeError, ValueError):  # no stdout when daemonised, or a closed stream
+        return False
+    return is_terminal and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
 
 
 def _styled(text: str, style: str, stream: TextIO) -> str:
@@ -36,10 +40,6 @@ class Glyph(Enum):
     CHANGE = "~"
 
     @property
-    def row_style(self) -> str:
-        return _ROW_STYLES[self]
-
-    @property
     def verdict_style(self) -> str:
         return _VERDICT_STYLES[self]
 
@@ -48,11 +48,10 @@ _ROW_STYLES = {
     Glyph.DONE: "32",
     Glyph.FAILED: "31",
     Glyph.NEEDS_YOU: "33",
-    Glyph.UNCHANGED: _DIM,
     Glyph.CHANGE: "34",
 }
 _VERDICT_STYLES = {
-    Glyph.DONE: "1;92",
+    Glyph.DONE: "1",
     Glyph.FAILED: _BOLD_RED,
     Glyph.NEEDS_YOU: "1;33",
     Glyph.UNCHANGED: _DIM,
@@ -102,7 +101,7 @@ def write_row(row: Row) -> None:
         line = f"  {row.glyph.value} {columns}  {fact}".rstrip()
         print(_styled(line, _DIM, stdout))
         return
-    glyph = _styled(row.glyph.value, row.glyph.row_style, stdout)
+    glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
     line = f"  {glyph} {columns}"
     print(f"{line}  {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
 
@@ -118,7 +117,8 @@ def write_verdict(verdict: Verdict) -> None:
     headline = _styled(
         f"{verdict.glyph.value} {printable(verdict.summary)}", verdict.glyph.verdict_style, stdout
     )
-    print(" · ".join([headline, _styled(counted, _DIM, stdout), *hint]))
+    counts = [_styled(counted, _DIM, stdout)] if counted else []
+    print(" · ".join([headline, *counts, *hint]))
 
 
 def write_error(message: str, next_step: str | None = None) -> None:
