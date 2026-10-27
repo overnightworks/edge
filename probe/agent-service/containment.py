@@ -38,7 +38,7 @@ BINARY_LINE = re.compile(r'^binary = ".*"$', re.MULTILINE)
 WRAPPER_DIRECTORY = "/opt/probe-wrapper"
 WRAPPER = f"{WRAPPER_DIRECTORY}/claude"
 PLANT_FLAG = "plant"
-TEMPORARY = "/tmp"
+TEMPORARY = "/tmp"  # NOSONAR(S5443) only listed in the census, never written to
 FRAME = "event: failed"
 WINDOW_SECONDS = 60  # the sampler's window, which covers the whole run
 REAP_SECONDS = 6  # the reap's bound is 5 s
