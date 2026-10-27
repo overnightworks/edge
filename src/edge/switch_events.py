@@ -20,7 +20,7 @@ APPLY_WOULD_START_IT = "hal apply would start it again"
 class SwitchEvent(StrEnum):
     SWITCHED_OFF = "switched off"
     ALREADY_OFF = "already off"
-    BARRIER_UP_AGAIN = "barrier up again"
+    BARRIER_RAISED = "barrier raised"
     DISABLED = "disabled"
     PARTIAL = "partial"
 
@@ -28,7 +28,7 @@ class SwitchEvent(StrEnum):
 _GLYPH_OF_EVENT = {
     SwitchEvent.SWITCHED_OFF: Glyph.DONE,
     SwitchEvent.ALREADY_OFF: Glyph.UNCHANGED,
-    SwitchEvent.BARRIER_UP_AGAIN: Glyph.DONE,
+    SwitchEvent.BARRIER_RAISED: Glyph.DONE,
     SwitchEvent.DISABLED: Glyph.UNCHANGED,
     SwitchEvent.PARTIAL: Glyph.FAILED,
 }
@@ -134,7 +134,7 @@ def report_closing(key: str, closing: Closing) -> None:
 def report_already_off(key: str, since: str, barrier_repaired: bool) -> None:
     time = switches.describe_since(since)
     if barrier_repaired:
-        _write(key, SwitchEvent.BARRIER_UP_AGAIN, f"off since {time}")
+        _write(key, SwitchEvent.BARRIER_RAISED, f"off since {time}")
     else:
         _write(key, SwitchEvent.ALREADY_OFF, f"since {time}")
 

@@ -2665,7 +2665,7 @@ def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_i
     exit_code, out, _ = stop("probe")
 
     assert exit_code == 0
-    assert "barrier up again" in out and "off since 17.10. 22:10" in out
+    assert "barrier raised" in out and "off since 17.10. 22:10" in out
     assert ingress.barrier_file().exists()
     assert ingress.asked == ["barrier"]
     assert scripted.changing_verbs() == []
@@ -2682,9 +2682,9 @@ def test_stop_names_the_barrier_it_repaired_and_only_then(
 
     _, repaired, _ = stop("probe")
 
-    assert "barrier up again" not in standing
+    assert "barrier raised" not in standing
     assert "already off" in standing
-    assert "barrier up again" in repaired
+    assert "barrier raised" in repaired
 
 
 @pytest.mark.parametrize(
@@ -2701,7 +2701,7 @@ def test_stop_repairs_a_barrier_file_that_differs_or_cannot_be_decoded(
     exit_code, out, _ = stop("probe")
 
     assert exit_code == 0
-    assert "barrier up again" in out
+    assert "barrier raised" in out
     assert ingress.barrier_file().read_bytes() != damaged
 
 

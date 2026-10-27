@@ -127,7 +127,7 @@ def test_stop_of_a_switched_off_unit_names_the_barrier_it_put_back(hal, fakes): 
     result = hal("stop", "probe")
 
     assert result.exit_code == ExitCode.OK
-    assert squeezed(result.out) == "✓ probe barrier up again off since 17.10. 22:10"
+    assert squeezed(result.out) == "✓ probe barrier raised off since 17.10. 22:10"
 
 
 def test_stop_of_a_disabled_unit_that_nothing_runs_says_so(hal, fakes):  # noqa: F811
