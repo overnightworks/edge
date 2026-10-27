@@ -45,6 +45,13 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def cli_world(world: World, monkeypatch: pytest.MonkeyPatch) -> World:
+    """The fake world behind `hal.cli.main`, which reaches the world only through `real_world`."""
+    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
+    return world
+
+
+@pytest.fixture
 def world(home: Path, fakes: Fakes) -> World:
     return World(
         home=home,
@@ -531,10 +538,9 @@ LINKED_CASES = (
 
 @pytest.mark.parametrize("case", LINKED_CASES.split())
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
-    home, world, repository, fakes, case, capsys, monkeypatch
+    home, cli_world, repository, fakes, case, capsys, monkeypatch
 ):
     symlinked(home, monkeypatch, case)
-    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
     fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "probe")]
     before = tree_state(home.parent)
 
@@ -777,7 +783,7 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
     out = capsys.readouterr().out
     assert code == ExitCode.OK
     assert fakes.uv_calls == rewrites(home / "git" / "fresh") * 2
-    assert out.splitlines()[-1] == "✓ renamed old → fresh · 1 steps"
+    assert out.splitlines()[-1] == "✓ renamed old → fresh · 1 step"
     assert "nothing to do" not in out
 
 
@@ -813,9 +819,8 @@ def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home
 
 
 @pytest.fixture
-def through_cli(world, monkeypatch, capsys):
+def through_cli(cli_world, capsys):
     """`hal rename` through `hal.cli.main`, returning the exit code and the two streams."""
-    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
 
     def run(*arguments: str):
         code = cli.main(["rename", *arguments])
@@ -848,6 +853,20 @@ def test_the_plan_shows_one_row_for_each_kind_of_step(everything, through_cli, r
 
     assert code == ExitCode.OK
     assert row in out.splitlines()
+
+
+def test_the_plan_rows_follow_the_order_the_steps_run(everything, through_cli):
+    _, out, _ = through_cli("old", "fresh")
+
+    assert [line.split()[1] for line in out.splitlines()[:-2]] == [
+        "clone",
+        "worktrees",
+        "origin",
+        "worktrees",
+        "memory",
+        "origin",
+        "venv",
+    ]
 
 
 def test_the_plan_ends_with_its_verdict_and_the_command_that_applies_it(everything, through_cli):

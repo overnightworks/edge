@@ -9,7 +9,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from hal_output import Glyph, Row, Verdict, write_error, write_row, write_verdict
+from hal_output import Glyph, Noun, Row, Verdict, write_error, write_row, write_verdict
 
 
 class StepKind(Enum):
@@ -59,8 +59,8 @@ class HasRow(Protocol):
     row: StepRow
 
 
-class Label(StrEnum):
-    STEPS = "steps"
+class Label(Noun):
+    STEP = "step"
 
 
 def _event(word: str, count: int) -> StrEnum:
@@ -102,7 +102,7 @@ def write_nothing_to_do(old: str) -> None:
 
 
 def write_renamed(old: str, new: str, steps: int) -> None:
-    write_verdict(Verdict(Glyph.DONE, f"renamed {old} → {new}", ((steps, Label.STEPS),)))
+    write_verdict(Verdict(Glyph.DONE, f"renamed {old} → {new}", ((steps, Label.STEP),)))
 
 
 def write_refusals(reasons: Sequence[str]) -> None:
