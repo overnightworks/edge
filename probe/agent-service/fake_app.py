@@ -15,9 +15,14 @@ from scratch_secrets import issue_certificate
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
+HELD_LINE = "method=tools/call tool=step held"
+RELEASED_PREFIX = "method=tools/call tool=step released at="
 APP_LINE = re.compile(
-    r"method=(?:initialize|notifications/initialized|tools/list|other) "
-    r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
+    r"(?:method=(?:initialize|notifications/initialized|tools/list|other) "
+    r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01])"
+    rf"|{re.escape(HELD_LINE)}"
+    rf"|{re.escape(RELEASED_PREFIX)}\d+\.\d{{3}}"
+    r"|method=tools/call tool=other"
 )
 APP_HANDSHAKE = (
     "method=initialize offered=- canary=0 bearer=1",
@@ -29,6 +34,7 @@ APP_LISTING = "method=tools/list offered=step,bare,extra canary={canary} bearer=
 class Mode(StrEnum):
     RELAY = "relay"
     CANARY = "canary"
+    HOLD = "hold"
 
 
 def with_setting(text: str, key: str, value: str) -> str:
@@ -88,5 +94,5 @@ class FakeApp:
         (self.mode_directory / "mode").write_text(mode.value, encoding="utf-8")
         (self.mode_directory / "mode").chmod(0o644)
 
-    def app_lines(self) -> list[str]:
-        return self.container_log(APP_SERVICE).splitlines()
+    def app_lines(self, seconds: int = 300, container: str | None = None) -> list[str]:
+        return self.container_log(APP_SERVICE, timeout=seconds, container=container).splitlines()

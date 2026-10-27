@@ -280,7 +280,7 @@ def stub_probe(probe) -> SimpleNamespace:
     run = object.__new__(probe.cells.LoginProbe)
     run.held, run.failed, run.not_driven, run.texts = [], [], [], []
     run.wait_until_listening = lambda: None
-    for cell in ("config", "u2", "u3", "u6", "u7", "u8", "i6", "s00", "s1"):
+    for cell in ("config", "u2", "u3", "u6", "u7", "u8", "i6", "s00", "b9", "s1"):
         setattr(run, f"cell_{cell}", lambda cell=cell: run.held.append(cell))
     return run
 
@@ -295,7 +295,7 @@ def test_a_cell_that_fails_does_not_stop_the_cells_after_it(probe, capsys):
     run.cell_i6 = fails
     run.drive()
     assert run.failed == ["I6"]
-    assert run.held[-2:] == ["s00", "s1"]
+    assert run.held[-3:] == ["s00", "b9", "s1"]
     assert capsys.readouterr().out == "I6 FAILED (reason withheld)\n"
 
 
@@ -330,7 +330,7 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
 ):
     """#457 row S1 held: the cell holds only when the gate and every text are clean."""
     run = object.__new__(probe.cells.LoginProbe)
-    run.held, run.failed = [], []
+    run.held, run.failed, run.minted = [], [], []
     run.login = SimpleNamespace(token=TOKEN)
     run.gate = SimpleNamespace(hits=hits)
     run.container_log = lambda service: TOKEN * in_log

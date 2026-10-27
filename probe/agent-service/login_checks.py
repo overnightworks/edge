@@ -2,6 +2,9 @@
 gate over its output, the failure type and runner that print nothing but verdicts, the preflight
 of the resolved compose configuration and the S00 verdicts (agent-runtime#440, contract line 1).
 
+The B9 verdicts (agent-runtime#440, R2) and the waits of its drive are here too, on injected
+clocks.
+
 Nothing here prints a path, a subprocess's output or an exception's text: every line is a verdict,
 a count, a role name, a docker verb with an exit code, or a fixed reason from `Refusal`."""
 
@@ -20,10 +23,20 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple, Protocol, TextIO
 
-from census_client import Mount
+from census_client import Mount, Watched
 from egress import ProbeFailed
+from fake_app import HELD_LINE, RELEASED_PREFIX
 from image import ProbeFailed as ImageProbeFailed
 from live_smoke import redacted
+from run_client import (
+    CLIENT_LINE,
+    NO_LOSS,
+    OTHER,
+    REFUSED,
+    RUN_STARTED,
+    STATUS_SECONDS,
+)
+from service_log import LogClasses
 from tree_census import Skip
 
 TOKEN_LIMIT = 16 * 1024
@@ -31,6 +44,13 @@ TOKEN_FILE = "token"
 ROOTS_CELL = "S00 (roots)"
 TOKEN_CELL = "S00 (token)"
 SKIP_REASONS = frozenset(skip.value for skip in Skip)
+START_SECONDS = 30  # from starting the client to its `event run_started`: only the admission
+R2_CALL_SECONDS = 90  # from `event run_started` to a held call; the paid turn is bounded by it
+CALL_POLL_SECONDS = 0.5
+RELEASE_SECONDS = 5  # above the service's 2.0 s settle of the forwards, with room for the log read
+WATCH_SECONDS = 120  # R2_CALL_SECONDS + the hold + the reap (102.1 s), below the census's 240 s
+CLIENT_READ_SECONDS = STATUS_SECONDS + 10  # after it the host kills the client
+B9_CELLS = ("B9 (a)", "B9 (b)", "B9 (c)", "B9 (d)", "B9 (e)")
 
 
 class Refusal(StrEnum):
@@ -405,3 +425,215 @@ def s00_verdicts(mounts: Mapping[str, Mount]) -> tuple[Verdict, Verdict]:
             TOKEN_CELL, Outcome.HELD, "0 files outside the login directory hold the login token"
         )
     return roots, token
+
+
+# --- B9 -----------------------------------------------------------------------------------------
+
+
+class ClientReport(NamedTuple):
+    """What the run client printed: only lines that fullmatched `CLIENT_LINE` count as its
+    fields; any other line is counted and nothing of it is kept."""
+
+    answer: int | None = None
+    answer_code: str | None = None
+    events: tuple[str, ...] = ()
+    closed_at: float | None = None
+    state: str | None = None
+    running: bool = False
+    loss: str | None = None
+    broke_off: bool = False
+    unmatched: int = 0
+
+    @property
+    def started(self) -> bool:
+        return RUN_STARTED in self.events
+
+
+def read_client_output(lines: Iterable[str]) -> ClientReport:
+    report = ClientReport()
+    for line in lines:
+        found = CLIENT_LINE.fullmatch(line)
+        if not found:
+            report = report._replace(unmatched=report.unmatched + 1)
+        elif found["answer"]:
+            report = report._replace(answer=int(found["answer"]), answer_code=found["answer_code"])
+        elif found["event"]:
+            report = report._replace(events=(*report.events, found["event"]))
+        elif found["closed_at"]:
+            report = report._replace(closed_at=float(found["closed_at"]))
+        elif found["state"]:
+            report = report._replace(
+                state=found["state"], loss=found["loss"], running=bool(found["running"])
+            )
+        else:
+            report = report._replace(broke_off=True)
+    return report
+
+
+class AppCall(NamedTuple):
+    """The call of `step` the fake app logged: whether it was held, and when it was released."""
+
+    held: bool
+    released_at: float | None
+
+
+def app_call(lines: Iterable[str]) -> AppCall:
+    held, released = False, None
+    for line in lines:
+        held = held or line == HELD_LINE
+        if line.startswith(RELEASED_PREFIX):
+            released = float(line.removeprefix(RELEASED_PREFIX))
+    return AppCall(held, released)
+
+
+def wait_until(
+    condition: Callable[[int], bool],
+    seconds: float,
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> bool:
+    """True as soon as `condition` holds within `seconds`, False when they have passed first,
+    also when the condition itself held only after them. The condition gets the whole seconds
+    left (at least one) to bound its own reads; a read that times out counts as the deadline
+    passed."""
+    end = clock() + seconds
+    while True:
+        try:
+            if condition(max(int(end - clock()), 1)):
+                return clock() <= end
+        except subprocess.TimeoutExpired:
+            return False
+        if clock() >= end:
+            return False
+        sleep(CALL_POLL_SECONDS)
+
+
+class CallWait(StrEnum):
+    HELD = "held"
+    CLIENT_EXITED = "the client exited"
+    TIMED_OUT = "no call within the time"
+
+
+def wait_for_call(
+    clock: Callable[[], float],
+    sleep: Callable[[float], None],
+    app_lines: Callable[[int], list[str]],
+    client_alive: Callable[[], bool],
+) -> CallWait:
+    """Polls the app's lines (those since R2 began) until a `held` line appears, the client
+    exits, or `R2_CALL_SECONDS` have passed."""
+    held_polls: list[bool] = []
+
+    def call_or_exit(left: int) -> bool:
+        held_polls.append(app_call(app_lines(left)).held)
+        return held_polls[-1] or not client_alive()
+
+    if not wait_until(call_or_exit, R2_CALL_SECONDS, clock, sleep):
+        return CallWait.TIMED_OUT
+    return CallWait.HELD if held_polls[-1] else CallWait.CLIENT_EXITED
+
+
+class B9Evidence(NamedTuple):
+    client: ClientReport
+    watch: Watched | None
+    call: AppCall
+    log: LogClasses  # the service log's records since R2 began
+    working_root_before: int | None  # its entries at S00, just before R2; None: not shown
+
+
+class B9Result(NamedTuple):
+    verdicts: tuple[Verdict, ...]
+    timing: str | None  # printed only when (b), (c) and (d) held
+
+
+def b9_not_driven(reason: str) -> tuple[Verdict, ...]:
+    return tuple(Verdict(cell, Outcome.NOT_DRIVEN, reason) for cell in B9_CELLS)
+
+
+def _loss_verdict(client: ClientReport) -> Verdict:
+    cell = B9_CELLS[0]
+    if client.state is None or client.state == REFUSED:
+        return Verdict(cell, Outcome.NOT_DRIVEN, f"status read: {client.state or 'none'}")
+    evidence = f"client_lost {client.loss}, state {client.state}"
+    if OTHER in (client.state, client.loss):
+        return Verdict(cell, Outcome.NOT_DRIVEN, "status read: a value outside the wire's sets")
+    if client.running or client.loss == NO_LOSS:
+        return Verdict(cell, Outcome.FAILED, evidence)
+    return Verdict(cell, Outcome.HELD, evidence)
+
+
+def _gone_verdict(
+    cell: str, what: str, gone_at: float | None, seen: bool, t0: float | None
+) -> Verdict:
+    if t0 is None:
+        return Verdict(cell, Outcome.NOT_DRIVEN, "the client logged no t0")
+    if not seen:
+        return Verdict(cell, Outcome.NOT_DRIVEN, f"the watch never saw {what}")
+    if gone_at is None:
+        return Verdict(cell, Outcome.FAILED, f"{what} was never seen gone before the deadline")
+    if gone_at < t0:
+        return Verdict(cell, Outcome.FAILED, f"{what} was seen gone before t0")
+    return Verdict(cell, Outcome.HELD, f"{what} was seen gone {gone_at - t0:.2f} s after t0")
+
+
+def _tree_verdict(evidence: B9Evidence) -> Verdict:
+    cell = B9_CELLS[2]
+    before = evidence.working_root_before
+    if before != 0:
+        reason = (
+            "S00 showed no working root"
+            if before is None
+            else f"the working root held {before} entries before R2"
+        )
+        return Verdict(cell, Outcome.NOT_DRIVEN, reason)
+    watch = evidence.watch
+    return _gone_verdict(
+        cell, "the run tree", watch and watch.tree_gone_at, bool(watch and watch.tree_seen),
+        evidence.client.closed_at,
+    )  # fmt: skip
+
+
+def _release_verdict(evidence: B9Evidence) -> Verdict:
+    cell, released, t0 = B9_CELLS[3], evidence.call.released_at, evidence.client.closed_at
+    if released is None:
+        return Verdict(cell, Outcome.FAILED, f"released did not come within {RELEASE_SECONDS} s")
+    if t0 is None:
+        return Verdict(cell, Outcome.NOT_DRIVEN, "the client logged no t0")
+    if released < t0:
+        return Verdict(cell, Outcome.FAILED, "the app's connection closed before the client's")
+    return Verdict(cell, Outcome.HELD, f"released {released - t0:.2f} s after t0")
+
+
+def _log_verdict(log: LogClasses) -> Verdict:
+    errors = log.other_errors + log.login_refused
+    evidence = (
+        f"{log.other_errors} other ERROR records, {log.login_refused} login-refused, "
+        f"{log.escaped} bare lines"
+    )
+    return Verdict(B9_CELLS[4], Outcome.HELD if not errors else Outcome.FAILED, evidence)
+
+
+def b9_verdicts(evidence: B9Evidence) -> B9Result:
+    """agent-runtime#440 B9 (a)-(e) for a run whose call the app held and whose stream the client
+    closed at t0. The timing is an observation: no bound is claimed."""
+    watch, t0 = evidence.watch, evidence.client.closed_at
+    group = _gone_verdict(
+        B9_CELLS[1], "the CLI group", watch and watch.group_gone_at,
+        bool(watch and watch.group_seen), t0,
+    )  # fmt: skip
+    verdicts = (
+        _loss_verdict(evidence.client), group, _tree_verdict(evidence),
+        _release_verdict(evidence), _log_verdict(evidence.log),
+    )  # fmt: skip
+    seen = all(verdict.outcome is Outcome.HELD for verdict in verdicts[1:4])
+    return B9Result(verdicts, _timing(evidence) if seen else None)
+
+
+def _timing(evidence: B9Evidence) -> str:
+    watch, t0 = evidence.watch, evidence.client.closed_at
+    reaped, tree, released = watch.group_gone_at, watch.tree_gone_at, evidence.call.released_at
+    total = max(reaped, tree, released) - t0
+    return (
+        f"B9 timing (observed, no bound): max(t_reap, t_tree, t_up) - t0 = {total:.2f} s; "
+        f"t_up - t_reap = {released - reaped:.2f} s"
+    )

@@ -16,6 +16,8 @@ from egress import Probe, ProbeFailed, expect
 
 SERVICE_UID = 1000  # `user: "1000:1000"` of the service in compose.yaml
 SAMPLE_INTERVAL = 0.25
+WATCH_INTERVAL = 0.01
+WATCH_STOP_PATH = "/probe-watch/stop"  # the file the host's overlay lets it create to end a watch
 
 
 class Process(NamedTuple):
@@ -24,6 +26,17 @@ class Process(NamedTuple):
     pgid: int
     sid: int
     name: str  # as `tree_census.Names` shows it
+
+
+class Watched(NamedTuple):
+    """What a watch saw of the CLI's process group and the run tree: whether each was seen, the
+    wall time (unix seconds) it was first seen gone afterwards, and how many samples it took."""
+
+    group_seen: bool
+    group_gone_at: float | None
+    tree_seen: bool
+    tree_gone_at: float | None
+    samples: int
 
 
 class Mount(NamedTuple):
@@ -63,6 +76,14 @@ class CensusClient:
             "interval": SAMPLE_INTERVAL, "group_leader": 0,
         })  # fmt: skip
         return tuple(Process(*record) for record in report["processes"])
+
+    def watch(self, deadline_seconds: float) -> Watched:
+        """Samples the processes and the working root every 10 ms until the group and the tree
+        were each seen and then gone, the stop file appears, or the deadline passes."""
+        return Watched(**self.ask({
+            "mode": "watch", "proc": "/proc", "working_root": self.working_root,
+            "deadline": deadline_seconds, "interval": WATCH_INTERVAL, "stop_path": WATCH_STOP_PATH,
+        }))  # fmt: skip
 
     def mounts(self) -> dict[str, Mount]:
         """Every writable mount the census shows, by its shown name."""

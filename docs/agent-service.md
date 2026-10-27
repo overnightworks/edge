@@ -225,6 +225,17 @@ directory and that scratch file read-only. It prints only verdicts, counts, role
 with an exit code, and an exact-secret gate over its output is the second line. Agents give it only a `mktemp`
 directory with a dummy token.
 
+Between S00 and S1 it drives R2 (agent-runtime#440 B9 (a)-(e)), only when every frame cell held. The fake app
+(`app_tools.py`, in mode `hold`) holds a call of `step` until its connection closes. One run is posted once by
+`run_client.py` in `agent-smoke`, which prints only a closed vocabulary of lines; the host writes `close` on
+the client's stdin when the app logs the held call, or, when no call came within the time bound, writes it then
+and ends the wait.
+`tree_census.py`'s `watch` mode samples the CLI group and the run tree every 10 ms, the client reads
+`GET /runs/{id}` and the host the service log. B9 (a)-(e) and an observed timing line, with no bound claimed, follow. A
+dummy login makes no call: B9 (a)-(e) are then NOT DRIVEN ("no call reached the fake app") and the command
+exits 1 by design. With the real login R2 is one paid model turn, which is why it is posted once and `busy` is
+not retried.
+
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
 with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the

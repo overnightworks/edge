@@ -3,6 +3,8 @@ census relays nothing of its output."""
 
 from __future__ import annotations
 
+import ast
+import json
 import subprocess
 from collections.abc import Iterator
 from types import ModuleType
@@ -56,3 +58,26 @@ def test_a_failing_census_relays_neither_stderr_nor_its_key(census_client, retur
         client.ask({"mode": "census"})
     assert KEY_MARKER not in str(raised.value)
     assert client.key.hex() not in str(raised.value)
+
+
+def test_a_watch_sends_its_settings_and_parses_the_report(census_client):
+    """B9 (b), (c): the watch asks in watch mode for the working root and gives back its report."""
+    asked = []
+    report = {
+        "group_seen": True, "group_gone_at": 12.5, "tree_seen": True, "tree_gone_at": None,
+        "samples": 9,
+    }  # fmt: skip
+
+    class Probe:
+        def run(self, command, *, stdin, check, timeout):
+            asked.append(stdin)
+            return subprocess.CompletedProcess(command, 0, json.dumps(report) + "\n", "")
+
+    client = object.__new__(census_client.CensusClient)
+    client.probe, client.container, client.key = Probe(), "container", b"\x01" * 16
+    client.working_root = "/work"
+    assert client.watch(120)._asdict() == report
+    literal = asked[0].rsplit("emit(", 1)[1].strip().removesuffix(")")
+    settings = json.loads(ast.literal_eval(literal))
+    expected = ("watch", "/work", 120)
+    assert (settings["mode"], settings["working_root"], settings["deadline"]) == expected
