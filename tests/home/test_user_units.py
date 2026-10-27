@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import setup
-from home_tools.cli import build_layout_and_ports, edge_units_directory
+from conftest import Sandbox
+
+from home_tools import cli, setup
+from home_tools.cli import build_layout_and_ports, edge_units_directory, main
 from home_tools.system_step import Applied, CheckState, StepFailed
-from home_tools.layout import Layout
+from home_tools.layout import Layout, run_command
 from home_tools.user_units import UserUnits
 
 USER_UNITS_STEP = "User units"
@@ -103,7 +105,7 @@ class Machine:
         self.checkout_units = checkout_units
         self.user_units = home / ".config" / "systemd" / "user"
         self.user_units.mkdir(parents=True)
-        self.checkout_units.mkdir(parents=True)
+        self.checkout_units.mkdir(parents=True, exist_ok=True)
         self.write_unit(SERVICE, "ExecStart=/checkout/bin/backup\n")
         self.write_unit(TIMER, "OnCalendar=weekly\n")
         self.systemctl = FakeSystemctl(self.user_units)
@@ -146,71 +148,61 @@ def test_a_second_apply_changes_nothing(machine: Machine) -> None:
     assert machine.systemctl.changes == []
 
 
-def setup_output(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def sandboxed_machine(sandbox: Sandbox) -> Machine:
+    """The sandbox's home and checkout units, with the fake systemd in place of the real one."""
+    return Machine(sandbox.home, cli.edge_units_directory(sandbox.layout))
+
+
+def setup_apply_lines(
+    machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> list[str]:
-    """The lines `hal setup --apply` prints with the real user-units step and every other row settled."""
+    """The lines `hal setup --apply` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
 
-    def only_systemctl(argv: Sequence[str]) -> str | None:
-        return machine.systemctl(argv) if argv[0] == "systemctl" else None
+    def run(argv: Sequence[str]) -> str | None:
+        return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
 
-    def settled(row: setup.SetupRow) -> setup.Step:
-        return setup.Step(
-            "settled",
-            row,
-            lambda: True,
-            lambda: CheckState.UNCHANGED,
-            lambda: Applied.UNCHANGED,
-            "",
-            "",
-        )
-
-    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
-    units = next(step for step in setup._steps(layout, ports) if step.name == USER_UNITS_STEP)
-    others = [settled(row) for row in setup.SetupRow if row is not setup.SetupRow.TIMERS]
-    monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (*others, units))
-
-    assert setup.setup(layout, ports, apply=True) == 0
+    assert main(["setup", "--apply"], home=sandbox.home, run=run) == 0
 
     return capsys.readouterr().out.splitlines()
 
 
 def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    machine.write_unit("home-check.timer", "OnCalendar=daily\n")
+    sandboxed_machine.write_unit("home-check.timer", "OnCalendar=daily\n")
 
-    lines = setup_output(machine, capsys, monkeypatch)
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
     assert "  \u2713 timers          changed        2 timers \u00b7 systemd reloaded" in lines
 
 
 def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    machine.step.apply()
-    machine.systemctl.active.clear()
-    (machine.user_units / TIMERS_WANTS / TIMER).unlink()
+    sandboxed_machine.step.apply()
+    sandboxed_machine.systemctl.active.clear()
+    (sandboxed_machine.user_units / TIMERS_WANTS / TIMER).unlink()
 
-    lines = setup_output(machine, capsys, monkeypatch)
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
     assert "  \u2713 timers          changed        1 timer" in lines
 
 
 def test_an_unchanged_timers_row_is_bare(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    machine.step.apply()
+    sandboxed_machine.step.apply()
 
-    lines = setup_output(machine, capsys, monkeypatch)
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
     assert "  \u00b7 timers          unchanged" in lines
 
 
 def test_no_loaded_unit_line_follows_the_timers_row(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    output = "\n".join(setup_output(machine, capsys, monkeypatch))
+    output = "\n".join(setup_apply_lines(sandboxed_machine, sandbox, capsys))
 
     assert "ExecStart=" not in output
     assert "Result=" not in output
