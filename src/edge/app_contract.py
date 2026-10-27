@@ -22,13 +22,13 @@ from typing import Any
 import yaml
 
 from edge import compose
-from edge_check.docker import EDGE_NAME_LABEL
+from edge_check.docker import EDGE_ALIAS_LABEL, EDGE_NAME_LABEL, TRAEFIK_NAME
 
 _TRAEFIK_ENABLE = "traefik.enable"
 _WAITING_CONDITIONS = {"service_healthy", "service_completed_successfully"}
 _RESTART = "unless-stopped"
 _DISABLED_HEALTHCHECK = "NONE"
-_DECIDING_LABELS = {EDGE_NAME_LABEL, _TRAEFIK_ENABLE}
+_DECIDING_LABELS = {EDGE_NAME_LABEL, EDGE_ALIAS_LABEL, _TRAEFIK_ENABLE}
 _COMPOSE_TRUE = {"true", "yes", "on", "y"}
 
 
@@ -184,30 +184,68 @@ def _mount_interpolates(volume: object) -> bool:
 
 
 def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
-    """Each host has exactly one service labelled with its name and `traefik.enable: "true"`; a
-    labelled service names a host of the entry and has a healthcheck."""
+    """Each host has exactly one service labelled with its name, or with it as `edge.alias`, and
+    `traefik.enable: "true"`; a labelled service names hosts of the entry and has a healthcheck."""
     holders: dict[str, list[str]] = {}
     for name, definition in services.items():
-        service = f"service {compose.printable(str(name))}"
-        if _label_interpolates(definition):
-            yield f"{service} interpolates a label ($); not yet supported"
-            continue
-        labels = _labels(definition)
-        if EDGE_NAME_LABEL not in labels:
-            continue
-        if labels.get(_TRAEFIK_ENABLE) != "true":
-            yield f"{service} has {EDGE_NAME_LABEL} without {_TRAEFIK_ENABLE} true (labels)"
-        if labels[EDGE_NAME_LABEL] not in hosts:
-            yield f"{service} labels a name the entry does not list ({EDGE_NAME_LABEL})"
-        holders.setdefault(labels[EDGE_NAME_LABEL], []).append(str(name))
-        if reason := _healthcheck_refusal(definition.get("healthcheck")):
-            yield f"{service} {reason}"
+        yield from _service_refusals(str(name), definition, hosts, holders)
     for host in hosts:
         if len(holders.get(host, [])) != 1:
             yield (
                 f"host {compose.printable(host)} needs exactly one service labelled "
-                f"{EDGE_NAME_LABEL} with its name (labels)"
+                f"{EDGE_NAME_LABEL} or {EDGE_ALIAS_LABEL} with it (labels)"
             )
+
+
+def _service_refusals(
+    key: str, definition: dict, hosts: Sequence[str], holders: dict[str, list[str]]
+) -> Iterator[str]:
+    """One service's refusals; the hosts it holds are added to `holders`."""
+    service = f"service {compose.printable(key)}"
+    if (interpolated := _interpolated_label(definition)) is not None:
+        named = f" ({interpolated})" if interpolated in _DECIDING_LABELS else ""
+        yield f"{service} interpolates a label ($){named}; not yet supported"
+        return
+    labels = _labels(definition)
+    if EDGE_NAME_LABEL not in labels:
+        if EDGE_ALIAS_LABEL in labels:
+            yield f"{service} has {EDGE_ALIAS_LABEL} without {EDGE_NAME_LABEL} (labels)"
+        return
+    if labels.get(_TRAEFIK_ENABLE) != "true":
+        yield f"{service} has {EDGE_NAME_LABEL} without {_TRAEFIK_ENABLE} true (labels)"
+    if labels[EDGE_NAME_LABEL] not in hosts:
+        yield f"{service} labels a name the entry does not list ({EDGE_NAME_LABEL})"
+    holders.setdefault(labels[EDGE_NAME_LABEL], []).append(key)
+    yield from _alias_refusals(service, labels, hosts, holders, key)
+    if reason := _healthcheck_refusal(definition.get("healthcheck")):
+        yield f"{service} {reason}"
+
+
+def _alias_refusals(
+    service: str,
+    labels: dict[str, str],
+    hosts: Sequence[str],
+    holders: dict[str, list[str]],
+    key: str,
+) -> Iterator[str]:
+    """`edge.alias` is one more host of the entry for the service that carries `edge.name`: the
+    name must be one Traefik's provider accepts, the alias too, and differ from the name."""
+    if EDGE_ALIAS_LABEL not in labels:
+        return
+    alias = labels[EDGE_ALIAS_LABEL]
+    if not TRAEFIK_NAME.fullmatch(labels[EDGE_NAME_LABEL]):
+        yield (
+            f"{service} has {EDGE_ALIAS_LABEL} beside an {EDGE_NAME_LABEL} Traefik "
+            "does not route (labels)"
+        )
+    elif not TRAEFIK_NAME.fullmatch(alias):
+        yield f"{service} labels an {EDGE_ALIAS_LABEL} outside [a-z0-9-]{{1,63}} (labels)"
+    elif alias == labels[EDGE_NAME_LABEL]:
+        yield f"{service} labels an {EDGE_ALIAS_LABEL} equal to its {EDGE_NAME_LABEL} (labels)"
+    elif alias not in hosts:
+        yield f"{service} labels an alias the entry does not list ({EDGE_ALIAS_LABEL})"
+    else:
+        holders.setdefault(alias, []).append(key)
 
 
 def _healthcheck_refusal(health: object) -> str | None:
@@ -231,12 +269,16 @@ def _compose_true(value: object) -> bool:
     return value is True or (isinstance(value, str) and value.lower() in _COMPOSE_TRUE)
 
 
-def _label_interpolates(definition: dict) -> bool:
-    """A `$` in a label's key, or in the value of a label the contract reads, could resolve to
-    another label or host from the `.env` the release tracks."""
-    return any(
-        _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
-        for key, value in _label_pairs(definition)
+def _interpolated_label(definition: dict) -> str | None:
+    """The key of the first label with a `$` in its key, or in its value when the contract reads
+    that label: it could resolve to another label or host from the `.env` the release tracks."""
+    return next(
+        (
+            key
+            for key, value in _label_pairs(definition)
+            if _interpolates(key) or (key in _DECIDING_LABELS and _interpolates(value))
+        ),
+        None,
     )
 
 

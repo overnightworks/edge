@@ -1,15 +1,11 @@
 """The one decision: what reaches beyond loopback, and which routed names Traefik would mix up."""
 
-import re
 from collections import defaultdict
 
 from edge_check.allowlist import AllowEntry
-from edge_check.docker import Container, Publication, parse_containers
+from edge_check.docker import TRAEFIK_NAME, Container, Publication, parse_containers
 from edge_check.exposure import Finding, PortRange, Problem, is_loopback, ordered
 from edge_check.listeners import Listener, parse_listeners
-
-# The same pattern traefik.yml's provider constraint demands of the `edge.name` label.
-_EDGE_NAME = re.compile(r"[a-z0-9-]{1,63}")
 
 # docker-proxy runs in dockerd's unit: ss shows that cgroup to every caller, the process to root.
 _DOCKER_PROXY_UNIT = "docker.service"
@@ -82,24 +78,31 @@ def edge_name_findings(containers: list[Container]) -> list[Finding]:
     findings += [
         Finding(problem=Problem.INVALID_EDGE_NAME, subject=container.name, edge_name=name)
         for container in containers
-        if (name := container.edge_name) is not None and not _EDGE_NAME.fullmatch(name)
+        for name in _claimed_hosts(container)
+        if not TRAEFIK_NAME.fullmatch(name)
     ]
     findings += [
         Finding(
             problem=Problem.DUPLICATE_EDGE_NAME, subject=", ".join(sorted(holders)), edge_name=name
         )
-        for name, holders in _running_containers_by_edge_name(containers).items()
+        for name, holders in _running_containers_by_host(containers).items()
         if len(holders) > 1
     ]
     return findings
 
 
-def _running_containers_by_edge_name(containers: list[Container]) -> dict[str, list[str]]:
-    by_edge_name: dict[str, list[str]] = defaultdict(list)
+def _claimed_hosts(container: Container) -> tuple[str, ...]:
+    """The `edge.name` and the `edge.alias` of a container, each only when it carries it."""
+    return tuple(host for host in (container.edge_name, container.edge_alias) if host is not None)
+
+
+def _running_containers_by_host(containers: list[Container]) -> dict[str, list[str]]:
+    by_host: dict[str, list[str]] = defaultdict(list)
     for container in containers:
-        if container.running and container.edge_name is not None:
-            by_edge_name[container.edge_name].append(container.name)
-    return by_edge_name
+        if container.running:
+            for host in dict.fromkeys(_claimed_hosts(container)):
+                by_host[host].append(container.name)
+    return by_host
 
 
 def _publication_problem(publication: Publication) -> Problem | None:

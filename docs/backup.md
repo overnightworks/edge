@@ -21,8 +21,8 @@ written) and reports, by `problem`:
 | `publication-without-host-ip` | a container publishes a port without a host IP (Docker would bind every interface; `-P` does this for every exposed port) |
 | `listener-beyond-loopback` | a TCP or UDP socket listens on a non-loopback address and no allow-list entry permits it |
 | `routed-without-edge-name` | a container carries `traefik.enable=true` but no `edge.name` label |
-| `invalid-edge-name` | a container's `edge.name` does not match `^[a-z0-9-]{1,63}$` |
-| `duplicate-edge-name` | two or more running containers carry the same `edge.name` (one finding names them all) |
+| `invalid-edge-name` | a container's `edge.name` or `edge.alias` does not match `^[a-z0-9-]{1,63}$` |
+| `duplicate-edge-name` | two or more running containers claim the same host by `edge.name` or `edge.alias` (one finding names them all) |
 
 Stopped containers count too, since their publications and labels return when they start; only the
 duplicate check looks at running containers alone. docker-proxy's socket for a running container's

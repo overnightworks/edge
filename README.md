@@ -2,7 +2,7 @@
 
 The gatekeeper in front of the tools on the operator's PC. Traefik listens on loopback only:
 `127.0.0.1:8081` is the tunnel's target and routes `<name>.<EDGE_DOMAIN>` to the container that
-carries the label `edge.name=<name>`; `127.0.0.1:8090` serves the Keycloak admin console on this PC and
+carries the label `edge.name=<name>` (a container with `edge.alias` is routed under that second host too); `127.0.0.1:8090` serves the Keycloak admin console on this PC and
 is never a tunnel target. Traefik never sees the Docker socket: a GET-only socket proxy hands it the
 container list and events.
 
@@ -60,6 +60,8 @@ labels:
 
 - `edge.name` is one lowercase label, no dots, matching `^[a-z0-9-]{1,63}$` (`traefik.yml`); a
   container whose `edge.name` is missing or does not match is never routed.
+- `edge.alias` (optional, one more host name of the same shape) routes a second host
+  `<alias>.<EDGE_DOMAIN>` to a container that has `edge.name`; without `edge.name` it routes nothing.
 - Traefik reaches the container by its bridge IP. If the container exposes more than one port, name
   it: `traefik.http.services.<name>.loadbalancer.server.port: "<port>"`.
 - Never put a login-less tool on a network shared with a public tool.
