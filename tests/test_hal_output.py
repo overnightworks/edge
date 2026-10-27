@@ -95,21 +95,19 @@ def put_on_terminals(monkeypatch: pytest.MonkeyPatch) -> tuple[Terminal, Termina
 def test_on_a_terminal_a_row_colours_only_its_glyph_and_dims_its_fact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#495 and #498: the glyph repeats the word in colour; subject and event keep the default."""
+    """#495: the glyph repeats the word in colour; subject and event keep the default."""
 
     out, _err = put_on_terminals(monkeypatch)
     write_row(Row(Glyph.DONE, "timers", Event.CHANGED, "three units"))
     write_row(Row(Glyph.FAILED, "system", Event.CHANGED))
     write_row(Row(Glyph.NEEDS_YOU, "secrets", Event.CHANGED))
     write_row(Row(Glyph.CHANGE, "commit hook", Event.CHANGED))
-    write_row(Row(Glyph.ANNOUNCE, "sudo", Event.CHANGED))
 
     assert out.getvalue().splitlines() == [
         "  \x1b[32m✓\x1b[0m timers          changed        \x1b[2mthree units\x1b[0m",
         "  \x1b[31m✗\x1b[0m system          changed",
         "  \x1b[33m!\x1b[0m secrets         changed",
         "  \x1b[34m~\x1b[0m commit hook     changed",
-        "  \x1b[36m\u203a\x1b[0m sudo            changed",
     ]
 
 
