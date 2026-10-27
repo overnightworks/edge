@@ -15,7 +15,7 @@ import pytest
 from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeDisk, FakeProbe, plant_secrets, symlinked_folder_fix
 
 from home_tools import cli, secrets_view
-from home_tools.secrets_setup import BY_HAND_STEP, Boundaries, Terminal
+from home_tools.secrets_setup import Boundaries, Terminal
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 from home_tools.layout import Layout
 
@@ -799,7 +799,6 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     assert rows_of(view)["restic/password"][-1] == RESTIC_RECREATE
     assert setup_code == 1
     assert f"Dafür gibt es noch keinen Assistenten; von Hand: {RESTIC_RECREATE}" in setup
-    assert BY_HAND_STEP + "restic/password" in setup
     assert not password.exists()
 
 

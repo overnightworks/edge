@@ -23,7 +23,7 @@ danach zu sehen sein soll. Was ein Agent einsortieren kann, zählt eine
 Schlusszeile:
 
 ```
-1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
+1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); then hal apply
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
 3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
    warum: without the hook no commit is checked for secrets; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
@@ -378,7 +378,7 @@ Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 `recreate` genannt, ein optionaler, der fehlt, übersprungen. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
 (Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
-Die letzte Zeile nennt den nächsten Schritt.
+Der Assistent druckt kein eigenes Ende; den Ausgang nennt `hal setup --apply` mit seiner `secrets`-Zeile und seinem Urteil.
 
 Beispiel (gekürzt, ein abgelehnter Versuch; ein TURN-Wert endet mit
 `gespeichert, nicht geprüft: ~/.secrets/cloudflare/turn-hopin/key-id (644)`):
@@ -405,18 +405,11 @@ geprüft und gespeichert: ~/.secrets/github/fleet-read (600)
 Wofür: OpenTofu verschlüsselt damit State und Plan unter ~/.secrets/opentofu.
 Wird zufällig erzeugt und nie gezeigt.
 erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600)
-
-next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 ```
 
-Fehlt danach noch etwas, nennen die Zeilen vor der letzten die offenen
-Einträge: die für einen neuen Lauf („noch offen: cloudflare/fleet-read“) und die
-von Hand („von Hand offen, siehe oben: gitlab, sonarcloud/token“). Genau eine
-Zeile beginnt mit `next:`, die letzte: Ist noch etwas offen, nennt sie zuerst den
-Befehl, der eine Weigerung aufhebt, dann den neuen Lauf („next: `chmod 700
-~/.secrets`, dann `hal setup --apply` noch einmal“); sonst den Plan-Schritt,
-oder, fehlt von Hand noch ein Eintrag, den `edge external plan` liest, diesen
-(„next: erst <Eintrag> anlegen; …“). Exit-Code: `0` nichts fehlt mehr,
+Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
+`next: hal apply`; es zeigt den Plan vor seinem Ja. Allein gefahren endet
+`home secrets --setup` mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
 Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den

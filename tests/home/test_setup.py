@@ -16,6 +16,7 @@ import home_tools
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from home_tools import system_step
+from home_tools.secrets_setup import Boundaries, Terminal
 from home_tools.cli import main
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
 from home_tools.system_step import AGENT_USER, CheckState, PlaybookRun, SystemStep
@@ -56,6 +57,16 @@ CHANGED_ROW = {
     COMMIT_HOOK: "  ✓ commit hook     changed",
     SYSTEM: "  ✓ system          changed",
 }
+
+
+GENERATED_SECRET = '''
+[[secret]]
+name = "opentofu/passphrase"
+kind = "service-password"
+paths = ["~/.secrets/opentofu/passphrase"]
+read_by = ["edge external plan"]
+recreate = "home secrets --setup"
+'''
 
 
 QUALITY_URL = "https://github.com/overnightworks/quality"
@@ -141,6 +152,22 @@ def test_second_apply_reports_every_step_unchanged_and_reinstalls_nothing(sandbo
 
     assert (code, lines) == (0, REPEATED_APPLY)
     assert len(uv_installs(sandbox)) == 2
+
+
+def test_a_walk_that_stored_everything_ends_setup_with_its_verdict_and_next_hal_apply(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], use_manifest
+) -> None:
+    """#503: the wizard prints no ending; the verdict of `hal setup --apply` is followed by `next: hal apply`."""
+    use_manifest(GENERATED_SECRET)
+    at_the_keyboard = Boundaries(Terminal(lambda: True, lambda _: "", lambda _: "", lambda _: True), lambda *_: None, lambda _: None)
+
+    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=at_the_keyboard)
+    lines = capsys.readouterr().out.splitlines()
+
+    assert code == 0
+    assert "  ✓ secrets         stored" in lines
+    assert lines[-2:] == ["✓ setup done · 3 changed, 1 unchanged · 47s", "next: hal apply"]
+    assert [line for line in lines if line.startswith("next:") or "offen" in line] == ["next: hal apply"]
 
 
 def test_failing_quality_install_leaves_hooks_path_untouched_and_exits_nonzero(
