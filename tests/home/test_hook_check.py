@@ -1,4 +1,4 @@
-"""`home check`'s hook check against real git repositories in a sandboxed HOME; the rules are those of overnightworks/home-tools#23."""
+"""`hal check`'s hook check against real git repositories in a sandboxed HOME; the rules are those of overnightworks/home-tools#23."""
 
 from __future__ import annotations
 

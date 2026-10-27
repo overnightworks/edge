@@ -171,14 +171,14 @@ SMTP_ENTRIES = """
 name = "smtp/password"
 kind = "token"
 paths = ["~/.secrets/smtp/password"]
-read_by = ["home check"]
+read_by = ["hal check"]
 recreate = "r"
 
 [[secret]]
 name = "smtp/account.toml"
 kind = "configuration"
 paths = ["~/.secrets/smtp/account.toml"]
-read_by = ["home check"]
+read_by = ["hal check"]
 recreate = "r"
 """
 # Stands in for msmtp: records argv and stdin per call, runs --passwordeval through sh like msmtp does, exits as the `exit` file says.

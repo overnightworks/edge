@@ -102,7 +102,7 @@
 "src/home_tools/setup.py" = 7
 "src/home_tools/system/playbook.yml" = 3
 "src/home_tools/system_step.py" = 6
-"tests/home/conftest.py" = 4
+"tests/home/conftest.py" = 2
 "tests/home/test_app_secrets.py" = 1
 "tests/home/test_backup_check.py" = 1
 "tests/home/test_check.py" = 4
@@ -110,7 +110,6 @@
 "tests/home/test_check_recovery.py" = 1
 "tests/home/test_check_switches.py" = 1
 "tests/home/test_check_waiter.py" = 1
-"tests/home/test_hook_check.py" = 1
 "tests/home/test_logs_check.py" = 1
 "tests/home/test_mail.py" = 3
 "tests/home/test_next.py" = 18
