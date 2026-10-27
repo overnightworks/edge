@@ -1,0 +1,8 @@
+claim_id = "5be97f493a46426697e62442b150d903"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ee5e4f5b2bc63fa65afdbb2409d8261470b427d6"
+branch = "claude/issue-461-sqlite-backup"
+scope = ["docs/backup.md", "src/edge_backup/apps.py", "src/edge_backup/docker.py", "src/edge_backup/images/Dockerfile", "src/edge_backup/restic.py", "src/edge_backup/runner.py", "src/edge_backup/settings.py", "src/edge_backup/sqlite_copy.py", "src/edge_backup/verify.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_images.py", "tests/test_edge_backup_sqlite.py"]
+opened_commit = "5f5b10c0dc8bac693d039d0d3af2d34d60a1fcf4"
+whole_reason = "One new database kind crosses every layer of the backup's one owner (record, copy script, docker runs, runner, manifest, image pin) and its reference document; any layer left out leaves a kind that is parsed but never copied, or copied but never verified."
