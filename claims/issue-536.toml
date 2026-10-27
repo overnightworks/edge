@@ -1,8 +1,0 @@
-claim_id = "702657ed47424375b2364dc86f0afd9c"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "525536cd07fb8ddf863001a7e9a5c9219d4dd71e"
-branch = "claude/issue-536-s7e-1-backup-reasons-english"
-scope = ["src/edge_backup/restic.py", "src/edge_backup/runner.py", "src/edge_backup/verify.py", "tests/test_edge_backup.py"]
-opened_commit = "7b28eb0f0f3f1225bee8733dcc3376923b2b3122"
-whole_reason = "Three production files that raise the ✗ reasons and the one test module that pins them; the wording moves with its pins."
