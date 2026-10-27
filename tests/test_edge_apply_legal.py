@@ -189,6 +189,20 @@ def test_the_plan_names_a_general_block_whose_final_paragraph_was_removed(world)
     assert f"legal: nutzungsbedingungen changes: {terms}" in out
 
 
+def test_the_plan_names_a_general_block_whose_final_heading_was_removed(world):
+    """L3."""
+
+    def without_final_heading(text: bytes) -> bytes:
+        return text[: text.rindex(b"<h2 ")]
+
+    world.switch()
+    world.edit(PRIVACY, without_final_heading)
+
+    _, out, _ = world.switch(answer="no")
+
+    assert f"legal: datenschutz changes: {PRIVACY}" in out
+
+
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     """L3."""
     world.switch()
@@ -202,14 +216,14 @@ def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     assert 'id="agent-dienst"' not in world.built_page("datenschutz")
 
 
-def test_the_plan_names_no_block_when_only_the_following_block_left(world):
+def test_the_plan_names_the_general_block_that_stood_before_a_block_that_left(world):
     """L3."""
     world.switch()
     write_fleet(world.repository, WITHOUT_AGENT)
 
     _, out, _ = world.switch(answer="no")
 
-    assert "legal: datenschutz changes: no block" in out
+    assert f"legal: datenschutz changes: {PRIVACY}" in out
 
 
 def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):

@@ -84,18 +84,38 @@ class Frame:
 
 def is_published_in(frame: Frame, blocks: Sequence[Block], block: Block, page_text: str) -> bool:
     """Whether the block's whole rendered text stands in the page unchanged and ends where a block
-    or the frame's own text begins, so that a paragraph cut from its end is a change; the
-    block's neighbours do not matter."""
+    or the frame's own text begins, so that a paragraph or heading cut from its end is a change;
+    a general block's own headings are no boundary."""
     own = _render(frame, block).body
     _, _, after = _page(frame, block.page, [(block, _Rendered(_SLOT, ""))]).partition(_SLOT)
-    block_starts = [frame.templates[kind.value].partition("$")[0] for kind in BlockKind]
-    boundaries = (*block_starts, after[: after.find(">") + 1])
+    others = (other for other in blocks if other.page == block.page and other is not block)
+    boundaries = (
+        *(_opening_tag(frame, other) for other in others),
+        *_generic_block_starts(frame, block),
+        _opening_tag_of(after),
+    )
     position = page_text.find(own)
     while position != -1:
         if page_text.startswith(boundaries, position + len(own)):
             return True
         position = page_text.find(own, position + 1)
     return False
+
+
+def _generic_block_starts(frame: Frame, block: Block) -> list[str]:
+    """What opens a block of any name; a general block's own headings look the same, so it knows
+    only the blocks that stand in the catalog."""
+    if block.kind is BlockKind.GENERAL:
+        return []
+    return [frame.templates[kind.value].partition("$")[0] for kind in BlockKind]
+
+
+def _opening_tag(frame: Frame, block: Block) -> str:
+    return _opening_tag_of(_render(frame, block).body)
+
+
+def _opening_tag_of(text: str) -> str:
+    return text[: text.find(">") + 1]
 
 
 def frame_page_path(page: str) -> str:
