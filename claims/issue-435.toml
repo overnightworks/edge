@@ -1,8 +1,0 @@
-claim_id = "2068918971164c67b42ac088b383c6fe"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "e99efa1a03a056f3ce745958720e543dfddb8384"
-branch = "claude/issue-435-110-a1-hal-apply-builds-the-three-legal"
-scope = [".gitignore", "README.md", "compose.yaml", "docs/architecture.md", "docs/stack.md", "legal/built", "legal/frame", "legal/sections", "src/edge/apply.py", "src/edge/legal_pages.py", "src/edge/legal_section.py", "src/edge/legal_step.py", "tests/test_edge_apply_legal.py", "tests/test_legal_pages.py", "tests/test_legal_section.py", "tests/test_legal_unit.py"]
-opened_commit = "6f94e278ff24804c87ea350bfa7e41e46ba04a4f"
-whole_reason = "The validator, the assembly and the apply step have no caller without each other, and a lone validator would be test-only code."
