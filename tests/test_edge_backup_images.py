@@ -6,7 +6,7 @@ from pathlib import Path
 
 import edge_backup
 from edge_backup.apps import PostgresMajor
-from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
+from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES, SQLITE_IMAGE
 
 
 def test_settings_returns_the_reference_of_each_stage_of_the_packaged_dockerfile():
@@ -19,6 +19,7 @@ def test_settings_returns_the_reference_of_each_stage_of_the_packaged_dockerfile
         "restic": RESTIC_IMAGE,
         "restore-16": RESTORE_IMAGES[PostgresMajor.SIXTEEN],
         "restore-17": RESTORE_IMAGES[PostgresMajor.SEVENTEEN],
+        "sqlite": SQLITE_IMAGE,
     }
 
 

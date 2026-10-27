@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Self
 
 from edge_backup import docker, host, restic
-from edge_backup.apps import App
+from edge_backup.apps import App, PostgresDatabase, SqliteDatabase
 from edge_backup.restic import MountKind
 from edge_backup.settings import (
     READINESS_POLL_SECONDS,
@@ -35,11 +35,13 @@ from edge_backup.status import (
 from edge_backup.verify import (
     DUMP_NAME,
     MANIFEST_NAME,
+    SQLITE_COPY_NAME,
     Manifest,
     VerificationError,
     check_audio_count,
     check_audio_references,
     check_row_count,
+    check_rows,
 )
 
 # A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
@@ -296,30 +298,81 @@ def restore(
     return snapshot_id
 
 
+@dataclass(frozen=True)
+class _PostgresTarget:
+    database: PostgresDatabase
+    container: str
+    audio_volume: str | None
+
+
+@dataclass(frozen=True)
+class _SqliteTarget:
+    database: SqliteDatabase
+    volume: str
+    audio_volume: None = None
+
+
+def _ready_target(app: App, readiness: _Deadline) -> _PostgresTarget | _SqliteTarget:
+    match app.database:
+        case PostgresDatabase(audio=audio) as database:
+            return _PostgresTarget(
+                database,
+                _wait_until_ready(
+                    lambda: docker.database_container(app, database),
+                    readiness,
+                    READINESS_POLL_SECONDS,
+                ),
+                _resolved(lambda: docker.app_volume(app, audio.volume)) if audio else None,
+            )
+        case SqliteDatabase(volume=volume) as database:
+            return _SqliteTarget(database, _resolved(lambda: docker.app_volume(app, volume)))
+
+
 def _back_up(
     settings: Settings, app: App, run: Run, readiness: _Deadline, *, pre_apply: bool
 ) -> None:
     with run.phase(Phase.READINESS):
-        container = _wait_until_ready(
-            lambda: docker.database_container(app), readiness, READINESS_POLL_SECONDS
-        )
-        audio_volume = _resolved(lambda: docker.audio_volume(app, app.audio)) if app.audio else None
+        target = _ready_target(app, readiness)
     with _private_directory(settings.work_dir) as staging:
         with run.phase(Phase.DUMP):
-            docker.dump_database(app, container, staging / DUMP_NAME)
+            _dump(settings, target, staging)
         with run.phase(Phase.MANIFEST):
-            audio_files = (
-                docker.count_audio_files(settings, MountKind.VOLUME, audio_volume)
-                if audio_volume
-                else None
-            )
-            manifest = Manifest(app.name, audio_files)
+            manifest = _manifest(settings, app, target, staging)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
             run.backed_up(
                 app.name,
-                restic.backup(settings, app.name, staging, audio_volume, pre_apply=pre_apply),
+                restic.backup(
+                    settings, app.name, staging, target.audio_volume, pre_apply=pre_apply
+                ),
             )
+
+
+def _dump(settings: Settings, target: _PostgresTarget | _SqliteTarget, staging: Path) -> None:
+    match target:
+        case _PostgresTarget(database=database, container=container):
+            docker.dump_database(database, container, staging / DUMP_NAME)
+        case _SqliteTarget(database=database, volume=volume):
+            _resolved(
+                lambda: docker.copy_sqlite(settings, volume, database, staging / SQLITE_COPY_NAME)
+            )
+
+
+def _manifest(
+    settings: Settings, app: App, target: _PostgresTarget | _SqliteTarget, staging: Path
+) -> Manifest:
+    match target:
+        case _PostgresTarget(audio_volume=None):
+            return Manifest(app.name, None)
+        case _PostgresTarget(audio_volume=audio_volume):
+            return Manifest(
+                app.name, docker.count_audio_files(settings, MountKind.VOLUME, audio_volume)
+            )
+        case _SqliteTarget():
+            rows = docker.check_sqlite(
+                settings, staging, SQLITE_COPY_NAME, app.restore_test.count_table
+            )
+            return Manifest(app.name, None, rows)
 
 
 def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str | None) -> None:
@@ -338,15 +391,40 @@ def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str |
 
 def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     """Only what the copy shows fails verification; a container that will not run is a command."""
-    restored_db, restored_audio = restored / restic.DB_FOLDER, restored / restic.AUDIO_FOLDER
+    restored_db = restored / restic.DB_FOLDER
     manifest_file = _restored_file(restored_db / MANIFEST_NAME, "kein Manifest")
     manifest = Manifest.from_json(manifest_file.read_text(encoding="utf-8"))
+    match app.database:
+        case PostgresDatabase() as database:
+            _verify_postgres(settings, app, database, restored, manifest, run)
+        case SqliteDatabase():
+            _restored_file(restored_db / SQLITE_COPY_NAME, "keine SQLite-Datenbank")
+            with run.phase(Phase.VERIFY):
+                rows = docker.check_sqlite(
+                    settings, restored_db, SQLITE_COPY_NAME, app.restore_test.count_table
+                )
+                check_rows(manifest, rows)
+                check_row_count(
+                    app.restore_test.count_table, rows, require_rows=app.restore_test.require_rows
+                )
+
+
+def _verify_postgres(
+    settings: Settings,
+    app: App,
+    database: PostgresDatabase,
+    restored: Path,
+    manifest: Manifest,
+    run: Run,
+) -> None:
+    restored_db, restored_audio = restored / restic.DB_FOLDER, restored / restic.AUDIO_FOLDER
     dump = _restored_file(restored_db / DUMP_NAME, "keinen Datenbank-Dump")
-    if app.audio:
+    audio = database.audio
+    if audio:
         check_audio_count(
             manifest, docker.count_audio_files(settings, MountKind.BIND, str(restored_audio))
         )
-    with docker.restore_server(RESTORE_IMAGES[app.postgres_major]) as server:
+    with docker.restore_server(RESTORE_IMAGES[database.postgres_major]) as server:
         _wait_until_ready(
             lambda: _ready_or_raise(server),
             _Deadline.start(RESTORE_SERVER_TIMEOUT),
@@ -362,9 +440,7 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
                 require_rows=restore_test.require_rows,
             )
             references = (
-                server.column_values(app.audio.reference_table, app.audio.reference_column)
-                if app.audio
-                else []
+                server.column_values(audio.reference_table, audio.reference_column) if audio else []
             )
     check_audio_references(references, restored_audio)
 

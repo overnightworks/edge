@@ -18,6 +18,7 @@ def _stage_references() -> dict[str, str]:
 
 _STAGES = _stage_references()
 RESTIC_IMAGE = _STAGES["restic"]
+SQLITE_IMAGE = _STAGES["sqlite"]
 # The restore test loads a dump into a throwaway server of the app's own major, so it proves the
 # version the app really runs; an older server cannot read a newer archive.
 RESTORE_IMAGES = {
