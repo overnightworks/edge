@@ -496,7 +496,9 @@ come before the system step, which is the one that asks for sudo:
    such an entry is never stopped: the step fails before it changes anything, names
    the file and leaves the decision to you. A timer that is not active after
    enabling fails the step too. A
-   missing `systemd/` directory fails the step as well. The step is
+   missing `systemd/` directory fails the step as well. `--apply` then prints, per
+   service, the loaded `ExecStart` and the `Result` of its last run right below the
+   `timers` row. The step is
    verified when every unit is linked, nothing needs a reload, every timer is
    enabled and active, and no link dangles.
 6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
