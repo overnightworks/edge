@@ -223,26 +223,22 @@ def _close_ingress(ingress: barrier.Barrier, closing: Closing) -> Closing:
     try:
         ingress.close()
     except barrier.BarrierError as error:
-        return replace(closing, barrier=BarrierPart.NOT_PROVEN, barrier_failure=str(error))
+        return closing.with_barrier(BarrierPart.NOT_PROVEN, str(error))
     except KeyboardInterrupt:
-        return replace(closing, interruption=Interruption.RAISING_THE_BARRIER)
-    return replace(closing, barrier=BarrierPart.UP if ingress.names else BarrierPart.NO_HOST)
+        return closing.interrupted(Interruption.RAISING_THE_BARRIER)
+    return closing.with_barrier(BarrierPart.UP if ingress.names else BarrierPart.NO_HOST)
 
 
 def _stop_target(target: Target, closing: Closing) -> Closing:
     try:
         target.stop()
         if target.running():
-            return replace(
-                closing, stop=StopPart.NOT_STOPPED, stop_failure="a container of it still runs"
-            )
+            return closing.with_stop(StopPart.NOT_STOPPED, "a container of it still runs")
     except compose.ComposeError as error:
-        return replace(
-            closing, stop=StopPart.NOT_STOPPED, stop_failure=f"could not stop it, {error}"
-        )
+        return closing.with_stop(StopPart.NOT_STOPPED, f"could not stop it, {error}")
     except KeyboardInterrupt:
-        return replace(closing, interruption=Interruption.STOPPING)
-    return replace(closing, stop=StopPart.STOPPED)
+        return closing.interrupted(Interruption.STOPPING)
+    return closing.with_stop(StopPart.STOPPED)
 
 
 def _close(marks: switches.Switches, target: Target, now: datetime) -> int:

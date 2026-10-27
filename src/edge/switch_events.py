@@ -6,7 +6,7 @@ row and the error pair. The glyph follows from the event alone, so a partial sta
 built with a `✓`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from edge import switches
@@ -73,6 +73,15 @@ class Closing:
     stop: StopPart | None = None
     stop_failure: str | None = None
     interruption: Interruption | None = None
+
+    def with_barrier(self, part: BarrierPart, failure: str | None = None) -> "Closing":
+        return replace(self, barrier=part, barrier_failure=failure)
+
+    def with_stop(self, part: StopPart, failure: str | None = None) -> "Closing":
+        return replace(self, stop=part, stop_failure=failure)
+
+    def interrupted(self, step: Interruption) -> "Closing":
+        return replace(self, interruption=step)
 
     @property
     def complete(self) -> bool:
