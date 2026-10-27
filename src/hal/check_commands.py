@@ -65,7 +65,10 @@ def _run_daily() -> ExitCode:
     try:
         config = load_config(layout)
     except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
-        write_error(f"{layout.config_file}: {error}")
+        message = str(error)
+        write_error(
+            message if str(layout.config_file) in message else f"{layout.config_file}: {message}"
+        )
         return ExitCode.USAGE  # exit 2 is "configuration or manifest invalid" for the daily check
     context = daily_check.CheckContext(
         layout, config, ports.run, ports.probe, ports.now, ports.disk_space

@@ -795,15 +795,19 @@ def test_a_bare_hal_check_with_an_invalid_manifest_keeps_the_rows_and_names_the_
     assert err.count("\n") == 1
 
 
-def test_a_bare_hal_check_with_an_invalid_config_names_the_file_and_checks_nothing(hal_check, clean_home) -> None:
+@pytest.mark.parametrize("config_text", ["this is not toml\n", "bogus = 1\n"], ids=["syntax error", "unknown key"])
+def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_nothing(
+    hal_check, clean_home, config_text
+) -> None:
     config_file = Layout(clean_home).config_file
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text("this is not toml\n")
+    config_file.write_text(config_text)
 
     exit_code, out, err = hal_check()
 
     assert (exit_code, out) == (2, "")
-    assert err.startswith(f"error: {config_file}: ")
+    assert err.startswith("error: ")
+    assert err.count(str(config_file)) == 1
     assert err.count("\n") == 1
 
 
