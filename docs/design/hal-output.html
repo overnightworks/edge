@@ -321,6 +321,9 @@
 
   .src { font-size: 13px; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 14px; }
   .src p { margin: 0 0 6px; max-width: 100ch; }
+  .s2note { margin: 0; padding: 10px 14px; border: 1px dashed var(--mark); border-radius: 8px; font-size: 14px; color: var(--ink-soft); background: var(--screen); }
+  .s2note b { color: var(--ink); font-weight: 600; }
+  h2 .tag { vertical-align: middle; margin-right: 6px; }
 </style>
 
 </head>
@@ -458,6 +461,81 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Scheitert der Play selbst,</b> ist sein Grund der Fakt der roten Zeile. Die <code>fail_msg</code> im Playbook werden dafür kurz, ohne <code>; nothing was written</code>: was geschrieben wurde, sagt die <code>error:</code>-Zeile.</li>
     <li><b>Vier Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
     <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  not started  sudo refused</code> und <code>error:</code> mit <code>/etc unchanged</code>.</li>
+  </ul>
+</section>
+
+  <div class="head">
+    <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
+    <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
+  </div>
+  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der <code>timers</code>-Zeile (S2c, S2d: <code>3 timers · systemd reloaded</code>) kommen in späteren Schritten; S2a druckt nur Zeichen, Objekt und Ereignis.</p>
+  <div class="pair">
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2a es, bevor S2c, S2d und S2f dazukommen</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> timers          changed
+<span class="d">  · system          unchanged</span>
+<span class="d">  · secrets         complete</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu S2</span> Agent-Lauf: der Schritt des Operators bleibt aus (nur <code>timers</code> ist im Plan benannt, die übrigen Zeilen sind meine Annahme)</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="g">  ✓</span> commit hook     updated
+<span class="d">  · timers          skipped        the operator&#x27;s step</span>
+<span class="d">  · system          skipped        the operator&#x27;s step</span>
+<span class="d">  · secrets         skipped        the operator&#x27;s step</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu S2</span> Geheimnis fehlt, vor dem Assistenten (Namen erfunden)</figcaption>
+<pre class="term"><span class="y">  !</span> secrets         missing        <span class="d">alpha/api-key, beta/token (by hand), gamma/cert (unknown)</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu S2</span> Dasselbe nach dem Assistenten</figcaption>
+<pre class="term"><span class="g">  ✓</span> secrets         stored</pre>
+      </figure>
+    </div>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu S2, Vorschlag</span> Probelauf ohne <code>--apply</code>: nichts wird geändert</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="b">  ~</span> commit hook     will change
+<span class="y">  !</span> system          not checked    <span class="d">needs sudo at a terminal</span>
+<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · run hal setup --apply</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu S2, Vorschlag</span> Probelauf, alles aktuell</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="w">✓ setup up to date</span> <span class="d">· 4 unchanged</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag fail">neu S2, kaputt</span> nicht gestartet: abgelehnt, bevor sich etwas geändert hat</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> timers          changed
+<span class="r">  ✗</span> system          not started    <span class="d">needs sudo in your own terminal window</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at system · /etc unchanged
+<span class="c">next:</span> hal setup --apply</pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag fail">neu S2, kaputt</span> gescheitert: Ansible lief und brach ab, sein Text steht darüber</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<span class="d">… Ansible: PLAY RECAP, fatal …</span>
+<span class="r">  ✗</span> system          failed         <span class="d">Ansible did not finish · its output above says why</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at system · /etc may be partial
+<span class="c">next:</span> hal setup --apply</pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Probelauf (Vorschlag des Kopfs):</b> <code>hal setup</code> ohne <code>--apply</code> ändert nichts. <code>~</code> heißt „würde sich ändern“, <code>!</code> heißt „nicht geprüft, du musst an ein Terminal“. Das Urteil zählt offene und unveränderte Zeilen und nennt den nächsten Befehl.</li>
+    <li><b>Nicht gestartet oder gescheitert:</b> „not started“ heißt vor jeder Änderung abgelehnt, <code>/etc unchanged</code>. „failed“ heißt, es lief und brach ab, <code>/etc may be partial</code>. <code>next:</code> ist der verschluckte Befehl oder <code>hal setup --apply</code>.</li>
+    <li><b>Agent-Lauf:</b> der Schritt, der einen Menschen braucht, wird übersprungen und gezählt, nicht als Fehler gemeldet.</li>
   </ul>
 </section>
 
