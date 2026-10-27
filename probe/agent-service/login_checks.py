@@ -28,6 +28,8 @@ from tree_census import Skip
 
 TOKEN_LIMIT = 16 * 1024
 TOKEN_FILE = "token"
+ROOTS_CELL = "S00 (roots)"
+TOKEN_CELL = "S00 (token)"
 SKIP_REASONS = frozenset(skip.value for skip in Skip)
 
 
@@ -374,28 +376,28 @@ def s00_verdicts(mounts: Mapping[str, Mount]) -> tuple[Verdict, Verdict]:
     if not mounts:
         reason = "0 writable mounts were shown"
         return (
-            Verdict("S00 (roots)", Outcome.NOT_DRIVEN, reason),
-            Verdict("S00 (token)", Outcome.NOT_DRIVEN, reason),
+            Verdict(ROOTS_CELL, Outcome.NOT_DRIVEN, reason),
+            Verdict(TOKEN_CELL, Outcome.NOT_DRIVEN, reason),
         )
     unlisted = unlisted_roots(mounts)
     if unlisted:
         roots = Verdict(
-            "S00 (roots)", Outcome.NOT_DRIVEN, f"{unlisted} directory roots were not listed"
+            ROOTS_CELL, Outcome.NOT_DRIVEN, f"{unlisted} directory roots were not listed"
         )
     else:
         roots = Verdict(
-            "S00 (roots)", Outcome.HELD, f"every directory root of {len(mounts)} mounts was listed"
+            ROOTS_CELL, Outcome.HELD, f"every directory root of {len(mounts)} mounts was listed"
         )
     leaked = token_files(mounts)
     unread = unread_entries(mounts)
     if leaked:
-        token = Verdict("S00 (token)", Outcome.FAILED, f"{leaked} files hold the login token")
+        token = Verdict(TOKEN_CELL, Outcome.FAILED, f"{leaked} files hold the login token")
     elif unread:
         token = Verdict(
-            "S00 (token)", Outcome.NOT_DRIVEN, f"{unread} entries could not be read for the token"
+            TOKEN_CELL, Outcome.NOT_DRIVEN, f"{unread} entries could not be read for the token"
         )
     else:
         token = Verdict(
-            "S00 (token)", Outcome.HELD, "0 files outside the login directory hold the login token"
+            TOKEN_CELL, Outcome.HELD, "0 files outside the login directory hold the login token"
         )
     return roots, token
