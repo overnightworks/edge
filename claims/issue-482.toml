@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "5c992b07d893580a503972b41eb8a76643e496e7"
 branch = "claude/issue-482-184-o4-s1a-hal-apply-swaps-agent-service"
-scope = ["docs/agent-service.md", "docs/architecture.md", "docs/design/hal-output.html", "docs/stack.md", "fleet.yaml", "probe/switches/built_image.py", "src/edge/apply.py", "src/edge/built_image.py", "src/edge/catalog.py", "src/edge/compose.py", "src/edge/service_recreate.py", "src/edge/unit_plans.py", "tests/old_names_baseline.toml", "tests/test_edge_apply.py", "tests/test_edge_apply_built_image.py"]
+scope = ["docs/agent-service.md", "docs/architecture.md", "docs/design/hal-output.html", "docs/stack.md", "fleet.yaml", "probe/agent-service/egress.py", "probe/edge_copy.py", "probe/switches/built_image.py", "probe/switches/probe.py", "src/edge/apply.py", "src/edge/built_image.py", "src/edge/catalog.py", "src/edge/compose.py", "src/edge/service_recreate.py", "src/edge/unit_plans.py", "tests/old_names_baseline.toml", "tests/test_edge_apply.py", "tests/test_edge_apply_built_image.py"]
 opened_commit = "5c3e9a4bec7799b648022b9611d2b690f58384fd"
 whole_reason = "The catalog key, the planner, the image lookup and their wiring are one behaviour, and the #91 sentences, docs and picture rows they make false change in the same commit."
