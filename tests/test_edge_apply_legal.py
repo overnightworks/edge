@@ -176,6 +176,19 @@ def test_the_plan_names_a_block_whose_title_was_only_shortened(world):
     assert f"legal: nutzungsbedingungen changes: {terms}" in out
 
 
+def test_the_plan_names_a_general_block_whose_final_paragraph_was_removed(world):
+    """L3."""
+    terms = "legal/sections/allgemein/nutzungsbedingungen.html"
+    world.switch()
+    world.edit(terms, lambda text: text + b"<p>Zusatz.</p>\n")
+    world.switch()
+    world.edit(terms, lambda text: text.replace(b"<p>Zusatz.</p>\n", b""))
+
+    _, out, _ = world.switch(answer="no")
+
+    assert f"legal: nutzungsbedingungen changes: {terms}" in out
+
+
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     """L3."""
     world.switch()

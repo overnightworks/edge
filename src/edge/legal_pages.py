@@ -58,6 +58,7 @@ _MONTHS = (
 )
 _ID_ATTRIBUTE = re.compile(r'\sid="([^"]*)"')
 FRAME_OWNER = "frame"
+_SLOT = "\x00"
 
 
 class BlockKind(StrEnum):
@@ -81,9 +82,16 @@ class Frame:
     templates: Mapping[str, str]  # the block templates by name, `TEMPLATES`
 
 
-def is_published_in(frame: Frame, block: Block, page_text: str) -> bool:
-    """Whether the block's whole rendered text, in its order, stands in the page unchanged."""
-    return _render(frame, block).body in page_text
+def is_published_in(frame: Frame, blocks: Sequence[Block], block: Block, page_text: str) -> bool:
+    """Whether the block's whole rendered text stands in the page unchanged, up to the next tag
+    after it, so that a paragraph cut from its end is a change."""
+    ordered = _in_page_order(blocks, block.page)
+    rendered = [(one, _render(frame, one)) for one in ordered]
+    own = _render(frame, block)
+    marked = [(one, _Rendered(_SLOT if one is block else text.body, "")) for one, text in rendered]
+    _, _, after = _page(frame, block.page, marked).partition(_SLOT)
+    first_tag_end = after.find(">") + 1
+    return own.body + after[:first_tag_end] in page_text
 
 
 def frame_page_path(page: str) -> str:

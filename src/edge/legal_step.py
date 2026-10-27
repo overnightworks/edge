@@ -103,7 +103,7 @@ def _changed_blocks(
     return tuple(
         block.path
         for block in blocks
-        if block.page == page and not is_published_in(frame, block, built)
+        if block.page == page and not is_published_in(frame, blocks, block, built)
     )
 
 
