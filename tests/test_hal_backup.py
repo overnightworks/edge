@@ -119,6 +119,29 @@ def _terminated_by_systemd():
     [
         (("backup",), "pg_dump"),
         (("backup", "radio", "--pre-apply", "--json"), "restic backup"),
+    ],
+    ids=" ".join,
+)
+def test_a_failed_backup_exits_3_with_an_error_line_and_a_next_line_and_frees_the_lock(
+    edge_backup, machine, home, monkeypatch, command, label
+):
+    monkeypatch.chdir(home)
+    edge_backup(*declare_two_apps(home), "backup")
+    machine.failing[label] = 1
+
+    outcome = edge_backup(*declare_two_apps(home), *command)
+
+    assert outcome.exit_code == 3
+    [error, next_step] = outcome.err.splitlines()
+    assert error.startswith("error: ")
+    assert "fehlgeschlagen" not in error
+    assert next_step.startswith("next: hal backup")
+    assert machine._host_lock_is_free()
+
+
+@pytest.mark.parametrize(
+    ("command", "label"),
+    [
         (("restore", "--test"), "pg_restore"),
         (("restore", "--test", "radio", "--snapshot", "latest"), "pg_restore"),
         (("backup", "--init"), "restic init"),
@@ -128,7 +151,7 @@ def _terminated_by_systemd():
     ],
     ids=" ".join,
 )
-def test_a_failed_step_of_any_verb_exits_3_with_one_error_line_and_frees_the_lock(
+def test_a_failed_maintenance_or_restore_step_exits_3_with_one_error_line_and_frees_the_lock(
     edge_backup, machine, home, monkeypatch, command, label
 ):
     monkeypatch.chdir(home)
@@ -140,13 +163,8 @@ def test_a_failed_step_of_any_verb_exits_3_with_one_error_line_and_frees_the_loc
     outcome = edge_backup(*declare_two_apps(home), *command)
 
     assert outcome.exit_code == 3
-    [line, *rest] = outcome.err.splitlines()
-    if command == ["backup"] or "--pre-apply" in command:
-        assert line.startswith("error: ")
-        assert "fehlgeschlagen" not in line
-    else:
-        assert line.startswith(f"error: hal {command[0]}: fehlgeschlagen: ")
-        assert rest == []
+    [line] = outcome.err.splitlines()
+    assert line.startswith(f"error: hal {command[0]}: fehlgeschlagen: ")
     assert machine._host_lock_is_free()
 
 
@@ -210,6 +228,17 @@ def test_an_interrupted_backup_names_the_app_it_stopped_in(edge_backup, machine,
         "error: interrupted while backing up songmaker · its state may be partial",
         "next: hal backup",
     ]
+
+
+def test_a_backup_interrupted_outside_any_app_says_only_that_it_was_interrupted(
+    edge_backup, machine, home
+):
+    machine.failing["restic forget"] = _terminated_by_systemd
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    assert outcome.exit_code == 130
+    assert outcome.err.splitlines() == ["error: interrupted", "next: hal backup"]
 
 
 def test_an_interrupted_unlock_keeps_its_plain_error_line_without_a_next_step(edge_backup, machine):

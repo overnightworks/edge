@@ -250,7 +250,7 @@ when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
 Exit 0: every phase succeeded. Exit 3: a run failed; `error: 1 of N apps not backed up` with
 `next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
-(`hal restore` still prints `error: hal restore: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
+(`hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
 example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 
 ### Restore one app
