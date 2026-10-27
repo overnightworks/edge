@@ -141,7 +141,7 @@ def test_a_failed_step_of_any_verb_exits_3_with_one_error_line_and_frees_the_loc
 
     assert outcome.exit_code == 3
     [line, *rest] = outcome.err.splitlines()
-    if command[0] == "backup":
+    if command == ["backup"] or "--pre-apply" in command:
         assert line.startswith("error: ")
         assert "fehlgeschlagen" not in line
     else:
@@ -212,13 +212,13 @@ def test_an_interrupted_backup_names_the_app_it_stopped_in(edge_backup, machine,
     ]
 
 
-def test_an_interrupted_unlock_says_only_that_it_was_interrupted(edge_backup, machine):
+def test_an_interrupted_unlock_keeps_its_plain_error_line_without_a_next_step(edge_backup, machine):
     machine.failing["restic unlock"] = _terminated_by_systemd
 
     outcome = edge_backup("backup", "--unlock")
 
     assert outcome.exit_code == 130
-    assert outcome.err.splitlines() == ["error: interrupted", "next: hal backup"]
+    assert outcome.err.splitlines() == ["error: hal backup: fehlgeschlagen: abgebrochen"]
 
 
 @pytest.mark.parametrize(

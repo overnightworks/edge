@@ -92,11 +92,15 @@ def _restore_step(arguments: argparse.Namespace) -> Step | str:
 
 
 def _backup(arguments: argparse.Namespace) -> ExitCode:
-    return _run("hal backup", _backup_step(arguments), arguments, _tell_backup_ended)
+    step = _backup_step(arguments)
+    tell_ended = _tell_backup_ended if step is steps.backup else _tell_ended_plainly("hal backup")
+    return _run("hal backup", step, arguments, tell_ended)
 
 
 def _restore(arguments: argparse.Namespace) -> ExitCode:
-    return _run("hal restore", _restore_step(arguments), arguments, _tell_restore_ended)
+    return _run(
+        "hal restore", _restore_step(arguments), arguments, _tell_ended_plainly("hal restore")
+    )
 
 
 def _tell_backup_ended(ended: StepFailed | KeyboardInterrupt) -> None:
@@ -111,9 +115,15 @@ def _tell_backup_ended(ended: StepFailed | KeyboardInterrupt) -> None:
             write_error("interrupted", "hal backup")
 
 
-def _tell_restore_ended(ended: StepFailed | KeyboardInterrupt) -> None:
-    reason = str(ended) if isinstance(ended, StepFailed) else "abgebrochen"
-    write_error(f"hal restore: fehlgeschlagen: {reason}")
+def _tell_ended_plainly(program: str) -> Callable[[StepFailed | KeyboardInterrupt], None]:
+    """The error line of the steps that keep their own wording: restore and the repository
+    maintenance."""
+
+    def tell(ended: StepFailed | KeyboardInterrupt) -> None:
+        reason = str(ended) if isinstance(ended, StepFailed) else "abgebrochen"
+        write_error(f"{program}: fehlgeschlagen: {reason}")
+
+    return tell
 
 
 def _run(
