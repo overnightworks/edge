@@ -88,9 +88,8 @@ def is_published_in(frame: Frame, blocks: Sequence[Block], block: Block, page_te
     block's neighbours do not matter."""
     own = _render(frame, block).body
     _, _, after = _page(frame, block.page, [(block, _Rendered(_SLOT, ""))]).partition(_SLOT)
-    boundaries = tuple(frame.templates[kind.value].partition("$")[0] for kind in BlockKind) + (
-        after[: after.find(">") + 1],
-    )
+    block_starts = [frame.templates[kind.value].partition("$")[0] for kind in BlockKind]
+    boundaries = (*block_starts, after[: after.find(">") + 1])
     position = page_text.find(own)
     while position != -1:
         if page_text.startswith(boundaries, position + len(own)):
