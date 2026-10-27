@@ -275,8 +275,10 @@ def test_a_template_with_an_unknown_field_is_refused_naming_its_file(name):
     templates = {**FRAME.templates, name: FRAME.templates[name] + "$unknown"}
     blocks = [general(), service("anmeldung"), app("zeta", sections=SECTIONS)]
 
+    frame = Frame(FRAME.pages, templates)
+
     with pytest.raises(LegalError) as refused:
-        build_pages(Frame(FRAME.pages, templates), blocks)
+        build_pages(frame, blocks)
 
     assert str(refused.value) == f"legal: legal/frame/blocks/{name}.html: unknown field $unknown"
 
@@ -285,5 +287,8 @@ def test_a_template_with_a_stray_dollar_sign_is_refused():
     """L14."""
     templates = {**FRAME.templates, "general": "cost $ 5"}
 
+    frame = Frame(FRAME.pages, templates)
+    blocks = [general()]
+
     with pytest.raises(LegalError, match=r"legal/frame/blocks/general.html: a \$ that starts no"):
-        build_pages(Frame(FRAME.pages, templates), [general()])
+        build_pages(frame, blocks)
