@@ -27,11 +27,18 @@ class Process(NamedTuple):
 
 
 class Mount(NamedTuple):
-    """What the census shows of one writable mount: its entries as (shown path, kind) and why
-    it skipped some, as (reason, count) pairs."""
+    """What the census shows of one writable mount: its entries as (shown path, kind), why it
+    skipped some as (reason, count) pairs, and how many files outside the login hold the token."""
 
     listings: tuple[tuple[str, str], ...]
     skips: tuple[tuple[str, int], ...]
+    token_files: int = 0
+
+    @property
+    def listed(self) -> bool:
+        """False when the census listed nothing and skipped something: the walk lists every entry
+        before it decides a skip, so that is a root it could not read, never an empty one."""
+        return bool(self.listings) or not self.skips
 
 
 class CensusClient:
@@ -64,6 +71,7 @@ class CensusClient:
             entry["mount"]: Mount(
                 tuple((path, kind) for path, kind, _ in entry["listings"]),
                 tuple(sorted(entry["skips"].items())),
+                entry["token_files"],
             )
             for entry in report["mounts"]
         }
@@ -83,7 +91,12 @@ class CensusClient:
     def ask(self, settings: dict) -> dict:
         full = json.dumps({"key": self.key.hex(), **settings})
         program = Path(tree_census.__file__).read_text(encoding="utf-8") + f"\nemit({full!r})\n"
-        report = self.probe.client_with(["exec", "-i", self.container], (), program)
+        command = ["docker", "exec", "-i", self.container, "python", "-I", "-"]
+        result = self.probe.run(command, stdin=program, check=False, timeout=240)
+        mode = settings["mode"]
+        if result.returncode != 0:
+            raise ProbeFailed(f"the census exited {result.returncode} in {mode} mode")
+        report = json.loads(result.stdout.strip().splitlines()[-1])
         if "error" in report:
-            raise ProbeFailed(f"the census failed in {settings['mode']} mode")
+            raise ProbeFailed(f"the census failed in {mode} mode")
         return report

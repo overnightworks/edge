@@ -6,24 +6,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from collections.abc import Iterator
-from pathlib import Path
 from types import ModuleType
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-PROBE_MODULES = (
-    "census_client",
-    "containment",
-    "egress",
-    "issuer",
-    "refusals",
-    "service_log",
-    "smoke",
-    "tree_census",
-)
+from probe_support import probe_imports
 
 OWNER_FAILED = "The owner of the relay of run r1 failed: CapabilityReflected at 3\n"
 RUNNER_FAILED = "The runner of run r1 failed: CapabilityReflected at 3\n"
@@ -34,18 +21,10 @@ LOGIN_REFUSED = "run r1 failed: CliLoginRefusedError\n"
 
 @pytest.fixture(scope="module")
 def containment() -> Iterator[ModuleType]:
-    path_before = list(sys.path)
-    modules_before = set(sys.modules)
-    sys.path[:0] = [str(ROOT / "probe" / "agent-service"), str(ROOT / "agent-service")]
-    try:
+    with probe_imports():
         import containment as module
 
         yield module
-    finally:
-        sys.path[:] = path_before
-        for name in PROBE_MODULES:
-            if name not in modules_before:
-                sys.modules.pop(name, None)
 
 
 def b2_verdicts(containment: ModuleType, log: str) -> dict[str, bool]:
