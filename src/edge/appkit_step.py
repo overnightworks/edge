@@ -12,8 +12,8 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module, metadata
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 
 from edge.unit_plans import Progress
 

@@ -139,7 +139,7 @@ def test_a_write_leaves_no_temporary_directory_beside_the_served_one(world):
     assert [path.name for path in world.served.parent.iterdir()] == [f"appkit-{VERSION}"]
 
 
-def test_a_missing_appkit_is_one_cannot_plan_error(repository):
+def test_a_missing_appkit_is_one_cannot_plan_error(repository):  # noqa: F811
     def not_installed(name: str):
         raise ModuleNotFoundError(name)
 
