@@ -6,7 +6,16 @@ from enum import StrEnum
 
 import pytest
 
-from hal_output import Glyph, Row, Verdict, format_duration, write_error, write_row, write_verdict
+from hal_output import (
+    Glyph,
+    Noun,
+    Row,
+    Verdict,
+    format_duration,
+    write_error,
+    write_row,
+    write_verdict,
+)
 
 
 class Event(StrEnum):
@@ -286,3 +295,47 @@ def test_an_empty_no_colour_does_not_turn_colour_off(
     write_error("stopped")
 
     assert err.getvalue().startswith("\x1b[")
+
+
+class Finding(Noun):
+    ACTION = "action"
+    AREA_CHECKED = "area checked"
+
+
+@pytest.mark.parametrize(
+    ("count", "shown"),
+    [(1, "1 action"), (2, "2 actions")],
+)
+def test_a_rows_count_carries_the_plural_of_a_noun_event(
+    capsys: pytest.CaptureFixture[str], count: int, shown: str
+) -> None:
+    """#493: the event enum holds the singular word; the renderer shows the count and the plural."""
+
+    write_row(Row(Glyph.NEEDS_YOU, "backup", Finding.ACTION, "a fact", count))
+
+    assert capsys.readouterr().out == f"  ! backup          {shown:<13}  a fact\n"
+
+
+def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next_step(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#493: counts of nouns take the plural; the next step follows on its own stdout line."""
+
+    write_verdict(
+        Verdict(
+            Glyph.NEEDS_YOU,
+            "",
+            ((2, Finding.ACTION), (0, Finding.AREA_CHECKED), (1, Event.CHANGED)),
+            details=("mail sent", "report ~/x"),
+            next_step="hal backup",
+        )
+    )
+    write_verdict(Verdict(Glyph.DONE, "all well", ((5, Finding.AREA_CHECKED),)))
+    write_verdict(Verdict(Glyph.DONE, "all well", ((1, Finding.AREA_CHECKED),)))
+
+    assert capsys.readouterr().out.splitlines() == [
+        "! 2 actions, 1 changed · mail sent · report ~/x",
+        "next: hal backup",
+        "✓ all well · 5 areas checked",
+        "✓ all well · 1 area checked",
+    ]
