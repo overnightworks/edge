@@ -632,7 +632,7 @@ def test_b5_prints_what_lets_a_reader_check_the_census(containment):
     )
     after = look(
         containment,
-        log=runner_lines(first=1000, count=3),
+        log=runner_lines(first=998, count=3),
         mounts={"/work": mount(containment, "w-after"), "/tmp": mount(containment, "a")},
     )
     verdicts = containment.b5_verdicts(before, after, RUNS, roots(containment))
@@ -640,7 +640,7 @@ def test_b5_prints_what_lets_a_reader_check_the_census(containment):
         "working root before [w-before (file)], after [w-after (file)]"
         in (verdicts["B5 (mounts)"][1])
     )
-    assert "first run r1000" in verdicts["B5 (log)"][1]
-    assert "last run r1002" in verdicts["B5 (log)"][1]
+    assert "first run r998" in verdicts["B5 (log)"][1]
+    assert "last run r1000" in verdicts["B5 (log)"][1]
     assert "/tmp before [a (file)], after [a (file)]" in verdicts["B5 (mounts)"][1]
     assert "(n-init, n-svc)" in verdicts["B5 (processes)"][1]
