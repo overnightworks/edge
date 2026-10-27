@@ -3,20 +3,13 @@
 repository switches on an app of a throwaway bare origin at its newest `vYYYY.MM.DD.N` tag, updates
 it, and refuses or ends partial where block A says so.
 
-The cells driven here: A1 the first apply, A2 a second apply, A3 an update that keeps the named
-volume's data, A4 a tag only on a side branch, A7 a declined `yes`, A8 a new tag that never becomes
-healthy (Traefik routes nothing to it), A9 a build that fails, A12 containers without a record, A18
-an interpolation error that carries a sentinel value, A23 an update interrupted after part of the
-containers were replaced, with a second container of one service, B5 an image `VOLUME` that no
-named volume covers (refused after build, before `create`) and the same covered, B8 a service with
-`pull_policy: always`, and block C, `enabled: false`: C1 an app switched off while running, C2 on
-again at the same tag, C3 off after an update that renamed a service and failed its build, C4 off
-with `compose.yaml` missing or invalid at HEAD, C5 off with a leftover container of an unknown
-service after an update dropped one, and the emergency switch (#255 P5): D1 `hal stop` without a
-terminal (marker, barrier answered by the probe's Traefik, containers stopped), D2 a stopped app
-with a newer tag waiting stays stopped, D4 a stop during the build leaves the containers and the
-record, D7 `hal start` and its refusal while disabled; D10, a stop while apply holds the switch
-lock, is a unit test. The exits are hal's: 0 or 3.
+Cells: A1 the first apply, A2 a second, A3 an update that keeps the volume's data, A4 a tag only on
+a side branch, A7 a declined `yes`, A8 a tag never healthy, A9 a failed build, A12 containers
+without a record, A18 a sentinel in an interpolation error, A23 an update interrupted midway, B5 an
+image `VOLUME` that no named volume covers and covered, B8 a service with `pull_policy: always`, and
+block C, `enabled: false`: C1 an app switched off running, C2 on again at the same tag, C3 off after
+a renamed service, a failed build, C4 off with `compose.yaml` unusable at HEAD, C5 off with a
+leftover container. D and R: `emergency_switch.py`, `alias_routing.py`. hal's exits: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -55,6 +48,7 @@ sys.path.insert(0, str(REPO / "probe"))  # the helper of the probes, importable 
 sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only the stdlib
 
 import edge_copy  # noqa: E402
+from alias_routing import AliasRouting  # noqa: E402
 from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
 from emergency_switch import EmergencySwitch  # noqa: E402
 
@@ -98,6 +92,8 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
     "h1": "v2026.10.26.3",
+    "alias": "v2026.10.27.1",
+    "alias_dropped": "v2026.10.27.2",
 }
 HEALTHCHECK = (
     '    healthcheck: {test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"],\n'
@@ -120,7 +116,7 @@ class Probe:
         self.scratch = scratch
         suffix = secrets.token_hex(3)
         self.key = f"apps-probe-{suffix}"
-        self.label = f"probe-{suffix}.name"
+        self.label, self.alias_label = (f"probe-{suffix}.{field}" for field in ("name", "alias"))
         self.edge_port, self.admin_port = free_port(), free_port()
         self.home = scratch / "home"
         self.home.mkdir(parents=True)
@@ -305,11 +301,14 @@ class Probe:
         )
         traefik = (self.copy / "traefik.yml").read_text()
         expect(
-            traefik.count("edge.name") == 2 and "127.0.0.1:8081" in traefik,
+            traefik.count("edge.name") == 2
+            and traefik.count("edge.alias") == 1
+            and "127.0.0.1:8081" in traefik,
             "traefik.yml changed shape",
         )
         private = (
             traefik.replace("edge.name", self.label)
+            .replace("edge.alias", self.alias_label)
             .replace("127.0.0.1:8081", f"127.0.0.1:{self.edge_port}")
             .replace("127.0.0.1:8090", f"127.0.0.1:{self.admin_port}")
         )
@@ -751,6 +750,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
         probe.cell_h1_service_without_healthcheck()
+        AliasRouting(probe, DOMAIN, TAGS).prove()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

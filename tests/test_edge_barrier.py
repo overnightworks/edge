@@ -46,6 +46,15 @@ def config() -> dict:
             "internal": {"labels": {"traefik.enable": "false", "edge.name": "internal"}},
             "stray": {"labels": {"traefik.enable": "true", "edge.name": "Not_Valid"}},
             "unnamed": {"labels": {"traefik.enable": "true"}},
+            "talker": {
+                "labels": {"traefik.enable": "true", "edge.name": "talk", "edge.alias": "speak"}
+            },
+            "bad-alias": {
+                "labels": {"traefik.enable": "true", "edge.name": "ok", "edge.alias": "Bad_Alias"}
+            },
+            "bad-name-alias": {
+                "labels": {"traefik.enable": "true", "edge.name": "Bad", "edge.alias": "fine"}
+            },
         }
     }
 
@@ -443,6 +452,23 @@ def test_the_apex_gets_a_router_on_the_bare_domain_that_no_label_can_take(checko
     assert routers["switch-probe-_apex"]["rule"] == 'Host(`{{ env "EDGE_DOMAIN" }}`)'
     assert sorted(routers) == ["switch-probe-_apex", "switch-probe-hello"]
     assert asked == ["probe.invalid", "hello.probe.invalid"]
+
+
+def test_a_routed_unit_with_an_alias_gets_a_router_for_the_alias_host_too(checkout):
+    """#445 R6."""
+    barrier_of(checkout, "talker").close()
+
+    assert sorted(parsed(checkout)["http"]["routers"]) == [
+        "switch-probe-speak",
+        "switch-probe-talk",
+    ]
+
+
+def test_an_alias_the_provider_would_not_route_gets_no_router(checkout):
+    """#445 R6."""
+    barrier_of(checkout, "bad-alias", "bad-name-alias", "hello").close()
+
+    assert sorted(parsed(checkout)["http"]["routers"]) == ["switch-probe-hello", "switch-probe-ok"]
 
 
 def test_a_declared_host_without_a_routed_service_gets_a_barrier_of_its_own(checkout):
