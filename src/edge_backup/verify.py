@@ -50,17 +50,24 @@ class Manifest:
             raise VerificationError("the snapshot's manifest is unreadable") from error
 
 
+def _manifest_count(expected: int | None) -> str:
+    return "no number" if expected is None else str(expected)
+
+
 def check_file_count(expected: int | None, restored: int, noun: str) -> None:
     """The restored kept volume holds exactly the files the manifest counted."""
     if restored != expected:
-        named = "no number" if expected is None else expected
-        raise VerificationError(f"{restored} {noun} restored, the manifest names {named}")
+        raise VerificationError(
+            f"{restored} {noun} restored, the manifest names {_manifest_count(expected)}"
+        )
 
 
 def check_rows(manifest: Manifest, restored: int) -> None:
     """A SQLite app's restored table holds exactly the rows its staged copy held."""
     if restored != manifest.rows:
-        raise VerificationError(f"{restored} rows restored, the manifest names {manifest.rows}")
+        raise VerificationError(
+            f"{restored} rows restored, the manifest names {_manifest_count(manifest.rows)}"
+        )
 
 
 def check_row_count(table: str, rows: int, *, require_rows: bool) -> None:
