@@ -1,7 +1,0 @@
-claim_id = "0134b985c2f34001b797fcee2d92b134"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "91736150dfc0c35194efb89186551df07f252f10"
-branch = "docs/songmaker-cowriter-privacy"
-scope = ["legal/sections/songmaker/datenschutz.html"]
-opened_commit = "3dfefed1493a78491cd5b55aced556e84a3b22ec"
