@@ -149,12 +149,13 @@ def test_an_app_key_is_held_against_the_name_of_the_checkouts_own_compose_projec
 
 
 def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_nothing(app_world):
-    sha = app_world.origin.release("v2026.10.22.1")
+    app_world.origin.release("v2026.10.22.1")
 
     exit_code, out, err = app_world.apply()
 
     assert exit_code == 0, err
-    assert f"hopin: on at v2026.10.22.1 ({sha}) from origin master, into ~/srv/hopin" in out
+    assert "switch on      " in out
+    assert "v2026.10.22.1 · into ~/srv/hopin" in out
     assert "edge apply --closed: hopin is on at v2026.10.22.1" in out
     again = app_world.apply()
     assert again[0] == 0
@@ -538,7 +539,7 @@ def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_sta
     exit_code, out, _ = app_world.apply()
 
     assert exit_code == 0
-    assert "hopin stays stopped (switch since 18.10. 08:00)" in out
+    assert "· hopin           stays stopped  switched off since 18.10. 08:00" in out
     assert "nothing to change" in out
     assert marker_file.read_bytes() == marker
     assert barrier_file.read_bytes() == barrier_bytes

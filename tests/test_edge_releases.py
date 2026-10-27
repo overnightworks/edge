@@ -43,14 +43,14 @@ def test_a_tag_that_is_not_a_release_is_skipped_and_named(tag):
 
     assert choice.newest.tag == "v2026.10.22.1"
     assert len(choice.skipped) == 1
-    assert "not vYYYY.MM.DD.N" in choice.skipped[0]
+    assert choice.skipped[0].reason == "not vYYYY.MM.DD.N"
 
 
 def test_a_release_not_on_the_default_branch_is_skipped_and_named():
     choice = newest_of("v2026.10.22.2", "v2026.10.22.9", on_branch=("v2026.10.22.2",))
 
     assert choice.newest.tag == "v2026.10.22.2"
-    assert choice.skipped == ("skipped tag v2026.10.22.9: not on origin master",)
+    assert choice.skipped == (releases.SkippedTag("v2026.10.22.9", "not on origin master"),)
 
 
 def test_without_a_release_there_is_no_newest_and_every_tag_is_named():
@@ -60,7 +60,7 @@ def test_without_a_release_there_is_no_newest_and_every_tag_is_named():
     assert len(choice.skipped) == 2
 
 
-def test_a_tag_name_with_a_control_character_is_named_escaped_on_one_line():
+def test_a_tag_name_with_a_control_character_is_named_as_it_is_for_the_row_writer_to_escape():
     choice = newest_of("v1\x1b[2J")
 
-    assert choice.skipped == ("skipped tag v1\\x1b[2J: not vYYYY.MM.DD.N",)
+    assert choice.skipped == (releases.SkippedTag("v1\x1b[2J", "not vYYYY.MM.DD.N"),)

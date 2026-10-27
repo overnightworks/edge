@@ -448,7 +448,7 @@ class Probe:
         sha = self.release(tag)
         out = self.apply()
         expect(
-            f"{self.key}: on at {tag} ({sha}) from origin master" in out,
+            f"switch on      {tag} · into ~/srv/{self.key}" in out,
             f"the plan said: {out[-300:]}",
         )
         expect(f"{self.key} is on at {tag}" in out, f"the run said: {out[-300:]}")
@@ -472,7 +472,7 @@ class Probe:
         self.release(tag)
         out = self.apply()
         expect(
-            f"update to {tag}" in out and f"last successful deployment {TAGS['a1']}" in out,
+            f"update         {TAGS['a1']} → {tag}" in out,
             out[-300:],
         )
         expect(self.deployed()["tag"] == tag, "the record is not the new tag")
@@ -483,7 +483,7 @@ class Probe:
     def cell_a4_side_branch(self) -> None:
         self.release(TAGS["a4_side"], on="side")
         out = self.apply(typed=b"no\n")
-        expect(f"skipped tag {TAGS['a4_side']}: not on origin master" in out, out[-300:])
+        expect(f"tag skipped    {TAGS['a4_side']} · not on origin master" in out, out[-300:])
         expect(
             "nothing to change" in out and self.deployed()["tag"] == TAGS["a3"], "the newest moved"
         )
@@ -514,7 +514,7 @@ class Probe:
         )
         self.serves(TAGS["a3"])
         again = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-        expect(f"the update to {tag} did not finish" in again, again[-300:])
+        expect(f"update to {tag} did not finish" in again, again[-300:])
         print("A9 held: a failed build keeps the old container and record; the plan says so")
 
     def cell_a8_never_healthy(self) -> None:
@@ -526,11 +526,8 @@ class Probe:
         expect(self.ask("/version")[0] == 404, "Traefik still routes an unhealthy container")
         again = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
         expect(
-            f"update to {tag}" in again and f"last successful deployment {TAGS['a3']}" in again,
+            f"update         {TAGS['a3']} → {tag} · update to {tag} did not finish" in again,
             again[-300:],
-        )
-        expect(
-            f"the update to {tag} did not finish" in again and "(unhealthy)" in again, again[-300:]
         )
         print(
             "A8 held: partial (hal 3), record stays, Traefik routes nothing, plan says unfinished"
@@ -597,7 +594,7 @@ class Probe:
                 "setup",
             )
             out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-            expect(f"the update to {tag} did not finish" in out, out[-400:])
+            expect(f"update to {tag} did not finish" in out, out[-400:])
             expect("nothing to change" not in out, out[-400:])
             expect(
                 all(row["service"] in out for row in self.containers()), "a container is not shown"
@@ -659,7 +656,7 @@ class Probe:
         print("C1 held: off removes every container, the named volumes, checkout and record stay")
         self.set_enabled(True)
         out = self.apply()
-        expect(f"start again at {tag}" in out, f"C2: the plan said: {out[-300:]}")
+        expect(f"start again    {tag} · recorded" in out, f"C2: the plan said: {out[-300:]}")
         self.serves(tag)
         after = self.starts()
         expect(after[: len(before)] == before and len(after) > len(before), f"C2: {after}")

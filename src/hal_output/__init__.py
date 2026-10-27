@@ -4,17 +4,21 @@ repository."""
 
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import TextIO
 
 SUBJECT_WIDTH = 14
 EVENT_WIDTH = 14
+HEADING_THRESHOLD = 6
+"""From this many printed rows a plan shows its groups under headings."""
 
 _RESET = "\x1b[0m"
 _DIM = "2"
 _BOLD_RED = "1;31"
 _CYAN = "36"
+_BOLD = "1"
 """The 16 base ANSI colours, so a terminal's own theme decides the shades."""
 
 
@@ -38,6 +42,8 @@ class Glyph(Enum):
     NEEDS_YOU = "!"
     UNCHANGED = "·"
     CHANGE = "~"
+    ADD = "+"
+    REMOVE = "-"
     ANNOUNCE = "\u203a"
 
     @property
@@ -50,6 +56,8 @@ _ROW_STYLES = {
     Glyph.FAILED: "31",
     Glyph.NEEDS_YOU: "33",
     Glyph.CHANGE: "34",
+    Glyph.ADD: "32",
+    Glyph.REMOVE: "31",
     Glyph.ANNOUNCE: "36",
 }
 _VERDICT_STYLES = {
@@ -76,6 +84,15 @@ class Row:
     event: StrEnum
     fact: str = ""
     count: int | None = None
+
+
+@dataclass(frozen=True)
+class Group:
+    """The rows of one kind of thing in a plan, in the order the work runs; `heading` names the
+    group, None for rows that never stand under one."""
+
+    heading: StrEnum | None
+    rows: tuple[Row, ...]
 
 
 @dataclass(frozen=True)
@@ -144,6 +161,20 @@ def write_row(row: Row) -> None:
     glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
     line = f"  {glyph} {columns}"
     print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+
+
+def write_groups(groups: Sequence[Group]) -> None:
+    """The groups' rows on stdout in the order given, the rows without a heading first and an
+    empty group not at all. Once `HEADING_THRESHOLD` rows are printed, each named group stands
+    under its lowercase heading, unindented and bold on a terminal."""
+    shown = [group for group in groups if group.rows]
+    shown.sort(key=lambda group: group.heading is not None)
+    headed = sum(len(group.rows) for group in shown) >= HEADING_THRESHOLD
+    for group in shown:
+        if headed and group.heading is not None:
+            print(_styled(printable(str(group.heading)), _BOLD, sys.stdout))
+        for row in group.rows:
+            write_row(row)
 
 
 def write_verdict(verdict: Verdict) -> None:

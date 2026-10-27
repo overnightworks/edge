@@ -51,7 +51,7 @@ from edge import (
     releases,
     switches,
 )
-from edge.unit_plans import Fleet, Progress, stays_stopped_line
+from edge.unit_plans import Fleet, Progress
 
 HEALTH_SECONDS = 300.0
 HEALTH_POLL_SECONDS = 2.0
@@ -140,28 +140,6 @@ class AppPlan:
     replaces_running: bool  # running containers are replaced on the first deployment
     containers: tuple[str, ...]  # as `ps` shows them
 
-    @property
-    def line(self) -> str:
-        key, tag = self.app.key, self.release.tag
-        now = "; now: " + (", ".join(self.containers) or "no container")
-        if self.kind is AppKind.ON:
-            replacing = (
-                ", replacing the running containers; named volumes kept"
-                if self.replaces_running
-                else ""
-            )
-            return (
-                f"{key}: on at {tag} ({self.sha}) from origin {self.app.default_branch}, "
-                f"into ~/srv/{key}{replacing}"
-            )
-        if self.kind is AppKind.START_AGAIN:
-            return f"{key}: start again at {tag} ({self.sha}, recorded){now}"
-        unfinished = f"; the update to {self.unfinished} did not finish" if self.unfinished else ""
-        return (
-            f"{key}: update to {tag} ({self.sha}); "
-            f"last successful deployment {self.recorded_tag}{unfinished}{now}"
-        )
-
 
 @dataclass(frozen=True)
 class OffPlan:
@@ -171,32 +149,17 @@ class OffPlan:
     containers: tuple[str, ...]  # as `ps` shows them
     volumes: tuple[str, ...]  # each named volume once, with its count when several share it
 
-    @property
-    def line(self) -> str:
-        shown = ", ".join(self.containers)
-        volumes = ", ".join(self.volumes) or "none"
-        key = self.app.key
-        return f"{key}: off (containers {shown}; named volumes {volumes} stay; ~/srv/{key} stays)"
-
 
 @dataclass(frozen=True)
 class StaysStoppedNote:
     key: str
     since: str | None  # None when only the barrier stands
 
-    @property
-    def line(self) -> str:
-        return stays_stopped_line(self.key, self.since)
-
 
 @dataclass(frozen=True)
 class SkippedNote:
     key: str
-    text: str
-
-    @property
-    def line(self) -> str:
-        return f"{self.key}: {self.text}"
+    skipped: releases.SkippedTag
 
 
 @dataclass(frozen=True)
@@ -211,13 +174,6 @@ class AppsPlan:
     @property
     def changes_nothing(self) -> bool:
         return not self.plans and not self.offs
-
-    @property
-    def notes(self) -> tuple[str, ...]:
-        return tuple(note.line for note in self.kept)
-
-    def describe(self) -> list[str]:
-        return [*self.notes, *(off.line for off in self.offs), *(plan.line for plan in self.plans)]
 
     def run(
         self, marks: switches.Switches, progress: Progress
@@ -258,7 +214,7 @@ def plan_apps(
                 )
             continue
         planned, skipped = _plan_one(app, organisation, runtime, ingress)
-        notes += [SkippedNote(app.key, text) for text in skipped]
+        notes += [SkippedNote(app.key, one) for one in skipped]
         if planned:
             plans.append(planned)
     return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every, tuple(still_running))
@@ -305,7 +261,7 @@ def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
 
 def _plan_one(
     app: catalog.App, organisation: str, runtime: AppRuntime, ingress: barrier.Barrier
-) -> tuple[AppPlan | None, tuple[str, ...]]:
+) -> tuple[AppPlan | None, tuple[releases.SkippedTag, ...]]:
     url = f"https://github.com/{organisation}/{app.key}.git"
     app_checkout = deploy_checkout.AppCheckout(
         checkout.Git(runtime.srv / app.key, runtime.git), url, app.default_branch

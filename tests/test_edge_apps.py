@@ -24,7 +24,7 @@ from app_support import (
 )
 from git_support import head_of, plain_git
 
-from edge import apps, compose, switches
+from edge import apps, compose, releases, switches
 from edge.unit_plans import Fleet, Progress
 
 EDGE_FLEET = Fleet({"name": "edge"}, {}, ())
@@ -116,7 +116,8 @@ def test_a_first_apply_plans_tag_and_full_sha_then_runs_and_records_after_health
 
     plan = world.plan()
 
-    assert plan.describe() == [f"hopin: on at {FIRST} ({sha}) from origin master, into ~/srv/hopin"]
+    [planned] = plan.plans
+    assert (planned.kind, planned.release.tag, planned.sha) == (apps.AppKind.ON, FIRST, sha)
     assert world.deployed() is None
     assert world.run(plan) == [None]
     assert world.deployed() == {"tag": FIRST, "sha": sha, "time": NOW.isoformat()}
@@ -142,7 +143,7 @@ def test_a_second_apply_changes_nothing_and_builds_creates_and_starts_nothing(wo
     plan = world.plan()
 
     assert plan.changes_nothing
-    assert plan.describe() == []
+    assert plan.kept == ()
     assert world.docker.verbs == ["ps"]
 
 
@@ -152,10 +153,10 @@ def test_a_newer_release_is_an_update_that_names_the_last_successful_deployment(
 
     plan = world.plan()
 
-    assert plan.describe() == [
-        f"hopin: update to {SECOND} ({sha}); last successful deployment {FIRST}; "
-        "now: hopin running (healthy)"
-    ]
+    [planned] = plan.plans
+    assert (planned.kind, planned.release.tag, planned.sha) == (apps.AppKind.UPDATE, SECOND, sha)
+    assert (planned.recorded_tag, planned.unfinished) == (FIRST, None)
+    assert planned.containers == ("hopin running (healthy)",)
     assert world.run(plan) == [None]
     assert world.deployed()["tag"] == SECOND
 
@@ -169,7 +170,9 @@ def test_a_release_on_a_side_branch_is_named_and_the_newest_stays(world, origin)
     plan = world.plan()
 
     assert plan.changes_nothing
-    assert plan.notes == ("hopin: skipped tag v2026.10.22.9: not on origin master",)
+    assert plan.kept == (
+        apps.SkippedNote(KEY, releases.SkippedTag("v2026.10.22.9", "not on origin master")),
+    )
 
 
 def test_an_off_grammar_tag_is_named_in_the_plan(world, origin):
@@ -178,7 +181,9 @@ def test_an_off_grammar_tag_is_named_in_the_plan(world, origin):
 
     plan = world.plan()
 
-    assert plan.notes == ("hopin: skipped tag v2027.1.5.1: not vYYYY.MM.DD.N",)
+    assert plan.kept == (
+        apps.SkippedNote(KEY, releases.SkippedTag("v2027.1.5.1", "not vYYYY.MM.DD.N")),
+    )
     assert plan.plans[0].release.tag == FIRST
 
 
@@ -203,10 +208,9 @@ def test_a_new_tag_that_fails_health_stays_partial_with_the_record_on_the_old_on
         "the record stays, the fix is a newer tag"
     )
     assert world.deployed()["tag"] == SECOND
-    assert world.plan().describe() == [
-        f"hopin: update to {THIRD} ({sha}); last successful deployment {SECOND}; "
-        f"the update to {THIRD} did not finish; now: hopin running (unhealthy)"
-    ]
+    [planned] = world.plan().plans
+    assert (planned.release.tag, planned.sha, planned.recorded_tag) == (THIRD, sha, SECOND)
+    assert (planned.unfinished, planned.containers) == (THIRD, ("hopin running (unhealthy)",))
 
 
 def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_nothing_to_change(
@@ -221,7 +225,7 @@ def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_n
         "web": "healthy",
         "worker": "",
     }
-    assert world.plan().describe() == []
+    assert world.plan().changes_nothing
 
 
 @pytest.mark.parametrize("helper_state", ["restarting", "exited", "created"])
@@ -256,10 +260,9 @@ def test_a_build_that_fails_leaves_the_old_containers_and_the_next_plan_says_unf
     )
     assert world.deployed()["tag"] == FIRST
     assert world.docker.rows[0]["Name"] == "hopin-hopin-1"
-    assert world.plan().describe() == [
-        f"hopin: update to {SECOND} ({sha}); last successful deployment {FIRST}; "
-        f"the update to {SECOND} did not finish; now: hopin running (healthy)"
-    ]
+    [planned] = world.plan().plans
+    assert (planned.release.tag, planned.sha, planned.recorded_tag) == (SECOND, sha, FIRST)
+    assert (planned.unfinished, planned.containers) == (SECOND, ("hopin running (healthy)",))
 
 
 @pytest.mark.parametrize("verb", ["build", "pull", "create", "start"])
@@ -309,7 +312,7 @@ def test_an_interrupt_names_the_app_and_step_and_leaves_the_record_and_the_next_
     assert step in world.progress.step
     assert ("partly replaced" in world.progress.step) == (verb != "build")
     assert world.deployed()["tag"] == FIRST
-    assert f"the update to {SECOND} did not finish" in world.plan().describe()[0]
+    assert world.plan().plans[0].unfinished == SECOND
     assert head_of(world.srv) == sha
 
 
@@ -349,9 +352,13 @@ def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts
     sha = deploy(world, origin, FIRST)
     break_it(world.docker)
 
-    assert world.plan().describe() == [
-        f"hopin: start again at {FIRST} ({sha}, recorded); now: hopin {now}"
-    ]
+    [planned] = world.plan().plans
+    assert (planned.kind, planned.release.tag, planned.sha) == (
+        apps.AppKind.START_AGAIN,
+        FIRST,
+        sha,
+    )
+    assert planned.containers == (f"hopin {now}",)
 
 
 def test_a_container_name_that_compose_interpolates_never_reaches_a_plan_or_a_failure(
@@ -371,22 +378,23 @@ def test_a_container_name_that_compose_interpolates_never_reaches_a_plan_or_a_fa
     world.docker.verb_create = create_named
     sha = deploy(world, origin, FIRST, {"compose.yaml": named})
     world.docker.rows[0]["State"] = "exited"
-    start_again = world.plan().describe()
+    start_again = world.plan().plans
 
     assert world.docker.rows[0]["Name"] == resolved
-    assert start_again[0].startswith(f"hopin: start again at {FIRST} ({sha}, recorded)")
+    assert (start_again[0].kind, start_again[0].sha) == (apps.AppKind.START_AGAIN, sha)
 
     origin.release(SECOND, {"compose.yaml": named})
-    update = world.plan().describe()
+    update = world.plan().plans
 
-    assert update[0].startswith(f"hopin: update to {SECOND}")
+    assert (update[0].kind, update[0].release.tag) == (apps.AppKind.UPDATE, SECOND)
 
     world.docker.health_after_start = "unhealthy"
     [failure] = world.run()
 
     assert world.docker.rows[0]["Name"] == resolved
     assert "hopin running (unhealthy)" in failure
-    assert resolved not in " ".join([*start_again, *update, failure])
+    shown = [*start_again[0].containers, *update[0].containers, failure]
+    assert resolved not in " ".join(shown)
 
 
 @pytest.mark.parametrize(
@@ -403,19 +411,18 @@ def test_one_container_per_service_and_no_orphan_is_needed_for_nothing_to_change
     sha = deploy(world, origin, FIRST)
     arrange(world.docker)
 
-    [line] = world.plan().describe()
+    [planned] = world.plan().plans
 
-    assert line.startswith(f"hopin: start again at {FIRST} ({sha}, recorded)")
+    assert (planned.kind, planned.sha) == (apps.AppKind.START_AGAIN, sha)
 
 
 def test_running_containers_without_a_record_are_replaced_and_their_volumes_kept(world, origin):
     sha = origin.release(FIRST)
     world.docker.put(KEY, "running", "healthy")
 
-    assert world.plan().describe() == [
-        f"hopin: on at {FIRST} ({sha}) from origin master, into ~/srv/hopin, "
-        "replacing the running containers; named volumes kept"
-    ]
+    [planned] = world.plan().plans
+    assert (planned.kind, planned.release.tag, planned.sha) == (apps.AppKind.ON, FIRST, sha)
+    assert planned.replaces_running
 
 
 def test_a_dirty_checkout_cannot_be_planned_and_is_not_reset(world, origin):
@@ -546,10 +553,9 @@ def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(worl
     plan = world.plan()
 
     assert not plan.changes_nothing
-    assert plan.describe() == [
-        f"{KEY}: off (containers {KEY} running (healthy), leftover exited; "
-        f"named volumes data stay; ~/srv/{KEY} stays)"
-    ]
+    [off] = plan.offs
+    assert off.containers == (f"{KEY} running (healthy)", "leftover exited")
+    assert off.volumes == ("data",)
 
 
 def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(world):
@@ -625,10 +631,10 @@ def test_an_update_interrupted_after_part_of_the_containers_was_replaced_is_repa
     if second_web:
         docker.put("web", "exited")
 
-    [line] = world.plan().describe()
+    [planned] = world.plan().plans
 
-    assert f"last successful deployment {FIRST}; the update to {SECOND} did not finish" in line
-    assert all(row["Service"] in line for row in docker.rows)
+    assert (planned.recorded_tag, planned.unfinished) == (FIRST, SECOND)
+    assert all(row["Service"] in " ".join(planned.containers) for row in docker.rows)
     assert world.run() == [None]
     assert sorted(row["Service"] for row in docker.rows) == ["web", "worker"]
     assert world.deployed()["tag"] == SECOND
@@ -763,17 +769,15 @@ def test_volumes_that_share_a_key_are_named_once_with_their_count(world):
     off = switch_off(world)
     off.volumes = {f"{KEY}_data": "data", SENTINEL: "data", f"{KEY}_cache": "cache"}
 
-    [line] = world.plan().describe()
+    [planned] = world.plan().offs
 
-    assert "named volumes data (2), cache stay" in line
-    assert SENTINEL not in line
+    assert planned.volumes == ("data (2)", "cache")
 
 
 def test_a_volume_name_that_compose_interpolates_never_reaches_the_plan(world):
     off = switch_off(world)
     off.volumes = {SENTINEL: "data"}
 
-    [line] = world.plan().describe()
+    [planned] = world.plan().offs
 
-    assert SENTINEL not in line
-    assert "named volumes data stay" in line
+    assert planned.volumes == ("data",)

@@ -55,5 +55,4 @@ class Plan:
             *self.legal.describe(),
             *(plan.describe() for plan in plans),
             *self.realm.lines,
-            *self.app_plans.describe(),
         ]
