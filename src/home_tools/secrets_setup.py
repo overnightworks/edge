@@ -582,6 +582,9 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
+STILL_OPEN_EXIT = 1
+
+
 def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
@@ -592,7 +595,7 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return 1 if still_open or by_hand else 0
+    return STILL_OPEN_EXIT if still_open or by_hand else 0
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
