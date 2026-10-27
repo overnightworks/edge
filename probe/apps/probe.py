@@ -3,15 +3,13 @@
 repository switches on an app of a throwaway bare origin at its newest `vYYYY.MM.DD.N` tag, updates
 it, and refuses or ends partial where block A says so.
 
-Cells: A1 the first apply, A2 a second, A3 an update that keeps the named volume's data,
-A4 a tag only on a side branch, A7 a declined `yes`, A8 a new tag that never becomes healthy, A9 a
-build that fails, A12 containers without a record, A18 an interpolation error that carries a
-sentinel value, A23 an update interrupted after part of the containers were replaced, B5 an image
-`VOLUME` that no named volume covers and the same covered, B8 a service with `pull_policy: always`,
-and block C, `enabled: false`: C1 an app switched off while running, C2 on again at the same tag, C3
-off after an update that renamed a service and failed its build, C4 off with `compose.yaml` missing
-or invalid at HEAD, C5 off with a leftover container of an unknown service after an update dropped
-one. The D and R cells are in `emergency_switch.py` and `alias_routing.py`. Exits: 0 or 3.
+Cells: A1 the first apply, A2 a second, A3 an update that keeps the volume's data, A4 a tag only on
+a side branch, A7 a declined `yes`, A8 a tag never healthy, A9 a failed build, A12 containers
+without a record, A18 a sentinel in an interpolation error, A23 an update interrupted midway, B5 an
+image `VOLUME` that no named volume covers and covered, B8 a service with `pull_policy: always`, and
+block C, `enabled: false`: C1 an app switched off running, C2 on again at the same tag, C3 off after
+a renamed service, a failed build, C4 off with `compose.yaml` unusable at HEAD, C5 off with a
+leftover container. D and R: `emergency_switch.py`, `alias_routing.py`. hal's exits: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -94,6 +92,8 @@ TAGS = {  # by cell, in the order they are cut: each is newer than the one befor
     "c5_first": "v2026.10.26.1",
     "c5_second": "v2026.10.26.2",
     "h1": "v2026.10.26.3",
+    "alias": "v2026.10.27.1",
+    "alias_dropped": "v2026.10.27.2",
 }
 HEALTHCHECK = (
     '    healthcheck: {test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"],\n'
@@ -750,7 +750,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
         probe.cell_h1_service_without_healthcheck()
-        AliasRouting(probe, DOMAIN).prove()
+        AliasRouting(probe, DOMAIN, TAGS).prove()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1

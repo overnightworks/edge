@@ -6,17 +6,16 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 
 from edge_copy import expect
 
-ALIASED = "v2026.10.27.1"  # newer than every tag of the probe's other cells
-DROPPED = "v2026.10.27.2"
 VOLUME = "    volumes: [data:/data]\n"
 
 
 class AliasRouting:
-    def __init__(self, probe, domain: str) -> None:
-        self.probe, self.domain = probe, domain
+    def __init__(self, probe, domain: str, tags: Mapping[str, str]) -> None:
+        self.probe, self.domain, self.tags = probe, domain, tags
 
     def compose_text(self, tag: str, alias: str) -> str:
         """The app's generated compose.yaml with `alias` as a second host label of `web`."""
@@ -35,24 +34,24 @@ class AliasRouting:
     def prove(self) -> None:
         """#445 R3, R4: the alias host answers, an unknown host gets 404, and dropping the label
         drops the route without a Traefik error."""
-        probe = self.probe
+        probe, aliased, dropped = self.probe, self.tags["alias"], self.tags["alias_dropped"]
         alias_host = f"{probe.key}-talk.{self.domain}"
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        probe.release(ALIASED, compose_file=self.compose_text(ALIASED, f"{probe.key}-talk"))
+        probe.release(aliased, compose_file=self.compose_text(aliased, f"{probe.key}-talk"))
         probe.apply()
-        probe.serves(ALIASED)
+        probe.serves(aliased)
         probe.wait_until(
             "the alias host answers",
-            lambda: probe.ask("/version", host=alias_host)[1] == ALIASED,
+            lambda: probe.ask("/version", host=alias_host)[1] == aliased,
         )
         expect(
             probe.ask("/version", host=f"other.{self.domain}")[0] == 404,
             "R3: an unknown host answers",
         )
         print("R3 held: Host = name and Host = alias reach the app, an unknown host gets 404")
-        probe.release(DROPPED)
+        probe.release(dropped)
         probe.apply()
-        probe.serves(DROPPED)
+        probe.serves(dropped)
         expect(
             probe.ask("/version", host=alias_host)[0] == 404, "R3: the alias routes without a label"
         )
