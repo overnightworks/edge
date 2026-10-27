@@ -522,16 +522,15 @@ def wait_for_call(
 ) -> CallWait:
     """Polls the app's lines (those since R2 began) until a `held` line appears, the client
     exits, or `R2_CALL_SECONDS` have passed."""
-    held = False
+    held_polls: list[bool] = []
 
     def call_or_exit(left: int) -> bool:
-        nonlocal held
-        held = app_call(app_lines(left)).held
-        return held or not client_alive()
+        held_polls.append(app_call(app_lines(left)).held)
+        return held_polls[-1] or not client_alive()
 
     if not wait_until(call_or_exit, R2_CALL_SECONDS, clock, sleep):
         return CallWait.TIMED_OUT
-    return CallWait.HELD if held else CallWait.CLIENT_EXITED
+    return CallWait.HELD if held_polls[-1] else CallWait.CLIENT_EXITED
 
 
 class B9Evidence(NamedTuple):

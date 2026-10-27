@@ -1,6 +1,7 @@
 """The run client of the login command's R2 (#469, agent-runtime#440 B9): the lines it prints,
 the close on the host's command and the status read, on a fake connection and fake clocks. Its
-`main`, which imports the runtime packages and connects to the service, runs only live."""
+`main`, which imports the runtime packages and connects to the service, runs only live. It also
+holds the drive tests of cells_12b's paid turn (R2 and B9) against a fake clock, client and app."""
 
 from __future__ import annotations
 

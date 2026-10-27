@@ -71,6 +71,12 @@ def called_tool(message: dict) -> str:
     return HELD_TOOL if name == HELD_TOOL else "other"
 
 
+def request_id_of(message: dict) -> int | None:
+    """The id a client numbered its request with; only the number is echoed back."""
+    request_id = message.get("id")
+    return None if request_id is None else int(request_id)
+
+
 def offered_tools(planted: str | None) -> list[dict]:
     return [
         {"name": "step", "description": planted or PLAIN_DESCRIPTION, "inputSchema": STEP_SCHEMA},
@@ -108,14 +114,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             f"method={method} offered={names} canary={int(planted is not None)} "
             f"bearer={int(signature is not None)}",
         )
-        self.answer(method, message.get("id"), tools)
+        self.answer(method, request_id_of(message), tools)
 
     def hold_call(self, message: dict) -> None:
         """A call of `step` gets no answer: the request ends when the peer closes its end."""
         tool = called_tool(message)
         if tool != HELD_TOOL:
             log_line(self.server.log, f"method={CALL_TOOL_METHOD} tool={tool}")
-            self.answer(OTHER_METHOD, message.get("id"), [])
+            self.answer(OTHER_METHOD, request_id_of(message), [])
             return
         log_line(self.server.log, f"method={CALL_TOOL_METHOD} tool={tool} held")
         self.read_until_closed()
@@ -126,11 +132,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Both the orderly end (nothing more to read) and a reset connection are the close."""
         try:
             while self.connection.recv(4096):
-                pass
+                continue
         except OSError:
             return
 
-    def answer(self, method: str, request_id: object, tools: list[dict]) -> None:
+    def answer(self, method: str, request_id: int | None, tools: list[dict]) -> None:
         if method == "notifications/initialized":
             self.reply(202, b"")
             return
@@ -189,7 +195,7 @@ def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
     server = HttpsServer(("0.0.0.0", PORT), MODE_FILE, sys.stdout, context)  # NOSONAR(S5332) TLS
-    server.serve_forever()
+    server.serve_forever()  # NOSONAR(S5332) TLS
     return 0
 
 
