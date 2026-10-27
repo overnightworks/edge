@@ -63,6 +63,9 @@ or nothing: Keycloak is DB-only. The database container and the volume are found
 A SQLite app declares `dump = "sqlite_online_copy"`, the compose volume `database_volume`, the
 `database_file` in that volume's root (one plain file name, no path) and the same `restore_test` table.
 That form refuses the Postgres keys and audio, and a Postgres record refuses the SQLite keys.
+A SQLite record may also declare one `files_volume` (a plain compose volume name, never `db` and never
+`database_volume`) that is backed up beside the copy, and a `files_skip` (only with it): one name glob,
+a plain prefix and exactly one trailing `*` (`staged-*`).
 
 restic runs from the official image, pinned by version and digest (stages of `src/edge_backup/images/Dockerfile`, which Dependabot keeps current), with no
 network, no capabilities and a read-only root, as your own user. Backup and restore test first check that
@@ -150,6 +153,19 @@ missing file fails the backup and creates nothing. Before restic stores it, the 
 `PRAGMA integrity_check` with exactly `ok`: a bad copy fails in the phase `manifest` and never becomes the
 last successful backup.
 
+A SQLite app's `files_volume` lands in the snapshot as `<volume>/` beside `db/`, so `hal restore --target`
+leaves both. The volume is mounted read-only into restic and read live, crash-consistent like audio.
+The app must keep its files readable to your user through a read-only mount: restic runs as you, so an
+entry you cannot read fails the backup (never skipped silently). Entries whose own name matches
+`files_skip` are left out at every depth, by restic (`--exclude <volume>/**/<glob>`) and by the count
+alike; nothing else is skipped. `db/manifest.json` also names the `files` counted just before the scan
+(`find`, no network, a read-only root, your user), written only when a files volume is declared.
+The database copy and the volume scan run seconds apart, so a run the app delivers in between may be
+missing from the snapshot. Churn during the scan is loud or caught, and the next run retries: the count
+fails the app in the phase `manifest` on any vanished or unreadable entry; restic exit 3 (a path vanished)
+fails it in the phase `backup`; a run removed whole before the scan leaves a short snapshot recorded as
+good, which the next restore test fails until the next backup.
+
 Keycloak's dump holds its realm signing keys, the credential hashes and the client secrets. In the
 repository it exists only encrypted. In plain text it exists in exactly three places, each mode 0700:
 the staging directory during a backup, the restore test's directory during a restore test (both removed
@@ -173,6 +189,9 @@ and checks:
 - for a SQLite app there is no throwaway server: a container of the `sqlite` stage mounts only the
   restored directory, read-only, and the file passes `PRAGMA integrity_check` with exactly `ok` and its
   table holds the manifest's `rows` (a manifest without `rows` fails; `require_rows` applies as above);
+- for a SQLite app with a files volume: the restored `<volume>/` is a directory and its file count,
+  taken by the same rule in a container that mounts no volume, equals the manifest's `files` (a manifest
+  without `files` fails);
 - for an app with audio: the restored audio file count equals the manifest's, and every audio file the
   restored database references (`generations.mp3_path`) exists in the copy with a size above zero.
 
