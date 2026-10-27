@@ -31,7 +31,7 @@ from home_tools.system_step import (
     UnresolvableRunningUser,
 )
 from home_tools.config import Config
-from home_tools.layout import Layout
+from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UserUnits
 
 if TYPE_CHECKING:
@@ -348,13 +348,8 @@ def _write_atomically(path: Path, content: str) -> None:
     temporary.replace(path)
 
 
-def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    run = ports.run
+def _quality_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
     quality, engines_dir = str(layout.quality_executable), str(layout.quality_engines_dir)
-    hook_content = render_hook(layout)
-    hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
-    system = SystemStep(layout, ports.system)
-    units = UserUnits(layout, ports.unit_directory, run)
 
     def quality_current() -> bool:
         return _recorded_quality_source_matches(layout) and _is_executable(layout.quality_executable)
@@ -367,6 +362,32 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
     def install_engines() -> bool:
         return run([quality, "engines", "install", engines_dir]) is not None and engines_current()
+
+    return (
+        _local_step(
+            "quality",
+            SetupRow.COMMIT_HOOK,
+            quality_current,
+            install_quality,
+            HOOK_WHY,
+            "uv could not install quality",
+            shell_join(["uv", "tool", "install", "--force", QUALITY_SOURCE]),
+        ),
+        _local_step(
+            "Engines",
+            SetupRow.COMMIT_HOOK,
+            engines_current,
+            install_engines,
+            HOOK_WHY,
+            "the quality engines did not install",
+            shell_join([quality, "engines", "install", engines_dir]),
+        ),
+    )
+
+
+def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
+    hook_content = render_hook(layout)
+    hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
 
     def hook_current(path: Path) -> bool:
         return _has_hook_mode(path) and path.read_text() == hook_content
@@ -383,35 +404,10 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     def activate_hooks() -> bool:
         return run(["git", "config", "--global", "core.hooksPath", str(layout.git_hooks_dir)]) is not None
 
-    def ansible_current() -> bool:
-        return _recorded_ansible_source_matches(layout) and _is_executable(layout.ansible_playbook_executable)
-
-    def install_ansible() -> bool:
-        return run(["uv", "tool", "install", "--force", ANSIBLE_SOURCE]) is not None and ansible_current()
-
-    hook, timers, system_row = SetupRow.COMMIT_HOOK, SetupRow.TIMERS, SetupRow.SYSTEM
     return (
         _local_step(
-            "quality",
-            hook,
-            quality_current,
-            install_quality,
-            HOOK_WHY,
-            "uv could not install quality",
-            shell_join(["uv", "tool", "install", "--force", QUALITY_SOURCE]),
-        ),
-        _local_step(
-            "Engines",
-            hook,
-            engines_current,
-            install_engines,
-            HOOK_WHY,
-            "the quality engines did not install",
-            shell_join([quality, "engines", "install", engines_dir]),
-        ),
-        _local_step(
             "Hook-Dateien",
-            hook,
+            SetupRow.COMMIT_HOOK,
             lambda: all(hook_current(path) for path in hook_paths),
             write_hooks,
             HOOK_WHY,
@@ -419,16 +415,32 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         ),
         _local_step(
             "Aktivierung",
-            hook,
+            SetupRow.COMMIT_HOOK,
             hooks_active,
             activate_hooks,
             HOOK_WHY,
             "git could not set core.hooksPath",
             shell_join(["git", "config", "--global", "core.hooksPath", str(layout.git_hooks_dir)]),
         ),
+    )
+
+
+def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
+    run = ports.run
+    system = SystemStep(layout, ports.system)
+    units = UserUnits(layout, ports.unit_directory, run)
+    system_row = SetupRow.SYSTEM
+
+    def ansible_current() -> bool:
+        return _recorded_ansible_source_matches(layout) and _is_executable(layout.ansible_playbook_executable)
+
+    def install_ansible() -> bool:
+        return run(["uv", "tool", "install", "--force", ANSIBLE_SOURCE]) is not None and ansible_current()
+
+    return (
         Step(
             "User units",
-            timers,
+            SetupRow.TIMERS,
             units.is_verified,
             units.check,
             units.apply,
@@ -459,8 +471,11 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             operators_only=True,
             may_leave_system_partial=True,
         ),
-        _secrets_step(layout, ports),
     )
+
+
+def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
+    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_system_steps(layout, ports), _secrets_step(layout, ports))
 
 
 def _role(ports: Ports) -> ExecutionRole:
