@@ -23,7 +23,12 @@ from edge_backup_support import (
 
 from edge_backup import sqlite_copy
 from edge_backup.apps import AppsError, SqliteDatabase, parse_apps
-from edge_backup.docker import SERVER_START_LABEL, SQLITE_CHECK_LABEL, SQLITE_COPY_LABEL
+from edge_backup.docker import (
+    SERVER_START_LABEL,
+    SQLITE_CHECK_LABEL,
+    SQLITE_COPY_LABEL,
+    SQLITE_OWNER_LABEL,
+)
 from edge_backup.settings import SQLITE_IMAGE
 from edge_backup.verify import Manifest, VerificationError
 
@@ -329,7 +334,7 @@ def test_the_owner_is_read_through_a_read_only_mount_as_the_operator(edge_backup
     machine.other_volumes["presentator"] = ["presentator_database"]
     edge_backup("backup", *_sqlite_apps(home))
 
-    argv = machine.argv_of("Lesen des SQLite-Besitzers")
+    argv = machine.argv_of(SQLITE_OWNER_LABEL)
 
     assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
     assert next(m for m in _mounts(argv) if "target=/data" in m).endswith(",readonly")

@@ -649,7 +649,7 @@ def test_restore_test_without_a_snapshot_fails(edge_backup):
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.out
+    assert "no successful backup of songmaker recorded" in outcome.out
     assert outcome.status["failing_phase"] == "restore"
 
 
@@ -951,7 +951,7 @@ def test_restore_refuses_a_target_in_the_directory_runs_sweep(edge_backup, machi
     outcome = edge_backup("restore", "songmaker", "--target", str(work_dir / target))
 
     assert outcome.exit_code == 3
-    assert "Arbeitsverzeichnis" in outcome.err
+    assert "work directory" in outcome.err
     assert list(work_dir.iterdir()) == []
 
 
@@ -1130,7 +1130,7 @@ def test_an_app_never_backed_up_is_named_so_by_restore_and_restore_test(edge_bac
     restored = edge_backup(*shipped, "restore", "keycloak", "--target", str(home / "restored"))
     tested = edge_backup(*shipped, "restore", "--test")
 
-    expected = "kein erfolgreiches Backup von keycloak aufgezeichnet"
+    expected = "no successful backup of keycloak recorded"
     assert expected in restored.err
     assert expected in tested.out
     assert not (home / "restored").exists()
