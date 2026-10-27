@@ -8,21 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import setup
-from home_tools.cli import build_layout_and_ports, edge_units_directory
+from conftest import Sandbox
+
+from home_tools import cli, setup
+from home_tools.cli import build_layout_and_ports, edge_units_directory, main
 from home_tools.system_step import Applied, CheckState, StepFailed
-from home_tools.layout import Layout
-from home_tools.user_units import LoadedUnit, UserUnits
+from home_tools.layout import Layout, run_command
+from home_tools.user_units import UserUnits
 
 USER_UNITS_STEP = "User units"
 SERVICE = "backup.service"
 TIMER = "backup.timer"
 TIMERS_WANTS = "timers.target.wants"
-LOADED_BACKUP = [f"  {SERVICE}: ExecStart=/checkout/bin/backup", f"  {SERVICE}: Result=success"]
-LOADED_HAL_BACKUP = [
-    f"  {SERVICE}: ExecStart=/checkout/bin/hal backup",
-    f"  {SERVICE}: Result=success",
-]
 MUTATING_VERBS = {"daemon-reload", "enable", "disable", "stop"}
 
 
@@ -39,7 +36,6 @@ class FakeSystemctl:
         self.failing_verb: str | None = None
         self.loaded: dict[str, str] = {}
         self.active: set[str] = set()
-        self.last_result = "success"
         self.starts_nothing = False
         self.loaded_from: dict[str, str] = {}
 
@@ -85,27 +81,14 @@ class FakeSystemctl:
     def show(self, name: str) -> str:
         link = self.user_units / name
         stale = link.exists() and self.loaded.get(name) != link.read_text()
-        exec_start = next(
-            (
-                line
-                for line in self.loaded.get(name, "").splitlines()
-                if line.startswith("ExecStart=")
-            ),
-            "",
-        )
-        command = exec_start.removeprefix("ExecStart=")
         fragment_path = self.loaded_from.get(name, str(link) if name in self.loaded else "")
         enabled = (self.user_units / TIMERS_WANTS / name).exists()
         return "\n".join(
             [
                 f"NeedDaemonReload={'yes' if stale else 'no'}",
                 f"UnitFileState={'enabled' if enabled else 'linked'}",
-                f"Result={self.last_result}",
                 f"FragmentPath={fragment_path}",
                 f"ActiveState={'active' if name in self.active else 'inactive'}",
-                f"ExecStart={{ path={command} ; argv[]={command} ; ignore_errors=no ; }}"
-                if command
-                else "ExecStart=",
             ]
         )
 
@@ -122,7 +105,7 @@ class Machine:
         self.checkout_units = checkout_units
         self.user_units = home / ".config" / "systemd" / "user"
         self.user_units.mkdir(parents=True)
-        self.checkout_units.mkdir(parents=True)
+        self.checkout_units.mkdir(parents=True, exist_ok=True)
         self.write_unit(SERVICE, "ExecStart=/checkout/bin/backup\n")
         self.write_unit(TIMER, "OnCalendar=weekly\n")
         self.systemctl = FakeSystemctl(self.user_units)
@@ -139,7 +122,7 @@ def machine(tmp_path: Path) -> Machine:
 
 
 def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:
-    assert machine.step.apply() is Applied.CHANGED
+    assert machine.step.apply().applied is Applied.CHANGED
 
     assert (machine.user_units / SERVICE).readlink() == machine.checkout_units / SERVICE
     assert (machine.user_units / TIMER).readlink() == machine.checkout_units / TIMER
@@ -158,61 +141,71 @@ def test_a_second_apply_changes_nothing(machine: Machine) -> None:
     machine.step.apply()
     machine.systemctl.calls.clear()
 
-    assert (machine.step.apply(), machine.step.check()) == (Applied.UNCHANGED, CheckState.UNCHANGED)
+    assert (machine.step.apply().applied, machine.step.check()) == (
+        Applied.UNCHANGED,
+        CheckState.UNCHANGED,
+    )
     assert machine.systemctl.changes == []
 
 
-def test_the_loaded_command_and_last_result_of_each_service_are_listed(machine: Machine) -> None:
-    machine.step.apply()
-
-    assert machine.step.loaded_command_lines() == LOADED_BACKUP
-
-
-def test_a_failed_last_run_of_a_service_is_listed_with_its_result(machine: Machine) -> None:
-    machine.systemctl.last_result = "exit-code"
-    machine.step.apply()
-
-    assert machine.step.loaded_command_lines()[-1] == f"  {SERVICE}: Result=exit-code"
+@pytest.fixture
+def sandboxed_machine(sandbox: Sandbox) -> Machine:
+    """The sandbox's home and checkout units, with the fake systemd in place of the real one."""
+    return Machine(sandbox.home, cli.edge_units_directory(sandbox.layout))
 
 
-def test_every_command_of_a_unit_with_several_is_kept() -> None:
-    shown = "\n".join(
-        f"ExecStart={{ path={command} ; argv[]={command} ; ignore_errors=no ; }}"
-        for command in ("/bin/first", "/bin/second --flag")
-    )
+def setup_apply_lines(
+    machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> list[str]:
+    """The lines `hal setup --apply` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
 
-    assert LoadedUnit.parse(shown).commands == ("/bin/first", "/bin/second --flag")
+    def run(argv: Sequence[str]) -> str | None:
+        return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
+
+    assert main(["setup", "--apply"], home=sandbox.home, run=run) == 0
+
+    return capsys.readouterr().out.splitlines()
 
 
-def test_hal_setup_prints_the_loaded_commands_right_below_the_timers_row(
-    machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def only_systemctl(argv: Sequence[str]) -> str | None:
-        return machine.systemctl(argv) if argv[0] == "systemctl" else None
+    sandboxed_machine.write_unit("home-check.timer", "OnCalendar=daily\n")
 
-    def settled(row: setup.SetupRow) -> setup.Step:
-        return setup.Step(
-            "settled",
-            row,
-            lambda: True,
-            lambda: CheckState.UNCHANGED,
-            lambda: Applied.UNCHANGED,
-            "",
-            "",
-        )
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
 
-    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
-    units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
-    others = [settled(row) for row in setup.SetupRow if row is not setup.SetupRow.TIMERS]
-    monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (*others, units))
+    assert "  \u2713 timers          changed        2 timers \u00b7 systemd reloaded" in lines
 
-    assert setup.setup(layout, ports, apply=True) == 0
 
-    lines = capsys.readouterr().out.splitlines()
-    timers_row = next(
-        position for position, line in enumerate(lines) if line.split() == ["\u2713", "timers", "changed"]
-    )
-    assert lines[timers_row + 1 : timers_row + 1 + len(LOADED_BACKUP)] == LOADED_BACKUP
+def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandboxed_machine.step.apply()
+    sandboxed_machine.systemctl.active.clear()
+    (sandboxed_machine.user_units / TIMERS_WANTS / TIMER).unlink()
+
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
+
+    assert "  \u2713 timers          changed        1 timer" in lines
+
+
+def test_an_unchanged_timers_row_is_bare(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandboxed_machine.step.apply()
+
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
+
+    assert "  \u00b7 timers          unchanged" in lines
+
+
+def test_no_loaded_unit_line_follows_the_timers_row(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = "\n".join(setup_apply_lines(sandboxed_machine, sandbox, capsys))
+
+    assert "ExecStart=" not in output
+    assert "Result=" not in output
 
 
 def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: Machine) -> None:
@@ -220,9 +213,8 @@ def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: M
     machine.write_unit(SERVICE, "ExecStart=/checkout/bin/hal backup\n")
 
     assert not machine.step.is_verified()
-    assert machine.step.apply() is Applied.CHANGED
+    assert machine.step.apply().applied is Applied.CHANGED
     assert machine.systemctl.changes[-1] == ["daemon-reload"]
-    assert machine.step.loaded_command_lines() == LOADED_HAL_BACKUP
     assert machine.step.is_verified()
 
 

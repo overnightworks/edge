@@ -62,7 +62,7 @@ AGENT_SORTS_IT_IN = "Das macht ein Agent: sag „räum home auf“."
 SETUP_PENDING = (
     "1. hal setup --apply (eigenes Terminalfenster) — erwartet: quality, Engines, Hook-Dateien, Aktivierung, Ansible, System: changed;"
     " it asks once for sudo",
-    "   warum: ohne den Hook prüft kein Commit auf Geheimnisse;"
+    "   warum: without the hook no commit is checked for secrets;"
     " without it the tunnel ignores edge's global stop after a reboot, and only root may stop it",
 )
 SYSTEM_PENDING = (
@@ -467,7 +467,7 @@ def test_as_the_agent_home_next_lists_none_of_the_operators_steps(
 
     assert lines == [
         "1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed",
-        "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+        "   warum: without the hook no commit is checked for secrets",
     ]
 
 
@@ -488,7 +488,7 @@ def test_with_only_a_local_step_open_after_a_verified_system_run_the_step_still_
         0,
         [
             "1. hal setup --apply (eigenes Terminalfenster) — erwartet: Hook-Dateien: changed; it asks once for sudo",
-            "   warum: ohne den Hook prüft kein Commit auf Geheimnisse",
+            "   warum: without the hook no commit is checked for secrets",
         ],
     )
 
