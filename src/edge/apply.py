@@ -62,7 +62,18 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
+from edge import (
+    appkit_step,
+    barrier,
+    catalog,
+    checkout,
+    compose,
+    core,
+    environment,
+    setup,
+    switches,
+    terminal,
+)
 from edge.appkit_step import AppkitError, AppkitPlan, plan_appkit
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.built_image import BuiltRecreate
@@ -177,6 +188,7 @@ def _plan(
     record: core.Record,
     repository: Path,
     app_runtime: AppRuntime,
+    rename: appkit_step.Rename = os.rename,
 ) -> Plan:
     fleet = read_fleet(engine, repository)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
@@ -210,7 +222,7 @@ def _plan(
         reconcile.restart_of(plans, unit_services.recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
-    appkit = plan_appkit(repository)
+    appkit = plan_appkit(repository, rename=rename)
     legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
         fleet,
@@ -241,6 +253,7 @@ def apply_closed(
     ensure_environment: EnsureEnvironment = environment.ensure,
     realm_backup: reconcile.Backup | None = None,
     app_runtime: AppRuntime | None = None,
+    rename: appkit_step.Rename = os.rename,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -272,6 +285,7 @@ def apply_closed(
             waiting,
             realm_backup or reconcile.Backup.installed(repository, _tell),
             app_runtime or AppRuntime.of(home or Path.home(), state_directory),
+            rename,
         )
     finally:
         os.close(lock)
@@ -342,6 +356,7 @@ def _plan_and_apply(
     waiting: Waiting,
     realm_backup: reconcile.Backup,
     app_runtime: AppRuntime,
+    rename: appkit_step.Rename,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -356,7 +371,7 @@ def _plan_and_apply(
                 print(f"{COMMAND}: {line}")
         completed: list[str] = []
         while True:  # the plan made after the setups ran is held to the same refusals
-            planned = _plan(engine, marks, record, repository, app_runtime)
+            planned = _plan(engine, marks, record, repository, app_runtime, rename)
             missing = _missing_setups(planned, repository, check)
             exit_code = _refusal(missing, planned, bool(completed))
             if exit_code is None:

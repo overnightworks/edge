@@ -35,6 +35,7 @@ from git_support import (
 from test_edge_core import bind, bind_core_files, sha256
 
 from edge import (
+    appkit_step,
     apply,
     apps,
     barrier,
@@ -615,6 +616,7 @@ def switch(
         ensure_environment: apply.EnsureEnvironment = trusted_environment,
         installed_backup: bool = False,
         app_runtime: apps.AppRuntime | None = None,
+        rename: appkit_step.Rename = os.rename,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -633,6 +635,7 @@ def switch(
             ensure_environment,
             None if installed_backup else realm_backup,
             app_runtime,
+            rename,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 

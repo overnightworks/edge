@@ -25,6 +25,8 @@ _TEMPORARY_PREFIX = ".appkit-"
 _DIRECTORY_MODE = 0o755  # nginx-unprivileged must read what a 0700 mkdtemp directory would hide
 _FILE_MODE = 0o644
 
+type Rename = Callable[[Path, Path], object]
+
 
 class AppkitError(Exception):
     """The step cannot plan: appkit is not installed, or the checkout has no assets directory."""
@@ -37,6 +39,7 @@ class AppkitPlan:
     directory: Path  # `legal/assets/appkit-<version>/`
     new: bool  # the directory is missing or differs from the installed files
     stale: tuple[str, ...]  # this step's other `appkit-*` directories, to be removed
+    rename: Rename = os.rename
 
     @property
     def changes_nothing(self) -> bool:
@@ -54,7 +57,7 @@ class AppkitPlan:
         progress.unit, progress.step = APPKIT_UNIT, "write the appkit files"
         try:
             if self.new:
-                _replace_directory(self.source, self.directory)
+                _replace_directory(self.source, self.directory, self.rename)
             for name in self.stale:
                 shutil.rmtree(self.directory.parent / name)
         except OSError as error:
@@ -65,7 +68,9 @@ class AppkitPlan:
 
 
 def plan_appkit(
-    repository: Path, find_package: Callable[[str], ModuleType] = import_module
+    repository: Path,
+    find_package: Callable[[str], ModuleType] = import_module,
+    rename: Rename = os.rename,
 ) -> AppkitPlan:
     """What the step would write. The lookup happens here, not at import: `hal.stack_commands`
     imports `edge.apply`, and a machine without a synced environment must still run `hal`."""
@@ -81,7 +86,9 @@ def plan_appkit(
             if path.is_dir() and path != directory
         )
     )
-    return AppkitPlan(version, source, directory, _bytes_of(source) != _bytes_of(directory), stale)
+    return AppkitPlan(
+        version, source, directory, _bytes_of(source) != _bytes_of(directory), stale, rename
+    )
 
 
 def installed_static(find_package: Callable[[str], ModuleType] = import_module) -> Path:
@@ -105,9 +112,7 @@ def _bytes_of(directory: Path) -> dict[str, bytes]:
     }
 
 
-def _replace_directory(
-    source: Path, directory: Path, rename: Callable[[Path, Path], object] = os.rename
-) -> None:
+def _replace_directory(source: Path, directory: Path, rename: Rename = os.rename) -> None:
     """The files in a temporary directory beside the target, then renamed into place; a damaged
     directory moves aside first and moves back when the final rename fails. When it cannot move
     back, the temporary directory stays and the error names where the previous copy is."""

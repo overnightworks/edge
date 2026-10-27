@@ -205,9 +205,8 @@ def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
     assert (kept / "appkit.css").read_text() == "previous"
 
 
-def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(world, monkeypatch):
+def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(world):
     (world.served / "appkit.css").write_text("previous")
-    real_replace = appkit_step._replace_directory
     calls = []
 
     def rename(source, destination):
@@ -218,13 +217,7 @@ def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(wo
             raise KeyboardInterrupt
         os.rename(source, destination)
 
-    monkeypatch.setattr(
-        appkit_step,
-        "_replace_directory",
-        lambda source, directory: real_replace(source, directory, rename),
-    )
-
-    exit_code, _, err = world.switch()
+    exit_code, _, err = world.switch(rename=rename)
 
     assert exit_code == 1
     assert "interrupted while changing" in err
