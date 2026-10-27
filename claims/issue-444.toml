@@ -1,0 +1,8 @@
+claim_id = "96fe7abc729d4ab5bc4e7460807ac669"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "0c85deae747dc7ad985629a24859095b7c4c03cb"
+branch = "claude/issue-444-health-only-where-check"
+scope = ["docs/architecture.md", "probe/apps/probe.py", "src/edge/app_compose.py", "src/edge/apply.py", "src/edge/apps.py", "src/edge/emergency.py", "tests/app_support.py", "tests/test_edge_app_compose.py", "tests/test_edge_apply_apps.py", "tests/test_edge_apps.py"]
+opened_commit = "df9c2474fe7a1f70d5e79b978890e2e53ba99bb3"
+whole_reason = "One rule change: the property, its one caller, the two doc sentences that state it, and the tests and probe cell that pin it; no part is useful or true alone."
