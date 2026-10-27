@@ -767,12 +767,14 @@ def _confirm_and_switch(
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as interruption:
         print(
             f"\n{COMMAND}: interrupted while changing {progress.unit} ({progress.step}); "
             f"its state may be partial, run `{COMMAND}` to see",
             file=sys.stderr,
         )
+        for note in getattr(interruption, "__notes__", ()):
+            print(f"{COMMAND}: {note}", file=sys.stderr)
         return ApplyExit.REFUSED
     return _report_switched(changes, withheld, mismatched, realm_failed or apps_failed)
 

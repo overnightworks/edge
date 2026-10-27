@@ -205,6 +205,32 @@ def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
     assert (kept / "appkit.css").read_text() == "previous"
 
 
+def test_an_interrupted_restore_shows_the_operator_where_the_previous_copy_is(world, monkeypatch):
+    (world.served / "appkit.css").write_text("previous")
+    real_replace = appkit_step._replace_directory
+    calls = []
+
+    def rename(source, destination):
+        calls.append(source)
+        if len(calls) == 2:
+            raise OSError(5, "interrupted")
+        if len(calls) == 3:
+            raise KeyboardInterrupt
+        os.rename(source, destination)
+
+    monkeypatch.setattr(
+        appkit_step,
+        "_replace_directory",
+        lambda source, directory: real_replace(source, directory, rename),
+    )
+
+    exit_code, _, err = world.switch()
+
+    assert exit_code == 1
+    assert "interrupted while changing" in err
+    assert "the previous copy is kept in " in err
+
+
 def test_a_missing_assets_directory_is_named_at_plan_time(world):
     assets = world.served.parent
     shutil.rmtree(assets)
