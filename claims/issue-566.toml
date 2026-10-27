@@ -1,0 +1,8 @@
+claim_id = "6ceb7c5ec9d145bdb73116818d031ef6"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "6c076729baf5730fd581496c46a78c72b5962802"
+branch = "claude/issue-566-s2g3c-secrets-open-row"
+scope = ["docs/home.md", "src/home_tools/secrets_setup.py", "src/home_tools/setup.py", "tests/home/test_app_secrets.py"]
+opened_commit = "b84442f051993a7179241fb2ea1a04deb6380cf8"
+whole_reason = "The row, the error line and their typed count are one behaviour; the production edit, the pins that move with the literal and the doc sentence that names it cannot land apart."
