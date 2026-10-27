@@ -17,3 +17,6 @@ crash.log
 !/legal/built/.gitkeep
 
 # What `edge apply` last wrote there, beside the pages nginx serves
+
+# What the apply's appkit step serves beside legal.css (the installed appkit's files)
+/legal/assets/appkit-*/

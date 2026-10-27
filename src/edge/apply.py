@@ -33,7 +33,9 @@ newest release tag is checked out, built, started and recorded once its containe
 While `services.legal` is enabled the three legal pages are built from `legal/frame` and
 `legal/sections` through the validator (`legal_step.py`); a refused section is exit 2, and the
 plan names each page that is new or changes. After `yes` the pages are written to `legal/built/`
-before any unit switches, which the legal unit serves.
+before any unit switches, which the legal unit serves. The appkit step (`appkit_step.py`) comes
+first and runs with or without the legal unit: it writes the installed appkit's tokens and fonts
+to `legal/assets/appkit-<version>/`; a missing appkit is exit 2.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -61,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
+from edge.appkit_step import AppkitError, AppkitPlan, Rename, plan_appkit
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.built_image import BuiltRecreate
 from edge.legal_section import LegalError
@@ -110,6 +113,7 @@ CANNOT_PLAN_ERRORS = (
     AppError,
     checkout.GitError,
     LegalError,
+    AppkitError,
 )
 
 
@@ -125,6 +129,7 @@ class Plan:
     images: list[KeptImage]
     realm: reconcile.RealmPlan
     app_plans: AppsPlan
+    appkit: AppkitPlan
     legal: LegalPlan
 
     @property
@@ -137,6 +142,7 @@ class Plan:
             and not self.built
             and not self.recreates
             and self.app_plans.changes_nothing
+            and self.appkit.changes_nothing
             and self.legal.changes_nothing
         )
 
@@ -150,6 +156,7 @@ class Plan:
             *self.images,
         )
         return [
+            *self.appkit.describe(),
             *self.legal.describe(),
             *(plan.describe() for plan in plans),
             *self.realm.lines,
@@ -170,6 +177,7 @@ def _plan(
     record: core.Record,
     repository: Path,
     app_runtime: AppRuntime,
+    rename: Rename = os.rename,
 ) -> Plan:
     fleet = read_fleet(engine, repository)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
@@ -203,6 +211,7 @@ def _plan(
         reconcile.restart_of(plans, unit_services.recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
+    appkit = plan_appkit(repository, rename=rename)
     legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
         fleet,
@@ -215,6 +224,7 @@ def _plan(
         unit_services.images,
         realm,
         app_plans,
+        appkit,
         legal,
     )
 
@@ -232,6 +242,7 @@ def apply_closed(
     ensure_environment: EnsureEnvironment = environment.ensure,
     realm_backup: reconcile.Backup | None = None,
     app_runtime: AppRuntime | None = None,
+    rename: Rename = os.rename,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -263,6 +274,7 @@ def apply_closed(
             waiting,
             realm_backup or reconcile.Backup.installed(repository, _tell),
             app_runtime or AppRuntime.of(home or Path.home(), state_directory),
+            rename,
         )
     finally:
         os.close(lock)
@@ -333,6 +345,7 @@ def _plan_and_apply(
     waiting: Waiting,
     realm_backup: reconcile.Backup,
     app_runtime: AppRuntime,
+    rename: Rename,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -347,7 +360,7 @@ def _plan_and_apply(
                 print(f"{COMMAND}: {line}")
         completed: list[str] = []
         while True:  # the plan made after the setups ran is held to the same refusals
-            planned = _plan(engine, marks, record, repository, app_runtime)
+            planned = _plan(engine, marks, record, repository, app_runtime, rename)
             missing = _missing_setups(planned, repository, check)
             exit_code = _refusal(missing, planned, bool(completed))
             if exit_code is None:
@@ -422,11 +435,7 @@ def _ask_and_run_setups(
     for item in missing:
         print(f"{item.unit.key} is not set up: {item.check_line}")
         if not terminal.confirmed(f"run `{item.unit.setup}` now"):
-            print(
-                f"{COMMAND}: aborted, nothing changed; run `{item.unit.setup}` yourself "
-                "or answer yes",
-                file=sys.stderr,
-            )
+            _say(f"aborted, nothing changed; run `{item.unit.setup}` yourself or answer yes")
             return ApplyExit.REFUSED
     for item in missing:
         if (exit_code := _run_one_setup(item, repository, check, run_setup)) is not None:
@@ -447,17 +456,16 @@ def _run_one_setup(
         print(f"{COMMAND}: cannot start `{command}`, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     if ran.interrupted:
-        print(
-            f"\n{COMMAND}: interrupted during `{command}`; nothing switched; keys may already "
-            f"exist; run `{COMMAND}` again",
-            file=sys.stderr,
+        print(file=sys.stderr)
+        _say(
+            f"interrupted during `{command}`; nothing switched; keys may already "
+            f"exist; run `{COMMAND}` again"
         )
         return ApplyExit.REFUSED
     if ran.exit_code:
-        print(
-            f"{COMMAND}: `{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
-            f"already exist; run `{COMMAND}` again",
-            file=sys.stderr,
+        _say(
+            f"`{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
+            f"already exist; run `{COMMAND}` again"
         )
         return ApplyExit.REFUSED
     if line := setup.not_set_up_line(item.unit, repository, check):
@@ -710,6 +718,24 @@ def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> 
     return failed
 
 
+def _say_aborted(completed_setups: Sequence[str]) -> None:
+    _say(
+        f"aborted, setup of {', '.join(completed_setups)} completed; nothing switched"
+        if completed_setups
+        else "aborted, nothing changed"
+    )
+
+
+def _say_interrupted(progress: Progress, interruption: KeyboardInterrupt) -> None:
+    print(file=sys.stderr)
+    _say(
+        f"interrupted while changing {progress.unit} ({progress.step}); "
+        f"its state may be partial, run `{COMMAND}` to see"
+    )
+    for note in getattr(interruption, "__notes__", ()):
+        _say(note)
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
@@ -718,29 +744,23 @@ def _confirm_and_switch(
     completed_setups: Sequence[str],
     realm_backup: reconcile.Backup,
 ) -> int:
-    print(f"{COMMAND}: the plan")
+    _show("the plan")
     for line in planned.describe():
         print(f"  {line}")
     if not terminal.confirmed("apply exactly this plan"):
-        outcome = (
-            f"setup of {', '.join(completed_setups)} completed; nothing switched"
-            if completed_setups
-            else "nothing changed"
-        )
-        print(f"{COMMAND}: aborted, {outcome}", file=sys.stderr)
+        _say_aborted(completed_setups)
         return ApplyExit.REFUSED
     plans, read = planned.plans, planned.read
     changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()
     withheld: dict[str, str] = {}
     try:
-        if failure := planned.legal.write(progress) or core_phase.run(
-            engine, planned, marks, progress
+        if failure := (
+            planned.appkit.write(progress)
+            or planned.legal.write(progress)
+            or core_phase.run(engine, planned, marks, progress)
         ):
-            print(
-                f"{COMMAND}: partial, {failure}; no unit switched; run `{COMMAND}` again",
-                file=sys.stderr,
-            )
+            _say(f"partial, {failure}; no unit switched; run `{COMMAND}` again")
             return ApplyExit.REFUSED
         for plan in changes:
             if since := switch(engine, plan, progress, marks, read):
@@ -751,17 +771,10 @@ def _confirm_and_switch(
         realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
         apps_failed = _apply_apps(planned, marks, progress)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
-        print(
-            f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
-            file=sys.stderr,
-        )
+        _say(f"partial, {progress.unit}: could not {progress.step}, {error}")
         return ApplyExit.REFUSED
-    except KeyboardInterrupt:
-        print(
-            f"\n{COMMAND}: interrupted while changing {progress.unit} ({progress.step}); "
-            f"its state may be partial, run `{COMMAND}` to see",
-            file=sys.stderr,
-        )
+    except KeyboardInterrupt as interruption:
+        _say_interrupted(progress, interruption)
         return ApplyExit.REFUSED
     return _report_switched(changes, withheld, mismatched, realm_failed or apps_failed)
 
@@ -773,16 +786,12 @@ def _report_switched(
     later_steps_failed: bool,
 ) -> int:
     for unit, since in withheld.items():
-        print(
-            f"{COMMAND}: partial, {unit} was switched off meanwhile "
-            f"(since {switches.describe_since(since)}); not started",
-            file=sys.stderr,
+        _say(
+            f"partial, {unit} was switched off meanwhile "
+            f"(since {switches.describe_since(since)}); not started"
         )
     for plan in mismatched:
-        print(
-            f"{COMMAND}: partial, {plan.unit.key} is not {plan.action} after the change",
-            file=sys.stderr,
-        )
+        _say(f"partial, {plan.unit.key} is not {plan.action} after the change")
     if mismatched or withheld or later_steps_failed:
         return ApplyExit.REFUSED
     for plan in changes:
