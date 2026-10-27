@@ -1,0 +1,7 @@
+claim_id = "398d96f2e5e141af8616d4518ddee8bb"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "80b45b12df801d62ca0f3e516629c6c5ceda5b69"
+branch = "claude/issue-554-s2g2b-1-manifest-english"
+scope = ["docs/home.md", "src/home_tools/secrets_manifest.toml", "tests/home/test_secrets_view.py"]
+opened_commit = "2fa3e40395b4ddc6a644945c91f417795489f1e4"
