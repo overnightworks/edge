@@ -208,7 +208,7 @@ def test_the_apps_are_listed_in_the_account_console_only_for_people_who_used_the
     assert [client["clientId"] for client in apps if client["alwaysDisplayInConsole"]] == []
 
 
-@pytest.mark.parametrize("app", ["songmaker", "hopin"])
+@pytest.mark.parametrize("app", ["songmaker", "hopin", "presentator"])
 def test_an_app_back_channel_is_an_internal_isolated_network_only_keycloak_joins(app):
     """#293, #254: the app joins the fixed name as an external network; only keycloak is on it."""
     document = compose_document()
@@ -278,27 +278,29 @@ def realm_clients() -> dict[str, dict]:
     return {client["clientId"]: client for client in realm["clients"]}
 
 
-@pytest.mark.parametrize("app", ["songmaker", "hopin"])
-def test_an_app_is_logged_out_by_a_back_channel_call_that_needs_no_session_id(app):
+@pytest.mark.parametrize(
+    ("app", "port"), [("songmaker", 8080), ("hopin", 8080), ("presentator", 8000)]
+)
+def test_an_app_is_logged_out_by_a_back_channel_call_that_needs_no_session_id(app, port):
     """#293: webauth ends every session of the subject and ignores `sid`; hopin has the shape."""
     attributes = realm_clients()[app]["attributes"]
 
     assert (
         attributes["backchannel.logout.url"]
-        == f"http://{app}.hallucinai.de:8080/auth/backchannel-logout"
+        == f"http://{app}.hallucinai.de:{port}/auth/backchannel-logout"
     )
     assert attributes["backchannel.logout.session.required"] == "false"
 
 
-def test_only_songmaker_and_hopin_have_a_back_channel_logout_address():
-    """#382 cell 6: only songmaker and HopIn have a back-channel logout address."""
+def test_only_the_apps_have_a_back_channel_logout_address():
+    """#382 cell 6: only songmaker, HopIn and presentator have a back-channel logout address."""
     with_address = [
         name
         for name, client in realm_clients().items()
         if "backchannel.logout.url" in client.get("attributes", {})
     ]
 
-    assert sorted(with_address) == ["hopin", "songmaker"]
+    assert sorted(with_address) == ["hopin", "presentator", "songmaker"]
 
 
 def test_only_hopin_gets_no_refresh_token_because_it_uses_none():
@@ -479,6 +481,10 @@ HOPIN_RULED = {
     "backchannel.logout.session.required": "false",
     "use.refresh.tokens": "false",
 }
+PRESENTATOR_RULED = {
+    "backchannel.logout.url": "http://presentator.hallucinai.de:8000/auth/backchannel-logout",
+    "backchannel.logout.session.required": "false",
+}
 SONGMAKER_RULED = {
     "backchannel.logout.url": "http://songmaker.hallucinai.de:8080/auth/backchannel-logout",
     "backchannel.logout.session.required": "false",
@@ -515,12 +521,21 @@ SONGMAKER_RULED = {
             {"use.refresh.tokens"},
             id="songmaker with the refresh line",
         ),
-        pytest.param("presentator", {}, set(), id="presentator without a url"),
+        pytest.param("presentator", PRESENTATOR_RULED, set(), id="presentator as ruled"),
         pytest.param(
             "presentator",
-            {"backchannel.logout.url": "http://x"},
+            PRESENTATOR_RULED
+            | {
+                "backchannel.logout.url": "http://presentator.hallucinai.de:8080/auth/backchannel-logout"
+            },
             {"backchannel.logout.url"},
-            id="presentator with a url",
+            id="presentator wrong port",
+        ),
+        pytest.param(
+            "presentator",
+            PRESENTATOR_RULED | {"use.refresh.tokens": "false"},
+            {"use.refresh.tokens"},
+            id="presentator with the refresh line",
         ),
     ],
 )

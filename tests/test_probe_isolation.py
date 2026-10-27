@@ -142,21 +142,24 @@ def test_without_inherited_apps_leaves_the_repositorys_catalog_without_an_app():
 
     kept = yaml.safe_load(filtered)["services"]
     assert kept == {key: entry for key, entry in original.items() if not catalog.is_app(entry)}
-    assert "hopin" in original
+    assert {"hopin", "presentator"} <= set(original)
     assert not any(catalog.is_app(entry) for entry in kept.values())
     original_lines = iter(text.splitlines())
     assert all(line in original_lines for line in filtered.splitlines())  # in order
     lines = text.splitlines()
-    start = lines.index("  hopin:")
-    end = next(
-        (
-            i
-            for i in range(start + 1, len(lines))
-            if lines[i].startswith("  ") and not lines[i].startswith("   ")
-        ),
-        len(lines),
-    )
-    assert len(lines) - len(filtered.splitlines()) == end - start  # hopin's entry, nothing else
+    app_lines = 0
+    for key in (key for key, entry in original.items() if catalog.is_app(entry)):
+        start = lines.index(f"  {key}:")
+        end = next(
+            (
+                i
+                for i in range(start + 1, len(lines))
+                if lines[i].startswith("  ") and not lines[i].startswith("   ")
+            ),
+            len(lines),
+        )
+        app_lines += end - start
+    assert len(lines) - len(filtered.splitlines()) == app_lines  # every app's entry, nothing else
 
 
 def test_both_styles_of_app_go_and_hosts_only_and_library_entries_stay():

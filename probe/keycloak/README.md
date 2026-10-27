@@ -63,7 +63,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the master's untouched theme and language. Proof 10 signs a member of the app's group
   (`/apps/songmaker/admin`, `/apps/hopin`, `/apps/presentator/admin`) in to each of the
   songmaker, hopin and presentator clients through the edge entrypoint with PKCE, its secret a scratch file the
-  overlay mounts; the token response has a refresh token for songmaker and presentator and none for hopin. The overlay names both back-channel networks `<project>_backchannel_*`, so the probe never creates a `hal_*` network. For songmaker and presentator it also drives the agent workload cells of #183
+  overlay mounts; the token response has a refresh token for songmaker and presentator and none for hopin. The overlay names all three back-channel networks `<project>_backchannel_*`, so the probe never creates a `hal_*` network. For songmaker and presentator it also drives the agent workload cells of #183
   (W1 to W3: the `client_credentials` token has `agent-workload`, the `agent-service` audience, `azp`
   and the realm's token lifespan, with no client override; a person's token has no `agent-workload`; proof 10 also puts the person in `/services/agent-service/subscription` and requires that group, as a full path, in the access token beside the `agent-service` audience), hopin's refusal of
   `client_credentials` (W5) and `agent-service` with every flow off (W4); DG1 (#297) shows that only songmaker starts a device sign-in and only with its secret. Proof 11 (#129) loads

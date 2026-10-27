@@ -184,7 +184,8 @@ clients:
       - profile
       - groups
     optionalClientScopes: []
-  # One client for presentator's two hosts (agent-presentator#242).
+  # One client for presentator's two hosts (agent-presentator#242). It is logged out like hopin, on
+  # presentator's own port, over its own back-channel network.
   - clientId: presentator
     name: presentator
     enabled: true
@@ -203,5 +204,7 @@ clients:
     attributes:
       post.logout.redirect.uris: "https://presentator.hallucinai.de/login"
       pkce.code.challenge.method: "S256"
+      backchannel.logout.url: "http://presentator.hallucinai.de:8000/auth/backchannel-logout"
+      backchannel.logout.session.required: "false"
     defaultClientScopes: *agent_workload_scopes
     optionalClientScopes: []

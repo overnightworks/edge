@@ -101,6 +101,11 @@ uses no refresh token, so its client also has `use.refresh.tokens: "false"` and 
 none; the rule for every app is that it gets a refresh token only if it uses one (operator ruling
 O1 of #254), so songmaker keeps Keycloak's default until its head has checked.
 
+presentator is logged out the same way, over its own internal network `hal_backchannel_presentator`
+(only `keycloak` joins it on edge's side), on presentator's own port: its client has
+`backchannel.logout.url` `http://presentator.hallucinai.de:8000/auth/backchannel-logout` and
+`session.required: "false"`, and keeps Keycloak's default refresh token.
+
 ### Theme and language
 
 Keycloak's login and account pages use the realm theme `hallucinai`
