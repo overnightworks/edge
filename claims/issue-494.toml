@@ -1,8 +1,0 @@
-claim_id = "cc0c7ecca40442ac85e52371748f628b"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "66530c23bbaacb496ffd1d79f2f8288d5faa5d20"
-branch = "claude/issue-494-s2c-timers-fact"
-scope = ["docs/design/hal-output.html", "docs/home.md", "scripts/system-proof/drive.sh", "src/home_tools/setup.py", "src/home_tools/user_units.py", "tests/home/test_cli.py", "tests/home/test_next.py", "tests/home/test_setup.py", "tests/home/test_user_units.py"]
-opened_commit = "437bb3fc3878c0891a2b642ac32f0fcd0ecb6269"
-whole_reason = "One step's output: the fact replaces the loaded lines in the same two production files, and every pin of both moves with them."
