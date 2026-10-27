@@ -480,13 +480,22 @@ def test_the_playbook_ships_inside_the_package() -> None:
 @pytest.mark.parametrize(
     ("applied_before", "expected", "recorded"),
     [
-        (False, line("~", SYSTEM, "will change"), False),
-        (True, line("·", SYSTEM, "unchanged"), True),
+        (
+            False,
+            [
+                *UP_TO_DATE[:2],
+                line("~", SYSTEM, "will change"),
+                UP_TO_DATE[3],
+                verdict("~", "setup plan", f"1 open, 3 unchanged · {RUN_APPLY}"),
+            ],
+            False,
+        ),
+        (True, UP_TO_DATE, True),
     ],
     ids=["something to change", "nothing to change"],
 )
 def test_a_dry_run_at_a_terminal_checks_with_ansible_and_only_unchanged_counts_as_verified(
-    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], applied_before: bool, expected: str, recorded: bool
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], applied_before: bool, expected: list[str], recorded: bool
 ) -> None:
     """E1 and rule 7: the dry run asks once for sudo through Ansible's check mode; only `unchanged` records a verified run."""
     run_setup(sandbox, capsys, "--apply")
@@ -495,7 +504,7 @@ def test_a_dry_run_at_a_terminal_checks_with_ansible_and_only_unchanged_counts_a
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines[2]) == (0, expected)
+    assert (code, lines) == (0, expected)
     assert playbook_runs(sandbox) == ["apply", "check"]
     assert sandbox.layout.system_step_record.exists() is recorded
 
