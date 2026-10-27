@@ -1478,23 +1478,39 @@ install_the_conflicting_flag() {  # dockerd refuses a directive given as a flag 
     return
 }
 
-cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: created|merged|earlier> <what daemon.json must be after, as JSON>
-    local name=$1 state=$2 expected=$3 code backups_before pc="$EVIDENCE/dk7-pc-daemon.json"
+DOCKER_SHIM=/usr/local/bin/docker
+
+install_a_docker_that_reports_json_file() {  # Docker restarts and starts, yet `docker info` names another default driver
+    local real
+    real=$(command -v docker)
+    printf '%s\n' '#!/bin/sh' \
+        "case \"\$*\" in *LoggingDriver*) echo json-file; exit 0 ;; esac" \
+        "exec $real \"\$@\"" >"$DOCKER_SHIM"
+    chmod 755 "$DOCKER_SHIM"
+    return
+}
+
+cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: created|merged|earlier> <what daemon.json must be after, as JSON> <how Docker fails: flag|wrong-driver>
+    local name=$1 state=$2 expected=$3 failure=${4:-flag} code backups_before pc="$EVIDENCE/dk7-pc-daemon.json"
     write_the_pcs_daemon_json "$pc"
     case $state in
         created) engine_on_json_file_with "" ;;
         merged) engine_on_json_file_with "$pc" ;;
         earlier) engine_on_json_file_with ""; printf '{"log-driver": "%s"}' "$WANTED_DRIVER" >"$DAEMON_JSON" ;;
     esac
-    install_the_conflicting_flag
+    if [[ $failure = flag ]]; then install_the_conflicting_flag; else install_a_docker_that_reports_json_file; fi
     backups_before=$(backups_of_daemon_json)
-    at_terminal "dk7-$state" "$HOME_BIN setup --apply"
+    at_terminal "dk7-$state-$failure" "$HOME_BIN setup --apply"
     code=$?
-    verdict DK7 "$name: the apply exits 1 naming the rescue" '[ $code -eq 1 ] && in_log "dk7-$state" "was written back without"'
+    verdict DK7 "$name: the apply exits 1 naming the rescue" '[ $code -eq 1 ] && in_log "dk7-$state-$failure" "was written back without"'
+    if [[ $failure = wrong-driver ]]; then
+        verdict DK7 "$name: the apply saw Docker start and name json-file, not the journal" 'in_log "dk7-$state-$failure" "Docker reports json-file"'
+    fi
     verdict DK7 "$name: daemon.json is JSON-equal to the state before this slice" 'daemon_json_is "$expected"'
     verdict DK7 "$name: no backup was deleted" '[ -z "$(comm -23 <(echo "$backups_before") <(backups_of_daemon_json))" ]'
     verdict DK7 "$name: Docker is active and answering" 'systemctl is-active --quiet docker && docker info >/dev/null 2>&1'
     rm -rf "$DOCKER_DROP_IN_DIR"
+    rm -f "$DOCKER_SHIM"
     systemctl daemon-reload
     return
 }
@@ -1503,6 +1519,7 @@ cells_dk7() {
     cell_dk7_case "file created in this run" created '{}'
     cell_dk7_case "file merged in this run" merged '{"runtimes": {"nvidia": {"args": [], "path": "nvidia-container-runtime"}}}'
     cell_dk7_case "file merged by an earlier run, Docker still on json-file" earlier '{}'
+    cell_dk7_case "Docker started but reports json-file" created '{}' wrong-driver
     engine_on_json_file_with ""
     at_terminal dk7-converge "$HOME_BIN setup --apply"
     docker info >/dev/null 2>&1 || journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/dk7-docker-unit.txt" 2>&1
