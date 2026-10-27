@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "The edge tools: the edge command, home, the workstation tool, and hal, the daily door."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["pyyaml>=6"]
+dependencies = [
+    "pyyaml>=6",
+    "overnightworks-appkit @ https://github.com/overnightworks/appkit/releases/download/v0.5.0/overnightworks_appkit-0.5.0-py3-none-any.whl#sha256=7539a8a42d3e07aaf71e14fae63db0eb59806eb641c18c87abad5b67ea21ada1",
+]
 
 [project.scripts]
 edge = "edge.cli:main"
