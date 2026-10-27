@@ -28,8 +28,7 @@ started. The health wait runs outside the lock, so a stop never waits for it.
 
 An app the catalog disables while containers of its project exist is switched off: file-free
 `stop` and `rm -f` of project `<key>`, which reaches every container, whatever the checkout's
-compose file says. The plan names the named volumes that stay; they, the checkout and the record
-are never touched (E4).
+compose file says. The named volumes, the checkout and the record are never touched (E4).
 """
 
 import json
@@ -137,7 +136,6 @@ class AppPlan:
     kind: AppKind
     recorded_tag: str | None  # None on the first deployment
     unfinished: str | None  # the tag or head an update did not reach, None when none
-    replaces_running: bool  # running containers are replaced on the first deployment
     containers: tuple[str, ...]  # as `ps` shows them
 
 
@@ -147,7 +145,6 @@ class OffPlan:
 
     app: catalog.App
     containers: tuple[str, ...]  # as `ps` shows them
-    volumes: tuple[str, ...]  # each named volume once, with its count when several share it
 
 
 @dataclass(frozen=True)
@@ -243,20 +240,14 @@ def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
     return any(compose.is_live(container.state) for container in engine.containers())
 
 
-def _counted(keys: Sequence[str]) -> list[str]:
-    """Each key once, with the count when several volumes share it."""
-    return [f"{key} ({count})" if count > 1 else key for key, count in Counter(keys).items()]
-
-
 def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
-    """None when no container of the project exists. The line names the containers as `ps` shows
-    them (service and state, never a container name that Compose interpolated) and the named
-    volumes that stay."""
+    """None when no container of the project exists. It names the containers as `ps` shows
+    them (service and state, never a container name that Compose interpolated)."""
     engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
     if not (containers := engine.containers()):
         return None
     shown = tuple(container.describe() for container in containers)
-    return OffPlan(app, shown, tuple(_counted(engine.volumes())))
+    return OffPlan(app, shown)
 
 
 def _plan_one(
@@ -303,7 +294,6 @@ def _plan_one(
         kind=_kind_of(recorded, sha),
         recorded_tag=recorded.tag if recorded else None,
         unfinished=_unfinished_update(recorded, sha, release.tag, head),
-        replaces_running=recorded is None and bool(containers),
         containers=tuple(container.describe() for container in containers),
     )
     return plan, choice.skipped

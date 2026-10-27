@@ -361,7 +361,7 @@ def test_the_newest_release_recorded_and_checked_out_but_not_running_well_starts
     assert planned.containers == (f"hopin {now}",)
 
 
-def test_a_container_name_that_compose_interpolates_never_reaches_a_plan_or_a_failure(
+def test_an_app_whose_container_name_compose_interpolates_plans_start_again_and_update(
     world, origin, monkeypatch
 ):
     resolved = "hal-test-sentinel-value"
@@ -414,15 +414,6 @@ def test_one_container_per_service_and_no_orphan_is_needed_for_nothing_to_change
     [planned] = world.plan().plans
 
     assert (planned.kind, planned.sha) == (apps.AppKind.START_AGAIN, sha)
-
-
-def test_running_containers_without_a_record_are_replaced_and_their_volumes_kept(world, origin):
-    sha = origin.release(FIRST)
-    world.docker.put(KEY, "running", "healthy")
-
-    [planned] = world.plan().plans
-    assert (planned.kind, planned.release.tag, planned.sha) == (apps.AppKind.ON, FIRST, sha)
-    assert planned.replaces_running
 
 
 def test_a_dirty_checkout_cannot_be_planned_and_is_not_reset(world, origin):
@@ -488,12 +479,12 @@ def test_a_disabled_app_is_not_fetched_and_has_nothing_to_change(world, reposito
 
 
 class OffDocker:
-    """What the off step asks of Docker: the project's `ps` from the scripted table, its volume
-    listing, and the file-free `stop` and `rm -f`, which empty the table. Every other call goes to
-    the scripted Docker, which fails the test on a `down`, a `-v` or a file-bound call."""
+    """What the off step asks of Docker: the project's `ps` from the scripted table and the file-free
+    `stop` and `rm -f`, which empty the table. Every other call goes to the scripted Docker,
+    which fails the test on a `down`, a `-v` or a file-bound call."""
 
-    def __init__(self, scripted: ScriptedDocker, volumes: dict[str, str]) -> None:
-        self.scripted, self.volumes = scripted, volumes  # volume name -> its key in the file
+    def __init__(self, scripted: ScriptedDocker) -> None:
+        self.scripted = scripted
         self.commands: list[list[str]] = []
         self.failing: str | None = None
         self.removal_by_identifier_works = True
@@ -502,9 +493,6 @@ class OffDocker:
 
     def run(self, command, timeout, stdin=None):
         self.commands.append(command)
-        if command[:3] == ["docker", "volume", "ls"]:
-            shown = self.volumes.values() if "Label" in command[-1] else self.volumes
-            return subprocess.CompletedProcess(command, 0, "\n".join(shown), "")
         if command[:3] == ["docker", "rm", "-f"]:
             return self.remove_by_identifier(command)
         if command[4:5] in (["stop"], ["rm"]):
@@ -536,18 +524,18 @@ class OffDocker:
 
 
 def switch_off(world: World) -> OffDocker:
-    """The app disabled in the catalog while its project holds a healthy container, a leftover of
-    a service the file does not name, and the named volume `hopin_data`."""
+    """The app disabled in the catalog while its project holds a healthy container, and a
+    leftover of a service the file does not name."""
     (world.repository / "fleet.yaml").write_text(FLEET.replace("enabled: true", "enabled: false"))
     if not world.docker.rows:
         world.docker.put(KEY, "running", "healthy")
     world.docker.put("leftover", "exited")
-    fake = OffDocker(world.docker, {f"{KEY}_data": "data"})
+    fake = OffDocker(world.docker)
     world.runtime = dataclasses.replace(world.runtime, docker=fake.run)
     return fake
 
 
-def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(world):
+def test_an_app_switched_off_while_running_is_planned_off_with_its_containers(world):
     switch_off(world)
 
     plan = world.plan()
@@ -555,7 +543,6 @@ def test_an_app_switched_off_while_running_plans_one_line_naming_what_stays(worl
     assert not plan.changes_nothing
     [off] = plan.offs
     assert off.containers == (f"{KEY} running (healthy)", "leftover exited")
-    assert off.volumes == ("data",)
 
 
 def test_off_stops_then_removes_every_container_of_the_project_and_nothing_else(world):
@@ -763,21 +750,3 @@ def test_a_failing_docker_rm_ends_the_off_partial_naming_service_and_state_and_w
     )
     assert "exited 5" in failure
     assert SENTINEL not in failure
-
-
-def test_volumes_that_share_a_key_are_named_once_with_their_count(world):
-    off = switch_off(world)
-    off.volumes = {f"{KEY}_data": "data", SENTINEL: "data", f"{KEY}_cache": "cache"}
-
-    [planned] = world.plan().offs
-
-    assert planned.volumes == ("data (2)", "cache")
-
-
-def test_a_volume_name_that_compose_interpolates_never_reaches_the_plan(world):
-    off = switch_off(world)
-    off.volumes = {SENTINEL: "data"}
-
-    [planned] = world.plan().offs
-
-    assert planned.volumes == ("data",)
