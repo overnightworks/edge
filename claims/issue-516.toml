@@ -1,0 +1,8 @@
+claim_id = "dda3ce7094604fb3a998d5115d795d7e"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "1b227e3f51b472b814bf113013dee4d2e356b394"
+branch = "claude/issue-516-s9d-1-hal-rename-rows"
+scope = ["docs/design/hal-output.html", "src/hal/rename_commands.py", "src/hal/rename_rows.py", "tests/test_hal_rename.py"]
+opened_commit = "c6c63a0e1432ec4f15dbd01b2d80f9020fbe9c84"
+whole_reason = "One command's plan and apply output: its typed steps, their rows and verdicts, and the pins of the old lines change together."
