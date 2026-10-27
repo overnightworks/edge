@@ -87,7 +87,7 @@ def test_b1_b7_a_published_port_or_the_host_network_is_refused_as_the_key_and_no
     [
         (
             None,
-            "host hopin needs exactly one service labelled edge.name or edge.alias with it (labels)",
+            "host hopin needs exactly one service labelled edge.name or edge.alias with it",
         ),
         ('{edge.name: other, traefik.enable: "true"}', "labels a name the entry does not list"),
         ("{edge.name: hopin}", "has edge.name without traefik.enable true (labels)"),
