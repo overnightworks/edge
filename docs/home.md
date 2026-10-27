@@ -397,13 +397,16 @@ Beispiel (gekürzt, ein abgelehnter Versuch):
     [ ] compare the rights in the form with the line above
     [ ] Generate token, copy the value
     Enter opens the page in your browser:
-    opened https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
+    opened github.com/settings/personal-access-tokens/new?…
     paste the token (hidden, empty skips):
   ✗ github/fleet-read  rejected  GitHub answers 401 · paste again or leave empty
     paste the token (hidden, empty skips):
   ✓ github/fleet-read  verified  ~/.secrets/github/fleet-read (600)
   ✓ opentofu/state-passphrase  generated  ~/.secrets/opentofu/state-passphrase (600) · never shown
 ```
+
+`opened` zeigt Host und Pfad der Seite, bei einer Abfrage mit `?…`; öffnet kein Browser die
+Seite, steht die ganze Adresse in der gelben Zeile `no browser opened`.
 
 Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
 `next: hal apply`; es zeigt den Plan vor seinem Ja. Allein gefahren endet

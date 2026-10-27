@@ -1,6 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict and an error. It imports nothing else of this
-repository."""
+to show, and the form of a row, a verdict, an error and the indented detail lines under a row. It
+imports nothing else of this repository."""
 
 import os
 import sys
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import TextIO
 
+DETAIL_INDENT = "    "
 SUBJECT_WIDTH = 14
 EVENT_WIDTH = 14
 
@@ -59,6 +60,14 @@ _VERDICT_STYLES = {
     Glyph.UNCHANGED: _DIM,
     Glyph.CHANGE: "1;34",
 }
+
+
+class Tone(Enum):
+    """How a detail line looks on a terminal: unstyled, dim, or in the needs-you row's yellow."""
+
+    PLAIN = None
+    DIM = _DIM
+    WARNING = _ROW_STYLES[Glyph.NEEDS_YOU]
 
 
 class Noun(StrEnum):
@@ -177,3 +186,12 @@ def write_error(message: str, next_step: str | None = None) -> None:
     print(f"{_styled('error:', _BOLD_RED, stderr)} {printable(message)}", file=stderr)
     if next_step:
         print(f"{_styled('next:', _CYAN, stderr)} {printable(next_step)}", file=stderr)
+
+
+def write_detail(*lines: str, tone: Tone = Tone.PLAIN) -> None:
+    """Each line on stdout under a row, indented and escaped; on a terminal it takes the tone's
+    style."""
+    stdout = sys.stdout
+    for line in lines:
+        text = f"{DETAIL_INDENT}{printable(line)}"
+        print(text if tone.value is None else _styled(text, tone.value, stdout))

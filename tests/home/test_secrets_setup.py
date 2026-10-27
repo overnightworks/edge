@@ -583,9 +583,8 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 ) -> None:
     """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-
     assert home_secrets_setup(home, boundaries) == 0
-    github, output = github_entry(), capsys.readouterr().out
+    output = capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
     assert squeezed(output) == [
@@ -598,7 +597,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
         "[ ] Zone Resources: Include › Specific zone › example.invalid",
         "[ ] TTL: leave the start date empty, set only the End Date 16.11.2026",
         "[ ] Continue to summary › Create Token, copy the value",
-        f"opened {CLOUDFLARE_TOKEN_PAGE}",
+        "opened dash.cloudflare.com/profile/api-tokens",
         "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
         "› github/read new token the link fills name, owner, expiry and rights",
         "why: liest GitHub",
@@ -606,12 +605,13 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
         "[ ] Repository access: All repositories",
         "[ ] compare the rights in the form with the line above",
         "[ ] Generate token, copy the value",
-        f"opened {github_page(github, github.source)}",
+        "opened github.com/settings/personal-access-tokens/new?…",
         "✓ github/read verified ~/.secrets/github/read (600)",
         "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
     ]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
     under_a_row = [line for line in output.splitlines() if line.lstrip().startswith(("why:", "[ ]", "prefilled:", "opened "))]
+    assert under_a_row
     assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 

@@ -33,9 +33,9 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
-from hal_output import Glyph, Row, printable, write_row
+from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -65,9 +65,8 @@ NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
 ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
-INDENT = "    "
-OPEN_PROMPT = f"{INDENT}Enter opens the page in your browser: "
-PASTE_PROMPT = f"{INDENT}paste the token (hidden, empty skips): "
+OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
+PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
 OPENED = "opened"
 NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
@@ -392,12 +391,6 @@ class WizardEvent(StrEnum):
     NOT_STORED = "not stored"
 
 
-def _say(*lines: str) -> None:
-    """Indented lines under an announce row; text from a manifest or a provider is made safe to show."""
-    for line in lines:
-        print(f"{INDENT}{printable(line)}")
-
-
 def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
     write_row(Row(glyph, entry_name, event, fact))
 
@@ -460,22 +453,31 @@ def _accepted_paste(entry: SecretEntry, source: TokenSource, boundaries: Boundar
     return None
 
 
+def _shown_address(page: str) -> str:
+    """Host and path of the page, with `?…` when it has a query; the scheme and the prefilled parameters stay out of the walk."""
+    parts = urlsplit(page)
+    return f"{parts.netloc}{parts.path}{'?…' if parts.query else ''}"
+
+
 def _offer_page(terminal: Terminal, page: str) -> None:
     terminal.ask(OPEN_PROMPT)
-    _say(f"{OPENED} {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
+    if terminal.open_page(page):
+        write_detail(f"{OPENED} {_shown_address(page)}", tone=Tone.DIM)
+    else:
+        write_detail(f"{NO_BROWSER} {page}", tone=Tone.WARNING)
 
 
 def _announce(entry: SecretEntry, how: str) -> None:
     """The row that opens a walk for a token, then why it is needed."""
     _write_entry_row(Glyph.ANNOUNCE, entry.name, WizardEvent.NEW_TOKEN, how)
     if entry.purpose:
-        _say(f"why: {entry.purpose}")
+        write_detail(f"why: {entry.purpose}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
     guide = GUIDES[source.provider]
     _announce(entry, guide.how)
-    _say(*guide.briefing(entry, source, now))
+    write_detail(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(entry, source, boundaries)
     return value is not None and _stored(entry, layout, boundaries, value)
@@ -484,7 +486,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
     _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
-    _say(f"create: {entry.recreate}")
+    write_detail(f"create: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
