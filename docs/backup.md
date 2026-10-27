@@ -54,6 +54,16 @@ and a monthly test that restores the last successful backup's snapshot and prove
 on the same disk as the data, so it does **not** protect against losing the disk. A second disk or an
 off-site copy is a later slice (architecture.md, gap 19).
 
+**Platform rules for every app.**
+
+- *Data classes.* An app's record in `backup/apps.toml` names its persistent data: the database and the audio or files volume. That is backed up and restore-tested. What the record does not name, such as caches and model weights, is rebuildable and is not backed up; no key marks it.
+- *Online.* No service is stopped: a PostgreSQL app is dumped transactionally, a SQLite app is copied through SQLite's online backup, and volumes are read live. The app keeps running.
+- *One app fails alone.* An app whose volume or database container is missing fails only itself; the others still back up, and a run with any failure prunes nothing.
+- *Restore goes to a new folder.* `hal restore --target` refuses a directory that exists; loading it into the live app is a separate step.
+- *0 rows is valid.* The restore test requires rows only where the record says `require_rows = true`.
+- *One retention.* Every app's snapshots follow the same policy, 4 weekly and 3 monthly, and pre-apply snapshots keep their own last 10 (below). There is no per-app retention of backup snapshots; privacy values are app-owned (architecture.md, section 2).
+- *Separate backups.* All secrets are backed up once as their own encrypted off-disk backup with its own password; the data backup has its own. Of the backup credentials only these two passwords sit in the password manager, and a restore after a disk loss brings the secrets back first, then the data. The secrets backup does not exist yet: `~/.secrets` is in no backup today (architecture.md, section 6).
+
 `backup/apps.toml` declares each app as a validated record (compose project, database service, dump kind,
 database user and name, the Postgres major, the audio volume with the table that names its files, and
 what the restore test asks the restored database). There is no hook language. Audio is optional and all
