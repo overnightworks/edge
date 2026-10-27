@@ -552,7 +552,7 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert code == 1
     assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
     assert "! locked/token not checked its folder cannot be read" in lines
-    assert not any("github/old" in line for line in lines)
+    assert not any("github/old" in line or line.startswith(("› gitlab", "› locked")) for line in lines)
     assert "· ssh/key.ppk skipped optional" in lines
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
