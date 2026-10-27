@@ -26,13 +26,12 @@ LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 @pytest.fixture
 def seed_appkit() -> Callable[[Path], Path]:
     """Puts the installed appkit's files where the step serves them in a fake repository, as a
-    finished apply leaves them; returns that directory. A fixture, because a test module that
+    finished apply leaves them; returns the repository. A fixture, because a test module that
     imports from `conftest` breaks in a full run."""
 
     def seed(repository: Path) -> Path:
-        served = appkit_step.served_directory(repository)
-        shutil.copytree(appkit_step.installed_static(), served)
-        return served
+        shutil.copytree(appkit_step.installed_static(), appkit_step.served_directory(repository))
+        return repository
 
     return seed
 
