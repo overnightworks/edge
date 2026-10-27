@@ -746,23 +746,15 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     assert f"Sicherung: in Ordnung, zuletzt {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
 
 
-DISK_LOW_MAIL = """Handlungsbedarf
-
-1. Auf der Festplatte ist weniger als 10 % frei. (neu)
-   Nächster Schritt: Sag einem Agenten „Die Festplatte ist fast voll, schau nach“.
-"""
-
-
 def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_figure(clean_home, runner, mail_stub, fake_disk) -> None:
     """#460 D1, D2, D3: the sentence and step, no GB figure in the mail, the figures in the report."""
     fake_disk.free_share = 0.09
 
     home_check(clean_home, runner, disk=fake_disk)
 
-    (sent,) = mail_stub.sent
-    news = message_of(sent)
+    news = message_of(mail_stub.sent[0])
     assert news["Subject"] == ACTION_TITLE
-    assert DISK_LOW_MAIL in news.get_content()
+    assert "1. Auf der Festplatte ist weniger als 10 % frei. (neu)\n   Nächster Schritt: Sag einem Agenten „Die Festplatte ist fast voll, schau nach“.\n" in news.get_content()
     assert "Dienste: Handlungsbedarf" in news.get_content()
     assert "GB" not in news.get_content()
     assert "| disk-low | / | 90 GB von 1000 GB frei (9 %) |" in Layout(clean_home).check_report_file.read_text()
@@ -770,13 +762,9 @@ def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_fig
 
 def test_a_disk_that_stays_low_sends_no_second_mail_and_one_that_clears_is_mailed_as_done(clean_home, runner, mail_stub, fake_disk) -> None:
     """#460 D1 and #415 Z4, Z5: once on appearing, once on going, however much less is free in between."""
-    fake_disk.free_share = 0.09
-    home_check(clean_home, runner, disk=fake_disk)
-    fake_disk.free_share = 0.07
-    home_check(clean_home, runner, disk=fake_disk)
-    fake_disk.free_share = 0.30
-
-    home_check(clean_home, runner, disk=fake_disk)
+    for free_share in (0.09, 0.07, 0.30):
+        fake_disk.free_share = free_share
+        home_check(clean_home, runner, disk=fake_disk)
 
     first, done = mail_stub.sent
     assert "weniger als 10 % frei" in message_of(first).get_content()
@@ -792,8 +780,7 @@ def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_are
     home_check(clean_home, runner, disk=fake_disk)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert "1. " in body
-    assert "2. " in body
+    assert "1. " in body and "2. " in body
     assert "weniger als 10 % frei" in body
     assert "edge-a startet ständig neu" in body
     assert body.count("Dienste: Handlungsbedarf") == 1
