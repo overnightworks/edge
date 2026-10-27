@@ -5,6 +5,7 @@ checks are in test_agent_service_login_checks.py; the command itself runs live u
 
 from __future__ import annotations
 
+import io
 import json
 import signal
 import subprocess
@@ -280,7 +281,7 @@ def stub_probe(probe) -> SimpleNamespace:
     run = object.__new__(probe.cells.LoginProbe)
     run.held, run.failed, run.not_driven, run.texts = [], [], [], []
     run.wait_until_listening = lambda: None
-    for cell in ("config", "u2", "u3", "u6", "u7", "u8", "i6", "s00", "s1"):
+    for cell in ("config", "u2", "u3", "u6", "u7", "u8", "i6", "s00", "b9", "s1"):
         setattr(run, f"cell_{cell}", lambda cell=cell: run.held.append(cell))
     return run
 
@@ -295,7 +296,7 @@ def test_a_cell_that_fails_does_not_stop_the_cells_after_it(probe, capsys):
     run.cell_i6 = fails
     run.drive()
     assert run.failed == ["I6"]
-    assert run.held[-2:] == ["s00", "s1"]
+    assert run.held[-3:] == ["s00", "b9", "s1"]
     assert capsys.readouterr().out == "I6 FAILED (reason withheld)\n"
 
 
@@ -330,7 +331,7 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
 ):
     """#457 row S1 held: the cell holds only when the gate and every text are clean."""
     run = object.__new__(probe.cells.LoginProbe)
-    run.held, run.failed = [], []
+    run.held, run.failed, run.minted = [], [], []
     run.login = SimpleNamespace(token=TOKEN)
     run.gate = SimpleNamespace(hits=hits)
     run.container_log = lambda service: TOKEN * in_log
@@ -524,3 +525,289 @@ def test_the_command_says_it_waits_for_another_holder_and_starts_after_the_relea
         assert not started.is_set()
     thread.join(timeout=10)
     assert started.is_set()
+
+
+# --- R2 and B9 (#469) --------------------------------------------------------------------------
+
+PERSON, WORKLOAD = "person-token-value", "workload-token-value"
+HELD_LINE = "method=tools/call tool=step held"
+HANDSHAKE = (
+    "method=initialize offered=- canary=0 bearer=1",
+    "method=notifications/initialized offered=- canary=0 bearer=1",
+)
+LISTING = "method=tools/list offered=step,bare,extra canary=0 bearer=1"
+FRAME_FAILED = "a frame cell did not hold"
+
+
+class Timeline:
+    """The fake clock of one R2 drive: `sleep` is the only thing that advances it, and the
+    client's output and the app's log are functions of it."""
+
+    def __init__(self, client_lines, app_lines=lambda now: [], exits_at=None):
+        self.now = 0.0
+        self.client_lines = client_lines
+        self.app = app_lines
+        self.exits_at = exits_at
+        self.closed_times: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakeClient:
+    def __init__(self, timeline: Timeline, read) -> None:
+        self.timeline = timeline
+        self.read = read
+        self.finished_with: float | None = None
+
+    def report(self):
+        return self.read(self.lines)
+
+    @property
+    def lines(self) -> list[str]:
+        return self.timeline.client_lines(self.timeline.now, bool(self.timeline.closed_times))
+
+    def alive(self) -> bool:
+        exits = self.timeline.exits_at
+        return exits is None or self.timeline.now < exits
+
+    def say_close(self) -> None:
+        self.timeline.closed_times.append(self.timeline.now)
+
+    def finish(self, seconds: float) -> None:
+        self.finished_with = seconds
+
+
+def watched(probe, **change):
+    fields = {
+        "group_seen": True, "group_gone_at": 1002.0,
+        "tree_seen": True, "tree_gone_at": 1003.0, "samples": 300,
+    }  # fmt: skip
+    return probe.census.Watched(**{**fields, **change})
+
+
+def r2_probe(probe, monkeypatch, tmp_path, timeline, *, watch=None, failed=(), root_entries=0):
+    run = object.__new__(probe.cells.LoginProbe)
+    run.held, run.failed, run.not_driven = [], list(failed), []
+    run.texts, run.minted, run.windows = [], [], []
+    run.gate = probe.checks.Gate([])
+    run.login = SimpleNamespace(token=TOKEN)
+    run.working_root_entries = root_entries
+    run.watch_directory = tmp_path
+    run.tokens = lambda: SimpleNamespace(person=PERSON, workload=WORKLOAD)
+    run.census = lambda: SimpleNamespace(
+        key=b"\x02", watch=lambda seconds: watch(seconds) if callable(watch) else watch
+    )
+    run.container_log = lambda service: ""
+    run.app_lines = lambda: timeline.app(timeline.now)
+    run.write_mode = lambda mode: run.windows.append(("mode", mode))
+    run.start_client = lambda tokens: (
+        run.windows.append("client") or FakeClient(timeline, probe.checks.read_client_output)
+    )
+    monkeypatch.setattr(
+        probe.cells, "time", SimpleNamespace(monotonic=lambda: timeline.now, sleep=timeline.sleep)
+    )
+    return run
+
+
+def cells_of(run) -> dict[str, str]:
+    return {cell: "held" for cell in run.held} | {
+        **{cell: "failed" for cell in run.failed},
+        **{cell: "not driven" for cell in run.not_driven},
+    }
+
+
+def test_a_frame_failure_posts_nothing_and_leaves_b9_not_driven(
+    probe, monkeypatch, tmp_path, capsys
+):
+    """Matrix row 2: R2 is posted only after every frame cell held."""
+    timeline = Timeline(lambda *_: [])
+    run = r2_probe(probe, monkeypatch, tmp_path, timeline, failed=["S00 (token)"])
+    run.cell_b9()
+    assert "client" not in run.windows
+    assert run.not_driven == [f"B9 ({letter})" for letter in "abcde"]
+    assert f"B9 (a) NOT DRIVEN: {FRAME_FAILED}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("lines", "alive_for", "reason", "closes"),
+    [
+        (["answer 409 busy"], 0.0, "R2 was refused: 409 busy", 1),
+        (["answer 500"], 0.0, "R2 was refused: 500 no code", 1),
+        (["answer 200"], None, "R2 reached no run_started", 1),
+        (["answer 200", "event run_started"], 0.0, "no call reached the fake app", 1),
+        (["answer 200", "event run_started"], None, "no call reached the fake app", 1),
+    ],
+    ids=["busy", "refused", "no run_started", "run ended before a call", "no call in time"],
+)
+def test_a_run_that_reaches_no_call_is_not_driven_and_is_posted_and_closed_once(
+    probe, monkeypatch, tmp_path, capsys, lines, alive_for, reason, closes
+):
+    """Matrix rows 8, 14 and 15: one POST, one close, no retry, and the bound on the paid turn
+    is the fake clock's R2_CALL_SECONDS."""
+    timeline = Timeline(lambda *_: lines, exits_at=alive_for)
+    posts = []
+    run = r2_probe(probe, monkeypatch, tmp_path, timeline)
+    run.start_client = lambda tokens: (
+        posts.append(tokens) or FakeClient(timeline, probe.checks.read_client_output)
+    )
+    run.cell_b9()
+    assert (len(posts), len(timeline.closed_times)) == (1, closes)
+    assert run.not_driven == [f"B9 ({letter})" for letter in "abcde"]
+    assert f"B9 (a) NOT DRIVEN: {reason}" in capsys.readouterr().out
+    expected_wait = {
+        "R2 reached no run_started": probe.checks.START_SECONDS,
+        "no call reached the fake app": probe.checks.R2_CALL_SECONDS if alive_for is None else 0,
+    }.get(reason, 0)
+    assert timeline.closed_times == [expected_wait]
+
+
+def test_a_dummy_run_prints_what_the_app_and_the_watch_saw_and_holds_nothing_of_b9(
+    probe, monkeypatch, tmp_path, capsys
+):
+    """Matrix row 1: the login project reached the app (handshake, one listing); no call."""
+    reads = []  # the first read is the baseline before R2; the app logs its lines after it
+    timeline = Timeline(
+        lambda *_: ["answer 200", "event run_started", "event failed", "status failed none"],
+        app_lines=lambda now: [*HANDSHAKE, LISTING] if reads.append(now) or len(reads) > 1 else [],
+        exits_at=0.0,
+    )
+    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=watched(probe, group_seen=False))
+    run.cell_b9()
+    output = capsys.readouterr().out
+    assert (
+        "R2 observed: the app logged 2 handshake lines and 1 listings; the client printed "
+        "2 events, 0 lines outside its vocabulary; watch: group seen False, tree seen True, "
+        "300 samples"
+    ) in output
+    assert "B9 (e) NOT DRIVEN: no call reached the fake app" in output
+    assert (tmp_path / "stop").exists()
+    assert (PERSON in run.gate.secrets, WORKLOAD in run.gate.secrets, "02" in run.gate.secrets) == (
+        True, True, True,
+    )  # fmt: skip
+
+
+def hold_and_release(now: float) -> list[str]:
+    """The app holds the call from 1 s, and releases it 0.5 s after the close at 2 s."""
+    held = [HELD_LINE] if now >= 1.0 else []
+    released = ["method=tools/call tool=step released at=1002.500"] if now >= 2.5 else []
+    return [*HANDSHAKE, LISTING, *held, *released]
+
+
+def closed_run(now: float, closed: bool) -> list[str]:
+    return ["answer 200", "event run_started", "closed at=1002.000"] if closed else [
+        "answer 200", "event run_started",
+    ]  # fmt: skip
+
+
+def test_a_call_that_is_closed_at_t0_gives_the_b9_verdicts_and_the_timing(
+    probe, monkeypatch, tmp_path, capsys
+):
+    """Matrix row 3: (a)-(e) from the client's lines, the watch's times, the app's release."""
+    lines = [
+        "answer 200", "event run_started", "closed at=1002.000", "status cancelled disconnected",
+    ]  # fmt: skip
+    timeline = Timeline(lambda now, closed: lines if closed else lines[:2], hold_and_release)
+    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=watched(probe))
+    run.cell_b9()
+    output = capsys.readouterr().out
+    assert cells_of(run) == {f"B9 ({letter})": "held" for letter in "abcde"}
+    assert "B9 timing (observed, no bound): max(t_reap, t_tree, t_up) - t0 = 1.00 s" in output
+    assert len(timeline.closed_times) == 1
+    assert any(PERSON in text for text in run.texts) is False
+    assert any("method=tools/call tool=step held" in text for text in run.texts)
+
+
+def test_a_watch_that_failed_leaves_the_group_and_the_tree_not_driven(
+    probe, monkeypatch, tmp_path, capsys
+):
+    lines = ["answer 200", "event run_started", "closed at=1002.000", "status cancelled dropped"]
+    timeline = Timeline(lambda now, closed: lines, hold_and_release)
+
+    def failing(_seconds):
+        raise probe.egress.ProbeFailed(MARKER)
+
+    run = r2_probe(probe, monkeypatch, tmp_path, timeline, watch=failing)
+    run.cell_b9()
+    assert cells_of(run)["B9 (b)"] == cells_of(run)["B9 (c)"] == "not driven"
+    assert cells_of(run)["B9 (a)"] == cells_of(run)["B9 (d)"] == "held"
+    assert MARKER not in capsys.readouterr().out
+
+
+def test_s1_fails_when_a_minted_token_is_in_the_clients_output(probe, capsys):
+    """Matrix row 10: a minted token in the client's output fails S1, and is not printed."""
+    run = object.__new__(probe.cells.LoginProbe)
+    run.held, run.failed = [], []
+    run.minted = [SimpleNamespace(person=PERSON, workload=WORKLOAD)]
+    run.login = SimpleNamespace(token=TOKEN)
+    run.gate = SimpleNamespace(hits=0)
+    run.container_log = lambda service: ""
+    run.texts = [f"event run_started\nstatus {WORKLOAD}"]
+    run.cell_s1()
+    assert (run.failed, run.held) == (["S1"], [])
+    output = capsys.readouterr().out
+    assert WORKLOAD not in output
+    assert output.startswith("S1 FAILED: 0 gate hits, 0 in the service log, 1 in all")
+
+
+def test_the_fake_app_is_started_with_the_local_log_driver_or_nothing_starts(probe):
+    config = resolved()
+    assert "agent-app" in probe.cells.STARTED
+    del config["services"]["agent-app"]["logging"]
+    with pytest.raises(probe.checks.LoginFailed) as raised:
+        probe.checks.check_resolved(
+            config,
+            service="agent-service",
+            started=probe.cells.STARTED,
+            login=("/run/agent-service/login/claude", Path("/login")),
+            configuration=(CONFIGURATION, Path("/scratch/service.toml")),
+        )
+    assert str(raised.value) == probe.checks.Refusal.LOG_DRIVER
+
+
+class FakeProcess:
+    """A `Popen` whose stdin may be closed on the far side."""
+
+    def __init__(self, *, broken=False, outlives=False) -> None:
+        self.broken, self.outlives = broken, outlives
+        self.written: list[str] = []
+        self.killed = False
+        self.stdout = io.StringIO("answer 200\nCompose says hello\n")
+        self.stdin = SimpleNamespace(write=self.write, flush=lambda: None, close=self.close_stdin)
+
+    def write(self, text: str) -> None:
+        if self.broken:
+            raise BrokenPipeError
+        self.written.append(text)
+
+    def close_stdin(self) -> None:
+        if self.broken:
+            raise BrokenPipeError
+
+    def poll(self):
+        return None if self.outlives and not self.killed else 0
+
+    def wait(self, timeout=None):
+        if self.outlives and not self.killed and timeout is not None:
+            raise subprocess.TimeoutExpired("client", timeout)
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def test_close_written_to_a_client_that_exited_is_no_failure(probe):
+    """Matrix row 16: the broken pipe is caught; the client's output decides."""
+    client = probe.cells.ClientProcess(FakeProcess(broken=True))
+    client.say_close()
+    client.finish(1)
+    assert client.report().answer == 200
+    assert client.report().unmatched == 1
+
+
+def test_a_client_that_outlives_its_read_time_is_killed_and_what_it_printed_counts(probe):
+    process = FakeProcess(outlives=True)
+    client = probe.cells.ClientProcess(process)
+    client.say_close()
+    client.finish(1)
+    assert (process.written, process.killed) == (["close\n"], True)
+    assert client.report().answer == 200

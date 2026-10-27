@@ -520,7 +520,7 @@ class B9Evidence(NamedTuple):
     watch: Watched | None
     call: AppCall
     log: LogClasses  # the service log's records since R2 began
-    working_root_before: int  # entries in the working root at S00, just before R2
+    working_root_before: int | None  # its entries at S00, just before R2; None: not shown
 
 
 class B9Result(NamedTuple):
@@ -558,8 +558,13 @@ def _gone_verdict(
 
 def _tree_verdict(evidence: B9Evidence) -> Verdict:
     cell = B9_CELLS[2]
-    if evidence.working_root_before:
-        reason = f"the working root held {evidence.working_root_before} entries before R2"
+    before = evidence.working_root_before
+    if before != 0:
+        reason = (
+            "S00 showed no working root"
+            if before is None
+            else f"the working root held {before} entries before R2"
+        )
         return Verdict(cell, Outcome.NOT_DRIVEN, reason)
     watch = evidence.watch
     return _gone_verdict(

@@ -70,5 +70,6 @@ def resolved(*, login_source="/login", configuration_source="/scratch/service.to
             },
             "agent-egress": {"logging": {"driver": "local"}},
             "agent-issuer": {"logging": {"driver": "local"}},
+            "agent-app": {"logging": {"driver": "local"}},
         }
     }
