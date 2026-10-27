@@ -23,12 +23,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view, tidy_home
+from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
 from home_tools.report import Level, findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe, FindingRule, SecretKind
-from home_tools.tidy_home import Config
+from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 
 MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
@@ -71,11 +71,6 @@ CheckFindings = tuple[str, frozenset[str]]
 """What one check returns: its report section and the identities of its findings."""
 
 
-def _tidy_check(ctx: CheckContext) -> CheckFindings:
-    findings, report = tidy_home.dry_run(ctx.layout, ctx.now, ctx.config.tidy, ctx.run)
-    return report, frozenset(finding.identity for finding in findings)
-
-
 MISSING_PASSWORD_RULE = "missing-password"
 
 
@@ -113,7 +108,6 @@ def _backup_check(ctx: CheckContext) -> CheckFindings:
 
 # The one place a check gets its name; the name prefixes every remembered finding identity.
 CHECKS: tuple[tuple[str, Callable[[CheckContext], CheckFindings]], ...] = (
-    ("tidy", _tidy_check),
     ("secrets", _secrets_check),
     ("hook", _hook_check),
     ("logs", _logs_check),
@@ -170,9 +164,21 @@ def _previous_identities(layout: Layout) -> frozenset[str] | None:
     return None if text is None else _parse_identities(text)
 
 
+REMOVED_CHECK_NAME = "tidy"
+
+
+def _is_of_the_removed_check(identity: object) -> bool:
+    return isinstance(identity, str) and identity.partition("\t")[0] == REMOVED_CHECK_NAME
+
+
 def _parse_identities(text: str) -> frozenset[str]:
-    """Only identities `home check` itself remembers pass, so nothing else is ever carried into the state file."""
+    """Only identities `home check` itself remembers pass, so nothing else is ever carried into the state file.
+
+    The findings of the removed tidy check are dropped unseen: they are neither news nor recovered.
+    """
     identities = json.loads(text)
+    if isinstance(identities, list):
+        identities = [identity for identity in identities if not _is_of_the_removed_check(identity)]
     if not isinstance(identities, list) or not all(isinstance(identity, str) and _is_remembered(identity) for identity in identities):
         raise ValueError("gemerkte Funde ungültig: erwartet eine Liste aus Prüfung, Regel und Gegenstand")
     return frozenset(identities)
@@ -269,8 +275,6 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "journal-unreadable"): LOGS_UNSEEN,
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
 }
-# Nothing `home tidy` finds is broken: its rules clean or list, so the whole area is a note.
-TIDY_REPORT = RuleReport(NOTE, "Es gibt etwas aufzuräumen.", area_note="es gibt etwas aufzuräumen")
 BROKEN_CHECK_REPORT = RuleReport(ACTION, "Die Prüfung {area} lief nicht.", "Führe `home check` aus.", resolved="Die Prüfung {area} läuft wieder.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
@@ -279,7 +283,6 @@ AREAS = (
     ("hook", "Commit-Schutz"),
     ("secrets", "Geheimnisse"),
     ("logs", "Server-Logs"),
-    ("tidy", "Aufräumen"),
 )
 AREA_LABELS = dict(AREAS)
 
@@ -304,7 +307,7 @@ class Item:
 def _rule_report(check_name: str, rule: str) -> RuleReport | None:
     if rule == CHECK_FAILED_IDENTITY:
         return BROKEN_CHECK_REPORT
-    return TIDY_REPORT if check_name == "tidy" else RULE_REPORTS.get((check_name, rule))
+    return RULE_REPORTS.get((check_name, rule))
 
 
 APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")

@@ -60,16 +60,16 @@ def test_the_same_exit_is_mailed_once_the_switch_is_gone(clean_home, runner, mai
     assert "Dienste: Handlungsbedarf" in body
 
 
-def test_a_switch_directory_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, leave_pasted_image, runner, sandbox) -> None:
+def test_a_switch_directory_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, runner, sandbox) -> None:
     """#466 E-3 (#340 S5): a run fails rather than guesses."""
     stopped = sandbox.home / ".local/state/edge/stopped"
     stopped.parent.mkdir(parents=True, exist_ok=True)
     stopped.write_text("")
-    leave_pasted_image(clean_home)
+    (clean_home / ".secrets" / "gitlab").unlink()
 
     code = home_check(clean_home, runner)
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 3
     assert "Prüfung platform fehlgeschlagen" in report
-    assert "| pasted-images |" in report
+    assert "| missing | gitlab |" in report

@@ -35,7 +35,7 @@ RULES = [(name, rule) for name, rules in RULES_BY_CHECK.items() for rule in sort
 
 @pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
 def test_every_rule_of_a_check_has_a_level(check_name: str, rule: str) -> None:
-    """#415 Z3: every rule of the six checks has a level."""
+    """#415 Z3: every rule of the five checks has a level."""
     assert (check_name, rule) in check.RULE_REPORTS
 
 
@@ -53,7 +53,7 @@ def test_an_action_has_exactly_one_next_step_and_a_note_has_none(check_name: str
 
 @pytest.mark.parametrize(("check_name", "rule"), RULES, ids=[f"{name}/{rule}" for name, rule in RULES])
 def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule: str) -> None:
-    """#415 Z6: no sentence of secrets, hook, logs or tidy takes the finding's subject, a path or a file name."""
+    """#415 Z6: no sentence of secrets, hook, logs takes the finding's subject, a path or a file name."""
     report = check.RULE_REPORTS[check_name, rule]
     assert ("{subject}" in report.sentence + report.next_step) <= (check_name in {"platform", "backup"})
 
@@ -62,10 +62,10 @@ def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule
     ("identities", "title"),
     [
         (set(), "PC-Check: alles in Ordnung"),
-        ({"tidy\tpasted-images\tx.png", "platform\treboot-pending\treboot"}, "PC-Check: in Ordnung – nur Hinweise"),
+        ({"secrets\tmissing\tgitlab", "platform\treboot-pending\treboot"}, "PC-Check: in Ordnung – nur Hinweise"),
         ({"platform\tcontainer-restarting\tedge-a-1"}, "PC-Check: Handlungsbedarf – Dienste"),
         (
-            {"logs\tjournal-age\tjournal", "platform\tcontainer-dead\tedge-a-1", "tidy\tpasted-images\tx.png"},
+            {"logs\tjournal-age\tjournal", "platform\tcontainer-dead\tedge-a-1", "secrets\tmissing\tgitlab"},
             "PC-Check: Handlungsbedarf – Dienste, Server-Logs",
         ),
         ({"hook\tcheck-failed"}, "PC-Check: Handlungsbedarf – Commit-Schutz"),
@@ -82,10 +82,9 @@ def test_the_title_names_the_state_and_at_action_the_areas(identities: set[str],
     [
         ("secrets\tmissing-password\trestic/password", Level.ACTION),
         ("secrets\tmissing\tgitlab", Level.NOTE),
-        ("tidy\tanything-tidy-finds\tx", Level.NOTE),
     ],
-    ids=["human password", "other secret", "tidy rule"],
+    ids=["human password", "other secret"],
 )
-def test_the_level_of_a_missing_secret_follows_its_kind_and_every_tidy_rule_is_a_note(identity: str, level: Level) -> None:
-    """#415 Z3: a missing secret is an action only for a human password; every tidy rule is a note."""
+def test_the_level_of_a_missing_secret_follows_its_kind(identity: str, level: Level) -> None:
+    """#415 Z3: a missing secret is an action only for a human password."""
     assert check.title(frozenset({identity})) == ("PC-Check: Handlungsbedarf – Geheimnisse" if level is Level.ACTION else "PC-Check: in Ordnung – nur Hinweise")

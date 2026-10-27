@@ -1,6 +1,6 @@
 # home-tools
 
-Ein Befehl, `home`, hält das Home in der Form, die `~/README.md` beschreibt.
+Ein Befehl, `home`, zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.
 Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
@@ -27,11 +27,11 @@ Schlusszeile:
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
 3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
    warum: ohne den Hook prüft kein Commit auf Geheimnisse; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
-Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. Das macht ein Agent: sag „räum home auf“.
+Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets. Das macht ein Agent: sag „räum home auf“.
 ```
 
 Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
-Terminal (`home secrets --setup`, `hal setup --apply`, `home tidy --apply`),
+Terminal (`home secrets --setup`, `hal setup --apply`),
 eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
 Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
 Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.
@@ -51,24 +51,21 @@ beiseite legt). Dann fehlende Geheimnisse aus der Ansicht von `home secrets`
 übrigen), ein fehlgeschlagener Login, ein unbestätigter Widerruf und jeder
 übrige Fund von `home secrets`, den nur du klären kannst, mit Ort und Empfehlung
 von Hand (etwa „~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann
-offene Schritte von `hal setup` (dann `hal setup --apply`), die Korrekturen
-der Hook-Prüfung und die clean-Funde von `home tidy` (dann `home tidy --apply`).
+offene Schritte von `hal setup` (dann `hal setup --apply`) und die Korrekturen
+der Hook-Prüfung.
 Jeder Befehl steht nur einmal da.
 
 Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
-Pfad: unbekannte Dateien in `~/.secrets`, „~/README.md fehlt“, Home-Einträge,
-die `~/README.md` nicht kennt, Reste in `~/git`, alte Worktrees, alte Downloads und alte
-Codex-Sitzungen. Die sortiert ein Agent ein; jede Löschentscheidung kommt als
-eine Liste zu dir. Die einzelnen Funde zeigen `home check`, `home tidy` und
-`home secrets`.
+Pfad: unbekannte Dateien in `~/.secrets`. Die sortiert ein Agent ein; jede
+Löschentscheidung kommt als eine Liste zu dir. Die einzelnen Funde zeigen
+`home check` und `home secrets`.
 
 Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
 Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
 „1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
-Schritte der anderen Quellen folgen. Eine ungültige Konfigurationsdatei liest nur
-`home tidy`; dann steht dort „konnte das Home (home tidy) nicht lesen; den Fehler
-zeigt: home tidy“. Es ändert nichts, fragt nach keinem Passwort und liest keinen
+Schritte der anderen Quellen folgen. Die Konfigurationsdatei liest `home next` nicht.
+Es ändert nichts, fragt nach keinem Passwort und liest keinen
 Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
 Prüfung; `3` nur bei einem unerwarteten Fehler.
@@ -79,14 +76,14 @@ Prüfung; `3` nur bei einem unerwarteten Fehler.
 home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 ```
 
-`home check` fährt jede Prüfung, die nichts ändert — den Dry-Run von
-`home tidy`, die Ansicht von `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
+`home check` fährt jede Prüfung, die nichts ändert — die Ansicht von
+`home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
 **Stufen.** Jeder Fund hat genau eine Stufe. *In Ordnung*: nichts gefunden. *Hinweis*: kann warten, nichts geht heute
 kaputt, nichts liegt offen. *Handlungsbedarf*: etwas ist jetzt kaputt, ungeschützt oder unsichtbar. Der Stand eines
-Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner sechs Bereiche (Dienste, Sicherung,
-Commit-Schutz, Geheimnisse, Server-Logs, Aufräumen). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
+Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner fünf Bereiche (Dienste, Sicherung,
+Commit-Schutz, Geheimnisse, Server-Logs). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
 `check.py`; ein Test lässt jede Regel der Prüfungen ohne Stufe scheitern.
 
 | Prüfung | Handlungsbedarf | Hinweis |
@@ -96,7 +93,6 @@ Commit-Schutz, Geheimnisse, Server-Logs, Aufräumen). Die Stufe und der Satz je 
 | `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
-| `tidy` | – | jede Regel |
 
 Ein zerbrochener Lauf einer Prüfung ist Handlungsbedarf („Die Prüfung … lief nicht“, Schritt `home check`).
 
@@ -139,14 +135,13 @@ Sicherung: in Ordnung, zuletzt heute 14:15
 Commit-Schutz: in Ordnung
 Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch
 Server-Logs: in Ordnung
-Aufräumen: Hinweis – es gibt etwas aufzuräumen
 
 Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
 Alles im Einzelnen: ~/.local/state/home/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
-Containers, Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz, Logs und Aufräumen steht nur, was los ist. Ein
+Containers, Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz und Logs steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
@@ -465,62 +460,6 @@ dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch e
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
-## home tidy
-
-```
-home tidy            # Dry-Run: zeigt alle Funde, ändert nichts
-home tidy --apply    # führt die clean-Funde aus, audit-Funde bleiben Bericht
-home tidy --sizes    # zusätzlich die zehn größten Einträge im Home (langsam)
-```
-
-Jeder Lauf schreibt seinen Bericht nach `~/.local/state/home/tidy-report.md`.
-`home tidy` benachrichtigt nicht: Wer es von Hand startet, sieht den Bericht
-im Terminal; die Benachrichtigung gehört allein `home check`.
-
-Eine Regel meldet nur, wenn `--apply` wirklich etwas ändern würde: `docker`
-meldet gestoppte Container nur, wenn welche über dem Alterslimit liegen,
-Images nur, wenn es dangling Images gibt (genau die löscht `docker image
-prune -f`), den Build-Cache nur, wenn er über seinem Limit liegt *und*
-reklamierbaren Speicher hat.
-
-### clean: wird mit `--apply` ausgeführt
-
-| Regel | Was | Grenze |
-|---|---|---|
-| `pasted-images` | `Eingefügtes Bild*.png` in `~`, `~/git`, `~/Dokumente`, `~/Schreibtisch` | älter als 7 Tage |
-| `trash` | GNOME-Papierkorb und der Papierkorb des VS-Code-Snaps | älter als 30 Tage |
-| `docker` | gestoppte Container, dangling Images, Build-Cache | 7 Tage, 20 GB Cache bleiben |
-
-`uv cache prune` und `npm cache verify` laufen ebenfalls unter `--apply`, sind
-aber keine Funde: sie zählen nie mit, blockieren nie, und ihr Ergebnis steht
-nur in der `Wartung:`-Zeile am Ende des Berichts (im Dry-Run steht dort, dass
-`--apply` sie ausführen würde).
-
-### audit: nur Bericht, entscheidet ein Mensch
-
-| Regel | Was |
-|---|---|
-| `missing-readme` | `~/README.md` fehlt |
-| `unknown-home-entry` | Einträge im Home-Root, die `~/README.md` nicht kennt |
-| `git-root-litter` | alles in `~/git`, das weder Repo noch `<repo>-worktrees` ist |
-| `stale-worktree` | Worktrees mit geschlossenem Issue oder ohne Registrierung |
-| `downloads-inbox` | Downloads älter als 14 Tage |
-| `codex-sessions` | Codex-Sessions älter als 90 Tage, als Summe |
-| `largest-entries` | nur mit `--sizes`, nur Einträge ab 5 GiB, höchstens 10 |
-
-Bekannt ist ein Home-Eintrag, wenn `~/README.md` ihn vor der Überschrift „Was
-hier nicht mehr liegt“ in Backticks als Pfad nennt — `~/`, `.` oder `/` im
-Token, der erste Pfadabschnitt zählt, `.secrets/gitlab` macht `.secrets`
-bekannt — oder wenn es `README.md` selbst ist. Tokens danach oder ohne
-Pfadform (`uv`, `pip`, ...) zählen nicht. Fehlt `~/README.md` ganz, meldet
-`home tidy` genau einen Fund, `missing-readme`: „README.md fehlt“;
-`unknown-home-entry` läuft dann nicht. Wer einen Ordner im Home anlegt, trägt ihn in `~/README.md` ein — eine zweite Liste gibt es nicht.
-
-Der Bericht listet außerdem, welche Regeln liefen und nichts fanden
-(„Geprüft, nichts gefunden: …“) und welche gar nicht laufen konnten, etwa
-weil `docker` fehlt oder `du` fehlschlug („Nicht geprüft: docker (nicht
-installiert)“) — das eine ist kein Fund, das andere ist keine Prüfung.
-
 ## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
@@ -774,27 +713,11 @@ Die Zusage ist enger als „jeder Commit“:
 
 Eine Datei für alle Befehle: `~/.config/home/config.toml`, eine Tabelle je
 Befehl mit Einstellungen. Ohne die Datei gelten die Defaults. Eine unbekannte
-Tabelle, ein unbekannter Schlüssel, ein negativer Tageswert oder ein falscher
-Werttyp ist ein Konfigurationsfehler: `home` meldet ihn auf stderr und beendet
-sich mit Exit-Code 2, statt mit falschen Grenzen weiterzulaufen (`home next`
-zeigt ihn stattdessen als Schritt und endet mit `0`, siehe dort).
-
-Liegt noch die alte `~/.config/tidy-home/config.toml` und die neue fehlt,
-bricht `home` ebenso mit Exit-Code 2 ab (`home next` auch hier als Schritt,
-siehe dort) und nennt den genauen Befehl, der die alte Datei einmalig unter
-`[tidy]` in die neue umzieht — es gibt keinen stillen Rückfall auf die Defaults.
-
-### `[tidy]`
-
-| Schlüssel | Default | Bedeutung |
-|---|---|---|
-| `pasted_image_days` | `7` | Alter, ab dem `pasted-images` löscht |
-| `trash_days` | `30` | Alter, ab dem `trash` löscht |
-| `downloads_days` | `14` | Alter, ab dem `downloads-inbox` meldet |
-| `codex_session_days` | `90` | Alter, ab dem `codex-sessions` meldet |
-| `docker_stopped_container_days` | `7` | Alter, ab dem gestoppte Container geprunt werden |
-| `docker_build_cache_keep` | `"20GB"` | Wert für `docker builder prune --keep-storage` |
-| `downloads_ignore` | `[]` | Dateinamen in `Downloads/`, die nie gemeldet werden |
+Tabelle, ein unbekannter Schlüssel oder ein falscher Werttyp ist ein
+Konfigurationsfehler: `home` meldet ihn auf stderr und beendet sich mit
+Exit-Code 2, statt mit falschen Einstellungen weiterzulaufen. Eine Tabelle
+`[tidy]` wird nicht mehr gelesen und beim Namen abgelehnt: sie ist aus der Datei
+zu löschen.
 
 ### `[notify]`
 
@@ -805,10 +728,6 @@ siehe dort) und nennt den genauen Befehl, der die alte Datei einmalig unter
 Beispiel:
 
 ```toml
-[tidy]
-trash_days = 60
-downloads_ignore = ["keepme.iso"]
-
 [notify]
 enabled = true
 ```
@@ -836,8 +755,7 @@ Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked
 ausführen (oder `home` über `bin/home` aufrufen), bevor der Timer läuft.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
-nach) und fährt nur `home check`. `home tidy --apply` bleibt ein bewusster
-Handgriff.
+nach) und fährt nur `home check`.
 
 ## Tests
 

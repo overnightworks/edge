@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from home_tools import check, secrets_setup, secrets_view, setup, system_step, tidy_home
+from home_tools import check, secrets_setup, secrets_view, setup, system_step
 from home_tools import next as next_steps
 from home_tools.platform_check import DiskSpaceReader, read_disk_space
 from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
-from home_tools.tidy_home import Config, load_config
+from home_tools.config import Config, load_config
 from home_tools.layout import CommandRunner, Layout, run_command
 
 
@@ -36,15 +36,13 @@ class Ports:
     disk_space: DiskSpaceReader
 
 
-SUBCOMMANDS = (next_steps, check, tidy_home, secrets_setup, setup)
+SUBCOMMANDS = (next_steps, check, secrets_setup, setup)
 UNEXPECTED_ERROR_EXIT = 3
 
 EXAMPLES = """\
 Beispiele:
   home next            was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
   home check           tägliche Prüfung, wie der Timer sie fährt
-  home tidy            zeigt, was im Home liegt, wo es nicht hingehört
-  home tidy --apply    räumt die clean-Funde weg
   home secrets         zeigt jedes Geheimnis, nie einen Wert
   home secrets --setup führt am Terminal durch jedes fehlende Geheimnis
   home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht; at a terminal it asks once for sudo
@@ -95,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="home",
         add_help=False,
-        description="Hält das Home in der Form, die ~/README.md beschreibt.",
+        description="Zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

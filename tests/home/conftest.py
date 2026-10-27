@@ -19,7 +19,6 @@ from home_tools.setup import QUALITY_SOURCE
 from home_tools.layout import Layout, run_command
 from home_tools.tunnel_config import TUNNEL_ID_PLACEHOLDER
 
-DAY_SECONDS = 24 * 60 * 60
 
 # Path-shaped tokens make these entries known, so the state `home` writes never becomes a finding itself.
 HOME_README = "`.local/state`, `.config/home`, `.secrets` and `git/` belong here.\n"
@@ -161,21 +160,6 @@ def furnish_clean_home(use_manifest: Callable[[str], Path]) -> Callable[[Path], 
 @pytest.fixture
 def clean_home(tmp_path: Path, furnish_clean_home: Callable[[Path], Path]) -> Path:
     return furnish_clean_home(tmp_path / "home")
-
-
-@pytest.fixture
-def leave_pasted_image() -> Callable[[Path, int], Path]:
-    """A pasted screenshot `age_days` old; past the default week it is a pasted-images finding."""
-
-    def leave(directory: Path, age_days: int = 30) -> Path:
-        directory.mkdir(parents=True, exist_ok=True)
-        image = directory / "Eingefügtes Bild.png"
-        image.write_bytes(b"png")
-        stamp = time.time() - age_days * DAY_SECONDS
-        os.utime(image, (stamp, stamp))
-        return image
-
-    return leave
 
 
 PASSWORD_CANARY = "CANARY-SMTP-PASSWORD-9f3"
@@ -437,7 +421,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         monkeypatch.setenv(name, value)
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
-    # A real ~/git/edge in the sandbox home would be a repository the hook check and tidy report on.
+    # A real ~/git/edge in the sandbox home would be a repository the hook check reports on.
     monkeypatch.setattr(cli, "edge_units_directory", lambda _layout: unit_directory)
     # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup` looks at none unless a test names some.
     empty_manifest = tmp_path / "empty-secrets-manifest.toml"

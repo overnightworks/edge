@@ -79,11 +79,11 @@
 "uv.lock" = 1
 
 [home-verb]
-".github/workflows/ci.yml" = 4
+".github/workflows/ci.yml" = 3
 "docs/agent-service.md" = 2
-"docs/architecture.md" = 33
+"docs/architecture.md" = 32
 "docs/design/hal-output.html" = 1
-"docs/home.md" = 66
+"docs/home.md" = 49
 "docs/stack.md" = 1
 "scripts/system-proof/Dockerfile" = 1
 "scripts/system-proof/drive.sh" = 5
@@ -91,12 +91,12 @@
 "src/edge_backup/status.py" = 1
 "src/hal/setup_commands.py" = 3
 "src/home_tools/backup_check.py" = 2
-"src/home_tools/check.py" = 8
-"src/home_tools/cli.py" = 8
+"src/home_tools/check.py" = 7
+"src/home_tools/cli.py" = 6
 "src/home_tools/hook_check.py" = 2
 "src/home_tools/logs_check.py" = 2
 "src/home_tools/mail.py" = 1
-"src/home_tools/next.py" = 20
+"src/home_tools/next.py" = 12
 "src/home_tools/platform_check.py" = 2
 "src/home_tools/secrets_manifest.toml" = 9
 "src/home_tools/secrets_setup.py" = 9
@@ -104,7 +104,6 @@
 "src/home_tools/setup.py" = 7
 "src/home_tools/system/playbook.yml" = 3
 "src/home_tools/system_step.py" = 6
-"src/home_tools/tidy_home.py" = 8
 "systemd/home-check.service" = 2
 "systemd/home-check.timer" = 1
 "tests/home/conftest.py" = 5
@@ -115,11 +114,10 @@
 "tests/home/test_check_recovery.py" = 1
 "tests/home/test_check_switches.py" = 1
 "tests/home/test_check_waiter.py" = 1
-"tests/home/test_cli.py" = 1
 "tests/home/test_hook_check.py" = 2
 "tests/home/test_logs_check.py" = 1
 "tests/home/test_mail.py" = 3
-"tests/home/test_next.py" = 25
+"tests/home/test_next.py" = 18
 "tests/home/test_platform_check.py" = 1
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 3
@@ -141,12 +139,11 @@
 "tests/test_edge_tunnel_files.py" = 3
 
 [config-directory]
-"docs/home.md" = 2
+"docs/home.md" = 1
 "src/home_tools/cli.py" = 1
-"src/home_tools/tidy_home.py" = 1
 
 [state-directory]
-"docs/home.md" = 6
+"docs/home.md" = 5
 "src/home_tools/check.py" = 1
 "src/home_tools/secrets_setup.py" = 1
 "src/home_tools/secrets_view.py" = 1

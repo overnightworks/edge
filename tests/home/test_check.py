@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import os
-import shutil
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -32,9 +30,8 @@ def runner() -> RunnerWithCleanLogs:
 ACTION_TITLE = "PC-Check: Handlungsbedarf – Dienste"
 
 
-def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, leave_pasted_image, runner) -> None:
+def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification(clean_home, runner) -> None:
     """#415 Z1: the popup title is the state in a phrase, its body the sentences and the report."""
-    leave_pasted_image(clean_home)
     restarting_containers(runner, "presentator-live")
 
     code = home_check(clean_home, runner)
@@ -42,7 +39,7 @@ def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 1
     assert report.startswith("# home check ")
-    assert "| pasted-images |" in report
+    assert "| container-restarting |" in report
     assert runner.notifications == [ACTION_TITLE]
     assert runner.notification_bodies == [f"presentator-live startet ständig neu und ist darum nicht erreichbar.\nAlles im Einzelnen: {REPORT_DISPLAY}"]
 
@@ -173,7 +170,8 @@ def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
 
     assert code == 0
     assert runner.notifications == []
-    assert "Nichts zu tun." in Layout(clean_home).check_report_file.read_text()
+    assert Layout(clean_home).check_report_file.read_text().startswith("# home check ")
+    assert "| 0 Funde" in Layout(clean_home).check_report_file.read_text().splitlines()[0]
 
 
 def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, runner) -> None:
@@ -214,27 +212,18 @@ def test_a_failed_notification_is_reported_and_sent_again_on_the_next_run(clean_
     assert len(runner.notifications) == 2
 
 
-def test_notes_from_tidy_and_secrets_join_the_report_but_send_nothing(clean_home, leave_pasted_image, runner) -> None:
-    """#415 Z4: a missing secret and tidy litter are notes; the report keeps the numbers."""
-    leave_pasted_image(clean_home / "git")
+def test_a_note_joins_the_report_but_sends_nothing(clean_home, runner) -> None:
+    """#415 Z4: a missing secret is a note; the report keeps the numbers."""
     (clean_home / ".secrets" / "gitlab").unlink()
 
     code = home_check(clean_home, runner)
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 1
-    assert report.splitlines()[0].endswith("| 3 Funde")
-    assert "# home tidy " in report
+    assert report.splitlines()[0].endswith("| 1 Fund")
     assert "# home secrets " in report
     assert "| missing | gitlab |" in report
     assert runner.notifications == []
-
-
-def break_tidy(home: Path) -> Path:
-    (home / "git").mkdir(exist_ok=True)
-    (home / "git" / "stray.txt").write_text("litter")
-    (home / ".secrets" / "gitlab").unlink()  # a secrets finding that must stay visible
-    return home / "git"
 
 
 class ProbeThatCannotStart(FakeProbe):
@@ -244,67 +233,43 @@ class ProbeThatCannotStart(FakeProbe):
         raise PermissionError(argv[0])
 
 
-@contextmanager
-def broken_tidy(home: Path) -> Iterator[FakeProbe]:
-    locked = break_tidy(home)
-    locked.chmod(0)
-    try:
-        yield FakeProbe()
-    finally:
-        locked.chmod(0o700)
+def home_check_with_a_secrets_check_that_breaks(home: Path, runner) -> int:
+    return home_check(home, runner, ProbeThatCannotStart())
 
 
-@contextmanager
-def broken_secrets(home: Path) -> Iterator[FakeProbe]:
-    shutil.copy(home / "README.md", home / "Eingefügtes Bild.png")
-    os.utime(home / "Eingefügtes Bild.png", (0, 0))  # a tidy finding that must stay visible
-    yield ProbeThatCannotStart()
+def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_3(clean_home, runner, capsys) -> None:
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
 
-
-def home_check_with_a_secrets_check_that_breaks(home: Path, runner) -> None:
-    home_check(home, runner, ProbeThatCannotStart())
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
-@pytest.mark.parametrize(
-    ("break_one", "broken", "still_visible"),
-    [(broken_tidy, "tidy", "| missing | gitlab |"), (broken_secrets, "secrets", "| pasted-images |")],
-    ids=["tidy breaks", "secrets breaks"],
-)
-def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_3(
-    clean_home, runner, capsys, break_one: Callable[[Path], AbstractContextManager[FakeProbe]], broken: str, still_visible: str
-) -> None:
-    with break_one(clean_home) as probe:
-        code = home_check(clean_home, runner, probe)
+    code = home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
     report = Layout(clean_home).check_report_file.read_text()
     error = capsys.readouterr().err
     assert code == 3
-    assert f"| fehlgeschlagen: {broken}" in report.splitlines()[0]
-    assert f"Prüfung {broken} fehlgeschlagen (PermissionError)" in report
-    assert still_visible in report
+    assert "| fehlgeschlagen: secrets" in report.splitlines()[0]
+    assert "Prüfung secrets fehlgeschlagen (PermissionError)" in report
+    assert "container-unhealthy | edge" in report
     assert error.startswith("home: unerwarteter Fehler (CheckFailed): ")
     assert error.count("\n") == 1
     assert len(runner.notifications) == 1
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
-def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone(clean_home, runner) -> None:
-    locked = break_tidy(clean_home)
+def test_a_broken_checker_counts_its_unobserved_findings_as_neither_new_nor_gone(clean_home, runner, mail_stub, use_manifest) -> None:
+    use_manifest(TEST_MANIFEST.replace('kind = "token"', 'kind = "human-password"'))
+    (clean_home / ".secrets" / "gitlab").unlink()
     home_check(clean_home, runner)
-    locked.chmod(0)
-    try:
-        broken_codes = [home_check(clean_home, runner) for _ in range(2)]
-    finally:
-        locked.chmod(0o700)
+    broken_codes = [home_check_with_a_secrets_check_that_breaks(clean_home, runner) for _ in range(2)]
     home_check(clean_home, runner)
 
+    password = "Das Passwort der Sicherung fehlt; ohne es lässt sich nichts wiederherstellen."
+    first, broke, recovered = (message_of(mail).get_content() for mail in mail_stub.sent)
     assert broken_codes == [3, 3]
-    # the locked ~/git also stops the hook check from scanning; one notification for the break, one for the recovery
-    assert runner.notifications == ["PC-Check: Handlungsbedarf – Commit-Schutz, Aufräumen", "PC-Check: in Ordnung – nur Hinweise"]
+    assert f"{password} (neu)" in first
+    assert f"{password} (neu)" not in broke
+    assert "Die Prüfung Geheimnisse lief nicht. (neu)" in broke
+    assert "Erledigt\n\n- Die Prüfung Geheimnisse läuft wieder." in recovered
+    assert password not in recovered.split("Erledigt")[1]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 def test_a_broken_checker_that_recovers_into_a_clean_home_notifies_the_recovery(clean_home, runner) -> None:
     home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
@@ -327,10 +292,8 @@ def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(cle
     assert runner.notifications[2] == "PC-Check: alles in Ordnung"
 
 
-def test_an_invalid_manifest_leaves_the_tidy_findings_in_the_report_and_exits_2(
-    clean_home, leave_pasted_image, runner, use_manifest, capsys
-) -> None:
-    leave_pasted_image(clean_home)
+def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2(clean_home, runner, use_manifest, capsys) -> None:
+    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
     manifest = use_manifest('[[secret]]\nname = "e"\n')
 
     code = home_check(clean_home, runner)
@@ -340,7 +303,7 @@ def test_an_invalid_manifest_leaves_the_tidy_findings_in_the_report_and_exits_2(
     assert code == 2
     assert "| fehlgeschlagen: secrets" in report.splitlines()[0]
     assert "Prüfung secrets fehlgeschlagen (ManifestError)" in report
-    assert "| pasted-images |" in report
+    assert "container-unhealthy | edge" in report
     assert error.startswith(f"home: {manifest}: ")
     assert error.count("\n") == 1
 
@@ -352,11 +315,11 @@ def memory_text(text: str) -> Callable[[Path], None]:
 @pytest.mark.parametrize(
     ("plant_memory", "refusal"),
     [
-        (memory_text('["tidy\\t'), "JSONDecodeError"),
-        (memory_text('["tidy\\tleaked-secret"]'), "ValueError"),
+        (memory_text('["platform\\t'), "JSONDecodeError"),
+        (memory_text('["platform\\tleaked-secret"]'), "ValueError"),
         (memory_text('["platform\\tno-such-rule\\tx"]'), "ValueError"),
         (memory_text('["platform\\tcheck-failed\\tx"]'), "ValueError"),
-        (memory_text('{"tidy": 1}'), "ValueError"),
+        (memory_text('{"platform": 1}'), "ValueError"),
         (os.mkfifo, "ValueError"),
     ],
     ids=["cut off", "not a finding identity", "a rule without a level", "a failure marker with a subject", "not a list", "a fifo that never gets a writer"],
@@ -380,14 +343,9 @@ def test_a_symlinked_findings_memory_is_refused_and_never_carried_into_the_state
     layout = Layout(clean_home)
     layout.state_dir.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside.json"
-    outside.write_text('["tidy\\tpasted-images\\tleaked-secret"]')
+    outside.write_text('["platform\\tcontainer-dead\\tleaked-secret"]')
     layout.check_findings_file.symlink_to(outside)
-    locked = break_tidy(clean_home)
-    locked.chmod(0)
-    try:
-        code = home_check(clean_home, runner)
-    finally:
-        locked.chmod(0o700)
+    code = home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
     state_files = [path for path in layout.state_dir.iterdir() if path.is_file() and not path.is_symlink()]
     assert code == 3
@@ -415,11 +373,11 @@ def test_the_first_news_is_mailed_once_with_the_title_as_subject_and_the_passwor
 
 
 @pytest.mark.parametrize("sees_notes", [True, False], ids=["with notes", "clean"])
-def test_an_action_that_goes_is_mailed_as_done_and_the_title_is_the_new_state(clean_home, leave_pasted_image, runner, mail_stub, sees_notes) -> None:
+def test_an_action_that_goes_is_mailed_as_done_and_the_title_is_the_new_state(clean_home, runner, mail_stub, sees_notes) -> None:
     """#415 Z4, mail C: the action goes and the PC is clean or only notes remain; one mail says so."""
     restarting_containers(runner, "presentator-live")
     if sees_notes:
-        leave_pasted_image(clean_home)
+        (clean_home / ".secrets" / "gitlab").unlink()
     home_check(clean_home, runner)
     no_container_restarts(runner)
 
@@ -445,11 +403,12 @@ def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_
     assert "gitlab" not in news.get_content()
 
 
-def test_a_note_that_appears_or_goes_sends_no_mail(clean_home, leave_pasted_image, runner, mail_stub) -> None:
+def test_a_note_that_appears_or_goes_sends_no_mail(clean_home, runner, mail_stub) -> None:
     """#415 Z4: only notes change, so nothing is mailed."""
-    image = leave_pasted_image(clean_home)
+    secret = clean_home / ".secrets" / "gitlab"
+    secret.rename(clean_home / "gitlab-aside")
     home_check(clean_home, runner)
-    image.unlink()
+    (clean_home / "gitlab-aside").rename(secret)
 
     home_check(clean_home, runner)
 
@@ -470,7 +429,7 @@ def test_a_restarting_container_that_then_exits_is_a_new_item(clean_home, runner
 
 
 def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, mail_stub) -> None:
-    """#415 Z7: 21 actions give 20 items, one more-line and the six area lines."""
+    """#415 Z7: 21 actions give 20 items, one more-line and the five area lines."""
     runner.platform_listing = "".join(f"/edge-{n:03}-1\texited\t\t1\tproject-{n:03}\n" for n in range(21))
 
     home_check(clean_home, runner)
@@ -478,18 +437,17 @@ def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, m
     body = message_of(mail_stub.sent[0]).get_content()
     assert body.count("hat sich mit einem Fehler beendet.") == 20
     assert "… und 1 weitere, siehe Bericht" in body
-    assert body.count("in Ordnung") == 5
+    assert body.count("in Ordnung") == 4
 
 
 def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_runs_nothing(tmp_path, monkeypatch) -> None:
-    """#390 C10 and #415 Z6: shell syntax in a container name reaches stdin verbatim and runs nothing; a secret path or home file name appears nowhere."""
+    """#390 C10 and #415 Z6: shell syntax in a container name reaches stdin verbatim and runs nothing; a secret path appears nowhere."""
     monkeypatch.chdir(tmp_path)
     stub = set_up_mail(tmp_path / "home", tmp_path, monkeypatch)
     hostile_container = "platform\tcontainer-dead\t$(touch PWNED) `touch PWNED`\nBcc: x@example.test"
     secret_path = "secrets\tloose-mode\t~/.secrets/songmaker/token"
-    home_file = "tidy\tpasted-images\tEingefügtes Bild.png"
     account = mail.load_account(Layout(tmp_path / "home"))
-    body = check.mail_body(frozenset({hostile_container, secret_path, home_file}), None, REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54), check.MailFacts())
+    body = check.mail_body(frozenset({hostile_container, secret_path}), None, REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54), check.MailFacts())
 
     run_command(mail.sendmail_command(account, Layout(tmp_path / "home").secrets_dir, mail.compose(account, "s", body)))
 
@@ -497,7 +455,6 @@ def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_r
     content = message_of(sent).get_content()
     assert "$(touch PWNED) `touch PWNED`\n" in content
     assert "songmaker" not in content
-    assert "Eingefügtes" not in content
     assert not list(tmp_path.glob("PWNED"))
 
 
@@ -515,12 +472,25 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
     """#390 C3 and #415 Z4: a recovered check is an action that went and is mailed."""
     layout = Layout(clean_home)
     layout.state_dir.mkdir(parents=True, exist_ok=True)
-    layout.check_findings_file.write_text('["tidy\\tcheck-failed"]')
+    layout.check_findings_file.write_text('["platform\\tcheck-failed"]')
 
     home_check(clean_home, runner)
 
     assert len(mail_stub.sent) == 1
-    assert "Erledigt\n\n- Die Prüfung Aufräumen läuft wieder." in message_of(mail_stub.sent[0]).get_content()
+    assert "Erledigt\n\n- Die Prüfung Dienste läuft wieder." in message_of(mail_stub.sent[0]).get_content()
+
+
+def test_a_remembered_tidy_finding_is_dropped_without_a_mail_and_the_run_exits_0(clean_home, runner, mail_stub) -> None:
+    """#486 D4: identities of the removed tidy check are neither news nor recovered, and the next write forgets them."""
+    layout = Layout(clean_home)
+    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.check_findings_file.write_text('["tidy\\tcheck-failed", "tidy\\tpasted-images\\tx.png"]')
+
+    code = home_check(clean_home, runner)
+
+    assert code == 0
+    assert mail_stub.sent == []
+    assert "tidy" not in layout.check_findings_file.read_text()
 
 
 def test_a_missing_account_sends_nothing_and_says_nothing(clean_home, runner, capsys) -> None:
@@ -671,12 +641,11 @@ def test_a_home_with_a_space_and_a_quote_still_lets_msmtp_read_the_password(tmp_
     assert PASSWORD_CANARY not in captured.out + captured.err + "".join(sent.arguments) + sent.stdin
 
 
-def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_number(clean_home, leave_pasted_image, runner, mail_stub, use_manifest) -> None:
-    """#415 Z2, Z6: mail A; the tidy file, the secret and the counts stay in the report."""
+def test_the_mail_says_the_action_with_one_step_and_one_line_per_area_and_no_number(clean_home, runner, mail_stub, use_manifest) -> None:
+    """#415 Z2, Z6: mail A; the secret and the counts stay in the report."""
     use_manifest(TEST_MANIFEST.replace('read_by = [".bashrc"]', 'read_by = ["hopin"]'))
     restarting_containers(runner, "presentator-live")
     (clean_home / ".secrets" / "gitlab").unlink()
-    leave_pasted_image(clean_home)
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago=0))
 
     home_check(clean_home, runner)
@@ -695,7 +664,6 @@ Sicherung: in Ordnung, zuletzt heute 14:15
 Commit-Schutz: in Ordnung
 Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch
 Server-Logs: in Ordnung
-Aufräumen: Hinweis – es gibt etwas aufzuräumen
 
 Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
 Alles im Einzelnen: {REPORT_DISPLAY}
