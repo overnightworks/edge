@@ -114,7 +114,7 @@ services:
       - /opt/keycloak/data/tmp:uid=1000,gid=0,mode=0700,size=64m,nosuid,nodev,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [keycloak, backchannel-songmaker, backchannel-hopin]
+    networks: [keycloak, backchannel-songmaker, backchannel-hopin, backchannel-presentator]
     # Secrets reach the process from /run/secrets, never through the container's Config.Env.
     entrypoint: ["/opt/edge/entrypoint.sh", "/opt/keycloak/bin/kc.sh"]
     command: ["start"]
@@ -544,6 +544,11 @@ networks:
   # The same for HopIn, whose alias is hopin.hallucinai.de.
   backchannel-hopin:
     name: hal_backchannel_hopin
+    internal: true
+    driver_opts: *isolated-bridge
+  # The same for presentator, whose alias is presentator.hallucinai.de and whose port is 8000.
+  backchannel-presentator:
+    name: hal_backchannel_presentator
     internal: true
     driver_opts: *isolated-bridge
   # The agent service and agent-egress, the only way out of the service.

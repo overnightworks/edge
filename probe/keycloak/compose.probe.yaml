@@ -52,6 +52,8 @@ networks:
     name: ${COMPOSE_PROJECT_NAME}_backchannel_songmaker
   backchannel-hopin:
     name: ${COMPOSE_PROJECT_NAME}_backchannel_hopin
+  backchannel-presentator:
+    name: ${COMPOSE_PROJECT_NAME}_backchannel_presentator
 
 secrets:
   keycloak_db_password:
