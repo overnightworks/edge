@@ -329,6 +329,7 @@ def test_the_module_refuses_a_broken_checkout_with_exit_2(world, capsys):
     assert f"{world.targets[1].parent} is missing" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the read-only mode")
 def test_the_module_names_the_failing_target_with_exit_1(world, capsys):
     failing = world.targets[2]
     shutil.rmtree(failing)

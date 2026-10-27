@@ -13,7 +13,7 @@ directory and always tear the stack down. While a probe runs, `hal check exposur
 
 Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
 themes read them (`appkit-<version>/` beside each theme's `css/`), through
-`uv run --project <checkout> python -m edge.appkit_step`. Any interpreter starts the probe, but
+`uv run --project <checkout> python -m edge.appkit_step <checkout>`. Any interpreter starts the probe, but
 `uv` must be on `PATH`; a failing write ends the probe before the stack exists.
 
 An exported `DOCKER_GID` overrides the host's `docker` group id in the compose environment; unset

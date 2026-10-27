@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -14,7 +15,10 @@ from test_keycloak_probe import (
 
 
 def stack_that_records(
-    module: ModuleType, scratch: Path, steps: list[str], write_appkit=None
+    module: ModuleType,
+    scratch: Path,
+    steps: list[str],
+    write_appkit: Callable[[], None] | None = None,
 ) -> object:
     stack = module.Stack(scratch, write_appkit=write_appkit or (lambda: steps.append("write")))
 
@@ -79,6 +83,12 @@ def test_the_default_write_runs_the_step_through_the_repositorys_own_uv_run(
     else:
         probe.write_appkit_files()
 
-    arguments = log.read_text().split()
-    assert arguments[-3:-1] == ["-m", "edge.appkit_step"]
-    assert Path(arguments[-1]) == probe.REPO
+    assert log.read_text().split() == [
+        "run",
+        "--project",
+        str(probe.REPO),
+        "python",
+        "-m",
+        "edge.appkit_step",
+        str(probe.REPO),
+    ]
