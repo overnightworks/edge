@@ -6,85 +6,19 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 from git_support import committed_main, plain_git
+from rename_support import HTTPS, SSH, make_clone, memory_of, squeezed
 
 from hal import cli, rename_commands
 from hal.grammar import ExitCode
 from hal.rename_commands import RunningProcess, World
 
-SSH = "git@github.com:overnightworks/{}.git"
-HTTPS = "https://github.com/overnightworks/{}.git"
-
-
-@dataclass
-class Fakes:
-    """What the fake boundaries answer, and what they were asked."""
-
-    known: set[str] = field(default_factory=lambda: {"fresh"})
-    running: list[RunningProcess] = field(default_factory=list)
-    tools: str = ""
-    uv_calls: list[tuple[Path, tuple[str, ...]]] = field(default_factory=list)
-
-
-@pytest.fixture
-def fakes() -> Fakes:
-    return Fakes()
-
-
-@pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "home"
-    (home / "git").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    return home
-
-
-@pytest.fixture
-def cli_world(world: World, monkeypatch: pytest.MonkeyPatch) -> World:
-    """The fake world behind `hal.cli.main`, which reaches the world only through `real_world`."""
-    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
-    return world
-
-
-@pytest.fixture
-def world(home: Path, fakes: Fakes) -> World:
-    return World(
-        home=home,
-        github_knows=lambda name: name in fakes.known,
-        running_in=lambda roots: [
-            session
-            for session in fakes.running
-            if any(session.directory.is_relative_to(root) for root in roots)
-        ],
-        uv=lambda project, arguments: fakes.uv_calls.append((project, arguments)),
-        uv_tools=lambda: fakes.tools,
-    )
-
-
-def make_clone(path: Path, url: str, worktrees: tuple[str, ...] = ()) -> Path:
-    """A clone at `path` whose origin is `url`, with linked worktrees in `<path>-worktrees`."""
-    committed_main(path)
-    plain_git(path, "remote", "add", "origin", url)
-    plain_git(path, "switch", "--detach")
-    for name in worktrees:
-        plain_git(
-            path, "worktree", "add", "-b", name,
-            str(path.parent / f"{path.name}-worktrees" / name),
-        )  # fmt: skip
-    return path
-
 
 def origin_of(path: Path) -> str:
     return plain_git(path, "config", "--get", "remote.origin.url").stdout.strip()
-
-
-def memory_of(home: Path, clone: Path) -> Path:
-    return rename_commands.memory_directory(home, clone)
 
 
 def tree_state(home: Path) -> list[str]:
@@ -95,21 +29,6 @@ def tree_state(home: Path) -> list[str]:
 
 def rename(world: World, apply: bool = True, old: str = "old", new: str = "fresh") -> ExitCode:
     return rename_commands.rename(world, old, new, apply)
-
-
-def squeezed(text: str) -> str:
-    """Each line with its column padding collapsed, so a test reads the words, not the widths."""
-    return "\n".join(" ".join(line.split()) for line in text.splitlines())
-
-
-@pytest.fixture
-def repository(home: Path) -> Path:
-    """`~/git/old` with two worktrees and a Claude memory directory."""
-    clone = make_clone(home / "git" / "old", SSH.format("old"), ("lane", "other"))
-    memory = memory_of(home, clone) / "memory"
-    memory.mkdir(parents=True)
-    (memory / "note.md").write_text("remembered")
-    return clone
 
 
 def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
@@ -678,7 +597,7 @@ def test_a_failure_in_a_middle_step_names_it_and_what_is_done_and_not_done(
     assert code == ExitCode.FAILURE
     assert lines[0].startswith("error: stopped halfway at `origin of ")
     assert f"done: move {repository} -> {home / 'git' / 'fresh'}" in lines
-    assert any(line.startswith("not done: repair 2 worktrees") for line in lines)
+    assert any(line.startswith("done: repair 2 worktrees") for line in lines)
     assert any(line.startswith("not done: move ") and "projects" in line for line in lines)
     assert lines[-1] == "next: hal rename fresh old --apply"
     assert "! unit check ~/.config/systemd/user/old.service points into a moved clone" in squeezed(
@@ -735,14 +654,6 @@ def test_a_clone_whose_memory_directory_is_the_same_for_both_names_keeps_it(
     assert code == ExitCode.OK
     assert origin_of(home / "git" / "a-b") == SSH.format("a-b")
     assert (memory / "note.md").read_text() == "remembered"
-
-
-@pytest.fixture
-def locked(repository):
-    (repository / "uv.lock").write_text("")
-    (repository / ".gitignore").write_text(".venv/\n")
-    (repository / ".venv").mkdir()
-    return repository
 
 
 def failing_uv(project: Path, arguments: tuple[str, ...]) -> None:
@@ -816,112 +727,3 @@ def test_a_link_into_the_new_path_of_a_moved_clone_is_not_a_deploy_checkout(home
     assert code == ExitCode.OK
     assert origin_of(home / "git" / "fresh") == SSH.format("fresh")
     assert "current" not in capsys.readouterr().err
-
-
-@pytest.fixture
-def through_cli(cli_world, capsys):
-    """`hal rename` through `hal.cli.main`, returning the exit code and the two streams."""
-
-    def run(*arguments: str):
-        code = cli.main(["rename", *arguments])
-        captured = capsys.readouterr()
-        return code, squeezed(captured.out), squeezed(captured.err)
-
-    return run
-
-
-@pytest.fixture
-def everything(home, locked) -> None:
-    """The clone with two worktrees, memory and a lock file, and a deploy checkout."""
-    make_clone(home / "old-live", HTTPS.format("old"))
-
-
-@pytest.mark.parametrize(
-    "row",
-    [
-        "~ clone move ~/git/old → ~/git/fresh",
-        "~ worktrees move ~/git/old-worktrees → ~/git/fresh-worktrees",
-        "~ worktrees repair 2 in ~/git/fresh-worktrees",
-        "~ origin set url git@github.com:overnightworks/fresh.git",
-        "~ origin set url https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
-        "~ memory move Claude project memory of the clone",
-        "~ venv uv sync in ~/git/fresh",
-    ],
-)
-def test_the_plan_shows_one_row_for_each_kind_of_step(everything, through_cli, row):
-    code, out, _ = through_cli("old", "fresh")
-
-    assert code == ExitCode.OK
-    assert row in out.splitlines()
-
-
-def test_the_plan_rows_follow_the_order_the_steps_run(everything, through_cli):
-    _, out, _ = through_cli("old", "fresh")
-
-    assert [line.split()[1] for line in out.splitlines()[:-2]] == [
-        "clone",
-        "worktrees",
-        "origin",
-        "worktrees",
-        "memory",
-        "origin",
-        "venv",
-    ]
-
-
-def test_the_plan_ends_with_its_verdict_and_the_command_that_applies_it(everything, through_cli):
-    code, out, _ = through_cli("old", "fresh")
-
-    assert code == ExitCode.OK
-    assert out.splitlines()[-2:] == [
-        "· plan only, nothing changed",
-        "next: hal rename old fresh --apply",
-    ]
-
-
-def test_a_repository_without_a_clone_has_nothing_to_do(home, through_cli):
-    code, out, err = through_cli("old", "fresh")
-
-    assert (code, out, err) == (ExitCode.OK, "· nothing to do, no clone of old to move", "")
-
-
-def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
-    home, repository, through_cli
-):
-    link = home / ".local" / "bin" / "tool"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(repository / "bin" / "tool")
-
-    code, out, _ = through_cli("old", "fresh")
-
-    assert code == ExitCode.FINDINGS
-    assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
-
-
-def test_an_apply_prints_each_step_as_done_and_ends_with_the_count(everything, through_cli):
-    code, out, err = through_cli("old", "fresh", "--apply")
-
-    assert code == ExitCode.OK
-    assert out.splitlines() == [
-        "✓ clone moved ~/git/old → ~/git/fresh",
-        "✓ worktrees moved ~/git/old-worktrees → ~/git/fresh-worktrees",
-        "✓ origin url set git@github.com:overnightworks/fresh.git",
-        "✓ worktrees repaired 2 in ~/git/fresh-worktrees",
-        "✓ memory moved Claude project memory of the clone",
-        "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
-        "✓ venv uv synced in ~/git/fresh",
-        "✓ renamed old → fresh · 7 steps",
-    ]
-    assert err == ""
-
-
-def test_a_refusal_says_why_nothing_changed_and_offers_no_next_step(repository, fakes, through_cli):
-    fakes.known.clear()
-
-    code, out, err = through_cli("old", "fresh", "--apply")
-
-    assert code == ExitCode.REFUSED
-    assert out == ""
-    assert (
-        err == "error: cannot rename, GitHub does not know overnightworks/fresh · nothing changed"
-    )

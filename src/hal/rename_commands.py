@@ -658,20 +658,20 @@ def _steps(
         for move in relocation.clone_moves
     ]
     steps += [
+        _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
+    ]
+    steps += [
         _origin_step(disk, relocation.site.clone.target, relocation.new_url)
         for relocation in relocations
         if relocation.new_url
     ]
     steps += [
-        _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
+        _origin_step(disk, checkout.path, checkout.new_url, deploy=True) for checkout in deploy
     ]
     steps += [
         _move_step(disk, relocation.memory_move, relocation.site)
         for relocation in relocations
         if relocation.memory_move
-    ]
-    steps += [
-        _origin_step(disk, checkout.path, checkout.new_url, deploy=True) for checkout in deploy
     ]
     steps += [
         _sync_step(world, disk, sync) for relocation in relocations for sync in relocation.syncs
