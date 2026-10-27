@@ -3,12 +3,17 @@ It writes nothing and builds no page; edge's own legal tree is read from this ch
 
 import argparse
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 
 from edge import compose, legal_step
 from edge.legal_section import LegalError
 from hal.grammar import Asks, Command, ExitCode
-from hal_output import write_error
+from hal_output import Glyph, Row, write_error, write_row
+
+
+class LegalEvent(StrEnum):
+    VALID = "legal valid"
 
 
 def _configure(parser: argparse.ArgumentParser) -> None:
@@ -41,7 +46,8 @@ def _legal(arguments: argparse.Namespace) -> ExitCode:
     except LegalError as error:
         write_error(str(error))
         return ExitCode.FINDINGS
-    print(f"legal: {arguments.key}: {', '.join(files)} are valid")
+    pages = ", ".join(Path(file).stem for file in files)
+    write_row(Row(Glyph.DONE, arguments.key, LegalEvent.VALID, pages))
     return ExitCode.OK
 
 
