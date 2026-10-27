@@ -23,7 +23,7 @@ danach zu sehen sein soll. Was ein Agent einsortieren kann, zählt eine
 Schlusszeile:
 
 ```
-1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); then hal apply
+1. home secrets --setup (eigenes Terminalfenster) — erwartet: cloudflare/fleet-read verified ~/.secrets/cloudflare/fleet-read (600); github/fleet-read verified ~/.secrets/github/fleet-read (600); opentofu/state-passphrase generated ~/.secrets/opentofu/state-passphrase (600) · never shown; then hal apply
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
 3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
    warum: without the hook no commit is checked for secrets; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
@@ -373,17 +373,20 @@ Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
 Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/key-id` und
 `…/api-token`, Art „Token, ungeprüft“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
 der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
-bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter: gespeichert, nicht
-geprüft, denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
+bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter (`stored`, `not verified`), denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
 zeigt beide als `nicht geprüft`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
-`recreate` genannt, ein optionaler, der fehlt, übersprungen. Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
+`recreate` genannt (`by hand`), ein optionaler, der fehlt, übersprungen (`skipped`, `optional`). Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
 (Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
 Der Assistent druckt kein eigenes Ende; den Ausgang nennt `hal setup --apply` mit seiner `secrets`-Zeile und seinem Urteil.
 
-Beispiel (gekürzt, ein abgelehnter Versuch; ein TURN-Wert endet mit
-`gespeichert, nicht geprüft: ~/.secrets/cloudflare/turn-hopin/key-id (644)`):
+Jeder Fall druckt eine Zeile `Zeichen Name Ereignis Tatsache` (Ereignisse: `verified`,
+`generated`, `stored`, `rejected`, `skipped`, `not checked`, `by hand`, `not stored`); ein Eintrag, der
+schon da ist, druckt keine. Nie steht ein Wert in einer Zeile, nur Name, Pfad und Rechte. Ein TURN-Wert
+endet mit `✓ cloudflare/turn-hopin/key-id  stored  not verified · ~/.secrets/cloudflare/turn-hopin/key-id (644)`.
+
+Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
 == github/fleet-read (Token, fehlt)
@@ -399,14 +402,14 @@ Von Hand, das kann kein Link vorgeben:
 Enter öffnet die Seite im Browser.
 Geöffnet: https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
 Token einfügen (unsichtbar; leer überspringt):
-abgelehnt: GitHub antwortet 401; nichts gespeichert. Noch einmal einfügen oder leer lassen.
+  ✗ github/fleet-read  rejected  GitHub antwortet 401 · paste again or leave empty
 Token einfügen (unsichtbar; leer überspringt):
-geprüft und gespeichert: ~/.secrets/github/fleet-read (600)
+  ✓ github/fleet-read  verified  ~/.secrets/github/fleet-read (600)
 
 == opentofu/state-passphrase (Dienstpasswort, fehlt)
 Wofür: OpenTofu verschlüsselt damit State und Plan unter ~/.secrets/opentofu.
 Wird zufällig erzeugt und nie gezeigt.
-erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600)
+  ✓ opentofu/state-passphrase  generated  ~/.secrets/opentofu/state-passphrase (600) · never shown
 ```
 
 Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
