@@ -80,13 +80,13 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
-**Stufen.** Jeder Fund hat genau eine Stufe. *In Ordnung*: nichts gefunden. *Hinweis*: kann warten, nichts geht heute
-kaputt, nichts liegt offen. *Handlungsbedarf*: etwas ist jetzt kaputt, ungeschützt oder unsichtbar. Der Stand eines
-Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner fünf Bereiche (Dienste, Sicherung,
-Commit-Schutz, Geheimnisse, Server-Logs). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
+**Stufen.** Jeder Fund hat genau eine Stufe. *OK*: nichts gefunden. *Note*: kann warten, nichts geht heute
+kaputt, nichts liegt offen. *Action needed*: etwas ist jetzt kaputt, ungeschützt oder unsichtbar. Der Stand eines
+Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner fünf Bereiche (Services, Backup,
+Commit protection, Secrets, Server logs). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
 `check.py`; ein Test lässt jede Regel der Prüfungen ohne Stufe scheitern.
 
-| Prüfung | Handlungsbedarf | Hinweis |
+| Prüfung | Action needed | Note |
 |---|---|---|
 | `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
@@ -94,50 +94,50 @@ Commit-Schutz, Geheimnisse, Server-Logs). Die Stufe und der Satz je Regel stehen
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 
-Ein zerbrochener Lauf einer Prüfung ist Handlungsbedarf („Die Prüfung … lief nicht“, Schritt `home check`).
+Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `home check`).
 
 **Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
-wenn ein Handlungsbedarf neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
-wieder laufender Lauf einer Prüfung ist so einer. Ändern sich nur Hinweise, kommt nichts. Ein Fund ist Regel plus
+wenn ein Action needed neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
+wieder laufender Lauf einer Prüfung ist so einer. Ändern sich nur Notes, kommt nichts. Ein Fund ist Regel plus
 Gegenstand: Derselbe Fund, der nur älter oder größer wird, nervt nicht erneut; wechselt ein Container von „startet
 neu“ zu „beendet“, ist das ein neuer Punkt.
 
-Betreff und Titel der Benachrichtigung sagen den Stand des PCs in einem Satzteil: „PC-Check: Handlungsbedarf –
-Dienste, Sicherung“ (mit den Bereichen im Handlungsbedarf), „PC-Check: in Ordnung – nur Hinweise“ oder „PC-Check:
-alles in Ordnung“. Der Text der Benachrichtigung sind die Sätze der Handlungsbedarfe und der Pfad des Berichts. Die
-Benachrichtigung trägt den Knopf „Bericht öffnen“; ein Klick öffnet den
+Betreff und Titel der Benachrichtigung sagen den Stand des PCs in einem Satzteil: „PC check: action needed –
+Services, Backup“ (mit den Bereichen im Action needed), „PC check: all well – notes only“ oder „PC check:
+all well“. Der Text der Benachrichtigung sind die Sätze der Action-needed-Funde und der Pfad des Berichts. Die
+Benachrichtigung trägt den Knopf „Open report“; ein Klick öffnet den
 Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
 losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
 der Timer-Dienst sofort enden.
 
 Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`. Der saubere Stand wird ebenfalls
-gemerkt, sodass ein wiederkehrender Handlungsbedarf wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die
+gemerkt, sodass ein wiederkehrender Action-needed-Fund wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die
 zuletzt gemeldete Fundmenge stehen, und der nächste Lauf meldet, was dann noch von ihr abweicht.
 
 **Die Mail.** Sie geht über `msmtp`, als du, mit dem Konto aus `~/.secrets/smtp/account.toml`, und nur, wenn diese Datei
 existiert; fehlt sie, schickt `home check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
-Einträge). Der Text hat oben jeden Handlungsbedarf als Satz mit genau einem nächsten Schritt (neue Punkte mit „(neu)“,
-höchstens 20, dann „… und N weitere, siehe Bericht“), darunter was nicht mehr ansteht, dann eine Zeile je Bereich und
+Einträge). Der Text hat oben jeden Fund mit Action needed als Satz mit genau einem nächsten Schritt (neue Punkte mit „(new)“,
+höchstens 20, dann „… and N more, see report“), darunter was nicht mehr ansteht, dann eine Zeile je Bereich und
 den Pfad des Berichts:
 
 ```
-Betreff: PC-Check: Handlungsbedarf – Dienste
+Subject: PC check: action needed – Services
 
-Handlungsbedarf
+Action needed
 
-1. presentator-live startet ständig neu und ist darum nicht erreichbar. (neu)
-   Nächster Schritt: Sag einem Agenten „presentator-live startet ständig neu, schau nach“.
+1. presentator-live keeps restarting and is therefore unreachable. (new)
+   Next step: Tell an agent: "presentator-live keeps restarting, please look".
 
-So steht der PC (26.10.2026 14:54)
+How the PC stands (2026-10-26 14:54)
 
-Dienste: Handlungsbedarf
-Sicherung: in Ordnung, zuletzt heute 14:15
-Commit-Schutz: in Ordnung
-Geheimnisse: Hinweis – Zugangsdaten für hopin fehlen noch
-Server-Logs: in Ordnung
+Services: Action needed
+Backup: OK, last backup today 14:15
+Commit protection: OK
+Secrets: Note – Credentials for hopin are still missing
+Server logs: OK
 
-Hinweise eilen nicht; home next zeigt, was davon du tun kannst.
-Alles im Einzelnen: ~/.local/state/home/check-report.md
+Notes are not urgent; home next shows what you can do.
+Everything in detail: ~/.local/state/home/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
@@ -200,15 +200,15 @@ eigener Fund, nie ein sauberer Lauf.
 
 - **`platform`, Container.** Jeder Container mit nicht leerem Compose-Projekt-Label (`docker inspect --format` mit
   benannten Feldern, darunter das Projekt, ein Aufruf für alle; der Fund trägt den Projektnamen): `container-unhealthy`, `container-restarting`, `container-dead` und
-  `container-exited` mit Code ungleich 0 (alle Handlungsbedarf). Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
+  `container-exited` mit Code ungleich 0 (alle Action needed). Exit-Code 0, `starting` und ein Container ohne Healthcheck sind keine Funde,
   ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein Container einer App, die mit `hal stop`
   abgeschaltet ist (eine Datei unter `~/.local/state/edge/stopped/`; nur der Name wird gelesen), ist mit jedem Code ungleich 0
   kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
   Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
-  Datum“); ein Hinweis, der nie eine Mail auslöst.
+  Datum“); eine Note, die nie eine Mail auslöst.
 - **`platform`, Festplatte.** Nur die Platte, auf der `/` liegt (`shutil.disk_usage`: was ein unprivilegierter Prozess
-  noch nutzen kann): `disk-low` (Handlungsbedarf), wenn weniger als 10 % frei sind; genau 10 % ist kein Fund. Der Fund
+  noch nutzen kann): `disk-low` (Action needed), wenn weniger als 10 % frei sind; genau 10 % ist kein Fund. Der Fund
   hat den Gegenstand `/`, der freie Platz gehört nicht zur Identität. Die Mail nennt keine Zahl, der Bericht GB frei,
   GB gesamt und den Anteil. Lässt sich die Platte nicht lesen, läuft die Prüfung `platform` nicht.
 - **`backup`.** `~/.local/state/edge/backup-status.json` (Schema 2, nur die dokumentierten Felder): `backup-failed`,

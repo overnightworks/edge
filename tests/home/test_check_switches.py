@@ -56,8 +56,8 @@ def test_the_same_exit_is_mailed_once_the_switch_is_gone(clean_home, runner, mai
     home_check(clean_home, runner)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert "hopin hat sich mit einem Fehler beendet." in body
-    assert "Dienste: Handlungsbedarf" in body
+    assert "hopin stopped with an error." in body
+    assert "Services: Action needed" in body
 
 
 def test_a_switch_directory_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, runner, sandbox) -> None:

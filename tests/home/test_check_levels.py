@@ -61,14 +61,14 @@ def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule
 @pytest.mark.parametrize(
     ("identities", "title"),
     [
-        (set(), "PC-Check: alles in Ordnung"),
-        ({"secrets\tmissing\tgitlab", "platform\treboot-pending\treboot"}, "PC-Check: in Ordnung – nur Hinweise"),
-        ({"platform\tcontainer-restarting\tedge-a-1"}, "PC-Check: Handlungsbedarf – Dienste"),
+        (set(), "PC check: all well"),
+        ({"secrets\tmissing\tgitlab", "platform\treboot-pending\treboot"}, "PC check: all well – notes only"),
+        ({"platform\tcontainer-restarting\tedge-a-1"}, "PC check: action needed – Services"),
         (
             {"logs\tjournal-age\tjournal", "platform\tcontainer-dead\tedge-a-1", "secrets\tmissing\tgitlab"},
-            "PC-Check: Handlungsbedarf – Dienste, Server-Logs",
+            "PC check: action needed – Services, Server logs",
         ),
-        ({"hook\tcheck-failed"}, "PC-Check: Handlungsbedarf – Commit-Schutz"),
+        ({"hook\tcheck-failed"}, "PC check: action needed – Commit protection"),
     ],
     ids=["clean", "only notes", "one area", "two areas and a note", "a check that broke"],
 )
@@ -87,4 +87,10 @@ def test_the_title_names_the_state_and_at_action_the_areas(identities: set[str],
 )
 def test_the_level_of_a_missing_secret_follows_its_kind(identity: str, level: Level) -> None:
     """#415 Z3: a missing secret is an action only for a human password."""
-    assert check.title(frozenset({identity})) == ("PC-Check: Handlungsbedarf – Geheimnisse" if level is Level.ACTION else "PC-Check: in Ordnung – nur Hinweise")
+    assert check.title(frozenset({identity})) == ("PC check: action needed – Secrets" if level is Level.ACTION else "PC check: all well – notes only")
+
+
+def test_the_english_labels_leave_every_stored_identity_unchanged() -> None:
+    """#488 invariant 1: identities are built from code keys, so a label says nothing about what is remembered."""
+    assert [name for name, _ in check.AREAS] == ["platform", "backup", "hook", "secrets", "logs"]
+    assert (check.CHECK_FAILED_IDENTITY, check.MISSING_PASSWORD_RULE) == ("check-failed", "missing-password")
