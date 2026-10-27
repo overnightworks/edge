@@ -138,7 +138,7 @@ class EmergencySwitch:
         probe.release(tag)
         marker, barrier_bytes = self.marker.read_bytes(), self.barrier_file.read_bytes()
         out = probe.apply(typed=b"no\n")
-        expect("stays stopped  switched off since" in out, f"D2: {out[-300:]}")
+        expect("stays stopped switched off since" in out, f"D2: {out[-300:]}")
         expect("nothing to change" in out, f"D2: {out[-300:]}")
         fetched = checkout.Git(probe.srv).call(
             ["for-each-ref", "--format=%(refname)", f"refs/edge/releases/{tag}"]
