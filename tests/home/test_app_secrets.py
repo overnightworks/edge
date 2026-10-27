@@ -357,6 +357,7 @@ def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
 def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after_it(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """#491 Lines: ! secrets missing before the wizard, ✓ secrets stored after it."""
     _, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
 
     secrets_rows = [line for line in lines if "secrets  " in line]
