@@ -202,7 +202,7 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     assert "restic forget" not in machine.labels()
 
 
-def test_a_single_failed_app_is_named_on_the_error_line(edge_backup, machine, home):
+def test_a_single_failed_app_is_named_on_the_error_line(edge_backup, machine):
     machine.other_db_containers["edge"] = []
 
     outcome = edge_backup(*declare_shipped_apps(), "backup", "keycloak")

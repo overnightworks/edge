@@ -15,7 +15,7 @@ from typing import BinaryIO
 
 
 class HostError(RuntimeError):
-    """A host step failed in a way every command reports as one German line, not a traceback."""
+    """A host step failed in a way every command reports as one English line, not a traceback."""
 
 
 class HostCommandError(HostError):

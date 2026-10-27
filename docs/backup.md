@@ -232,7 +232,7 @@ path or file name.
   `restic backup` exits 0, so earlier successes stay. A run with any failure prunes nothing. An app
   removed from `apps.toml` keeps its entry; renaming an app makes it a new app.
 - A status file that cannot be read (mode 000, corrupt JSON, an unknown `schema`) is never overwritten:
-  backup, restore test and restore fail with one German line and exit 3. Past successes are never
+  backup, restore test and restore fail with one line and exit 3. Past successes are never
   replaced by nulls; repair or remove the file by hand to go on.
 - A schema-1 file is read into this shape: its id and times go to the declared app only when exactly one
   app is declared and restic confirms the id in that app's tag scope; otherwise they stay in an
@@ -273,7 +273,7 @@ hal restore songmaker --target ~/restore-songmaker   # a new directory, not unde
 It restores the snapshot of that app's **last successful backup**
 (`apps.<app>.last_snapshot_id` in the status) and prints its short ID, never a
 newer snapshot that a failed run left behind (restic exit 3 leaves a partial
-one). `hal restore` refuses with one German line and exit 3, names the newest
+one). `hal restore` refuses with one line and exit 3, names the newest
 snapshot and says how to choose it, in two cases: no successful backup of that
 app is recorded yet, or the recorded snapshot is missing in the repository.
 The restore test verifies each app against its own last good snapshot and
@@ -288,7 +288,7 @@ hal restore songmaker --snapshot 1a2b3c4d --target ~/restore-songmaker
 ```
 
 An ID that is unknown, ambiguous, another app's or from another host is refused
-with one German line. The target holds
+with one line. The target holds
 `db/db.dump` and `audio/`. Loading them into the live app is a deliberate
 manual step. Stop every Songmaker container except its database,
 load the dump, copy the audio back into the volume, start them again. Paste the
