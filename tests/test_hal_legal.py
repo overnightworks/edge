@@ -137,8 +137,9 @@ def test_a_symlink_or_a_directory_in_place_of_a_file_is_refused(checkout, app, c
 def test_a_refused_file_gets_the_line_the_parser_gives(checkout, app, capsys, text):
     """L7, L14: the line is the section parser's, the path is relative to the app."""
     put(app, PRIVACY, text)
+    fragment = text.encode()
     with pytest.raises(legal_section.LegalError) as parsed:
-        legal_section.parse_fragment(PRIVACY, text.encode(), KEY, ZONE)
+        legal_section.parse_fragment(PRIVACY, fragment, KEY, ZONE)
 
     code, out, err = run(capsys, checkout, KEY, app)
 
