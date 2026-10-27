@@ -46,7 +46,7 @@ class Probe(Protocol):
 
     def keep_secret(self, name: str, value: str) -> str: ...
 
-    def admin_now(self) -> Admin: ...
+    admin: Admin
 
     logout_timeout_seconds: int
 
@@ -79,9 +79,8 @@ def register_client(probe: Probe, admin: Admin) -> str:
 
 
 def new_signed_in_user(probe: Probe, client_secret: str, action: str) -> tuple[Admin, str, str]:
-    """Each action waits out the logout timeout, which outlives the admin token: every action
-    takes a fresh one."""
-    admin = probe.admin_now()
+    """Each action waits out the logout timeout; the probe's admin replaces an expired token."""
+    admin = probe.admin
     username = "probe-" + action.replace(" ", "-")
     password = probe.keep_secret(f"{username} password", secrets.token_urlsafe(16))
     user_id = admin.create_user(REALM, username, password)
@@ -106,7 +105,7 @@ def prove(
     expect: Callable[[bool, str], None],
     member_group: str,
 ) -> None:
-    client_secret = register_client(probe, probe.admin_now())
+    client_secret = register_client(probe, probe.admin)
     control = "control sign out"
     admin, username, user_id = new_signed_in_user(probe, client_secret, control)
     status = admin.call("POST", f"/{REALM}/users/{user_id}/logout").status
@@ -117,7 +116,7 @@ def prove(
         "nothing below measures",
     )
     probe.held("LA1", f"{control}, signed in to {CLIENT_ID}: logout seen")
-    group_id = probe.admin_now().get(f"/{REALM}/group-by-path{member_group}")["id"]
+    group_id = probe.admin.get(f"/{REALM}/group-by-path{member_group}")["id"]
     actions = {
         "disable user": ("PUT", "/users/{user}", {"enabled": False}),
         "delete user": ("DELETE", "/users/{user}", None),
