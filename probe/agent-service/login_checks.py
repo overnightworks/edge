@@ -34,7 +34,6 @@ from run_client import (
     OTHER,
     REFUSED,
     RUN_STARTED,
-    RUNNING,
     STATUS_SECONDS,
 )
 from service_log import LogClasses
@@ -440,6 +439,7 @@ class ClientReport(NamedTuple):
     events: tuple[str, ...] = ()
     closed_at: float | None = None
     state: str | None = None
+    running: bool = False
     loss: str | None = None
     broke_off: bool = False
     unmatched: int = 0
@@ -462,7 +462,9 @@ def read_client_output(lines: Iterable[str]) -> ClientReport:
         elif found["closed_at"]:
             report = report._replace(closed_at=float(found["closed_at"]))
         elif found["state"]:
-            report = report._replace(state=found["state"], loss=found["loss"])
+            report = report._replace(
+                state=found["state"], loss=found["loss"], running=bool(found["running"])
+            )
         else:
             report = report._replace(broke_off=True)
     return report
@@ -520,13 +522,16 @@ def wait_for_call(
 ) -> CallWait:
     """Polls the app's lines (those since R2 began) until a `held` line appears, the client
     exits, or `R2_CALL_SECONDS` have passed."""
-    done = wait_until(
-        lambda left: app_call(app_lines(left)).held or not client_alive(),
-        R2_CALL_SECONDS, clock, sleep,
-    )  # fmt: skip
-    if not done:
+    held = False
+
+    def call_or_exit(left: int) -> bool:
+        nonlocal held
+        held = app_call(app_lines(left)).held
+        return held or not client_alive()
+
+    if not wait_until(call_or_exit, R2_CALL_SECONDS, clock, sleep):
         return CallWait.TIMED_OUT
-    return CallWait.HELD if app_call(app_lines(R2_CALL_SECONDS)).held else CallWait.CLIENT_EXITED
+    return CallWait.HELD if held else CallWait.CLIENT_EXITED
 
 
 class B9Evidence(NamedTuple):
@@ -553,7 +558,7 @@ def _loss_verdict(client: ClientReport) -> Verdict:
     evidence = f"client_lost {client.loss}, state {client.state}"
     if OTHER in (client.state, client.loss):
         return Verdict(cell, Outcome.NOT_DRIVEN, "status read: a value outside the wire's sets")
-    if client.state == RUNNING or client.loss == NO_LOSS:
+    if client.running or client.loss == NO_LOSS:
         return Verdict(cell, Outcome.FAILED, evidence)
     return Verdict(cell, Outcome.HELD, evidence)
 

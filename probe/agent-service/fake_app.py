@@ -94,5 +94,5 @@ class FakeApp:
         (self.mode_directory / "mode").write_text(mode.value, encoding="utf-8")
         (self.mode_directory / "mode").chmod(0o644)
 
-    def app_lines(self, seconds: int = 300) -> list[str]:
-        return self.container_log(APP_SERVICE, timeout=seconds).splitlines()
+    def app_lines(self, seconds: int = 300, container: str | None = None) -> list[str]:
+        return self.container_log(APP_SERVICE, timeout=seconds, container=container).splitlines()

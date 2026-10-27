@@ -376,7 +376,11 @@ def test_a_run_that_held_every_cell_reports_held_and_the_timing(probe):
     ("change", "cell", "outcome"),
     [
         ({"client": {"loss": "none"}}, "B9 (a)", "FAILED"),
-        ({"client": {"state": "running", "loss": "none"}}, "B9 (a)", "FAILED"),
+        (
+            {"client": {"state": "running", "loss": "disconnected", "running": True}},
+            "B9 (a)",
+            "FAILED",
+        ),
         ({"client": {"state": "refused", "loss": "forbidden"}}, "B9 (a)", "NOT DRIVEN"),
         ({"client": {"state": None, "loss": None}}, "B9 (a)", "NOT DRIVEN"),
         ({"client": {"state": "other", "loss": "other"}}, "B9 (a)", "NOT DRIVEN"),
@@ -497,6 +501,29 @@ def test_the_wait_for_a_call_ends_on_a_held_line_a_dead_client_or_the_time(
     if expected == "no call within the time":
         assert time.now == probe.checks.R2_CALL_SECONDS
         assert time.slept == probe.checks.R2_CALL_SECONDS / polls
+
+
+def test_a_held_call_is_not_read_again_after_the_wait_saw_it(probe):
+    """#469 R2_CALL_SECONDS: the wait decides from the read that showed the call; a second read
+    that would stall cannot turn a held call into an error."""
+    time = FakeTime()
+    reads = []
+
+    def lines(_left):
+        reads.append(1)
+        if len(reads) > 1:
+            raise subprocess.TimeoutExpired("docker logs", 90)
+        return [HELD]
+
+    outcome = probe.checks.wait_for_call(lambda: time.now, time.sleep, lines, lambda: True)
+    assert outcome == "held"
+
+
+def test_a_status_line_marked_running_reads_as_a_run_still_running(probe):
+    """#469 B9 (a): the host reads the client's own running mark, not the wire's state name."""
+    read = probe.checks.read_client_output
+    assert read(["status running disconnected running"]).running
+    assert not read(["status cancelled disconnected"]).running
 
 
 def test_the_start_wait_is_bounded_by_its_seconds(probe):

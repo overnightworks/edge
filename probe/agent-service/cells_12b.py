@@ -316,11 +316,12 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         census = self.census()
         self.gate.add(census.key.hex())
         log_before = classify_log(self.container_log(SERVICE))
+        app = self.container(APP_SERVICE)  # looked up once: its reads during the turn are bounded
         app_before = len(self.app_lines())
         self.write_mode(Mode.HOLD)
 
         def app_since(seconds: int) -> list[str]:
-            return self.app_lines(seconds)[app_before:]
+            return self.app_lines(seconds, app)[app_before:]
 
         client = self.start_client(tokens)
         watching: Future[Watched] | None = None

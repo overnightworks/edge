@@ -37,11 +37,11 @@ CLIENT_LINE = re.compile(
     r"answer (?P<answer>\d{3})(?: (?P<answer_code>[a-z_]+))?"
     r"|event (?P<event>[a-z_]+)"
     r"|closed at=(?P<closed_at>\d+\.\d{3})"
-    r"|status (?P<state>[a-z_]+) (?P<loss>[a-z_]+)"
+    r"|status (?P<state>[a-z_]+) (?P<loss>[a-z_]+)(?P<running> running)?"
     r"|broke off (?P<broke_off>\w+)"
 )
 RUN_STARTED = "run_started"  # the wire's RunStarted `type`: checked by `vocabulary_from`
-RUNNING = "running"  # the wire's RunState.RUNNING: checked by `vocabulary_from`
+RUNNING_MARK = "running"  # ends a status line whose state is the wire's RunState.RUNNING
 NO_LOSS = "none"
 REFUSED = "refused"
 OTHER = "other"
@@ -54,6 +54,7 @@ class Vocabulary(NamedTuple):
     states: frozenset[str]
     losses: frozenset[str]
     codes: frozenset[str]
+    running: str  # the wire's RunState.RUNNING
 
     def shown(self, value: object, allowed: frozenset[str]) -> str:
         return value if isinstance(value, str) and value in allowed else OTHER
@@ -69,8 +70,9 @@ def vocabulary_from(wire) -> Vocabulary:
         states=frozenset(member.value for member in wire.RunState),
         losses=frozenset(member.value for member in wire.ClientLoss),
         codes=frozenset(member.value for member in wire.RejectionCode),
+        running=wire.RunState.RUNNING.value,
     )
-    if RUN_STARTED not in vocabulary.events or RUNNING not in vocabulary.states:
+    if RUN_STARTED not in vocabulary.events:
         raise ValueError("the wire package no longer has the values the host judges against")
     return vocabulary
 
@@ -91,7 +93,8 @@ def closed_line(moment: float) -> str:
 
 def status_line(state: object, loss: object, vocabulary: Vocabulary) -> str:
     shown_loss = NO_LOSS if loss is None else vocabulary.shown(loss, vocabulary.losses)
-    return f"status {vocabulary.shown(state, vocabulary.states)} {shown_loss}"
+    shown = f"status {vocabulary.shown(state, vocabulary.states)} {shown_loss}"
+    return f"{shown} {RUNNING_MARK}" if state == vocabulary.running else shown
 
 
 def refused_line(code: object, vocabulary: Vocabulary) -> str:

@@ -36,6 +36,7 @@ def vocabulary(run_client):
         states=frozenset({"running", "cancelled", "failed"}),
         losses=frozenset({"disconnected", "dropped"}),
         codes=frozenset({"busy", "forbidden"}),
+        running="running",
     )
 
 
@@ -213,7 +214,7 @@ def test_the_last_read_is_printed_when_the_run_did_not_end_in_time(run_client, v
     service = FakeService(FakeResponse(200), *[FakeResponse(200, still)] * 100)
     clock = Clock()
     _, lines, _ = started(run_client, vocabulary, service, stream(service, STARTED), clock=clock)
-    assert lines[-1] == "status running disconnected"
+    assert lines[-1] == "status running disconnected running"
     assert clock.now == run_client.STATUS_SECONDS
 
 
@@ -256,70 +257,40 @@ def test_a_run_that_never_started_has_no_status_to_read(run_client, vocabulary):
     assert (code, lines) == (1, ["answer 200"])
 
 
-def test_the_vocabulary_is_read_from_the_wire_package(run_client):
-    """#469 Decision 3: the closed sets come from the wire package's enums and event classes."""
-    import enum
-
-    def event_class(name):
-        return SimpleNamespace(model_fields={"type": SimpleNamespace(annotation=_Literal(name))})
-
-    class State(enum.StrEnum):
-        RUNNING = "running"
-
-    class Loss(enum.StrEnum):
-        DROPPED = "dropped"
-
-    class Code(enum.StrEnum):
-        BUSY = "busy"
-
-    union = SimpleNamespace(
-        __args__=(SimpleNamespace(__args__=(event_class("run_started"), event_class("failed"))),)
-    )
-    wire = SimpleNamespace(RunEvent=union, RunState=State, ClientLoss=Loss, RejectionCode=Code)
-    assert run_client.vocabulary_from(wire) == run_client.Vocabulary(
-        frozenset({"run_started", "failed"}),
-        frozenset({"running"}),
-        frozenset({"dropped"}),
-        frozenset({"busy"}),
-    )
-
-
 class _Literal(SimpleNamespace):
     def __init__(self, name: str) -> None:
         super().__init__(__args__=(name,))
 
 
-@pytest.mark.parametrize(
-    "missing",
-    [{"events": frozenset({"failed"})}, {"states": frozenset({"cancelled"})}],
-    ids=["run_started", "running"],
-)
-def test_a_wire_without_a_value_the_host_judges_by_fails_loud(run_client, vocabulary, missing):
-    """#469 Decision 3: the host's `run_started` and `running` are checked against the wire."""
-    wire_sets = vocabulary._replace(**missing)
+def fake_wire(vocabulary):
+    """A stand-in for `agent_runtime_client.wire` holding exactly `vocabulary`'s values."""
+    import enum
 
     def event_class(name):
         return SimpleNamespace(model_fields={"type": SimpleNamespace(annotation=_Literal(name))})
 
-    def members(values):
-        return [SimpleNamespace(value=value) for value in values]
-
-    class Members:
-        def __init__(self, values):
-            self.values = members(values)
-
-        def __iter__(self):
-            return iter(self.values)
+    def members(name, values):
+        return enum.StrEnum(name, {value.upper(): value for value in values})
 
     union = SimpleNamespace(
-        __args__=(SimpleNamespace(__args__=tuple(event_class(n) for n in wire_sets.events)),)
+        __args__=(SimpleNamespace(__args__=tuple(event_class(n) for n in vocabulary.events)),)
     )
-    wire = SimpleNamespace(
+    return SimpleNamespace(
         RunEvent=union,
-        RunState=Members(wire_sets.states),
-        ClientLoss=Members(wire_sets.losses),
-        RejectionCode=Members(wire_sets.codes),
+        RunState=members("RunState", vocabulary.states),
+        ClientLoss=members("ClientLoss", vocabulary.losses),
+        RejectionCode=members("RejectionCode", vocabulary.codes),
     )
+
+
+def test_the_vocabulary_is_read_from_the_wire_package(run_client, vocabulary):
+    """#469 Decision 3: the closed sets and the running state come from the wire package."""
+    assert run_client.vocabulary_from(fake_wire(vocabulary)) == vocabulary
+
+
+def test_a_wire_without_run_started_fails_loud(run_client, vocabulary):
+    """#469 Decision 3: the host's `run_started` is checked against the wire."""
+    wire = fake_wire(vocabulary._replace(events=frozenset({"failed"})))
     with pytest.raises(ValueError, match="wire package"):
         run_client.vocabulary_from(wire)
 
@@ -336,5 +307,16 @@ def test_a_status_read_that_stalls_ends_at_its_socket_timeout(run_client, vocabu
             stdin=io.StringIO(), out=io.StringIO(),
         )  # fmt: skip
         client.run_id = RUN_ID
-        with pytest.raises(OSError):
-            client.status_once(0.2)
+        ended: list[BaseException] = []
+
+        def read() -> None:
+            try:
+                client.status_once(0.2)
+            except OSError as problem:
+                ended.append(problem)
+
+        reader = threading.Thread(target=read, daemon=True)  # a regression must not hang the job
+        reader.start()
+        reader.join(WAIT_SECONDS)
+        assert not reader.is_alive()
+        assert len(ended) == 1

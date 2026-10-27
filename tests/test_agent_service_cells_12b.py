@@ -579,7 +579,9 @@ def watched(probe, **change):
     return probe.census.Watched(**{**fields, **change})
 
 
-def r2_probe(probe, tmp_path, timeline, *, watch=None, failed=(), root_entries=0):
+def r2_probe(probe, tmp_path, timeline, *, watch=None, failed=(), root_entries=0, commands=None):
+    """`commands`: a fake `run` port; the log reads then go through the real FakeApp and
+    IssuerProbe, down to it."""
     run = object.__new__(probe.cells.LoginProbe)
     run.held, run.failed, run.not_driven = [], list(failed), []
     run.texts, run.minted, run.windows = [], [], []
@@ -591,8 +593,13 @@ def r2_probe(probe, tmp_path, timeline, *, watch=None, failed=(), root_entries=0
     run.census = lambda: SimpleNamespace(
         key=b"\x02", watch=lambda seconds: watch(seconds) if callable(watch) else watch
     )
-    run.container_log = lambda service: ""
-    run.app_lines = lambda seconds=300: timeline.app(timeline.now)
+    if commands is None:
+        run.container = lambda service: f"{service}-container"
+        run.container_log = lambda service: ""
+        run.app_lines = lambda seconds=300, container=None: timeline.app(timeline.now)
+    else:
+        run.run = commands
+        run.compose_file, run.overlays = Path("compose.yaml"), []
     run.write_mode = lambda mode: run.windows.append(("mode", mode))
     run.start_client = lambda tokens: (
         run.windows.append("client") or FakeClient(timeline, probe.checks.read_client_output)
@@ -649,6 +656,42 @@ def test_a_run_that_reaches_no_call_is_not_driven_and_is_posted_and_closed_once(
         "no call reached the fake app": probe.checks.R2_CALL_SECONDS if alive_for is None else 0,
     }.get(reason, 0)
     assert timeline.closed_times == [expected_wait]
+
+
+class StalledDocker:
+    """The fake `run` port: from the turn's start until the stream is closed every command
+    stalls to its timeout; each is recorded with the seconds the turn has left."""
+
+    def __init__(self, timeline: Timeline, turn_seconds: int) -> None:
+        self.timeline, self.turn_seconds = timeline, turn_seconds
+        self.turn_began: float | None = None
+        self.started_in_turn: list[tuple[int, float]] = []
+
+    def begin_turn(self) -> None:
+        self.turn_began = self.timeline.now
+
+    def __call__(self, command, *, check=True, timeout=300, **_):
+        if self.turn_began is None or self.timeline.closed_times:
+            return subprocess.CompletedProcess(command, 0, "a-container-id\n", "")
+        left = self.turn_began + self.turn_seconds - self.timeline.now
+        self.started_in_turn.append((timeout, left))
+        self.timeline.now += timeout
+        raise subprocess.TimeoutExpired(command, timeout)
+
+
+def test_every_command_of_the_paid_turn_gets_at_most_the_seconds_left(probe, tmp_path, capsys):
+    """#469 R2_CALL_SECONDS: a docker daemon that stalls ends the turn at its deadline, and no
+    command started in it is allowed more than what is left; B9 is not driven."""
+    timeline = Timeline(lambda *_: ["answer 200", "event run_started"])
+    docker = StalledDocker(timeline, probe.checks.R2_CALL_SECONDS)
+    run = r2_probe(probe, tmp_path, timeline, commands=docker)
+    start = run.start_client
+    run.start_client = lambda tokens: docker.begin_turn() or start(tokens)
+    run.cell_b9()
+    assert docker.started_in_turn
+    assert all(timeout <= left for timeout, left in docker.started_in_turn)
+    assert run.not_driven == [f"B9 ({letter})" for letter in "abcde"]
+    assert "B9 (a) NOT DRIVEN: no call reached the fake app" in capsys.readouterr().out
 
 
 def test_a_dummy_run_prints_what_the_app_and_the_watch_saw_and_holds_nothing_of_b9(
