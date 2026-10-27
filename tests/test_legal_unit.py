@@ -3,15 +3,15 @@
 import re
 from datetime import date
 from functools import cache
+from importlib import metadata
 from pathlib import Path
 
 import pytest
 import yaml
 
-from edge import catalog, compose, legal_pages, legal_step
+from edge import appkit_step, catalog, compose, legal_pages, legal_step
 
 ROOT = Path(__file__).resolve().parents[1]
-FONTS = "./keycloak/themes/hallucinai/login/resources/fonts"
 
 
 @pytest.fixture(scope="module")
@@ -43,13 +43,12 @@ def test_the_unit_has_no_route_out_and_no_published_port(document, legal):
     assert "ports" not in legal
 
 
-def test_every_bind_is_read_only_and_the_fonts_are_the_login_themes_copy(legal):
+def test_every_bind_is_read_only(legal):
     assert sorted(legal["volumes"]) == sorted(
         [
             "./legal/nginx:/etc/nginx/conf.d:ro",
             "./legal/built:/srv/pages:ro",
             "./legal/assets:/srv/assets:ro",
-            f"{FONTS}:/srv/fonts:ro",
         ]
     )
     assert all((ROOT / bind.split(":")[0]).is_dir() for bind in legal["volumes"])
@@ -87,13 +86,20 @@ def test_the_security_headers_stand_at_server_level_and_no_location_overrides_th
     assert not any("add_header" in location for location in locations)
 
 
-def test_every_font_the_stylesheet_names_exists_in_the_mounted_directory():
+def test_the_stylesheet_declares_no_face_and_no_family_token_appkit_owns():
     stylesheet = (ROOT / "legal/assets/legal.css").read_text()
-    names = [part.split('"')[0] for part in stylesheet.split('url("fonts/')[1:]]
-    assert names
-    assert all((ROOT / FONTS / name).is_file() for name in names)
+    assert "@font-face" not in stylesheet
+    assert "--font-display:" not in stylesheet
+    assert "--text-muted:" not in stylesheet
 
 
+def test_the_unit_serves_appkits_files_only_from_the_versioned_assets_path():
+    config = (ROOT / "legal/nginx/default.conf").read_text()
+    assert "/srv/fonts" not in config
+    assert "/_rechtliches/fonts/" not in config
+
+
+VERSION = metadata.version(appkit_step.DISTRIBUTION)
 PAGES = ("impressum", "datenschutz", "nutzungsbedingungen")
 TEXT_PAGES = PAGES[1:]
 
@@ -120,10 +126,30 @@ def test_each_page_file_exists_and_the_config_resolves_paths_through_try_files(n
 @pytest.mark.parametrize("name", PAGES)
 def test_a_page_links_only_assets_the_unit_has_files_for(name):
     served = {f"/_rechtliches/{path.name}" for path in (ROOT / "legal/assets").iterdir()}
-    served |= {f"/_rechtliches/fonts/{path.name}" for path in (ROOT / FONTS).iterdir()}
+    appkit = appkit_step.installed_static()
+    served |= {
+        f"/_rechtliches/appkit-{VERSION}/{path.relative_to(appkit)}"
+        for path in appkit.rglob("*")
+        if path.is_file()
+    }
     linked = set(re.findall(r'(?:href|src)="(/_rechtliches/[^"]+)"', read_page(name)))
     assert linked
     assert linked <= served
+
+
+@pytest.mark.parametrize("name", PAGES)
+def test_every_appkit_link_and_preload_names_the_installed_version(name):
+    linked = re.findall(r'(?:href|src)="/_rechtliches/(appkit-[^/"]+)/', read_page(name))
+    assert linked
+    assert set(linked) == {f"appkit-{VERSION}"}
+
+
+@pytest.mark.parametrize("name", PAGES)
+def test_a_page_links_appkit_css_before_legal_css(name):
+    page = read_page(name)
+    assert page.index(f"/_rechtliches/appkit-{VERSION}/appkit.css") < page.index(
+        "/_rechtliches/legal.css"
+    )
 
 
 @pytest.mark.parametrize("name", PAGES)

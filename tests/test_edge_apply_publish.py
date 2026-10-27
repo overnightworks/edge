@@ -97,8 +97,9 @@ class World:
 
 
 @pytest.fixture
-def repository(live_checkout, monkeypatch) -> Path:  # noqa: F811
-    """`~/git/edge`: one real checkout that both parts read, the catalog committed."""
+def repository(live_checkout, monkeypatch, seed_appkit) -> Path:  # noqa: F811
+    """`~/git/edge`: one real checkout that both parts read, the catalog committed, the appkit
+    files the last apply left in it (ignored by git, as in this repository)."""
     step_ca_setup = live_checkout / "step-ca" / "init"
     step_ca_setup.parent.mkdir()
     step_ca_setup.write_text("#!/bin/sh\n")
@@ -108,8 +109,10 @@ def repository(live_checkout, monkeypatch) -> Path:  # noqa: F811
     (live_checkout / "traefik.yml").write_text(
         'entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n'
     )
+    (live_checkout / ".gitignore").write_text("/legal/assets/appkit-*/\n")
     plain_git(live_checkout, "add", "--all")
     commit_catalog(live_checkout, CATALOG)
+    seed_appkit(live_checkout)
     monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
     return live_checkout
 

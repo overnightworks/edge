@@ -798,7 +798,7 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     assert findings_of(view, "missing") == {"restic/password": ["-", "zurückholen, siehe Tabelle"]}
     assert rows_of(view)["restic/password"][-1] == RESTIC_RECREATE
     assert setup_code == 1
-    assert f"Dafür gibt es noch keinen Assistenten; von Hand: {RESTIC_RECREATE}" in setup
+    assert f"! restic/password by hand no wizard yet: {RESTIC_RECREATE}" in [" ".join(line.split()) for line in setup]
     assert not password.exists()
 
 

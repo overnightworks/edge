@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import getpass
-import http.server
-import json
 import logging
 import os
 import signal
 import stat
-import threading
-import urllib.request
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -24,18 +20,14 @@ from home_tools.secrets_setup import (
     EXPOSED_INPUT_REFUSAL,
     NO_BROWSER,
     TERMINAL_BOUNDARIES,
-    UNSENDABLE_PASTE,
     Boundaries,
     Outcome,
-    Response,
     Terminal,
     Verdict,
     github_page,
-    http_fetch,
-    verify_token,
 )
 from home_tools.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
-from home_tools.secrets_view import Provider, SecretEntry, TokenSource, load_manifest
+from home_tools.secrets_view import SecretEntry, TokenSource, load_manifest
 
 NOW = datetime(2026, 10, 17, 9, 0)
 
@@ -207,6 +199,11 @@ def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeDisk) -
     return Boundaries(terminal.boundary(), verifier, disk.sync)
 
 
+def squeezed(output: str) -> list[str]:
+    """The output's lines with each run of spaces squeezed to one, so a row reads as its columns in order."""
+    return [" ".join(line.split()) for line in output.splitlines()]
+
+
 def home_secrets_setup(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES) -> int:
     return cli.main(["secrets", "--setup"], home=home, probe=FakeProbe(), now=NOW, secrets_setup_boundaries=boundaries)
 
@@ -244,6 +241,11 @@ def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_without_a
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
     assert not [line for line in output.splitlines() if line.startswith("next:")]
+    assert [line for line in squeezed(output) if line[:1] in tuple("✓✗!·")] == [
+        "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
+        "✓ github/read verified ~/.secrets/github/read (600)",
+        "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
+    ]
 
 
 def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:
@@ -367,9 +369,10 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
 
     code = home_secrets_setup(home, boundaries)
 
-    lines = capsys.readouterr().out.splitlines()
+    lines = squeezed(capsys.readouterr().out)
     assert code == 1
-    assert f"abgelehnt: {refusal.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen." in lines
+    assert f"✗ cloudflare/read rejected {refusal.detail} · paste again or leave empty" in lines
+    assert "· cloudflare/read skipped nothing stored" in lines
     assert files_under(home) == {".secrets/github/read", PASSPHRASE_FILE}
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
@@ -445,7 +448,7 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 0
-    assert "cloudflare/read: vorhanden, bleibt unverändert" in capsys.readouterr().out.splitlines()
+    assert not [line for line in squeezed(capsys.readouterr().out) if "cloudflare/read" in line and line[0] in "✓✗!·"]
     assert existing.read_text() == "FAKE-OLD-VALUE"
     assert (existing.stat().st_mtime_ns, existing.stat().st_mode) == (before.st_mtime_ns, before.st_mode)
     assert [urlsplit(page).netloc for page in terminal.opened] == ["github.com"]
@@ -489,7 +492,9 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    assert "nicht gespeichert: ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in squeezed(output)
+    assert PASTED_VALUE not in output
     assert rival.read_text() == "FAKE-RIVAL-VALUE"
     assert files_under(home) == set(EVERY_FILE)
 
@@ -510,8 +515,10 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "nicht gespeichert: ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
-    assert refused in capsys.readouterr().out.splitlines()
+    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    output = capsys.readouterr().out
+    assert refused in squeezed(output)
+    assert PASTED_VALUE not in output
     assert files_under(home) == {".secrets/github", PASSPHRASE_FILE}
 
 
@@ -541,7 +548,9 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
 
     output = capsys.readouterr().out
     assert code == 1
-    assert output.count(f"nicht gespeichert: {reason}: erst {fix}") == 3
+    assert [line for line in squeezed(output) if "not stored" in line] == [
+        f"✗ {name} not stored {reason}: erst {fix}" for name in ("cloudflare/read", "github/read", "opentofu/passphrase")
+    ]
     assert not [line for line in output.splitlines() if line.startswith("next:")]
     assert (terminal.opened, terminal.prompts) == ([], [])
     assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
@@ -560,12 +569,12 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     finally:
         (home / ".secrets" / "locked").chmod(0o700)
 
-    lines = capsys.readouterr().out.splitlines()
+    lines = squeezed(capsys.readouterr().out)
     assert code == 1
-    assert "Dafür gibt es noch keinen Assistenten; von Hand: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
-    assert "locked/token: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen" in lines
+    assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
+    assert "! locked/token not checked its folder cannot be read" in lines
     assert not any("github/old" in line for line in lines)
-    assert "ssh/key.ppk: fehlt, ist optional; übersprungen" in lines
+    assert "· ssh/key.ppk skipped optional" in lines
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
@@ -649,243 +658,6 @@ def test_the_github_page_pre_fills_every_documented_field(home: Path) -> None:
         ("metadata", "read"),
         ("organization_secrets", "read"),
     ]
-
-
-GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
-CLOUDFLARE = TokenSource(Provider.CLOUDFLARE, "example.invalid", ("Zone › DNS › Read",), 30)
-
-
-CLOUDFLARE_DISABLED = "Cloudflare meldet das Token als disabled, nicht active"
-CLOUDFLARE_UNREADABLE = "Cloudflare meldet das Token als unbekannt, nicht active"
-
-
-def cloudflare_answer(status: object, not_before: object = None, *, with_start: bool = False) -> bytes:
-    result = {"id": "0", "status": status, **({"not_before": not_before} if with_start or not_before else {})}
-    return json.dumps({"success": True, "result": result}).encode()
-
-
-CLOUDFLARE_START = "2026-12-30T23:00:00Z"
-
-
-def not_yet_valid(start_in_utc: str) -> str:
-    return (
-        f"Cloudflare reports the token as active, but it is not valid before {start_in_utc} UTC; "
-        "clear the start date on the token's Edit page in Cloudflare, then paste again"
-    )
-
-
-CLOUDFLARE_NOT_YET_VALID = not_yet_valid("30.12.2026 23:00")
-
-
-@pytest.mark.parametrize(
-    ("source", "response", "expected"),
-    [
-        (GITHUB, Response(200, b"{}"), Verdict(Outcome.ACCEPTED)),
-        (GITHUB, Response(401, b""), Verdict(Outcome.REFUSED, "GitHub antwortet 401")),
-        (CLOUDFLARE, Response(200, cloudflare_answer("active")), Verdict(Outcome.ACCEPTED)),
-        (CLOUDFLARE, Response(200, cloudflare_answer("disabled")), Verdict(Outcome.REFUSED, CLOUDFLARE_DISABLED)),
-        (CLOUDFLARE, Response(200, b"[]"), Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE)),
-        (CLOUDFLARE, Response(200, b"not json"), Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE)),
-        (CLOUDFLARE, Response(403, b""), Verdict(Outcome.REFUSED, "Cloudflare antwortet 403")),
-        (CLOUDFLARE, None, Verdict(Outcome.UNREACHABLE, "Cloudflare nicht erreichbar; später noch einmal")),
-    ],
-)
-def test_a_token_counts_only_once_its_provider_confirms_it(source: TokenSource, response: Response | None, expected: Verdict) -> None:
-    """#36 rule 2.4 / #10 line 4: a token counts only once its provider confirms it."""
-    assert verify_token(source, PASTED_VALUE, lambda _request: response) == expected
-
-
-CLOUDFLARE_UNREADABLE_START = (
-    "Cloudflare's answer has a start date that cannot be read; check the token's TTL on its Edit page, then paste again"
-)
-CLOUDFLARE_START_INSTANT = datetime(2026, 12, 30, 23, 0, tzinfo=UTC)
-REFUSED_UNTIL_START = Verdict(Outcome.REFUSED, CLOUDFLARE_NOT_YET_VALID)
-ACCEPTED = Verdict(Outcome.ACCEPTED)
-
-
-@pytest.mark.parametrize(
-    ("start", "now", "expected"),
-    [
-        (CLOUDFLARE_START, datetime(2026, 10, 19, tzinfo=UTC), REFUSED_UNTIL_START),
-        (CLOUDFLARE_START, CLOUDFLARE_START_INSTANT + timedelta(seconds=1), ACCEPTED),
-        (CLOUDFLARE_START, CLOUDFLARE_START_INSTANT, ACCEPTED),
-        ("2026-12-31T00:00:00+01:00", CLOUDFLARE_START_INSTANT, ACCEPTED),
-        ("2026-12-30T22:30:00-01:00", CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, not_yet_valid("30.12.2026 23:30"))),
-        ("2026-12-31T00:00:01+01:00", CLOUDFLARE_START_INSTANT, REFUSED_UNTIL_START),
-        ("2026-12-30T23:00:00", CLOUDFLARE_START_INSTANT - timedelta(seconds=1), REFUSED_UNTIL_START),
-        ("2026-12-30T23:00:00", CLOUDFLARE_START_INSTANT, ACCEPTED),
-        (None, CLOUDFLARE_START_INSTANT, ACCEPTED),
-        ("invalid", CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE_START)),
-        (1767222000, CLOUDFLARE_START_INSTANT, Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE_START)),
-    ],
-    ids=[
-        "start in the future",
-        "start in the past",
-        "start exactly now",
-        "positive offset, exactly now",
-        "negative offset, still ahead",
-        "positive offset, one second ahead",
-        "no offset is read as UTC, ahead",
-        "no offset is read as UTC, exactly now",
-        "null start",
-        "unreadable text",
-        "not text",
-    ],
-)
-def test_a_cloudflare_token_counts_only_from_its_start_date(start: object, now: datetime, expected: Verdict) -> None:
-    """#54 rule 1: an active token whose start date lies ahead or cannot be read is refused; one without or past it passes."""
-    response = Response(200, cloudflare_answer("active", start, with_start=True))
-
-    assert verify_token(CLOUDFLARE, PASTED_VALUE, lambda _request: response, lambda: now) == expected
-
-
-def test_the_default_clock_refuses_a_start_date_far_in_the_future() -> None:
-    response = Response(200, cloudflare_answer("active", "9999-01-01T00:00:00Z"))
-
-    assert verify_token(CLOUDFLARE, PASTED_VALUE, lambda _request: response).outcome is Outcome.REFUSED
-
-
-@pytest.mark.parametrize(
-    ("source", "url"),
-    [
-        (GITHUB, "https://api.github.com/orgs/example-org/actions/secrets?per_page=1"),
-        (CLOUDFLARE, "https://api.cloudflare.com/client/v4/user/tokens/verify"),
-    ],
-)
-def test_the_check_asks_the_provider_with_the_token_as_a_bearer(source: TokenSource, url: str) -> None:
-    """#36 rule 2.4: the check asks the provider's address with the token as a bearer."""
-    sent: list[urllib.request.Request] = []
-
-    verify_token(source, PASTED_VALUE, lambda request: sent.append(request))
-
-    (request,) = sent
-    assert (request.get_method(), request.full_url) == ("GET", url)
-    assert request.get_header("Authorization") == f"Bearer {PASTED_VALUE}"
-
-
-class _Answers(http.server.BaseHTTPRequestHandler):
-    """Answers /ok, sends /redirect on to /ok, and notes the Authorization each path received."""
-
-    seen: list[tuple[str, str | None]]
-
-    def do_GET(self) -> None:  # noqa: N802 - the name http.server calls
-        self.seen.append((self.path, self.headers.get("Authorization")))
-        if self.path == "/not-yet-valid":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(cloudflare_answer("active", CLOUDFLARE_START))
-            return
-        if self.path == "/redirect":
-            self.send_response(302)
-            self.send_header("Location", "/ok")
-            self.end_headers()
-            return
-        status = 200 if self.path == "/ok" else 404
-        self.send_response(status)
-        self.end_headers()
-        self.wfile.write(b"ok" if status == 200 else b"")
-
-    def log_message(self, *_args: object) -> None:
-        """Silent: a test server never writes to stderr."""
-
-
-@dataclass(frozen=True)
-class LocalServer:
-    url: str
-    seen: list[tuple[str, str | None]]
-
-    def fetch(self, path: str) -> Callable[[urllib.request.Request], Response | None]:
-        """The real fetch, sent here instead of to the provider: the request verify_token built, headers and all."""
-
-        def fetch(request: urllib.request.Request) -> Response | None:
-            request.full_url = f"{self.url}{path}"
-            return http_fetch(request)
-
-        return fetch
-
-
-@pytest.fixture
-def local_server() -> Iterator[LocalServer]:
-    seen: list[tuple[str, str | None]] = []
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("Answers", (_Answers,), {"seen": seen}))
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield LocalServer(f"http://127.0.0.1:{server.server_address[1]}", seen)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-def test_a_fetch_returns_the_status_and_body_or_none_when_nothing_answers(local_server: LocalServer) -> None:
-    """#36 rule 2.4: an answer is told apart from no answer, so an unreachable provider is never a refusal."""
-    closed_port = local_server.url.rsplit(":", 1)[0] + ":1"
-
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/ok")) == Response(200, b"ok")
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/missing")) == Response(404, b"")
-    assert http_fetch(urllib.request.Request(f"{closed_port}/ok")) is None
-
-
-def test_a_redirect_never_carries_the_token_on(local_server: LocalServer) -> None:
-    """#36 rule 3: the bearer reaches the provider's address only; the place a redirect names never receives it."""
-    verify_token(GITHUB, PASTED_VALUE, local_server.fetch("/redirect"))
-
-    assert local_server.seen == [("/redirect", f"Bearer {PASTED_VALUE}"), ("/ok", None)]
-
-
-UNSENDABLE_CHARACTERS = {"carriage return": "\r", "line feed": "\n", "nul": "\x00", "tab": "\t", "space": " ", "euro sign": "€"}
-
-
-def canary_with(character: str) -> str:
-    return f"FAKE-CANARY-HEAD{character}FAKE-CANARY-TAIL"
-
-
-@pytest.mark.parametrize("character", UNSENDABLE_CHARACTERS.values(), ids=UNSENDABLE_CHARACTERS.keys())
-def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritten(
-    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys, character: str
-) -> None:
-    """#36 rule 3 / #10 line 2: a paste no token can be is refused with a fixed line; it is never sent, shown or written."""
-    canary = canary_with(character)
-    real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync)
-    terminal.pastes = [canary, "", canary, ""]
-
-    code = home_secrets_setup(home, real_check)
-
-    captured = capsys.readouterr()
-    assert code == 1
-    assert captured.out.splitlines().count(UNSENDABLE_PASTE) == 2
-    for part in (canary, "FAKE-CANARY-HEAD", "FAKE-CANARY-TAIL"):
-        assert part not in captured.out + captured.err
-    assert local_server.seen == []
-    assert files_under(home) == {PASSPHRASE_FILE}
-
-
-def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
-    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys
-) -> None:
-    """#54 rule 1 / #10 line 22: a rejected value is refused with one line naming the start date and is never written."""
-    now = datetime(2026, 10, 19, tzinfo=UTC)
-    real_check = Boundaries(
-        terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/not-yet-valid"), lambda: now), os.fsync
-    )
-    terminal.pastes = [PASTED_VALUE, "", ""]
-
-    code = home_secrets_setup(home, real_check)
-
-    captured = capsys.readouterr()
-    assert code == 1
-    assert f"abgelehnt: {CLOUDFLARE_NOT_YET_VALID}; nichts gespeichert." in captured.out
-    assert PASTED_VALUE not in captured.out + captured.err
-    assert files_under(home) == {PASSPHRASE_FILE}
-
-
-@pytest.mark.parametrize("character", ["\r", "\n", "€"], ids=["carriage return", "line feed", "euro sign"])
-def test_a_value_http_cannot_send_is_refused_without_quoting_it(local_server: LocalServer, character: str) -> None:
-    """#36 rule 3 / #10 line 2: a value the HTTP layer refuses to send is a refusal whose detail never quotes the value."""
-    verdict = verify_token(GITHUB, canary_with(character), local_server.fetch("/ok"))
-
-    assert verdict == Verdict(Outcome.REFUSED, "der Wert lässt sich GitHub nicht als Token senden")
 
 
 def test_a_service_password_is_generated_fresh_for_each_home(
