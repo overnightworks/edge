@@ -252,7 +252,8 @@ when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 `hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`
 per app, `✓ repository  checked` (`✗ repository  not checked  <reason>` when the check failed after an app
 failed) and, on success, `✓ restore test done · N apps · <time>`; a failed app ends with `error: 1 of N apps
-not proven` and `next: hal restore --test <app>`.
+not proven` and `next: hal restore --test <app>`; with `--snapshot` (one app, the realm step's call) it ends with
+`error: <app>: <reason>` instead.
 
 Exit 0: every phase succeeded. Exit 3: a run failed; `error: 1 of N apps not backed up` with
 `next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
