@@ -286,13 +286,16 @@ each followed by at least one `block`, no `section`, no `h3`, in the file's orde
 Refused: any other element or attribute, a second, duplicate or valueless attribute; comments, doctype, CDATA and
 processing instructions; a section in a section, a link in a link, a list in a paragraph or in a list item; an
 empty paragraph or list item; text outside a paragraph, list item or heading; an unclosed element, or anything
-but whitespace after the last closing tag. No script, style, image, form or external resource reaches a page.
+but whitespace after the last closing tag (none, one or several line feeds and spaces: a file normally ends with one
+LF). Between block tags any run of spaces and line feeds, or none, is free and published as written (`<ul><li>` and
+`<ul>\n<li>` are both valid); a tab, a no-break space or a control character is refused. No script, style, image, form or external resource reaches a page.
 
 **Canonical form.** `html.parser` only tokenises; every token is checked against the grammar, and the tokens are
 written out again (lowercase tags, ` id="…"` and ` href="…"` with one space and double quotes, `<br>` without a
 slash, text escaped as `&amp;`, `&lt;`, `&gt;` only). A file whose rewritten form differs from its bytes is refused
 at the first differing line, so a section is published byte for byte or not at all (write `ä` or a no-break space
-as the character, never `&nbsp;`). Edge re-emits only the structural tags with its own decorations; everything
+as the character, never `&nbsp;`; the line says so when it holds a reference other than `&amp;`, `&lt;` or
+`&gt;`, such as `&quot;`, and a literal `"` in text stays valid). Edge re-emits only the structural tags with its own decorations; everything
 inside them is the file's bytes.
 
 **Ids.** The `h2` id is the anchor exactly (`[a-z0-9][a-z0-9_-]*`). Every other id starts with `<anchor>-`
@@ -319,6 +322,13 @@ changes only the frame does not move it. The imprint has none.
 **Refusal line**, never quoting the text: `edge apply --closed: cannot plan, legal: legal/sections/songmaker/datenschutz.html: line 14: <img> is not allowed (allowed: h2 h3 section p ul ol li strong em code br a)`.
 A change that would refuse a file valid under v1 is asked of every producing repository first; one that only
 accepts more is announced.
+
+**`hal legal KEY [DIR]`** runs this validator and the page assembly on the app's `legal/datenschutz.html`
+(required) and `legal/nutzungsbedingungen.html` (optional) in `DIR` (default: the current directory), in the pages
+as this checkout builds them and with its own held block for `KEY` left out. It prints the same refusal as above
+as `error: legal: <path relative to DIR>: line N: <rule>` and exits 1, prints `legal: KEY: <files> are valid` and
+exits 0, and exits 3 when `DIR` does not exist; it writes nothing. A path under `legal/sections/` or `legal/frame/`
+in the line is edge's, not the app's. Apps' own texts are not read from their releases yet.
 
 ### Hopin as the worked example: what it needs before its entry works
 

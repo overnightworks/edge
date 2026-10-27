@@ -36,6 +36,8 @@ GENERAL_UNIT = "allgemein"
 SECTIONS_DIRECTORY = "legal/sections"
 BUILT_DIRECTORY = "legal/built"
 SECTION_PAGES = ("datenschutz", "nutzungsbedingungen")
+PRIVACY_PAGE = "datenschutz"
+APP_DIRECTORY = "legal"
 # The anchor of a block of edge's own services; any other block's anchor is its catalog key.
 SERVICE_ANCHORS = {"keycloak": "anmeldung", "agent-service": "agent-dienst"}
 _BUILT_MODE = 0o644  # nginx-unprivileged must read the page whatever the umask
@@ -148,15 +150,48 @@ def read_blocks(
 def _unit_blocks(
     repository: Path, unit: str, zone: str, date_of: Callable[[str], date]
 ) -> list[Block]:
-    anchor = SERVICE_ANCHORS.get(unit, unit)
-    kind = BlockKind.SERVICE if unit in SERVICE_ANCHORS else BlockKind.APP
     blocks = []
     for page in SECTION_PAGES:
         path = f"{SECTIONS_DIRECTORY}/{unit}/{page}.html"
         if (repository / path).is_file():
-            parsed = parse_fragment(path, _read(repository, path), anchor, zone)
-            blocks.append(Block(path, page, kind, parsed, date_of(path)))
+            blocks.append(
+                unit_block(path, _read(repository, path), page, unit, zone, date_of(path))
+            )
     return blocks
+
+
+def unit_block(path: str, data: bytes, page: str, unit: str, zone: str, written: date) -> Block:
+    """One unit's file for one page as a block; the anchor is its key or its service anchor."""
+    anchor = SERVICE_ANCHORS.get(unit, unit)
+    kind = BlockKind.SERVICE if unit in SERVICE_ANCHORS else BlockKind.APP
+    return Block(path, page, kind, parse_fragment(path, data, anchor, zone), written)
+
+
+def app_blocks(directory: Path, key: str, zone: str, written: date) -> list[Block]:
+    """The blocks of an app's own `legal` files; the privacy file is required, the terms are not."""
+    blocks = []
+    for page in SECTION_PAGES:
+        path = f"{APP_DIRECTORY}/{page}.html"
+        file = directory / path
+        if not file.is_symlink() and not file.exists():
+            if page == PRIVACY_PAGE:
+                raise LegalError(f"{path} is missing; every app needs a privacy section")
+            continue
+        if file.is_symlink() or not file.is_file():
+            raise LegalError(f"{path} is not a regular file")
+        blocks.append(unit_block(path, _read(directory, path), page, key, zone, written))
+    return blocks
+
+
+def check_app(repository: Path, key: str, directory: Path, today: date) -> tuple[str, ...]:
+    """Builds the pages with the app's files in place of the checkout's own block for `key`;
+    returns the files that were valid, and raises LegalError for what `edge apply` would refuse."""
+    zone = catalog.zone(catalog.read(repository / catalog.FLEET_FILE))
+    others = _catalog_keys(repository) - {key}
+    blocks = read_blocks(repository, others, lambda _path: today)
+    app = app_blocks(directory, key, zone, today)
+    build_pages(read_frame(repository), [*blocks, *app])
+    return tuple(block.path for block in app)
 
 
 def _catalog_keys(repository: Path) -> set[str]:
