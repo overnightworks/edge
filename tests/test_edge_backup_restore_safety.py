@@ -48,8 +48,8 @@ def _lose_the_status(machine: Machine) -> None:
 @pytest.mark.parametrize(
     ("break_history", "refusal"),
     [
-        (_forget_the_recorded_snapshot, "fehlt im Repository"),
-        (_lose_the_status, "kein erfolgreiches Backup von songmaker aufgezeichnet"),
+        (_forget_the_recorded_snapshot, "is missing from the repository"),
+        (_lose_the_status, "no successful backup of songmaker recorded"),
     ],
 )
 def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newest(
@@ -65,7 +65,7 @@ def test_restore_refuses_without_the_last_successful_snapshot_and_names_the_newe
     assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
     assert refusal in line
-    assert f"der neueste Snapshot ist {machine.snapshots[-1]['id'][:8]}" in line
+    assert f"the newest snapshot is {machine.snapshots[-1]['id'][:8]}" in line
     assert not target.exists()
 
 
@@ -185,7 +185,7 @@ def test_restore_refuses_a_snapshot_that_is_not_one_single_snapshot_of_the_app(
 
     assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
-    assert "nennt keinen einzelnen Snapshot" in line
+    assert "names no single snapshot" in line
     assert not target.exists()
 
 
@@ -200,7 +200,7 @@ def test_restore_refuses_the_snapshot_of_another_app(edge_backup, machine, home)
 
     assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
-    assert "nennt keinen einzelnen Snapshot" in line
+    assert "names no single snapshot" in line
     assert not target.exists()
 
 
@@ -222,7 +222,7 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.out
+    assert "no successful backup of songmaker recorded" in outcome.out
 
 
 def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machine, home):
@@ -319,7 +319,7 @@ def test_schema_one_evidence_moves_to_an_app_only_with_restic_evidence(
 
     assert (restored.exit_code == 0) is attributed
     if not attributed:
-        assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in restored.err
+        assert "no successful backup of songmaker recorded" in restored.err
     assert machine.status_file.read_bytes() == legacy_file
 
     migrated = edge_backup(*declared, "restore", "--test")
@@ -354,8 +354,8 @@ def test_restore_refuses_a_recorded_snapshot_of_the_old_host_without_naming_it_a
 
     assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
-    assert "fehlt im Repository" in line
-    assert "der neueste Snapshot" not in line
+    assert "is missing from the repository" in line
+    assert "the newest snapshot" not in line
     assert not target.exists()
 
 
@@ -371,7 +371,7 @@ def test_restore_names_the_newest_snapshot_of_the_new_host_never_an_old_one(
     outcome = edge_backup("restore", "songmaker", "--target", str(home / "restored"))
 
     assert outcome.exit_code == 3
-    assert f"der neueste Snapshot ist {machine.snapshots[0]['id'][:8]}" in outcome.err
+    assert f"the newest snapshot is {machine.snapshots[0]['id'][:8]}" in outcome.err
 
 
 @pytest.mark.parametrize(
@@ -390,7 +390,7 @@ def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
     outcome = edge_backup(*command, "songmaker", "--snapshot", machine.snapshots[0]["id"], *target)
 
     assert outcome.exit_code == 3
-    assert "nennt keinen einzelnen Snapshot" in getattr(outcome, stream)
+    assert "names no single snapshot" in getattr(outcome, stream)
     assert not (home / "restored").exists()
 
 

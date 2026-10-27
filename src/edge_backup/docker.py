@@ -37,6 +37,7 @@ SQLITE_CHECK_LABEL = "SQLite copy check"
 FILE_COUNT_LABEL = "file count"
 SERVER_START_LABEL = "throwaway database start"
 SERVER_REMOVAL_LABEL = "throwaway database removal"
+SQLITE_OWNER_LABEL = "SQLite owner read"
 _SCANNED = "/scanned"
 _SQLITE_SCRIPT = "/sqlite_copy.py"
 _SQLITE_DATA = "/data"
@@ -170,7 +171,7 @@ def _sqlite_argv(
 
 def _read_owner(settings: Settings, volume: str, file: str) -> bytes:
     """The script's `VERDICT_EXIT` on `owner` means the file is missing or unreadable."""
-    label = "Lesen des SQLite-Besitzers"
+    label = SQLITE_OWNER_LABEL
     try:
         return host.run(
             _sqlite_argv(
