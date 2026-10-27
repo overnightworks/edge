@@ -22,15 +22,22 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
 from census_client import SERVICE_UID, CensusClient, Mount, Process
 from egress import CLI_BINARY, LABEL, REPO, NotDriven, ProbeFailed, expect
+from fake_app import (
+    APP_HANDSHAKE,
+    APP_LINE,
+    APP_LISTING,
+    APP_SERVICE,
+    FakeApp,
+    Mode,
+    with_setting,
+)
 from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe
 from refusals import SMOKE_SERVICE
-from scratch_secrets import issue_certificate
 from service_log import (
     BOOTSTRAP,
     LOGIN_REFUSED,
@@ -43,11 +50,6 @@ from service_log import (
 )
 from smoke import RUN_END_EVENTS, Tokens
 
-APP_SERVICE = "agent-app"
-APP_PORT = 8444
-APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
-ORIGIN_LINE = re.compile(r'^mcp_origin = ".*"$', re.MULTILINE)
-BINARY_LINE = re.compile(r'^binary = ".*"$', re.MULTILINE)
 WRAPPER_DIRECTORY = "/opt/probe-wrapper"
 WRAPPER = f"{WRAPPER_DIRECTORY}/claude"
 PLANT_FLAG = "plant"
@@ -57,21 +59,11 @@ WINDOW_SECONDS = 60  # the sampler's window, which covers the whole run
 REAP_SECONDS = 6  # the reap's bound is 5 s
 DIE_SECONDS = 30
 SMOKE_TOOLS = ("step:read_only", "bare:read_only")
-APP_LINE = re.compile(
-    r"method=(?:initialize|notifications/initialized|tools/list|other) "
-    r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
-)
 LOG_SECONDS = 30
 RUNS = 100
 SERVICE_COMMAND = ["--config", "/etc/agent-service/service.toml"]
 SKIPS_THAT_HIDE_ENTRIES = ("replaced", "refused", "login excluded", "too deep")
 
-
-APP_HANDSHAKE = (
-    "method=initialize offered=- canary=0 bearer=1",
-    "method=notifications/initialized offered=- canary=0 bearer=1",
-)
-APP_LISTING = "method=tools/list offered=step,bare,extra canary={canary} bearer=1"
 PROVIDER_ERROR = "provider_error"
 
 
@@ -279,6 +271,11 @@ class Look(NamedTuple):
         """The pids that are init or have a parent; the census starts below no process."""
         return frozenset(seen.pid for seen in self.processes if seen.pid == 1 or seen.ppid != 0)
 
+    def resident_names(self) -> str:
+        """The shown names of the resident processes, which `tree_census.Names` made."""
+        residents = self.resident()
+        return ", ".join(seen.name for seen in self.processes if seen.pid in residents)
+
     def service_pids(self) -> tuple[int, ...]:
         return Snapshot(self.processes, "", 0, 0).service_pids()
 
@@ -353,6 +350,11 @@ def b5_terminals(terminals: int) -> Verdicts:
     }
 
 
+def shown_listing(mount: Mount) -> str:
+    """The shown paths and kinds of one mount's entries."""
+    return "[" + ", ".join(f"{path} ({kind})" for path, kind in mount.listings) + "]"
+
+
 def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verdicts:
     new = after.log.since(before.log)
     temporary_same = (
@@ -362,17 +364,24 @@ def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verd
         f"cc-socks-{SERVICE_UID}" in path for path, _ in after.mounts[roots.temporary].listings
     )
     working = len(after.mounts[roots.working].listings)
+    first_run, last_run = (new.run_ids[0], new.run_ids[-1]) if new.run_ids else ("none", "none")
     return {
         **b5_terminals(terminals),
         "B5 (processes)": (
             after.resident() == before.resident(),
-            f"{len(after.resident())} processes remain, the service pids are "
+            f"{len(after.resident())} processes remain ({after.resident_names()}), the service "
+            f"pids are "
             f"{'the same' if after.service_pids() == before.service_pids() else 'different'}",
         ),
         "B5 (mounts)": (
             working == 0 and temporary_same,
-            f"{working} working-root entries, /tmp listing unchanged: {temporary_same}, "
-            f"cc-socks-{SERVICE_UID} in /tmp: {socks} (reported)",
+            f"{working} working-root entries, /tmp listing unchanged: {temporary_same}; "
+            f"working root before {shown_listing(before.mounts[roots.working])}, after "
+            f"{shown_listing(after.mounts[roots.working])}; /tmp before "
+            f"{shown_listing(before.mounts[roots.temporary])}, after "
+            f"{shown_listing(after.mounts[roots.temporary])}; the CLI's socket directory "
+            f"cc-socks-{SERVICE_UID} in /tmp after the runs: {'present' if socks else 'absent'} "
+            f"(reported, not asserted)",
         ),
         "B5 (listeners)": (
             after.listeners == before.listeners,
@@ -385,7 +394,8 @@ def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verd
             and new.refused == 0
             and new.escaped == 0,
             f"{new.login_refused} runner lines of CliLoginRefusedError for {len(new.run_ids)} "
-            f"runs, {new.other_errors} other ERRORs, {new.refused} refused announcements, "
+            f"runs (first run {first_run}, last run {last_run}), {new.other_errors} other ERRORs, "
+            f"{new.refused} refused announcements, "
             f"{new.escaped} bare lines continuing no record; warnings: {new.agent_warnings} "
             f"agent_runtime*, {new.uvicorn_warnings} uvicorn*, {new.other_warnings} other "
             f"(not a full detector of output that escaped logging)",
@@ -393,19 +403,10 @@ def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verd
     }
 
 
-class Mode(StrEnum):
-    RELAY = "relay"
-    CANARY = "canary"
-
-
 def with_containment(text: str) -> str:
-    """The service's configuration with the fake app's origin in place of songmaker's, and the
-    wrapper in place of the CLI; the signing key and the CA come from the repository's own
-    `[signing]` and `[mcp]`."""
-    expect(len(ORIGIN_LINE.findall(text)) == 1, "service.toml: no single mcp_origin")
-    expect(len(BINARY_LINE.findall(text)) == 1, "service.toml: no single binary")
-    moved = ORIGIN_LINE.sub(f'mcp_origin = "{APP_ORIGIN}"', text)
-    return BINARY_LINE.sub(f'binary = "{WRAPPER}"', moved)
+    """The service's configuration with the wrapper in place of the CLI; the signing key and the
+    CA come from the repository's own `[signing]` and `[mcp]`."""
+    return with_setting(text, "binary", WRAPPER)
 
 
 def wrapper_text(cli: str) -> str:
@@ -427,9 +428,9 @@ exec {cli} "$@"
 """
 
 
-class ContainmentProbe(IssuerProbe):
-    """The service with the scratch signing key and CA and a fake app that lists tools on
-    `agent-songmaker`, its certificate issued by that CA."""
+class ContainmentProbe(FakeApp, IssuerProbe):
+    """The service with the scratch signing key and CA and the fake app, run through a wrapper in
+    place of the CLI."""
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch)
@@ -437,43 +438,18 @@ class ContainmentProbe(IssuerProbe):
         self.minted: list[Tokens] = []
         directory = scratch / "containment"
         directory.mkdir()
-        app = directory / "app"
-        app.mkdir()
-        self.mode_directory = directory / "mode"
-        self.mode_directory.mkdir()
-        self.write_mode(Mode.RELAY)
-        certificate, key = issue_certificate(self.scratch_secrets, APP_SERVICE, app)
         self.wrapper_directory = directory / "wrapper"
         self.wrapper_directory.mkdir()
         wrapper = self.wrapper_directory / "claude"
         wrapper.write_text(wrapper_text(CLI_BINARY), encoding="utf-8")
         wrapper.chmod(0o755)
-        for readable in (app, self.mode_directory, self.wrapper_directory):
-            readable.chmod(0o755)
-        for name in (certificate, key):
-            name.chmod(0o644)
+        self.wrapper_directory.chmod(0o755)
         self.configuration.write_text(
             with_containment(self.configuration.read_text(encoding="utf-8")), encoding="utf-8"
         )
-        program = Path(__file__).resolve().with_name("app_tools.py")
         overlay = scratch / "compose.containment.yaml"
         overlay.write_text(
             json.dumps({"services": {
-                APP_SERVICE: {
-                    "image": self.image,
-                    "profiles": ["agent-service"],
-                    "user": "65534:65534", "read_only": True, "cap_drop": ["ALL"],
-                    "security_opt": ["no-new-privileges:true"], "networks": ["agent-songmaker"],
-                    "entrypoint": ["python", "-I", "-B", "/app_tools.py"],
-                    "volumes": [
-                        {"type": "bind", "source": str(program), "target": "/app_tools.py",
-                         "read_only": True},
-                        {"type": "bind", "source": str(app), "target": "/app",
-                         "read_only": True},
-                        {"type": "bind", "source": str(self.mode_directory), "target": "/mode",
-                         "read_only": True},
-                    ],
-                },
                 SERVICE: {
                     "entrypoint": ["python", "-I", "-c", BOOTSTRAP],
                     "command": SERVICE_COMMAND,
@@ -489,10 +465,6 @@ class ContainmentProbe(IssuerProbe):
 
     def services_to_start(self) -> tuple[str, ...]:
         return ("agent-egress", ISSUER_SERVICE, APP_SERVICE, SERVICE)
-
-    def write_mode(self, mode: Mode) -> None:
-        (self.mode_directory / "mode").write_text(mode.value, encoding="utf-8")
-        (self.mode_directory / "mode").chmod(0o644)
 
     def drive(self) -> None:
         self.wait_until_listening()
@@ -785,6 +757,3 @@ class ContainmentProbe(IssuerProbe):
 
     def service_log(self) -> str:
         return self.container_log(SERVICE)
-
-    def app_lines(self) -> list[str]:
-        return self.container_log(APP_SERVICE).splitlines()

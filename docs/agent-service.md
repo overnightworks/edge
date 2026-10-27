@@ -252,7 +252,7 @@ The processes and listings come from `tree_census.py` through `census_client.py`
 freshly minted tokens, and holds when afterwards only init and the same service process remain, the
 working root is empty and `/tmp` is unchanged, the loopback listener count is unchanged, and the
 service log holds exactly one runner line of `CliLoginRefusedError` per run and no other ERROR,
-announcement refusal or bare line; another writable mount whose listing changed is only reported.
+announcement refusal or bare line; another writable mount whose listing changed is only reported. B5 prints the first and last run id of the log, the shown names of the remaining processes and the before and after listings of the working root and `/tmp`; the `cc-socks` directory in `/tmp` is reported, not asserted.
 For that the probe starts the service through a bootstrap that adds one WARNING-level root handler
 with level and logger name (the same records the service prints bare otherwise), a deviation the
 report names. The cells print counts and event names, never a log line. The loopback capture (the
