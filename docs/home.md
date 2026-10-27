@@ -26,7 +26,7 @@ Schlusszeile:
 1. home secrets --setup (eigenes Terminalfenster) — erwartet: geprüft und gespeichert: ~/.secrets/cloudflare/fleet-read (600); geprüft und gespeichert: ~/.secrets/github/fleet-read (600); erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600); zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)
 2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
 3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
-   warum: ohne den Hook prüft kein Commit auf Geheimnisse; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
+   warum: without the hook no commit is checked for secrets; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
 Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets. Das macht ein Agent: sag „räum home auf“.
 ```
 
@@ -496,9 +496,9 @@ come before the system step, which is the one that asks for sudo:
    such an entry is never stopped: the step fails before it changes anything, names
    the file and leaves the decision to you. A timer that is not active after
    enabling fails the step too. A
-   missing `systemd/` directory fails the step as well. `--apply` then prints, per
-   service, the loaded `ExecStart` and the `Result` of its last run right below the
-   `timers` row. The step is
+   missing `systemd/` directory fails the step as well. A changed `timers` row says
+   `N timers` (every timer of the checkout's `systemd/`) and ` · systemd reloaded` when a
+   reload ran; an unchanged row stays bare. The step is
    verified when every unit is linked, nothing needs a reload, every timer is
    enabled and active, and no link dangles.
 6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from

@@ -32,7 +32,7 @@ from home_tools.system_step import (
 )
 from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
-from home_tools.user_units import UserUnits
+from home_tools.user_units import UnitsApplied, UserUnits
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
@@ -44,7 +44,7 @@ ANSIBLE_SOURCE = "ansible-core==2.21.5"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
 HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
-HOOK_WHY = "ohne den Hook prüft kein Commit auf Geheimnisse"
+HOOK_WHY = "without the hook no commit is checked for secrets"
 UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
@@ -158,9 +158,9 @@ class ExecutionRole(Enum):
 
 
 SETUP_EXAMPLES = """\
-Beispiele:
-  home setup           zeigt, welche Schritte etwas ändern würden
-  home setup --apply   führt sie der Reihe nach aus; the activation and the user units come before the system step, which asks once for sudo
+Examples:
+  home setup           shows which steps would change something
+  home setup --apply   runs them in order; the activation and the user units come before the system step, which asks once for sudo
 """
 
 
@@ -172,7 +172,7 @@ class Step:
     and `next_step` the command that goes on from there.
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
     `open_fact` names what a dry run that found something to change shows on its row.
-    `details` are the lines printed under the row of an applied step.
+    `apply` may return `UnitsApplied`, which adds the fact the row of a changed step shows.
     `before_apply` is the row printed before an apply that waits on the operator (the wizard), or nothing.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
@@ -183,13 +183,12 @@ class Step:
     row: SetupRow
     is_verified: Callable[[], bool]
     check: Callable[[], CheckState]
-    apply: Callable[[], Applied]
+    apply: Callable[[], Applied | UnitsApplied]
     why: str
     failure: str
     next_step: str = RERUN
     needs_first: Callable[[], str] = lambda: ""
     open_fact: Callable[[], str] = lambda: ""
-    details: Callable[[], list[str]] = lambda: []
     before_apply: Callable[[], Outcome | None] = lambda: None
     events: StepEvents = field(default_factory=StepEvents)
     listed_by_next: bool = True
@@ -201,9 +200,11 @@ class Step:
 
     def run(self, apply: bool) -> Outcome:
         if apply:
-            return Outcome(
-                self.events.changed if self.apply() is Applied.CHANGED else self.events.unchanged
-            )
+            done = self.apply()
+            if isinstance(done, UnitsApplied):
+                event = self.events.changed if done.applied is Applied.CHANGED else self.events.unchanged
+                return Outcome(event, done.fact)
+            return Outcome(self.events.changed if done is Applied.CHANGED else self.events.unchanged)
         match self.check():
             case CheckState.NOT_CHECKED:
                 return Outcome(SetupEvent.NOT_CHECKED, f"needs {self.needs_first()}")
@@ -436,7 +437,6 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             units.apply,
             UNITS_WHY,
             "the user units did not come up",
-            details=units.loaded_command_lines,
             operators_only=True,
         ),
         _local_step(
@@ -522,9 +522,8 @@ class _RowStopped(Exception):
         self.error = error
 
 
-def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply: bool) -> tuple[Outcome, list[str]]:
+def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply: bool) -> Outcome:
     outcomes: list[Outcome] = []
-    details: list[str] = []
     for step in (step for step in steps if step.row is row):
         if not step.runs_for(role):
             outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
@@ -533,11 +532,9 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply:
             if apply and (announced := step.before_apply()):
                 write_row(announced.row(row))
             outcomes.append(step.run(apply))
-            if apply:
-                details.extend(step.details())
         except (OSError, StepFailed) as error:
             raise _RowStopped(step, error) from error
-    return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity), details
+    return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
 
 
 def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
@@ -560,13 +557,11 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     rows = list(SetupRow)
     for position, row in enumerate(rows):
         try:
-            outcome, details = _run_row(row, steps, role, apply)
+            outcome = _run_row(row, steps, role, apply)
         except _RowStopped as stopped:
             _stop_after_failure(rows, position, stopped, apply)
             return 1
         write_row(outcome.row(row))
-        for line in details:
-            print(line)
         outcomes.append(outcome)
     verdict = verdict_of(outcomes, apply)
     write_verdict(verdict)
@@ -584,9 +579,9 @@ def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "setup",
-        help="quality, Engines und den globalen Commit-Hook einrichten, then the user units, the system step and the secrets",
+        help="set up quality, the engines and the global commit hook, then the user units, the system step and the secrets",
         description=(
-            "Zeigt, was fehlt, oder richtet mit --apply quality, die Engines und den Hook ein."
+            "Shows what is missing, or with --apply sets up quality, the engines and the hook."
             " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
             " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
@@ -597,5 +592,5 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         epilog=SETUP_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--apply", action="store_true", help="führt die Schritte aus, statt sie nur zu zeigen")
+    parser.add_argument("--apply", action="store_true", help="run the steps instead of only showing them")
     parser.set_defaults(handler=_setup_from_args)

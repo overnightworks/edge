@@ -433,7 +433,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
         <figcaption><span class="tag new">neu</span> derselbe Rechner (sudo-rs), es läuft durch</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
 <span class="d">  · commit hook     unchanged</span>
-<span class="g">  ✓</span> timers          relinked       <span class="d">3 timers · systemd reloaded</span>
+<span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
 <span class="sys">[sudo: authenticate] Passwort:</span>  <span class="n">← der Prompt deines sudo</span>
 <span class="live">  <span class="spin"></span> system          Read the default log driver Docker reports · 9s</span>  <span class="n">← nur live</span>
@@ -445,7 +445,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
         <figcaption><span class="tag fail">neu, kaputt</span> Docker antwortet nicht: hal merkt es vor dem Passwort</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
 <span class="d">  · commit hook     unchanged</span>
-<span class="g">  ✓</span> timers          relinked       <span class="d">3 timers · systemd reloaded</span>
+<span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="r">  ✗</span> system          not started    <span class="d">Docker does not answer `docker info`</span>
 <span class="d">  · secrets         not run</span>
 <span class="rw">error:</span> setup stopped at system · /etc unchanged
@@ -468,16 +468,14 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
     <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der <code>timers</code>-Zeile (S2c, S2d: <code>3 timers · systemd reloaded</code>) kommen in späteren Schritten; S2a druckt Zeichen, Objekt und Ereignis; die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste stehen bis S2c unter der <code>timers</code>-Zeile.</p>
+  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit im Urteil (S2f) und die Fakten der übrigen Zeilen (S2d) kommen in späteren Schritten; die <code>timers</code>-Zeile trägt ihren Fakt seit S2c (<code>3 timers · systemd reloaded</code>, nur bei <code>changed</code>), die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste gibt es nicht mehr.</p>
   <div class="pair">
     <div class="stack">
       <figure>
-        <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2a es, bevor S2c, S2d und S2f dazukommen</figcaption>
+        <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2c es, bevor S2d und S2f dazukommen</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
 <span class="d">  · commit hook     unchanged</span>
-<span class="g">  ✓</span> timers          changed
-<span class="d">  hal-backup.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal backup</span>
-<span class="d">  hal-backup.service: Result=success</span>
+<span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
 <span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged</span></pre>
@@ -859,7 +857,7 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
         <tr><td><code>BECOME password:</code></td><td><code>› system  needs sudo</code>, dann der Prompt deines sudo</td><td>Ansible fragt nicht mehr; dein System fragt, wie bei jedem sudo</td></tr>
         <tr><td><code>[sudo: [sudo via ansible, key=…] password:] Passwort:</code> und der Timeout</td><td>nichts</td><td>kein Prompt-Erkennen, also kein Spezialfall</td></tr>
         <tr><td><code>PLAY […] ***</code>, <code>TASK […] ***</code>, <code>PLAY RECAP ***</code></td><td>eine Live-Zeile, danach das Ergebnis</td><td>Rohtext nur mit <code>-v</code></td></tr>
-        <tr><td><code>hal-backup.service: ExecStart=…</code>, <code>Result=success</code></td><td><code>✓ timers  relinked  3 timers</code></td><td>sechs Zeilen für „hat geklappt“</td></tr>
+        <tr><td><code>hal-backup.service: ExecStart=…</code>, <code>Result=success</code></td><td><code>✓ timers  changed  3 timers · systemd reloaded</code></td><td>sechs Zeilen für „hat geklappt“</td></tr>
         <tr><td><code>Hook-Dateien</code>, <code>Geheimnisse</code>, <code>Schritt „System“ ist fehlgeschlagen</code></td><td><code>commit hook</code>, <code>secrets</code>, <code>error: setup stopped at system</code></td><td>eine Sprache pro Lauf</td></tr>
         <tr><td><code>its output above says why</code></td><td>der Grund als Fakt der roten Zeile</td><td>die Info steht da, statt auf Rohtext zu zeigen</td></tr>
         <tr><td><code>edge apply --closed:</code> vor jeder Zeile</td><td>nichts</td><td>du hast <code>hal apply</code> getippt</td></tr>

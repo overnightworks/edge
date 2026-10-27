@@ -873,7 +873,7 @@ install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that 
 }
 
 A1_NEXT_AS_AGENT="1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed
-   warum: ohne den Hook prüft kein Commit auf Geheimnisse
+   warum: without the hook no commit is checked for secrets
 Außerdem zum Einsortieren: ~/README.md fehlt. Das macht ein Agent: sag „räum home auf“."
 
 cell_a1_4_and_5() {

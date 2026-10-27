@@ -10,7 +10,6 @@ own (a link elsewhere, a mask, a file) is never replaced: the step fails and the
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,9 +19,7 @@ from home_tools.layout import CommandRunner, Layout
 SERVICE_SUFFIX = ".service"
 TIMER_SUFFIX = ".timer"
 UNIT_SUFFIXES = (SERVICE_SUFFIX, TIMER_SUFFIX)
-SHOWN_PROPERTIES = "NeedDaemonReload,UnitFileState,ActiveState,ExecStart,Result,FragmentPath"
-# systemd prints a loaded command as `{ path=… ; argv[]=… ; ignore_errors=… ; … }`.
-EXEC_START_ARGV = re.compile(r"argv\[\]=(.*?) ;")
+SHOWN_PROPERTIES = "NeedDaemonReload,UnitFileState,ActiveState,FragmentPath"
 DEPENDENCY_DIRECTORY_SUFFIXES = (".wants", ".requires")
 STOPPED_STATES = ("inactive", "failed", "")
 
@@ -34,8 +31,6 @@ class LoadedUnit:
     needs_reload: bool
     enabled: bool
     active_state: str
-    commands: tuple[str, ...]
-    last_result: str
     fragment_path: str
 
     @classmethod
@@ -46,13 +41,6 @@ class LoadedUnit:
             needs_reload=properties.get("NeedDaemonReload") == "yes",
             enabled=properties.get("UnitFileState") == "enabled",
             active_state=properties.get("ActiveState", ""),
-            commands=tuple(
-                command
-                for key, _, value in lines
-                if key == "ExecStart"
-                for command in EXEC_START_ARGV.findall(value)
-            ),
-            last_result=properties.get("Result", ""),
             fragment_path=properties.get("FragmentPath", ""),
         )
 
@@ -63,6 +51,27 @@ class LoadedUnit:
     @property
     def stopped(self) -> bool:
         return self.active_state in STOPPED_STATES
+
+
+@dataclass(frozen=True)
+class UnitsApplied:
+    """What `UserUnits.apply` did: the timers the checkout holds and whether systemd was reloaded."""
+
+    timers: int
+    reloaded: bool
+    started: bool
+
+    @property
+    def applied(self) -> Applied:
+        return Applied.CHANGED if self.reloaded or self.started else Applied.UNCHANGED
+
+    @property
+    def fact(self) -> str:
+        """The one sentence the timers row shows; an unchanged row stays bare."""
+        if self.applied is Applied.UNCHANGED:
+            return ""
+        noun = "timer" if self.timers == 1 else "timers"
+        return f"{self.timers} {noun}" + (" · systemd reloaded" if self.reloaded else "")
 
 
 class UserUnits:
@@ -99,7 +108,7 @@ class UserUnits:
     def check(self) -> CheckState:
         return CheckState.UNCHANGED if self.verify() else CheckState.WOULD_CHANGE
 
-    def apply(self) -> Applied:
+    def apply(self) -> UnitsApplied:
         self.refuse_foreign_entries()
         dangling = self.dangling_links()
         self.retire(dangling)
@@ -112,7 +121,7 @@ class UserUnits:
         if reloaded:
             self.systemctl("daemon-reload")
         started = self.start_idle_timers()
-        return Applied.CHANGED if reloaded or started else Applied.UNCHANGED
+        return UnitsApplied(len(self.timers()), reloaded, bool(started))
 
     def start_idle_timers(self) -> list[Path]:
         idle = [path for path in self.timers() if not self.is_running_enabled(path)]
@@ -124,17 +133,6 @@ class UserUnits:
                 f"{', '.join(not_running)} enabled but not active; see `systemctl --user status`"
             )
         return idle
-
-    def loaded_command_lines(self) -> list[str]:
-        """What systemd has loaded for each service and how its last run ended, so a missed reload
-        or a failed timer run shows."""
-        lines = []
-        for path in self.unit_files():
-            if path.suffix == SERVICE_SUFFIX:
-                unit = self.show(path.name)
-                lines += [f"  {path.name}: ExecStart={command}" for command in unit.commands]
-                lines.append(f"  {path.name}: Result={unit.last_result}")
-        return lines
 
     def timers(self) -> list[Path]:
         return [path for path in self.unit_files() if path.suffix == TIMER_SUFFIX]

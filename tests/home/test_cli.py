@@ -57,13 +57,16 @@ def test_an_unreadable_config_exits_2(clean_home, runner, capsys: pytest.Capture
     assert capsys.readouterr().err.startswith("home: ")
 
 
-@pytest.mark.parametrize("argv", [["--help"], ["check", "--help"], ["setup", "--help"]])
-def test_help_shows_german_examples(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    ("argv", "heading"),
+    [(["--help"], "Beispiele:"), (["check", "--help"], "Beispiele:"), (["setup", "--help"], "Examples:")],
+)
+def test_help_shows_examples(argv: list[str], heading: str, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         cli.main(argv)
 
     assert exited.value.code == 0
-    assert "Beispiele:" in capsys.readouterr().out
+    assert heading in capsys.readouterr().out
 
 
 def test_home_without_a_subcommand_is_a_usage_error() -> None:
