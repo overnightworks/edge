@@ -1,4 +1,4 @@
-"""edge-check driven through its CLI, with fixture command outputs in place of the host."""
+"""The exposure check driven through `hal check exposure`, with fixture host command outputs."""
 
 import json
 import os
@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from edge_check import cli, host
+from edge_check import host, inspection
+from hal import cli
 
 ALLOW_AVAHI = """
 [[allow]]
@@ -131,9 +132,9 @@ def run_edge_check(monkeypatch, tmp_path, capsys):
     def run(state: Host, *arguments: str) -> tuple[int, str, str]:
         monkeypatch.setattr(host, "docker_inspect_json", lambda: state.docker)
         monkeypatch.setattr(host, "socket_listeners", lambda: state.ss)
-        allow_list = tmp_path / "edge-check.toml"
+        allow_list = tmp_path / "allow-list.toml"
         allow_list.write_text(state.allow_list, encoding="utf-8")
-        exit_code = cli.main(["--allow-list", str(allow_list), *arguments])
+        exit_code = cli.main(["check", "exposure", "--allow-list", str(allow_list), *arguments])
         captured = capsys.readouterr()
         return exit_code, captured.out, captured.err
 
@@ -152,7 +153,8 @@ HOSTS = {
     ),
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
     "the project's allow-list permits the tunnel's QUIC and Chrome's mDNS sockets": Host(
-        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE, allow_list=cli.DEFAULT_ALLOW_LIST.read_text()
+        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE,
+        allow_list=inspection.DEFAULT_ALLOW_LIST.read_text(),
     ),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
@@ -307,7 +309,11 @@ HOSTS = {
 def test_exits_1_exactly_when_something_reaches_beyond_loopback(run_edge_check, state):
     exit_code, out, err = run_edge_check(state, "--json")
 
-    assert (exit_code, json.loads(out), err) == (1 if state.findings else 0, state.findings, "")
+    assert (exit_code, json.loads(out)["exposure"], err) == (
+        1 if state.findings else 0,
+        state.findings,
+        "",
+    )
 
 
 def test_human_table_names_subject_address_and_port(run_edge_check):
@@ -333,7 +339,7 @@ def test_human_table_names_the_edge_name_a_finding_is_about(run_edge_check):
 def test_human_output_says_so_when_nothing_is_exposed(run_edge_check):
     exit_code, out, _ = run_edge_check(HOSTS["allow-listed mDNS port"])
 
-    assert (exit_code, out) == (0, "edge-check: nothing reaches beyond loopback\n")
+    assert (exit_code, out) == (0, "exposure: nothing reaches beyond loopback\n")
 
 
 VALID_ENTRY = 'protocol = "udp"\nport = 5353\nreason = "mDNS"\n'
@@ -371,12 +377,12 @@ INVALID_ALLOW_LISTS = {
 @pytest.mark.parametrize(
     ("second_entry", "message"), INVALID_ALLOW_LISTS.values(), ids=INVALID_ALLOW_LISTS.keys()
 )
-def test_exits_2_naming_the_invalid_allow_list_entry(run_edge_check, second_entry, message):
+def test_exits_3_naming_the_invalid_allow_list_entry(run_edge_check, second_entry, message):
     allow_list = f"[[allow]]\n{VALID_ENTRY}\n[[allow]]\n{second_entry}\n"
 
     exit_code, out, err = run_edge_check(Host(ss=SS_SSHD, allow_list=allow_list), "--json")
 
-    assert (exit_code, out) == (2, "")
+    assert (exit_code, out) == (3, "")
     assert message in err
 
 
@@ -388,27 +394,27 @@ def test_exits_2_naming_the_invalid_allow_list_entry(run_edge_check, second_entr
     ],
     ids=["broken TOML", "unknown top-level key"],
 )
-def test_exits_2_on_an_unreadable_allow_list(run_edge_check, allow_list, message):
+def test_exits_3_on_an_unreadable_allow_list(run_edge_check, allow_list, message):
     exit_code, _, err = run_edge_check(Host(allow_list=allow_list))
 
-    assert exit_code == 2
+    assert exit_code == 3
     assert message in err
 
 
-def test_exits_2_when_the_allow_list_is_not_a_regular_file(run_edge_check, tmp_path):
+def test_exits_3_when_the_allow_list_is_not_a_regular_file(run_edge_check, tmp_path):
     """defect: pythonsecurity:S8707 -- the allow-list argument must name a regular file."""
     exit_code, _, err = run_edge_check(Host(), "--allow-list", str(tmp_path))
 
-    assert exit_code == 2
+    assert exit_code == 3
     assert "not a regular file" in err
 
 
 def _allow_list_in_unreadable_directory(tmp_path):
     locked = tmp_path / "locked"
     locked.mkdir()
-    (locked / "edge-check.toml").write_text("", encoding="utf-8")
+    (locked / "allow-list.toml").write_text("", encoding="utf-8")
     locked.chmod(0o000)
-    return locked / "edge-check.toml"
+    return locked / "allow-list.toml"
 
 
 def _allow_list_symlink_loop(tmp_path):
@@ -432,10 +438,10 @@ def _allow_list_symlink_loop(tmp_path):
     ],
     ids=["unreadable parent directory", "symlink loop", "missing file"],
 )
-def test_exits_2_naming_the_os_reason_an_allow_list_cannot_be_reached(
+def test_exits_3_naming_the_os_reason_an_allow_list_cannot_be_reached(
     run_edge_check, tmp_path, make_allow_list, reason
 ):
-    """defect: PR #115 review B1 -- an allow-list path failing in the OS must exit 2, not 1."""
+    """defect: PR #115 review B1 -- an allow-list path failing in the OS must exit 3, not 1."""
     allow_list = make_allow_list(tmp_path)
     try:
         exit_code, _, err = run_edge_check(Host(), "--allow-list", str(allow_list))
@@ -443,7 +449,7 @@ def test_exits_2_naming_the_os_reason_an_allow_list_cannot_be_reached(
         for locked in tmp_path.glob("locked"):
             locked.chmod(0o700)
 
-    assert exit_code == 2
+    assert exit_code == 3
     assert reason in err
 
 
@@ -477,25 +483,25 @@ UNREADABLE_OUTPUTS = {
 @pytest.mark.parametrize(
     ("state", "message"), UNREADABLE_OUTPUTS.values(), ids=UNREADABLE_OUTPUTS.keys()
 )
-def test_exits_2_naming_the_command_output_it_cannot_read(run_edge_check, state, message):
+def test_exits_3_naming_the_command_output_it_cannot_read(run_edge_check, state, message):
     exit_code, out, err = run_edge_check(state, "--json")
 
-    assert (exit_code, out) == (2, "")
+    assert (exit_code, out) == (3, "")
     assert message in err
 
 
-def test_exits_2_when_a_host_command_fails(monkeypatch, tmp_path, capsys):
+def test_exits_3_when_a_host_command_fails(monkeypatch, tmp_path, capsys):
     def docker_is_down() -> str:
         raise host.HostCommandError("docker ps failed with exit 1: daemon not running")
 
     monkeypatch.setattr(host, "docker_inspect_json", docker_is_down)
     monkeypatch.setattr(host, "socket_listeners", lambda: "")
-    allow_list = tmp_path / "edge-check.toml"
+    allow_list = tmp_path / "allow-list.toml"
     allow_list.write_text("", encoding="utf-8")
 
-    exit_code = cli.main(["--allow-list", str(allow_list)])
+    exit_code = cli.main(["check", "exposure", "--allow-list", str(allow_list)])
 
-    assert exit_code == 2
+    assert exit_code == 3
     assert "docker ps failed" in capsys.readouterr().err
 
 
@@ -504,15 +510,15 @@ def test_default_allow_list_is_the_projects_whatever_the_cwd(monkeypatch, tmp_pa
     monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
     monkeypatch.setattr(host, "socket_listeners", lambda: "")
 
-    exit_code = cli.main(["--json"])
+    exit_code = cli.main(["check", "exposure", "--json"])
 
-    assert (exit_code, capsys.readouterr().out) == (0, "[]\n")
+    assert (exit_code, json.loads(capsys.readouterr().out)) == (0, {"exposure": []})
 
 
-def test_exits_2_when_the_allow_list_is_missing(tmp_path, capsys):
-    exit_code = cli.main(["--allow-list", str(tmp_path / "absent.toml")])
+def test_exits_3_when_the_allow_list_is_missing(tmp_path, capsys):
+    exit_code = cli.main(["check", "exposure", "--allow-list", str(tmp_path / "absent.toml")])
 
-    assert exit_code == 2
+    assert exit_code == 3
     assert "cannot read" in capsys.readouterr().err
 
 
@@ -535,9 +541,9 @@ def fake_docker(monkeypatch, tmp_path):
 
 
 def run_against_real_host_commands(tmp_path) -> int:
-    allow_list = tmp_path / "edge-check.toml"
+    allow_list = tmp_path / "allow-list.toml"
     allow_list.write_text("", encoding="utf-8")
-    return cli.main(["--allow-list", str(allow_list)])
+    return cli.main(["check", "exposure", "--allow-list", str(allow_list)])
 
 
 def process_is_running(pid: int) -> bool:
@@ -548,14 +554,14 @@ def process_is_running(pid: int) -> bool:
     return True
 
 
-def test_exits_2_naming_the_command_that_does_not_answer_in_time_and_kills_it(
+def test_exits_3_naming_the_command_that_does_not_answer_in_time_and_kills_it(
     fake_docker, monkeypatch, tmp_path, capsys
 ):
     monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
     pid_file = tmp_path / "docker.pid"
     fake_docker(f'echo $$ > "{pid_file}"\nexec sleep 30')
 
-    assert run_against_real_host_commands(tmp_path) == 2
+    assert run_against_real_host_commands(tmp_path) == 3
     assert "docker ps did not answer within 0.2 s" in capsys.readouterr().err
     hung_pid = int(pid_file.read_text())
     deadline = time.monotonic() + 2
@@ -569,7 +575,7 @@ def test_names_ss_as_ss_when_it_does_not_answer_in_time(fake_docker, monkeypatch
     fake_docker("exit 0")
     (tmp_path / "bin" / "ss").write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
 
-    assert run_against_real_host_commands(tmp_path) == 2
+    assert run_against_real_host_commands(tmp_path) == 3
     assert "ss did not answer within 0.2 s" in capsys.readouterr().err
 
 
@@ -577,10 +583,10 @@ SHORT_INSPECT_ANSWERS = {"empty list": "[]", "one of two": '[{"Name": "/a"}]'}
 
 
 @pytest.mark.parametrize("answer", SHORT_INSPECT_ANSWERS.values(), ids=SHORT_INSPECT_ANSWERS.keys())
-def test_exits_2_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
+def test_exits_3_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
     fake_docker, tmp_path, capsys, answer
 ):
     fake_docker(f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
 
-    assert run_against_real_host_commands(tmp_path) == 2
+    assert run_against_real_host_commands(tmp_path) == 3
     assert "docker ps listed 2" in capsys.readouterr().err

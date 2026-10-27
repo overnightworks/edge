@@ -1,14 +1,13 @@
 [project]
 name = "edge-check"
 version = "0.1.0"
-description = "The edge tools: the edge command, the loopback alarm edge-check, home, the workstation tool, and hal, the daily door."
+description = "The edge tools: the edge command, home, the workstation tool, and hal, the daily door."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["pyyaml>=6"]
 
 [project.scripts]
 edge = "edge.cli:main"
-edge-check = "edge_check.cli:main"
 home = "home_tools.cli:main"
 hal = "hal.cli:main"
 

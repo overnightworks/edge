@@ -3,10 +3,6 @@ mandatory_jobs = ["check"]
 legacy = "fail"
 
 [[root.allow]]
-entry = "edge-check.toml"
-reason = "the listener allowlist that edge-check reads at the repository root"
-
-[[root.allow]]
 entry = "fleet.yaml"
 reason = "the fleet declaration that the edge tools read at the repository root"
 
