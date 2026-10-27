@@ -86,7 +86,7 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
     guided = [entry for entry in missing if entry.written_by_setup]
     by_hand = [entry for entry in missing if not entry.written_by_setup]
     if guided:
-        said = [*map(secrets_setup.stored_line, guided), f"zuletzt {secrets_setup.next_line([], by_hand, [])}"]
+        said = [*map(secrets_setup.stored_line, guided), f"then {setup.APPLY_PLAN}"]
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
