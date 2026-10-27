@@ -2,7 +2,8 @@
 
 It asks Docker for named fields only (name, state, health, exit code, the compose project label), never
 any other label or the full inspect JSON, which holds each container's environment, and never a log. From the reboot
-flag it reads whether the file exists and when it was changed; from the disk of `/` its total and free bytes. Nothing is started, stopped or repaired. Docker that
+flag it reads whether the file exists and when it was changed; from the disk of `/` its total and free bytes.
+Nothing is started, stopped or repaired. Docker that
 cannot be read is a finding of its own, never a pass.
 """
 
