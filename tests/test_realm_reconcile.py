@@ -534,19 +534,6 @@ def test_the_backup_asks_for_keycloak_alone_and_reads_the_snapshot_id() -> None:
     ]
 
 
-def test_a_failing_restore_test_says_why_the_snapshot_is_not_proven() -> None:
-    failing = Commands(
-        stdout="  \u2717 keycloak  not proven  the dump does not restore\n",
-        stderr="error: keycloak: the dump does not restore\nnext: hal restore --test keycloak\n",
-        code=3,
-    )
-    backup = reconcile.Backup(("hal",), failing)
-
-    with pytest.raises(reconcile.RealmError) as raised:
-        backup.restore_test(SNAPSHOT)
-    assert str(raised.value) == "the restore test failed (keycloak: the dump does not restore)"
-
-
 def test_a_failing_backup_says_the_error_line_hal_wrote() -> None:
     failing = Commands(stdout="", stderr="error: hal backup: kein Passwort\n", code=3)
     backup = reconcile.Backup(("hal",), failing)

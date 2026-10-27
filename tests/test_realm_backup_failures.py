@@ -44,3 +44,13 @@ def test_an_answer_without_a_snapshot_id_is_a_failure(stdout: str) -> None:
 
     with pytest.raises(reconcile.RealmError, match="named no pre-apply snapshot"):
         backup.pre_apply()
+
+
+def test_a_failing_restore_test_names_the_cause_never_the_next_line() -> None:
+    stderr = "error: keycloak: the dump does not restore\nnext: hal restore --test keycloak\n"
+    backup = reconcile.Backup(("hal",), _answering("", stderr, 3))
+
+    with pytest.raises(reconcile.RealmError) as raised:
+        backup.restore_test("ab12cd34")
+
+    assert str(raised.value) == "the restore test failed (keycloak: the dump does not restore)"
