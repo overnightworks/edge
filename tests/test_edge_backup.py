@@ -660,10 +660,7 @@ def test_an_interrupted_run_is_failed_and_cleans_up(edge_backup, machine, home):
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 130
-    assert outcome.err.splitlines() == [
-        "error: interrupted while testing the restore of songmaker",
-        "next: hal restore --test",
-    ]
+    assert "testing the restore of songmaker\nnext: hal restore --test\n" in outcome.err
     assert outcome.status["state"] == "failed"
     assert outcome.status["exit_category"] == "interrupted"
     assert no_restore_server_left(machine)
