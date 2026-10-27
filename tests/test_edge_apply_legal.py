@@ -251,8 +251,8 @@ def test_without_a_usable_record_the_plan_names_every_block_as_new(world, record
 
     assert f"{AGENT}#agent-dienst new" in out
     assert f"{PRIVACY}#verantwortlicher new" in out
-    assert "changed" not in out
-    assert "unchanged" not in out
+    assert " changed" not in out
+    assert "legal: unchanged" not in out
 
 
 @pytest.mark.parametrize("record", [None, b"{not json"], ids=["missing", "unreadable"])
@@ -265,7 +265,7 @@ def test_a_page_that_matches_is_planned_again_when_its_record_is_unusable(world,
         record_file.write_bytes(record)
 
     _, out, _ = world.switch(answer="no")
-    assert "unchanged" not in out
+    assert "legal: unchanged" not in out
     assert f"{AGENT}#agent-dienst new" in out
 
     world.switch()

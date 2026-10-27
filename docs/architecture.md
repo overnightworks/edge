@@ -265,7 +265,7 @@ A program of another repository may read the record of `hal apply`: the last dep
 `hal apply` builds `/impressum`, `/datenschutz` and `/nutzungsbedingungen` while `services.legal` is
 enabled. The pages are not files in git: `legal/frame/` holds the markup (one skeleton per page and one
 template per block kind), `legal/sections/<unit>/<page>.html` holds the texts, and `legal/built/` (git-ignored)
-holds the result, which the legal unit serves. A unit's text is a **section**; the imprint is one whole page
+holds the result, which the legal unit serves. The pages take their tokens and fonts from the installed appkit: the appkit step of `hal apply` writes its static files to `legal/assets/appkit-<version>/` (git-ignored; the version is the lock's), served at `/_rechtliches/appkit-<version>/`, whether or not the legal unit is enabled. A unit's text is a **section**; the imprint is one whole page
 with no sections. A page's blocks stand as the general part (`allgemein`, edge's own), then the services
 (`agent-service` under `#agent-dienst`, `keycloak` under `#anmeldung`), then the apps (their catalog key
 is the anchor), each group sorted by anchor. A section directory with no catalog entry builds no block. Edge's
