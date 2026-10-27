@@ -1,68 +1,26 @@
-/* hallucinai's look on Keycloak's sign-in pages: the dark tokens, fonts and shapes of songmaker's
-   hallucinai.de, laid over PatternFly. docs/design/keycloak-theme.html is the picture. */
-
-@font-face {
-  font-family: "Oswald";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400;
-  src: url("../fonts/oswald-latin-400-normal.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Oswald";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 700;
-  src: url("../fonts/oswald-latin-700-normal.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Open Sans";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 400;
-  src: url("../fonts/open-sans-latin-400-normal.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Open Sans";
-  font-style: normal;
-  font-display: swap;
-  font-weight: 600;
-  src: url("../fonts/open-sans-latin-600-normal.woff2") format("woff2");
-}
+/* hallucinai's look on Keycloak's sign-in pages: the app colour and shapes of songmaker's
+   hallucinai.de, over appkit's tokens and fonts (the first stylesheet), laid over PatternFly.
+   docs/design/keycloak-theme.html is the picture. */
 
 :root {
   color-scheme: dark;
-  --h-primary: #ff3220;
-  --h-accent: #a020f0;
-  --h-on-accent: #ffffff;
-  --h-bg: #0d0d0d;
-  --h-bg-deep: #050508;
-  --h-surface: #111111;
-  --h-surface-hover: #1a1a1a;
-  --h-border: #333333;
-  --h-text: #e0e0e0;
-  --h-text-muted: #888888;
-  --h-card-bg: rgba(13, 13, 13, 0.85);
-  --h-glow-primary: rgba(255, 50, 32, 0.03);
+  --primary: #ff3220;
+  --accent: #a020f0;
+  --on-accent: #ffffff;
   --h-bad: #ff4444;
-  --h-font-display: "Oswald", Impact, sans-serif;
-  --h-font-body: "Open Sans", Arial, sans-serif;
-  --h-action: var(--h-accent);
+  --h-action: var(--accent);
 }
 
 /* ---------- ground: deep black, grid, red and violet glows ---------- */
 
 html.login-pf {
-  background: var(--h-bg-deep);
+  background: var(--bg-deep);
 }
 
 .login-pf body {
   background: transparent;
-  color: var(--h-text);
-  font-family: var(--h-font-body);
+  color: var(--text);
+  font-family: var(--font-body);
   min-height: 100%;
 }
 
@@ -82,7 +40,7 @@ html.login-pf::before {
   height: 400px;
   top: -100px;
   right: -100px;
-  background: var(--h-primary);
+  background: var(--primary);
 }
 
 html.login-pf::after {
@@ -90,7 +48,7 @@ html.login-pf::after {
   height: 300px;
   bottom: -50px;
   left: -50px;
-  background: var(--h-accent);
+  background: var(--accent);
 }
 
 .login-pf body::before {
@@ -100,8 +58,8 @@ html.login-pf::after {
   z-index: -1;
   pointer-events: none;
   background-image:
-    linear-gradient(var(--h-glow-primary) 1px, transparent 1px),
-    linear-gradient(90deg, var(--h-glow-primary) 1px, transparent 1px);
+    linear-gradient(var(--glow-primary) 1px, transparent 1px),
+    linear-gradient(90deg, var(--glow-primary) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
@@ -129,7 +87,7 @@ html.login-pf::after {
 /* ---------- wordmark: the realm name, red above, violet below ---------- */
 
 #kc-header-wrapper {
-  font-family: var(--h-font-display);
+  font-family: var(--font-display);
   font-weight: 400;
   font-size: 36px;
   line-height: 1.1;
@@ -139,26 +97,26 @@ html.login-pf::after {
   -webkit-text-fill-color: transparent;
   background-image: linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--h-primary) 80%, var(--h-text)) 0 35%,
-    var(--h-text) 35% 65%,
-    color-mix(in srgb, var(--h-accent) 80%, var(--h-text)) 65% 100%
+    color-mix(in srgb, var(--primary) 80%, var(--text)) 0 35%,
+    var(--text) 35% 65%,
+    color-mix(in srgb, var(--accent) 80%, var(--text)) 65% 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
-  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--h-primary) 30%, transparent));
+  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--primary) 30%, transparent));
   padding: 0;
 }
 
 /* ---------- card ---------- */
 
 .pf-v5-c-login__main {
-  background: var(--h-card-bg);
-  border: 1px solid color-mix(in srgb, var(--h-primary) 15%, transparent);
+  background: var(--card-bg);
+  border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent);
   border-radius: 12px;
-  box-shadow: 0 0 60px color-mix(in srgb, var(--h-primary) 5%, transparent);
+  box-shadow: 0 0 60px color-mix(in srgb, var(--primary) 5%, transparent);
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
-  color: var(--h-text);
+  color: var(--text);
   padding: 30px 30px 18px;
   display: flex;
   flex-direction: column;
@@ -176,10 +134,10 @@ html.login-pf::after {
 }
 
 .pf-v5-c-login__main-header .pf-v5-c-title {
-  font-family: var(--h-font-display);
+  font-family: var(--font-display);
   font-size: 17px;
   font-weight: 700;
-  color: var(--h-text);
+  color: var(--text);
   margin: 0;
 }
 
@@ -190,7 +148,7 @@ html.login-pf::after {
 .pf-v5-c-login__main-header-utilities .pf-v5-c-form-control {
   min-height: 32px;
   font-size: 13px;
-  color: var(--h-text-muted);
+  color: var(--text-muted);
 }
 
 .pf-v5-c-login__main-header-utilities select {
@@ -207,21 +165,21 @@ html.login-pf::after {
 /* ---------- fields ---------- */
 
 .pf-v5-c-form__label-text {
-  font-family: var(--h-font-display);
+  font-family: var(--font-display);
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--h-text-muted);
+  color: var(--text-muted);
 }
 
 .pf-v5-c-form-control {
   min-height: 44px;
-  background: var(--h-surface);
-  border: 1px solid var(--h-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--h-text);
-  font-family: var(--h-font-body);
+  color: var(--text);
+  font-family: var(--font-body);
   font-size: 15px;
   --pf-v5-c-form-control--BorderColor: transparent;
   --pf-v5-c-form-control--before--BorderColor: transparent;
@@ -245,8 +203,8 @@ html.login-pf::after {
 
 .pf-v5-c-form-control input,
 .pf-v5-c-form-control input:focus {
-  color: var(--h-text);
-  font-family: var(--h-font-body);
+  color: var(--text);
+  font-family: var(--font-body);
   outline: none;
   background: transparent;
   border: 0;
@@ -254,7 +212,7 @@ html.login-pf::after {
 
 .pf-v5-c-form-control.pf-m-readonly {
   background: transparent;
-  color: var(--h-text-muted);
+  color: var(--text-muted);
 }
 
 .pf-v5-c-form__helper-text .pf-m-error,
@@ -265,8 +223,8 @@ html.login-pf::after {
 
 .pf-v5-c-input-group {
   align-items: center;
-  background: var(--h-surface);
-  border: 1px solid var(--h-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
 }
 
@@ -284,7 +242,7 @@ html.login-pf::after {
   min-height: 42px;
   background: transparent;
   border: 0;
-  color: var(--h-text-muted);
+  color: var(--text-muted);
 }
 
 .pf-v5-c-input-group .pf-v5-c-button.pf-m-control::before,
@@ -297,7 +255,7 @@ html.login-pf::after {
 .pf-v5-c-button {
   min-height: 44px;
   border-radius: 4px;
-  font-family: var(--h-font-display);
+  font-family: var(--font-display);
   font-size: 15px;
   font-weight: 400;
   letter-spacing: 0.5px;
@@ -307,11 +265,11 @@ html.login-pf::after {
 .pf-v5-c-button.pf-m-primary {
   --pf-v5-c-button--m-primary--BackgroundColor: var(--h-action);
   --pf-v5-c-button--m-primary--hover--BackgroundColor: color-mix(in srgb, var(--h-action) 85%, white);
-  --pf-v5-c-button--m-primary--Color: var(--h-on-accent);
-  --pf-v5-c-button--m-primary--hover--Color: var(--h-on-accent);
+  --pf-v5-c-button--m-primary--Color: var(--on-accent);
+  --pf-v5-c-button--m-primary--hover--Color: var(--on-accent);
   background: var(--h-action);
   border: 1px solid var(--h-action);
-  color: var(--h-on-accent);
+  color: var(--on-accent);
 }
 
 .pf-v5-c-button.pf-m-primary:hover,
@@ -326,8 +284,8 @@ html.login-pf::after {
 .pf-v5-c-button.pf-m-secondary,
 .pf-v5-c-button.pf-m-tertiary {
   background: transparent;
-  border: 1px solid var(--h-border);
-  color: var(--h-text);
+  border: 1px solid var(--border);
+  color: var(--text);
 }
 
 .pf-v5-c-button.pf-m-secondary::after,
@@ -343,10 +301,10 @@ a {
 /* ---------- feedback alerts ---------- */
 
 .pf-v5-c-alert {
-  background: var(--h-surface);
-  border: 1px solid var(--h-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--h-text);
+  color: var(--text);
 }
 
 /* ---------- legal links ---------- */
@@ -357,12 +315,12 @@ a {
   justify-content: center;
   margin: 6px 0 0;
   padding-top: 14px;
-  border-top: 1px solid var(--h-border);
+  border-top: 1px solid var(--border);
   font-size: 11px;
 }
 
 .hallucinai-legal a {
-  color: var(--h-text-muted);
+  color: var(--text-muted);
   text-decoration: none;
 }
 
