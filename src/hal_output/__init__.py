@@ -38,6 +38,7 @@ class Glyph(Enum):
     NEEDS_YOU = "!"
     UNCHANGED = "·"
     CHANGE = "~"
+    ANNOUNCE = "\u203a"
 
     @property
     def verdict_style(self) -> str:
@@ -49,6 +50,7 @@ _ROW_STYLES = {
     Glyph.FAILED: "31",
     Glyph.NEEDS_YOU: "33",
     Glyph.CHANGE: "34",
+    Glyph.ANNOUNCE: "36",
 }
 _VERDICT_STYLES = {
     Glyph.DONE: "1",
