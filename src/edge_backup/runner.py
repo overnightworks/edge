@@ -10,6 +10,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Self
 
@@ -43,6 +45,7 @@ from edge_backup.verify import (
     check_row_count,
     check_rows,
 )
+from hal_output import Glyph, Row
 
 # A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
@@ -52,15 +55,37 @@ RUN_MARK_SUFFIX = ".run"
 MIN_SNAPSHOT_PREFIX = 8
 
 
+class BackupEvent(StrEnum):
+    BACKED_UP = "backed up"
+    NOT_BACKED_UP = "not backed up"
+    PRUNED = "pruned"
+    NOT_PRUNED = "not pruned"
+
+
+REPOSITORY = "repository"
+
+
 class StepFailed(Exception):
-    """A handled failure: the run is over, the status says `failed`, the message is German."""
+    """A handled failure: the run is over and the status says `failed`. `error_line` and
+    `next_step` are what the door prints instead of the message and its default, once the run
+    has more to say than the first failure."""
 
     def __init__(self, category: ExitCategory, message: str, *, shared: bool = False) -> None:
         self.category = category
         self.shared = shared
         self.app: str | None = None
         self.phase: Phase | None = None
+        self.error_line: str | None = None
+        self.next_step: str | None = None
         super().__init__(message)
+
+
+class Interrupted(KeyboardInterrupt):
+    """Ctrl-C or SIGTERM, with the app the run was working on, if any."""
+
+    def __init__(self, app: str | None) -> None:
+        self.app = app
+        super().__init__()
 
 
 class Run:
@@ -70,6 +95,9 @@ class Run:
         self._path = path
         self._status = status
         self._first_app_failure: StepFailed | None = None
+        self.working_on: str | None = None
+        self.backed_up_apps = 0
+        self.failed_apps: list[str] = []
         write_status(path, status)
 
     @contextmanager
@@ -82,15 +110,18 @@ class Run:
         except host.HostError as error:
             raise StepFailed(
                 failing,
-                f"Phase {phase}: {error}",
+                f"{phase}: {error}",
                 shared=isinstance(error, restic.RepositoryUnusableError),
             ) from error
         except VerificationError as error:
-            raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"Phase {phase}: {error}") from error
+            raise StepFailed(ExitCategory.VERIFICATION_FAILED, f"{phase}: {error}") from error
 
     @contextmanager
-    def isolated(self, app: str) -> Iterator[None]:
+    def isolated(
+        self, app: str, on_failure: Callable[[StepFailed], None] = lambda _: None
+    ) -> Iterator[None]:
         """One app's failure is kept for the verdict while the other apps go on."""
+        self.working_on = app
         try:
             yield
         except StepFailed as failure:
@@ -98,6 +129,9 @@ class Run:
                 raise
             failure.app, failure.phase = app, self._status.phase
             self._first_app_failure = self._first_app_failure or failure
+            self.failed_apps.append(app)
+            on_failure(failure)
+        self.working_on = None
 
     def raise_first_app_failure(self) -> None:
         if self._first_app_failure is not None:
@@ -112,6 +146,7 @@ class Run:
             self._record(attributed)
 
     def backed_up(self, app: str, snapshot_id: str) -> None:
+        self.backed_up_apps += 1
         self._record(self._status.backed_up(app, host.now(), snapshot_id))
 
     def restore_tested(self, apps: list[str]) -> None:
@@ -135,7 +170,7 @@ def require_secret_and_repository(settings: Settings) -> None:
     if not (settings.repository / "config").is_file():
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            "das restic-Repository ist nicht initialisiert (docs/backup.md: Setup)",
+            "the restic repository is not initialised (docs/backup.md: Setup)",
         )
 
 
@@ -145,11 +180,11 @@ def require_password_file(settings: Settings) -> None:
         mode = settings.password_file.stat().st_mode
     except FileNotFoundError:
         raise StepFailed(
-            ExitCategory.CONFIGURATION, "die Passwortdatei fehlt (docs/backup.md: Setup)"
+            ExitCategory.CONFIGURATION, "the password file is missing (docs/backup.md: Setup)"
         ) from None
     if not stat.S_ISREG(mode) or stat.S_IMODE(mode) & 0o077:
         raise StepFailed(
-            ExitCategory.CONFIGURATION, "die Passwortdatei muss eine Datei mit Modus 600 sein"
+            ExitCategory.CONFIGURATION, "the password file must be a regular file with mode 600"
         )
 
 
@@ -172,8 +207,10 @@ def backup(
     *,
     only: str | None = None,
     pre_apply: bool = False,
+    report: Callable[[Row], None] = lambda _: None,
 ) -> None:
-    """Every declared app, or `only` that one; `pre_apply` tags its snapshot and thins those."""
+    """Every declared app, or `only` that one; `pre_apply` tags its snapshot and thins those.
+    `report` gets a row as each app ends and for the repository."""
     targets = _targets(apps, only)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
@@ -182,20 +219,28 @@ def backup(
     with run.phase(Phase.PREPARE):
         run.attribute_legacy_evidence(settings, apps)
     for index, app in enumerate(targets):
-        with run.isolated(app.name):
-            _back_up(
+        with run.isolated(app.name, partial(_report_not_backed_up, report, app)):
+            snapshot_id = _back_up(
                 settings,
                 app,
                 run,
                 first_readiness if index == 0 else _Deadline.start(),
                 pre_apply=pre_apply,
             )
+            report(Row(Glyph.DONE, app.name, BackupEvent.BACKED_UP, snapshot_id[:8]))
+    if run.failed_apps:
+        report(Row(Glyph.UNCHANGED, REPOSITORY, BackupEvent.NOT_PRUNED, "a backup failed"))
     run.raise_first_app_failure()
     for app in targets:
         with run.phase(Phase.FORGET):
             restic.forget(settings, app.name, pre_apply=pre_apply)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=False)
+    report(Row(Glyph.DONE, REPOSITORY, BackupEvent.PRUNED, "checked"))
+
+
+def _report_not_backed_up(report: Callable[[Row], None], app: App, failure: StepFailed) -> None:
+    report(Row(Glyph.FAILED, app.name, BackupEvent.NOT_BACKED_UP, str(failure)))
 
 
 def restore_test(
@@ -227,7 +272,7 @@ def restore_test(
 
 def declared_app(apps: tuple[App, ...], name: str) -> App:
     if (app := {app.name: app for app in apps}.get(name)) is None:
-        raise StepFailed(ExitCategory.CONFIGURATION, f"{name} ist nicht deklariert")
+        raise StepFailed(ExitCategory.CONFIGURATION, f"{name} is not declared")
     return app
 
 
@@ -251,7 +296,7 @@ def previous_status(settings: Settings) -> Status | None:
         return read_status(settings.status_file)
     except StatusFileError as error:
         raise StepFailed(
-            ExitCategory.CONFIGURATION, f"{error}; die Datei bleibt unverändert"
+            ExitCategory.CONFIGURATION, f"{error}; the file stays unchanged"
         ) from error
 
 
@@ -338,7 +383,7 @@ def _kept_volume(app: App, folder: str, volume: str, skip: str | None) -> KeptVo
 
 def _back_up(
     settings: Settings, app: App, run: Run, readiness: _Deadline, *, pre_apply: bool
-) -> None:
+) -> str:
     with run.phase(Phase.READINESS):
         target = _ready_target(app, readiness)
     with _private_directory(settings.work_dir) as staging:
@@ -348,10 +393,11 @@ def _back_up(
             manifest = _manifest(settings, app, target, staging)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
-            run.backed_up(
-                app.name,
-                restic.backup(settings, app.name, staging, target.kept, pre_apply=pre_apply),
+            snapshot_id = restic.backup(
+                settings, app.name, staging, target.kept, pre_apply=pre_apply
             )
+            run.backed_up(app.name, snapshot_id)
+    return snapshot_id
 
 
 def _dump(settings: Settings, target: _PostgresTarget | _SqliteTarget, staging: Path) -> None:
@@ -524,9 +570,7 @@ def _wait_until_ready[T](probe: Callable[[], T], deadline: _Deadline, poll_secon
         except docker.NotReadyError as error:
             if host.monotonic() >= deadline.expires_at:
                 minutes = int(deadline.timeout.total_seconds() // 60)
-                raise StepFailed(
-                    ExitCategory.NOT_READY, f"nach {minutes} Minuten nicht bereit: {error}"
-                ) from error
+                raise StepFailed(ExitCategory.NOT_READY, f"{error} after {minutes} min") from error
             host.sleep(poll_seconds)
 
 
@@ -566,7 +610,7 @@ def sweep_leftover_staging(parent: Path) -> None:
     except OSError as error:
         raise StepFailed(
             ExitCategory.INTERNAL,
-            f"der Klartext eines abgebrochenen Laufs lässt sich nicht entfernen: {error.strerror}",
+            f"the plaintext of an aborted run cannot be removed: {error.strerror}",
         ) from error
 
 

@@ -7,7 +7,7 @@ import signal
 import sys
 
 import pytest
-from edge_backup_support import declare_two_apps, no_restore_server_left
+from edge_backup_support import declare_shipped_apps, declare_two_apps, no_restore_server_left
 
 
 @pytest.mark.parametrize(
@@ -35,22 +35,22 @@ def test_pre_apply_json_answers_one_object_naming_the_snapshot(edge_backup, mach
 
 
 @pytest.mark.parametrize(
-    ("arguments", "program"),
+    ("arguments", "error_lines"),
     [
-        (("backup", "nobody"), "hal backup"),
-        (("restore", "--test", "nobody"), "hal restore"),
+        (("backup", "nobody"), ["error: nobody is not declared", "next: hal backup"]),
+        (
+            ("restore", "--test", "nobody"),
+            ["error: hal restore: fehlgeschlagen: nobody is not declared"],
+        ),
     ],
 )
 def test_an_undeclared_app_runs_nothing_and_writes_no_status(
-    edge_backup, machine, arguments, program
+    edge_backup, machine, arguments, error_lines
 ):
     """#238 matrix cell 7."""
     outcome = edge_backup(*arguments)
 
-    assert (outcome.exit_code, outcome.err) == (
-        3,
-        f"error: {program}: fehlgeschlagen: nobody ist nicht deklariert\n",
-    )
+    assert (outcome.exit_code, outcome.err.splitlines()) == (3, error_lines)
     assert machine.calls == []
     assert outcome.status is None
 
@@ -139,12 +139,86 @@ def test_a_failed_step_of_any_verb_exits_3_with_one_error_line_and_frees_the_loc
 
     outcome = edge_backup(*declare_two_apps(home), *command)
 
-    program = f"hal {command[0]}"
     assert outcome.exit_code == 3
-    [line] = outcome.err.splitlines()
-    assert line.startswith(f"error: {program}: fehlgeschlagen: ")
-    assert outcome.out == ""
+    [line, *rest] = outcome.err.splitlines()
+    if command[0] == "backup":
+        assert line.startswith("error: ")
+        assert "fehlgeschlagen" not in line
+    else:
+        assert line.startswith(f"error: hal {command[0]}: fehlgeschlagen: ")
+        assert rest == []
     assert machine._host_lock_is_free()
+
+
+def test_a_good_backup_prints_a_row_per_app_the_repository_row_and_the_verdict(
+    edge_backup, machine, home
+):
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    first, second = (snapshot["id"][:8] for snapshot in machine.snapshots[-2:])
+    assert (outcome.exit_code, outcome.err) == (0, "")
+    assert outcome.out.splitlines() == [
+        f"  ✓ songmaker       backed up      {first}",
+        f"  ✓ radio           backed up      {second}",
+        "  ✓ repository      pruned         checked",
+        "✓ backup done · 2 apps · <1s",
+    ]
+
+
+def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_repository_is_not_pruned(
+    edge_backup, machine
+):
+    machine.other_db_containers["edge"] = []
+
+    outcome = edge_backup(*declare_shipped_apps(), "backup")
+
+    rows = outcome.out.splitlines()
+    assert outcome.exit_code == 3
+    assert rows == [
+        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
+        "  ✗ keycloak        not backed up  no database container after 10 min",
+        "  · repository      not pruned     a backup failed",
+    ]
+    assert outcome.err.splitlines() == [
+        "error: 1 of 2 apps not backed up",
+        "next: hal backup keycloak",
+    ]
+    assert "restic forget" not in machine.labels()
+
+
+def test_pre_apply_json_names_the_failed_apps_reason_on_the_error_line_and_prints_no_row(
+    edge_backup, machine
+):
+    machine.other_db_containers["edge"] = []
+
+    outcome = edge_backup(*declare_shipped_apps(), "backup", "keycloak", "--pre-apply", "--json")
+
+    assert (outcome.exit_code, outcome.out) == (3, "")
+    assert outcome.err.splitlines() == [
+        "error: keycloak: no database container after 10 min",
+        "next: hal backup keycloak",
+    ]
+
+
+def test_an_interrupted_backup_names_the_app_it_stopped_in(edge_backup, machine, home):
+    machine.failing["pg_dump"] = _terminated_by_systemd
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    assert outcome.exit_code == 130
+    assert outcome.err.splitlines() == [
+        "error: interrupted while backing up songmaker · its state may be partial",
+        "next: hal backup",
+    ]
+
+
+def test_an_interrupted_unlock_says_only_that_it_was_interrupted(edge_backup, machine):
+    machine.failing["restic unlock"] = _terminated_by_systemd
+
+    outcome = edge_backup("backup", "--unlock")
+
+    assert outcome.exit_code == 130
+    assert outcome.err.splitlines() == ["error: interrupted", "next: hal backup"]
 
 
 @pytest.mark.parametrize(
@@ -178,4 +252,5 @@ def test_sigterm_ends_a_run_as_an_interruption_that_cleans_up_and_frees_the_lock
     if label in {"pg_dump", "pg_restore"}:  # the verbs that record their outcome
         assert outcome.status["state"] == "failed"
         assert outcome.status["exit_category"] == "interrupted"
-        assert outcome.err.endswith("fehlgeschlagen: abgebrochen\n")
+        if command[0] == "restore":
+            assert outcome.err.endswith("fehlgeschlagen: abgebrochen\n")

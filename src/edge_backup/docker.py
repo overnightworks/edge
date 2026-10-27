@@ -56,7 +56,7 @@ def require_daemon() -> None:
             timeout=PROBE_TIMEOUT,
         )
     except host.HostCommandError as error:
-        raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+        raise NotReadyError(f"docker does not answer: {error}") from error
 
 
 def ensure_pinned_images(apps: tuple[App, ...]) -> None:
@@ -92,7 +92,7 @@ def _pull(image: str) -> None:
     try:
         host.run(["docker", "pull", "--quiet", image], label="docker pull", discard_stderr=True)
     except host.HostCommandError as error:
-        raise TargetError(f"das gepinnte Image {image} fehlt und lässt sich nicht laden") from error
+        raise TargetError(f"the pinned image {image} is missing and cannot be pulled") from error
 
 
 def database_container(app: App, database: PostgresDatabase) -> str:
@@ -108,9 +108,11 @@ def database_container(app: App, database: PostgresDatabase) -> str:
             )
         )  # fmt: skip
         if len(ids) > 1:
-            raise TargetError(f"{len(ids)} Datenbank-Container für {app.name} statt genau einem")
+            raise TargetError(
+                f"{len(ids)} database containers for {app.name} instead of exactly one"
+            )
         if not ids:
-            raise NotReadyError(f"kein Datenbank-Container für {app.name}")
+            raise NotReadyError("no database container")
         state = host.run(
             ["docker", "inspect", "--format",
              "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", ids[0]],
@@ -118,9 +120,9 @@ def database_container(app: App, database: PostgresDatabase) -> str:
             timeout=PROBE_TIMEOUT,
         )  # fmt: skip
     except host.HostCommandError as error:
-        raise NotReadyError(f"Docker antwortet nicht: {error}") from error
+        raise NotReadyError(f"docker does not answer: {error}") from error
     if state.decode().strip() not in _READY_STATES:
-        raise NotReadyError(f"die Datenbank von {app.name} ist nicht bereit")
+        raise NotReadyError("database not ready")
     return ids[0]
 
 
@@ -136,7 +138,7 @@ def app_volume(app: App, volume: str) -> str:
         )
     )  # fmt: skip
     if len(names) != 1:
-        raise TargetError(f"{len(names)} Volumes {volume} für {app.name} statt genau einem")
+        raise TargetError(f"{len(names)} volumes {volume} for {app.name} instead of exactly one")
     return names[0]
 
 
@@ -178,7 +180,7 @@ def _read_owner(settings: Settings, volume: str, file: str) -> bytes:
             raise
         raise host.HostCommandError(
             label,
-            f"endete mit Exit {error.exit_code}: {file} fehlt oder ist unlesbar",
+            f"ended with exit {error.exit_code}: {file} is missing or unreadable",
             error.exit_code,
         ) from error
 
@@ -190,7 +192,7 @@ def copy_sqlite(settings: Settings, volume: str, database: SqliteDatabase, targe
     answer = _read_owner(settings, volume, database.file)
     owner = _OWNER.fullmatch(answer.decode(errors="replace"))
     if owner is None or int(owner[1]) == 0:
-        raise TargetError(f"der Besitzer der Datenbank von {database.file} ist unlesbar oder root")
+        raise TargetError(f"the owner of the database {database.file} is unreadable or root")
     host.run(
         _sqlite_argv(
             settings,
@@ -222,12 +224,14 @@ def check_sqlite(settings: Settings, directory: Path, file: str, table: str) -> 
         )
     except host.HostCommandError as error:
         if error.exit_code == sqlite_copy.VERDICT_EXIT:
-            raise VerificationError("die SQLite-Kopie besteht die Prüfung nicht") from error
+            raise VerificationError("the SQLite copy fails its check") from error
         raise
     try:
         return int(output)
     except ValueError as error:
-        raise host.UnreadableOutputError("die Zeilenzahl der SQLite-Kopie ist unlesbar") from error
+        raise host.UnreadableOutputError(
+            "the row count of the SQLite copy is unreadable"
+        ) from error
 
 
 def count_files(settings: Settings, kind: MountKind, source: str, skip: str | None = None) -> int:
@@ -382,4 +386,4 @@ def _lines(output: bytes) -> list[str]:
     try:
         return output.decode().split()
     except UnicodeDecodeError as error:
-        raise host.UnreadableOutputError("docker meldete Ausgabe, die kein UTF-8 ist") from error
+        raise host.UnreadableOutputError("docker printed output that is not UTF-8") from error
