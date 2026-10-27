@@ -1,8 +1,0 @@
-claim_id = "e9d8bfcf04d64b8a9b6d09257ecff56f"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "aa288854d5bc5e931336327940969f35351422d6"
-branch = "claude/issue-445-edge-alias-second-host"
-scope = ["README.md", "docs/architecture.md", "docs/backup.md", "probe/apps/alias_routing.py", "probe/apps/probe.py", "src/edge/app_contract.py", "src/edge/barrier.py", "src/edge_check/check.py", "src/edge_check/docker.py", "tests/test_edge_app_contract.py", "tests/test_edge_barrier.py", "tests/test_edge_check.py", "traefik.yml"]
-opened_commit = "df070f19c468b4d7d5ab6b55ade037a18792ca9c"
-whole_reason = "One label has one contract, one route and one runtime finding; the contract without the route accepts a label that does nothing, the route without the contract is unchecked."
