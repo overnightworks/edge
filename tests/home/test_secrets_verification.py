@@ -228,7 +228,8 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
 
     captured = capsys.readouterr()
     assert code == 1
-    assert squeezed(captured.out).count(f"✗ cloudflare/read rejected {UNSENDABLE_PASTE} · paste again or leave empty") == 1
+    rejection = f"rejected {UNSENDABLE_PASTE} · paste again or leave empty"
+    assert sorted(line.split(" ", 2)[1] for line in squeezed(captured.out) if line.endswith(rejection)) == ["cloudflare/read", "github/read"]
     for part in (canary, "FAKE-CANARY-HEAD", "FAKE-CANARY-TAIL"):
         assert part not in captured.out + captured.err
     assert local_server.seen == []
