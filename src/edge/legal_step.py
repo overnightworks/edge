@@ -101,7 +101,9 @@ def _changed_blocks(
     except FileNotFoundError:
         built = ""
     return tuple(
-        block.path for block in blocks if block.page == page and not is_published_in(frame, block, built)
+        block.path
+        for block in blocks
+        if block.page == page and not is_published_in(frame, block, built)
     )
 
 
