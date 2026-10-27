@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The operator's smoke of the agent service: one run, its event types and its text on stdout.
 
-    docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...]
+    docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...] | --offer
 
 Stdin holds exactly two lines, the person's token and then the workload's, and nothing else
 supplies one: there is no option, no environment variable and no file for a token. Both tokens
@@ -11,6 +11,8 @@ run and prints each event's type and the text of the answer; exit 0 when the run
 the CLI run behind it can be seen, then closes it before any answer, to see that the service
 ends that run; it fails when the run succeeded (docs/agent-service.md, "Proofs"). Each `--tool`
 lists a tool of the app in the request, with the effect the service judges (the probes' option).
+`--offer` asks `GET /offer` once, with both tokens, and prints one line per offered model, or
+the service's refusal; no run starts.
 `live_smoke.py` runs it with the sign-in.
 
 Only the standard library of the service image is used.
@@ -44,6 +46,7 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 TEXT_EVENTS = {"assistant_text", "succeeded"}
 MAX_REFUSAL_BYTES = 65536
 REDACTED = "[token]"
+EMPTY_OFFER = "the offer lists no model"
 
 
 class SmokeFailed(Exception):
@@ -54,7 +57,9 @@ class QuietParser(argparse.ArgumentParser):
     """A rejected argument is never printed: a token typed as an option must not reach a log."""
 
     def error(self, message: str) -> NoReturn:
-        self.exit(2, "smoke: unusable arguments; the options are --timeout, --cancel and --tool\n")
+        self.exit(
+            2, "smoke: unusable arguments; the options: --timeout, --cancel, --tool, --offer\n"
+        )
 
 
 @dataclass(frozen=True)
@@ -115,6 +120,13 @@ def text_of(frame: Frame, key: str) -> str:
     return value
 
 
+def offer_line(entry: dict) -> str:
+    return (
+        f"{entry['id']}: route {entry['route']}, ready {entry['ready']}, "
+        f"background {entry['background']}"
+    )
+
+
 def refusal_line(response: http.client.HTTPResponse) -> str:
     """The service's typed refusal, or the bare status when the body is not one."""
     body = response.read(MAX_REFUSAL_BYTES)
@@ -156,6 +168,24 @@ class Smoke:
             return self.read_run(response, connection, cancel)
         except (OSError, http.client.HTTPException, ValueError) as error:
             self.say(f"the run broke off: {type(error).__name__}")
+            return 1
+        finally:
+            connection.close()
+
+    def offer(self, timeout_seconds: float) -> int:
+        connection = self.connect(SERVICE_HOST, SERVICE_PORT, timeout_seconds)
+        try:
+            connection.request("GET", "/offer", None, self.headers())
+            response = connection.getresponse()
+            if response.status != http.HTTPStatus.OK:
+                self.say(refusal_line(response))
+                return 1
+            models = json.loads(response.read())["data"]
+            for line in [offer_line(entry) for entry in models] or [EMPTY_OFFER]:
+                self.say(line)
+            return 0
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as error:
+            self.say(f"the offer broke off: {type(error).__name__}")
             return 1
         finally:
             connection.close()
@@ -234,19 +264,23 @@ def main(
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--cancel", action="store_true")
     parser.add_argument("--tool", type=tool_option, action="append", default=[])
+    parser.add_argument("--offer", action="store_true")
     arguments = parser.parse_args(argv)
     tools = dict(arguments.tool)
     if len(tools) != len(arguments.tool):
         parser.error("a tool named twice")
+    if arguments.offer and (arguments.cancel or tools):
+        parser.error("the offer starts no run")
     try:
         tokens = read_tokens(stdin)
     except SmokeFailed as failure:
         print(f"smoke: {failure}", file=sys.stderr)
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
-    return Smoke(tokens, out, connect, pause, tools).run(
-        arguments.timeout, prompt, arguments.cancel
-    )
+    smoke = Smoke(tokens, out, connect, pause, tools)
+    if arguments.offer:
+        return smoke.offer(arguments.timeout)
+    return smoke.run(arguments.timeout, prompt, arguments.cancel)
 
 
 if __name__ == "__main__":

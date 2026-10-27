@@ -389,13 +389,13 @@ services:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
 
-  # The agent service (agent-runtime v0.7.0; the image is built on the PC, docs/agent-service.md,
+  # The agent service (the image is built on the PC, docs/agent-service.md,
   # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
   # login file that group or others can touch, so the container user must own the login directory
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.7.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.8.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"

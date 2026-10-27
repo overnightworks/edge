@@ -194,6 +194,7 @@ def test_the_one_profile_is_claude_with_its_token_file(configuration):
         "claude": {
             "provider": "claude",
             "token_file": "/run/agent-service/login/claude/token",
+            "background": False,
         }
     }
 
