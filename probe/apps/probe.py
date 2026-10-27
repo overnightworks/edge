@@ -57,7 +57,6 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
 from emergency_switch import EmergencySwitch  # noqa: E402
-from health_cell import HelperWithoutHealthcheck  # noqa: E402
 
 from edge import checkout  # noqa: E402
 
@@ -723,6 +722,28 @@ class Probe:
         expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
+    def cell_h1_helper_without_healthcheck(self) -> None:
+        """A running service without a healthcheck, or with `disable: true`, is settled: Docker
+        reports it no health, the app is recorded and then quiet in the plan."""
+        self.set_enabled(True)
+        for key, disabled in (("h1_no_check", False), ("h1_disabled", True)):
+            tag = TAGS[key]
+            self.release(
+                tag, services=("web", "helper"), unchecked=("helper",), check_disabled=disabled
+            )
+            self.apply()
+            rows = {row["service"]: row for row in self.containers()}
+            expect(sorted(rows) == ["helper", "web"], f"H1: containers {rows}")
+            expect(
+                rows["helper"]["state"] == "running" and rows["helper"]["health"] == "",
+                f"H1: the helper is {rows['helper']}",
+            )
+            expect(rows["web"]["health"] == "healthy", "H1: web is not healthy")
+            expect(self.deployed()["tag"] == tag, "H1: the app was not recorded")
+            out = self.apply(typed=b"no\n")
+            expect("nothing to change" in out, f"H1: the next plan said: {out[-200:]}")
+        print("H1 held: a running helper without a healthcheck (absent, disabled) is recorded")
+
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
     try:
@@ -748,7 +769,7 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_c3_renamed_service()
         probe.cell_c4_compose_file_unusable()
         probe.cell_c5_dropped_service_and_leftover()
-        HelperWithoutHealthcheck(probe, TAGS).prove()
+        probe.cell_h1_helper_without_healthcheck()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
         print(f"PROBE FAILED: {failure}")
         return 1
