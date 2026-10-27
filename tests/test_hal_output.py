@@ -53,16 +53,22 @@ def test_a_row_shows_text_from_outside_as_one_line_of_plain_text(
         (3720, "1h02m"),
     ],
 )
-def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(seconds: float, shown: str) -> None:
+def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(
+    seconds: float, shown: str
+) -> None:
     """#500: under a second `<1s`, from 60 s `XmYYs`, from one hour `XhYYm`."""
 
     assert format_duration(seconds) == shown
 
 
-def test_the_run_time_stands_after_the_counts_and_before_the_hint(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_run_time_stands_after_the_counts_and_before_the_hint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """#500: every verdict that knows its run time ends its counts with it."""
 
-    write_verdict(Verdict(Glyph.CHANGE, "setup plan", ((2, Event.CHANGED),), "run hal setup --apply", 3.2))
+    write_verdict(
+        Verdict(Glyph.CHANGE, "setup plan", ((2, Event.CHANGED),), "run hal setup --apply", 3.2)
+    )
     write_verdict(Verdict(Glyph.DONE, "setup done", ((1, Event.CHANGED),), elapsed_seconds=47.9))
 
     assert capsys.readouterr().out.splitlines() == [
@@ -77,7 +83,9 @@ def test_on_a_terminal_the_run_time_is_dim(monkeypatch: pytest.MonkeyPatch) -> N
     out, _err = put_on_terminals(monkeypatch)
     write_verdict(Verdict(Glyph.DONE, "setup", ((1, Event.CHANGED),), elapsed_seconds=65))
 
-    assert out.getvalue() == "\x1b[1m✓ setup\x1b[0m · \x1b[2m1 changed\x1b[0m · \x1b[2m1m05s\x1b[0m\n"
+    assert out.getvalue() == (
+        "\x1b[1m✓ setup\x1b[0m · \x1b[2m1 changed\x1b[0m · \x1b[2m1m05s\x1b[0m\n"
+    )
 
 
 def test_a_verdict_is_a_glyph_the_summary_its_counts_and_its_hint_flush_left(

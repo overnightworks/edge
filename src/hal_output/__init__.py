@@ -127,8 +127,9 @@ def write_row(row: Row) -> None:
 
 
 def write_verdict(verdict: Verdict) -> None:
-    """The last line of a command on stdout: the summary, its non-zero counts, the run time, then the hint.
-    On a terminal the glyph and summary are bold in the glyph's colour, the counts and the run time dim."""
+    """The last line of a command on stdout: the summary, its non-zero counts, the run time, then
+    the hint. On a terminal the glyph and summary are bold in the glyph's colour, the counts and
+    the run time dim."""
     stdout = sys.stdout
     counted = ", ".join(
         f"{number} {printable(str(label))}" for number, label in verdict.counts if number
