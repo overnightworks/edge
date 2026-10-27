@@ -187,6 +187,7 @@ class Step:
     and `next_step` the command that goes on from there.
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
     `open_fact` names what a dry run that found something to change shows on its row.
+    `details` are the lines printed under the row of an applied step.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
     `may_leave_system_partial` marks the step that runs as root, whose failed apply leaves /etc half written.
@@ -202,6 +203,7 @@ class Step:
     next_step: str = RERUN
     needs_first: Callable[[], str] = lambda: ""
     open_fact: Callable[[], str] = lambda: ""
+    details: Callable[[], list[str]] = lambda: []
     events: StepEvents = field(default_factory=StepEvents)
     listed_by_next: bool = True
     operators_only: bool = False
@@ -432,6 +434,7 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             units.apply,
             UNITS_WHY,
             "the user units did not come up",
+            details=units.loaded_command_lines,
             operators_only=True,
         ),
         _local_step(
@@ -519,12 +522,15 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     rows = list(SetupRow)
     for position, row in enumerate(rows):
         row_outcomes: list[Outcome] = []
+        row_details: list[str] = []
         for step in (step for step in steps if step.row is row):
             if not step.runs_for(role):
                 row_outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
                 continue
             try:
                 row_outcomes.append(step.run(apply))
+                if apply:
+                    row_details.extend(step.details())
             except (OSError, StepFailed) as error:
                 event = (
                     SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
@@ -536,6 +542,8 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
                 return 1
         outcome = max(row_outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
         write_row(outcome.row(row))
+        for line in row_details:
+            print(line)
         outcomes.append(outcome)
     verdict = verdict_of(outcomes, apply)
     write_verdict(verdict.glyph, verdict.summary, verdict.detail)

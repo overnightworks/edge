@@ -184,19 +184,35 @@ def test_every_command_of_a_unit_with_several_is_kept() -> None:
     assert LoadedUnit.parse(shown).commands == ("/bin/first", "/bin/second --flag")
 
 
-def test_hal_setup_prints_the_loaded_commands_under_the_heading_of_its_step(
+def test_hal_setup_prints_the_loaded_commands_right_below_the_timers_row(
     machine: Machine, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def only_systemctl(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else None
 
+    def settled(row: setup.SetupRow) -> setup.Step:
+        return setup.Step(
+            "settled",
+            row,
+            lambda: True,
+            lambda: CheckState.UNCHANGED,
+            lambda: Applied.UNCHANGED,
+            "",
+            "",
+        )
+
     layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
     units = next(step for step in setup.pending(layout, ports) if step.name == USER_UNITS_STEP)
-    monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (units,))
+    others = [settled(row) for row in setup.SetupRow if row is not setup.SetupRow.TIMERS]
+    monkeypatch.setattr(setup, "_steps", lambda _layout, _ports: (*others, units))
 
     assert setup.setup(layout, ports, apply=True) == 0
 
-    assert capsys.readouterr().out.splitlines() == [f"{USER_UNITS_STEP}: changed", *LOADED_BACKUP]
+    lines = capsys.readouterr().out.splitlines()
+    timers_row = next(
+        position for position, line in enumerate(lines) if line.split() == ["\u2713", "timers", "changed"]
+    )
+    assert lines[timers_row + 1 : timers_row + 1 + len(LOADED_BACKUP)] == LOADED_BACKUP
 
 
 def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: Machine) -> None:
