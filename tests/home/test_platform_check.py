@@ -1,4 +1,4 @@
-"""`home check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3; #460 D1-D4) against a fake docker, a reboot flag file and a fake disk."""
+"""`home check`'s platform check (overnightworks/edge#340 C1-C3, C6, S1, S4, R1, Z2, Z3; #460 D1-D4; #466 S-1..S-7) against a fake docker, a reboot flag file and a fake disk."""
 
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ class FakeDocker:
     """Answers `docker ps` and `docker inspect`; an inspect with any format but the allowed one answers the canary line."""
 
     def __init__(self) -> None:
-        self.containers: list[tuple[str, str, str, int, bool]] = []  # name, status, health, exit code, in a compose project (the project is called edge)
+        self.containers: list[tuple[str, str, str, int, str]] = []  # name, status, health, exit code, compose project (empty: none)
         self.unreadable = False
         self.removed_while_inspected: list[str] = []  # each inspect call takes one name: it fails and that container is gone
         self.inspect_calls: list[list[str]] = []
 
-    def add(self, name: str, status: str = "running", health: str = "", exit_code: int = 0, in_project: bool = True) -> None:
-        self.containers.append((name, status, health, exit_code, in_project))
+    def add(self, name: str, status: str = "running", health: str = "", exit_code: int = 0, project: str = "edge") -> None:
+        self.containers.append((name, status, health, exit_code, project))
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if self.unreadable:
@@ -40,7 +40,7 @@ class FakeDocker:
             self.containers = [container for container in self.containers if container[0] != gone]
             return None
         listed = [container for container in self.containers if container[0] in argv[4:]]
-        return "".join(f"/{n}\t{s}\t{h}\t{c}\t{'edge' if p else ''}\n" for n, s, h, c, p in listed)
+        return "".join(f"/{n}\t{s}\t{h}\t{c}\t{p}\n" for n, s, h, c, p in listed)
 
 
 @pytest.fixture
@@ -53,8 +53,8 @@ def reboot_file(tmp_path: Path) -> Path:
     return tmp_path / "reboot-required"
 
 
-def rules_found(docker: FakeDocker, reboot_file: Path, disk: FakeDisk) -> set[tuple[str, str]]:
-    findings, _report = platform_check.inspect(docker, NOW, reboot_file, disk)
+def rules_found(docker: FakeDocker, reboot_file: Path, disk: FakeDisk, switched_off: frozenset[str] = frozenset()) -> set[tuple[str, str]]:
+    findings, _report = platform_check.inspect(docker, NOW, reboot_file, disk, switched_off)
     return {(f.rule, f.subject) for f in findings}
 
 
@@ -75,20 +75,20 @@ def test_a_broken_compose_container_is_a_finding_named_by_its_state(docker, rebo
 
 
 @pytest.mark.parametrize(
-    ("status", "health", "exit_code", "in_project"),
+    ("status", "health", "exit_code", "project"),
     [
-        ("running", "healthy", 0, True),
-        ("running", "starting", 0, True),
-        ("running", "", 0, True),
-        ("exited", "", 0, True),
-        ("exited", "unhealthy", 0, True),
-        ("created", "", 0, True),
-        ("exited", "", 1, False),
-        ("running", "unhealthy", 0, False),
+        ("running", "healthy", 0, "edge"),
+        ("running", "starting", 0, "edge"),
+        ("running", "", 0, "edge"),
+        ("exited", "", 0, "edge"),
+        ("exited", "unhealthy", 0, "edge"),
+        ("created", "", 0, "edge"),
+        ("exited", "", 1, ""),
+        ("running", "unhealthy", 0, ""),
     ],
 )
-def test_a_container_that_is_fine_or_outside_compose_is_no_finding(docker, reboot_file, fake_disk, status, health, exit_code, in_project) -> None:
-    docker.add("some-container", status, health, exit_code, in_project)
+def test_a_container_that_is_fine_or_outside_compose_is_no_finding(docker, reboot_file, fake_disk, status, health, exit_code, project) -> None:
+    docker.add("some-container", status, health, exit_code, project)
 
     assert rules_found(docker, reboot_file, fake_disk) == set()
 
@@ -131,7 +131,7 @@ def test_many_containers_are_inspected_in_one_call_and_healthy_ones_appear_only_
         docker.add(f"edge-service-{number}-1", "running", "healthy")
     docker.add("edge-broken-1", "running", "unhealthy")
 
-    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert len(docker.inspect_calls) == 1
     assert [f.subject for f in findings] == ["edge"]
@@ -142,7 +142,7 @@ def test_many_containers_are_inspected_in_one_call_and_healthy_ones_appear_only_
 def test_a_wider_projection_than_the_named_fields_would_show_in_the_report_and_the_allowed_one_keeps_it_out(docker, reboot_file, fake_disk) -> None:
     docker.add("edge-step-ca-1", "running", "unhealthy")
 
-    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert docker.inspect_calls[0][3] == ALLOWED_PLATFORM_INSPECT_FORMAT
     assert [f.subject for f in findings] == ["edge"]
@@ -154,7 +154,7 @@ def test_the_retry_after_a_failed_inspection_asks_for_the_same_named_fields_only
     docker.add("edge-step-ca-1", "running", "unhealthy")
     docker.removed_while_inspected = ["edge-job-1"]
 
-    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert [call[3] for call in docker.inspect_calls] == [ALLOWED_PLATFORM_INSPECT_FORMAT] * 2
     assert INSPECT_CANARY not in report
@@ -165,7 +165,7 @@ def test_a_pending_reboot_is_a_finding_with_the_date_the_flag_appeared(docker, r
     flagged = datetime(2026, 10, 16, 8, 0).timestamp()
     os.utime(reboot_file, (flagged, flagged))
 
-    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert [(f.rule, f.subject) for f in findings] == [("reboot-pending", "reboot")]
     assert "seit 16.10.2026" in findings[0].detail
@@ -174,9 +174,9 @@ def test_a_pending_reboot_is_a_finding_with_the_date_the_flag_appeared(docker, r
 
 def test_the_reboot_finding_keeps_its_identity_as_the_flag_ages(docker, reboot_file, fake_disk) -> None:
     reboot_file.touch()
-    first, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    first, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
     os.utime(reboot_file, (1.0, 1.0))
-    later, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    later, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert [f.identity for f in first] == [f.identity for f in later]
 
@@ -201,9 +201,9 @@ def test_a_tenth_free_or_more_is_no_finding(docker, reboot_file, fake_disk, free
 def test_the_report_carries_the_free_and_total_gigabytes_and_the_share(docker, reboot_file, fake_disk) -> None:
     """#460 D3: the report carries the free and total gigabytes and the share."""
     fake_disk.free_share = 0.19
-    _findings, quiet_report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    _findings, quiet_report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
     fake_disk.free_share = 0.08
-    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert "- Festplatte /: 190 GB von 1000 GB frei (19 %)" in quiet_report
     assert "- Festplatte /: 80 GB von 1000 GB frei (8 %)" in report
@@ -214,9 +214,9 @@ def test_the_report_carries_the_free_and_total_gigabytes_and_the_share(docker, r
 def test_the_disk_finding_keeps_its_identity_as_the_free_space_shrinks(docker, reboot_file, fake_disk) -> None:
     """#460 D1 (#340 I1): the finding keeps its identity as the free space shrinks."""
     fake_disk.free_share = 0.09
-    first, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    first, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
     fake_disk.free_share = 0.07
-    later, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    later, _ = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert [f.identity for f in first] == [f.identity for f in later]
 
@@ -225,7 +225,7 @@ def test_the_share_prints_rounded_down_without_a_floating_point_error(docker, re
     """#460 D3: 29 GB free of 100 GB reads 29 %, never 28 %."""
     fake_disk.free_share = 0.29
 
-    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk)
+    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
 
     assert "- Festplatte /: 290 GB von 1000 GB frei (29 %)" in report
 
@@ -236,3 +236,70 @@ def test_the_real_disk_reader_reports_a_total_and_a_free_figure_in_bytes(tmp_pat
 
     assert 0 <= space.free <= space.total
     assert space.total > 0
+
+
+HOPIN_OFF = frozenset({"hopin"})
+
+
+def test_a_switched_off_apps_exited_container_is_no_finding_and_the_report_names_the_switch_without_counting_it_as_fine(docker, reboot_file, fake_disk) -> None:
+    """#466 S-1 (#415 Z8): a container of an app switched off with hal stop is no finding; the report stays honest."""
+    docker.add("hopin-web-1", "exited", "", 143, "hopin")
+    docker.add("edge-step-ca-1", "running", "healthy")
+
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, HOPIN_OFF)
+
+    assert findings == []
+    assert "Container mit Compose-Projekt: 2, davon in Ordnung 1" in report
+    assert "Mit hal stop abgeschaltet: hopin" in report
+
+
+@pytest.mark.parametrize("exit_code", [137, 1, 2])
+def test_a_switched_off_apps_exited_container_is_no_finding_whatever_its_code(docker, reboot_file, fake_disk, exit_code) -> None:
+    """#466 S-2: Z8 judges the switch, not the code the app's signal handling ends with."""
+    docker.add("hopin-web-1", "exited", "", exit_code, "hopin")
+
+    assert rules_found(docker, reboot_file, fake_disk, HOPIN_OFF) == set()
+
+
+def test_the_same_exit_without_a_switch_is_a_finding(docker, reboot_file, fake_disk) -> None:
+    """#466 S-3: the Z8 counterexample."""
+    docker.add("hopin-web-1", "exited", "", 143, "hopin")
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("container-exited", "hopin")}
+
+
+def test_another_apps_exit_is_a_finding_while_one_app_is_switched_off(docker, reboot_file, fake_disk) -> None:
+    """#466 S-4."""
+    docker.add("presentator-web-1", "exited", "", 1, "presentator")
+
+    assert rules_found(docker, reboot_file, fake_disk, HOPIN_OFF) == {("container-exited", "presentator")}
+
+
+@pytest.mark.parametrize(
+    ("status", "health", "rule"),
+    [("restarting", "", "container-restarting"), ("dead", "", "container-dead"), ("running", "unhealthy", "container-unhealthy")],
+)
+def test_a_switched_off_app_that_broke_after_being_started_again_is_still_a_finding(docker, reboot_file, fake_disk, status, health, rule) -> None:
+    """#466 S-5: a stop ends in exited, so these states mean the app was started again under the switch."""
+    docker.add("hopin-web-1", status, health, 0, "hopin")
+
+    assert rules_found(docker, reboot_file, fake_disk, HOPIN_OFF) == {(rule, "hopin")}
+
+
+def test_only_compose_project_names_in_the_switch_directory_are_switches(tmp_path) -> None:
+    """#466 S-6: a half-written temporary and a foreign name are no switch."""
+    directory = tmp_path / platform_check.SWITCHES_DIRECTORY
+    directory.mkdir(parents=True)
+    for name in (".hopin.k3x9", "Bad Name", "hopin", "agent-service"):
+        (directory / name).write_text("2026-10-27T09:00:00+01:00")
+
+    assert platform_check.read_switched_off(tmp_path) == {"hopin", "agent-service"}
+
+
+def test_a_missing_switch_directory_means_no_switch_and_the_report_has_no_switch_line(docker, reboot_file, fake_disk, tmp_path) -> None:
+    """#466 S-7."""
+    switched_off = platform_check.read_switched_off(tmp_path)
+    _findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, switched_off)
+
+    assert switched_off == frozenset()
+    assert "abgeschaltet" not in report

@@ -101,7 +101,7 @@ def _logs_check(ctx: CheckContext) -> CheckFindings:
 
 
 def _platform_check(ctx: CheckContext) -> CheckFindings:
-    findings, report = platform_check.inspect(ctx.run, ctx.now, REBOOT_REQUIRED_FILE, ctx.disk_space)
+    findings, report = platform_check.inspect(ctx.run, ctx.now, REBOOT_REQUIRED_FILE, ctx.disk_space, platform_check.read_switched_off(ctx.layout.home))
     return report, frozenset(finding.identity for finding in findings)
 
 

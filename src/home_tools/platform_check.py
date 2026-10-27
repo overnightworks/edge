@@ -2,13 +2,15 @@
 
 It asks Docker for named fields only (name, state, health, exit code, the compose project label), never
 any other label or the full inspect JSON, which holds each container's environment, and never a log. From the reboot
-flag it reads whether the file exists and when it was changed; from the disk of `/` its total and free bytes.
+flag it reads whether the file exists and when it was changed; from the disk of `/` its total and free bytes; from
+the emergency switches only the names of the switched-off apps, never what the files hold.
 Nothing is started, stopped or repaired. Docker that
 cannot be read is a finding of its own, never a pass.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -27,6 +29,8 @@ INSPECT_FORMAT = (
     '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}'
     '\t{{index .Config.Labels "com.docker.compose.project"}}'
 )
+SWITCHES_DIRECTORY = Path(".local/state/edge/stopped")  # below the home directory; one file per app switched off with `hal stop`, which `home` only reads
+COMPOSE_PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 BROKEN_STATES = {"restarting": "container-restarting", "dead": "container-dead"}
 
 
@@ -60,15 +64,28 @@ def read_disk_space(path: Path) -> DiskSpace:
     return DiskSpace(usage.total, usage.free)
 
 
+def read_switched_off(home: Path) -> frozenset[str]:
+    """The names of the switch files; a missing directory is no switch, an unreadable one breaks the platform check."""
+    try:
+        names = [entry.name for entry in (home / SWITCHES_DIRECTORY).iterdir()]
+    except FileNotFoundError:
+        return frozenset()
+    return frozenset(name for name in names if COMPOSE_PROJECT_NAME.fullmatch(name))
+
+
 def _parse_container(line: str) -> ContainerState:
     name, status, health, exit_code, compose_project = line.split("\t")
     return ContainerState(name.removeprefix("/"), status, health, int(exit_code), compose_project)
 
 
-def _container_finding(container: ContainerState) -> Finding | None:
+def _stopped_on_purpose(container: ContainerState, switched_off: frozenset[str]) -> bool:
+    return container.status == "exited" and container.exit_code != 0 and container.compose_project in switched_off
+
+
+def _container_finding(container: ContainerState, switched_off: frozenset[str]) -> Finding | None:
     if container.status in BROKEN_STATES:
         return Finding(BROKEN_STATES[container.status], container.compose_project, f"{container.name}: Zustand {container.status}")
-    if container.status == "exited" and container.exit_code != 0:
+    if container.status == "exited" and container.exit_code != 0 and not _stopped_on_purpose(container, switched_off):
         return Finding("container-exited", container.compose_project, f"{container.name}: beendet mit Code {container.exit_code}")
     if container.status == "running" and container.health == "unhealthy":
         return Finding("container-unhealthy", container.compose_project, f"{container.name}: Gesundheitsprüfung schlägt fehl")
@@ -89,13 +106,17 @@ def _inspect_all(run: CommandRunner) -> list[ContainerState] | None:
     return None
 
 
-def _container_findings(run: CommandRunner) -> tuple[list[Finding], list[str]]:
+def _container_findings(run: CommandRunner, switched_off: frozenset[str]) -> tuple[list[Finding], list[str]]:
     containers = _inspect_all(run)
     if containers is None:
         return [Finding("docker-unreadable", "docker", "`docker ps` oder `docker inspect` lässt sich nicht ausführen")], []
     judged = [container for container in containers if container.compose_project]
-    findings = [finding for container in judged if (finding := _container_finding(container))]
-    return findings, [f"Container mit Compose-Projekt: {len(judged)}, davon in Ordnung {len(judged) - len(findings)}"]
+    findings = [finding for container in judged if (finding := _container_finding(container, switched_off))]
+    excused = sum(_stopped_on_purpose(container, switched_off) for container in judged)
+    lines = [f"Container mit Compose-Projekt: {len(judged)}, davon in Ordnung {len(judged) - len(findings) - excused}"]
+    if switched_off:
+        lines.append(f"Mit hal stop abgeschaltet: {', '.join(sorted(switched_off))}")
+    return findings, lines
 
 
 def _reboot_findings(reboot_file: Path) -> tuple[list[Finding], list[str]]:
@@ -116,9 +137,9 @@ def _disk_findings(disk_space: DiskSpaceReader) -> tuple[list[Finding], list[str
     return [], [status]
 
 
-def inspect(run: CommandRunner, now: datetime, reboot_file: Path, disk_space: DiskSpaceReader) -> tuple[list[Finding], str]:
+def inspect(run: CommandRunner, now: datetime, reboot_file: Path, disk_space: DiskSpaceReader, switched_off: frozenset[str]) -> tuple[list[Finding], str]:
     """What `home check` reads of the platform; findings and their report."""
-    container_findings, container_lines = _container_findings(run)
+    container_findings, container_lines = _container_findings(run, switched_off)
     reboot_findings, reboot_lines = _reboot_findings(reboot_file)
     disk_findings, disk_lines = _disk_findings(disk_space)
     findings = container_findings + reboot_findings + disk_findings
