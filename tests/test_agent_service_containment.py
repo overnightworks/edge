@@ -189,15 +189,17 @@ def test_b3_at_the_frame_fails_only_when_b_is_dead(containment):
 
 
 def test_b3_is_not_driven_when_no_marker_was_seen(containment):
+    nothing_seen = snapshot(containment)
     with pytest.raises(containment.NotDriven):
-        containment.expect_planted(snapshot(containment))
+        containment.expect_planted(nothing_seen)
 
 
 @pytest.mark.parametrize("missing", ["A", "B"])
 def test_b3_is_not_driven_when_one_marker_was_not_seen(containment, missing):
     seen = [r for r in planted(containment) if (r.pid == 41) != (missing == "A")]
+    window = snapshot(containment, *seen)
     with pytest.raises(containment.NotDriven, match=f"marker {missing}"):
-        containment.expect_planted(snapshot(containment, *seen))
+        containment.expect_planted(window)
 
 
 @pytest.mark.parametrize(
@@ -208,8 +210,9 @@ def test_b3_is_not_driven_when_one_marker_was_not_seen(containment, missing):
 def test_b3_is_not_driven_when_a_is_not_in_the_clis_group(containment, marker_a):
     cli = process(containment, CLI_PID, 7, 7, 7, "n-c11c")
     seen = (cli, process(containment, *marker_a), process(containment, 42, CLI_PID, 42, 42))
+    window = snapshot(containment, *seen)
     with pytest.raises(containment.NotDriven, match="marker A"):
-        containment.expect_planted(snapshot(containment, *seen))
+        containment.expect_planted(window)
 
 
 def test_a_marker_is_told_from_the_cli_by_its_name(containment):
