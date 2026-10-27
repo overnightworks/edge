@@ -520,6 +520,16 @@ def no_restore_server_left(machine: Machine) -> bool:
     return started == removed_servers(machine).count(RESTORE_SERVER_ID)
 
 
+def assert_the_restore_test_fails_verification(edge_backup, apps: list) -> None:
+    outcome = edge_backup("restore", "--test", *apps)
+
+    assert outcome.exit_code == 3
+    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
+        "verify",
+        "verification-failed",
+    )
+
+
 def mount_of(argv: list[str], target: str) -> dict[str, str]:
     mounts = [argv[i + 1] for i, argument in enumerate(argv) if argument == "--mount"]
     return next(

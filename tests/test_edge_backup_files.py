@@ -9,6 +9,7 @@ from edge_backup_support import (
     SQLITE_TOML,
     STATUS_KEYS,
     Machine,
+    assert_the_restore_test_fails_verification,
     app_history,
     declare_apps,
     mount_of,
@@ -87,15 +88,19 @@ def test_a_files_key_is_refused_where_it_has_no_meaning(toml, key):
 )
 def test_a_files_volume_is_a_plain_name_that_collides_with_nothing_in_the_snapshot(volume):
     """#468 M3."""
+    toml = _toml(f'files_volume = "{volume}"')
+
     with pytest.raises(AppsError, match="files_volume"):
-        parse_apps(_toml(f'files_volume = "{volume}"'))
+        parse_apps(toml)
 
 
 @pytest.mark.parametrize("skip", ["*", "**", "a/b*", "a?*", "a", "*a", "é*", ""])
 def test_a_files_skip_is_one_prefix_and_one_trailing_star(skip):
     """#468 M4."""
+    toml = _toml('files_volume = "builds"', f'files_skip = "{skip}"')
+
     with pytest.raises(AppsError, match="files_skip"):
-        parse_apps(_toml('files_volume = "builds"', f'files_skip = "{skip}"'))
+        parse_apps(toml)
 
 
 def test_the_files_volume_is_mounted_read_only_with_one_anchored_exclude(edge_backup, builds, home):
@@ -226,13 +231,7 @@ def test_the_restore_test_fails_on_a_different_count_a_manifest_without_files_or
     """#468 M9."""
     tamper(builds)
 
-    outcome = edge_backup("restore", "--test", *backed_up)
-
-    assert outcome.exit_code == 3
-    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
-        "verify",
-        "verification-failed",
-    )
+    assert_the_restore_test_fails_verification(edge_backup, backed_up)
 
 
 def test_the_restore_test_mounts_no_volume_for_the_files_count(edge_backup, builds, backed_up):

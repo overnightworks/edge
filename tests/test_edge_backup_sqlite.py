@@ -16,6 +16,7 @@ from edge_backup_support import (
     SQLITE_TOML,
     STATUS_KEYS,
     Machine,
+    assert_the_restore_test_fails_verification,
     app_history,
     declare_apps,
 )
@@ -475,13 +476,7 @@ def test_the_restore_test_fails_on_a_different_count_a_missing_rows_or_a_bad_cop
     """#461 A5 M11: a different count, missing rows or a bad copy fail."""
     tamper(machine)
 
-    outcome = edge_backup("restore", "--test", *backed_up)
-
-    assert outcome.exit_code == 3
-    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
-        "verify",
-        "verification-failed",
-    )
+    assert_the_restore_test_fails_verification(edge_backup, backed_up)
 
 
 @pytest.mark.parametrize(("require_rows", "exit_code"), [(False, 0), (True, 3)])
