@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from hal_output import printable
+
 REPOSITORY = Path(__file__).resolve().parents[2]
 READ_SECONDS = 60
 _COMPATIBILITY_VARIABLE = "COMPOSE_COMPATIBILITY"
@@ -318,12 +320,3 @@ def last_line(output: str) -> str:
     there is none. The one owner for every refusal that quotes a command's own words."""
     lines = [line for line in output.splitlines() if line.strip()]
     return printable(lines[-1].strip()) if lines else "no output"
-
-
-def printable(text: str) -> str:
-    """`text` with every character a terminal would act on escaped (a newline as `\\n`, ESC as
-    `\\x1b`), so text from outside, a path or a command's line, stays one line of plain text."""
-    return "".join(
-        character if character.isprintable() else character.encode("unicode_escape").decode()
-        for character in text
-    )

@@ -21,8 +21,8 @@ from typing import Any
 
 import yaml
 
-from edge import compose
 from edge_check.docker import EDGE_ALIAS_LABEL, EDGE_NAME_LABEL, TRAEFIK_NAME
+from hal_output import printable
 
 _TRAEFIK_ENABLE = "traefik.enable"
 _WAITING_CONDITIONS = {"service_healthy", "service_completed_successfully"}
@@ -65,7 +65,7 @@ def check(text: str | None, entry: str, tag: str, hosts: Sequence[str]) -> tuple
         raise refuse(f"names its project other than {entry} (name)")
     for name, definition in services.items():
         if reason := _service_refusal(definition):
-            raise refuse(f"service {compose.printable(str(name))} {reason}")
+            raise refuse(f"service {printable(str(name))} {reason}")
     for reason in _routing_refusals(services, hosts):
         raise refuse(reason)
     return tuple(str(name) for name in services)
@@ -82,7 +82,7 @@ def check_image_volumes(
         for path in declared.get(str(name), ()):
             if path.rstrip("/") not in covered:
                 raise ContractError(
-                    f"services.{entry}: image of service {compose.printable(str(name))} at {tag} "
+                    f"services.{entry}: image of service {printable(str(name))} at {tag} "
                     "declares a volume that no named volume of the service covers (volumes); "
                     "give it a named volume"
                 )
@@ -192,7 +192,7 @@ def _routing_refusals(services: dict, hosts: Sequence[str]) -> Iterator[str]:
     for host in hosts:
         if len(holders.get(host, [])) != 1:
             yield (
-                f"host {compose.printable(host)} needs exactly one service labelled "
+                f"host {printable(host)} needs exactly one service labelled "
                 f"{EDGE_NAME_LABEL} or {EDGE_ALIAS_LABEL} with it (labels)"
             )
 
@@ -201,7 +201,7 @@ def _service_refusals(
     key: str, definition: dict, hosts: Sequence[str], holders: dict[str, list[str]]
 ) -> Iterator[str]:
     """One service's refusals; the hosts it holds are added to `holders`."""
-    service = f"service {compose.printable(key)}"
+    service = f"service {printable(key)}"
     if (interpolated := _interpolated_label(definition)) is not None:
         named = f" ({interpolated})" if interpolated in _DECIDING_LABELS else ""
         yield f"{service} interpolates a label ($){named}; not yet supported"

@@ -3,7 +3,7 @@ changed between two of them.
 
 `observe.py` runs inside the `realm-observer` compose service and stays standard library only;
 this side compares two of its inventories and prints the changes, every name and value escaped
-by `compose.printable`, so a console name holding ESC or a newline stays one line.
+by `hal_output.printable`, so a console name holding ESC or a newline stays one line.
 """
 
 import json
@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from edge.compose import printable
 from edge.realm.observe import Entity, Inventory
+from hal_output import printable
 
 OBSERVER_SERVICE = "realm-observer"
 DIGEST_KEY_BYTES = 32

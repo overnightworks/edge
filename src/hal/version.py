@@ -8,8 +8,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from edge import checkout, compose
-from hal.grammar import Asks, Command, ExitCode, write_error
+from edge import checkout
+from hal.grammar import Asks, Command, ExitCode
+from hal_output import printable, write_error
 
 # The tree this code lives in, looked up when the command runs: an installed wheel has none.
 CODE_TREE = Path(__file__).resolve().parents[2]
@@ -31,9 +32,7 @@ def run(arguments: argparse.Namespace) -> ExitCode:
     try:
         lines = describe(checkout.Git(tree, runner))
     except checkout.GitError as error:
-        write_error(
-            f"cannot read the checkout {compose.printable(str(tree))}, {error}", "hal version -v"
-        )
+        write_error(f"cannot read the checkout {printable(str(tree))}, {error}", "hal version -v")
         return ExitCode.FAILURE
     print("\n".join(lines))
     return ExitCode.OK
@@ -45,7 +44,7 @@ def describe(git: checkout.Git) -> list[str]:
     branch = git.branch()
     return [
         f"commit: {commit}",
-        f"branch: {compose.printable(branch) if branch else f'detached at {commit}'}",
+        f"branch: {printable(branch) if branch else f'detached at {commit}'}",
         f"tree: {_tree(git.changed_paths())}",
         f"origin/{checkout.MAIN}: {_standing(git)}",
     ]
@@ -77,7 +76,7 @@ def _echoing(runner: checkout.Runner) -> checkout.Runner:
     def echo(
         tree: Path, arguments: Sequence[str], profile: checkout.Profile
     ) -> subprocess.CompletedProcess[bytes]:
-        print(f"git {compose.printable(' '.join(arguments))}", file=sys.stderr)
+        print(f"git {printable(' '.join(arguments))}", file=sys.stderr)
         return runner(tree, arguments, profile)
 
     return echo

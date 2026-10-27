@@ -31,6 +31,7 @@ from enum import Enum
 from pathlib import Path
 
 from edge import compose
+from hal_output import printable
 
 LIVE_CHECKOUT = "~/git/edge"
 MAIN = "main"
@@ -167,7 +168,7 @@ class ChangedFile:
 
     @property
     def shown(self) -> str:
-        return compose.printable(self.path)
+        return printable(self.path)
 
 
 @dataclass(frozen=True)
@@ -184,7 +185,7 @@ class Git:
             return None
         reference = _text(result.stdout).strip()
         if not reference.startswith(_BRANCH_PREFIX):
-            raise GitError(f"`git symbolic-ref` answered '{compose.printable(reference)}'")
+            raise GitError(f"`git symbolic-ref` answered '{printable(reference)}'")
         return reference.removeprefix(_BRANCH_PREFIX)
 
     def short(self, revision: str = "HEAD") -> str:
@@ -212,7 +213,7 @@ class Git:
         """origin's effective fetch URL, rewritten as the global configuration says, credentials
         redacted (#98 rule 1)."""
         answer = self.call(["remote", "get-url", _ORIGIN], profile=Profile.TRANSFER)
-        return without_credentials(compose.printable(_text(answer.stdout).strip()))
+        return without_credentials(printable(_text(answer.stdout).strip()))
 
     def fetch_main(self) -> str:
         """Fetch origin's `main` through the operator's credential helper and pin it: the full sha
@@ -227,7 +228,7 @@ class Git:
         answer = _text(self.call(["rev-list", "--left-right", "--count", f"HEAD...{sha}"]).stdout)
         counts = answer.split()
         if len(counts) != 2 or not all(count.isdigit() for count in counts):
-            raise GitError(f"`git rev-list` answered '{compose.printable(answer.strip())}'")
+            raise GitError(f"`git rev-list` answered '{printable(answer.strip())}'")
         return int(counts[0]), int(counts[1])
 
     def waiting_commits(self, sha: str) -> list[Commit]:
@@ -235,7 +236,7 @@ class Git:
         log = ["log", "--no-color", "--no-show-signature", "-z", "--format=%h%x00%s"]
         fields = _nul_fields(self.call([*log, f"HEAD..{sha}"]).stdout, "log")
         return [
-            Commit(_sha(_text(short), "log"), compose.printable(_text(subject)))
+            Commit(_sha(_text(short), "log"), printable(_text(subject)))
             for short, subject in zip(fields[::2], fields[1::2], strict=True)
         ]
 
@@ -246,7 +247,7 @@ class Git:
         changed = []
         for status, path in zip(fields[::2], fields[1::2], strict=True):
             if _text(status) not in _STATUS_LETTERS:
-                raise GitError(f"`git diff` answered '{compose.printable(_text(status))}'")
+                raise GitError(f"`git diff` answered '{printable(_text(status))}'")
             changed.append(ChangedFile(_text(status), _text(path)))
         return changed
 
@@ -294,7 +295,7 @@ def _error_line(output: str) -> str:
 
 def _sha(answer: str, verb: str) -> str:
     if not answer or not all(digit in "0123456789abcdef" for digit in answer):
-        raise GitError(f"`git {verb}` answered '{compose.printable(answer)}'")
+        raise GitError(f"`git {verb}` answered '{printable(answer)}'")
     return answer
 
 
@@ -323,13 +324,13 @@ def _porcelain_paths(output: bytes) -> list[str]:
     paths = []
     for entry in entries:
         if len(entry) < 4 or entry[2:3] != b" ":
-            raise GitError(f"`git status` answered '{compose.printable(_text(entry))}'")
+            raise GitError(f"`git status` answered '{printable(_text(entry))}'")
         paths.append(entry[3:])
         if {entry[0], entry[1]} & set(b"RC"):
             if (source := next(entries, None)) is None:
                 raise GitError("`git status` named a rename without its source")
             paths.append(source)
-    return [compose.printable(_text(path)) for path in paths]
+    return [printable(_text(path)) for path in paths]
 
 
 def live_checkout(home: Path) -> Path:
@@ -339,7 +340,7 @@ def live_checkout(home: Path) -> Path:
 def not_live_checkout(tree: Path, home: Path) -> str | None:
     """None when `tree` is the live checkout, else why not (#95 rule 2)."""
     if tree.resolve() != live_checkout(home).resolve():
-        return f"this is {compose.printable(str(tree))}"
+        return f"this is {printable(str(tree))}"
     if (tree / ".git").is_file():
         return "a linked worktree, not the main checkout"
     if not (tree / ".git").is_dir():
@@ -360,7 +361,7 @@ def not_on_main(git: Git) -> str | None:
     if branch is None:
         return f"HEAD is detached at {git.short()}"
     if branch != MAIN:
-        return f"this is branch {compose.printable(branch)}"
+        return f"this is branch {printable(branch)}"
     if not git.has_commit():
         return f"{MAIN} has no commit yet"
     return None

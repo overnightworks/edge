@@ -16,8 +16,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from edge import compose
-from hal.grammar import Asks, Command, ExitCode, write_error
+from hal.grammar import Asks, Command, ExitCode
+from hal_output import printable, write_error
 from home_tools.tidy_home import Layout, registered_worktrees
 
 OWNER = "overnightworks"
@@ -695,7 +695,7 @@ def _execute(steps: Sequence[Step]) -> Halfway | None:
 
 
 def _say(line: str) -> None:
-    print(compose.printable(line))
+    print(printable(line))
 
 
 def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
@@ -705,7 +705,7 @@ def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
     )
     for label, steps in (("done", halfway.done), ("not done", halfway.pending)):
         for step in steps:
-            print(compose.printable(f"{label}: {step.description}"), file=sys.stderr)
+            print(printable(f"{label}: {step.description}"), file=sys.stderr)
     print(f"next: hal rename {new} {old} --apply", file=sys.stderr)
 
 
@@ -743,7 +743,7 @@ def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
 
 def _repository_name(text: str) -> str:
     if not NAME_PATTERN.fullmatch(text):
-        raise argparse.ArgumentTypeError(f"not a repository name: {compose.printable(text)}")
+        raise argparse.ArgumentTypeError(f"not a repository name: {printable(text)}")
     return text
 
 

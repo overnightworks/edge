@@ -11,7 +11,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import date
 
-from edge import compose
+from hal_output import printable
 
 # ASCII digits only (`re.ASCII`) and `fullmatch`, not `$`: a trailing newline is no release.
 _RELEASE = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})\.([1-9]\d*)", re.ASCII)
@@ -54,11 +54,11 @@ def choose(tags: Iterable[str], on_branch: Collection[str], branch: str) -> Choi
     skipped: list[str] = []
     for tag in sorted(set(tags)):
         release = parse(tag)
-        shown = compose.printable(tag)
+        shown = printable(tag)
         if release is None:
             skipped.append(f"skipped tag {shown}: not {GRAMMAR}")
         elif tag not in on_branch:
-            skipped.append(f"skipped tag {shown}: not on origin {compose.printable(branch)}")
+            skipped.append(f"skipped tag {shown}: not on origin {printable(branch)}")
         else:
             eligible.append(release)
     return Choice(max(eligible, default=None), tuple(skipped))

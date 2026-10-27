@@ -47,11 +47,11 @@ jobs:
         # pyproject.toml's pythonpath makes src and scripts importable.
         run: uv run --no-sync --no-build pytest --cov=src --cov=scripts --cov=probe/agent-service --cov-report=xml:coverage.xml
 
-      # home's and hal's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
+      # home's, hal's and hal_output's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
       # If a home or hal path moves, this include moves with it. hal's console script runs in child
       # processes, which [tool.coverage.run] patch = ["subprocess"] measures.
-      - name: home's and hal's code stay at 100 % line and branch coverage
-        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*' --fail-under=100 --show-missing
+      - name: home's, hal's and hal_output's code stay at 100 % line and branch coverage
+        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*,src/hal_output/*' --fail-under=100 --show-missing
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -89,6 +89,8 @@ jobs:
           # docs/naming.md: `hal` must import from the tool's own environment, not from a stray package.
           hal_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal; print(hal.__file__)')
           case $hal_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal imported from $hal_file"; exit 1 ;; esac
+          hal_output_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal_output; print(hal_output.__file__)')
+          case $hal_output_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal_output imported from $hal_output_file"; exit 1 ;; esac
 
       - name: Compose renders (default, keycloak, step-ca, probe, agent-service and agent-probe profiles, Keycloak bootstrap and probe overlays)
         run: |

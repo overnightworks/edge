@@ -264,7 +264,7 @@ def test_service_account_roles_and_mappers_are_removed_one_line_each(
 def test_a_name_holding_esc_and_a_newline_prints_as_one_escaped_line(
     keycloak: FakeKeycloak,
 ) -> None:
-    """Rule 7: every name passes through compose.printable."""
+    """Rule 7: every name passes through hal_output.printable."""
 
     def console_group(realms: dict[str, FakeRealm]) -> None:
         realms["hallucinai"].groups["/probe\x1b[31mred\nline"] = Group()
