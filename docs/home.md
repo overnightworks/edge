@@ -58,7 +58,7 @@ Jeder Befehl steht nur einmal da.
 Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
 Pfad: unbekannte Dateien in `~/.secrets`. Die sortiert ein Agent ein; jede
 Löschentscheidung kommt als eine Liste zu dir. Die einzelnen Funde zeigen
-`home check` und `home secrets`.
+`hal check` und `home secrets`.
 
 Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
@@ -70,13 +70,13 @@ Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
 Prüfung; `3` nur bei einem unerwarteten Fehler.
 
-## home check
+## hal check
 
 ```
-home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
+hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 ```
 
-`home check` fährt jede Prüfung, die nichts ändert — die Ansicht von
+`hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
@@ -114,7 +114,7 @@ Services, Backup“ (mit den Bereichen im Action needed), „PC check: all well 
 all well“. Der Text der Benachrichtigung sind die Sätze der Action-needed-Funde und der Pfad des Berichts. Die
 Benachrichtigung trägt den Knopf „Open report“; ein Klick öffnet den
 Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
-losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
+losgelösten Einheit (`systemd-run --user --collect`), sodass `hal check` und
 der Timer-Dienst sofort enden.
 
 Die zuletzt gemeldete Fundmenge hält `~/.local/state/hal/check-findings.txt`. Der saubere Stand wird ebenfalls
@@ -122,7 +122,7 @@ gemerkt, sodass ein wiederkehrender Action-needed-Fund wieder meldet. Scheitert 
 zuletzt gemeldete Fundmenge stehen, und der nächste Lauf meldet, was dann noch von ihr abweicht.
 
 **Die Mail.** Sie geht über `msmtp`, als du, mit dem Konto aus `~/.secrets/smtp/account.toml`, und nur, wenn diese Datei
-existiert; fehlt sie, schickt `home check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
+existiert; fehlt sie, schickt `hal check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
 Einträge). Der Text hat oben jeden Fund mit Action needed als Satz mit genau einem nächsten Schritt (neue Punkte mit „(new)“,
 höchstens 20, dann „… and N more, see report“), darunter was nicht mehr ansteht, dann eine Zeile je Bereich und
 den Pfad des Berichts:
@@ -193,7 +193,7 @@ Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt
 - `--no-verify`;
 - Repositories außerhalb von `~/git`;
 - ein `includeIf "onbranch:…"`, das nur für den Branch gilt, der beim Lauf von
-  `home check` ausgecheckt ist.
+  `hal check` ausgecheckt ist.
 
 Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
 zerbrochen, nie als sauber.
@@ -506,7 +506,7 @@ come before the system step, which is the one that asks for sudo:
    another version.
 7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
-   It also installs `msmtp` and `ca-certificates` for the mail of `home check`, purges `rsyslog`
+   It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
    It asks once for sudo.
@@ -592,7 +592,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 - **rsyslog is removed.** After the refusals below pass, the play purges the package `rsyslog` (apt, no autoremove) and then
   deletes `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err` and `ufw.log` with every rotation (`name` and `name.*`
   directly under `/var/log`, files only) **without a copy**, not even to `/var/backups/home-setup`: a copy would outlive the
-  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `home check` reads the
+  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `hal check` reads the
   same list. The purge comes first, so a running rsyslog cannot recreate a deleted file. Both tasks work by state, so a run
   interrupted between them is finished by the next `--apply`, and a second one reports `changed=0`. The dry run lists the
   purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
@@ -608,7 +608,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
     back the packaged one.
 - **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
   Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
-  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "mail failed: msmtp could not deliver via" while
+  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `hal check` then reports "mail failed: msmtp could not deliver via" while
   `~/.secrets/smtp/account.toml` exists.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
@@ -654,7 +654,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 
   Or roll back as described.
 - **Docker's log default.** The same run merges `"log-driver": "journald"` into `/etc/docker/daemon.json` (`DOCKER_LOG_DRIVER`
-  in `src/home_tools/system_step.py`, which `home check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
+  in `src/home_tools/system_step.py`, which `hal check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
   written root-owned, mode 644, with sorted keys, so the diff of a file that only holds the runtime is one new line, and it is
   checked with `dockerd --validate` before it replaces the old one. A file that does not parse, one that is not an object, a
   `log-opts` key, another `log-driver`, and a Docker that does not answer `docker info` are refused before anything is
@@ -672,7 +672,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
   `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
-  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `home check` there:
+  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `hal check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
   a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
@@ -689,7 +689,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 24.04 package's
   Docker without a GPU, not the PC's. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
-### Das Mail-Konto von `home check`
+### Das Mail-Konto von `hal check`
 
 Zwei Dateien, beide von Hand angelegt, beide Modus 0600, beide im Geheimnis-Manifest:
 
@@ -737,7 +737,7 @@ zu löschen.
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `home check` ab |
+| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
 
 Beispiel:
 
@@ -769,7 +769,7 @@ Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked
 ausführen (oder `home` über `bin/home` aufrufen), bevor der Timer läuft.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
-nach) und fährt nur `home check`.
+nach) und fährt nur `hal check`.
 
 ## Tests
 

@@ -392,7 +392,7 @@ def test_only_the_pending_root_certificate_may_be_0644(
 
 
 def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path: Path, probe: FakeProbe, capsys) -> None:
-    """#195 M5: laid out as keycloak/go-live and step-ca/init write them, `home check` reports nothing for them; #201 the agent service's token with its renewal file beside it; #356 its signing pair, whose public half at 0644 is no finding."""
+    """#195 M5: laid out as keycloak/go-live and step-ca/init write them, `hal check` reports nothing for them; #201 the agent service's token with its renewal file beside it; #356 its signing pair, whose public half at 0644 is no finding."""
     home = tmp_path / "home"
     files = {
         "step-ca": {"password": 0o644, "root_ca_key": 0o600, "root_ca.crt": 0o644},

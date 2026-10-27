@@ -1,4 +1,4 @@
-"""Tests of the Done lines of the `home check` mail (#415 Z4): what the mail claims as done."""
+"""Tests of the Done lines of the `hal check` mail (#415 Z4): what the mail claims as done."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""`home check`'s backup check (overnightworks/edge#340 C5, C7, I1, I3, S3, R1) against status files in a temporary directory."""
+"""`hal check`'s backup check (overnightworks/edge#340 C5, C7, I1, I3, S3, R1) against status files in a temporary directory."""
 
 from __future__ import annotations
 
