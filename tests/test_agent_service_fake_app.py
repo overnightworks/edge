@@ -159,6 +159,7 @@ def test_the_step_schema_takes_an_integer_n(served):
 
 
 def test_a_nonnumeric_request_id_is_answered_without_echo_or_traceback(served, capfd):
+    """defect:#469: a non-numeric request id is answered with a null id, never echoed."""
     port, _, _ = served
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=LINE_SECONDS)
     connection.request("POST", "/mcp", json.dumps({"id": "request-canary", "method": "tools/list"}))
