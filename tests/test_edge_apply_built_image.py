@@ -23,7 +23,7 @@ from test_edge_apply import (
 
 from edge import core
 from edge.built_image import ENDS_RUNS
-from edge.unit_plans import stays_stopped_line
+from edge.unit_plans import KEPT_IMAGE_OWNER, stays_stopped_line
 
 BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
 REBUILT_ID = f"sha256:{'e' * 64}"
@@ -321,7 +321,7 @@ def test_a_switched_off_agent_service_with_a_running_container_gets_no_kept_imag
 
     assert exit_code == 0
     assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
-    assert NEVER_SWAPS not in out
+    assert KEPT_IMAGE_OWNER not in out
     assert scripted.changing_verbs() == []
 
 
