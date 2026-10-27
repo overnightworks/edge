@@ -241,7 +241,7 @@ def test_the_plan_names_a_changed_frame_and_no_block(world):
 def test_without_a_usable_record_the_plan_names_every_block_as_new(world, record):
     """L3."""
     world.switch()
-    record_file = world.repository / "legal/built-record.json"
+    record_file = world.state / "legal-built.json"
     record_file.unlink()
     if record is not None:
         record_file.write_bytes(record)
@@ -253,6 +253,36 @@ def test_without_a_usable_record_the_plan_names_every_block_as_new(world, record
     assert f"{PRIVACY}#verantwortlicher new" in out
     assert "changed" not in out
     assert "unchanged" not in out
+
+
+@pytest.mark.parametrize("record", [None, b"{not json"], ids=["missing", "unreadable"])
+def test_a_page_that_matches_is_planned_again_when_its_record_is_unusable(world, record):
+    """L3."""
+    world.switch()
+    record_file = world.state / "legal-built.json"
+    record_file.unlink()
+    if record is not None:
+        record_file.write_bytes(record)
+
+    _, out, _ = world.switch(answer="no")
+    assert "unchanged" not in out
+    assert f"{AGENT}#agent-dienst new" in out
+
+    world.switch()
+    _, again, _ = world.switch(answer="no")
+    assert "legal: unchanged" in again
+
+
+def test_the_plan_names_a_changed_table_of_contents_template(world):
+    """L3."""
+    world.switch()
+    world.edit(
+        "legal/frame/blocks/toc-entry.html", lambda text: text.replace(b"<li", b"<li data-x", 1)
+    )
+
+    _, out, _ = world.switch(answer="no")
+
+    assert "legal: datenschutz changes: legal/frame/datenschutz.html changed" in out
 
 
 def test_a_built_page_edited_by_hand_makes_every_block_of_it_new(world):
@@ -270,7 +300,7 @@ def test_the_record_stays_out_of_the_directory_the_unit_serves(world):
     """L3."""
     world.switch()
 
-    assert (world.repository / "legal/built-record.json").is_file()
+    assert (world.state / "legal-built.json").is_file()
     assert world.built_names() == THE_PAGES
 
 

@@ -25,6 +25,7 @@ TEMPLATES = (
     "toc-entry",
     "toc-entry-with-sections",
 )
+TOC_TEMPLATES = ("toc-entry", "toc-entry-with-sections")
 # Edge renames or removes none of these without asking the apps that link them first.
 STABLE_IDS: Mapping[str, frozenset[str]] = {
     "datenschutz": frozenset(
@@ -125,7 +126,7 @@ def fingerprint_pages(
     return {
         page: PageFingerprint(
             _sha256(pages[page]),
-            _sha256(_page(frame, page, [])),
+            _frame_sha256(frame, page),
             tuple(
                 BlockFingerprint(block.path, anchor, block.kind, _sha256(body))
                 for block in _in_page_order(blocks, page)
@@ -134,6 +135,12 @@ def fingerprint_pages(
         )
         for page in PAGES
     }
+
+
+def _frame_sha256(frame: Frame, page: str) -> str:
+    """The skeleton with no block in it, with the templates its table of contents is filled by."""
+    entries = (frame.templates[name] for name in TOC_TEMPLATES)
+    return _sha256("\0".join((_page(frame, page, []), *entries)))
 
 
 def _sha256(text: str) -> str:

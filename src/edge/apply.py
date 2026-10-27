@@ -59,7 +59,7 @@ from typing import Any
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.legal_section import LegalError
-from edge.legal_step import LegalPlan, plan_legal
+from edge.legal_step import RECORD_FILE, LegalPlan, plan_legal
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
@@ -204,7 +204,7 @@ def _plan(
         reconcile.restart_of(plans, recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
-    legal = plan_legal(repository, fleet)
+    legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
         fleet, read, core_plans, follower_plans, recreates, plans, images, realm, app_plans, legal
     )

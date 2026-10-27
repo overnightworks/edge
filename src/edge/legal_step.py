@@ -44,8 +44,9 @@ _BUILT_MODE = 0o644  # nginx-unprivileged must read the page whatever the umask
 @dataclass(frozen=True)
 class LegalPlan:
     repository: Path
+    record: Path  # what the last write was made of, in the apply state
     pages: Mapping[str, str]  # empty while the step does not run
-    changed: Mapping[str, str]  # the pages that differ from `legal/built`: "new" or "changes"
+    changed: Mapping[str, str]  # the pages to write: "new", "changes" or NO_RECORD
     changed_blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # lines by page
     fingerprints: Mapping[str, PageFingerprint] = field(default_factory=dict)
 
@@ -69,12 +70,13 @@ class LegalPlan:
         progress.unit, progress.step = LEGAL_UNIT, "write the legal pages"
         failed = ""
         try:
-            for page in self.changed:
-                failed = f"{BUILT_DIRECTORY}/{page}.html"
-                _replace(self.repository / BUILT_DIRECTORY, page, self.pages[page])
+            for page, change in self.changed.items():
+                if change != NO_RECORD:
+                    failed = f"{BUILT_DIRECTORY}/{page}.html"
+                    _replace(self.repository / BUILT_DIRECTORY, page, self.pages[page])
             if self.changed:
-                failed = RECORD_FILE
-                write_record(self.repository, self.fingerprints)
+                failed = str(self.record)
+                write_record(self.record, self.fingerprints)
         except OSError as error:
             return f"legal: could not write {failed} ({error.strerror})"
         finally:
@@ -83,35 +85,37 @@ class LegalPlan:
 
 
 def plan_legal(
-    repository: Path, fleet: Fleet, run_git: checkout.Runner = checkout.run_git
+    repository: Path,
+    record: Path,
+    fleet: Fleet,
+    run_git: checkout.Runner = checkout.run_git,
 ) -> LegalPlan:
     """What the step would write; a plan without pages while the legal unit does not run."""
     if not any(unit.key == LEGAL_UNIT and unit.enabled for unit in fleet.units):
-        return LegalPlan(repository, {}, {})
+        return LegalPlan(repository, record, {}, {})
     git = checkout.Git(repository, run_git)
     all_blocks = read_blocks(
         repository, _catalog_keys(repository), lambda path: _commit_date(git, path)
     )
     frame = read_frame(repository)
     pages = build_pages(frame, all_blocks)
-    changed = {
-        page: change
-        for page, text in pages.items()
-        if (change := _change(repository / BUILT_DIRECTORY / f"{page}.html", text))
-    }
     fingerprints = fingerprint_pages(frame, all_blocks, pages)
-    named = {page: _changes_of(repository, page, fingerprints[page]) for page in changed}
-    return LegalPlan(repository, pages, changed, named, fingerprints)
+    changed: dict[str, str] = {}
+    named: dict[str, tuple[str, ...]] = {}
+    for page, text in pages.items():
+        built = _read_built(repository, page)
+        previous = None if built is None else read_recorded_page(record, built, page)
+        if change := _change(built, previous, text):
+            changed[page] = change
+            named[page] = block_changes(page, previous, fingerprints[page])
+    return LegalPlan(repository, record, pages, changed, named, fingerprints)
 
 
-def _changes_of(repository: Path, page: str, current: PageFingerprint) -> tuple[str, ...]:
-    """What the new build changes on the page against the record of the last write."""
+def _read_built(repository: Path, page: str) -> bytes | None:
     try:
-        built = (repository / BUILT_DIRECTORY / f"{page}.html").read_bytes()
+        return (repository / BUILT_DIRECTORY / f"{page}.html").read_bytes()
     except FileNotFoundError:
-        built = None
-    previous = None if built is None else read_recorded_page(repository, built, page)
-    return block_changes(page, previous, current)
+        return None
 
 
 def _named(lines: tuple[str, ...]) -> str:
@@ -181,12 +185,12 @@ def _commit_date(git: checkout.Git, relative: str) -> date:
         raise LegalError(f"{relative}: has no commit") from error
 
 
-def _change(built: Path, text: str) -> str | None:
-    try:
-        current = built.read_bytes()
-    except FileNotFoundError:
+def _change(built: bytes | None, previous: PageFingerprint | None, text: str) -> str | None:
+    if built is None:
         return "new"
-    return None if current == text.encode() else "changes"
+    if built != text.encode():
+        return "changes"
+    return NO_RECORD if previous is None else None
 
 
 def _replace(directory: Path, page: str, text: str) -> None:
@@ -202,10 +206,12 @@ def _replace(directory: Path, page: str, text: str) -> None:
         raise
 
 
-# The record of what the step last wrote sits beside `legal/built/`, not in it: nginx serves that
-# directory. A page's entry is trusted only while the built page still has the bytes the entry was
-# made from; a missing, unreadable or stale entry makes every block of the page new.
-RECORD_FILE = "legal/built-record.json"
+# The record of what the step last wrote sits in the apply state, not beside the pages: nginx serves
+# `legal/built/`. A page's entry is trusted only while the built page still has the bytes the entry
+# was made from; a missing, unreadable or stale entry makes every block of the page new, and the
+# plan then writes the record even when the page bytes already match.
+RECORD_FILE = "legal-built.json"
+NO_RECORD = "has no usable record"
 _RECORD_MODE = 0o600
 
 
@@ -215,10 +221,10 @@ class Change(StrEnum):
     LEFT = "left"
 
 
-def read_recorded_page(repository: Path, built_text: bytes, page: str) -> PageFingerprint | None:
+def read_recorded_page(record: Path, built_text: bytes, page: str) -> PageFingerprint | None:
     """The page's entry, or None when there is none or it does not describe `built_text`."""
     try:
-        entry = json.loads((repository / RECORD_FILE).read_text())[page]
+        entry = json.loads(record.read_text())[page]
         fingerprint = PageFingerprint(
             entry["page_sha256"],
             entry["frame_sha256"],
@@ -234,10 +240,9 @@ def read_recorded_page(repository: Path, built_text: bytes, page: str) -> PageFi
     return fingerprint if fingerprint.page_sha256 == sha256(built_text).hexdigest() else None
 
 
-def write_record(repository: Path, fingerprints: Mapping[str, PageFingerprint]) -> None:
+def write_record(target: Path, fingerprints: Mapping[str, PageFingerprint]) -> None:
     """The whole record under a temporary name, then renamed over the old one."""
     text = json.dumps({page: asdict(one) for page, one in fingerprints.items()}, indent=1)
-    target = repository / RECORD_FILE
     temporary = target.with_name(f".{target.name}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _RECORD_MODE)
     with os.fdopen(descriptor, "w") as file:
