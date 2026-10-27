@@ -354,10 +354,10 @@ def restore(
     if target.resolve().is_relative_to(settings.work_dir.resolve()):
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            "das Ziel liegt im Arbeitsverzeichnis (~/.cache/edge-backup)",
+            "the target is inside the work directory (~/.cache/edge-backup)",
         )
     if target.exists():
-        raise StepFailed(ExitCategory.CONFIGURATION, "das Ziel existiert schon")
+        raise StepFailed(ExitCategory.CONFIGURATION, "the target already exists")
     require_secret_and_repository(settings)
     snapshot_id = (
         _last_successful_snapshot(settings, app, _recorded_snapshot(settings, apps, app))
@@ -551,13 +551,12 @@ def _last_successful_snapshot(settings: Settings, app: App, recorded: str | None
     if recorded is None:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"kein erfolgreiches Backup von {app.name} aufgezeichnet"
-            + _newest_snapshot_hint(settings, app),
+            f"no successful backup of {app.name} recorded" + _newest_snapshot_hint(settings, app),
         )
     if not restic.has_snapshot(settings, app.name, recorded):
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"der aufgezeichnete Snapshot {recorded[:8]} von {app.name} fehlt im Repository"
+            f"the recorded snapshot {recorded[:8]} of {app.name} is missing from the repository"
             + _newest_snapshot_hint(settings, app),
         )
     return recorded
@@ -569,8 +568,8 @@ def _newest_snapshot_hint(settings: Settings, app: App) -> str:
     if newest is None:
         return ""
     return (
-        f"; der neueste Snapshot ist {newest[:8]}; wählbar mit: "
-        f"hal restore {app.name} --snapshot <ID> --target <Ordner>"
+        f"; the newest snapshot is {newest[:8]}; choose it with: "
+        f"hal restore {app.name} --snapshot <ID> --target <folder>"
     )
 
 
@@ -584,8 +583,8 @@ def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
     if len(matches) != 1:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
-            f"{prefix} nennt keinen einzelnen Snapshot von {app.name} "
-            f"(mindestens {MIN_SNAPSHOT_PREFIX} Zeichen der ID aus `hal restore --list`)",
+            f"{prefix} names no single snapshot of {app.name} "
+            f"(at least {MIN_SNAPSHOT_PREFIX} characters of an ID from `hal restore --list`)",
         )
     return matches[0]
 

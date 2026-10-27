@@ -313,7 +313,7 @@ def test_a_failed_app_has_its_row_while_the_others_are_proven_and_the_repository
     assert outcome.exit_code == 3
     assert outcome.out.splitlines() == [
         f"  ✓ songmaker       restore proven {machine.snapshots[-1]['id'][:8]}",
-        "  ✗ keycloak        not proven     kein erfolgreiches Backup von keycloak aufgezeichnet",
+        "  ✗ keycloak        not proven     no successful backup of keycloak recorded",
         "  ✓ repository      checked",
     ]
     assert outcome.err.splitlines() == [
@@ -333,8 +333,8 @@ def test_a_failed_restore_test_of_one_snapshot_keeps_its_reason_in_the_error_lin
 
     assert outcome.exit_code == 3
     assert outcome.err.splitlines() == [
-        "error: keycloak: 000000000000 nennt keinen einzelnen Snapshot von keycloak "
-        "(mindestens 8 Zeichen der ID aus `hal restore --list`)",
+        "error: keycloak: 000000000000 names no single snapshot of keycloak "
+        "(at least 8 characters of an ID from `hal restore --list`)",
         "next: hal restore --test keycloak",
     ]
 
@@ -350,7 +350,7 @@ def test_a_failed_check_after_the_failed_app_of_one_snapshot_still_names_the_app
     )
 
     assert outcome.exit_code == 3
-    assert outcome.err.splitlines()[0].startswith("error: keycloak: 000000000000 nennt keinen")
+    assert outcome.err.splitlines()[0].startswith("error: keycloak: 000000000000 names no")
     assert outcome.err.splitlines()[1] == "next: hal restore --test keycloak"
 
 
