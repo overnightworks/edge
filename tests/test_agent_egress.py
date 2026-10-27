@@ -573,17 +573,23 @@ def agent_networks(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     yield from probe_module("agent_networks")
 
 
-def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_networks, monkeypatch):
+def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_networks):
     target = "agent-service-1"
     refused_pairs = []
 
     class Probe:
         def __init__(self):
             self.target = SimpleNamespace(compose_service=target)
+            self.image = "image"
+
+        def run(self, command):
+            return SimpleNamespace(stdout=f"ip-{command[-1]}\n")
 
         def client_in_namespace_of(self, beside, action, *arguments):
             if action == "resolve":
                 return {"addresses": []}
+            if arguments[0] == "127.0.0.1":
+                return {"result": "connected"}
             if arguments[0] == target:
                 return {"result": "connected"}
             refused_pairs.append((beside, arguments[0]))
@@ -598,9 +604,6 @@ def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_network
         def hold(self, cell, text):
             self.held = cell
 
-    monkeypatch.setattr(
-        agent_networks, "start_caller", lambda probe, project, label, network, name: f"ip-{name}"
-    )
     probe = Probe()
     agent_networks.cell_p36(probe, project="p", label="l", service_port=80, service_listens=True)
     assert probe.held == "P36"
