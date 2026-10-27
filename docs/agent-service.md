@@ -155,7 +155,10 @@ a turn leaves this PC for Anthropic, which generates the answer.
 Claude subscription serves only his own use. Every other person reaches the service only through the
 API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
 enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
-gets 403 `not_enabled`. An app's privacy text therefore describes only the API route.
+gets 403 `not_enabled`. An app's privacy text therefore describes only the API route. Which groups
+may use an AI feature is decided by the service's subscription and api groups only, the same in
+every app; an app adds no AI group of its own. Membership in the app (`/apps/<name>`) stays separate
+access to the app.
 
 ## An app's side
 
