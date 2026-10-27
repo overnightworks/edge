@@ -1,5 +1,5 @@
-"""The containment probe's counting of B2 (c), its B3 and B4 verdicts and the transparent
-wrapper (agent-runtime#440), on synthetic service logs and stub tools:
+"""The containment probe's counting of B2 (c), its B3, B4 and B5 verdicts, the log classes and the
+transparent wrapper (agent-runtime#440), on synthetic service logs and stub tools:
 the probe's cells themselves run live under `unit.py --cell containment`."""
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ PROBE_MODULES = (
     "egress",
     "issuer",
     "refusals",
+    "service_log",
     "smoke",
     "tree_census",
 )
@@ -355,3 +356,288 @@ def test_the_wrapper_plants_two_markers_on_a_run_only_when_the_flag_file_is_ther
         sorted(out.read_text(encoding="utf-8").split("\n")[:-1])
         == (["sleep 3000.11", "sleep 3000.22"][:planted_count])
     )
+
+
+RUNS = 100
+INIT = (1, 0, 1, 1, "n-init")
+SERVICE = (SERVICE_PID, 1, SERVICE_PID, SERVICE_PID, "n-svc")
+CENSUS = (90, 0, 90, 90, "n-py")  # `docker exec` starts the census with no parent in the namespace
+
+
+def runner_lines(first: int = 0, count: int = RUNS) -> str:
+    return "".join(
+        f"ERROR agent_runtime_service.run_events The runner of run r{number} failed: "
+        f"CliLoginRefusedError at 3\n"
+        for number in range(first, first + count)
+    )
+
+
+def mount(containment, *paths, skips=None):
+    return containment.Mount(
+        tuple((path, "file") for path in paths), tuple(sorted((skips or {}).items()))
+    )
+
+
+def look(containment, *, processes=(INIT, SERVICE, CENSUS), mounts=None, listeners=3, log=""):
+    mounts = (
+        mounts
+        if mounts is not None
+        else {"/work": mount(containment), "/tmp": mount(containment, "a")}
+    )
+    return containment.Look(
+        tuple(containment.Process(*record) for record in processes),
+        mounts,
+        listeners,
+        containment.classify_log(log),
+    )
+
+
+def roots(containment):
+    return containment.Roots(working="/work", temporary="/tmp")
+
+
+def b5(containment, before, after, terminals=RUNS):
+    verdicts = containment.b5_verdicts(before, after, terminals, roots(containment))
+    return {cell: held for cell, (held, _) in verdicts.items()}
+
+
+def after_the_runs(containment, **changes):
+    return look(containment, log=runner_lines(), **changes)
+
+
+def test_b5_holds_when_a_hundred_runs_leave_nothing_and_log_one_class(containment):
+    verdicts = b5(containment, look(containment), after_the_runs(containment))
+    assert verdicts == {
+        "B5 (terminals)": True,
+        "B5 (processes)": True,
+        "B5 (mounts)": True,
+        "B5 (listeners)": True,
+        "B5 (log)": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("cell", "changes"),
+    [
+        ("B5 (processes)", {"processes": (INIT, SERVICE, CENSUS, (41, 7, 41, 41, "n-x"))}),
+        ("B5 (processes)", {"processes": (INIT, (8, 1, 8, 8, "n-svc"), CENSUS)}),
+        ("B5 (listeners)", {"listeners": 4}),
+        ("B5 (listeners)", {"listeners": 2}),
+    ],
+    ids=["a process remains", "the service pid changed", "a listener added", "a listener gone"],
+)
+def test_b5_fails_on_each_observation_alone(containment, cell, changes):
+    verdicts = b5(containment, look(containment), after_the_runs(containment, **changes))
+    assert [name for name, held in verdicts.items() if not held] == [cell]
+
+
+def test_b5_working_root_or_tmp_difference_fails(containment):
+    leftover = {"/work": mount(containment, "run"), "/tmp": mount(containment, "a")}
+    changed_tmp = {
+        "/work": mount(containment),
+        "/tmp": mount(containment, "a", "cc-socks-1000"),
+    }
+    for mounts in (leftover, changed_tmp):
+        verdicts = b5(containment, look(containment), after_the_runs(containment, mounts=mounts))
+        assert not verdicts["B5 (mounts)"]
+
+
+def test_b5_other_mount_difference_is_reported_not_failed(containment):
+    before = look(
+        containment,
+        mounts={
+            "/work": mount(containment),
+            "/tmp": mount(containment, "a"),
+            "/dev/shm": mount(containment),
+        },
+    )
+    after = after_the_runs(
+        containment,
+        mounts={
+            "/work": mount(containment),
+            "/tmp": mount(containment, "a"),
+            "/dev/shm": mount(containment, "n-1"),
+        },
+    )
+    assert all(b5(containment, before, after).values())
+    changed = containment.changed_mounts(before, after, roots(containment))
+    assert changed == {"/dev/shm": (("n-1", "file"),)}
+
+
+def test_b5_reports_cc_socks_in_tmp(containment):
+    after = after_the_runs(
+        containment,
+        mounts={"/work": mount(containment), "/tmp": mount(containment, "a", "cc-socks-1000")},
+    )
+    verdicts = containment.b5_verdicts(look(containment), after, RUNS, roots(containment))
+    assert "cc-socks-1000 in /tmp: True" in verdicts["B5 (mounts)"][1]
+
+
+def test_b5_fails_when_a_run_reached_no_terminal(containment):
+    held, evidence = containment.b5_terminals(37)["B5 (terminals)"]
+    assert not held
+    assert "37 of 100" in evidence
+
+
+@pytest.mark.parametrize(
+    "log",
+    [
+        runner_lines(count=99),
+        runner_lines(count=101),
+        runner_lines(count=99) + runner_lines(first=0, count=1),
+        runner_lines() + "ERROR agent_runtime_service.quarantine The close step failed\n",
+        runner_lines() + "ERROR: uvicorn trouble\n",
+        runner_lines() + "CRITICAL agent_runtime_service.x gone\n",
+        runner_lines() + "WARNING agent_runtime_service.x " + OTHER_REFUSAL,
+        "bare line escaped logging\n" + runner_lines(),
+    ],
+    ids=[
+        "99 runner lines",
+        "101 runner lines",
+        "a run id twice",
+        "another ERROR",
+        "a uvicorn ERROR",
+        "a CRITICAL",
+        "a refused announcement",
+        "a bare line continuing no record",
+    ],
+)
+def test_b5_log_fails_outside_the_contract(containment, log):
+    verdicts = b5(containment, look(containment), look(containment, log=log))
+    assert not verdicts["B5 (log)"]
+
+
+def test_b5_log_counts_continuations_and_other_warnings_without_failing(containment):
+    log = (
+        runner_lines()
+        + "WARNING agent_runtime_service.provider Claude run failed (rc=1)\n"
+        + "Traceback (most recent call last):\n  File x\n"
+        + "WARNING uvicorn.error something\n"
+        + "WARNING:  uvicorn's own warning\n"
+        + "WARNING third.party hello\n"
+        + "INFO:     127.0.0.1 - GET /health 200\n"
+    )
+    after = look(containment, log=log)
+    assert b5(containment, look(containment), after)["B5 (log)"]
+    classes = after.log
+    assert (classes.agent_warnings, classes.uvicorn_warnings, classes.other_warnings) == (1, 2, 1)
+    assert classes.escaped == 0
+
+
+def test_b5_run_ids_come_from_new_text_only(containment):
+    earlier = look(containment, log=runner_lines(first=1000, count=1))
+    later = look(containment, log=runner_lines(first=1000, count=1) + runner_lines())
+    assert b5(containment, earlier, later)["B5 (log)"]
+
+
+def test_b5_log_lines_follow_the_probes_handler_format(containment):
+    import io
+    import logging
+
+    from service_log import LOG_FORMAT
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger = logging.Logger("agent_runtime_service.run_events")
+    logger.addHandler(handler)
+    logger.error("The runner of run %s failed: CliLoginRefusedError at %s", "r1", "3")
+    assert containment.classify_log(stream.getvalue()).run_ids == frozenset({"r1"})
+
+
+@pytest.mark.parametrize(
+    ("names", "count"),
+    [
+        (["127.0.0.11:53", "[::1]:80", "[::ffff:127.0.0.1]:81"], 3),
+        (["0.0.0.0:8000", "192.168.1.5:80", "[::]:8000", "[fe80::1]:1"], 0),
+        (["127.255.0.1:9", "10.0.0.127:9"], 1),
+    ],
+    ids=["loopback in three forms", "no loopback", "all of 127/8 only"],
+)
+def test_loopback_listeners_counts_127_and_ipv6_loopback(containment, names, count):
+    assert containment.loopback_listeners(names) == count
+
+
+def test_b5_is_not_driven_when_the_working_root_or_tmp_skipped_something(containment):
+    working_roots = roots(containment)
+    for reason in ("replaced", "refused", "login excluded", "too deep"):
+        skipped = {"/work": mount(containment, skips={reason: 1}), "/tmp": mount(containment)}
+        seen = look(containment, mounts=skipped)
+        with pytest.raises(containment.NotDriven):
+            containment.expect_comparable(seen, seen, working_roots)
+
+
+def test_b5_is_not_driven_when_any_skip_changed(containment):
+    base = {"/work": mount(containment), "/tmp": mount(containment)}
+    before = look(containment, mounts={**base, "/dev/shm": mount(containment)})
+    after = look(
+        containment, mounts={**base, "/dev/shm": mount(containment, skips={"vanished": 1})}
+    )
+    working_roots = roots(containment)
+    with pytest.raises(containment.NotDriven):
+        containment.expect_comparable(before, after, working_roots)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"mounts": {"/work": ("run",), "/tmp": ()}},
+        {"processes": (INIT, SERVICE, CENSUS, (41, 7, 41, 41, "n-x"))},
+    ],
+    ids=["working root not empty", "an extra process"],
+)
+def test_b5_is_not_driven_from_an_unclean_before_state(containment, changes):
+    unclean = look(
+        containment,
+        **{
+            key: (
+                {m: mount(containment, *paths) for m, paths in value.items()}
+                if key == "mounts"
+                else value
+            )
+            for key, value in changes.items()
+        },
+    )
+    working_roots = roots(containment)
+    with pytest.raises(containment.NotDriven):
+        containment.expect_clean_before(unclean, working_roots)
+
+
+def test_b5_refused_token_is_not_driven(containment):
+    output = "person token ok\nrefused with 401 invalid_token: expired\n"
+    with pytest.raises(containment.NotDriven, match=r"refused with 401"):
+        containment.reached_terminal(output, 41)
+
+
+@pytest.mark.parametrize(
+    ("output", "ended"),
+    [
+        ("event: started\nevent: failed\nprovider_error\n", True),
+        ("event: succeeded\n", True),
+        ("event: cancelled\n", True),
+        ("event: started\n", False),
+    ],
+    ids=["failed", "succeeded", "cancelled", "no terminal"],
+)
+def test_b5_a_terminal_is_one_of_the_smokes_end_events(containment, output, ended):
+    assert containment.reached_terminal(output, 1) is ended
+
+
+def test_b5_is_not_driven_when_the_fake_app_saw_too_few_listings(containment):
+    containment.expect_relay_attached(["m"] * 200, per_run=2, listing="m")
+    with pytest.raises(containment.NotDriven):
+        containment.expect_relay_attached(["m"] * 199, per_run=2, listing="m")
+
+
+def test_every_minted_token_is_in_the_s1_list(containment):
+    probe = object.__new__(containment.ContainmentProbe)
+    probe.shown = ["output holding minted-late\n"]
+    probe.minted = [
+        containment.Tokens("minted-early", "w1"),
+        containment.Tokens("minted-late", "w2"),
+    ]
+    probe.held = []
+    probe.service_log = lambda: ""
+    probe.app_lines = lambda: []
+    with pytest.raises(containment.ProbeFailed, match="S1"):
+        probe.expect_no_token("dummy")
