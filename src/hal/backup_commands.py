@@ -16,6 +16,9 @@ from edge_backup.settings import Settings
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
 
+HAL_BACKUP = "hal backup"
+Ended = StepFailed | Interrupted | KeyboardInterrupt
+
 Step = Callable[[Settings, argparse.Namespace], None]
 
 
@@ -93,8 +96,8 @@ def _restore_step(arguments: argparse.Namespace) -> Step | str:
 
 def _backup(arguments: argparse.Namespace) -> ExitCode:
     step = _backup_step(arguments)
-    tell_ended = _tell_backup_ended if step is steps.backup else _tell_ended_plainly("hal backup")
-    return _run("hal backup", step, arguments, tell_ended)
+    tell_ended = _tell_backup_ended if step is steps.backup else _tell_ended_plainly(HAL_BACKUP)
+    return _run(HAL_BACKUP, step, arguments, tell_ended)
 
 
 def _restore(arguments: argparse.Namespace) -> ExitCode:
@@ -103,23 +106,23 @@ def _restore(arguments: argparse.Namespace) -> ExitCode:
     )
 
 
-def _tell_backup_ended(ended: StepFailed | KeyboardInterrupt) -> None:
+def _tell_backup_ended(ended: Ended) -> None:
     match ended:
         case StepFailed():
-            write_error(ended.error_line or str(ended), ended.next_step or "hal backup")
+            write_error(ended.error_line or str(ended), ended.next_step or HAL_BACKUP)
         case Interrupted(app=str() as app):
             write_error(
-                f"interrupted while backing up {app} · its state may be partial", "hal backup"
+                f"interrupted while backing up {app} · its state may be partial", HAL_BACKUP
             )
         case _:
-            write_error("interrupted", "hal backup")
+            write_error("interrupted", HAL_BACKUP)
 
 
-def _tell_ended_plainly(program: str) -> Callable[[StepFailed | KeyboardInterrupt], None]:
+def _tell_ended_plainly(program: str) -> Callable[[Ended], None]:
     """The error line of the steps that keep their own wording: restore and the repository
     maintenance."""
 
-    def tell(ended: StepFailed | KeyboardInterrupt) -> None:
+    def tell(ended: Ended) -> None:
         reason = str(ended) if isinstance(ended, StepFailed) else "abgebrochen"
         write_error(f"{program}: fehlgeschlagen: {reason}")
 
@@ -130,7 +133,7 @@ def _run(
     program: str,
     step: Step | str,
     arguments: argparse.Namespace,
-    tell_ended: Callable[[StepFailed | KeyboardInterrupt], None],
+    tell_ended: Callable[[Ended], None],
 ) -> ExitCode:
     if isinstance(step, str):
         write_error(step, f"{program} --help")
@@ -145,7 +148,7 @@ def _run(
     except StepFailed as failure:
         tell_ended(failure)
         return ExitCode.FAILURE
-    except KeyboardInterrupt as interrupt:
+    except (Interrupted, KeyboardInterrupt) as interrupt:
         tell_ended(interrupt)
         return ExitCode.INTERRUPTED
     finally:

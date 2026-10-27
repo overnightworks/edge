@@ -80,7 +80,7 @@ class StepFailed(Exception):
         super().__init__(message)
 
 
-class Interrupted(KeyboardInterrupt):
+class Interrupted(Exception):
     """Ctrl-C or SIGTERM, with the app the run was working on, if any."""
 
     def __init__(self, app: str | None) -> None:
@@ -95,7 +95,7 @@ class Run:
         self._path = path
         self._status = status
         self._first_app_failure: StepFailed | None = None
-        self.working_on: str | None = None
+        self.interrupted_app: str | None = None
         self.backed_up_apps = 0
         self.failed_apps: list[str] = []
         write_status(path, status)
@@ -121,9 +121,11 @@ class Run:
         self, app: str, on_failure: Callable[[StepFailed], None] = lambda _: None
     ) -> Iterator[None]:
         """One app's failure is kept for the verdict while the other apps go on."""
-        self.working_on = app
         try:
             yield
+        except KeyboardInterrupt:
+            self.interrupted_app = app
+            raise
         except StepFailed as failure:
             if failure.shared:
                 raise
@@ -131,7 +133,6 @@ class Run:
             self._first_app_failure = self._first_app_failure or failure
             self.failed_apps.append(app)
             on_failure(failure)
-        self.working_on = None
 
     def raise_first_app_failure(self) -> None:
         if self._first_app_failure is not None:

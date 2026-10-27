@@ -140,7 +140,7 @@ def _recorded(
         raise
     except KeyboardInterrupt as interrupt:
         run.failed(ExitCategory.INTERRUPTED)
-        raise Interrupted(run.working_on) from interrupt
+        raise Interrupted(run.interrupted_app) from interrupt
     except BaseException:
         run.failed(ExitCategory.INTERNAL)
         raise
