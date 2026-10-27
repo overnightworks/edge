@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pytest
@@ -67,8 +68,8 @@ def test_the_recovery_of_a_subject_is_mailed_while_another_subject_stays_broken(
     body = check.mail_body(frozenset(current), frozenset(previous), REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54), check.MailFacts())
 
     assert done in body
-    assert body.count("greift wieder") <= 1
-    assert "ist wieder da" not in body
+    assert body.count(check.HOOK_BROKEN.resolved) <= 1
+    assert not re.search(r"\b(is|are) (present|back)\b|present again", body)
 
 
 def test_an_action_that_turns_into_a_note_is_mailed_as_done_in_words_the_note_does_not_deny() -> None:
