@@ -222,7 +222,7 @@ def test_restore_test_refuses_without_a_recorded_successful_snapshot(edge_backup
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.err
+    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.out
 
 
 def test_restore_takes_each_apps_own_last_successful_snapshot(edge_backup, machine, home):
@@ -388,7 +388,7 @@ def test_an_old_host_snapshot_given_as_snapshot_is_refused_like_an_unknown_one(
     outcome = edge_backup(*command, "songmaker", "--snapshot", machine.snapshots[0]["id"], *target)
 
     assert outcome.exit_code == 3
-    assert "nennt keinen einzelnen Snapshot" in outcome.err
+    assert "nennt keinen einzelnen Snapshot" in outcome.out + outcome.err
     assert not (home / "restored").exists()
 
 

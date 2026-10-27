@@ -40,7 +40,7 @@ def test_pre_apply_json_answers_one_object_naming_the_snapshot(edge_backup, mach
         (("backup", "nobody"), ["error: nobody is not declared", "next: hal backup"]),
         (
             ("restore", "--test", "nobody"),
-            ["error: hal restore: fehlgeschlagen: nobody is not declared"],
+            ["error: nobody is not declared", "next: hal restore --test"],
         ),
     ],
 )
@@ -142,8 +142,6 @@ def test_a_failed_backup_exits_3_with_an_error_line_and_a_next_line_and_frees_th
 @pytest.mark.parametrize(
     ("command", "label"),
     [
-        (("restore", "--test"), "pg_restore"),
-        (("restore", "--test", "radio", "--snapshot", "latest"), "pg_restore"),
         (("backup", "--init"), "restic init"),
         (("backup", "--unlock"), "restic unlock"),
         (("restore", "--list"), "restic snapshots"),
@@ -191,6 +189,7 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     outcome = edge_backup(*declare_shipped_apps(), "backup")
 
     rows = outcome.out.splitlines()
+    print(outcome.out)
     assert outcome.exit_code == 3
     assert rows == [
         f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
@@ -282,4 +281,102 @@ def test_sigterm_ends_a_run_as_an_interruption_that_cleans_up_and_frees_the_lock
         assert outcome.status["state"] == "failed"
         assert outcome.status["exit_category"] == "interrupted"
         if command[0] == "restore":
-            assert outcome.err.endswith("fehlgeschlagen: abgebrochen\n")
+            assert outcome.err.splitlines() == [
+                "error: interrupted while testing the restore of songmaker",
+                "next: hal restore --test",
+            ]
+
+
+def test_a_good_restore_test_prints_a_row_per_app_the_repository_row_and_the_verdict(
+    edge_backup, machine, home
+):
+    edge_backup(*declare_two_apps(home), "backup")
+
+    outcome = edge_backup(*declare_two_apps(home), "restore", "--test")
+
+    first, second = (snapshot["id"][:8] for snapshot in machine.snapshots[-2:])
+    assert (outcome.exit_code, outcome.err) == (0, "")
+    assert outcome.out.splitlines() == [
+        f"  ✓ songmaker       restore proven  {first}",
+        f"  ✓ radio           restore proven  {second}",
+        "  ✓ repository      checked",
+        "✓ restore test done · 2 apps · 1s",
+    ]
+
+
+def test_a_failed_app_has_its_row_while_the_others_are_proven_and_the_repository_is_checked(
+    edge_backup, machine
+):
+    edge_backup("backup")
+
+    outcome = edge_backup(*declare_shipped_apps(), "restore", "--test")
+
+    assert outcome.exit_code == 3
+    assert outcome.out.splitlines() == [
+        f"  ✓ songmaker       restore proven  {machine.snapshots[-1]['id'][:8]}",
+        "  ✗ keycloak        not proven     kein erfolgreiches Backup von keycloak aufgezeichnet",
+        "  ✓ repository      checked",
+    ]
+    assert outcome.err.splitlines() == [
+        "error: 1 of 2 apps not proven",
+        "next: hal restore --test keycloak",
+    ]
+
+
+def test_a_restore_test_that_cannot_start_prints_only_the_error_pair(edge_backup, machine, home):
+    edge_backup(*declare_two_apps(home), "backup")
+    (home / ".secrets/restic/password").unlink()
+
+    outcome = edge_backup(*declare_two_apps(home), "restore", "--test")
+
+    assert (outcome.exit_code, outcome.out) == (3, "")
+    assert outcome.err.splitlines() == [
+        "error: the password file is missing (docs/backup.md: Setup)",
+        "next: hal restore --test",
+    ]
+
+
+def test_an_interrupted_restore_test_names_the_app_it_stopped_in(
+    edge_backup, machine, home, monkeypatch
+):
+    monkeypatch.chdir(home)
+    edge_backup(*declare_two_apps(home), "backup")
+    machine.failing["pg_restore"] = _terminated_by_systemd
+
+    outcome = edge_backup(*declare_two_apps(home), "restore", "--test")
+
+    assert outcome.exit_code == 130
+    assert outcome.err.splitlines() == [
+        "error: interrupted while testing the restore of songmaker",
+        "next: hal restore --test",
+    ]
+
+
+def test_a_repository_that_fails_its_check_after_a_failed_app_has_its_row_and_the_app_count(
+    edge_backup, machine
+):
+    edge_backup("backup")
+    machine.failing["restic check"] = 1
+
+    outcome = edge_backup(*declare_shipped_apps(), "restore", "--test")
+
+    rows = outcome.out.splitlines()
+    assert outcome.exit_code == 3
+    assert rows[-1].startswith("  ✗ repository      not checked    ")
+    assert outcome.err.splitlines() == [
+        "error: 1 of 2 apps not proven",
+        "next: hal restore --test keycloak",
+    ]
+
+
+def test_a_restore_test_interrupted_outside_any_app_says_only_that_it_was_interrupted(
+    edge_backup, machine, home, monkeypatch
+):
+    monkeypatch.chdir(home)
+    edge_backup(*declare_two_apps(home), "backup")
+    machine.failing["restic check"] = _terminated_by_systemd
+
+    outcome = edge_backup(*declare_two_apps(home), "restore", "--test")
+
+    assert outcome.exit_code == 130
+    assert outcome.err.splitlines() == ["error: interrupted", "next: hal restore --test"]

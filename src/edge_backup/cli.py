@@ -84,14 +84,41 @@ def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
 
 
 def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
+    """A row per app, one for the repository and the verdict."""
     _require_declared(arguments)
+    started = host.monotonic()
 
     def step(settings: Settings, apps: tuple[App, ...], run: Run) -> None:
-        runner.restore_test(
-            settings, apps, run, only=arguments.app, snapshot_prefix=arguments.snapshot
+        try:
+            runner.restore_test(
+                settings,
+                apps,
+                run,
+                only=arguments.app,
+                snapshot_prefix=arguments.snapshot,
+                report=write_row,
+            )
+        except StepFailed as failure:
+            if run.failed_apps:
+                failed = run.failed_apps
+                total = run.proven_apps + len(failed)
+                noun = Noun.APP if total == 1 else Noun.APPS
+                failure.error_line = f"{len(failed)} of {total} {noun} not proven"
+                failure.next_step = f"hal restore --test {failed[0]}"
+            raise
+
+    def announce(run: Run) -> None:
+        noun = Noun.APP if run.proven_apps == 1 else Noun.APPS
+        write_verdict(
+            Verdict(
+                Glyph.DONE,
+                "restore test done",
+                ((run.proven_apps, noun),),
+                elapsed_seconds=host.monotonic() - started,
+            )
         )
 
-    _recorded(settings, arguments, step)
+    _recorded(settings, arguments, step, announce)
 
 
 def snapshots(settings: Settings, _: argparse.Namespace) -> None:

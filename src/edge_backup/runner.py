@@ -62,6 +62,13 @@ class BackupEvent(StrEnum):
     NOT_PRUNED = "not pruned"
 
 
+class RestoreEvent(StrEnum):
+    PROVEN = "restore proven"
+    NOT_PROVEN = "not proven"
+    CHECKED = "checked"
+    NOT_CHECKED = "not checked"
+
+
 REPOSITORY = "repository"
 
 
@@ -97,6 +104,7 @@ class Run:
         self._first_app_failure: StepFailed | None = None
         self.interrupted_app: str | None = None
         self.backed_up_apps = 0
+        self.proven_apps = 0
         self.failed_apps: list[str] = []
         write_status(path, status)
 
@@ -244,6 +252,10 @@ def _report_not_backed_up(report: Callable[[Row], None], app: App, failure: Step
     report(Row(Glyph.FAILED, app.name, BackupEvent.NOT_BACKED_UP, str(failure)))
 
 
+def _report_not_proven(report: Callable[[Row], None], app: App, failure: StepFailed) -> None:
+    report(Row(Glyph.FAILED, app.name, RestoreEvent.NOT_PROVEN, str(failure)))
+
+
 def restore_test(
     settings: Settings,
     apps: tuple[App, ...],
@@ -251,9 +263,11 @@ def restore_test(
     *,
     only: str | None = None,
     snapshot_prefix: str | None = None,
+    report: Callable[[Row], None] = lambda _: None,
 ) -> None:
     """Every declared app, or `only` that one, which skips the data-reading check. With
-    `snapshot_prefix` (one app only) it tests that snapshot instead of the last successful one."""
+    `snapshot_prefix` (one app only) it tests that snapshot instead of the last successful one.
+    `report` gets a row as each app ends and for the repository."""
     targets = _targets(apps, only)
     with run.phase(Phase.PREPARE, failing=ExitCategory.CONFIGURATION):
         require_secret_and_repository(settings)
@@ -262,11 +276,19 @@ def restore_test(
         run.attribute_legacy_evidence(settings, apps)
     verified = []
     for app in targets:
-        with run.isolated(app.name):
-            _restore_test(settings, app, run, snapshot_prefix)
+        with run.isolated(app.name, partial(_report_not_proven, report, app)):
+            snapshot_id = _restore_test(settings, app, run, snapshot_prefix)
             verified.append(app.name)
-    with run.phase(Phase.CHECK):
-        restic.check(settings, read_data=only is None)
+            run.proven_apps += 1
+            report(Row(Glyph.DONE, app.name, RestoreEvent.PROVEN, snapshot_id[:8]))
+    try:
+        with run.phase(Phase.CHECK):
+            restic.check(settings, read_data=only is None)
+    except StepFailed as failure:
+        if run.failed_apps:
+            report(Row(Glyph.FAILED, REPOSITORY, RestoreEvent.NOT_CHECKED, str(failure)))
+        raise
+    report(Row(Glyph.DONE, REPOSITORY, RestoreEvent.CHECKED))
     run.restore_tested(verified)
     run.raise_first_app_failure()
 
@@ -430,7 +452,7 @@ def _count_kept(settings: Settings, kept: KeptVolume) -> int:
     return docker.count_files(settings, MountKind.VOLUME, kept.volume, kept.skip)
 
 
-def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str | None) -> None:
+def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str | None) -> str:
     with run.phase(Phase.RESTORE):
         snapshot_id = (
             _last_successful_snapshot(settings, app, run.snapshot_of(app.name))
@@ -442,6 +464,7 @@ def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str |
             restic.restore(settings, app.name, snapshot_id, restored)
         with run.phase(Phase.VERIFY):
             _verify(settings, app, restored, run)
+    return snapshot_id
 
 
 def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
