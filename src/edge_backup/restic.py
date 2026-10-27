@@ -9,7 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from edge_backup import host
-from edge_backup.apps import PRE_APPLY_TAG
+from edge_backup.apps import DB_FOLDER, PRE_APPLY_TAG
 from edge_backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
 
 REPOSITORY = "/repo"
@@ -22,8 +22,8 @@ KEEP_MONTHLY = 3
 # A snapshot taken right before a change is applied carries this tag besides its app's name.
 KEEP_PRE_APPLY = 10
 CHECK_READ_DATA_SUBSET = "10%"
-# The snapshot layout under an app's source path: the dump and manifest, and the audio.
-DB_FOLDER = "db"
+# The snapshot layout under an app's source path: the dump and manifest (DB_FOLDER), the audio,
+# and a SQLite app's files volume under its compose volume name.
 AUDIO_FOLDER = "audio"
 
 
@@ -45,8 +45,18 @@ class Mount:
         return f"{argument},readonly" if self.readonly else argument
 
 
+@dataclass(frozen=True)
+class KeptVolume:
+    """A compose volume the snapshot holds read-only beside the dump, in its own folder."""
+
+    folder: str
+    volume: str
+    skip: str | None
+    """A name glob left out at every depth below the folder."""
+
+
 def app_source(app: str) -> str:
-    """The fixed in-container path an app's snapshot holds: DB_FOLDER and AUDIO_FOLDER."""
+    """The fixed in-container path an app's snapshot holds: DB_FOLDER and the kept volume."""
     return f"/backup/{app}"
 
 
@@ -98,19 +108,23 @@ def backup(
     settings: Settings,
     app: str,
     staging: Path,
-    audio_volume: str | None,
+    kept: KeptVolume | None,
     *,
     pre_apply: bool = False,
 ) -> str:
-    """One snapshot holding dump, manifest and audio (none for a DB-only app); any non-zero
-    exit (3 too) is a failure."""
+    """One snapshot holding dump, manifest and the kept volume (none for a DB-only app); any
+    non-zero exit (3 too) is a failure. The skip is anchored under the volume's folder."""
     mounts = [Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}")]
-    if audio_volume is not None:
-        mounts.append(Mount(MountKind.VOLUME, audio_volume, f"{app_source(app)}/{AUDIO_FOLDER}"))
+    excludes: list[str] = []
+    if kept is not None:
+        target = f"{app_source(app)}/{kept.folder}"
+        mounts.append(Mount(MountKind.VOLUME, kept.volume, target))
+        if kept.skip is not None:
+            excludes = ["--exclude", f"{target}/**/{kept.skip}"]
     output = _restic(
         settings,
         "restic backup",
-        ["backup", "--json", *_tag(app, pre_apply=pre_apply), app_source(app)],
+        ["backup", "--json", *excludes, *_tag(app, pre_apply=pre_apply), app_source(app)],
         *mounts,
     )
     return _snapshot_id(output)
@@ -163,7 +177,7 @@ def snapshot_ids(settings: Settings, app: str, *options: str) -> list[str]:
 
 
 def restore(settings: Settings, app: str, snapshot_id: str, target: Path) -> None:
-    """The app's source path lands directly in target: DB_FOLDER and AUDIO_FOLDER below it."""
+    """The app's source path lands directly in target: DB_FOLDER and the kept folder below it."""
     _restic(
         settings,
         "restic restore",

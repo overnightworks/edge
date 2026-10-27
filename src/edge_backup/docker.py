@@ -31,7 +31,7 @@ RESTORE_OWNER_ROLE = "restore-test"
 RESTORE_DATABASE = "restore_test"
 # The image's superuser; `docker exec` runs as root, which is no role in the server.
 RESTORE_ROLE = "postgres"
-_SCANNED_AUDIO = "/audio"
+_SCANNED = "/scanned"
 _SQLITE_SCRIPT = "/sqlite_copy.py"
 _SQLITE_DATA = "/data"
 _OWNER = re.compile(r"(\d+):(\d+)\n")
@@ -160,19 +160,34 @@ def _sqlite_argv(
     return [*argv, "-I", _SQLITE_SCRIPT, *command]
 
 
+def _read_owner(settings: Settings, volume: str, file: str) -> bytes:
+    """The script's `VERDICT_EXIT` on `owner` means the file is missing or unreadable."""
+    label = "Lesen des SQLite-Besitzers"
+    try:
+        return host.run(
+            _sqlite_argv(
+                settings,
+                Mount(MountKind.VOLUME, volume, _SQLITE_DATA),
+                command=["owner", f"{_SQLITE_DATA}/{file}"],
+            ),
+            label=label,
+            discard_stderr=True,
+        )
+    except host.HostCommandError as error:
+        if error.exit_code != sqlite_copy.VERDICT_EXIT:
+            raise
+        raise host.HostCommandError(
+            label,
+            f"endete mit Exit {error.exit_code}: {file} fehlt oder ist unlesbar",
+            error.exit_code,
+        ) from error
+
+
 def copy_sqlite(settings: Settings, volume: str, database: SqliteDatabase, target: Path) -> None:
     """The online copy runs as the file's owner with the volume writable: a WAL reader keeps its
     read lock in the `-shm` file. Its connection is read-only: the database file stays unwritten."""
     path = f"{_SQLITE_DATA}/{database.file}"
-    answer = host.run(
-        _sqlite_argv(
-            settings,
-            Mount(MountKind.VOLUME, volume, _SQLITE_DATA),
-            command=["owner", path],
-        ),
-        label="Lesen des SQLite-Besitzers",
-        discard_stderr=True,
-    )
+    answer = _read_owner(settings, volume, database.file)
     owner = _OWNER.fullmatch(answer.decode(errors="replace"))
     if owner is None or int(owner[1]) == 0:
         raise TargetError(f"der Besitzer der Datenbank von {database.file} ist unlesbar oder root")
@@ -215,17 +230,21 @@ def check_sqlite(settings: Settings, directory: Path, file: str, table: str) -> 
         raise host.UnreadableOutputError("die Zeilenzahl der SQLite-Kopie ist unlesbar") from error
 
 
-def count_audio_files(settings: Settings, kind: MountKind, source: str) -> int:
+def count_files(settings: Settings, kind: MountKind, source: str, skip: str | None = None) -> int:
     """Regular files under a volume or host directory, counted read-only in a container.
 
-    The one rule for the manifest's count and the restored copy's; names never leave it.
+    The one rule for the manifest's count and the restored copy's; names never leave it. An entry
+    matching the skip is pruned at every depth below the root, as restic leaves it out; any read
+    error fails the count.
     """
+    # `-mindepth 1` keeps the pattern from matching the root itself (`s*` over `/scanned`).
+    pruned = ["-mindepth", "1", "-name", skip, "-prune", "-o"] if skip is not None else []
     listing = host.run(
         [
-            *container_argv(settings, Mount(kind, source, _SCANNED_AUDIO), entrypoint="find"),
-            _SCANNED_AUDIO, "-type", "f", "-print0",
+            *container_argv(settings, Mount(kind, source, _SCANNED), entrypoint="find"),
+            _SCANNED, *pruned, "-type", "f", "-print0",
         ],
-        label="Zählen der Audiodateien",
+        label="Zählen der Dateien",
     )  # fmt: skip
     return listing.count(b"\0")
 

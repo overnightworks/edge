@@ -1,6 +1,7 @@
 """A scripted Docker host in place of docker and restic, for the edge-backup test modules."""
 
 import fcntl
+import fnmatch
 import json
 import re
 import stat
@@ -95,6 +96,12 @@ class Machine:
     other_volumes: dict[str, list[str]] = field(
         default_factory=lambda: {"radio": ["radio_audiofiles"]}
     )
+    volume_files: dict[str, dict[str, bytes]] = field(default_factory=dict)
+    """The files of a kept volume by Docker volume name; songmaker's audio volume holds `audio`."""
+    volumes_by_label: dict[str, list[str]] = field(default_factory=dict)
+    """What `docker volume ls` answers for a compose volume name, whatever the project."""
+    unreadable_files: set[str] = field(default_factory=set)
+    """Entries of a kept volume the operator cannot read: a count that meets one exits 1."""
     clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
@@ -174,7 +181,7 @@ class Machine:
             "docker inspect": self._state,
             "docker volume ls": self._volumes,
             "pg_dump": self._pg_dump,
-            "Zählen der Audiodateien": self._scan,
+            "Zählen der Dateien": self._scan,
             "Lesen des SQLite-Besitzers": self._sqlite_owner,
             "Kopie der SQLite-Datenbank": self._sqlite_copy,
             "Prüfung der SQLite-Kopie": self._sqlite_check,
@@ -256,6 +263,10 @@ class Machine:
         return b"running healthy\n"
 
     def _volumes(self, argv, **_) -> bytes:
+        if (
+            named := self.volumes_by_label.get(label_value(argv, "com.docker.compose.volume"))
+        ) is not None:
+            return "\n".join(named).encode()
         project = label_value(argv, "com.docker.compose.project")
         found = self.volumes if project == "songmaker" else self.other_volumes[project]
         return "\n".join(found).encode()
@@ -265,12 +276,16 @@ class Machine:
 
     def _sqlite_owner(self, argv, *, discard_stderr, **_) -> bytes:
         if self.sqlite_copy is None:
-            return self._sqlite_failure("Lesen des SQLite-Besitzers", 1, discard_stderr)
+            return self._sqlite_failure(
+                "Lesen des SQLite-Besitzers", sqlite_copy.VERDICT_EXIT, discard_stderr
+            )
         return self.sqlite_owner
 
     def _sqlite_copy(self, argv, *, discard_stderr, **_) -> bytes:
         if self.sqlite_copy is None or self.sqlite_copy_fails:
-            return self._sqlite_failure("Kopie der SQLite-Datenbank", 1, discard_stderr)
+            return self._sqlite_failure(
+                "Kopie der SQLite-Datenbank", sqlite_copy.VERDICT_EXIT, discard_stderr
+            )
         return self.sqlite_copy
 
     def _sqlite_check(self, argv, *, discard_stderr, **_) -> bytes:
@@ -290,23 +305,28 @@ class Machine:
         return exit_with(label, exit_code)
 
     def _scan(self, argv, **_) -> bytes:
-        """`find /audio -type f -print0` over the live volume or a restored directory."""
-        mount = mount_of(argv, "/audio")
+        """`find <mount> [-mindepth 1 -name <skip> -prune -o] -type f -print0` over a live volume or
+        a restored directory."""
+        mount = mount_of(argv, "/scanned")
+        skip = argv[argv.index("-name") + 1] if "-name" in argv else None
         if mount["type"] == "volume":
-            names = list(self.audio)
+            names = self.volume_files.get(mount["source"], self.audio)
         else:
             root = Path(mount["source"])
-            names = [
-                str(path.relative_to(root))
+            names = {
+                str(path.relative_to(root)): b""
                 for path in root.rglob("*")
                 if path.is_file() and not path.is_symlink()
-            ]
-        return b"".join(name.encode() + b"\0" for name in names)
+            }
+        kept = [name for name in names if not _skipped(name, skip)]
+        if self.unreadable_files & set(kept):
+            return exit_with("Zählen der Dateien", 1)
+        return b"".join(name.encode() + b"\0" for name in kept)
 
     def _backup(self, argv, **_) -> bytes:
         self.status_seen_during_backup = json.loads(self.status_file.read_text())
         app = re.search(r"target=/backup/([^/,]+)/db", " ".join(argv))[1]
-        has_audio = any(a.endswith(f"target=/backup/{app}/audio,readonly") for a in argv)
+        kept = self._kept_by_folder(argv, app)
         staging = Path(mount_source(argv, f"/backup/{app}/db"))
         self.private_modes["staging"] = mode_of(staging)
         self.private_modes |= {path.name: mode_of(path) for path in staging.iterdir()}
@@ -323,12 +343,33 @@ class Machine:
                     for path in staging.iterdir()
                     if path.name not in self.snapshot_without
                 },
-                "audio": self.audio | self.written_during_scan if has_audio else {},
+                "audio": self.audio | self.written_during_scan if "audio" in kept else {},
+                "volumes": {folder: files for folder, files in kept.items() if folder != "audio"},
             }
         )
         status = {"message_type": "status", "percent_done": 1}
         summary = {"message_type": "summary", "snapshot_id": snapshot_id}
         return f"{json.dumps(status)}\n{json.dumps(summary)}\n".encode()
+
+    def _kept_by_folder(self, argv, app: str) -> dict[str, dict[str, bytes]]:
+        """The volumes restic is told to keep beside `db/`, without what `--exclude` leaves out."""
+        source = f"/backup/{app}/"
+        excludes = [argv[i + 1] for i, a in enumerate(argv) if a == "--exclude"]
+        kept = {}
+        for argument in (argv[i + 1] for i, a in enumerate(argv) if a == "--mount"):
+            mount = dict(part.split("=", 1) for part in argument.split(",") if "=" in part)
+            folder = mount["target"].removeprefix(source)
+            if not mount["target"].startswith(source) or folder == "db":
+                continue
+            skips = [
+                e.rsplit("/", 1)[1] for e in excludes if e.startswith(f"{mount['target']}/**/")
+            ]
+            kept[folder] = {
+                name: content
+                for name, content in self.volume_files.get(mount["source"], self.audio).items()
+                if not any(_skipped(name, skip) for skip in skips)
+            }
+        return kept
 
     def _snapshots(self, argv, **_) -> bytes:
         if "--json" in argv:
@@ -354,8 +395,11 @@ class Machine:
         snapshot = next(s for s in self.snapshots if s["id"] == snapshot_id)
         target = Path(mount_source(argv, "/restore"))
         self.private_modes["restored"] = mode_of(target)
-        for folder in ("db", "audio"):
-            for name, content in snapshot[folder].items():
+        folders = {"db": snapshot["db"], "audio": snapshot["audio"]} | snapshot.get("volumes", {})
+        for folder, files in folders.items():
+            if folder in snapshot.get("volumes", {}):
+                (target / folder).mkdir(parents=True, exist_ok=True)
+            for name, content in files.items():
                 (target / folder / name).parent.mkdir(parents=True, exist_ok=True)
                 (target / folder / name).write_bytes(content)
         return b""
@@ -407,6 +451,12 @@ class Machine:
         if sql not in answers:
             pytest.fail(f"the throwaway server was asked an unexpected query: {sql}")
         return answers[sql]
+
+
+def _skipped(name: str, glob: str | None) -> bool:
+    """`find -name <glob> -prune` and restic's `**/<glob>` both drop an entry whose own name, or
+    one of its parents' below the root, matches."""
+    return glob is not None and any(fnmatch.fnmatchcase(part, glob) for part in Path(name).parts)
 
 
 def declare_apps(home: Path, toml: str) -> tuple[str, str]:

@@ -215,10 +215,10 @@ def test_the_restored_audio_is_counted_by_the_manifests_own_rule(edge_backup, ma
     edge_backup("backup")
     edge_backup("restore", "--test")
 
-    scans = [argv for label, argv in machine.calls if label == "Zählen der Audiodateien"]
-    assert [mount_of(argv, "/audio")["type"] for argv in scans] == ["volume", "bind"]
+    scans = [argv for label, argv in machine.calls if label == "Zählen der Dateien"]
+    assert [mount_of(argv, "/scanned")["type"] for argv in scans] == ["volume", "bind"]
     assert len({tuple(argv[argv.index("--entrypoint") :]) for argv in scans}) == 1
-    assert all(any(m.endswith("target=/audio,readonly") for m in argv) for argv in scans)
+    assert all(any(m.endswith("target=/scanned,readonly") for m in argv) for argv in scans)
 
 
 def test_restore_test_removes_only_throwaway_servers_it_owns_by_id(edge_backup, machine):
@@ -298,7 +298,7 @@ def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_ba
     ("failing_label", "exit_code", "phase", "backup_counts"),
     [
         ("pg_dump", 1, "dump", False),
-        ("Zählen der Audiodateien", 1, "manifest", False),
+        ("Zählen der Dateien", 1, "manifest", False),
         ("restic backup", 3, "backup", False),
         ("restic backup", 1, "backup", False),
         ("restic forget", 1, "forget", True),
@@ -629,7 +629,7 @@ def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
 
 @pytest.mark.parametrize(
     "failing_label",
-    ["Zählen der Audiodateien", "Start der Wegwerf-Datenbank", "Entfernen der Wegwerf-Datenbank"],
+    ["Zählen der Dateien", "Start der Wegwerf-Datenbank", "Entfernen der Wegwerf-Datenbank"],
 )
 def test_restore_test_counts_a_container_that_will_not_run_as_a_failed_command(
     edge_backup, machine, failing_label
