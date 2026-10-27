@@ -61,27 +61,38 @@ _VERDICT_STYLES = {
 }
 
 
+class Noun(StrEnum):
+    """An event or label that names something to count: its value is the singular phrase, and a
+    count other than one shows it with an `s` after its first word (`action`, `area checked`)."""
+
+
 @dataclass(frozen=True)
 class Row:
-    """One thing a command did or found. The caller owns its event enum; `fact` is one sentence."""
+    """One thing a command did or found. The caller owns its event enum; `fact` is one sentence;
+    `count` is shown before the event, which takes the plural when it is a `Noun`."""
 
     glyph: Glyph
     subject: str
     event: StrEnum
     fact: str = ""
+    count: int | None = None
 
 
 @dataclass(frozen=True)
 class Verdict:
     """The last line of a run: the caller computes the glyph, the summary and the count of each
     of its labels, in the order to show them; the renderer leaves out a zero count. `hint` is the
-    command to run next; `elapsed_seconds` is the run time, shown after the counts."""
+    command to run next; `elapsed_seconds` is the run time, shown after the counts. Without a
+    summary the counts are the headline. `details` are plain phrases after the counts and
+    `next_step` is a `next:` line under the verdict."""
 
     glyph: Glyph
     summary: str
     counts: tuple[tuple[int, StrEnum], ...]
     hint: str = ""
     elapsed_seconds: float | None = None
+    details: tuple[str, ...] = ()
+    next_step: str = ""
 
 
 SECONDS_PER_MINUTE = 60
@@ -110,11 +121,20 @@ def printable(text: str) -> str:
     )
 
 
+def _counted(number: int, label: StrEnum) -> str:
+    text = printable(str(label))
+    if isinstance(label, Noun) and number != 1:
+        first, separator, rest = text.partition(" ")
+        text = f"{first}s{separator}{rest}"
+    return f"{number} {text}"
+
+
 def write_row(row: Row) -> None:
     """The row on stdout; text from outside is escaped before it is padded, so columns hold.
     On a terminal only the glyph is coloured and the fact dim; a `·` row is dim as a whole."""
     stdout = sys.stdout
-    subject, event = printable(row.subject), printable(str(row.event))
+    subject = printable(row.subject)
+    event = printable(str(row.event)) if row.count is None else _counted(row.count, row.event)
     fact = printable(row.fact).rstrip()
     columns = f"{subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}"
     if row.glyph is Glyph.UNCHANGED:
@@ -129,22 +149,24 @@ def write_row(row: Row) -> None:
 def write_verdict(verdict: Verdict) -> None:
     """The last line of a command on stdout: the summary, its non-zero counts, the run time, then
     the hint. On a terminal the glyph and summary are bold in the glyph's colour, the counts and
-    the run time dim."""
+    the run time dim; a `next:` line follows when the verdict has a next step."""
     stdout = sys.stdout
-    counted = ", ".join(
-        f"{number} {printable(str(label))}" for number, label in verdict.counts if number
-    )
+    counted = ", ".join(_counted(number, label) for number, label in verdict.counts if number)
     hint = [printable(verdict.hint)] if verdict.hint else []
+    headline_text = printable(verdict.summary) or counted
     headline = _styled(
-        f"{verdict.glyph.value} {printable(verdict.summary)}", verdict.glyph.verdict_style, stdout
+        f"{verdict.glyph.value} {headline_text}", verdict.glyph.verdict_style, stdout
     )
-    counts = [_styled(counted, _DIM, stdout)] if counted else []
+    counts = [_styled(counted, _DIM, stdout)] if counted and verdict.summary else []
+    details = [_styled(printable(detail), _DIM, stdout) for detail in verdict.details]
     run_time = (
         [_styled(format_duration(verdict.elapsed_seconds), _DIM, stdout)]
         if verdict.elapsed_seconds is not None
         else []
     )
-    print(" · ".join([headline, *counts, *run_time, *hint]))
+    print(" · ".join([headline, *counts, *details, *run_time, *hint]))
+    if verdict.next_step:
+        print(f"{_styled('next:', _CYAN, stdout)} {printable(verdict.next_step)}")
 
 
 def write_error(message: str, next_step: str | None = None) -> None:
