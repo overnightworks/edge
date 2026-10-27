@@ -25,7 +25,8 @@ left is never started and its switch is never cleared here: only `edge start` en
 enabled in the catalog, declares a setup, and its containers still run while it is not set up,
 the run is refused: nothing is asked or published.
 An app (an entry with `repo`) is planned last, in the same plan and under the same `yes`: its
-newest release tag is checked out, built, started and recorded once healthy (`apps.py`).
+newest release tag is checked out, built, started and recorded once its containers are settled
+(`apps.py`).
 While `services.legal` is enabled the three legal pages are built from `legal/frame` and
 `legal/sections` through the validator (`legal_step.py`); a refused section is exit 2, and the
 plan names each page that is new or changes. After `yes` the pages are written to `legal/built/`
