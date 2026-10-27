@@ -583,7 +583,6 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 ) -> None:
     """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-
     assert home_secrets_setup(home, boundaries) == 0
     output = capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
