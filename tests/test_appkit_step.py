@@ -5,7 +5,6 @@ the legal unit from `legal/assets/appkit-<version>/`, on the scripted boundaries
 import os
 import shutil
 import stat
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
@@ -140,16 +139,33 @@ def test_a_write_leaves_no_temporary_directory_beside_the_served_one(world):
     assert [path.name for path in world.served.parent.iterdir()] == [f"appkit-{VERSION}"]
 
 
-def test_a_missing_appkit_is_one_cannot_plan_line_and_writes_nothing(world, monkeypatch):
-    monkeypatch.setitem(sys.modules, "appkit", None)
+def test_a_missing_appkit_is_one_cannot_plan_error(repository):
+    def not_installed(name: str):
+        raise ModuleNotFoundError(name)
 
-    exit_code, out, err = world.switch()
+    with pytest.raises(appkit_step.AppkitError, match="appkit is not installed, run `uv sync`"):
+        appkit_step.plan_appkit(repository, not_installed)
 
-    assert exit_code == 2
-    assert err.startswith("edge apply --closed: cannot plan, appkit is not installed")
-    assert "uv sync" in err
-    assert "Traceback" not in err
-    assert "the plan" not in out
+
+def test_a_failed_final_rename_keeps_the_previous_directory(world, monkeypatch):
+    served = world.served
+    (served / "appkit.css").write_text("previous")
+    real_rename = os.rename
+    renames = []
+
+    def fail_the_publishing_rename(source, destination):
+        renames.append(source)
+        if len(renames) == 2:
+            raise OSError("interrupted")
+        real_rename(source, destination)
+
+    monkeypatch.setattr(appkit_step.os, "rename", fail_the_publishing_rename)
+
+    with pytest.raises(OSError, match="interrupted"):
+        appkit_step._replace_directory(appkit_step.installed_static(), served)
+
+    assert (served / "appkit.css").read_text() == "previous"
+    assert [path.name for path in served.parent.iterdir()] == [served.name]
 
 
 def test_a_missing_assets_directory_is_named_at_plan_time(world):

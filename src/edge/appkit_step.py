@@ -9,8 +9,10 @@ every refusal comes at plan time, before the question: nothing is written on one
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import metadata
+from importlib import import_module, metadata
+from types import ModuleType
 from pathlib import Path
 
 from edge.unit_plans import Progress
@@ -62,12 +64,14 @@ class AppkitPlan:
         return None
 
 
-def plan_appkit(repository: Path) -> AppkitPlan:
+def plan_appkit(
+    repository: Path, find_package: Callable[[str], ModuleType] = import_module
+) -> AppkitPlan:
     """What the step would write. The lookup happens here, not at import: `hal.stack_commands`
     imports `edge.apply`, and a machine without a synced environment must still run `hal`."""
-    source = installed_static()
-    version = metadata.version(DISTRIBUTION)
+    source = installed_static(find_package)
     directory = served_directory(repository)
+    version = directory.name.removeprefix(_DIRECTORY_PREFIX)
     if not directory.parent.is_dir():
         raise AppkitError(f"{directory.parent} is missing, the checkout is broken")
     stale = tuple(
@@ -80,12 +84,12 @@ def plan_appkit(repository: Path) -> AppkitPlan:
     return AppkitPlan(version, source, directory, _bytes_of(source) != _bytes_of(directory), stale)
 
 
-def installed_static() -> Path:
+def installed_static(find_package: Callable[[str], ModuleType] = import_module) -> Path:
     try:
-        import appkit
+        appkit = find_package("appkit")
     except ImportError as error:
         raise AppkitError("appkit is not installed, run `uv sync`") from error
-    return Path(appkit.__file__).parent / "static"
+    return Path(str(appkit.__file__)).parent / "static"
 
 
 def served_directory(repository: Path) -> Path:
@@ -103,7 +107,7 @@ def _bytes_of(directory: Path) -> dict[str, bytes]:
 
 def _replace_directory(source: Path, directory: Path) -> None:
     """The files in a temporary directory beside the target, then renamed into place; a damaged
-    directory moves aside first, so a failure before the rename leaves it as it was."""
+    directory moves aside first and moves back when the final rename fails."""
     temporary = Path(tempfile.mkdtemp(dir=directory.parent, prefix=_TEMPORARY_PREFIX))
     displaced = temporary / "displaced"
     try:
@@ -111,7 +115,12 @@ def _replace_directory(source: Path, directory: Path) -> None:
         _make_readable(temporary / "files")
         if directory.exists():
             os.rename(directory, displaced)
-        os.rename(temporary / "files", directory)
+        try:
+            os.rename(temporary / "files", directory)
+        except BaseException:
+            if displaced.exists():
+                os.rename(displaced, directory)
+            raise
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
 
