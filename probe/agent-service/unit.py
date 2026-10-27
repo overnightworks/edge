@@ -12,8 +12,8 @@ issuer on the `agent-songmaker` network, so the tokens verify and the CLI meets 
 with the dummy login. U17 (refusals.py) asks the refusals before any run; U16 then runs the cells of
 `agent-service/live_smoke.py` there, past its sign-in. `--cell containment` (containment.py) adds a
 fake app that lists tools (app_tools.py), certified by the scratch CA of scratch_secrets.py, and
-drives agent-runtime#440's cells B1 and B2 through `agent-smoke --tool`, and B3 and B4 through a
-transparent wrapper around the CLI. `--cell signer` (signer.py) drives #413's P12 and P28 against
+drives agent-runtime#440's cells B1 and B2 through `agent-smoke --tool`, B3 and B4 through a
+transparent wrapper around the CLI, and B5 (a hundred runs) through the same wrapper. `--cell signer` (signer.py) drives #413's P12 and P28 against
 a signing stand-in. The image
 compose.yaml names must exist (docs/agent-service.md, "The image"). The probe
 always removes its containers and networks, and never touches the live stack: the project name is
