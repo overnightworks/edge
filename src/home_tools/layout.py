@@ -19,18 +19,6 @@ class Layout:
         return self.home / "git"
 
     @property
-    def downloads(self) -> Path:
-        return self.home / "Downloads"
-
-    @property
-    def codex_sessions(self) -> Path:
-        return self.home / ".codex" / "sessions"
-
-    @property
-    def readme(self) -> Path:
-        return self.home / "README.md"
-
-    @property
     def config_file(self) -> Path:
         return self.home / ".config" / "home" / "config.toml"
 

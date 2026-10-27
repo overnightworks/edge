@@ -157,14 +157,6 @@ class Tally:
 
     one: str
     many: str
-    counted: bool = True
-
-    @classmethod
-    def fact(cls, text: str) -> Tally:
-        """A kind that is found at most once is said without a count: "~/README.md fehlt"."""
-        return cls(text, text, counted=False)
 
     def of(self, count: int) -> str:
-        if not self.counted:
-            return self.one
         return f"{count} {self.one if count == 1 else self.many}"

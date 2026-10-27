@@ -11,7 +11,13 @@ from home_tools.layout import Layout
 
 @pytest.mark.parametrize(
     "config_text",
-    ["[notify]\nnot_a_real_key = 1\n", "[notify]\nenabled = [\n", "[other]\nenabled = true\n"],
+    [
+        "[notify]\nnot_a_real_key = 1\n",
+        "[notify]\nenabled = [\n",
+        "[other]\nenabled = true\n",
+        '[notify]\nenabled = "yes"\n',
+        "notify = 1\n",
+    ],
 )
 def test_check_exits_2_on_a_config_it_cannot_trust(clean_home, runner, capsys: pytest.CaptureFixture[str], config_text: str) -> None:
     config_file = Layout(clean_home).config_file
