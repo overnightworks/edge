@@ -612,7 +612,8 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
     ]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
     under_a_row = [line for line in output.splitlines() if line.lstrip().startswith(("why:", "[ ]", "prefilled:", "opened "))]
-    assert under_a_row and all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
+    assert under_a_row
+    assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 
 def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
