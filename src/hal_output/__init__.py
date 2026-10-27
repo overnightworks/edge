@@ -75,12 +75,30 @@ class Row:
 class Verdict:
     """The last line of a run: the caller computes the glyph, the summary and the count of each
     of its labels, in the order to show them; the renderer leaves out a zero count. `hint` is the
-    command to run next."""
+    command to run next; `elapsed_seconds` is the run time, shown after the counts."""
 
     glyph: Glyph
     summary: str
     counts: tuple[tuple[int, StrEnum], ...]
     hint: str = ""
+    elapsed_seconds: float | None = None
+
+
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3600
+
+
+def format_duration(seconds: float) -> str:
+    """Whole seconds rounded down: `<1s`, `47s`, `1m05s`, `1h02m`."""
+    whole = int(seconds)
+    if whole < 1:
+        return "<1s"
+    if whole < SECONDS_PER_MINUTE:
+        return f"{whole}s"
+    if whole < SECONDS_PER_HOUR:
+        return f"{whole // SECONDS_PER_MINUTE}m{whole % SECONDS_PER_MINUTE:02d}s"
+    minutes = whole % SECONDS_PER_HOUR // SECONDS_PER_MINUTE
+    return f"{whole // SECONDS_PER_HOUR}h{minutes:02d}m"
 
 
 def printable(text: str) -> str:
@@ -109,8 +127,8 @@ def write_row(row: Row) -> None:
 
 
 def write_verdict(verdict: Verdict) -> None:
-    """The last line of a command on stdout: the summary, its non-zero counts, then the hint.
-    On a terminal the glyph and summary are bold in the glyph's colour and the counts dim."""
+    """The last line of a command on stdout: the summary, its non-zero counts, the run time, then the hint.
+    On a terminal the glyph and summary are bold in the glyph's colour, the counts and the run time dim."""
     stdout = sys.stdout
     counted = ", ".join(
         f"{number} {printable(str(label))}" for number, label in verdict.counts if number
@@ -120,7 +138,12 @@ def write_verdict(verdict: Verdict) -> None:
         f"{verdict.glyph.value} {printable(verdict.summary)}", verdict.glyph.verdict_style, stdout
     )
     counts = [_styled(counted, _DIM, stdout)] if counted else []
-    print(" · ".join([headline, *counts, *hint]))
+    run_time = (
+        [_styled(format_duration(verdict.elapsed_seconds), _DIM, stdout)]
+        if verdict.elapsed_seconds is not None
+        else []
+    )
+    print(" · ".join([headline, *counts, *run_time, *hint]))
 
 
 def write_error(message: str, next_step: str | None = None) -> None:

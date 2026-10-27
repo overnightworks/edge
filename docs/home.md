@@ -528,8 +528,9 @@ secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged
 (`needs sudo at a terminal`, or `needs Ansible, …` before the Ansible step has installed it) or, for the
 secrets, `missing` with the names (`(by hand)` for an entry only a person can create, `(unknown)` for one whose
 presence `stat` cannot tell). The last line is the verdict, counted over the four rows:
-`✓ setup done · 1 changed, 3 unchanged`, `~ setup plan · 2 open, 2 unchanged · run hal setup --apply`
-or `✓ setup up to date · 4 unchanged`. A step that fails prints its row as `failed` with its own
+`✓ setup done · 1 changed, 3 unchanged · 47s`, `~ setup plan · 2 open, 2 unchanged · 3s · run hal setup --apply`
+or `✓ setup up to date · 4 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
+a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for

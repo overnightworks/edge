@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,10 +32,14 @@ class Ports:
     probe: ExitCodeProbe
     secrets_setup: Boundaries
     now: datetime
+    clock: Callable[[], float]
     system: system_step.Boundaries
     unit_directory: Path
     disk_space: DiskSpaceReader
 
+
+# Looked up per call, so the tests can keep every run's time off this machine's clock.
+MONOTONIC_CLOCK: Callable[[], float] = time.monotonic
 
 SUBCOMMANDS = (next_steps, check, secrets_setup, setup)
 UNEXPECTED_ERROR_EXIT = 3
@@ -61,6 +66,7 @@ def build_layout_and_ports(
     secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
     disk_space: DiskSpaceReader | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; `home` and `hal setup` both build theirs here."""
     # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
@@ -71,6 +77,7 @@ def build_layout_and_ports(
         probe or probe_exit_code,
         secrets_setup_boundaries or TERMINAL_BOUNDARIES,
         now or datetime.now(),
+        clock or MONOTONIC_CLOCK,
         system,
         edge_units_directory(layout),
         disk_space or read_disk_space,
@@ -115,9 +122,12 @@ def main(
     secrets_setup_boundaries: Boundaries | None = None,
     system_boundaries: system_step.Boundaries | None = None,
     disk_space: DiskSpaceReader | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
-    layout, ports = build_layout_and_ports(home, run, probe, now, secrets_setup_boundaries, system_boundaries, disk_space)
+    layout, ports = build_layout_and_ports(
+        home, run, probe, now, secrets_setup_boundaries, system_boundaries, disk_space, clock
+    )
     try:
         # A subcommand that reads the config as one of its sources turns an invalid one into its own line, never exit 2.
         config = Config() if args.reads_config_as_a_source else load_config(layout)
