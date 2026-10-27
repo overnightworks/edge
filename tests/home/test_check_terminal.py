@@ -1,4 +1,4 @@
-"""Tests of what `home check` prints on the terminal (#493): one row per area, the verdict and the first step."""
+"""Tests of what the daily check prints on the terminal (#493): one row per area, the verdict and the first step."""
 
 from __future__ import annotations
 
