@@ -5,7 +5,7 @@ Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
-es einen Fund gibt (das ist kein Fehler — `systemd/home-check.service` trägt
+es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
 `SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
 Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
@@ -760,7 +760,7 @@ ln -s ~/git/edge/bin/home ~/.local/bin/home
 ```
 
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
-`systemd/` und startet die Timer, darunter `home-check.timer`. `hal` liegt nicht im PATH; der
+`systemd/` und startet die Timer, darunter `hal-check.timer`. `hal` liegt nicht im PATH; der
 Starter des Checkouts ruft es auf.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf

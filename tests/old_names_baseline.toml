@@ -103,8 +103,6 @@
 "src/home_tools/setup.py" = 7
 "src/home_tools/system/playbook.yml" = 3
 "src/home_tools/system_step.py" = 6
-"systemd/home-check.service" = 2
-"systemd/home-check.timer" = 1
 "tests/home/conftest.py" = 5
 "tests/home/test_app_secrets.py" = 1
 "tests/home/test_backup_check.py" = 1
