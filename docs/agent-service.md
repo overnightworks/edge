@@ -45,6 +45,8 @@ through a recreate. There is no model override: the model is the app's.
 
 `GET /offer` answers, for the person and app of its two tokens, the models of `[cli.claude] models` that the person's subscription group can run, each `ready` on route `cli`; it is computed from the configuration, opens no login and starts no run. Every profile carries `background = false`: no profile admits a background run (the service refuses to start without the key), and which identity runs an app's background agents is agent-runtime#479's question.
 
+Membership in the subscription group or the api group alone decides who may use an AI feature, in every app (hopin#240); an app adds no AI group of its own.
+
 A change to `service.toml`, `compose.yaml` or the image reaches the running service only by
 recreating it, which ends every run in flight:
 `docker compose --profile agent-service up -d --force-recreate agent-service`, in the live checkout
