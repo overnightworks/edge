@@ -206,7 +206,11 @@ STEP_CONSOLE_FLOW = "probe-step-console-flow"
 ONLY_IN_KEYCLOAK = "realm: only in Keycloak: "
 COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
 RESIDUE_OF_THE_APPLY = [
-    # the service account a console turned off and the apply turns back on
+    # the service account a console turned off and the apply turns back on: Keycloak drops its
+    # scope with the flag and the apply restores it
+    f"hallucinai: change client {ENABLED_SERVICE_ACCOUNT_CLIENT} defaultClientScopes: "
+    '["agent-service-audience", "basic", "groups", "profile", "roles"] → '
+    '["agent-service-audience", "basic", "groups", "profile", "roles", "service_account"]',
     f"hallucinai: change client {ENABLED_SERVICE_ACCOUNT_CLIENT} serviceAccountsEnabled: false → "
     "true",
     f'hallucinai: change client {SCOPED_CLIENT} defaultClientScopes: ["acr", '
@@ -217,6 +221,12 @@ RESIDUE_OF_THE_APPLY = [
     f"hallucinai: removal protocol mapper scope groups/{CONSOLE_NAME}-mapper",
     f"hallucinai: removal service-account client role service-account-{SERVICE_ACCOUNT_CLIENT}/"
     f"{AGENT_SERVICE}/{CONSOLE_CLIENT_ROLE}",
+    # the user and the role mappings the apply recreates with the service account
+    "hallucinai: addition service-account realm role service-account-"
+    f"{ENABLED_SERVICE_ACCOUNT_CLIENT}/{AGENT_WORKLOAD_ROLE}",
+    "hallucinai: addition service-account realm role service-account-"
+    f"{ENABLED_SERVICE_ACCOUNT_CLIENT}/default-roles-hallucinai",
+    f"hallucinai: addition service-account user service-account-{ENABLED_SERVICE_ACCOUNT_CLIENT}",
     f"master: removal flow {CONSOLE_SUBFLOW}",
     f"master: removal flow step {FORMS_FLOW}/auth-otp-form#1",
     f"master: removal flow step {SUBFLOW_PARENT}/{CONSOLE_SUBFLOW}#1",

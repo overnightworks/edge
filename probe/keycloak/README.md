@@ -50,7 +50,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   the console changes to declared objects that the apply resets (a mapper on the scope `groups`,
   a step in `browser-mfa-forms`, a subflow under `direct-grant-mfa-totp`, a default scope and a
   flow binding override on songmaker, a client role on its service account, hopin's service account
-  turned off, which the apply turns on again; the blockquote in docs/keycloak.md after „Theme and language“ states the class) and the
+  turned off, which the apply turns on again with its scope, user and role mappings; the blockquote in docs/keycloak.md after „Theme and language“ states the class) and the
   console subgroup with its member, flows, role and group on service accounts, and the default
   scope on `agent-service` (a client without scope lists) are still there; proof 3d holds that a changed YAML which drops a group, a client
   and the realm role `agent-workload` deletes none of them nor the role's mappings; proof 9 checks the

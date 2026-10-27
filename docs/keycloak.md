@@ -177,7 +177,7 @@ only Cloudflare's copy; a browser that already holds the old file keeps it.
 >   - a client role on a listed service account (`service-account-songmaker`); its realm roles
 >     and groups stay;
 >   - a service account turned off in the console on a declared client (hopin), which the apply
->     turns on again, keeping its user, its role and no group;
+>     turns on again, which recreates its user with its role and no group;
 >   - a flow binding override on a declared client.
 >
 >   A change to a declared object is made in the file, by an agent, never in the console. Deleting
