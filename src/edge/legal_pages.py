@@ -74,6 +74,15 @@ class Block:
     parsed: Parsed
     date: date
 
+    def is_published_in(self, page_text: str) -> bool:
+        """Whether every heading of the block stands in the page with its id, title and bytes."""
+        return all(
+            f'id="{heading.id}"' in page_text
+            and heading.title in page_text
+            and heading.content in page_text
+            for heading in (*self.parsed.headings, *self.parsed.subsections)
+        )
+
 
 @dataclass(frozen=True)
 class Frame:

@@ -154,6 +154,17 @@ def test_a_changed_text_goes_live_only_after_yes_and_the_plan_names_its_page(wor
     assert 'id="neu"' in world.built_page("datenschutz")
 
 
+def test_the_plan_names_the_block_whose_text_changed_and_no_other(world):
+    """L3."""
+    world.switch()
+    world.edit(AGENT, lambda text: text + b"<p>Neu</p>\n")
+
+    _, out, _ = world.switch(answer="no")
+
+    assert f"legal: datenschutz changes: {AGENT}" in out
+    assert PRIVACY not in out
+
+
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     """L3."""
     world.switch()

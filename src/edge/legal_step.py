@@ -7,8 +7,8 @@ plan time, before the question, and nothing is written on one.
 
 import os
 import tempfile
-from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -40,6 +40,7 @@ class LegalPlan:
     repository: Path
     pages: Mapping[str, str]  # empty while the step does not run
     changed: Mapping[str, str]  # the pages that differ from `legal/built`: "new" or "changes"
+    changed_blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # files by page
 
     @property
     def changes_nothing(self) -> bool:
@@ -50,7 +51,10 @@ class LegalPlan:
             return []
         if not self.changed:
             return ["legal: unchanged"]
-        return [f"legal: {page} {change}" for page, change in self.changed.items()]
+        return [
+            f"legal: {page} {change}: {_named(self.changed_blocks.get(page, ()))}"
+            for page, change in self.changed.items()
+        ]
 
     def write(self, progress: Progress) -> str | None:
         """Write the changed pages; the failure line, or None. The progress names this step only
@@ -73,16 +77,32 @@ def plan_legal(
     if not any(unit.key == LEGAL_UNIT and unit.enabled for unit in fleet.units):
         return LegalPlan(repository, {}, {})
     git = checkout.Git(repository, run_git)
-    pages = build_pages(
-        read_frame(repository),
-        read_blocks(repository, _catalog_keys(repository), lambda path: _commit_date(git, path)),
+    all_blocks = read_blocks(
+        repository, _catalog_keys(repository), lambda path: _commit_date(git, path)
     )
+    pages = build_pages(read_frame(repository), all_blocks)
     changed = {
         page: change
         for page, text in pages.items()
         if (change := _change(repository / BUILT_DIRECTORY / f"{page}.html", text))
     }
-    return LegalPlan(repository, pages, changed)
+    blocks = {page: _changed_blocks(repository, page, all_blocks) for page in changed}
+    return LegalPlan(repository, pages, changed, blocks)
+
+
+def _changed_blocks(repository: Path, page: str, blocks: Sequence[Block]) -> tuple[str, ...]:
+    """The files of the page's blocks whose text the built page does not hold yet."""
+    try:
+        built = (repository / BUILT_DIRECTORY / f"{page}.html").read_text()
+    except FileNotFoundError:
+        built = ""
+    return tuple(
+        block.path for block in blocks if block.page == page and not block.is_published_in(built)
+    )
+
+
+def _named(files: Sequence[str]) -> str:
+    return ", ".join(files) if files else "no block (the frame or a block that left)"
 
 
 def read_frame(repository: Path) -> Frame:
