@@ -222,8 +222,10 @@ class Step:
                 return Outcome(SetupEvent.NOT_CHECKED, f"needs {self.needs_first()}")
             case CheckState.WOULD_CHANGE:
                 return Outcome(self.events.open, self.open_fact())
-            case CheckState.UNCHANGED:
-                return Outcome(self.events.unchanged)
+        return Outcome(self.events.unchanged)
+
+
+HOOKS_PATH_KEY = "core.hooksPath"
 
 
 def _local_step(
@@ -399,10 +401,10 @@ def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
         return True
 
     def hooks_active() -> bool:
-        return (run(["git", "config", "--global", "--get", "core.hooksPath"]) or "").strip() == str(layout.git_hooks_dir)
+        return (run(["git", "config", "--global", "--get", HOOKS_PATH_KEY]) or "").strip() == str(layout.git_hooks_dir)
 
     def activate_hooks() -> bool:
-        return run(["git", "config", "--global", "core.hooksPath", str(layout.git_hooks_dir)]) is not None
+        return run(["git", "config", "--global", HOOKS_PATH_KEY, str(layout.git_hooks_dir)]) is not None
 
     return (
         _local_step(
@@ -420,7 +422,7 @@ def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
             activate_hooks,
             HOOK_WHY,
             "git could not set core.hooksPath",
-            shell_join(["git", "config", "--global", "core.hooksPath", str(layout.git_hooks_dir)]),
+            shell_join(["git", "config", "--global", HOOKS_PATH_KEY, str(layout.git_hooks_dir)]),
         ),
     )
 
@@ -525,6 +527,37 @@ def _stopped(row: SetupRow, step: Step, event: SetupEvent, apply: bool) -> None:
     )
 
 
+class _RowStopped(Exception):
+    def __init__(self, step: Step, error: OSError | StepFailed) -> None:
+        super().__init__(str(error))
+        self.step = step
+        self.error = error
+
+
+def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply: bool) -> tuple[Outcome, list[str]]:
+    outcomes: list[Outcome] = []
+    details: list[str] = []
+    for step in (step for step in steps if step.row is row):
+        if not step.runs_for(role):
+            outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
+            continue
+        try:
+            outcomes.append(step.run(apply))
+            if apply:
+                details.extend(step.details())
+        except (OSError, StepFailed) as error:
+            raise _RowStopped(step, error) from error
+    return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity), details
+
+
+def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
+    event = SetupEvent.NOT_STARTED if isinstance(stopped.error, StepRefused) else SetupEvent.FAILED
+    write_row(Outcome(event, _failure_sentence(stopped.step, stopped.error)).row(rows[position]))
+    for later in rows[position + 1 :]:
+        write_row(Outcome(SetupEvent.NOT_RUN).row(later))
+    _stopped(rows[position], stopped.step, event, apply)
+
+
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     """Stops at the first failed step, so a missing scanner never gets a hook activated; the later rows say `not run`."""
     try:
@@ -536,28 +569,13 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     outcomes: list[Outcome] = []
     rows = list(SetupRow)
     for position, row in enumerate(rows):
-        row_outcomes: list[Outcome] = []
-        row_details: list[str] = []
-        for step in (step for step in steps if step.row is row):
-            if not step.runs_for(role):
-                row_outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
-                continue
-            try:
-                row_outcomes.append(step.run(apply))
-                if apply:
-                    row_details.extend(step.details())
-            except (OSError, StepFailed) as error:
-                event = (
-                    SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
-                )
-                write_row(Outcome(event, _failure_sentence(step, error)).row(row))
-                for later in rows[position + 1 :]:
-                    write_row(Outcome(SetupEvent.NOT_RUN).row(later))
-                _stopped(row, step, event, apply)
-                return 1
-        outcome = max(row_outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
+        try:
+            outcome, details = _run_row(row, steps, role, apply)
+        except _RowStopped as stopped:
+            _stop_after_failure(rows, position, stopped, apply)
+            return 1
         write_row(outcome.row(row))
-        for line in row_details:
+        for line in details:
             print(line)
         outcomes.append(outcome)
     verdict = verdict_of(outcomes, apply)
