@@ -1,0 +1,8 @@
+claim_id = "562448c3f9ec4f53b1070e735466d144"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "5121cba2e9134e210804d959d3f6f080aa9cbe94"
+branch = "claude/issue-488-h5m4-check-mail-speaks-english"
+scope = ["docs/home.md", "scripts/system-proof/drive.sh", "src/home_tools/check.py", "src/home_tools/report.py", "tests/home/test_check.py", "tests/home/test_check_disk.py", "tests/home/test_check_levels.py", "tests/home/test_check_recovery.py", "tests/home/test_check_switches.py", "tests/home/test_platform_check.py", "tests/old_names_baseline.toml"]
+opened_commit = "cdb55e4b979e184a252e9541b7ad608222333521"
+whole_reason = "One translation of the mail's text owners: the subject, areas, levels and rule sentences change together with the tests and docs that pin them, or the mail mixes two languages."
