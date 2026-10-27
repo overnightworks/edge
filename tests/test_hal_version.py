@@ -77,18 +77,17 @@ def fetch_ahead(tree: Path, bare: Path, count: int) -> str:
     return tip
 
 
+def short_sha(tree: Path) -> str:
+    return plain_git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
+
+
 def test_a_clean_main_that_is_current_says_so(tmp_path):
     tree = main_checkout(tmp_path)
 
     result = version(tmp_path, tree)
 
     assert result.returncode == 0
-    assert result.stdout.splitlines() == [
-        f"commit: {plain_git(tree, 'rev-parse', '--short', 'HEAD').stdout.strip()}",
-        "branch: main",
-        "tree: clean",
-        "origin/main: current",
-    ]
+    assert result.stdout == f"hal {short_sha(tree)} · main · clean · up to date with origin/main\n"
 
 
 @pytest.mark.parametrize("worktree", ["the main checkout", "a linked worktree"])
@@ -99,14 +98,8 @@ def test_the_code_names_the_checkout_it_lives_in_whatever_the_cwd(tmp_path, work
 
     result = run_hal(tmp_path, hal_program(), "version", source=tree / "src")
 
-    short = plain_git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
     assert result.returncode == 0
-    assert result.stdout.splitlines() == [
-        f"commit: {short}",
-        "branch: main",
-        "tree: clean",
-        "origin/main: current",
-    ]
+    assert result.stdout == f"hal {short_sha(tree)} · main · clean · up to date with origin/main\n"
 
 
 def test_a_changed_path_and_the_fetched_standing_are_read_without_writing(tmp_path, git_record):
@@ -121,7 +114,7 @@ def test_a_changed_path_and_the_fetched_standing_are_read_without_writing(tmp_pa
 
     result = version(tmp_path, tree, path_first=git_record.directory)
 
-    assert result.stdout.splitlines()[2:] == ["tree: 1 changed path", "origin/main: 2 behind"]
+    assert result.stdout.split(" · ")[2:] == ["1 changed", "2 behind origin/main\n"]
     assert checkout_state(tree, may_change=()) == before
     calls = git_record.calls()
     assert calls
@@ -134,7 +127,7 @@ def test_several_changed_paths_are_counted(tmp_path):
     (tree / "one").touch()
     (tree / "two").touch()
 
-    assert "tree: 2 changed paths" in version(tmp_path, tree).stdout
+    assert version(tmp_path, tree).stdout.split(" · ")[2] == "2 changed"
 
 
 def test_a_detached_head_says_where(tmp_path):
@@ -142,8 +135,7 @@ def test_a_detached_head_says_where(tmp_path):
     tree = main_checkout(tmp_path)
     plain_git(tree, "switch", "--detach")
 
-    short = plain_git(tree, "rev-parse", "--short", "HEAD").stdout.strip()
-    assert f"branch: detached at {short}" in version(tmp_path, tree).stdout.splitlines()
+    assert version(tmp_path, tree).stdout.split(" · ")[1] == f"detached at {short_sha(tree)}"
 
 
 def test_a_checkout_that_never_fetched_says_so(tmp_path):
@@ -151,7 +143,7 @@ def test_a_checkout_that_never_fetched_says_so(tmp_path):
     tree = main_checkout(tmp_path)
     plain_git(tree, "remote", "remove", "origin")
 
-    assert "origin/main: never fetched" in version(tmp_path, tree).stdout.splitlines()
+    assert version(tmp_path, tree).stdout.endswith(" · origin/main never fetched\n")
 
 
 def test_a_tree_without_git_beside_the_code_is_no_checkout_though_one_encloses_it(
@@ -183,8 +175,8 @@ def test_verbose_prints_each_git_call_on_stderr_and_never_the_environment(tmp_pa
 @pytest.mark.parametrize(
     ("local", "waiting", "expected"),
     [
-        pytest.param(1, 0, "1 ahead", id="ahead"),
-        pytest.param(1, 2, "diverged (1 ahead, 2 behind)", id="diverged"),
+        pytest.param(1, 0, "1 ahead of origin/main", id="ahead"),
+        pytest.param(1, 2, "diverged from origin/main (1 ahead, 2 behind)", id="diverged"),
     ],
 )
 def test_a_head_ahead_of_the_fetched_main_names_both_counts(tmp_path, local, waiting, expected):
@@ -194,7 +186,7 @@ def test_a_head_ahead_of_the_fetched_main_names_both_counts(tmp_path, local, wai
     if waiting:
         fetch_ahead(tree, tmp_path / "origin.git", waiting)
 
-    assert f"origin/main: {expected}" in version(tmp_path, tree).stdout.splitlines()
+    assert version(tmp_path, tree).stdout.endswith(f" · {expected}\n")
 
 
 def test_a_branch_name_is_escaped_onto_one_line(tmp_path):
@@ -204,6 +196,6 @@ def test_a_branch_name_is_escaped_onto_one_line(tmp_path):
 
     result = version(tmp_path, tree)
 
-    assert "branch: fix\\u202ex" in result.stdout.splitlines()
+    assert result.stdout.split(" · ")[1] == "fix\\u202ex"
     assert "\u202e" not in result.stdout
-    assert len(result.stdout.splitlines()) == 4
+    assert len(result.stdout.splitlines()) == 1
