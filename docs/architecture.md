@@ -125,7 +125,7 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 |---|---|---|---|---|---|
 | **L0 PC and tools** | Ubuntu packages (Docker with loopback default, cloudflared from apt, gh, uv, restic, the pinned `tofu`, Tailscale); `/etc/docker/daemon.json`; edge's `tunnel/` (the cloudflared unit, its drop-ins, the stop-only polkit rule); linger; auto-login off; the AppArmor profile; the agent user (only with D14); the `home` and `aco` tools; the work clones in `~/git` | home-tools: the setup playbook (home-tools#9; Ansible recommended there; it installs edge's `tunnel/`) | `~/git/home-tools/bootstrap` (new, home-tools#9), then `hal setup --apply` (without `--apply`: dry run) | `home check` (daily timer, today) | OS install and disk encryption (the installer decides it); BIOS "power on after AC loss"; the first `gh auth login --web`, because cloning the private home-tools needs it |
 | **L1 secrets** | every token, password and key; values only in `~/.secrets`; tool logins in their tools' stores. Directories 0700. Files 0600, except a file a container user must read: 0644 inside its 0700 directory (docs/keycloak.md). Today every agent can read all of it (D14) | `home-tools/src/home_tools/secrets_manifest.toml` (names, purpose, reader, scope, bindings, rotation; never a value) | `hal setup --apply` (its step „Geheimnisse“): walks every missing secret page by page (home-tools#10) | `home secrets`, part of `home check` (today: local view; the remote check is section 4) | creating a token at the provider: a human logs in and clicks. The wizard opens the page, takes the value hidden, verifies it, stores it (HopIn's Cloudflare TURN key ID and API token: stored, not verified) |
-| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins) and `traefik-mcp` (the second Traefik, the only container on the internal networks `mcp-ca`, `mcp`, `mcp-backends` and one per app, `hal_mcp_songmaker`; no host port), `legal` (nginx serving the imprint, the privacy notice and the terms of every app from `legal/`, on its own internal network; its one catalog host is the apex, public for the pages `cloudflare.redirect.serve` names), hal-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `traefik-mcp.yml` and `mcp/dynamic/`, `keycloak/*.yaml` (realm as code), `legal/` (pages, stylesheet, nginx config), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: it creates the permanent admin from a typed name and password; TOTP and passkey in the browser) |
+| **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins) and `traefik-mcp` (the second Traefik, the only container on the internal networks `mcp-ca`, `mcp`, `mcp-backends` and one per app, `hal_mcp_songmaker`; no host port), `legal` (nginx serving the imprint, the privacy notice and the terms that `hal apply` builds from the section of every block into `legal/built/`, on its own internal network; its one catalog host is the apex, public for the pages `cloudflare.redirect.serve` names), hal-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `traefik-mcp.yml` and `mcp/dynamic/`, `keycloak/*.yaml` (realm as code), `legal/` (frame, edge's own sections, stylesheet, nginx config; the built pages are not in git), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `edge check` (proposed: `edge-check` today, plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: it creates the permanent admin from a typed name and password; TOTP and passkey in the browser) |
 | **L3 external** | Cloudflare DNS, Access apps and policies, tunnel ingress (D6), the zone's HSTS setting; GitHub repo settings, rulesets, Actions policy, org secret names and reach | edge `fleet.yaml` + OpenTofu (`ext-as-code.md`, epic E3, its slices listed in the epic's body) | the publish phase of `edge apply` (operator, TTY, the word `yes`) | `edge external check` → `home check` | secret values, the tunnel object and its credential, Access identity providers, the Access group's one member, SonarCloud projects, CodeQL default setup, GitHub App installs, the registrar. Each has no provider or would put a secret into state |
 | **L4 services** | songmaker, presentator, hopin, the agent service (its compose service and image recipe live in edge; switched on by its unit in `fleet.yaml`), later the aco board | each service repo's `compose.yaml` (containers) + its entry in `fleet.yaml` (where it runs, who may use it, on or off) | the deploy watcher (newest `v*` tag) after `edge apply` turned the service on | the LOOK page (each service's health URL); Grafana for its metrics | creating a new repo's SonarCloud project (one click) |
 | **L5 data** | Docker volumes (songmaker DB and audio, Keycloak DB; `step-ca` ([internal-ca.md](internal-ca.md) names its backup) and `traefik-mcp-acme`, which is not: its certificates are issued again), the restic repository and its off-disk copy (D3), the encrypted OpenTofu state | edge `backup/apps.toml` | `hal restore …` (section 6) | the restore test (monthly), the clean-machine drill (section 6), and the backup's freshness on the LOOK page | the restic password, the OpenTofu passphrase and the disk's recovery key live in the password manager: without them no backup, no state and no disk can be read |
@@ -248,6 +248,77 @@ What the file declares belongs to the file: a console change to a declared objec
 **Today's switch** is different: "off" means removing a tunnel line by hand, as on 14.10.2026 for presentator. Planned with X6a (#168): the ingress comes from the catalog, so a line is no longer removed by hand. Before presentator is published, its own Access app (its people, plus the `/sources/*` bypass) must still answer 401 to a request without a session; the operator checks that himself. The wildcard `*` protection is X8b.
 
 **Emergency switches are separate:** `edge stop hopin` takes it offline at once without a code change. Guards: section 8 state table.
+
+### The legal pages: sections, frame and the section contract (v1)
+
+`hal apply` builds `/impressum`, `/datenschutz` and `/nutzungsbedingungen` while `services.legal` is
+enabled. The pages are not files in git: `legal/frame/` holds the markup (one skeleton per page and one
+template per block kind), `legal/sections/<unit>/<page>.html` holds the texts, and `legal/built/` (git-ignored)
+holds the result, which the legal unit serves. A unit's text is a **section**; the imprint is one whole page
+with no sections. A page's blocks stand as the general part (`allgemein`, edge's own), then the services
+(`agent-service` under `#agent-dienst`, `keycloak` under `#anmeldung`), then the apps (their catalog key
+is the anchor), each group sorted by anchor. A section directory with no catalog entry builds no block. Edge's
+services and songmaker's text, which edge holds until songmaker ships its own, are built while their entry is in
+the catalog, enabled or not. Apps' own texts are not read yet (edge#110).
+
+What `hal apply` does: it validates every section, builds the pages and compares them with `legal/built/`. The
+plan names each page that is new or changes (`legal: datenschutz changes`) or says `legal: unchanged`. After
+`yes`, before any unit switches, it writes each changed page (a temporary file, mode 0644, renamed over the page).
+Without an enabled `legal` unit there is no step and no line. A refusal comes before the question (exit 2) and
+changes nothing; a failed write is partial with no unit switched (exit 1). A page goes live only that way, and a
+wrong text is taken back by the next change of the text: there is no override.
+
+**Format.** German, UTF-8 without a byte order mark, at most 65,536 bytes, LF line ends, no control character
+other than LF.
+```
+fragment := WS h2 WS (block WS)* (section WS)*
+h2       := '<h2 id="' ANCHOR '">' TEXT '</h2>'
+section  := '<section id="' ANCHOR '-' SLUG '">' WS h3 WS (block WS)+ '</section>'
+h3       := '<h3>' TEXT '</h3>'
+block    := '<p>' INLINE+ '</p>' | ('<ul>'|'<ol>') WS ('<li>' INLINE+ '</li>' WS)+ ('</ul>'|'</ol>')
+INLINE   := TEXT | '<br>' | ('<strong>'|'<em>'|'<code>') TEXT ('</strong>'|'</em>'|'</code>') | '<a href="' HREF '">' TEXT '</a>'
+TEXT     := one or more characters; & < > written exactly as &amp; &lt; &gt;; no other character reference
+WS       := spaces and LF only (may be empty)
+```
+The general part is edge's own and not part of what an app sends: several `h2` (`ID := [a-z0-9]+(-[a-z0-9]+)*`),
+each followed by at least one `block`, no `section`, no `h3`, in the file's order.
+
+Refused: any other element or attribute, a second, duplicate or valueless attribute; comments, doctype, CDATA and
+processing instructions; a section in a section, a link in a link, a list in a paragraph or in a list item; an
+empty paragraph or list item; text outside a paragraph, list item or heading; an unclosed element, or anything
+but whitespace after the last closing tag. No script, style, image, form or external resource reaches a page.
+
+**Canonical form.** `html.parser` only tokenises; every token is checked against the grammar, and the tokens are
+written out again (lowercase tags, ` id="…"` and ` href="…"` with one space and double quotes, `<br>` without a
+slash, text escaped as `&amp;`, `&lt;`, `&gt;` only). A file whose rewritten form differs from its bytes is refused
+at the first differing line, so a section is published byte for byte or not at all (write `ä` or a no-break space
+as the character, never `&nbsp;`). Edge re-emits only the structural tags with its own decorations; everything
+inside them is the file's bytes.
+
+**Ids.** The `h2` id is the anchor exactly (`[a-z0-9][a-z0-9_-]*`). Every other id starts with `<anchor>-`
+followed by `[a-z0-9]+(-[a-z0-9]+)*`, and `titel` is reserved as the last word. An id stands once in the
+assembled page, whatever its owner (a block or the frame); a clash refuses the run and names both owners. Existing
+ids stay: edge renames or removes none of the stable ids without asking the apps that link them.
+
+**Links.** `https://` with a host of two or more lowercase labels (no port, user, IP address or `#`), then an
+optional path and query; `mailto:name@host` without a query; `#id`; `/impressum`, `/datenschutz` or
+`/nutzungsbedingungen`, optionally with `#id`. A link to these pages written in full on the zone's apex or `www` is
+refused: write the short form. A text may link its own ids and the stable ids below, nothing else, and every
+`#id` link needs its target in the assembled pages. If the block it points at has left, the whole run is refused;
+edge never rewrites a text to drop the link.
+
+| Page | Stable ids |
+|---|---|
+| /datenschutz | `verantwortlicher`, `cloudflare`, `rechte`, `widerspruch`, `kein-tracking`, `automatisierte-entscheidungen`, `pseudonym`, `anmeldung`, `agent-dienst` |
+| /nutzungsbedingungen | `recht` |
+| /impressum | `verantwortlich`, `kontakt` |
+
+**Stand** is the newest commit date of the page's section files (`git log -1 --format=%cs`); a commit that
+changes only the frame does not move it. The imprint has none.
+
+**Refusal line**, never quoting the text: `edge apply --closed: cannot plan, legal: legal/sections/songmaker/datenschutz.html: line 14: <img> is not allowed (allowed: h2 h3 section p ul ol li strong em code br a)`.
+A change that would refuse a file valid under v1 is asked of every producing repository first; one that only
+accepts more is announced.
 
 ### Hopin as the worked example: what it needs before its entry works
 
