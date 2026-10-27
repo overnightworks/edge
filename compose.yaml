@@ -182,7 +182,7 @@ services:
     volumes:
       # A directory, not a file: git replaces files, so a file bind would keep the old inode.
       - ./legal/nginx:/etc/nginx/conf.d:ro
-      - ./legal/pages:/srv/pages:ro
+      - ./legal/built:/srv/pages:ro
       - ./legal/assets:/srv/assets:ro
       - ./keycloak/themes/hallucinai/login/resources/fonts:/srv/fonts:ro
     labels:

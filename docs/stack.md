@@ -29,10 +29,11 @@ and `edge apply --closed` writes it again.
   the live checkout by `git -C ~/git/edge pull --ff-only` (until S2.4c); a local edit leaves the tree
   dirty and the apply refuses it, naming the path.
 - **The legal unit.** `legal` (nginx, profile `legal`, switched by `services.legal.run.enabled`) serves
-  the imprint, the privacy notice and the terms from `legal/pages/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and the
+  the imprint, the privacy notice and the terms from `legal/built/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and the
   login theme's fonts (one copy) answer under `/_rechtliches/`, every other path with 404. The catalog gives
   it the apex as its host, which the Cloudflare redirect leaves to it for the three pages, `/favicon.ico` (answered 404) and
-  `/_rechtliches/` (`cloudflare.redirect.serve`). Pages and the stylesheet go live once the live checkout is
+  `/_rechtliches/` (`cloudflare.redirect.serve`). The pages are built by `hal apply` from `legal/frame` and `legal/sections` (the plan names each page that is
+  new or changes) and go live when it has written them; before the first build they answer 404. The stylesheet goes live once the live checkout is
   pulled; a changed `legal/nginx/default.conf` needs the container restarted with `hal stop legal` and
   `hal start legal`.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
@@ -99,7 +100,7 @@ not "applied or nothing to do". They deviate in exactly three ways:
   commands until H5e renames them; a number in such a line is edge's, not hal's process exit. Type
   `hal stop <unit or app>` / `hal start <unit or app>` for `edge stop|start <unit or app>`, `hal offline` for
   `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
-  `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c, so run it as
+  `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c2, so run it as
   `~/git/edge/bin/edge external check --hosts`.
 
 `hal setup` deviates in one way:
