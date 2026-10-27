@@ -58,6 +58,7 @@ sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
 import device_grant_cell  # noqa: E402
 import logout_actions_cell  # noqa: E402
+from admin import AdminToken  # noqa: E402
 
 from edge import compose as edge_compose  # noqa: E402
 from edge import core, switches  # noqa: E402
@@ -804,15 +805,14 @@ def wait_until_ready(admin_url: str) -> None:
 # --- Admin API --------------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass
 class Admin:
-    token: str
+    token: AdminToken
     admin_url: str
 
     def call(self, method: str, path: str, json_body: Any = None) -> Response:
-        return http(
-            method, f"{self.admin_url}/admin/realms{path}", json_body=json_body, bearer=self.token
-        )
+        url = f"{self.admin_url}/admin/realms{path}"
+        return self.token.send(lambda bearer: http(method, url, json_body=json_body, bearer=bearer))
 
     def get(self, path: str) -> Any:
         response = self.call("GET", path)
@@ -1084,6 +1084,7 @@ class Probe:
     secret_values: dict[str, str] = field(default_factory=dict)
     member_password: str = field(default_factory=lambda: secrets.token_urlsafe(16))
     evidence: list[str] = field(default_factory=list)
+    admin: Admin = field(init=False)
     logout_timeout_seconds: ClassVar[int] = 20
 
     def say(self, line: str) -> None:
@@ -1117,6 +1118,14 @@ class Probe:
                 self.keep_secret(f"{holder} {kind}", value)
         return tokens
 
+    def admin_minting(self, holder: str, form: dict[str, str]) -> Admin:
+        def mint(count: int) -> str:
+            response = http("POST", self.stack.master_token_url, form=form)
+            name = holder if count == 1 else f"{holder} {count}"
+            return self.tokens_from(name, response)["access_token"]
+
+        return Admin(AdminToken(mint), self.stack.admin_url)
+
     def admin_with_password(self, username: str, password: str) -> Admin:
         form = {
             "grant_type": "password",
@@ -1124,8 +1133,7 @@ class Probe:
             "username": username,
             "password": password,
         }
-        tokens = self.tokens_from(username, http("POST", self.stack.master_token_url, form=form))
-        return Admin(tokens["access_token"], self.stack.admin_url)
+        return self.admin_minting(username, form)
 
     def admin_with_client(self, secret: str) -> Admin:
         form = {
@@ -1133,14 +1141,7 @@ class Probe:
             "client_id": "config-cli",
             "client_secret": secret,
         }
-        tokens = self.tokens_from(
-            "config-cli", http("POST", self.stack.master_token_url, form=form)
-        )
-        return Admin(tokens["access_token"], self.stack.admin_url)
-
-    def admin_now(self) -> Admin:
-        """An admin whose token is fresh: master tokens live 60 s."""
-        return self.admin_with_client(self.secret_values["config-cli-secret"])
+        return self.admin_minting("config-cli", form)
 
     def start_with_bootstrap_admin(self) -> Admin:
         self.secret_values = self.stack.write_secrets()
@@ -1154,21 +1155,21 @@ class Probe:
             "temp-admin", self.secret_values["bootstrap-admin-password"]
         )
 
-    def apply_and_restart(self) -> Admin:
+    def apply_and_restart(self) -> None:
         self.stack.must_apply("fresh apply", bootstrap=True)
         # The bootstrap keycloak container and its logs disappear when it is recreated below.
         self.stack.see_running()
         self.stack.up("keycloak")
         wait_until_ready(self.stack.admin_url)
         # The config-cli client exists only if the fresh apply created the master configuration.
-        admin = self.admin_with_client(self.secret_values["config-cli-secret"])
-        expect(admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
-        return admin
+        self.admin = self.admin_with_client(self.secret_values["config-cli-secret"])
+        expect(self.admin.get(f"/{REALM}")["realm"] == REALM, f"no {REALM} realm")
 
     def run(self) -> None:
         bootstrap_admin = self.start_with_bootstrap_admin()
         self.missing_variable_fails_loudly(bootstrap_admin)
-        admin = self.apply_and_restart()
+        self.apply_and_restart()
+        admin = self.admin
         stand = self.fresh_realm_has_nothing_only_in_keycloak()
         self.held(
             "3a",
@@ -1188,13 +1189,11 @@ class Probe:
         self.disabled_user_refused_on_refresh(admin, rp_secret)
         self.backchannel_logout_reaches_rp(admin, rp_secret)
         logout_actions_cell.prove(self, expect, MEMBER_GROUP)
-        admin = self.admin_now()  # the logout cell outlived the token
         self.only_logins_and_failed_logins_are_stored(admin, rp_secret)
         for client in APP_CLIENTS:
             self.app_client(admin, client)
         self.agent_service_stays_audience_only(admin)
         self.the_realm_step(stand)
-        admin = self.admin_now()  # proof 12 outlived the token
         self.the_observer_door(admin)
         self.no_secret_leaked()
 
@@ -2465,8 +2464,7 @@ class Probe:
         ]
         expect(sorted(changes) == sorted(expected), f"the lines are {changes}")
         expect(
-            self.admin_now().get(f"/{REALM}")["accessTokenLifespan"]
-            == CHANGED_ACCESS_TOKEN_LIFESPAN,
+            self.admin.get(f"/{REALM}")["accessTokenLifespan"] == CHANGED_ACCESS_TOKEN_LIFESPAN,
             "the realm does not hold the changed lifespan",
         )
         expect(stand.plan().settled and stand.plan().lines == [], "the next plan is not quiet")
@@ -2480,9 +2478,9 @@ class Probe:
             "only in Keycloak with no removal line, and one line names the unread kinds",
         )
 
-        realm = self.admin_now().get(f"/{REALM}")
+        realm = self.admin.get(f"/{REALM}")
         checksum = next(key for key in realm["attributes"] if key.startswith(IMPORT_CHECKSUM))
-        self.admin_now().must(
+        self.admin.must(
             "PUT",
             f"/{REALM}",
             {**realm, "attributes": {**realm["attributes"], checksum: "restored"}},
@@ -2499,8 +2497,8 @@ class Probe:
             "applied again, and the next plan is quiet (cell 7)",
         )
 
-        groups_scope = self.admin_now().find(f"/{REALM}/client-scopes", "name", "groups")
-        self.admin_now().create(
+        groups_scope = self.admin.find(f"/{REALM}/client-scopes", "name", "groups")
+        self.admin.create(
             f"/{REALM}/client-scopes/{groups_scope['id']}/protocol-mappers/models",
             hardcoded_claim(STEP_CONSOLE_MAPPER),
         )
@@ -2562,7 +2560,7 @@ class Probe:
     def make_console_objects(self) -> list[str]:
         """A group, a client and a top-level flow made in the console; returns the lines the
         step is to list for them."""
-        admin = self.admin_now()
+        admin = self.admin
         admin.create(f"/{REALM}/groups", {"name": STEP_CONSOLE_GROUP})
         admin.create(f"/{REALM}/clients", {"clientId": STEP_CONSOLE_CLIENT, "enabled": True})
         admin.create(
@@ -2588,7 +2586,7 @@ class Probe:
         made_names = (STEP_CONSOLE_GROUP, STEP_CONSOLE_CLIENT, STEP_CONSOLE_FLOW)
         removed = [x for x in lines if "removal" in x and any(name in x for name in made_names)]
         expect(not removed, f"the step resets a console object: {removed}")
-        admin = self.admin_now()
+        admin = self.admin
         expect(
             admin.get(f"/{REALM}/group-by-path/{STEP_CONSOLE_GROUP}")["name"] == STEP_CONSOLE_GROUP
             and admin.client(STEP_CONSOLE_CLIENT)["clientId"] == STEP_CONSOLE_CLIENT
