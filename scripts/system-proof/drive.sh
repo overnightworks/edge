@@ -1311,7 +1311,7 @@ wait_for_engine() {  # the engine answers within 60 s; a socket that is stopped 
     local waited=0
     systemctl start docker.socket
     until docker info >"$EVIDENCE/engine-wait.txt" 2>&1; do
-        (( waited++ >= 60 )) && return 1
+        (( waited++ >= 60 )) && { systemctl status docker --no-pager >"$EVIDENCE/engine-wait-status.txt" 2>&1; return 1; }
         sleep 1
     done
     return 0
@@ -1362,6 +1362,8 @@ engine_on_json_file_with() {  # engine_on_json_file_with <file: a path, or "" fo
     systemctl daemon-reload
     rm -f "$DAEMON_JSON"
     [[ -z $1 ]] || cp "$1" "$DAEMON_JSON"
+    # Several restarts within a minute would hit the unit's start limit, which the proof's own setup must not trigger.
+    systemctl reset-failed docker
     systemctl restart docker
     wait_for_engine
     [[ $(docker_default_driver) == json-file ]]
@@ -1418,7 +1420,7 @@ cell_dk2_merge() {  # the PC's file keeps runtimes and gains the one line; the o
     changed_lines=$(diff --unified=0 "$pc" "$DAEMON_JSON" | grep -c '^[+-][^+-]')
     verdict DK2 "the PC's file is merged: runtimes equal as JSON, log-driver added, apply exits 0" \
         '[ $code -eq 0 ] && daemon_json_is "{\"log-driver\": \"$WANTED_DRIVER\", \"runtimes\": {\"nvidia\": {\"args\": [], \"path\": \"nvidia-container-runtime\"}}}"'
-    verdict DK2 "the diff of the file is the one log-driver line" '[ "$changed_lines" -eq 1 ] && diff "$pc" "$DAEMON_JSON" | grep -qF "\"log-driver\": \"$WANTED_DRIVER\","'
+    verdict DK2 "the diff of the file is the one log-driver line" '[ "$changed_lines" -eq 1 ] && grep -qF "\"log-driver\": \"$WANTED_DRIVER\"," <(diff "$pc" "$DAEMON_JSON")'
     verdict DK2 "the old bytes are in the backup under /var/backups/home-setup" '[ -n "$backup" ] && cmp "$pc" "$backup"'
     return
 }
