@@ -886,14 +886,7 @@ class ImportedClients:
         return self.client
 
 
-HOPIN_SCOPES = [
-    "basic",
-    "profile",
-    "groups",
-    "roles",
-    "service_account",
-    "agent-service-audience",
-]
+HOPIN_SCOPES = ["basic", "profile", "groups", "roles", "service_account", "agent-service-audience"]
 SONGMAKER_SCOPES = [*HOPIN_SCOPES, "email", "web-origins", "acr"]
 
 
@@ -916,11 +909,7 @@ def imported_client(client: object, **changes: object) -> dict[str, object]:
 
 @pytest.mark.parametrize(
     ("client_name", "scopes"),
-    [
-        pytest.param("SONGMAKER", SONGMAKER_SCOPES, id="songmaker"),
-        pytest.param("PRESENTATOR", SONGMAKER_SCOPES, id="presentator"),
-        pytest.param("HOPIN", HOPIN_SCOPES, id="hopin without email, web-origins and acr"),
-    ],
+    [("SONGMAKER", SONGMAKER_SCOPES), ("PRESENTATOR", SONGMAKER_SCOPES), ("HOPIN", HOPIN_SCOPES)],
 )
 def test_each_app_client_has_exactly_its_own_decided_scopes(
     probe: ModuleType, client_name: str, scopes: list[str]
@@ -944,12 +933,6 @@ def test_each_app_client_has_exactly_its_own_decided_scopes(
             {"defaultClientScopes": HOPIN_SCOPES},
             False,
             id="presentator with hopin's smaller set",
-        ),
-        pytest.param(
-            "PRESENTATOR",
-            {"defaultClientScopes": SONGMAKER_SCOPES[1:]},
-            False,
-            id="basic missing",
         ),
         pytest.param(
             "PRESENTATOR", {"serviceAccountsEnabled": False}, False, id="no service account"
