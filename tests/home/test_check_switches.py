@@ -1,4 +1,4 @@
-"""An app switched off with `hal stop` in `home check` (overnightworks/edge#466 E-1..E-3, #415 Z8): the mail, the report and an unreadable switch directory."""
+"""An app switched off with `hal stop` in `hal check` (overnightworks/edge#466 E-1..E-3, #415 Z8): the mail, the report and an unreadable switch directory."""
 
 from __future__ import annotations
 

@@ -48,7 +48,7 @@ flowchart TB
 
     subgraph pc["The PC"]
         subgraph l0["L0 PC and tools: home-tools"]
-            HOME["hal setup / home check"]
+            HOME["hal setup / hal check"]
             SEC["L1 secrets: ~/.secrets<br/>inventory: secrets_manifest.toml"]
             CFD["cloudflared.service"]
             AGT["Agent user (D14)<br/>no docker, no ~/.secrets"]
@@ -123,10 +123,10 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 
 | Layer | Holds | One source of truth | Bring up | Check | Stays manual, and why |
 |---|---|---|---|---|---|
-| **L0 PC and tools** | Ubuntu packages (Docker, with the `journald` log default, cloudflared from apt, gh, uv, restic, the pinned `tofu`, Tailscale); `/etc/docker/daemon.json` (the system step merges the log default into it); edge's `tunnel/` (the cloudflared unit, its drop-ins, the stop-only polkit rule); linger; auto-login off; the AppArmor profile; the agent user (only with D14); the `home` and `aco` tools; the work clones in `~/git` | home-tools: the setup playbook (home-tools#9; Ansible recommended there; it installs edge's `tunnel/`) | `~/git/home-tools/bootstrap` (new, home-tools#9), then `hal setup --apply` (without `--apply`: dry run) | `home check` (daily timer, today) | OS install and disk encryption (the installer decides it); BIOS "power on after AC loss"; the first `gh auth login --web`, because cloning the private home-tools needs it |
-| **L1 secrets** | every token, password and key; values only in `~/.secrets`; tool logins in their tools' stores. Directories 0700. Files 0600, except a file a container user must read: 0644 inside its 0700 directory (docs/keycloak.md). Today every agent can read all of it (D14) | `home-tools/src/home_tools/secrets_manifest.toml` (names, purpose, reader, scope, bindings, rotation; never a value) | `hal setup --apply` (its step „Geheimnisse“): walks every missing secret page by page (home-tools#10) | `home secrets`, part of `home check` (today: local view; the remote check is section 4) | creating a token at the provider: a human logs in and clicks. The wizard opens the page, takes the value hidden, verifies it, stores it (HopIn's Cloudflare TURN key ID and API token: stored, not verified) |
+| **L0 PC and tools** | Ubuntu packages (Docker, with the `journald` log default, cloudflared from apt, gh, uv, restic, the pinned `tofu`, Tailscale); `/etc/docker/daemon.json` (the system step merges the log default into it); edge's `tunnel/` (the cloudflared unit, its drop-ins, the stop-only polkit rule); linger; auto-login off; the AppArmor profile; the agent user (only with D14); the `home` and `aco` tools; the work clones in `~/git` | home-tools: the setup playbook (home-tools#9; Ansible recommended there; it installs edge's `tunnel/`) | `~/git/home-tools/bootstrap` (new, home-tools#9), then `hal setup --apply` (without `--apply`: dry run) | `hal check` (daily timer, today) | OS install and disk encryption (the installer decides it); BIOS "power on after AC loss"; the first `gh auth login --web`, because cloning the private home-tools needs it |
+| **L1 secrets** | every token, password and key; values only in `~/.secrets`; tool logins in their tools' stores. Directories 0700. Files 0600, except a file a container user must read: 0644 inside its 0700 directory (docs/keycloak.md). Today every agent can read all of it (D14) | `home-tools/src/home_tools/secrets_manifest.toml` (names, purpose, reader, scope, bindings, rotation; never a value) | `hal setup --apply` (its step „Geheimnisse“): walks every missing secret page by page (home-tools#10) | `home secrets`, part of `hal check` (today: local view; the remote check is section 4) | creating a token at the provider: a human logs in and clicks. The wizard opens the page, takes the value hidden, verifies it, stores it (HopIn's Cloudflare TURN key ID and API token: stored, not verified) |
 | **L2 platform** | Traefik, socket proxy, Keycloak and its DB, step-ca (the internal CA for the MCP origins) and `traefik-mcp` (the second Traefik, the only container on the internal networks `mcp-ca`, `mcp`, `mcp-backends` and one per app, `hal_mcp_songmaker`; no host port), `legal` (nginx serving the imprint, the privacy notice and the terms that `hal apply` builds from the section of every block into `legal/built/`, on its own internal network; its one catalog host is the apex, public for the pages `cloudflare.redirect.serve` names), hal-backup timers, the deploy watchers, the LOOK page (Gatus: "is it OK now?"), the monitoring stack for every service (Prometheus, Grafana, Alertmanager: "why, since when?"; moves out of songmaker, ruled 16.10.2026, edge#4), one alert channel | edge: `compose.yaml`, `traefik.yml`, `traefik-mcp.yml` and `mcp/dynamic/`, `keycloak/*.yaml` (realm as code), `legal/` (frame, edge's own sections, stylesheet, nginx config; the built pages are not in git), `step-ca/ca.json`, `backup/apps.toml`, `systemd/` | `edge apply --closed` (start without publishing), then `edge apply` (publish), then `edge start --all` (open the tunnel; section 6 step 11). Proposed: one command for compose, realm apply, timers, services on/off, external | `hal check` (`hal check exposure` today; proposed: plus readiness, backup freshness, deploy state) | the Keycloak go-live once (edge#19: it creates the permanent admin from a typed name and password; TOTP and passkey in the browser) |
-| **L3 external** | Cloudflare DNS, Access apps and policies, tunnel ingress (D6), the zone's HSTS setting; GitHub repo settings, rulesets, Actions policy, org secret names and reach | edge `fleet.yaml` + OpenTofu (`ext-as-code.md`, epic E3, its slices listed in the epic's body) | the publish phase of `edge apply` (operator, TTY, the word `yes`) | `hal check hosts` → `home check` | secret values, the tunnel object and its credential, Access identity providers, the Access group's one member, SonarCloud projects, CodeQL default setup, GitHub App installs, the registrar. Each has no provider or would put a secret into state |
+| **L3 external** | Cloudflare DNS, Access apps and policies, tunnel ingress (D6), the zone's HSTS setting; GitHub repo settings, rulesets, Actions policy, org secret names and reach | edge `fleet.yaml` + OpenTofu (`ext-as-code.md`, epic E3, its slices listed in the epic's body) | the publish phase of `edge apply` (operator, TTY, the word `yes`) | `hal check hosts` → `hal check` | secret values, the tunnel object and its credential, Access identity providers, the Access group's one member, SonarCloud projects, CodeQL default setup, GitHub App installs, the registrar. Each has no provider or would put a secret into state |
 | **L4 services** | songmaker, presentator, hopin, the agent service (its compose service and image recipe live in edge; switched on by its unit in `fleet.yaml`), later the aco board | each service repo's `compose.yaml` (containers) + its entry in `fleet.yaml` (where it runs, who may use it, on or off) | the deploy watcher (newest `v*` tag) after `edge apply` turned the service on | the LOOK page (each service's health URL); Grafana for its metrics | creating a new repo's SonarCloud project (one click) |
 | **L5 data** | Docker volumes (songmaker DB and audio, Keycloak DB; `step-ca` ([internal-ca.md](internal-ca.md) names its backup) and `traefik-mcp-acme`, which is not: its certificates are issued again), the restic repository and its off-disk copy (D3), the encrypted OpenTofu state | edge `backup/apps.toml` | `hal restore …` (section 6) | the restore test (monthly), the clean-machine drill (section 6), and the backup's freshness on the LOOK page | the restic password, the OpenTofu passphrase and the disk's recovery key live in the password manager: without them no backup, no state and no disk can be read |
 | **People** | users, passkeys, group memberships (`/apps/<name>`, `/services/agent-service/subscription`, `/services/agent-service/api`) | the Keycloak database (managed only in the admin console); the groups themselves are code in `keycloak/realm.yaml` | first-ever: create people in the admin console; re-setup: restore the Keycloak DB | Keycloak events (login anomalies) on the LOOK page | everything: people are never code (ruled) |
@@ -139,7 +139,7 @@ Each layer has **one** owner. The order is the order of a setup: a layer needs o
 - `edge apply` is **the one publisher**. `edge apply --closed` runs only the local part: the platform and the enabled services. `edge apply` without `--closed` runs the local part, then its publish phase: `edge external apply` and its check of each host against the catalog (built, edge#171). The two run one after the other and each asks its own `yes` only when it has changes (ruled 20.10.2026); with nothing to change `edge apply` asks nothing. A local part that does not end with exit 0 publishes nothing; the exit is then its own, and a publish exit 2 becomes 1, so a 2 from `edge apply` means the local part could not finish planning. It never creates a secret: when a service's setup is missing it asks **separately** ("step-ca has no keys yet. Create them now? (yes)") and then delegates to the existing owner, `step-ca/init` or `keycloak/go-live`, which keep the key generation, and the operator runs `edge apply` himself. For `--closed` this is built ([edge#69](https://github.com/overnightworks/edge/issues/69)): the question comes before the plan, the setup runs in the operator's terminal with its output uncaptured, `--check` runs again, and a fresh plan follows with its own `yes` (R2, ruled 16.10.2026, [edge#50](https://github.com/overnightworks/edge/issues/50)). `keycloak/go-live` never publishes.
 - The deploy watcher deploys newer tags and nothing else.
 - What `edge apply`, `edge start` and the watcher may do in each state: section 8 state table.
-- `home check` only reads. It runs the checks secrets, hook, logs, backup and platform (containers, the pending reboot and free disk space).
+- `hal check` only reads. It runs the checks secrets, hook, logs, backup and platform (containers, the pending reboot and free disk space).
 
 ### The agent service (A1d) in the layers
 
@@ -387,7 +387,7 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 
 **Generated app secrets.** Any secret no human chooses is a `service-password` entry in `src/home_tools/secrets_manifest.toml`, kept in `~/.secrets` and mounted into the app as a file, never as an environment variable (ruled 22.10.2026, confirmed 27.10.2026). `hal setup --apply` generates it unseen and keeps an existing value. Its mode is 0600, or 0644 inside its 0700 directory when the container user is not the operator, with a `loosest_mode_reason` on the entry. An app that fits this needs no question; only a deviation is asked.
 
-**The internal CA's files (edge#38).** `step-ca/init` creates them once; `src/home_tools/secrets_manifest.toml` names them, with `loosest_mode = 0o644` for the files a container user reads, so the daily `home check` judges them against that mode and never recommends `chmod 600`. Presence stays with each unit's own `--check`: every one of these entries is `optional`.
+**The internal CA's files (edge#38).** `step-ca/init` creates them once; `src/home_tools/secrets_manifest.toml` names them, with `loosest_mode = 0o644` for the files a container user reads, so the daily `hal check` judges them against that mode and never recommends `chmod 600`. Presence stays with each unit's own `--check`: every one of these entries is `optional`.
 
 | File | Mode | Who reads it | In the backup |
 |---|---|---|---|
@@ -410,7 +410,7 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 
 **One split keeps it single.** The manifest owns *what a secret is and where an app receives it*. `fleet.yaml` owns *where GitHub installs it and which repos see it*: the org secret name and its reach (E3, X5). The value is set by `home secrets --rotate` (home-tools#10 line 19). Its reach is checked by `hal check hosts`. home-tools#10 line 19's own "repo list drift" view is therefore dropped; the reach check lives once, in X5.
 
-### The check: `home check` compares the inventory with reality
+### The check: `hal check` compares the inventory with reality
 
 | Finding | Meaning |
 |---|---|
@@ -444,7 +444,7 @@ Every finding names the subject and a page to fix it, never a value.
 | **Cloudflare tunnels and Access service tokens** | `GET /accounts/{id}/cfd_tunnel`; `GET /accounts/{id}/access/service_tokens` (names, `expires_at`) | `cloudflare/fleet-read` plus Tunnel read and Service Tokens read | extra tunnel (a second live tunnel is an open door); expiring service token |
 | **Keycloak clients** | the client list, which clients are confidential, their redirect URIs. The apply deletes no client, so a console-made client stays and appears as drift at the next read | a **read-only** service account in `hallucinai` with `view-clients` and `view-realm`. It cannot change anything and is not an admin credential (D8) | extra client; a confidential client whose secret file is missing in `~/.secrets` |
 
-**The checks stay narrow.** Each source is one small reader returning findings in `hal check exposure`'s shape. GitHub and Cloudflare already come from `hal check hosts` (X5); only the token self-checks, SonarCloud, the compose scan and Keycloak are new. `home check` aggregates them, with notify-on-change as today.
+**The checks stay narrow.** Each source is one small reader returning findings in `hal check exposure`'s shape. GitHub and Cloudflare already come from `hal check hosts` (X5); only the token self-checks, SonarCloud, the compose scan and Keycloak are new. `hal check` aggregates them, with notify-on-change as today.
 
 ---
 
@@ -473,8 +473,8 @@ Every finding names the subject and a page to fix it, never a value.
 
 **What a deploy accepts, and who may write it (D14).**
 - **Only a release tag.** The deploy input is a `v*` tag fetched from the forge (step 1), protected by ruleset 25224012. Never a local working tree, branch or path.
-- **Root-owned, not agent-writable:** the `edge` CLI and the `home check` executable (installed by `hal setup` under `/usr/local`), the watcher units, and the deployment checkouts (`~/srv/<name>`, songmaker's auto-deploy checkout, the live edge checkout). The agent user cannot write them. Agents work in their own worktrees and reach a deploy only through a pushed, gated tag.
-- **The proof:** `home check` fails when any path on a deploy path (those executables, units, checkouts and the paths the watchers read) is writable by the agent user or by a group it is in.
+- **Root-owned, not agent-writable:** the `edge` CLI and the `hal check` executable (installed by `hal setup` under `/usr/local`), the watcher units, and the deployment checkouts (`~/srv/<name>`, songmaker's auto-deploy checkout, the live edge checkout). The agent user cannot write them. Agents work in their own worktrees and reach a deploy only through a pushed, gated tag.
+- **The proof:** `hal check` fails when any path on a deploy path (those executables, units, checkouts and the paths the watchers read) is writable by the agent user or by a group it is in.
 
 **The watcher's GitHub credential** becomes a read-only token: Contents read and Checks read on the service repos (`github/deploy-read` in the manifest). Today songmaker's watcher calls `gh api`, so it runs with the operator's `gh` login (`repo`, `workflow`). A read token is needed at all because three watchers polling every 2 minutes make 90 calls an hour, above the 60 an unauthenticated client gets.
 
@@ -555,7 +555,7 @@ That is the operator's „zumindest durchleiten zu den Seiten“, and edge#19 ru
 |---|---|---|---|---|---|
 | 1 | Install Ubuntu 24.04, disk encryption per D10, the operator's user | manual (the installer) | same | same | the desktop runs |
 | 2 | `sudo apt install -y gh && gh auth login --web && gh repo clone overnightworks/home-tools ~/git/home-tools && ~/git/home-tools/bootstrap` | one line, printed on paper and at the top of `docs/architecture.md`; the login is guided by `gh`. **`bootstrap` does not exist today**; home-tools#9 builds it | same | same | `home --help` answers |
-| 3 | `hal setup`, then `hal setup --apply` | one command, asks for `sudo` once | same | same | the dry run shows nothing left to change; `home check` reports L0 clean (Docker loopback default, cloudflared installed and **disabled**, restic, `tofu` pinned, Tailscale, auto-login off; the agent user once D14 is done) |
+| 3 | `hal setup`, then `hal setup --apply` | one command, asks for `sudo` once | same | same | the dry run shows nothing left to change; `hal check` reports L0 clean (Docker loopback default, cloudflared installed and **disabled**, restic, `tofu` pinned, Tailscale, auto-login off; the agent user once D14 is done) |
 | 4 | **Secrets** | guided | `hal setup --apply`: per secret, open the provider page, paste hidden, verify, store (HopIn's TURN key ID and API token: stored, not verified). Generated service passwords need no typing | `hal restore secrets --repo <off-disk repository> --target ~/.secrets`: the recovery form below | `home secrets` without findings |
 | 5 | Tool logins: Tailscale, Claude, Codex (for the agent user, once D14 is done) | guided (part of step 4: the wizard runs each official login command) | same | the same; tool logins are not restored, because they expire and rebind | each `verify` passes |
 | 6 | `edge apply --closed --platform` | one command | **skipped**: step 7 creates the Keycloak secrets first and starts the platform itself | first restores the Keycloak dump into the empty DB (the data backup's newest complete run), then starts Keycloak, so the realm, the people and the passkeys are back | 8081 and 8090 listen on loopback, Keycloak answers; the PC is in column C |
@@ -599,7 +599,7 @@ They survive a dead PC because they live at the provider.
 ## 7. Gaps and duplicates
 
 **Exists today:**
-- `home check`, `home secrets` (view only);
+- `hal check`, `home secrets` (view only);
 - edge: Traefik, socket proxy, Keycloak as code with its probe, `hal check`, hal backup with weekly and monthly timers. The edge stack is **not running** on this PC (no `edge/.env`, no edge containers);
 - songmaker's auto-deploy, alerts and monitoring stack;
 - the tunnel with songmaker's host and auth, then the terminal 404 rule;
@@ -614,7 +614,7 @@ They survive a dead PC because they live at the provider.
 | 3 | Tunnel ingress | the catalog (its lines written by `edge external apply`), the `ingress:` of `/etc/cloudflared/config.yml` (serving until the switch) | E3 slices X6 and X8, in the mode D6 ruled. The catalog is the owner; the `config.yml` cleanup is #144 (B7) |
 | 4 | App groups | `keycloak/realm.yaml` (`/apps/songmaker`, `presentator`, `hopin`) and the catalog's `login_group` | **new slice in E3**: the catalog's CI checks against `realm.yaml` and `apps.toml` (section 3) |
 | 5 | Org secret reach | home-tools#10 line 19 (repo-list drift) and E3 X5 (`fleet.yaml` org secrets) | home-tools#10 (drop its drift view) and E3 X5 (keep it) |
-| 6 | Alert channels: three today | songmaker's e-mail (`songmaker-alert@`), Alertmanager inside songmaker, `home check`'s desktop notification | edge#4: **one e-mail channel** (ruled 24.10.2026: `msmtp`, run as the operator, over the SMTP account songmaker uses). `home check` mails its news itself; Gatus ("is it OK now?") and Alertmanager ("why, since when?") both send into it; songmaker's own e-mail alert goes |
+| 6 | Alert channels: three today | songmaker's e-mail (`songmaker-alert@`), Alertmanager inside songmaker, `hal check`'s desktop notification | edge#4: **one e-mail channel** (ruled 24.10.2026: `msmtp`, run as the operator, over the SMTP account songmaker uses). `hal check` mails its news itself; Gatus ("is it OK now?") and Alertmanager ("why, since when?") both send into it; songmaker's own e-mail alert goes |
 | 7 | Deploy | songmaker's watcher only; presentator by hand, with locally tagged images; hopin none | **new item in edge**: "one deploy model: tag watcher and `edge release`". Its first slice is in songmaker (section 5) |
 | 8 | Deploy checkout = work clone | `~/git/songmaker` is both; the workaround is the extra `~/git/songmaker-land` | the songmaker migration item (section 5, step 3) |
 | 9 | Monitoring stack | Prometheus, Grafana and Alertmanager live in songmaker's compose, though they serve the platform | edge#4: **ruled 16.10.2026:** they move into edge and serve every service. songmaker keeps only its metrics endpoint and its dashboards as files edge loads |
@@ -660,8 +660,8 @@ The operator asked: „wer verwaltet das Home / die Dienste? ggf eine UI-Seite, 
 
 | Kind | When | How | Effect |
 |---|---|---|---|
-| **Planned change** | anything meant to last: a service on or off, a new name, a new group | a PR to the catalog or the code, merge, then `edge apply` (section 3) | the code is the truth; `home check` is clean afterwards |
-| **Emergency switch** | something is wrong *now* | one `edge` command in the operator's terminal; no code change | acts within seconds; what it does is the state table below. `home check` leaves a switched-off app's stopped containers out of its findings, and the switch stays until `edge start` |
+| **Planned change** | anything meant to last: a service on or off, a new name, a new group | a PR to the catalog or the code, merge, then `edge apply` (section 3) | the code is the truth; `hal check` is clean afterwards |
+| **Emergency switch** | something is wrong *now* | one `edge` command in the operator's terminal; no code change | acts within seconds; what it does is the state table below. `hal check` leaves a switched-off app's stopped containers out of its findings, and the switch stays until `edge start` |
 
 ### The state table: the one owner of every guard
 
@@ -717,7 +717,7 @@ Each mismatch is a red finding, for example a recorded switch without its barrie
 - **Honest results (P15, [edge#50](https://github.com/overnightworks/edge/issues/50)).** A partial failure is reported as partial, never as "applied"; a closed state is reported only after it was observed; a second `edge apply` with nothing changed changes nothing.
 - **Reboots.** The boot row rests on three pieces: `restart: unless-stopped` on every long-running service (section 3's catalog check flags any other policy); Docker's rule that an explicitly stopped container stays stopped (a switched-off unit is stopped that way, #60 rule 7; no boot service exists); and the cloudflared drop-in from `hal setup`, which tests the global marker (`ConditionPathExists=!<marker>`).
 
-Example: `edge stop hopin` at 22:10 records the switch, and `home check` no longer reports hopin's stopped containers as a failure; the switch stays recorded until `edge start`.
+Example: `edge stop hopin` at 22:10 records the switch, and `hal check` no longer reports hopin's stopped containers as a failure; the switch stays recorded until `edge start`.
 
 **Who owns what.**
 - **edge** owns everything that serves or guards a service: the tunnel, Traefik, Keycloak, the services, the deploy watchers, backup, monitoring.
@@ -780,7 +780,7 @@ Each recovery below is a walk through the state table (its states in brackets). 
 | An agent misbehaves on the PC | stop every agent session, then treat every secret it could read as leaked | **gap:** aco has no "stop all" command (section 7 row 34). Until D14, a misbehaving agent could read every secret, so the "token leaked" row applies to all of them | operator |
 | Who did what? | read the login and admin events, and the journal | the LOOK page's login-anomaly light, linking to Keycloak's Events page (logins and failed logins kept 90 days, admin events 1 year), plus Grafana and `journalctl` | operator; an agent may read |
 | Data was destroyed or tampered with | restore from the last good backup | `edge stop <app>` (A → B); `hal restore <app> --live` (B; section 7 row 18); a check on the container itself; `edge start <app>` (B → A). For a host that bypasses Traefik: `edge stop --all` (A → C), the same restore (C), a check on loopback, `edge start --all` (C → A) | operator |
-| After the incident | make the end state permanent and clear the drift | a PR plus `edge apply`, or `edge start`; then `home check` is clean | operator |
+| After the incident | make the end state permanent and clear the drift | a PR plus `edge apply`, or `edge start`; then `hal check` is clean | operator |
 
 **Honest limit.** Today every agent runs as the operator's user. That user is in the `docker` group, which is root on the PC. It can read all of `~/.secrets`. After go-live that includes `config-cli-secret`, which signs in as Keycloak master `admin` with no TOTP. So today:
 - every "may an agent run it?" answer is a request, not a wall;

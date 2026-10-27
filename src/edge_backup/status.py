@@ -1,4 +1,4 @@
-"""The status contract a Gatus light and `home check` read: versioned JSON, written atomically.
+"""The status contract a Gatus light and `hal check` read: versioned JSON, written atomically.
 
 It never carries raw output, command lines, paths, file names or content.
 """

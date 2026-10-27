@@ -492,7 +492,7 @@ def test_a_hook_finding_fixed_by_home_setup_apply_asks_for_sudo_in_your_own_wind
         0,
         [
             "1. konnte den Stand von hal setup nicht lesen; den Fehler zeigt: hal setup",
-            f"2. hal setup --apply (eigenes Terminalfenster) — erwartet: home check meldet hook-file für {hook} nicht mehr; "
+            f"2. hal setup --apply (eigenes Terminalfenster) — erwartet: hal check meldet hook-file für {hook} nicht mehr; "
             "it asks once for sudo",
         ],
     )
@@ -510,7 +510,7 @@ def test_a_hook_finding_with_its_own_fix_is_any_terminal_and_does_not_say_it_ask
         0,
         [
             f"1. {sandbox.global_git_config} bearbeiten und die Zeile core.hooksPath (oder das include) entfernen (beliebiges Terminal)"
-            f" — erwartet: home check meldet hooks-path für {repository} nicht mehr",
+            f" — erwartet: hal check meldet hooks-path für {repository} nicht mehr",
         ],
     )
 

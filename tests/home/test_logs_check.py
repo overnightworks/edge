@@ -1,4 +1,4 @@
-"""`home check`'s logs check (overnightworks/edge#167 cells C1 and C2) against fake docker and journalctl."""
+"""`hal check`'s logs check (overnightworks/edge#167 cells C1 and C2) against fake docker and journalctl."""
 
 from __future__ import annotations
 

@@ -27,12 +27,12 @@ PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
 AGENT_USER = "agent"
 # The ruled bound on every server log on this PC: „ja 30 tage für alle“.
 LOG_RETENTION_DAYS = 30
-# The default log driver of Docker, which the play merges into daemon.json and `home check` expects.
+# The default log driver of Docker, which the play merges into daemon.json and `hal check` expects.
 DOCKER_LOG_DRIVER = "journald"
 # journalctl deletes whole archive files by the age of their oldest entry: one day for a file's span
 # and one day of slack for a PC that is off at midnight keep every line under LOG_RETENTION_DAYS.
 JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
-# The files rsyslog wrote: the play deletes them (and their rotations) once rsyslog is purged, and `home check` reports them.
+# The files rsyslog wrote: the play deletes them (and their rotations) once rsyslog is purged, and `hal check` reports them.
 RSYSLOG_FILE_NAMES = ("syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log")
 # The last line of a play recap names the host and counts each outcome.
 RECAP = re.compile(
@@ -103,7 +103,7 @@ def run_playbook(argv: Sequence[str]) -> PlaybookRun:
 
 
 def _run_scoped_environment(ansible_home: Path) -> dict[str, str]:
-    """Ansible keeps its state in the run's own directory, never in `~/.ansible`, which `home check` would flag.
+    """Ansible keeps its state in the run's own directory, never in `~/.ansible`, which `hal check` would flag.
 
     Plain output with the default callback, whatever the operator configured, keeps the recap readable.
     """

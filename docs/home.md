@@ -72,6 +72,10 @@ Prüfung; `3` nur bei einem unerwarteten Fehler.
 
 ## hal check
 
+```
+hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
+```
+
 `hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
