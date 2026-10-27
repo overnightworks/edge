@@ -217,8 +217,10 @@ def test_a_sqlite_record_parses_into_the_sqlite_variant():
 )
 def test_a_sqlite_record_refuses_the_postgres_keys(key_line):
     """#461 A1 M2: a SQLite record refuses the Postgres keys."""
+    toml = _record_with(key_line)
+
     with pytest.raises(AppsError, match=key_line.split(" ")[0]):
-        parse_apps(_record_with(key_line))
+        parse_apps(toml)
 
 
 def test_a_sqlite_record_refuses_audio_references():
@@ -232,8 +234,10 @@ def test_a_sqlite_record_refuses_audio_references():
 @pytest.mark.parametrize("missing", ["database_volume", "database_file"])
 def test_a_sqlite_record_needs_its_volume_and_file(missing):
     """#461 A1: a SQLite record needs its volume and file."""
+    toml = _record_with(without=missing)
+
     with pytest.raises(AppsError, match=missing):
-        parse_apps(_record_with(without=missing))
+        parse_apps(toml)
 
 
 @pytest.mark.parametrize(
@@ -249,10 +253,10 @@ def test_a_sqlite_record_refuses_a_file_name_that_is_not_one_plain_segment(file_
 
 def test_a_postgres_record_refuses_the_sqlite_keys():
     """#461 A1 M2: a Postgres record refuses the SQLite keys."""
+    toml = SONGMAKER_TOML.replace("[app.songmaker]\n", '[app.songmaker]\ndatabase_file = "x"\n')
+
     with pytest.raises(AppsError, match="database_file"):
-        parse_apps(
-            SONGMAKER_TOML.replace("[app.songmaker]\n", '[app.songmaker]\ndatabase_file = "x"\n')
-        )
+        parse_apps(toml)
 
 
 @pytest.fixture
