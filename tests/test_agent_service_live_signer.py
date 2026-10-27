@@ -453,8 +453,10 @@ def test_l3a_holds_when_networks_and_mount_sources_equal_the_resolved_configurat
         ({"joined": ("hal_agent_songmaker", "edge_mcp", "edge_egress")}, "L3 networks"),
         ({"joined": (*SERVICE_NETWORKS.values(), "hal_agent")}, "L3 networks"),
         ({"open_network": "agent-presentator"}, "L3 networks"),
+        ({"open_network": "agent-hopin"}, "L3 networks"),
         ({"open_network": "mcp"}, "L3 networks"),
         ({"bridged_network": "agent-presentator"}, "L3 networks"),
+        ({"bridged_network": "agent-hopin"}, "L3 networks"),
         ({"bridged_network": "mcp"}, "L3 networks"),
         ({"resolved_file": "/elsewhere/root_ca.crt"}, "L3 mounts"),
         (

@@ -7,7 +7,7 @@
 "Keycloak.admin_api" = 29
 
 [file_lines]
-"probe/keycloak/probe.py" = 2839
+"probe/keycloak/probe.py" = 2836
 "probe/step-ca/probe.py" = 1052
 "src/home_tools/secrets_view.py" = 855
 "tests/home/test_secrets_setup.py" = 677
@@ -18,7 +18,7 @@
 "tests/test_edge_external.py" = 2792
 "tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1737
-"tests/test_keycloak_probe.py" = 1039
+"tests/test_keycloak_probe.py" = 1038
 "tests/test_realm_reconcile.py" = 999
 
 [function_lines."probe/keycloak/probe.py"]

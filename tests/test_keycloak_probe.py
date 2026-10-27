@@ -886,16 +886,8 @@ class ImportedClients:
         return self.client
 
 
-LOGIN_SCOPES = ["basic", "profile", "groups"]
-WORKLOAD_SCOPES = [
-    *LOGIN_SCOPES,
-    "email",
-    "roles",
-    "web-origins",
-    "acr",
-    "service_account",
-    "agent-service-audience",
-]
+HOPIN_SCOPES = ["basic", "profile", "groups", "roles", "service_account", "agent-service-audience"]
+SONGMAKER_SCOPES = [*HOPIN_SCOPES, "email", "web-origins", "acr"]
 
 
 def imported_client(client: object, **changes: object) -> dict[str, object]:
@@ -904,48 +896,55 @@ def imported_client(client: object, **changes: object) -> dict[str, object]:
         "standardFlowEnabled": True,
         "implicitFlowEnabled": False,
         "directAccessGrantsEnabled": False,
-        "serviceAccountsEnabled": client.agent_workload,
+        "serviceAccountsEnabled": True,
         "frontchannelLogout": False,
         "redirectUris": list(client.callbacks),
         "baseUrl": f"{client.origin}/",
         "alwaysDisplayInConsole": False,
         "optionalClientScopes": [],
-        "defaultClientScopes": WORKLOAD_SCOPES if client.agent_workload else LOGIN_SCOPES,
+        "defaultClientScopes": sorted(client.default_scopes),
         "attributes": sys.modules["backchannel_cell"].ruled_settings(client.client_id),
     } | changes
+
+
+@pytest.mark.parametrize(
+    ("client_name", "scopes"),
+    [("SONGMAKER", SONGMAKER_SCOPES), ("PRESENTATOR", SONGMAKER_SCOPES), ("HOPIN", HOPIN_SCOPES)],
+)
+def test_each_app_client_has_exactly_its_own_decided_scopes(
+    probe: ModuleType, client_name: str, scopes: list[str]
+) -> None:
+    assert getattr(probe, client_name).default_scopes == set(scopes)
 
 
 @pytest.mark.parametrize(
     ("client_name", "changes", "accepted"),
     [
         pytest.param("PRESENTATOR", {}, True, id="a workload client as decided"),
-        pytest.param("HOPIN", {}, True, id="a login-only client as decided"),
+        pytest.param("HOPIN", {}, True, id="hopin as decided"),
         pytest.param(
             "PRESENTATOR",
-            {"defaultClientScopes": WORKLOAD_SCOPES[::-1]},
+            {"defaultClientScopes": SONGMAKER_SCOPES[::-1]},
             True,
             id="another order of the scopes",
         ),
         pytest.param(
             "PRESENTATOR",
-            {"defaultClientScopes": LOGIN_SCOPES},
+            {"defaultClientScopes": HOPIN_SCOPES},
             False,
-            id="the workload scopes missing",
-        ),
-        pytest.param(
-            "PRESENTATOR",
-            {"defaultClientScopes": WORKLOAD_SCOPES[1:]},
-            False,
-            id="basic missing",
+            id="presentator with hopin's smaller set",
         ),
         pytest.param(
             "PRESENTATOR", {"serviceAccountsEnabled": False}, False, id="no service account"
         ),
         pytest.param(
-            "HOPIN", {"serviceAccountsEnabled": True}, False, id="a service account on hopin"
+            "HOPIN", {"serviceAccountsEnabled": False}, False, id="no service account on hopin"
         ),
         pytest.param(
-            "HOPIN", {"defaultClientScopes": WORKLOAD_SCOPES}, False, id="workload scopes on hopin"
+            "HOPIN", {"defaultClientScopes": SONGMAKER_SCOPES}, False, id="songmaker's set on hopin"
+        ),
+        pytest.param(
+            "HOPIN", {"defaultClientScopes": HOPIN_SCOPES[:-1]}, False, id="hopin without audience"
         ),
     ],
 )

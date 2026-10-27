@@ -28,13 +28,13 @@ def logout_url(app: str, port: int) -> str:
 
 
 # Per app, the attributes the ruling sets; an app that is not here has none of these keys. HopIn
-# uses no refresh token (O1 of #254): an app gets one only if it uses one.
+# names its refresh token as on (R1 of #506), so a merge cannot keep an earlier off.
 RULED_SETTINGS = {
     "songmaker": {LOGOUT_URL_KEY: logout_url("songmaker", 8080), SESSION_REQUIRED_KEY: "false"},
     "hopin": {
         LOGOUT_URL_KEY: logout_url("hopin", 8080),
         SESSION_REQUIRED_KEY: "false",
-        REFRESH_TOKENS_KEY: "false",
+        REFRESH_TOKENS_KEY: "true",
     },
     "presentator": {
         LOGOUT_URL_KEY: logout_url("presentator", 8000),

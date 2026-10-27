@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 # `hal_agent_<app>` of compose.yaml, as the probe's copy names them: `<project>_agent_<app>`.
 # P36 drives only these, which keep one app from another.
-AGENT_NETWORKS = ("agent_songmaker", "agent_presentator")
+AGENT_NETWORKS = ("agent_songmaker", "agent_presentator", "agent_hopin")
 CALLER_PORT = 8000
 READY_SECONDS = 90
 
@@ -36,8 +36,8 @@ def service_networks(probe: Probe, project: str) -> tuple[str, ...]:
 def cell_p36(
     probe: Probe, *, project: str, label: str, service_port: int, service_listens: bool
 ) -> None:
-    """One caller per agent network: neither reaches the other's port, each reaches the target by
-    its name, and the target is a member of both networks."""
+    """One caller per agent network: each of the three reaches neither of the others' ports, each
+    reaches the target by its name, and the target is a member of all agent networks."""
     names = {network: f"{project}-caller-{network}" for network in AGENT_NETWORKS}
     addresses = {
         network: start_caller(probe, project, label, network, name)
@@ -45,7 +45,7 @@ def cell_p36(
     }
     target = probe.target.compose_service
     reached = "connected" if service_listens else "ECONNREFUSED"
-    for caller, other in itertools.permutations(AGENT_NETWORKS):
+    for caller, other in itertools.permutations(AGENT_NETWORKS, 2):
         beside = names[caller]
         seen = probe.client_in_namespace_of(beside, "connect", addresses[other], str(CALLER_PORT))[
             "result"
@@ -61,8 +61,9 @@ def cell_p36(
         expect(target_id in members, f"P36: {target} is not a member of {network}")
     probe.hold(
         "P36",
-        f"the callers on {' and '.join(AGENT_NETWORKS)} reach neither the other's port nor its "
-        f"name; both reach {target}:{service_port} ({reached}); {target} is on both",
+        f"the callers on {', '.join(AGENT_NETWORKS)} reach neither another's port nor its "
+        f"name; each reaches {target}:{service_port} ({reached}); {target} is on all "
+        f"{len(AGENT_NETWORKS)}",
     )
 
 
