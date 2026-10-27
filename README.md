@@ -80,7 +80,7 @@ container environment values; review evidence must not dump those payloads.
 OpenTofu inputs) hold the stack; `dynamic/` holds routes for host processes and the emergency
 barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
-`legal/` the legal unit's pages (imprint, privacy notice, terms), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
+`legal/` the legal unit's frame and sections (imprint, privacy notice, terms; `hal apply` builds the pages into `legal/built/`), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
 their timers. The commands are Python under `src/` (`edge`, `hal`, `home`;
 `hal check` reports what reaches beyond loopback, `hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
 `bin/hal` and `bin/home` link to), the OpenTofu
