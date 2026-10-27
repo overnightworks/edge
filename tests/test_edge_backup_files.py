@@ -315,3 +315,20 @@ def test_a_missing_database_file_is_named_without_a_path_or_a_row_value(edge_bac
         "dump",
         "command-failed",
     )
+
+
+def test_an_owner_run_that_fails_for_another_reason_is_not_called_a_missing_file(
+    edge_backup, machine, home
+):
+    """#468 M16: docker failing to start the owner run says so."""
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    machine.failing["Lesen des SQLite-Besitzers"] = 125
+
+    outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML))
+
+    assert "Lesen des SQLite-Besitzers endete mit Exit 125" in outcome.err
+    assert "fehlt oder ist unlesbar" not in outcome.err
+    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
+        "dump",
+        "command-failed",
+    )
