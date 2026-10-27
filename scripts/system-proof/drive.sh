@@ -1511,6 +1511,7 @@ cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: c
     verdict DK7 "$name: Docker is active and answering" 'systemctl is-active --quiet docker && docker info >/dev/null 2>&1'
     rm -rf "$DOCKER_DROP_IN_DIR"
     rm -f "$DOCKER_SHIM"
+    verdict DK7 "$name: the real engine runs on the restored default driver, so the rescue restarted Docker" '[ "$(docker_default_driver)" = json-file ]'
     systemctl daemon-reload
     return
 }
