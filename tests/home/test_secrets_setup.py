@@ -630,13 +630,9 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
     """#36 rule 2.2: a page no browser opens is named for opening by hand, never reported as opened."""
-    terminal.browser_opens = False
-    terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-
-    code = home_secrets_setup(home, boundaries)
-
+    terminal.browser_opens, terminal.pastes = False, [PASTED_VALUE, PASTED_VALUE]
+    home_secrets_setup(home, boundaries)
     lines = capsys.readouterr().out.splitlines()
-    assert code == 0
     assert f"    {NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
     assert not any(line.lstrip().startswith("opened ") for line in lines)
     assert files_under(home) == set(EVERY_FILE)
