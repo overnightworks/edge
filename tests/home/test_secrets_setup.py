@@ -207,6 +207,11 @@ def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeDisk) -
     return Boundaries(terminal.boundary(), verifier, disk.sync)
 
 
+def squeezed(output: str) -> list[str]:
+    """The output's lines with each run of spaces squeezed to one, so a row reads as its columns in order."""
+    return [" ".join(line.split()) for line in output.splitlines()]
+
+
 def home_secrets_setup(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES) -> int:
     return cli.main(["secrets", "--setup"], home=home, probe=FakeProbe(), now=NOW, secrets_setup_boundaries=boundaries)
 
@@ -244,6 +249,11 @@ def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_without_a
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
     assert not [line for line in output.splitlines() if line.startswith("next:")]
+    assert [line for line in squeezed(output) if line[:1] in tuple("✓✗!·")] == [
+        "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
+        "✓ github/read verified ~/.secrets/github/read (600)",
+        "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
+    ]
 
 
 def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:
@@ -367,9 +377,10 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
 
     code = home_secrets_setup(home, boundaries)
 
-    lines = capsys.readouterr().out.splitlines()
+    lines = squeezed(capsys.readouterr().out)
     assert code == 1
-    assert f"abgelehnt: {refusal.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen." in lines
+    assert f"✗ cloudflare/read rejected {refusal.detail} · paste again or leave empty" in lines
+    assert "· cloudflare/read skipped nothing stored" in lines
     assert files_under(home) == {".secrets/github/read", PASSPHRASE_FILE}
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
@@ -445,7 +456,7 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 0
-    assert "cloudflare/read: vorhanden, bleibt unverändert" in capsys.readouterr().out.splitlines()
+    assert not [line for line in squeezed(capsys.readouterr().out) if "cloudflare/read" in line and line[0] in "✓✗!·"]
     assert existing.read_text() == "FAKE-OLD-VALUE"
     assert (existing.stat().st_mtime_ns, existing.stat().st_mode) == (before.st_mtime_ns, before.st_mode)
     assert [urlsplit(page).netloc for page in terminal.opened] == ["github.com"]
@@ -489,7 +500,9 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    assert "nicht gespeichert: ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read ist inzwischen vorhanden und bleibt unverändert" in squeezed(output)
+    assert PASTED_VALUE not in output
     assert rival.read_text() == "FAKE-RIVAL-VALUE"
     assert files_under(home) == set(EVERY_FILE)
 
@@ -510,8 +523,10 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "nicht gespeichert: ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
-    assert refused in capsys.readouterr().out.splitlines()
+    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: erst `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    output = capsys.readouterr().out
+    assert refused in squeezed(output)
+    assert PASTED_VALUE not in output
     assert files_under(home) == {".secrets/github", PASSPHRASE_FILE}
 
 
@@ -541,7 +556,9 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
 
     output = capsys.readouterr().out
     assert code == 1
-    assert output.count(f"nicht gespeichert: {reason}: erst {fix}") == 3
+    assert [line for line in squeezed(output) if "not stored" in line] == [
+        f"✗ {name} not stored {reason}: erst {fix}" for name in ("cloudflare/read", "github/read", "opentofu/passphrase")
+    ]
     assert not [line for line in output.splitlines() if line.startswith("next:")]
     assert (terminal.opened, terminal.prompts) == ([], [])
     assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
@@ -560,12 +577,12 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     finally:
         (home / ".secrets" / "locked").chmod(0o700)
 
-    lines = capsys.readouterr().out.splitlines()
+    lines = squeezed(capsys.readouterr().out)
     assert code == 1
-    assert "Dafür gibt es noch keinen Assistenten; von Hand: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
-    assert "locked/token: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen" in lines
+    assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
+    assert "! locked/token not checked its folder cannot be read" in lines
     assert not any("github/old" in line for line in lines)
-    assert "ssh/key.ppk: fehlt, ist optional; übersprungen" in lines
+    assert "· ssh/key.ppk skipped optional" in lines
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
@@ -854,7 +871,7 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
 
     captured = capsys.readouterr()
     assert code == 1
-    assert captured.out.splitlines().count(UNSENDABLE_PASTE) == 2
+    assert squeezed(captured.out).count(f"✗ cloudflare/read rejected {UNSENDABLE_PASTE} · paste again or leave empty") == 1
     for part in (canary, "FAKE-CANARY-HEAD", "FAKE-CANARY-TAIL"):
         assert part not in captured.out + captured.err
     assert local_server.seen == []
@@ -875,7 +892,7 @@ def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
 
     captured = capsys.readouterr()
     assert code == 1
-    assert f"abgelehnt: {CLOUDFLARE_NOT_YET_VALID}; nichts gespeichert." in captured.out
+    assert f"✗ cloudflare/read rejected {CLOUDFLARE_NOT_YET_VALID} · paste again or leave empty" in squeezed(captured.out)
     assert PASTED_VALUE not in captured.out + captured.err
     assert files_under(home) == {PASSPHRASE_FILE}
 

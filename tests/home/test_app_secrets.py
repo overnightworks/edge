@@ -129,7 +129,7 @@ def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
 ) -> None:
     main(["next"], home=packaged_home.home, probe=probe, now=NOW)
 
-    assert f"home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/{HOPIN_SESSION_SECRET} (644)" in (
+    assert f"home secrets --setup (eigenes Terminalfenster) — erwartet: hopin/session-secret generated ~/{HOPIN_SESSION_SECRET} (644) · never shown" in (
         capsys.readouterr().out
     )
 
@@ -202,7 +202,9 @@ def test_apply_asks_the_turn_values_hidden_in_order_and_stores_them_at_0644_in_a
     assert [stat.S_IMODE(path.stat().st_mode) for path in (key_id, api_token, key_id.parent)] == [0o644, 0o644, 0o700]
     assert terminal.prompts.count(PASTE_PROMPT) == 2
     assert "FAKE-TURN" not in output
-    assert output.count("gespeichert, nicht geprüft: ") == 2
+    assert [" ".join(line.split()) for line in output.splitlines() if "turn-hopin" in line and "✓" in line] == [
+        f"✓ {name} stored not verified · ~/{relative} (644)" for name, relative in (("cloudflare/turn-hopin/key-id", TURN_KEY_ID), ("cloudflare/turn-hopin/api-token", TURN_API_TOKEN))
+    ]
 
 
 def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboard(
@@ -235,6 +237,7 @@ def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(turn_home: Sandb
 
     assert code == 1
     assert "noch offen" not in output
+    assert "· cloudflare/turn-hopin/key-id skipped nothing stored" in [" ".join(line.split()) for line in output.splitlines()]
     assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
 
 
@@ -244,7 +247,7 @@ def test_a_non_ascii_turn_paste_is_refused_unshown_and_unwritten(turn_home: Sand
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal(pastes=[canary]))
 
     assert code == 1
-    assert UNSENDABLE_PASTE in output
+    assert f"✗ cloudflare/turn-hopin/key-id rejected {UNSENDABLE_PASTE} · paste again or leave empty" in [" ".join(line.split()) for line in output.splitlines()]
     assert canary not in output
     assert not (turn_home.home / TURN_KEY_ID).exists()
 
@@ -278,7 +281,7 @@ def test_home_next_says_the_missing_turn_values_are_stored_not_verified(
 ) -> None:
     main(["next"], home=turn_home.home, probe=probe, now=NOW)
 
-    assert f"gespeichert, nicht geprüft: ~/{TURN_KEY_ID} (644)" in capsys.readouterr().out
+    assert f"cloudflare/turn-hopin/key-id stored not verified · ~/{TURN_KEY_ID} (644)" in capsys.readouterr().out
 
 
 SECRETS_MANIFEST = """\
@@ -380,7 +383,7 @@ def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_e
     assert (code, lines[-3]) == (0, "  ✓ secrets         stored")
     assert modes == {SECRET_FILES[0]: 0o600, SECRET_FILES[1]: 0o644}
     assert folder_modes == {name: 0o700 for name in SECRET_FILES}
-    assert "erzeugt und gespeichert: ~/.secrets/hopin/session-secret (644)" in lines
+    assert "✓ hopin/session-secret generated ~/.secrets/hopin/session-secret (644) · never shown" in [" ".join(line.split()) for line in lines]
 
 
 def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
@@ -526,8 +529,7 @@ def test_hal_setup_apply_fails_the_secrets_step_when_an_entry_cannot_be_checked(
 
     assert (
         code,
-        "closed/entry: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen"
-        in lines,
+        "! closed/entry not checked its folder cannot be read" in [" ".join(line.split()) for line in lines],
     ) == (ExitCode.FAILURE, True)
     assert error.splitlines()[0] == "error: setup stopped at secrets"
 
