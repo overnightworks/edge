@@ -147,22 +147,26 @@ def test_a_missing_appkit_is_one_cannot_plan_error(repository):  # noqa: F811
         appkit_step.plan_appkit(repository, not_installed)
 
 
-def test_a_failed_final_rename_keeps_the_previous_directory(world, monkeypatch):
+def _rename_failing_on(*failing_calls: int):
+    calls = []
+
+    def rename(source, destination):
+        calls.append(source)
+        if len(calls) in failing_calls:
+            raise OSError(5, "interrupted")
+        os.rename(source, destination)
+
+    return rename
+
+
+def test_a_failed_final_rename_keeps_the_previous_directory(world):
     served = world.served
     (served / "appkit.css").write_text("previous")
-    real_rename = os.rename
-    renames = []
-
-    def fail_the_publishing_rename(source, destination):
-        renames.append(source)
-        if len(renames) == 2:
-            raise OSError("interrupted")
-        real_rename(source, destination)
-
-    monkeypatch.setattr(appkit_step.os, "rename", fail_the_publishing_rename)
 
     with pytest.raises(OSError, match="interrupted"):
-        appkit_step._replace_directory(appkit_step.installed_static(), served)
+        appkit_step._replace_directory(
+            appkit_step.installed_static(), served, _rename_failing_on(2)
+        )
 
     assert (served / "appkit.css").read_text() == "previous"
     assert [path.name for path in served.parent.iterdir()] == [served.name]

@@ -105,7 +105,9 @@ def _bytes_of(directory: Path) -> dict[str, bytes]:
     }
 
 
-def _replace_directory(source: Path, directory: Path) -> None:
+def _replace_directory(
+    source: Path, directory: Path, rename: Callable[[Path, Path], object] = os.rename
+) -> None:
     """The files in a temporary directory beside the target, then renamed into place; a damaged
     directory moves aside first and moves back when the final rename fails."""
     temporary = Path(tempfile.mkdtemp(dir=directory.parent, prefix=_TEMPORARY_PREFIX))
@@ -114,12 +116,12 @@ def _replace_directory(source: Path, directory: Path) -> None:
         shutil.copytree(source, temporary / "files", copy_function=_copy_readable)
         _make_readable(temporary / "files")
         if directory.exists():
-            os.rename(directory, displaced)
+            rename(directory, displaced)
         try:
-            os.rename(temporary / "files", directory)
+            rename(temporary / "files", directory)
         except BaseException:
             if displaced.exists():
-                os.rename(displaced, directory)
+                rename(displaced, directory)
             raise
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
