@@ -1,5 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict and an error. It imports nothing else of this repository."""
+to show, and the form of a row, a verdict and an error. It imports nothing else of this
+repository."""
 
 import sys
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ class Glyph(Enum):
 
 @dataclass(frozen=True)
 class Row:
-    """One thing a command did or found. The caller owns its event enum; `fact` is one fixed sentence or a name."""
+    """One thing a command did or found. The caller owns its event enum; `fact` is one sentence."""
 
     glyph: Glyph
     subject: str
@@ -37,13 +38,15 @@ def printable(text: str) -> str:
 
 
 def write_row(row: Row) -> None:
-    """The row on stdout; text from outside is escaped before it is padded, so the columns keep their width."""
+    """The row on stdout; text from outside is escaped before it is padded, so columns hold."""
     subject, event, fact = printable(row.subject), printable(str(row.event)), printable(row.fact)
-    print(f"  {row.glyph.value} {subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}  {fact}".rstrip())
+    print(
+        f"  {row.glyph.value} {subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}  {fact}".rstrip()
+    )
 
 
 def write_verdict(glyph: Glyph, summary: str, detail: str) -> None:
-    """The last line of a command, on stdout: its verdict, computed by the caller, and the detail after a `·`."""
+    """The last line of a command on stdout: the caller's verdict, then its detail after a `·`."""
     print(f"{glyph.value} {printable(summary)} · {printable(detail)}")
 
 
