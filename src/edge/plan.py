@@ -1,4 +1,4 @@
-"""The planned run as a value: what `edge apply` would do, before it does any of it."""
+"""The planned run as a value: what `hal apply` would do, before it does any of it."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
