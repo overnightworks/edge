@@ -87,10 +87,11 @@ jobs:
           [ ! -s "$scratch/out" ]
           head -n 1 "$scratch/err" | grep -q '^error:'
           # docs/naming.md: `hal` must import from the tool's own environment, not from a stray package.
-          hal_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal; print(hal.__file__)')
-          case $hal_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal imported from $hal_file"; exit 1 ;; esac
-          hal_output_file=$("$scratch/tools/edge-check/bin/python" -I -c 'import hal_output; print(hal_output.__file__)')
-          case $hal_output_file in "$scratch/tools/edge-check/"*) ;; *) echo "hal_output imported from $hal_output_file"; exit 1 ;; esac
+          tool_dir="$scratch/tools/edge-check"
+          for module in hal hal_output; do
+            module_file=$("$tool_dir/bin/python" -I -c "import $module; print($module.__file__)")
+            case $module_file in "$tool_dir/"*) ;; *) echo "$module imported from $module_file"; exit 1 ;; esac
+          done
 
       - name: Compose renders (default, keycloak, step-ca, probe, agent-service and agent-probe profiles, Keycloak bootstrap and probe overlays)
         run: |
