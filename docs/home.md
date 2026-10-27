@@ -391,7 +391,7 @@ Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
   › github/fleet-read  new token  the link fills name, owner, expiry and rights
-    why: Nichts liest es heute; edge external verlangt es erst wieder, wenn edge#30 X2/X3 die GitHub-Einstellungen als Code baut (Repo-Einstellungen, Rulesets, Actions-Regeln, Namen der Org-Secrets, nie ihre Werte). Die Datei bleibt, widerrufen wird nichts.
+    why: Nothing reads it today; edge external needs it again once edge#30 X2/X3 builds the GitHub settings as code (repo settings, rulesets, Actions rules, org secret names, never their values). The file stays, nothing is revoked.
     prefilled: metadata read, organization_secrets read
     [ ] Repository access: All repositories
     [ ] compare the rights in the form with the line above
