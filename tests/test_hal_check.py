@@ -57,11 +57,12 @@ def run_hal_check(fake_host, tmp_path, capsys):
 
 
 @pytest.mark.parametrize("ss", ["", SSHD_LISTENS_ON_ALL], ids=["clean", "finding"])
-def test_a_bare_check_and_the_exposure_area_print_the_same(run_hal_check, ss):
-    """E1, cell 2."""
-    bare = run_hal_check(ss=ss)
+@pytest.mark.parametrize("flags", [(), ("--json",)], ids=["text", "json"])
+def test_a_bare_check_and_the_exposure_area_print_the_same(run_hal_check, ss, flags):
+    """E1, cells 2 and 6."""
+    bare = run_hal_check(*flags, ss=ss)
 
-    assert bare == run_hal_check("exposure", ss=ss)
+    assert bare == run_hal_check("exposure", *flags, ss=ss)
     assert bare[0] == (1 if ss else 0)
 
 
