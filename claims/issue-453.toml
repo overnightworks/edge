@@ -1,0 +1,7 @@
+claim_id = "814db1712d8a4fe097f5b7fe4e11a9a2"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "aa288854d5bc5e931336327940969f35351422d6"
+branch = "claude/issue-453-deployed-tag-interface"
+scope = ["docs/architecture.md"]
+opened_commit = "4a2a4e0b18625e25bba22289fd84feab48e019d8"
