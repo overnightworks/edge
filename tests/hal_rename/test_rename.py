@@ -6,78 +6,19 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 from git_support import committed_main, plain_git
+from rename_support import HTTPS, SSH, make_clone, memory_of, squeezed
 
 from hal import cli, rename_commands
 from hal.grammar import ExitCode
 from hal.rename_commands import RunningProcess, World
 
-SSH = "git@github.com:overnightworks/{}.git"
-HTTPS = "https://github.com/overnightworks/{}.git"
-
-
-@dataclass
-class Fakes:
-    """What the fake boundaries answer, and what they were asked."""
-
-    known: set[str] = field(default_factory=lambda: {"fresh"})
-    running: list[RunningProcess] = field(default_factory=list)
-    tools: str = ""
-    uv_calls: list[tuple[Path, tuple[str, ...]]] = field(default_factory=list)
-
-
-@pytest.fixture
-def fakes() -> Fakes:
-    return Fakes()
-
-
-@pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "home"
-    (home / "git").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    return home
-
-
-@pytest.fixture
-def world(home: Path, fakes: Fakes) -> World:
-    return World(
-        home=home,
-        github_knows=lambda name: name in fakes.known,
-        running_in=lambda roots: [
-            session
-            for session in fakes.running
-            if any(session.directory.is_relative_to(root) for root in roots)
-        ],
-        uv=lambda project, arguments: fakes.uv_calls.append((project, arguments)),
-        uv_tools=lambda: fakes.tools,
-    )
-
-
-def make_clone(path: Path, url: str, worktrees: tuple[str, ...] = ()) -> Path:
-    """A clone at `path` whose origin is `url`, with linked worktrees in `<path>-worktrees`."""
-    committed_main(path)
-    plain_git(path, "remote", "add", "origin", url)
-    plain_git(path, "switch", "--detach")
-    for name in worktrees:
-        plain_git(
-            path, "worktree", "add", "-b", name,
-            str(path.parent / f"{path.name}-worktrees" / name),
-        )  # fmt: skip
-    return path
-
 
 def origin_of(path: Path) -> str:
     return plain_git(path, "config", "--get", "remote.origin.url").stdout.strip()
-
-
-def memory_of(home: Path, clone: Path) -> Path:
-    return rename_commands.memory_directory(home, clone)
 
 
 def tree_state(home: Path) -> list[str]:
@@ -88,16 +29,6 @@ def tree_state(home: Path) -> list[str]:
 
 def rename(world: World, apply: bool = True, old: str = "old", new: str = "fresh") -> ExitCode:
     return rename_commands.rename(world, old, new, apply)
-
-
-@pytest.fixture
-def repository(home: Path) -> Path:
-    """`~/git/old` with two worktrees and a Claude memory directory."""
-    clone = make_clone(home / "git" / "old", SSH.format("old"), ("lane", "other"))
-    memory = memory_of(home, clone) / "memory"
-    memory.mkdir(parents=True)
-    (memory / "note.md").write_text("remembered")
-    return clone
 
 
 def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
@@ -111,10 +42,9 @@ def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
     assert code == ExitCode.OK
     assert tree_state(home) == before
     assert origin_of(repository) == SSH.format("old")
-    output = capsys.readouterr().out
-    assert f"move {repository} -> {home / 'git' / 'fresh'}" in output
-    assert "--apply" in output
-    assert f"uv sync in {home / 'git' / 'fresh'}" in output
+    output = squeezed(capsys.readouterr().out)
+    assert "~ clone move ~/git/old → ~/git/fresh" in output
+    assert "~ venv uv sync in ~/git/fresh" in output
     assert fakes.uv_calls == []
 
 
@@ -214,9 +144,11 @@ def test_a_refusal_for_running_processes_names_each_and_says_to_end_the_session(
     rename(world)
 
     lines = capsys.readouterr().err.splitlines()
-    assert lines[0].endswith(f"pid 4242 (claude) runs in {repository}: end that session first")
+    assert lines[0].endswith(
+        f"pid 4242 (claude) runs in {repository}: end that session first · nothing changed"
+    )
     assert lines[1].endswith(
-        f"pid 4243 (node) runs in {repository / 'src'}: end that session first"
+        f"pid 4243 (node) runs in {repository / 'src'}: end that session first · nothing changed"
     )
 
 
@@ -265,7 +197,12 @@ def test_a_unit_or_link_into_a_moved_clone_is_reported_and_left_alone(
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
-    assert re.search(f" {reference} (points into|names) a moved clone", capsys.readouterr().out)
+    assert re.search(
+        f"! unit( link)? +check +~/{path} (points into|names) a moved clone"
+        if "systemd" in path
+        else f"! link +check +~/{path} points into a moved clone",
+        capsys.readouterr().out,
+    )
     assert (str(reference.readlink()) if kind == "link" else reference.read_text()) == content
     assert (home / "git" / "fresh").is_dir()
 
@@ -289,7 +226,7 @@ def test_what_does_not_point_into_a_moved_clone_is_not_reported(home, world, rep
     code = rename(world)
 
     assert code == ExitCode.OK
-    assert "finding" not in capsys.readouterr().out
+    assert "check" not in capsys.readouterr().out
 
 
 def test_a_uv_tool_installed_from_a_moved_clone_is_reported(world, repository, fakes, capsys):
@@ -304,8 +241,8 @@ def test_a_uv_tool_installed_from_a_moved_clone_is_reported(world, repository, f
     out = capsys.readouterr().out
     assert code == ExitCode.FINDINGS
     assert (
-        f"installed from a moved clone: agent-coordination v4.2.0 [required: file://{repository}]"
-        in out
+        "! uv tool check installed from a moved clone: agent-coordination v4.2.0 "
+        f"[required: file://{repository}]" in squeezed(out)
     )
     assert "ansible-core" not in out
 
@@ -404,7 +341,7 @@ def test_a_worktree_is_repaired_wherever_git_lists_it_under_a_moved_tree_but_not
 
     git = home / "git"
     assert code == ExitCode.OK
-    assert "repair 3 worktrees of" in capsys.readouterr().out
+    assert "✓ worktrees repaired 3 in ~/git/fresh-worktrees" in squeezed(capsys.readouterr().out)
     for worktree in (
         git / "fresh" / ".claude" / "worktrees" / "agent-1",
         git / "fresh-worktrees" / "feature" / "topic",
@@ -432,14 +369,16 @@ def test_a_clone_whose_only_worktree_lies_outside_the_moved_trees_reports_it_unt
     code = rename(world)
 
     assert code == ExitCode.FINDINGS
-    assert f"finding: worktree {outside} lies outside the moved trees" in capsys.readouterr().out
+    assert f"! worktree check {outside} lies outside the moved trees" in squeezed(
+        capsys.readouterr().out
+    )
     assert plain_git(home / "git" / "fresh", "worktree", "repair", str(outside)).returncode == 0
     assert plain_git(outside, "status", "--porcelain").stdout == ""
     if registration == "ghost":
         ghost = home / "git" / "fresh" / ".git" / "worktrees" / "ghost"
         (outside / ".git").write_text(f"gitdir: {ghost}\n")
     assert rename(world) == repeat
-    assert ("finding" in capsys.readouterr().out) == (registration == "ghost")
+    assert ("check" in capsys.readouterr().out) == (registration == "ghost")
 
 
 def symlinked(home: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
@@ -518,10 +457,9 @@ LINKED_CASES = (
 
 @pytest.mark.parametrize("case", LINKED_CASES.split())
 def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
-    home, world, repository, fakes, case, capsys, monkeypatch
+    home, cli_world, repository, fakes, case, capsys, monkeypatch
 ):
     symlinked(home, monkeypatch, case)
-    monkeypatch.setattr(rename_commands, "real_world", lambda path: replace(world, home=path))
     fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "probe")]
     before = tree_state(home.parent)
 
@@ -662,7 +600,9 @@ def test_a_failure_in_a_middle_step_names_it_and_what_is_done_and_not_done(
     assert any(line.startswith("not done: repair 2 worktrees") for line in lines)
     assert any(line.startswith("not done: move ") and "projects" in line for line in lines)
     assert lines[-1] == "next: hal rename fresh old --apply"
-    assert f"finding: unit {unit} points into a moved clone" in captured.out
+    assert "! unit check ~/.config/systemd/user/old.service points into a moved clone" in squeezed(
+        captured.out
+    )
     assert origin_of(home / "git" / "fresh") == SSH.format("old")
 
 
@@ -716,14 +656,6 @@ def test_a_clone_whose_memory_directory_is_the_same_for_both_names_keeps_it(
     assert (memory / "note.md").read_text() == "remembered"
 
 
-@pytest.fixture
-def locked(repository):
-    (repository / "uv.lock").write_text("")
-    (repository / ".gitignore").write_text(".venv/\n")
-    (repository / ".venv").mkdir()
-    return repository
-
-
 def failing_uv(project: Path, arguments: tuple[str, ...]) -> None:
     raise subprocess.CalledProcessError(1, "uv")
 
@@ -762,7 +694,7 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
     out = capsys.readouterr().out
     assert code == ExitCode.OK
     assert fakes.uv_calls == rewrites(home / "git" / "fresh") * 2
-    assert out.splitlines()[-1] == "nothing to move; ran 1 uv syncs"
+    assert out.splitlines()[-1] == "✓ renamed old → fresh · 1 step"
     assert "nothing to do" not in out
 
 

@@ -229,4 +229,4 @@ def _snapshot_id(backup_output: bytes) -> str:
         messages = [json.loads(line) for line in backup_output.splitlines() if line.strip()]
         return next(m["snapshot_id"] for m in messages if m.get("message_type") == "summary")
     except (ValueError, KeyError, AttributeError, StopIteration) as error:
-        raise host.UnreadableOutputError("restic backup meldete keinen Snapshot") from error
+        raise host.UnreadableOutputError("restic backup reported no snapshot") from error

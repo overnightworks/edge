@@ -21,8 +21,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
@@ -35,10 +37,6 @@ MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
-
-
-class CheckFailed(Exception):
-    """Raised after the report is written and the news sent, so a broken check still ends the run as an error."""
 
 
 @dataclass(frozen=True)
@@ -58,13 +56,9 @@ class CheckResult:
     finding_identities: frozenset[str]
     error: Exception | None = None
 
-    @property
-    def failure(self) -> str:
-        return _failure_line(self.name, self.error) if self.error else ""
-
 
 def _failure_line(name: str, error: Exception) -> str:
-    return f"Prüfung {name} fehlgeschlagen ({type(error).__name__}): {error}"
+    return f"check {name} failed ({type(error).__name__}): {error}"
 
 
 CheckFindings = tuple[str, frozenset[str]]
@@ -154,7 +148,7 @@ def remembered_identities(results: tuple[CheckResult, ...], previous: frozenset[
 def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     total = sum(len(result.finding_identities) for result in results)
     failed = [result.name for result in results if result.error]
-    failed_clause = f" | fehlgeschlagen: {', '.join(failed)}" if failed else ""
+    failed_clause = f" | failed: {', '.join(failed)}" if failed else ""
     header = f"# home check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
@@ -195,7 +189,7 @@ def _remember(layout: Layout, identities: frozenset[str]) -> None:
     write_state_file(layout.home, layout.check_findings_file, json.dumps(sorted(identities), indent=0) + "\n")
 
 
-NOTIFY_FAILED = "home: notify-send fehlgeschlagen; der nächste Lauf meldet die geänderten Funde erneut.\n"
+NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again"
 
 
 @dataclass(frozen=True)
@@ -285,6 +279,7 @@ AREAS = (
     ("logs", "Server logs"),
 )
 AREA_LABELS = dict(AREAS)
+TERMINAL_LABELS = {"platform": "services", "backup": "backup", "hook": "commit hook", "secrets": "secrets", "logs": "server logs"}
 
 
 @dataclass(frozen=True)
@@ -346,6 +341,66 @@ def _is_news(current: frozenset[str], previous: frozenset[str] | None) -> bool:
 
 def _area_level(items: list[Item], check_name: str) -> Level:
     return max((item.level for item in items if item.check == check_name), default=Level.OK)
+
+
+class Finding(Noun):
+    ACTION = "action"
+    NOTE = "note"
+
+
+class AreaState(StrEnum):
+    OK = "ok"
+    NOT_CHECKED = "not checked"
+
+
+class AreaChecked(Noun):
+    AREA = "area checked"
+
+
+LEVEL_FINDINGS = {Level.ACTION: Finding.ACTION, Level.NOTE: Finding.NOTE}
+LEVEL_GLYPHS = {Level.OK: Glyph.DONE, Level.NOTE: Glyph.UNCHANGED, Level.ACTION: Glyph.NEEDS_YOU}
+BROKEN_AREA_FACT = "the check did not run · details in the report"
+MORE_FINDINGS = " · +{count} more"
+BARE_COMMAND_STEP = re.compile(r"Run `(.+)`\.")
+
+
+@dataclass(frozen=True)
+class AreaSummary:
+    """What the terminal says of one area: its level, how many findings are at that level, the first one's sentence and how many other findings the area has."""
+
+    check: str
+    level: Level
+    count: int
+    sentence: str
+    others: int
+
+
+def area_summaries(items: list[Item]) -> list[AreaSummary]:
+    """One summary per area in the mail's order, from the items the mail is made of."""
+    summaries = []
+    for name, _ in AREAS:
+        level = _area_level(items, name)
+        in_area = [item for item in items if item.check == name]
+        at_level = [item for item in in_area if item.level is level and level is not Level.OK]
+        sentence = at_level[0].sentence.removesuffix(".") if at_level else ""
+        summaries.append(AreaSummary(name, level, len(at_level), sentence, len(in_area) - len(at_level) if at_level else 0))
+    return summaries
+
+
+def _terminal_step(step: str) -> str:
+    """A command bare, any other step as the mail writes it without its final period."""
+    command = BARE_COMMAND_STEP.fullmatch(step)
+    return command.group(1) if command else step.removesuffix(".")
+
+
+def _area_row(summary: AreaSummary, broken: bool) -> Row:
+    label = TERMINAL_LABELS[summary.check]
+    if broken:
+        return Row(Glyph.FAILED, label, AreaState.NOT_CHECKED, BROKEN_AREA_FACT)
+    if summary.level is Level.OK:
+        return Row(Glyph.DONE, label, AreaState.OK)
+    more = MORE_FINDINGS.format(count=summary.count - 1 + summary.others) if summary.count + summary.others > 1 else ""
+    return Row(LEVEL_GLYPHS[summary.level], label, LEVEL_FINDINGS[summary.level], summary.sentence + more, summary.count)
 
 
 def title(current: frozenset[str]) -> str:
@@ -435,8 +490,8 @@ def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_f
     return "\n\n".join(sections) + "\n"
 
 
-MAIL_FAILED = "home: msmtp fehlgeschlagen ({host}:{port}); der nächste Lauf meldet die geänderten Funde erneut.\n"
-MAIL_ACCOUNT_INVALID = "home: keine Mail, {problem}; der nächste Lauf meldet die geänderten Funde erneut.\n"
+MAIL_FAILED = "mail failed: msmtp could not deliver via {host}:{port}; the next run reports again\n"
+MAIL_ACCOUNT_INVALID = "mail not sent: {problem}; the next run reports again\n"
 GRAPHICAL_SESSION_PROBE = ["systemctl", "--user", "is-active", "--quiet", "graphical-session.target"]
 
 
@@ -445,13 +500,13 @@ def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
     try:
         account = mail.load_account(ctx.layout)
     except mail.AccountInvalid as error:
-        sys.stderr.write(MAIL_ACCOUNT_INVALID.format(problem=error))
+        sys.stderr.write(MAIL_ACCOUNT_INVALID.format(problem=printable(str(error))))
         return False
     if account is None:
         return None
     delivered = ctx.run(mail.sendmail_command(account, ctx.layout.secrets_dir, mail.compose(account, subject, body))) is not None
     if not delivered:
-        sys.stderr.write(MAIL_FAILED.format(host=account.host, port=account.port))
+        sys.stderr.write(MAIL_FAILED.format(host=printable(str(account.host)), port=account.port))
     return delivered
 
 
@@ -461,7 +516,7 @@ def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | Non
         return None
     delivered = _notify(ctx.run, summary, body, ctx.layout.check_report_file)
     if not delivered:
-        sys.stderr.write(NOTIFY_FAILED)
+        sys.stderr.write(printable(NOTIFY_FAILED) + "\n")
     return delivered
 
 
@@ -478,17 +533,50 @@ def _mail_facts(ctx: CheckContext) -> MailFacts:
     return MailFacts(readers, backup_check.last_successful_backup(ctx.layout.home))
 
 
-def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> bool:
+class Delivery(StrEnum):
+    """What the run says happened to the news."""
+
+    MAIL_SENT = "mail sent"
+    NEWS_SENT = "news sent"
+    MAIL_FAILED = "mail failed, retries next run"
+    NO_MAIL = "no mail set up"
+    POPUP_FAILED = "popup failed, retries next run"
+    NOTHING_NEW = "nothing new, no mail"
+    NOTIFICATIONS_OFF = "notifications off"
+
+
+@dataclass(frozen=True)
+class NewsOutcome:
+    delivery: Delivery
+    settled: bool
+    """Whether the run counts as having told the operator, so the remembered findings may advance."""
+
+
+def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
+    if mail_outcome is not None:
+        return Delivery.MAIL_SENT if mail_outcome else Delivery.MAIL_FAILED
+    if desktop is False:
+        return Delivery.POPUP_FAILED
+    return Delivery.NEWS_SENT if desktop else Delivery.NO_MAIL
+
+
+def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
     """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
     home = ctx.layout.home
     report_file = f"~/{ctx.layout.check_report_file.relative_to(home)}"
     summary = title(current)
-    outcomes = [
-        _desktop_delivered(ctx, summary, notification_body(current, report_file)),
-        _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, _mail_facts(ctx))),
-    ]
-    set_up = [outcome for outcome in outcomes if outcome is not None]
-    return bool(set_up) and all(set_up)
+    desktop = _desktop_delivered(ctx, summary, notification_body(current, report_file))
+    mail_outcome = _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, facts))
+    set_up = [outcome for outcome in (desktop, mail_outcome) if outcome is not None]
+    return NewsOutcome(_delivery_of(desktop, mail_outcome), bool(set_up) and all(set_up))
+
+
+def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
+    if not ctx.config.notify_enabled:
+        return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True)
+    if not _is_news(current, previous):
+        return NewsOutcome(Delivery.NOTHING_NEW, True)
+    return _news_delivered(ctx, current, previous, facts)
 
 
 OPEN_REPORT_ACTION = "open=Open report"
@@ -513,12 +601,32 @@ def _notify(run: CommandRunner, summary: str, body: str, report_file: Path) -> b
     return run(notification_command(summary, body, report_file)) is not None
 
 
-def _run_error(failed: list[CheckResult]) -> secrets_view.ManifestError | CheckFailed:
-    """An invalid manifest keeps its own exit code 2; any other broken check ends the run as an unexpected error."""
+A_CHECK_BROKE_EXIT = 3
+
+
+def _manifest_error(failed: list[CheckResult]) -> secrets_view.ManifestError | None:
+    """An invalid manifest keeps its own exit code 2, whatever else broke."""
     manifest_errors = [result.error for result in failed if isinstance(result.error, secrets_view.ManifestError)]
-    if len(manifest_errors) == len(failed):
-        return manifest_errors[0]
-    return CheckFailed("; ".join(result.failure for result in failed))
+    return manifest_errors[0] if len(manifest_errors) == len(failed) else None
+
+
+def _write_verdict(items: list[Item], area_count: int, outcome: NewsOutcome, report_file: str) -> None:
+    levels = [item.level for item in items]
+    action = next((item for item in items if item.level is Level.ACTION), None)
+    if not items:
+        shown = () if outcome.delivery is Delivery.NOTHING_NEW else (outcome.delivery,)
+        write_verdict(Verdict(Glyph.DONE, "all well", ((area_count, AreaChecked.AREA),), details=shown))
+        return
+    counts = ((levels.count(Level.ACTION), Finding.ACTION), (levels.count(Level.NOTE), Finding.NOTE))
+    write_verdict(
+        Verdict(
+            LEVEL_GLYPHS[max(levels)],
+            "",
+            counts,
+            details=(outcome.delivery, f"report {report_file}"),
+            next_step=_terminal_step(action.next_step) if action else "",
+        )
+    )
 
 
 def check(ctx: CheckContext) -> int:
@@ -528,14 +636,22 @@ def check(ctx: CheckContext) -> int:
     write_state_file(layout.home, layout.check_report_file, report)
     previous = _previous_identities(layout)
     current = remembered_identities(results, previous)
-    sys.stdout.write(report)
-    news = ctx.config.notify_enabled and _is_news(current, previous)
+    facts = _mail_facts(ctx)
+    outcome = _news_outcome(ctx, current, previous, facts)
     # The remembered set stays at the last delivered one, so the next run sends this news again.
-    if not news or _news_delivered(ctx, current, previous):
+    if outcome.settled:
         _remember(layout, current)
     failed = [result for result in results if result.error]
+    items = _items(current, facts.readers)
+    broken = {result.name for result in failed}
+    for summary in area_summaries(items):
+        write_row(_area_row(summary, summary.check in broken))
     if failed:
-        raise _run_error(failed)
+        if manifest_error := _manifest_error(failed):
+            raise manifest_error
+        write_error(f"{len(failed)} of {len(AREAS)} areas could not check · {outcome.delivery}", _terminal_step(BROKEN_CHECK_REPORT.next_step))
+        return A_CHECK_BROKE_EXIT
+    _write_verdict(items, len(AREAS), outcome, f"~/{layout.check_report_file.relative_to(layout.home)}")
     return 1 if current else 0
 
 
