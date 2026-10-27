@@ -626,6 +626,26 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
     assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 
+def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
+    tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
+) -> None:
+    """#531: purpose is optional on an unverified token, so the walk announces it and prints no empty `why:` line."""
+    use_manifest(
+        '[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\n'
+        'read_by = []\nrecreate = "https://dash.cloudflare.com"\n'
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    terminal.pastes = [PASTED_VALUE]
+
+    code = home_secrets_setup(home, boundaries)
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert squeezed(output)[0].startswith("› turn new token")
+    assert not any(line.lstrip().startswith("why:") for line in output.splitlines())
+
+
 def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:

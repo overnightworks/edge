@@ -455,7 +455,8 @@ def _offer_page(terminal: Terminal, page: str) -> None:
 def _announce(entry: SecretEntry, how: str) -> None:
     """The row that opens a walk for a token, then why it is needed."""
     _write_entry_row(Glyph.ANNOUNCE, entry.name, WizardEvent.NEW_TOKEN, how)
-    _say(f"why: {entry.purpose}")
+    if entry.purpose:
+        _say(f"why: {entry.purpose}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
