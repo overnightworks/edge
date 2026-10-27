@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 # `hal_agent_<app>` of compose.yaml, as the probe's copy names them: `<project>_agent_<app>`.
 # P36 drives only these, which keep one app from another.
-AGENT_NETWORKS = ("agent_songmaker", "agent_presentator")
+AGENT_NETWORKS = ("agent_songmaker", "agent_presentator", "agent_hopin")
 CALLER_PORT = 8000
 READY_SECONDS = 90
 
@@ -61,8 +61,9 @@ def cell_p36(
         expect(target_id in members, f"P36: {target} is not a member of {network}")
     probe.hold(
         "P36",
-        f"the callers on {' and '.join(AGENT_NETWORKS)} reach neither the other's port nor its "
-        f"name; both reach {target}:{service_port} ({reached}); {target} is on both",
+        f"the callers on {', '.join(AGENT_NETWORKS)} reach neither another's port nor its "
+        f"name; each reaches {target}:{service_port} ({reached}); {target} is on all "
+        f"{len(AGENT_NETWORKS)}",
     )
 
 

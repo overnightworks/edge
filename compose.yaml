@@ -19,7 +19,7 @@ x-mcp-origins: &mcp-origins [hello.mcp.internal, songmaker.mcp.internal]
 # agent-service/egress/dynamic/allowed.yml.
 x-egress-address: &egress-address 172.31.252.10
 x-agent-attachments: &agent-attachments
-  networks: [agent-songmaker, agent-presentator, egress, mcp]
+  networks: [agent-songmaker, agent-presentator, agent-hopin, egress, mcp]
   extra_hosts:
     api.anthropic.com: *egress-address
     auth.hallucinai.de: *egress-address
@@ -532,6 +532,10 @@ networks:
     driver_opts: *isolated-bridge
   agent-presentator:
     name: hal_agent_presentator
+    internal: true
+    driver_opts: *isolated-bridge
+  agent-hopin:
+    name: hal_agent_hopin
     internal: true
     driver_opts: *isolated-bridge
   # Keycloak's back-channel logout call to songmaker, which joins it as an external network with the

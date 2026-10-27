@@ -104,6 +104,14 @@ SUBNET_CANDIDATES = tuple(f"172.31.{third}.0/24" for third in range(200, 250))
 TRAEFIK_NOT_FOUND = b"404 page not found\n"
 
 
+# `roles` carries the workload role, `service_account` the client_id and the audience is the
+# service's; hopin reads no email, web origin or acr, so it has none of the three.
+HOPIN_CLIENT_SCOPES = frozenset(
+    {"basic", "profile", "groups", "roles", "service_account", "agent-service-audience"}
+)
+SONGMAKER_PRESENTATOR_CLIENT_SCOPES = HOPIN_CLIENT_SCOPES | {"email", "web-origins", "acr"}
+
+
 @dataclass(frozen=True)
 class AppClient:
     """An app's relying party in realm.yaml as #11 lists it (#108, #161)."""
@@ -112,11 +120,7 @@ class AppClient:
     group: str  # the group of the user who signs in; its full path is in the ID token
     callbacks: tuple[str, ...]
     logout_redirect: str
-    agent_workload: bool = False  # its service account is a workload of the agent service (#183)
-
-    @property
-    def default_scopes(self) -> set[str]:
-        return AGENT_WORKLOAD_CLIENT_SCOPES if self.agent_workload else APP_DEFAULT_CLIENT_SCOPES
+    default_scopes: frozenset[str]  # exactly the client's default scopes in realm.yaml
 
     @property
     def secret_file(self) -> str:
@@ -136,13 +140,14 @@ SONGMAKER = AppClient(
     "/apps/songmaker/admin",
     (f"https://songmaker.{DOMAIN}/auth/callback",),
     f"https://songmaker.{DOMAIN}/login",
-    agent_workload=True,
+    default_scopes=SONGMAKER_PRESENTATOR_CLIENT_SCOPES,
 )
 HOPIN = AppClient(
     "hopin",
     "/apps/hopin",
     (f"https://hopin.{DOMAIN}/auth/callback",),
     f"https://hopin.{DOMAIN}/login",
+    default_scopes=HOPIN_CLIENT_SCOPES,
 )
 PRESENTATOR = AppClient(
     "presentator",
@@ -152,18 +157,9 @@ PRESENTATOR = AppClient(
         f"https://presentator-talk.{DOMAIN}/auth/callback",
     ),
     f"https://presentator.{DOMAIN}/login",
-    agent_workload=True,
+    default_scopes=SONGMAKER_PRESENTATOR_CLIENT_SCOPES,
 )
 APP_CLIENTS = (SONGMAKER, HOPIN, PRESENTATOR)
-APP_DEFAULT_CLIENT_SCOPES = {"basic", "profile", "groups"}
-AGENT_WORKLOAD_CLIENT_SCOPES = APP_DEFAULT_CLIENT_SCOPES | {
-    "email",
-    "roles",
-    "web-origins",
-    "acr",
-    "service_account",
-    "agent-service-audience",
-}
 AGENT_SERVICE = "agent-service"
 AGENT_WORKLOAD_ROLE = "agent-workload"
 SECRET_FILES = (
@@ -197,7 +193,7 @@ CONSOLE_SCOPE = f"{CONSOLE_NAME}-scope"
 CONSOLE_CLIENT_ROLE = f"{CONSOLE_NAME}-client-role"
 SCOPED_CLIENT = "songmaker"  # lists its default scopes, as do hopin and presentator
 SERVICE_ACCOUNT_CLIENT = "songmaker"  # a listed service account
-ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # declared with serviceAccountsEnabled: false
+ENABLED_SERVICE_ACCOUNT_CLIENT = "hopin"  # its service account, which the console turns off
 BACKUP_ASKED = ["backup", "keycloak", "--pre-apply", "--json"]  # what hal was asked first
 RESTORE_TEST_ASKED = ["restore", "--test", "keycloak", "--snapshot"]  # then the snapshot just made
 LIFESPAN_SETTING = "accessTokenLifespan: 300 "  # as realm.yaml sets it
@@ -210,12 +206,9 @@ STEP_CONSOLE_FLOW = "probe-step-console-flow"
 ONLY_IN_KEYCLOAK = "realm: only in Keycloak: "
 COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
 RESIDUE_OF_THE_APPLY = [
-    # a default scope on a declared client with scope lists, and the one Keycloak adds with a
-    # console-enabled service account
-    f'hallucinai: change client {ENABLED_SERVICE_ACCOUNT_CLIENT} defaultClientScopes: ["basic", '
-    '"groups", "profile", "service_account"] → ["basic", "groups", "profile"]',
-    f"hallucinai: change client {ENABLED_SERVICE_ACCOUNT_CLIENT} serviceAccountsEnabled: true → "
-    "false",
+    # the service account a console turned off and the apply turns back on
+    f"hallucinai: change client {ENABLED_SERVICE_ACCOUNT_CLIENT} serviceAccountsEnabled: false → "
+    "true",
     f'hallucinai: change client {SCOPED_CLIENT} defaultClientScopes: ["acr", '
     '"agent-service-audience", "basic", "email", "groups", "probe-console-scope", "profile", '
     '"roles", "service_account", "web-origins"] → ["acr", "agent-service-audience", "basic", '
@@ -224,9 +217,6 @@ RESIDUE_OF_THE_APPLY = [
     f"hallucinai: removal protocol mapper scope groups/{CONSOLE_NAME}-mapper",
     f"hallucinai: removal service-account client role service-account-{SERVICE_ACCOUNT_CLIENT}/"
     f"{AGENT_SERVICE}/{CONSOLE_CLIENT_ROLE}",
-    "hallucinai: removal service-account realm role service-account-"
-    f"{ENABLED_SERVICE_ACCOUNT_CLIENT}/default-roles-hallucinai",
-    f"hallucinai: removal service-account user service-account-{ENABLED_SERVICE_ACCOUNT_CLIENT}",
     f"master: removal flow {CONSOLE_SUBFLOW}",
     f"master: removal flow step {FORMS_FLOW}/auth-otp-form#1",
     f"master: removal flow step {SUBFLOW_PARENT}/{CONSOLE_SUBFLOW}#1",
@@ -1262,6 +1252,7 @@ class Probe:
             f"the observer lists {removed}, not the residue the apply removes",
         )
         self.console_changes_survive(admin, member_id)
+        self.service_account_is_back_with_its_role_and_no_group(admin)
         self.stack.must_apply("third apply")
         reapplied = self.observe(digest_key)
         again = change_lines(after, reapplied)
@@ -1286,6 +1277,17 @@ class Probe:
         account = admin.service_account_user(SERVICE_ACCOUNT_CLIENT)
         group = admin.get(f"/{REALM}/group-by-path{CONSOLE_SUBGROUP}")
         admin.must("DELETE", f"/{REALM}/users/{account['id']}/groups/{group['id']}")
+
+    def service_account_is_back_with_its_role_and_no_group(self, admin: Admin) -> None:
+        account = admin.service_account_user(ENABLED_SERVICE_ACCOUNT_CLIENT)
+        roles = admin.get(f"/{REALM}/users/{account['id']}/role-mappings/realm")
+        expect(
+            AGENT_WORKLOAD_ROLE in [role["name"] for role in roles]
+            and admin.group_paths(account["id"]) == [],
+            f"{ENABLED_SERVICE_ACCOUNT_CLIENT}'s service account has roles "
+            f"{[role['name'] for role in roles]} and groups {admin.group_paths(account['id'])} "
+            "after the apply",
+        )
 
     def console_changes_survive(self, admin: Admin, member_id: str) -> None:
         expect(admin.group_paths(member_id) == [MEMBER_GROUP], "the seeded membership changed")
@@ -1387,7 +1389,7 @@ class Probe:
         admin.must(
             "PUT",
             f"/{REALM}/clients/{enabled['id']}",
-            {**enabled, "serviceAccountsEnabled": True},
+            {**enabled, "serviceAccountsEnabled": False},
         )
 
     def make_survivors(self, admin: Admin) -> None:
@@ -1938,7 +1940,11 @@ class Probe:
         role_holders = admin.get(f"/{REALM}/roles/{DROPPED_ROLE}/users")
         expect(
             sorted(holder["username"] for holder in role_holders)
-            == ["service-account-presentator", "service-account-songmaker"],
+            == [
+                "service-account-hopin",
+                "service-account-presentator",
+                "service-account-songmaker",
+            ],
             f"the role {DROPPED_ROLE}, dropped from realm.yaml, or its service accounts did not "
             f"survive the apply: {role_holders}",
         )
@@ -1947,7 +1953,7 @@ class Probe:
             f"a changed realm.yaml applies (access token {CHANGED_ACCESS_TOKEN_LIFESPAN} s, "
             f"group /{CHANGED_GROUP}) and deletes nothing it dropped: "
             f"the group /{DROPPED_GROUP} tree and the client {DROPPED_CLIENT} and the role "
-            f"{DROPPED_ROLE} with its two service-account "
+            f"{DROPPED_ROLE} with its three service-account "
             f"holders, all dropped from realm.yaml, and the console-made {CONSOLE_SUBGROUP} stay; "
             f"probe-member is still in {MEMBER_GROUP}",
         )
@@ -2104,8 +2110,7 @@ class Probe:
         password = self.keep_secret(f"{username} password", secrets.token_urlsafe(16))
         member_id = admin.create_user(REALM, username, password)
         admin.join_group(member_id, client.group)
-        if client.agent_workload:
-            admin.join_group(member_id, SUBSCRIPTION_GROUP)
+        admin.join_group(member_id, SUBSCRIPTION_GROUP)
         client_secret = self.secret_values[client.secret_file]
         browser = new_opener(
             ReceivedCookies(lambda cookie, value: self.keep_secret(f"{name} {cookie}", value))
@@ -2114,35 +2119,26 @@ class Probe:
         groups = claims(tokens["id_token"]).get("groups", [])
         expect(client.group in groups, f"{name}'s ID token groups are {groups}")
         backchannel_cell.refresh_token_follows_the_ruling(name, tokens, expect)
-        subscription_token = ""
-        if client.agent_workload:
-            self.person_token_is_no_workload(client, tokens["access_token"])
-            subscription_token = (
-                f", and an access token with {SUBSCRIPTION_GROUP} and the {AGENT_SERVICE} audience"
-            )
+        self.person_token_is_no_workload(client, tokens["access_token"])
         self.app_client_refuses_what_it_does_not_use(client, client_secret)
         self.app_client_logout_pages(client, browser)
         self.app_client_representation(admin, client)
-        if client.agent_workload:
-            self.workload_token_carries_the_role(admin, client_secret, client)
+        self.workload_token_carries_the_role(admin, client_secret, client)
         self.held(
             "10",
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
             f"at exactly {client.callback}, exchanged with the scratch secret for an ID token "
-            f"with groups {groups}{subscription_token}; no code challenge, a suffixed callback, "
-            f"http, the password grant, {'' if client.agent_workload else 'client_credentials, '}"
-            "and the offline_access scope are refused; the end-session page asks before logging "
-            f"out for {client.logout_redirect} and refuses an unregistered address and the "
+            f"with groups {groups}, and an access token with {SUBSCRIPTION_GROUP} and the "
+            f"{AGENT_SERVICE} audience; no code challenge, a suffixed callback, "
+            "http, the password grant and the offline_access scope are refused; the end-session "
+            f"page asks before logging out for {client.logout_redirect} and refuses an unregistered "
+            "address and the "
             "origin root; the client's logout, optional scopes, base URL, console listing and "
             "refresh token are as ruled"
-            + (
-                f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
-                f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
-                f"client_id and azp {name}, no group and the realm's access token lifespan to "
-                "live (W1 to W3)"
-                if client.agent_workload
-                else "; it has no service account (W5)"
-            ),
+            f"; a person's token has the {AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} "
+            f"role, and its client_credentials token has {AGENT_WORKLOAD_ROLE}, "
+            f"client_id and azp {name}, no group and the realm's access token lifespan to "
+            "live (W1 to W3)",
         )
 
     @staticmethod
@@ -2231,20 +2227,17 @@ class Probe:
                 f"redirect_uri {redirect_uri} answered {page.status}: {page_message(page)}",
             )
         self.app_client_refuses_offline_access(client)
-        refused_grants = [self.password_grant_of_the_member()]
-        if not client.agent_workload:
-            refused_grants.insert(0, {"grant_type": "client_credentials"})
-        for grant in refused_grants:
-            refused = self.through_tunnel(
-                "POST",
-                PUBLIC_TOKEN_PATH,
-                form={"client_id": client.client_id, "client_secret": client_secret, **grant},
-            )
-            error = refused.json().get("error") if refused.status in (400, 401) else None
-            expect(
-                error == "unauthorized_client",
-                f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
-            )
+        grant = self.password_grant_of_the_member()
+        refused = self.through_tunnel(
+            "POST",
+            PUBLIC_TOKEN_PATH,
+            form={"client_id": client.client_id, "client_secret": client_secret, **grant},
+        )
+        error = refused.json().get("error") if refused.status in (400, 401) else None
+        expect(
+            error == "unauthorized_client",
+            f"{grant['grant_type']} on {client.client_id} answered {refused.status}",
+        )
         device_grant_cell.prove(self, client.client_id, client_secret, expect)
 
     @staticmethod
@@ -2367,7 +2360,7 @@ class Probe:
                 "standardFlowEnabled": True,
                 "implicitFlowEnabled": False,
                 "directAccessGrantsEnabled": False,
-                "serviceAccountsEnabled": client.agent_workload,
+                "serviceAccountsEnabled": True,
                 "frontchannelLogout": False,
                 "baseUrl": f"{client.origin}/",
                 "alwaysDisplayInConsole": False,

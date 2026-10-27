@@ -20,6 +20,7 @@ GATEWAY = "172.31.252.10"
 SERVICE_NETWORKS = {
     "agent-songmaker": "hal_agent_songmaker",
     "agent-presentator": "hal_agent_presentator",
+    "agent-hopin": "hal_agent_hopin",
     "mcp": "edge_mcp",
     "egress": "edge_egress",
 }

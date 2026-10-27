@@ -445,6 +445,7 @@ def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     [
         ("agent-songmaker", "hal_agent_songmaker"),
         ("agent-presentator", "hal_agent_presentator"),
+        ("agent-hopin", "hal_agent_hopin"),
     ],
 )
 def test_each_agent_network_has_the_fixed_name_apps_join_as_an_external_network(key, name):
@@ -464,6 +465,7 @@ def test_the_service_is_on_the_per_app_networks_egress_and_mcp_and_agent_smoke_o
     assert set(services["agent-service"]["networks"]) == {
         "agent-songmaker",
         "agent-presentator",
+        "agent-hopin",
         "egress",
         "mcp",
     }
