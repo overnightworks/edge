@@ -200,10 +200,22 @@ def test_b3_is_not_driven_when_one_marker_was_not_seen(containment, missing):
         containment.expect_planted(snapshot(containment, *seen))
 
 
+@pytest.mark.parametrize(
+    "marker_a",
+    [(41, CLI_PID, 7, 7), (41, CLI_PID, 41, CLI_PID)],
+    ids=["A in the service's group", "A in a group of its own"],
+)
+def test_b3_is_not_driven_when_a_is_not_in_the_clis_group(containment, marker_a):
+    cli = process(containment, CLI_PID, 7, 7, 7, "n-c11c")
+    seen = (cli, process(containment, *marker_a), process(containment, 42, CLI_PID, 42, 42))
+    with pytest.raises(containment.NotDriven, match="marker A"):
+        containment.expect_planted(snapshot(containment, *seen))
+
+
 def test_a_marker_is_told_from_the_cli_by_its_name(containment):
     """B3: only the opaque marker name counts as a marker."""
     other = process(containment, 50, CLI_PID, CLI_PID, CLI_PID, "n-0000")
-    assert snapshot(containment, other).plain_markers() == ()
+    assert snapshot(containment, other).stray_markers() == ()
 
 
 def b4(containment, dies=1, before=0, after=1, host=0, restarted=None):

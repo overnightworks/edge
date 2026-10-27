@@ -160,7 +160,11 @@ class Snapshot(NamedTuple):
         return tuple(seen for seen in self.processes if seen.name == self.sleep)
 
     def plain_markers(self) -> tuple[Process, ...]:
-        """Marker A: any marker that leads no session, so one orphaned under init counts too."""
+        """Marker A: a marker in the group of its parent, the CLI, which leads that group."""
+        return tuple(m for m in self.sleepers() if m.ppid == m.pgid != m.pid)
+
+    def stray_markers(self) -> tuple[Process, ...]:
+        """Any marker that leads no session, so one orphaned under init counts too."""
         return tuple(m for m in self.sleepers() if m.sid != m.pid)
 
     def session_markers(self) -> tuple[Process, ...]:
@@ -198,15 +202,15 @@ def b3_verdicts(window: Snapshot, frame: Snapshot, later: Snapshot) -> Verdicts:
         "B3 (frame)": (
             bool(frame.session_markers()),
             f"{len(frame.session_markers())} markers in their own session alive (asserted); "
-            f"{len(frame.plain_markers())} markers in the CLI's group, {frame.working_root} "
+            f"{len(frame.stray_markers())} markers in the CLI's group, {frame.working_root} "
             f"working-root entries, parent of B is init: {frame.markers_below_init()} (reported)",
         ),
         "B3 (6 s)": (
-            not later.plain_markers()
+            not later.stray_markers()
             and later.working_root == 0
             and len(survivors) == 1
             and later.markers_below_init(),
-            f"{len(later.plain_markers())} markers in the CLI's group, {later.working_root} "
+            f"{len(later.stray_markers())} markers in the CLI's group, {later.working_root} "
             f"working-root entries, {len(survivors)} markers in their own session, "
             f"parent of B is init: {later.markers_below_init()}",
         ),
