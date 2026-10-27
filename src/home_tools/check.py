@@ -116,7 +116,7 @@ def _run_isolated(name: str, run_check: Callable[[CheckContext], CheckFindings],
     try:
         report, identities = run_check(ctx)
     except Exception as error:
-        return CheckResult(name, f"# home {name}\n\n{_failure_line(name, error)}\n", frozenset(), error)
+        return CheckResult(name, f"# {name}\n\n{_failure_line(name, error)}\n", frozenset(), error)
     return CheckResult(name, report, identities)
 
 
@@ -149,7 +149,7 @@ def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     total = sum(len(result.finding_identities) for result in results)
     failed = [result.name for result in results if result.error]
     failed_clause = f" | failed: {', '.join(failed)}" if failed else ""
-    header = f"# home check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
+    header = f"# hal check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
 
@@ -660,7 +660,7 @@ Beispiele:
   home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 
 Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn ein Handlungsbedarf neu auftaucht
-oder verschwindet; Hinweise allein melden nichts. Bericht: ~/.local/state/home/check-report.md
+oder verschwindet; Hinweise allein melden nichts. Bericht: ~/.local/state/hal/check-report.md
 Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwarteter Fehler.
 """
 

@@ -15,8 +15,8 @@ from pathlib import Path
 
 
 def findings_count(count: int) -> str:
-    """German singular and plural: "1 Fund", "0 Funde", "2 Funde"."""
-    return "1 Fund" if count == 1 else f"{count} Funde"
+    """English singular and plural: "1 finding", "0 findings", "2 findings"."""
+    return "1 finding" if count == 1 else f"{count} findings"
 
 
 class Level(IntEnum):
@@ -46,13 +46,13 @@ class Finding:
 
 def render_findings_report(name: str, now: datetime, status_lines: Sequence[str], findings: Sequence[Finding]) -> str:
     """The report of one check: title with the count, the lines that state what was read, then the findings."""
-    lines = [f"# home {name} {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
+    lines = [f"# {name} {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
     lines += [f"- {line}" for line in status_lines]
     lines.append("")
     if findings:
-        lines += markdown_table(["Regel", "Gegenstand", "Befund"], [[f.rule, f.subject, f.detail] for f in findings])
+        lines += markdown_table(["Rule", "Subject", "Finding"], [[f.rule, f.subject, f.detail] for f in findings])
     else:
-        lines.append("Keine Funde.")
+        lines.append("No findings.")
     return "\n".join(lines) + "\n"
 
 

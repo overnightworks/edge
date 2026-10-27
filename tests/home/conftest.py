@@ -494,7 +494,7 @@ def home_check(home: Path, runner, probe: FakeProbe | None = None, disk: FakeDis
     return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
 
-REPORT_DISPLAY = "~/.local/state/home/check-report.md"
+REPORT_DISPLAY = "~/.local/state/hal/check-report.md"
 
 
 def restarting_containers(runner, *names: str) -> None:

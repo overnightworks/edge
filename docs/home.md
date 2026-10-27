@@ -78,7 +78,7 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 
 `home check` fährt jede Prüfung, die nichts ändert — die Ansicht von
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
-Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
+Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
 Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
 
@@ -117,7 +117,7 @@ Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
 losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
 der Timer-Dienst sofort enden.
 
-Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`. Der saubere Stand wird ebenfalls
+Die zuletzt gemeldete Fundmenge hält `~/.local/state/hal/check-findings.txt`. Der saubere Stand wird ebenfalls
 gemerkt, sodass ein wiederkehrender Action-needed-Fund wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die
 zuletzt gemeldete Fundmenge stehen, und der nächste Lauf meldet, was dann noch von ihr abweicht.
 
@@ -144,7 +144,7 @@ Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
 
 Notes are not urgent; home next shows what you can do.
-Everything in detail: ~/.local/state/home/check-report.md
+Everything in detail: ~/.local/state/hal/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
@@ -277,7 +277,7 @@ nach 20 Sekunden ab.
 Beispiel (gekürzt):
 
 ```
-# home secrets 15.10.2026 09:00 | 2 Funde
+# home secrets 15.10.2026 09:00 | 2 findings
 
 | Name | Art | Datei | Prüfung | Ablauf | Ort | Neu anlegen |
 |---|---|---|---|---|---|---|

@@ -35,17 +35,21 @@ class Layout:
         return self.local_dir / "state" / "home"
 
     @property
+    def hal_state_dir(self) -> Path:
+        return self.local_dir / "state" / "hal"
+
+    @property
     def system_step_record(self) -> Path:
         """The digest of what the system step rendered at its last verified run; the next-steps command compares it, never sudo."""
         return self.state_dir / "system-step.sha256"
 
     @property
     def check_report_file(self) -> Path:
-        return self.state_dir / "check-report.md"
+        return self.hal_state_dir / "check-report.md"
 
     @property
     def check_findings_file(self) -> Path:
-        return self.state_dir / "check-findings.txt"
+        return self.hal_state_dir / "check-findings.txt"
 
     @property
     def secrets_dir(self) -> Path:
