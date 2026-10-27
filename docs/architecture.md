@@ -323,9 +323,9 @@ changes only the frame does not move it. The imprint has none.
 A change that would refuse a file valid under v1 is asked of every producing repository first; one that only
 accepts more is announced.
 
-**`hal legal KEY [DIR]`** runs this validator and the page assembly on the app's `legal/datenschutz.html`
+**`hal legal KEY [DIR] [--repository TREE]`** runs this validator and the page assembly on the app's `legal/datenschutz.html`
 (required) and `legal/nutzungsbedingungen.html` (optional) in `DIR` (default: the current directory), in the pages
-as this checkout builds them and with its own held block for `KEY` left out. It prints the same refusal as above
+as this checkout (or `TREE`) builds them and with its own held block for `KEY` left out. It prints the same refusal as above
 as `error: legal: <path relative to DIR>: line N: <rule>` and exits 1, prints `legal: KEY: <files> are valid` and
 exits 0, and exits 3 when `DIR` does not exist; it writes nothing. A path under `legal/sections/` or `legal/frame/`
 in the line is edge's, not the app's. Apps' own texts are not read from their releases yet.

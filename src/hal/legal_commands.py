@@ -21,6 +21,13 @@ def _configure(parser: argparse.ArgumentParser) -> None:
         help="the app's checkout, holding legal/datenschutz.html and, optionally, "
         "legal/nutzungsbedingungen.html (default: the current directory)",
     )
+    parser.add_argument(
+        "--repository",
+        type=Path,
+        default=compose.REPOSITORY,
+        help="edge's tree, holding the catalog, the frame and the general part "
+        "(default: the checkout this hal runs from)",
+    )
 
 
 def _legal(arguments: argparse.Namespace) -> ExitCode:
@@ -29,7 +36,7 @@ def _legal(arguments: argparse.Namespace) -> ExitCode:
         return ExitCode.FAILURE
     try:
         files = legal_step.check_app(
-            compose.REPOSITORY, arguments.key, arguments.directory, date.today()
+            arguments.repository, arguments.key, arguments.directory, date.today()
         )
     except LegalError as error:
         grammar.write_error(str(error))
