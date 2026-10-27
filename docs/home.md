@@ -346,7 +346,8 @@ Fine-grained-Tokens keine API, und für Cloudflare bräuchte der Assistent
 einen Admin-Schlüssel auf der Platte. Den Login im Browser macht deshalb der
 Mensch, alles andere der Assistent. Je Token:
 
-1. Er sagt, was kommt: welche Seite, welcher Login, welche Rechte, wofür.
+1. Er sagt, was kommt: eine Zeile `›` mit dem Eintrag und `new token`, darunter `why:` (wofür) und die
+   Checkliste der Rechte. Ein erzeugter oder von Hand anzulegender Eintrag druckt nur seine Ergebniszeile.
    Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
    seinen Besitzer verschlossen, ein Symlink („ist ein Symlink“) oder kein
    Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
@@ -389,26 +390,18 @@ endet mit `✓ cloudflare/turn-hopin/key-id  stored  not verified · ~/.secrets/
 Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
-== github/fleet-read (Token, fehlt)
-Wofür: Nichts liest es heute; edge external verlangt es erst wieder, wenn edge#30 X2/X3 die GitHub-Einstellungen als Code baut (Repo-Einstellungen, Rulesets, Actions-Regeln, Namen der Org-Secrets, nie ihre Werte). Die Datei bleibt, widerrufen wird nichts.
-Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org overnightworks.
-Der Link füllt vor: Name github/fleet-read, Resource owner overnightworks, Ablauf 366 Tage, die Beschreibung und diese Rechte:
-  - metadata: read
-  - organization_secrets: read
-Von Hand, das kann kein Link vorgeben:
-  [ ] Repository access: All repositories
-  [ ] die Rechte im Formular mit der Liste oben vergleichen
-  [ ] Generate token, dann den Wert kopieren
-Enter öffnet die Seite im Browser.
-Geöffnet: https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
-Token einfügen (unsichtbar; leer überspringt):
-  ✗ github/fleet-read  rejected  GitHub antwortet 401 · paste again or leave empty
-Token einfügen (unsichtbar; leer überspringt):
+  › github/fleet-read  new token  the link fills name, owner, expiry and rights
+    why: Nichts liest es heute; edge external verlangt es erst wieder, wenn edge#30 X2/X3 die GitHub-Einstellungen als Code baut (Repo-Einstellungen, Rulesets, Actions-Regeln, Namen der Org-Secrets, nie ihre Werte). Die Datei bleibt, widerrufen wird nichts.
+    prefilled: metadata read, organization_secrets read
+    [ ] Repository access: All repositories
+    [ ] compare the rights in the form with the line above
+    [ ] Generate token, copy the value
+    Enter opens the page in your browser:
+    opened https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
+    paste the token (hidden, empty skips):
+  ✗ github/fleet-read  rejected  GitHub answers 401 · paste again or leave empty
+    paste the token (hidden, empty skips):
   ✓ github/fleet-read  verified  ~/.secrets/github/fleet-read (600)
-
-== opentofu/state-passphrase (Dienstpasswort, fehlt)
-Wofür: OpenTofu verschlüsselt damit State und Plan unter ~/.secrets/opentofu.
-Wird zufällig erzeugt und nie gezeigt.
   ✓ opentofu/state-passphrase  generated  ~/.secrets/opentofu/state-passphrase (600) · never shown
 ```
 
