@@ -262,7 +262,7 @@ services and songmaker's text, which edge holds until songmaker ships its own, a
 the catalog, enabled or not. Apps' own texts are not read yet (edge#110).
 
 What `hal apply` does: it validates every section, builds the pages and compares them with `legal/built/`. The
-plan names each page that is new or changes (`legal: datenschutz changes`) or says `legal: unchanged`. After
+plan names each page that is new or changes and the section files whose text it does not hold yet (`legal: datenschutz changes: legal/sections/songmaker/datenschutz.html`) or says `legal: unchanged`. After
 `yes`, before any unit switches, it writes each changed page (a temporary file, mode 0644, renamed over the page).
 Without an enabled `legal` unit there is no step and no line. A refusal comes before the question (exit 2) and
 changes nothing; a failed write is partial with no unit switched (exit 1). A page goes live only that way, and a
