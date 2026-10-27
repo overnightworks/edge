@@ -597,7 +597,8 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
     assert code == 0
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
-    assert squeezed(capsys.readouterr().out) == [
+    output = capsys.readouterr().out
+    assert squeezed(output) == [
         "› cloudflare/read new token Cloudflare fills in nothing",
         "why: liest Cloudflare",
         "[ ] Create Token › Custom token › Get started",
@@ -620,6 +621,9 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
         "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
     ]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
+    under_a_row = [line for line in output.splitlines() if line.lstrip().startswith(("why:", "[ ]", "prefilled:", "opened "))]
+    assert under_a_row
+    assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 
 def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
@@ -631,10 +635,10 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
 
     code = home_secrets_setup(home, boundaries)
 
-    lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
+    lines = capsys.readouterr().out.splitlines()
     assert code == 0
-    assert f"{NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
-    assert not any(line.startswith("opened ") for line in lines)
+    assert f"    {NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
+    assert not any(line.lstrip().startswith("opened ") for line in lines)
     assert files_under(home) == set(EVERY_FILE)
 
 
