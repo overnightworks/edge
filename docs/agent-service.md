@@ -232,14 +232,21 @@ dummy login. L4 is proven only live, with the real login; the probe has no L4 ce
 is accepted and fails at the upstream) and B2 (a capability written into a tool description fails
 the relay's owner and the run) of agent-runtime#440. B2 (c) asserts that the runner's failure is
 `CapabilityReflected`, that no run reaches `CliLoginRefusedError` and that no announcement verdict
-other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. B3 and B4 run through a wrapper bound read-only in place of the CLI: it execs the CLI, and
+other than `RELAY_NOT_CONNECTED` appears; a `RELAY_NOT_CONNECTED` line is tolerated. B3 to B5 run through a wrapper bound read-only in place of the CLI: it execs the CLI, and
 on `-p` while the probe's flag file is there it first starts marker A in the CLI's process group and
 marker B in a session of its own. B3 holds when, 6 s after the run's terminal frame, A is gone, the
 working root lists nothing and B lives on under init (docs/host.md: a `setsid` process keeps
 running); B4 kills the service's pid as its own user and holds when the container dies once and
 restarts, B is on no host or container process list and the working root and `/tmp` are empty.
-The processes and listings come from `tree_census.py` through `census_client.py`. The cells print counts and event names, never a log line. Its loopback capture (the
-(a) parts) is not driven yet.
+The processes and listings come from `tree_census.py` through `census_client.py`. B5 runs the smoke a hundred times in a row with the wrapper transparent, each run with
+freshly minted tokens, and holds when afterwards only init and the same service process remain, the
+working root is empty and `/tmp` is unchanged, the loopback listener count is unchanged, and the
+service log holds exactly one runner line of `CliLoginRefusedError` per run and no other ERROR,
+announcement refusal or bare line; another writable mount whose listing changed is only reported.
+For that the probe starts the service through a bootstrap that adds one WARNING-level root handler
+with level and logger name (the same records the service prints bare otherwise), a deviation the
+report names. The cells print counts and event names, never a log line. The loopback capture (the
+(a) parts) is not driven: it is not built (#339).
 `--cell signer` (`signer.py`) is the live signer proof without the live stack. It starts the service with the
 scratch signing key, the scratch CA and songmaker's `mcp_origin` from `service.toml`, and a TLS front for that origin on `mcp`
 (a Traefik of compose.yaml's pin, its certificate issued by the scratch CA). P12: a run naming one tool reaches the front

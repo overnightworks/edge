@@ -167,17 +167,19 @@ class IssuerProbe(Probe):
         resolved = self.compose("config", "--format", "json")
         return json.loads(resolved.stdout)["services"][SERVICE]["image"]
 
-    def container_log(self, service: str) -> str:
-        """The log text; a failed read reports the command and its exit code, never its output,
-        because the probes print only verdicts, counts and event names."""
+    def container_log(self, service: str, since: int | None = None) -> str:
+        """The log text, from the unix time `since` on when given; a failed read reports the
+        command and its exit code, never its output, because the probes print only verdicts,
+        counts and event names."""
         container = self.container(service)
-        logs = self.run(["docker", "logs", container], check=False)
+        bound = [] if since is None else ["--since", str(since)]
+        logs = self.run(["docker", "logs", *bound, container], check=False)
         if logs.returncode != 0:
             raise ProbeFailed(f"docker logs {container} exited {logs.returncode}")
         return logs.stdout + logs.stderr
 
-    def wait_until_listening(self) -> None:
-        wait_for_listening(lambda: self.container_log(SERVICE), "the service did not listen")
+    def wait_until_listening(self, since: int | None = None) -> None:
+        wait_for_listening(lambda: self.container_log(SERVICE, since), "the service did not listen")
 
     @property
     def token_path(self) -> Path:
