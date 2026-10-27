@@ -569,7 +569,7 @@ That is the operator's „zumindest durchleiten zu den Seiten“, and edge#19 ru
 
 ### The off-disk restore path (D3)
 
-Backups are separated (ruled 27.10.2026); [backup.md](backup.md) owns the rule. Neither backup is built: today `hal backup` covers only the apps of `backup/apps.toml`, and `~/.secrets` is in no backup.
+Backups are separated (ruled 27.10.2026); [backup.md](backup.md) owns the rule. The secrets backup and the secrets-first restore are not built: today `hal backup` covers only the apps of `backup/apps.toml`, and `~/.secrets` is in no backup.
 
 Today `hal restore` cannot restore on a clean machine: its settings fix the repository to `~/backups/restic` and the password to `~/.secrets/restic/password` (`src/edge_backup/settings.py`, `Settings.for_home`). On a new disk, neither exists. The recovery form changes four things:
 
