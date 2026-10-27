@@ -81,8 +81,8 @@ OpenTofu inputs) hold the stack; `dynamic/` holds routes for host processes and 
 barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
 `legal/` the legal unit's pages (imprint, privacy notice, terms), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
-their timers. The commands are Python under `src/` (`edge`, `hal`, `home`, `edge-check`;
-`hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
+their timers. The commands are Python under `src/` (`edge`, `hal`, `home`;
+`hal check` reports what reaches beyond loopback, `hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
 `bin/hal` and `bin/home` link to), the OpenTofu
 root is `external/`, the probes that prove each service on a throwaway stack are under `probe/`, and
 `tests/` holds the rest.
@@ -95,7 +95,7 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 | [docs/stack.md](docs/stack.md) | run, apply, stop, catalog on and off, the emergency switch, rollback |
 | [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
-| [docs/backup.md](docs/backup.md) | `edge-check`, `hal backup`, `hal restore`, what a backup holds, restore |
+| [docs/backup.md](docs/backup.md) | `hal check`, `hal backup`, `hal restore`, what a backup holds, restore |
 | [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |
 | [docs/internal-ca.md](docs/internal-ca.md) | `step-ca`, `traefik-mcp`, `agent-egress` |
 | [docs/agent-service.md](docs/agent-service.md) | the agent service: image, login, an app's side, proofs |

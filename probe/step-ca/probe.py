@@ -18,7 +18,7 @@ them runs from a throwaway container on the network a client would sit on. Needs
 switch, 12 runs the setup from `edge apply`, 13 lets traefik-mcp follow its file and definition
 through about ten applies, and 14 drives songmaker's route (#346 P13-P27, mcp_networks.py): about
 13 minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
-proof 8 runs `edge-check` through it, proofs 10 to 13 `uv sync` in a copy of the repository.
+proof 8 runs `hal check exposure` through it, proofs 10 to 13 `uv sync` in a copy of the repository.
 The copy is a clean `main` with a bare remote under the scratch directory, and every edit a proof
 makes there is published (committed and pushed) before the apply that follows it (#95 P3).
 """
@@ -97,7 +97,7 @@ ORIGIN_PLAIN_URL = f"http://{ORIGIN}:443/"  # NOSONAR(S5332)
 TRAEFIK_USER = "65534:65534"
 TRAEFIK_UID = 65534
 ACME_STORAGE = "/acme/acme.json"
-EDGE_CHECK = ["uv", "run", "--quiet", "edge-check", "--json"]
+EXPOSURE_CHECK = ["uv", "run", "--quiet", "hal", "check", "exposure", "--json"]
 EXIT_AFTER_TERM = 143  # 128 + SIGTERM; a forced kill after the grace period is 137
 BOOT_WITHOUT_CA_SECONDS = 10  # how long the gateway has to sit idle before the CA appears
 LISTENER_PORTS_OF_THE_PROBE = (9000, 443)  # the CA and the gateway: container ports only
@@ -144,7 +144,7 @@ class Probe(McpNetworks):
         self.compose_files = [self.compose_file, STAND_IN_OVERLAY]
         self.guard = edge_copy.NetworkGuard(PROJECT, lambda command: self.run(command).stdout)
         self.listeners_before: set[str] = set()
-        self.edge_check_before: list[dict] = []
+        self.exposure_before: list[dict] = []
         self.intermediate_fingerprint = ""
 
     def run(
@@ -395,17 +395,17 @@ class Probe(McpNetworks):
         lines = self.run(["ss", "-Hltn"]).stdout.decode().splitlines()
         return {line.split()[3] for line in lines}
 
-    def edge_check_findings(self) -> list[dict]:
-        """What edge-check reports about the whole host; exit 1 only means it found something."""
-        result = self.run(EDGE_CHECK, check=False)
+    def exposure_findings(self) -> list[dict]:
+        """What `hal check exposure` reports about the whole host; exit 1 only means findings."""
+        result = self.run(EXPOSURE_CHECK, check=False)
         try:
-            findings = json.loads(result.stdout)
-        except ValueError:
+            findings = json.loads(result.stdout)["exposure"]
+        except (ValueError, KeyError, TypeError):
             findings = None
         stderr_tail = result.stderr.decode(errors="replace").strip().splitlines()[-1:]
         expect(
             result.returncode in (0, 1) and isinstance(findings, list),
-            f"edge-check exited {result.returncode} without a JSON list: {stderr_tail}",
+            f"hal check exposure exited {result.returncode} without findings: {stderr_tail}",
         )
         return findings
 
@@ -507,7 +507,7 @@ class Probe(McpNetworks):
 
     def proof_6_gateway(self) -> None:
         self.listeners_before = self.host_listeners()
-        self.edge_check_before = self.edge_check_findings()
+        self.exposure_before = self.exposure_findings()
         root = self.secrets_dir / ROOT_CERTIFICATE
         served = self.boot_gateway_before_the_ca()
         intermediate = self.intermediate_certificate()
@@ -540,11 +540,11 @@ class Probe(McpNetworks):
         ports = {listener.rsplit(":", 1)[1] for listener in self.host_listeners()}
         taken = ports & {str(port) for port in LISTENER_PORTS_OF_THE_PROBE}
         expect(not taken, f"the host listens on {sorted(taken)}")
-        new_findings = [f for f in self.edge_check_findings() if f not in self.edge_check_before]
-        expect(not new_findings, f"edge-check reports something new: {new_findings}")
+        new_findings = [f for f in self.exposure_findings() if f not in self.exposure_before]
+        expect(not new_findings, f"hal check exposure reports something new: {new_findings}")
         print(
             f"proof 8 held: ss -ltn unchanged ({len(self.listeners_before)} listeners), none on "
-            f"{LISTENER_PORTS_OF_THE_PROBE}; edge-check reports nothing new"
+            f"{LISTENER_PORTS_OF_THE_PROBE}; hal check exposure reports nothing new"
         )
 
     def remove_stored_certificates(self) -> None:

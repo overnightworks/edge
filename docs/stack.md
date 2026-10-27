@@ -99,7 +99,7 @@ not "applied or nothing to do". They deviate in exactly three ways:
   commands until H5e renames them; a number in such a line is edge's, not hal's process exit. Type
   `hal stop <unit or app>` / `hal start <unit or app>` for `edge stop|start <unit or app>`, `hal offline` for
   `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
-  `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c, so run it as
+  `edge apply [--closed]`; `edge external check --hosts` has no hal verb until H5c2, so run it as
   `~/git/edge/bin/edge external check --hosts`.
 
 `hal setup` deviates in one way:
