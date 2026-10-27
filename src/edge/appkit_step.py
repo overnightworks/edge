@@ -1,4 +1,4 @@
-"""The appkit step of `edge apply --closed`: the installed appkit's static files (tokens and fonts),
+"""The appkit step of the closed apply: the installed appkit's static files (tokens and fonts),
 compared with `legal/assets/appkit-<version>/` and written there after the operator's `yes`.
 
 The legal unit serves that directory at `/_rechtliches/appkit-<version>/`, so the version in the
