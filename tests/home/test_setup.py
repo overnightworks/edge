@@ -114,7 +114,7 @@ def test_apply_installs_pinned_quality_engines_and_both_hooks_then_activates(san
 
 
 def test_a_dry_run_with_a_terminal_announces_no_sudo(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """The announcement belongs to an apply: a dry run asks for the password in the check, and prints no `needs sudo` row."""
+    """#498: the announcement belongs to an apply; a dry run asks for the password in the check, and prints no `needs sudo` row."""
     run_setup(sandbox, capsys, "--apply")
     _, lines, _ = run_setup(sandbox, capsys)
 
