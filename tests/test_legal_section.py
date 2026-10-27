@@ -333,3 +333,16 @@ def test_the_general_part_is_refused_by_its_own_grammar(text, rule):
         general(text)
 
     assert rule in str(refused.value)
+
+
+def test_a_heading_title_keeps_its_escaped_bytes_so_no_markup_can_come_of_it():
+    """L7, L14."""
+    text = (
+        '<h2 id="hopin">A &lt;img src=x&gt; &amp; B</h2>\n<p>a</p>\n'
+        '<section id="hopin-daten">\n<h3>T &lt;script&gt;</h3>\n<p>x</p>\n</section>\n'
+    )
+
+    parsed = fragment(text)
+
+    assert parsed.headings[0].title == "A &lt;img src=x&gt; &amp; B"
+    assert parsed.subsections[0].title == "T &lt;script&gt;"

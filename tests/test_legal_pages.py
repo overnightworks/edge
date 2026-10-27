@@ -160,6 +160,18 @@ def test_stand_of_a_page_counts_only_the_sections_of_that_page():
     assert "Stand: 4. März 2026" in pages["nutzungsbedingungen"]
 
 
+def test_a_heading_title_with_escaped_text_is_published_as_the_files_bytes():
+    """L7, L14."""
+    sections = '<section id="zeta-eins">\n<h3>T &lt;b&gt;</h3>\n<p>x</p>\n</section>\n'
+    text = f'<h2 id="zeta">A &lt;img src=x&gt; &amp; B</h2>\n<p>a</p>\n{sections}'
+
+    page = built([block(BlockKind.APP, text, "zeta")])
+
+    assert "<h2>A &lt;img src=x&gt; &amp; B</h2>" in page
+    assert "<li>A &lt;img src=x&gt; &amp; B<ol><li>T &lt;b&gt;</li></ol></li>" in page
+    assert "<img" not in page
+
+
 def test_the_imprint_is_the_frame_as_it_is():
     """L14."""
     assert built([general()], "impressum") == FRAME.pages["impressum"]

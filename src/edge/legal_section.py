@@ -260,7 +260,7 @@ class _Reader:
         closing = self.next(opening)
         if closing.kind != "end" or closing.name != name:
             raise self.unexpected(closing, f"</{name}> is expected")
-        return opening, text.name, closing
+        return opening, _escape(text.name), closing
 
     def blocks(self) -> int:
         count = 0
