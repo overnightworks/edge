@@ -282,6 +282,31 @@ HOSTS = {
         ),
         findings=[finding("duplicate-edge-name", "blog-new, blog-old", edge_name="blog")],
     ),
+    "a valid alias on a routed container is silent": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "blog-talk"})
+        ),
+    ),
+    "edge.alias outside [a-z0-9-]{1,63}": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "Talk.App"})
+        ),
+        findings=[finding("invalid-edge-name", "web", edge_name="Talk.App")],
+    ),
+    "an alias claiming the host another container is named for": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "talk"}),
+            container("talk", labels=ROUTED | {"edge.name": "talk"}),
+        ),
+        findings=[finding("duplicate-edge-name", "talk, web", edge_name="talk")],
+    ),
+    "two aliases claiming one host": Host(
+        docker=inspect_json(
+            container("a", labels=ROUTED | {"edge.name": "a", "edge.alias": "talk"}),
+            container("b", labels=ROUTED | {"edge.name": "b", "edge.alias": "talk"}),
+        ),
+        findings=[finding("duplicate-edge-name", "a, b", edge_name="talk")],
+    ),
     "a stopped container sharing an edge.name is no duplicate": Host(
         docker=inspect_json(
             container("blog-old", labels=ROUTED | {"edge.name": "blog"}, running=False),

@@ -13,7 +13,6 @@ entry resolves the real one.
 
 import http.client
 import os
-import re
 import socket
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -25,11 +24,10 @@ from typing import Any, Self
 import yaml
 
 from edge import catalog, switches
-from edge_check.docker import EDGE_NAME_LABEL, is_routed
+from edge_check.docker import EDGE_ALIAS_LABEL, EDGE_NAME_LABEL, TRAEFIK_NAME, is_routed
 
 DYNAMIC_DIRECTORY = "dynamic"
 TRAEFIK_FILE = "traefik.yml"
-_TRAEFIK_NAME = re.compile(r"[a-z0-9-]{1,63}")  # the provider constraint of traefik.yml
 _NOT_FOUND_BODY = b"404 page not found\n"
 _NOT_FOUND = 404
 _APEX_ROUTER = "_apex"  # `_` is no part of a DNS label, so no host name can take it
@@ -183,13 +181,16 @@ class Verifier:
 
 
 def routed_names(config: Mapping[str, Any], services: Iterable[str]) -> tuple[str, ...]:
-    """The `edge.name` of each service Traefik routes, as Compose resolved it, once each."""
+    """The `edge.name` and `edge.alias` of each service Traefik routes, as Compose resolved it,
+    once each; an alias counts only beside a name the provider constraint accepts."""
     names: dict[str, None] = {}
     for service in services:
         labels = config["services"][service].get("labels", {})
         name = labels.get(EDGE_NAME_LABEL, "")
-        if is_routed(labels) and _TRAEFIK_NAME.fullmatch(name):
+        if is_routed(labels) and TRAEFIK_NAME.fullmatch(name):
             names[name] = None
+            if TRAEFIK_NAME.fullmatch(alias := labels.get(EDGE_ALIAS_LABEL, "")):
+                names[alias] = None
     return tuple(names)
 
 

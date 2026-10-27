@@ -102,6 +102,66 @@ def test_b2_two_services_labelled_with_one_host_are_refused():
     assert "host hopin needs exactly one service" in refusal(text, hosts=("hopin",))
 
 
+ALIASED = '{edge.name: hopin, edge.alias: talk, traefik.enable: "true"}'
+
+
+def aliased(labels: str) -> str:
+    return f"labels: {labels}, {HEALTH}"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        aliased(ALIASED),
+        "labels: ['edge.name=hopin', 'edge.alias=talk', 'traefik.enable=true']",
+    ],
+)
+def test_an_alias_names_a_second_host_of_the_entry_in_either_label_form(fields):
+    text = compose(fields, HEALTH if fields.startswith("labels: [") else "")
+
+    assert app_contract.check(text, KEY, TAG, ("hopin", "talk")) == ("web",)
+
+
+@pytest.mark.parametrize(
+    ("labels", "refused"),
+    [
+        ('{edge.name: hopin, edge.alias: other, traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: hopin, edge.alias: hopin, traefik.enable: "true"}', "edge.alias"),
+        ('{edge.alias: talk, traefik.enable: "true"}', "edge.alias without edge.name"),
+        ('{edge.name: hopin, edge.alias: "", traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: hopin, edge.alias: Talk, traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: hopin, edge.alias: "@", traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: hopin, edge.alias: "*", traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: Hopin, edge.alias: talk, traefik.enable: "true"}', "edge.alias"),
+        ('{edge.name: hopin, edge.alias: "${H}", traefik.enable: "true"}', "interpolates a label"),
+    ],
+)
+def test_an_alias_that_breaks_a_rule_is_refused_naming_service_and_label(labels, refused):
+    message = refusal(compose(aliased(labels)), hosts=("hopin", "talk", "Talk", "@", "*", "Hopin"))
+
+    assert "service web" in message
+    assert refused in message
+
+
+@pytest.mark.parametrize(
+    "second_labels",
+    [
+        '{edge.name: talk, traefik.enable: "true"}',
+        '{edge.name: other, edge.alias: talk, traefik.enable: "true"}',
+    ],
+)
+def test_two_services_holding_one_host_by_name_or_alias_are_refused(second_labels):
+    text = f"services: {{a: {service(aliased(ALIASED))}, b: {service(aliased(second_labels))}}}"
+
+    assert "host talk needs exactly one service" in refusal(text, hosts=("hopin", "talk", "other"))
+
+
+def test_a_host_no_service_holds_by_name_or_alias_is_refused():
+    message = refusal(compose(aliased(ALIASED)), hosts=("hopin", "talk", "third"))
+
+    assert "host third needs exactly one service" in message
+
+
 def test_b2_a_label_as_list_entry_routes_like_one_as_map_entry():
     fields = ["labels: ['edge.name=hopin', 'traefik.enable=true']", HEALTH]
 
