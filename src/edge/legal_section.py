@@ -19,6 +19,8 @@ ELEMENTS = ("h2", "h3", "section", "p", "ul", "ol", "li", "strong", "em", "code"
 CANONICAL_RULE = (
     "not in canonical form (lowercase tags, double quotes, <br>, only &amp; &lt; &gt;, LF)"
 )
+_REFERENCE_HINT = "write the character itself, not a reference such as &quot; or &nbsp;"
+_FOREIGN_REFERENCE = re.compile(r"&(?!(?:amp|lt|gt);)#?[A-Za-z0-9]+;")
 
 _ATTRIBUTE_OF = {"h2": "id", "section": "id", "a": "href"}
 _BLOCKS = ("p", "ul", "ol")
@@ -190,7 +192,10 @@ def _tokens(path: str, data: bytes) -> tuple[str, list[_Token]]:
     except _Refused as refused:
         raise refusal(path, refused.line, refused.rule) from refused
     if tokeniser.canonical != text:
-        raise refusal(path, _first_difference(text, tokeniser.canonical), CANONICAL_RULE)
+        number = _first_difference(text, tokeniser.canonical)
+        written = text.split("\n")[number - 1] if number <= text.count("\n") + 1 else ""
+        hint = f"; {_REFERENCE_HINT}" if _FOREIGN_REFERENCE.search(written) else ""
+        raise refusal(path, number, CANONICAL_RULE + hint)
     return text, tokeniser.tokens
 
 

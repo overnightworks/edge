@@ -16,6 +16,7 @@ from edge.legal_section import (
 PATH = "legal/sections/hopin/datenschutz.html"
 ANCHOR = "hopin"
 ZONE = "edge-fixture.invalid"
+CHARACTER_HINT = "write the character itself, not a reference such as &quot; or &nbsp;"
 ALLOWED = f"allowed: {' '.join(ELEMENTS)}"
 GOOD = (
     '<h2 id="hopin">HopIn</h2>\n'
@@ -142,12 +143,8 @@ def test_a_section_inside_a_section_is_refused():
         (in_paragraph("a<br/>b"), 2),
         ('<h2 id="hopin">HopIn</h2>\n<P>a</P>\n', 2),
         ("<h2 id='hopin'>HopIn</h2>\n<p>a</p>\n", 1),
-        (in_paragraph("a&nbsp;b"), 2),
-        (in_paragraph("&auml;"), 2),
-        (in_paragraph("&quot;a&quot;"), 2),
         (in_paragraph("a > b"), 2),
         (in_paragraph("AT&T"), 2),
-        (in_paragraph("a&copy;"), 2),
         ('<h2 id="hopin" >HopIn</h2>\n<p>a</p>\n', 1),
         ('<h2 id="hopin">HopIn</h2>\n<p>a</p >\n', 2),
     ],
@@ -155,6 +152,44 @@ def test_a_section_inside_a_section_is_refused():
 def test_a_text_that_is_not_in_canonical_form_is_refused_at_the_first_differing_line(text, line):
     """L14."""
     assert refusal(text) == f"legal: {PATH}: line {line}: {CANONICAL_RULE}"
+
+
+@pytest.mark.parametrize(
+    "written", ["a&nbsp;b", "&auml;", "&quot;a&quot;", "a&copy;", "a&#160;b", "a&#x41;b"]
+)
+def test_a_character_reference_is_refused_with_the_remedy(written):
+    """L14: the line says to write the character, and never quotes the text."""
+    message = refusal(in_paragraph(written))
+
+    assert message == f"legal: {PATH}: line 2: {CANONICAL_RULE}; {CHARACTER_HINT}"
+    assert written not in message
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\n\n\n", "\n \n"])
+def test_whitespace_after_the_last_closing_tag_is_free(ending):
+    """D1."""
+    text = f'<h2 id="hopin">HopIn</h2>\n<p>a</p>{ending}'
+
+    assert fragment(text).headings[0].content == f"\n<p>a</p>{ending}"
+
+
+@pytest.mark.parametrize(
+    "between",
+    ["", "\n", " ", "\n  \n"],
+)
+def test_spaces_and_line_feeds_between_block_tags_are_free_and_handed_on_as_written(between):
+    """D1: the section keeps the bytes the app wrote."""
+    text = f'<h2 id="hopin">HopIn</h2>\n<ul>{between}<li>a</li>{between}</ul>\n'
+
+    assert fragment(text).headings[0].content == f"\n<ul>{between}<li>a</li>{between}</ul>\n"
+
+
+@pytest.mark.parametrize("between", ["\t", "\u00a0", "\r"])
+def test_a_tab_a_no_break_space_or_a_cr_between_block_tags_is_refused(between):
+    """D1."""
+    text = f'<h2 id="hopin">HopIn</h2>\n<ul>{between}<li>a</li></ul>\n'
+
+    assert "legal: " in refusal(text)
 
 
 def test_the_three_character_references_are_the_canonical_way_to_write_them():

@@ -9,6 +9,7 @@ from hal import (
     backup_commands,
     check_commands,
     grammar,
+    legal_commands,
     rename_commands,
     setup_commands,
     stack_commands,
@@ -23,6 +24,7 @@ COMMANDS = (
     *check_commands.COMMANDS,
     *setup_commands.COMMANDS,
     *rename_commands.COMMANDS,
+    *legal_commands.COMMANDS,
     version.COMMAND,
 )
 
