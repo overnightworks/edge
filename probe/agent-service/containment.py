@@ -513,7 +513,7 @@ class ContainmentProbe(IssuerProbe):
         try:
             failed += self.drive_b5(census, relay)
             service_pids = self.baseline(census)
-            detached, snapshot = self.cell_b3(census, tokens)
+            detached, snapshot = self.cell_b3(census)
             failed += self.judge(snapshot)
             failed += self.judge(self.cell_b4(census, service_pids, detached))
         finally:
@@ -619,7 +619,7 @@ class ContainmentProbe(IssuerProbe):
         working_root, temporary = census.listed(census.working_root, TEMPORARY)
         return Snapshot(census.processes(), census.sleep, working_root, temporary)
 
-    def cell_b3(self, census: CensusClient, tokens: Tokens) -> tuple[str, Verdicts]:
+    def cell_b3(self, census: CensusClient) -> tuple[str, Verdicts]:
         """The run with the markers planted: the process sampler's window covers all of it, then
         a look at the terminal frame and one `REAP_SECONDS` after it. Returns marker B's number."""
         plain, detached = (f"3000.{secrets.randbelow(10**9):09d}" for _ in range(2))
@@ -630,18 +630,18 @@ class ContainmentProbe(IssuerProbe):
         try:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 sampled = pool.submit(census.processes, WINDOW_SECONDS)
-                frame, later = self.run_until_frame_and_after(census, tokens)
+                frame, later = self.run_until_frame_and_after(census)
                 window = Snapshot(sampled.result(), census.sleep, 0, 0)
         finally:
             flag.unlink(missing_ok=True)
         expect_planted(window)
         return detached, b3_verdicts(window, frame, later)
 
-    def run_until_frame_and_after(
-        self, census: CensusClient, tokens: Tokens
-    ) -> tuple[Snapshot, Snapshot]:
+    def run_until_frame_and_after(self, census: CensusClient) -> tuple[Snapshot, Snapshot]:
         """One run, its output read as it comes: a look when the terminal frame arrives, another
-        `REAP_SECONDS` later by the monotonic clock, then the rest of the run's output."""
+        `REAP_SECONDS` later by the monotonic clock, then the rest of the run's output. The tokens
+        are minted here: B5 takes minutes and the issuer's tokens expire."""
+        tokens = self.mint()
         self.write_mode(Mode.RELAY)
         smoke = subprocess.Popen(
             self.smoke_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
