@@ -221,7 +221,7 @@ def test_the_streams_are_restored_after_the_gate(probe):
     with probe.checks.gating([TOKEN]):
         assert sys.stdout is not before[0]
         assert sys.stdout.isatty() is False
-    assert (sys.stdout, sys.stderr) == before
+    assert before == (sys.stdout, sys.stderr)
 
 
 # --- S00 ---------------------------------------------------------------------------------------
@@ -293,10 +293,17 @@ def test_token_files_are_summed_over_every_mount(probe):
     [
         ("", "elsewhere", "LOCK_IN_LOGIN"),
         ("inner", "elsewhere", "LOCK_IN_LOGIN"),
+        ("symlink", "elsewhere", "LOCK_IN_LOGIN"),
         ("", "", "SCRATCH_IN_LOGIN"),
         ("elsewhere", "inner", "SCRATCH_IN_LOGIN"),
     ],
-    ids=["lock in the login directory", "lock below it", "scratch in it", "scratch below it"],
+    ids=[
+        "lock in the login directory",
+        "lock below it",
+        "lock a link into it",
+        "scratch in it",
+        "scratch below it",
+    ],
 )
 def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
     probe, tmp_path, lock_in, tmpdir_in, reason
@@ -306,10 +313,17 @@ def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixe
     (directory / "inner").mkdir()
     (tmp_path / "elsewhere").mkdir()
     login = probe.checks.read_login(str(directory))
-    lock_parent = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path}[lock_in]
+    (tmp_path / "link").symlink_to(directory / "target")
+    lock_parent = {
+        "": directory,
+        "inner": directory / "inner",
+        "elsewhere": tmp_path,
+        "symlink": tmp_path,
+    }[lock_in]
+    lock = tmp_path / "link" if lock_in == "symlink" else lock_parent / "lock"
     scratch = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path / "elsewhere"}[
         tmpdir_in
     ]
     with pytest.raises(probe.checks.LoginFailed) as raised:
-        probe.checks.scratch_parent(login, lock_parent / "lock", {"TMPDIR": str(scratch)})
+        probe.checks.scratch_parent(login, lock, {"TMPDIR": str(scratch)})
     assert str(raised.value) == probe.checks.Refusal[reason]

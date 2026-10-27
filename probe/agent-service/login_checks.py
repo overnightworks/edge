@@ -250,13 +250,12 @@ def begin_teardown() -> None:
 
 def scratch_parent(login: Login, lock: Path, environment: Mapping[str, str]) -> Path:
     """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that, or the directory
-    the probe lock is opened in, lies in the login directory, because making either there would
+    the probe lock resolves to, lies in the login directory, because making either there would
     write into it."""
     parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch
     if login.directory in (parent, *parent.parents):
         raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
-    lock_parent = lock.parent.resolve()
-    if login.directory in (lock_parent, *lock_parent.parents):
+    if login.directory in lock.resolve().parents:
         raise LoginFailed(Refusal.LOCK_IN_LOGIN)
     return parent
 
