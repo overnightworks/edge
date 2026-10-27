@@ -533,7 +533,7 @@ or `✓ setup up to date · 4 unchanged`. A step that fails prints its row as `f
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen

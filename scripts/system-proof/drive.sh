@@ -68,6 +68,12 @@ asked_once() {
     return
 }
 
+announced_before_prompt() {  # announced_before_prompt <log>: the `needs sudo` row is printed, then Ansible's password prompt
+    local log=$1
+    awk '/^  › system +needs sudo/ { announced = NR } /BECOME password/ && announced { found = 1 } END { exit !found }' "$EVIDENCE/$log.log"
+    return
+}
+
 snapshot() {
     find "$UNIT_DIR" /etc/polkit-1/rules.d -path '*cloudflared*' -type f -exec sha256sum {} + 2>/dev/null | sort
     return
@@ -222,6 +228,8 @@ cell_11() {
     apply=$?
     verdict 11 "--apply without a terminal refuses naming the command, exit 1, no hang" \
         '[ $apply -eq 1 ] && row_in_log cell11-apply system "not started" && in_log cell11-apply "needs sudo in your own terminal window"'
+    verdict 11 "--apply without a terminal prints no needs sudo announcement" \
+        '! grep -q "^  › system  *needs sudo" "$EVIDENCE/cell11-apply.log"'
     return
 }
 
@@ -277,6 +285,8 @@ cell_1() {
     at_terminal cell1 "$HOME_BIN setup --apply"
     code=$?
     verdict 1 "apply exits 0 after one prompt" '[ $code -eq 0 ] && asked_once cell1 && row_in_log cell1 system changed'
+    verdict 1 "the apply announces needs sudo once, before Ansible's password prompt" \
+        '[ "$(grep -c "^  › system  *needs sudo" "$EVIDENCE/cell1.log")" -eq 1 ] && announced_before_prompt cell1'
     verdict 1 "the four files are root-owned, mode 644" '[ "$(stat -c "%U %a" "${SYSTEM_FILES[@]}" | sort -u)" = "root 644" ]'
     verdict 1 "every placeholder is filled" 'all_exist "${SYSTEM_FILES[@]}" && ! grep -lE "@[A-Z_]+@" "${SYSTEM_FILES[@]}"'
     verdict 1 "systemd-analyze verify passes" 'systemd-analyze verify cloudflared.service >"$EVIDENCE/verify.log" 2>&1'
