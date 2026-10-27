@@ -413,7 +413,7 @@ Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
 der Assistent mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
-Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
+Eintrag, `130` abgebrochen. Strg-C und das Ende der Eingabe nennen den Eintrag, an dem sie trafen. Ein unerwarteter Fehler nennt nur seine Art und den
 Eintrag, nie seine Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
 Eintrag danach gespeichert ist, und `hal setup --apply` zum Weitermachen;
 vorher gespeicherte Einträge bleiben.

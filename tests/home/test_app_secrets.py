@@ -628,12 +628,12 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
     )
 
     assert code == ExitCode.INTERRUPTED
-    assert "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply" in error
+    assert "error: interrupted at live · no file half written\nnext: hal setup --apply" in error
     assert "setup stopped" not in error
     assert not (sandbox.home / ".secrets" / "live").exists()
 
 
-def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_traceback(
+def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_interrupted_line_and_no_traceback(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     def interrupted(_descriptor: int) -> None:
@@ -649,7 +649,7 @@ def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_t
     error = capsys.readouterr().err
 
     assert code == secrets_setup.ABORTED_EXIT
-    assert "abgebrochen; keine Datei halb geschrieben" in error
+    assert "error: interrupted at live · no file half written" in error
     assert "Traceback" not in error
 
 

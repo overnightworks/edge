@@ -35,7 +35,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode, urlsplit
 
-from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_row
+from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -70,7 +70,6 @@ PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
 OPENED = "opened"
 NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
-EXPOSED_INPUT_REFUSAL = "abgebrochen: dieses Terminal kann die Eingabe nicht verbergen; nichts gelesen. Ein anderes Terminal nehmen."
 
 PASTE_AGAIN = "paste again or leave empty"
 PASSPHRASE_BYTES = 48
@@ -504,10 +503,26 @@ class Step(Enum):
 
 # What an unexpected error left of the one entry it stopped, as the disk shows it afterwards.
 WHAT_FAILURE_LEFT = {
-    Presence.PRESENT: "{name} ist gespeichert",
-    Presence.MISSING: "für {name} nichts gespeichert",
-    Presence.UNKNOWN: "ob {name} gespeichert ist, ist nicht feststellbar",
+    Presence.PRESENT: "{name} is stored",
+    Presence.MISSING: "{name} is not stored",
+    Presence.UNKNOWN: "cannot tell whether {name} is stored",
 }
+
+
+class Interruption(StrEnum):
+    """How the person ended the walk at one entry."""
+
+    CTRL_C = "interrupted"
+    INPUT_ENDED = "input ended"
+
+
+class EntryInterrupted(Exception):
+    """The person interrupted the walk, or its input ended, while one entry was set up."""
+
+    def __init__(self, entry_name: str, cause: Interruption) -> None:
+        super().__init__(entry_name)
+        self.entry_name = entry_name
+        self.cause = cause
 
 
 class EntryFailed(Exception):
@@ -524,7 +539,7 @@ class EntryFailed(Exception):
 
     def report(self) -> str:
         left = WHAT_FAILURE_LEFT[self.left].format(name=self.entry_name)
-        return f"abgebrochen bei {self.entry_name}: unerwarteter Fehler ({self.error_type}); {left}. Weiter mit: hal setup --apply"
+        return f"stopped at {self.entry_name} · unexpected {self.error_type} · {left}"
 
 
 def _presence_on_disk(entry: SecretEntry, layout: Layout) -> Presence:
@@ -549,7 +564,11 @@ def open_entries(layout: Layout) -> list[tuple[SecretEntry, Presence]]:
 def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
     try:
         return _set_up(entry, layout, boundaries, now)
-    except (EOFError, getpass.GetPassWarning):
+    except KeyboardInterrupt:
+        raise EntryInterrupted(entry.name, Interruption.CTRL_C) from None
+    except EOFError:
+        raise EntryInterrupted(entry.name, Interruption.INPUT_ENDED) from None
+    except getpass.GetPassWarning:
         raise
     except Exception as error:
         raise EntryFailed(entry.name, error, _presence_on_disk(entry, layout)) from None
@@ -600,20 +619,33 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     return STILL_OPEN_EXIT if still_open or by_hand else 0
 
 
+SETUP_NEXT_STEP = "hal setup --apply"
+
+
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
-        print("home secrets --setup läuft nur am eigenen Terminal; ohne --setup zeigt home secrets nur an.", file=sys.stderr)
+        write_error(
+            "secrets setup needs your own terminal window · nothing changed",
+            "hal setup --apply in your own terminal window",
+        )
         return NO_TERMINAL_EXIT
     try:
         return _walk(layout, boundaries, now)
-    except (KeyboardInterrupt, EOFError):
-        print("\nabgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply", file=sys.stderr)
+    except EntryInterrupted as interrupted:
+        write_error(
+            f"{interrupted.cause} at {interrupted.entry_name} · no file half written",
+            SETUP_NEXT_STEP,
+            fresh_line=True,
+        )
         return ABORTED_EXIT
     except getpass.GetPassWarning:
-        print(f"\n{EXPOSED_INPUT_REFUSAL}", file=sys.stderr)
+        write_error(
+            "this terminal cannot hide what you type · nothing read",
+            "hal setup --apply in another terminal window",
+        )
         return NO_TERMINAL_EXIT
     except EntryFailed as failed:
-        print(f"\n{failed.report()}", file=sys.stderr)
+        write_error(failed.report(), SETUP_NEXT_STEP)
         return ENTRY_FAILED_EXIT
 
 
