@@ -1,8 +1,0 @@
-claim_id = "6eb58684b1724e13931b33ff5ddc2b86"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "4e07c05c0c7a46cc1e1785fc222096239fcf1523"
-branch = "claude/issue-466-switched-off-app"
-scope = ["docs/architecture.md", "docs/home.md", "src/home_tools/check.py", "src/home_tools/platform_check.py", "tests/home/test_check_switches.py", "tests/home/test_platform_check.py"]
-opened_commit = "4c69f285022fe8498a54567a751e9f2ed7d1726f"
-whole_reason = "The reader, the excused branch, the report line and the inspect signature are one change, because inspect's new parameter breaks every existing call in test_platform_check.py at once; the two docs lines describe exactly that behaviour."
