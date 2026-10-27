@@ -50,6 +50,12 @@ in_log() {
     return
 }
 
+row_in_log() {  # row_in_log <log> <row> <event regex>: a row of hal setup's output, whatever its glyph
+    local log=$1 row=$2 event=$3
+    grep -qE -- "^  [^ ]+ $row +$event( |$)" "$EVIDENCE/$log.log"
+    return
+}
+
 asked_once() {
     local log=$1
     grep -qx 'PROMPTS=1' "$EVIDENCE/$log.log"
@@ -205,11 +211,11 @@ cell_11() {
     without_terminal cell11-dry "$HOME_BIN setup"
     dry=$?
     verdict 11 "a dry run without a terminal says not checked, exit 0" \
-        '[ $dry -eq 0 ] && in_log cell11-dry "System: not checked (needs sudo at a terminal)"'
+        '[ $dry -eq 0 ] && row_in_log cell11-dry system "not checked" && in_log cell11-dry "needs sudo at a terminal"'
     without_terminal cell11-apply "$HOME_BIN setup --apply"
     apply=$?
     verdict 11 "--apply without a terminal refuses naming the command, exit 1, no hang" \
-        '[ $apply -eq 1 ] && in_log cell11-apply "\`hal setup --apply\` in your own terminal window"'
+        '[ $apply -eq 1 ] && row_in_log cell11-apply system "not started" && in_log cell11-apply "needs sudo in your own terminal window"'
     return
 }
 
@@ -238,7 +244,7 @@ cell_13() {  # cell 11 has activated the hook already, so it is undone here for 
     PROOF_PASSWORD="not-the-password" at_terminal cell13 "$HOME_BIN setup --apply"
     code=$?
     verdict 13 "a wrong password fails the system step alone, exit 1" \
-        '[ $code -eq 1 ] && in_log cell13 "Aktivierung: changed" && in_log cell13 "„System“"'
+        '[ $code -eq 1 ] && row_in_log cell13 "commit hook" changed && row_in_log cell13 system failed'
     verdict 13 "the commit hook is active" '[ -n "$(su - tester -c "git config --global --get core.hooksPath")" ]'
     return
 }
@@ -251,7 +257,7 @@ cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, a
     verdict 10 "a dry run at a terminal asks once for sudo" '[ $code -eq 0 ] && asked_once cell10'
     verdict T1 "the dry run shows the units in its diff and starts nothing" \
         'in_log cell10 "hal-journal-retention.timer" && ! systemctl cat "$RETENTION_TIMER" >/dev/null 2>&1'
-    verdict 10 "it shows would change, with the diff" 'in_log cell10 "System: would change" && grep -q "^+++ " "$EVIDENCE/cell10.log"'
+    verdict 10 "it shows would change, with the diff" 'row_in_log cell10 system "will change" && grep -q "^+++ " "$EVIDENCE/cell10.log"'
     verdict DK4 "the dry run on a Docker still on json-file shows the log-driver line and the restart as changes, and writes nothing" \
         'in_log cell10 "+    \"log-driver\": \"journald\"" && grep -A2 "TASK \[Restart Docker\]" "$EVIDENCE/cell10.log" | grep -q "^changed:" && [ ! -e "$DAEMON_JSON" ]'
     return
@@ -261,7 +267,7 @@ cell_1() {
     local code
     at_terminal cell1 "$HOME_BIN setup --apply"
     code=$?
-    verdict 1 "apply exits 0 after one prompt" '[ $code -eq 0 ] && asked_once cell1 && in_log cell1 "System: changed"'
+    verdict 1 "apply exits 0 after one prompt" '[ $code -eq 0 ] && asked_once cell1 && row_in_log cell1 system changed'
     verdict 1 "the four files are root-owned, mode 644" '[ "$(stat -c "%U %a" "${SYSTEM_FILES[@]}" | sort -u)" = "root 644" ]'
     verdict 1 "every placeholder is filled" 'all_exist "${SYSTEM_FILES[@]}" && ! grep -lE "@[A-Z_]+@" "${SYSTEM_FILES[@]}"'
     verdict 1 "systemd-analyze verify passes" 'systemd-analyze verify cloudflared.service >"$EVIDENCE/verify.log" 2>&1'
@@ -281,7 +287,7 @@ cell_9() {
     verdict DK4 "a second apply restarts nothing: Docker's start time is unchanged" \
         '[ "$(docker_started_at)" = "$(cat "$EVIDENCE/dk4-started-after-cell1.txt")" ]'
     verdict 9 "a second apply: Ansible reports changed=0, System unchanged" \
-        '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log" && in_log cell9 "System: unchanged"'
+        '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log" && row_in_log cell9 system unchanged'
     verdict 9 "Ansible left nothing in the home" '[ ! -e /home/tester/.ansible ]'
     verdict D2 "a second apply installs nothing: changed=0" '[ $code -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/cell9.log"'
     return
@@ -289,12 +295,12 @@ cell_9() {
 
 cell_s1() {  # the secrets step: verified with every fake secret in place; the dry run names the one taken away and writes nothing
     local code dropped
-    verdict S1 "every secret in place: the secrets step is unchanged" 'in_log cell9 "Geheimnisse: unchanged"'
+    verdict S1 "every secret in place: the secrets step is unchanged" 'row_in_log cell9 secrets complete'
     dropped=$(plant_fake_secrets drop)
     without_terminal cell-s1 "$HOME_BIN setup"
     code=$?
     verdict S1 "a dry run names the missing secret $dropped and exits 0" \
-        '[ $code -eq 0 ] && in_log cell-s1 "Geheimnisse: would change" && in_log cell-s1 "fehlt: $dropped"'
+        '[ $code -eq 0 ] && row_in_log cell-s1 secrets missing && in_log cell-s1 "$dropped"'
     plant_fake_secrets >/dev/null
     return
 }
@@ -404,7 +410,7 @@ cell_t5() {
         '[ $first -eq 0 ] && [ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" = active ]'
     at_terminal t5-second "$HOME_BIN setup --apply"
     second=$?
-    verdict T5 "a second run reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5-second.log" && in_log t5-second "System: unchanged"'
+    verdict T5 "a second run reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5-second.log" && row_in_log t5-second system unchanged'
     return
 }
 
@@ -422,7 +428,7 @@ cell_t5b() {  # the timer is enabled and the service unit on disk is newer than 
         '[ $first -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-first.log" && [ "$(systemctl show $RETENTION_SERVICE -p NeedDaemonReload --value)" = no ] && systemctl show $RETENTION_SERVICE -p ExecStart --value | grep -qF -- "--vacuum-time=28d"'
     at_terminal t5b-second "$HOME_BIN setup --apply"
     second=$?
-    verdict T5b "a repeat reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-second.log" && in_log t5b-second "System: unchanged"'
+    verdict T5b "a repeat reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-second.log" && row_in_log t5b-second system unchanged'
     return
 }
 
@@ -557,7 +563,7 @@ cell_8() {
 # is not driven: it keeps the user and its home, and no revert exists to run.
 AGENT_HOME=/home/agent
 DOCKER_SOCKET=/run/docker.sock
-OPERATORS_SKIP="skipped: the operator's step"
+OPERATORS_SKIP="the operator's step"
 
 run_as() {  # run_as <user> <log> <command...>: with that user's own HOME and runtime directory, no terminal, no sudo
     local user=$1 log=$2
@@ -876,8 +882,8 @@ cell_a1_4_and_5() {
     run_as agent a1-4-dry "$AGENT_HOME/.local/bin/home" setup
     dry=$?
     verdict A1-4 "as agent the dry run exits 0, shows the per-user steps and skips the operator's" \
-        '[ $dry -eq 0 ] && in_log a1-4-dry "quality: would change" && in_log a1-4-dry "Aktivierung: would change" &&
-         in_log a1-4-dry "User units: skipped" && in_log a1-4-dry "Ansible: skipped" && in_log a1-4-dry "System: skipped"'
+        '[ $dry -eq 0 ] && row_in_log a1-4-dry "commit hook" "will change" &&
+         row_in_log a1-4-dry timers skipped && row_in_log a1-4-dry system skipped && row_in_log a1-4-dry secrets skipped'
     run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
     next=$?
     verdict A1-4 "home next exits 0 and lists exactly the per-user step and the bookkeeping line, none of the operator's steps" \
@@ -885,7 +891,7 @@ cell_a1_4_and_5() {
     run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
     apply=$?
     verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \
-        '[ $apply -eq 0 ] && in_log a1-5-apply "Aktivierung: changed" && in_log a1-5-apply "System: skipped" &&
+        '[ $apply -eq 0 ] && row_in_log a1-5-apply "commit hook" changed && row_in_log a1-5-apply system skipped &&
          ! grep -qi "password" "$EVIDENCE/a1-5-apply.log" && [ ! -e "$AGENT_HOME/.config/systemd/user" ]'
     verdict A1-5 "the account is still dormant after the agent's own apply" agent_is_dormant
     return
@@ -894,7 +900,7 @@ cell_a1_4_and_5() {
 cell_a1_6() {
     verdict A1-6 "the operator's dry run and apply print no skip and still run the user units and the system step" \
         '! grep -q "$OPERATORS_SKIP" "$EVIDENCE"/cell1.log "$EVIDENCE"/cell9.log "$EVIDENCE"/cell10.log &&
-         in_log cell9 "User units: " && in_log cell9 "System: unchanged" && in_log cell10 "System: would change"'
+         row_in_log cell9 timers "[a-z]+" && row_in_log cell9 system unchanged && row_in_log cell10 system "will change"'
     return
 }
 
@@ -909,11 +915,11 @@ cell_a1_7() {
     run_as bystander a1-7-dry /home/bystander/.local/bin/home setup
     dry=$?
     verdict A1-7 "a bystander's dry run behaves as today: not checked, exit 0, nothing skipped" \
-        '[ $dry -eq 0 ] && in_log a1-7-dry "System: not checked (needs sudo at a terminal)" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-dry.log"'
+        '[ $dry -eq 0 ] && row_in_log a1-7-dry system "not checked" && in_log a1-7-dry "needs sudo at a terminal" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-dry.log"'
     run_as bystander a1-7-apply /home/bystander/.local/bin/home setup --apply
     apply=$?
     verdict A1-7 "a bystander's --apply fails the system step, exit 1" \
-        '[ $apply -eq 1 ] && in_log a1-7-apply "„System“" && in_log a1-7-apply "sudo at a terminal" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-apply.log"'
+        '[ $apply -eq 1 ] && row_in_log a1-7-apply system "not started" && in_log a1-7-apply "needs sudo in your own terminal window" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-apply.log"'
     return
 }
 
@@ -1214,7 +1220,7 @@ no_planted_file_exists() {
 
 cell_r0() {  # after the refused runs of cells 12 and 13 and the dry run of cell 10: nothing was deleted
     verdict R0 "the dry run says it would change, names rsyslog and a planted file" \
-        'in_log cell10 "System: would change" && in_log cell10 "rsyslog" && in_log cell10 "/var/log/mail.err.1"'
+        'row_in_log cell10 system "will change" && in_log cell10 "rsyslog" && in_log cell10 "/var/log/mail.err.1"'
     verdict R0 "the refused runs and the dry run left the package and every planted file in place" \
         'dpkg -s rsyslog >/dev/null 2>&1 && all_planted_files_exist'
     return
@@ -1303,8 +1309,8 @@ cell_r4() {  # a run interrupted after the purge: the files are there again, one
     at_terminal r4-second "$HOME_BIN setup --apply"
     second=$?
     verdict R4 "an apply after the purge deletes the files that came back" \
-        '[ $first -eq 0 ] && in_log r4-first "System: changed" && no_planted_file_exists'
-    verdict R4 "the next apply changes nothing" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/r4-second.log" && in_log r4-second "System: unchanged"'
+        '[ $first -eq 0 ] && row_in_log r4-first system changed && no_planted_file_exists'
+    verdict R4 "the next apply changes nothing" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/r4-second.log" && row_in_log r4-second system unchanged'
     return
 }
 

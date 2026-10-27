@@ -39,7 +39,7 @@ RECAP = re.compile(
     r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
     re.MULTILINE,
 )
-NEEDS_SUDO_AT_A_TERMINAL = "the system step needs sudo at a terminal: run `hal setup --apply` in your own terminal window"
+NEEDS_SUDO_AT_A_TERMINAL = "needs sudo in your own terminal window"
 
 
 class CheckState(Enum):
@@ -60,7 +60,11 @@ class Applied(Enum):
 
 
 class StepFailed(Exception):
-    """A step that refused to run or did not finish; its message says why."""
+    """A step that did not finish; its message says why."""
+
+
+class StepRefused(StepFailed):
+    """A step refused before it started anything, so nothing it would have changed is touched."""
 
 
 @dataclass(frozen=True)
@@ -189,7 +193,7 @@ class SystemStep:
             return CheckState.NOT_CHECKED
         digest = self.inputs_digest()
         if not (run := self._run_playbook(check=True)).succeeded:
-            raise StepFailed("Ansible's check did not finish; its output above says why")
+            raise StepFailed("Ansible's check did not finish · its output above says why")
         if run.changed:
             return CheckState.WOULD_CHANGE
         self._record(digest)
@@ -197,12 +201,12 @@ class SystemStep:
 
     def apply(self) -> Applied:
         if not self.boundaries.has_terminal():
-            raise StepFailed(NEEDS_SUDO_AT_A_TERMINAL)
+            raise StepRefused(NEEDS_SUDO_AT_A_TERMINAL)
         digest = self.inputs_digest()
         # An apply may change the system, so an earlier verification no longer stands, whatever the outcome.
         self.layout.system_step_record.unlink(missing_ok=True)
         if not (run := self._run_playbook(check=False)).succeeded:
-            raise StepFailed("Ansible did not finish; its output above says why, and no verified run is recorded")
+            raise StepFailed("Ansible did not finish · its output above says why")
         self._record(digest)
         return Applied.CHANGED if run.changed else Applied.UNCHANGED
 

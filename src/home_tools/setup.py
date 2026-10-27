@@ -8,20 +8,30 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import tomllib
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from enum import Enum
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import Enum, StrEnum
 from pathlib import Path
+from shlex import join as shell_join
 from shlex import quote
 from typing import TYPE_CHECKING
 
+from hal_output import Glyph, Row, Verdict, write_error, write_row, write_verdict
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
-from home_tools.system_step import AGENT_USER, Applied, CheckState, StepFailed, SystemStep, UnresolvableRunningUser
+from home_tools.system_step import (
+    AGENT_USER,
+    Applied,
+    CheckState,
+    StepFailed,
+    StepRefused,
+    SystemStep,
+    UnresolvableRunningUser,
+)
 from home_tools.config import Config
-from home_tools.layout import Layout
+from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UserUnits
 
 if TYPE_CHECKING:
@@ -38,8 +48,102 @@ HOOK_WHY = "ohne den Hook prüft kein Commit auf Geheimnisse"
 UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
-SYSTEM_WHY = "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
-SKIPPED_FOR_THE_AGENT = "skipped: the operator's step"
+SYSTEM_WHY = (
+    "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
+)
+SKIPPED_FOR_THE_AGENT = "the operator's step"
+RERUN = "hal setup --apply"
+
+
+class SetupRow(StrEnum):
+    """The four rows `hal setup` prints, in the order it runs them."""
+
+    COMMIT_HOOK = "commit hook"
+    TIMERS = "timers"
+    SYSTEM = "system"
+    SECRETS = "secrets"
+
+
+class SetupEvent(StrEnum):
+    CHANGED = "changed"
+    UNCHANGED = "unchanged"
+    SKIPPED = "skipped"
+    WILL_CHANGE = "will change"
+    NOT_CHECKED = "not checked"
+    MISSING = "missing"
+    STORED = "stored"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    NOT_STARTED = "not started"
+    NOT_RUN = "not run"
+
+
+class Tally(StrEnum):
+    """What the verdict counts a row as."""
+
+    CHANGED = "changed"
+    OPEN = "open"
+    UNCHANGED = "unchanged"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class EventLook:
+    """`severity` ranks the events of one row's steps: the worst one is the row's."""
+
+    glyph: Glyph
+    severity: int
+    tally: Tally | None
+
+
+EVENT_LOOK: dict[SetupEvent, EventLook] = {
+    SetupEvent.FAILED: EventLook(Glyph.FAILED, 5, None),
+    SetupEvent.NOT_STARTED: EventLook(Glyph.FAILED, 5, None),
+    SetupEvent.NOT_CHECKED: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
+    SetupEvent.MISSING: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
+    SetupEvent.CHANGED: EventLook(Glyph.DONE, 3, Tally.CHANGED),
+    SetupEvent.STORED: EventLook(Glyph.DONE, 3, Tally.CHANGED),
+    SetupEvent.WILL_CHANGE: EventLook(Glyph.CHANGE, 3, Tally.OPEN),
+    SetupEvent.UNCHANGED: EventLook(Glyph.UNCHANGED, 2, Tally.UNCHANGED),
+    SetupEvent.COMPLETE: EventLook(Glyph.UNCHANGED, 2, Tally.UNCHANGED),
+    SetupEvent.SKIPPED: EventLook(Glyph.UNCHANGED, 1, Tally.SKIPPED),
+    SetupEvent.NOT_RUN: EventLook(Glyph.UNCHANGED, 0, None),
+}
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """What a step, or the worst of a row's steps, found or did; `fact` is the one sentence the row shows."""
+
+    event: SetupEvent
+    fact: str = ""
+
+    def row(self, subject: SetupRow) -> Row:
+        return Row(EVENT_LOOK[self.event].glyph, subject, self.event, self.fact)
+
+
+@dataclass(frozen=True)
+class StepEvents:
+    """The words a step reports in; the secrets step says what its wizard did, not what a file did."""
+
+    changed: SetupEvent = SetupEvent.CHANGED
+    unchanged: SetupEvent = SetupEvent.UNCHANGED
+    open: SetupEvent = SetupEvent.WILL_CHANGE
+
+
+SECRETS_EVENTS = StepEvents(
+    changed=SetupEvent.STORED, unchanged=SetupEvent.COMPLETE, open=SetupEvent.MISSING
+)
+
+
+def verdict_of(outcomes: Sequence[Outcome], apply: bool) -> Verdict:
+    tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
+    counts = tuple((tallies[tally], tally) for tally in Tally)
+    if apply:
+        return Verdict(Glyph.DONE, "setup done", counts)
+    if tallies[Tally.OPEN]:
+        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}")
+    return Verdict(Glyph.DONE, "setup up to date", counts)
 
 
 class ExecutionRole(Enum):
@@ -64,29 +168,64 @@ Beispiele:
 class Step:
     """`is_verified` is all `home next` asks, so it never needs sudo; `check` is the dry run, `apply` the run.
 
+    `row` is the line the step reports on; `failure` is the one sentence its failure shows when it raises nothing better,
+    and `next_step` the command that goes on from there.
     `needs_first` names what a `not checked` dry run lacks; only the system step can end up there.
-    `details` are the lines printed under the heading of an applied step.
-    `would_change` are the lines printed under the heading of a dry run that found something to change.
+    `open_fact` names what a dry run that found something to change shows on its row.
+    `details` are the lines printed under the row of an applied step.
+    `before_apply` is the row printed before an apply that waits on the operator (the wizard), or nothing.
     `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
+    `may_leave_system_partial` marks the step that runs as root, whose failed apply leaves /etc half written.
     """
 
     name: str
+    row: SetupRow
     is_verified: Callable[[], bool]
     check: Callable[[], CheckState]
     apply: Callable[[], Applied]
     why: str
+    failure: str
+    next_step: str = RERUN
     needs_first: Callable[[], str] = lambda: ""
+    open_fact: Callable[[], str] = lambda: ""
     details: Callable[[], list[str]] = lambda: []
-    would_change: Callable[[], list[str]] = lambda: []
+    before_apply: Callable[[], Outcome | None] = lambda: None
+    events: StepEvents = field(default_factory=StepEvents)
     listed_by_next: bool = True
     operators_only: bool = False
+    may_leave_system_partial: bool = False
 
     def runs_for(self, role: ExecutionRole) -> bool:
         return not (self.operators_only and role is ExecutionRole.AGENT)
 
+    def run(self, apply: bool) -> Outcome:
+        if apply:
+            return Outcome(
+                self.events.changed if self.apply() is Applied.CHANGED else self.events.unchanged
+            )
+        match self.check():
+            case CheckState.NOT_CHECKED:
+                return Outcome(SetupEvent.NOT_CHECKED, f"needs {self.needs_first()}")
+            case CheckState.WOULD_CHANGE:
+                return Outcome(self.events.open, self.open_fact())
+        return Outcome(self.events.unchanged)
 
-def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[], bool], why: str, *, operators_only: bool = False) -> Step:
+
+HOOKS_PATH_KEY = "core.hooksPath"
+
+
+def _local_step(
+    name: str,
+    row: SetupRow,
+    is_current: Callable[[], bool],
+    install: Callable[[], bool],
+    why: str,
+    failure: str,
+    next_step: str = RERUN,
+    *,
+    operators_only: bool = False,
+) -> Step:
     """A step in the user's own home: its check needs no password, so it is never `not checked`."""
 
     def check() -> CheckState:
@@ -99,7 +238,9 @@ def _local_step(name: str, is_current: Callable[[], bool], install: Callable[[],
             raise StepFailed
         return Applied.CHANGED
 
-    return Step(name, is_current, check, apply, why, operators_only=operators_only)
+    return Step(
+        name, row, is_current, check, apply, why, failure, next_step, operators_only=operators_only
+    )
 
 
 def _secrets_step(layout: Layout, ports: Ports) -> Step:
@@ -128,16 +269,29 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
             raise StepFailed(SECRETS_LEFT_OPEN)
         return Applied.CHANGED
 
-    def open_lines() -> list[str]:
-        return [f"  {_open_label(entry, found)}: {entry.name}" for entry, found in open_secrets()]
+    def open_names() -> str:
+        return ", ".join(_open_name(entry, found) for entry, found in open_secrets())
 
-    return Step("Geheimnisse", is_verified, check, apply, SECRETS_WHY, would_change=open_lines, listed_by_next=False, operators_only=True)
+    return Step(
+        "Geheimnisse",
+        SetupRow.SECRETS,
+        is_verified,
+        check,
+        apply,
+        SECRETS_WHY,
+        SECRETS_LEFT_OPEN,
+        open_fact=open_names,
+        before_apply=lambda: Outcome(SetupEvent.MISSING, open_names()) if open_secrets() else None,
+        events=SECRETS_EVENTS,
+        listed_by_next=False,
+        operators_only=True,
+    )
 
 
-def _open_label(entry: SecretEntry, found: Presence) -> str:
+def _open_name(entry: SecretEntry, found: Presence) -> str:
     if found is Presence.UNKNOWN:
-        return "nicht feststellbar"
-    return "fehlt" if entry.written_by_setup else "von Hand"
+        return f"{entry.name} (unknown)"
+    return entry.name if entry.written_by_setup else f"{entry.name} (by hand)"
 
 
 def render_hook(layout: Layout) -> str:
@@ -184,13 +338,8 @@ def _write_atomically(path: Path, content: str) -> None:
     temporary.replace(path)
 
 
-def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    run = ports.run
+def _quality_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
     quality, engines_dir = str(layout.quality_executable), str(layout.quality_engines_dir)
-    hook_content = render_hook(layout)
-    hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
-    system = SystemStep(layout, ports.system)
-    units = UserUnits(layout, ports.unit_directory, run)
 
     def quality_current() -> bool:
         return _recorded_quality_source_matches(layout) and _is_executable(layout.quality_executable)
@@ -204,6 +353,32 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     def install_engines() -> bool:
         return run([quality, "engines", "install", engines_dir]) is not None and engines_current()
 
+    return (
+        _local_step(
+            "quality",
+            SetupRow.COMMIT_HOOK,
+            quality_current,
+            install_quality,
+            HOOK_WHY,
+            "uv could not install quality",
+            shell_join(["uv", "tool", "install", "--force", QUALITY_SOURCE]),
+        ),
+        _local_step(
+            "Engines",
+            SetupRow.COMMIT_HOOK,
+            engines_current,
+            install_engines,
+            HOOK_WHY,
+            "the quality engines did not install",
+            shell_join([quality, "engines", "install", engines_dir]),
+        ),
+    )
+
+
+def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
+    hook_content = render_hook(layout)
+    hook_paths = [layout.git_hooks_dir / name for name in HOOK_NAMES]
+
     def hook_current(path: Path) -> bool:
         return _has_hook_mode(path) and path.read_text() == hook_content
 
@@ -214,10 +389,37 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         return True
 
     def hooks_active() -> bool:
-        return (run(["git", "config", "--global", "--get", "core.hooksPath"]) or "").strip() == str(layout.git_hooks_dir)
+        return (run(["git", "config", "--global", "--get", HOOKS_PATH_KEY]) or "").strip() == str(layout.git_hooks_dir)
 
     def activate_hooks() -> bool:
-        return run(["git", "config", "--global", "core.hooksPath", str(layout.git_hooks_dir)]) is not None
+        return run(["git", "config", "--global", HOOKS_PATH_KEY, str(layout.git_hooks_dir)]) is not None
+
+    return (
+        _local_step(
+            "Hook-Dateien",
+            SetupRow.COMMIT_HOOK,
+            lambda: all(hook_current(path) for path in hook_paths),
+            write_hooks,
+            HOOK_WHY,
+            "could not write the hook files",
+        ),
+        _local_step(
+            "Aktivierung",
+            SetupRow.COMMIT_HOOK,
+            hooks_active,
+            activate_hooks,
+            HOOK_WHY,
+            "git could not set core.hooksPath",
+            shell_join(["git", "config", "--global", HOOKS_PATH_KEY, str(layout.git_hooks_dir)]),
+        ),
+    )
+
+
+def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
+    run = ports.run
+    system = SystemStep(layout, ports.system)
+    units = UserUnits(layout, ports.unit_directory, run)
+    system_row = SetupRow.SYSTEM
 
     def ansible_current() -> bool:
         return _recorded_ansible_source_matches(layout) and _is_executable(layout.ansible_playbook_executable)
@@ -226,15 +428,44 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         return run(["uv", "tool", "install", "--force", ANSIBLE_SOURCE]) is not None and ansible_current()
 
     return (
-        _local_step("quality", quality_current, install_quality, HOOK_WHY),
-        _local_step("Engines", engines_current, install_engines, HOOK_WHY),
-        _local_step("Hook-Dateien", lambda: all(hook_current(path) for path in hook_paths), write_hooks, HOOK_WHY),
-        _local_step("Aktivierung", hooks_active, activate_hooks, HOOK_WHY),
-        Step("User units", units.is_verified, units.check, units.apply, UNITS_WHY, details=units.loaded_command_lines, operators_only=True),
-        _local_step("Ansible", ansible_current, install_ansible, SYSTEM_WHY, operators_only=True),
-        Step("System", system.is_verified, system.check, system.apply, SYSTEM_WHY, system.needs_first, operators_only=True),
-        _secrets_step(layout, ports),
+        Step(
+            "User units",
+            SetupRow.TIMERS,
+            units.is_verified,
+            units.check,
+            units.apply,
+            UNITS_WHY,
+            "the user units did not come up",
+            details=units.loaded_command_lines,
+            operators_only=True,
+        ),
+        _local_step(
+            "Ansible",
+            system_row,
+            ansible_current,
+            install_ansible,
+            SYSTEM_WHY,
+            "uv could not install Ansible",
+            shell_join(["uv", "tool", "install", "--force", ANSIBLE_SOURCE]),
+            operators_only=True,
+        ),
+        Step(
+            "System",
+            system_row,
+            system.is_verified,
+            system.check,
+            system.apply,
+            SYSTEM_WHY,
+            "the system step did not finish",
+            needs_first=system.needs_first,
+            operators_only=True,
+            may_leave_system_partial=True,
+        ),
     )
+
+
+def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
+    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_system_steps(layout, ports), _secrets_step(layout, ports))
 
 
 def _role(ports: Ports) -> ExecutionRole:
@@ -265,41 +496,80 @@ def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     return tuple(step for step in _steps(layout, ports) if step.runs_for(_role(ports)) and step.listed_by_next and not step.is_verified())
 
 
-def _outcome(step: Step, apply: bool) -> str:
-    if apply:
-        return step.apply().value
-    state = step.check()
-    needs = step.needs_first() if state is CheckState.NOT_CHECKED else ""
-    return f"{state.value} (needs {needs})" if needs else state.value
+def _failure_sentence(step: Step, error: OSError | StepFailed) -> str:
+    if isinstance(error, StepFailed):
+        return str(error) or step.failure
+    return f"{step.failure}: {error.strerror or type(error).__name__}"
 
 
-def _lines_under_heading(step: Step, apply: bool, outcome: str) -> list[str]:
-    if apply:
-        return step.details()
-    return step.would_change() if outcome == CheckState.WOULD_CHANGE.value else []
+def _stopped(row: SetupRow, step: Step, event: SetupEvent, apply: bool) -> None:
+    """The error pair after a failed row: what stopped, what /etc is left as, and the command that goes on."""
+    leaves = (
+        "/etc may be partial"
+        if step.may_leave_system_partial and apply and event is SetupEvent.FAILED
+        else "/etc unchanged"
+    )
+    write_error(
+        f"setup stopped at {row}" + (f" · {leaves}" if row is SetupRow.SYSTEM else ""),
+        step.next_step,
+    )
+
+
+class _RowStopped(Exception):
+    def __init__(self, step: Step, error: OSError | StepFailed) -> None:
+        super().__init__(str(error))
+        self.step = step
+        self.error = error
+
+
+def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply: bool) -> tuple[Outcome, list[str]]:
+    outcomes: list[Outcome] = []
+    details: list[str] = []
+    for step in (step for step in steps if step.row is row):
+        if not step.runs_for(role):
+            outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
+            continue
+        try:
+            if apply and (announced := step.before_apply()):
+                write_row(announced.row(row))
+            outcomes.append(step.run(apply))
+            if apply:
+                details.extend(step.details())
+        except (OSError, StepFailed) as error:
+            raise _RowStopped(step, error) from error
+    return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity), details
+
+
+def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
+    event = SetupEvent.NOT_STARTED if isinstance(stopped.error, StepRefused) else SetupEvent.FAILED
+    write_row(Outcome(event, _failure_sentence(stopped.step, stopped.error)).row(rows[position]))
+    for later in rows[position + 1 :]:
+        write_row(Outcome(SetupEvent.NOT_RUN).row(later))
+    _stopped(rows[position], stopped.step, event, apply)
 
 
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
-    """Stops at the first failed step, so a missing scanner never gets a hook activated."""
+    """Stops at the first failed step, so a missing scanner never gets a hook activated; the later rows say `not run`."""
     try:
         role = _role(ports)
     except UnresolvableRunningUser as error:
-        print(f"hal setup: {error}", file=sys.stderr)
+        write_error(str(error))
         return 1
-    for step in _steps(layout, ports):
-        if not step.runs_for(role):
-            print(f"{step.name}: {SKIPPED_FOR_THE_AGENT}")
-            continue
+    steps = _steps(layout, ports)
+    outcomes: list[Outcome] = []
+    rows = list(SetupRow)
+    for position, row in enumerate(rows):
         try:
-            outcome = _outcome(step, apply)
-            print(f"{step.name}: {outcome}")
-            for line in _lines_under_heading(step, apply, outcome):
-                print(line)
-        except (OSError, StepFailed) as error:
-            if str(error):
-                print(f"hal setup: {error}", file=sys.stderr)
-            print(f"hal setup: Schritt „{step.name}“ ist fehlgeschlagen; die späteren Schritte sind nicht gelaufen", file=sys.stderr)
+            outcome, details = _run_row(row, steps, role, apply)
+        except _RowStopped as stopped:
+            _stop_after_failure(rows, position, stopped, apply)
             return 1
+        write_row(outcome.row(row))
+        for line in details:
+            print(line)
+        outcomes.append(outcome)
+    verdict = verdict_of(outcomes, apply)
+    write_verdict(verdict)
     return 0
 
 

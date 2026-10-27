@@ -320,8 +320,8 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 
 `hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
 auf diesem PC kein offenes Geheimnis hat (nur `stat`); offen ist auch ein Eintrag, dessen
-Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen (`fehlt:`,
-`nicht feststellbar:`, `von Hand:`) und ändert nichts; `--apply` führt den Assistenten aus, der ein eigenes Terminal braucht. Der
+Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen in der Zeile
+`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` führt den Assistenten aus, der ein eigenes Terminal braucht. Der
 Assistent ist derselbe wie `home secrets --setup`, und `--setup` unten meint ihn. Ein Eintrag mit
 `loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
@@ -466,7 +466,7 @@ Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links the checkout's user units and runs the system step.
 Exit: 0 when nothing failed, 3 for a failed step (`home setup` keeps 1).
 `hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
-Reihe nach aus und hält beim ersten Fehler an, mit dem Namen des Schritts.
+Reihe nach aus und hält beim ersten Fehler an. Both print four rows (below) and a verdict.
 The activation comes before the user units and the system step, so a wrong
 sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
@@ -497,7 +497,8 @@ come before the system step, which is the one that asks for sudo:
    the file and leaves the decision to you. A timer that is not active after
    enabling fails the step too. A
    missing `systemd/` directory fails the step as well. `--apply` then prints, per
-   service, the loaded `ExecStart` and the `Result` of its last run. The step is
+   service, the loaded `ExecStart` and the `Result` of its last run right below the
+   `timers` row. The step is
    verified when every unit is linked, nothing needs a reload, every timer is
    enabled and active, and no link dangles.
 6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
@@ -513,16 +514,27 @@ come before the system step, which is the one that asks for sudo:
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
-Aktivierung run, and User units, Ansible, System and Geheimnisse print `skipped: the operator's step`
-(the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
+Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
 apply, and lists no secrets. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 1 with a line saying so.
 
-Each step reports `changed` or `unchanged` with `--apply`; a dry run reports
-`would change` or `unchanged`, and the system step also `not checked (needs
-sudo at a terminal)`, or `not checked (needs Ansible, …)` before the Ansible
-step has installed it. A second `--apply` changes nothing and downloads nothing. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
+**The rows.** The eight steps print as four rows, in the form of
+[docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
+Hook-Dateien, Aktivierung), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
+event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
+then skipped. With `--apply` a row says `changed` or `unchanged` (`stored` or `complete` for the
+secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged`, `not checked`
+(`needs sudo at a terminal`, or `needs Ansible, …` before the Ansible step has installed it) or, for the
+secrets, `missing` with the names (`(by hand)` for an entry only a person can create, `(unknown)` for one whose
+presence `stat` cannot tell). The last line is the verdict, counted over the four rows:
+`✓ setup done · 1 changed, 3 unchanged`, `~ setup plan · 2 open, 2 unchanged · run hal setup --apply`
+or `✓ setup up to date · 4 unchanged`. A step that fails prints its row as `failed` with its own
+sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
+the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
+system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. A second
+`--apply` changes nothing and downloads nothing. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
 `.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
@@ -613,8 +625,9 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   A revert keeps the user and its home.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
   `hal setup --apply` ask once for the sudo password. Without a terminal,
-  the dry run says `System: not checked (needs sudo at a terminal)` and
-  `--apply` refuses the step and names the command; neither waits for a prompt.
+  the dry run says `! system  not checked  needs sudo at a terminal` and
+  `--apply` ends the row `✗ system  not started` with `error: setup stopped at system · /etc unchanged`
+  and `next: hal setup --apply`; neither waits for a prompt.
 - **home next.** After a verified run (an `--apply`, or a dry run at a
   terminal that says `unchanged`), the step records a digest of edge's files,
   the playbook and the filled-in values in `~/.local/state/home/system-step.sha256`.
