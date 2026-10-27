@@ -32,7 +32,13 @@ verdict() {  # verdict <cell> <what> <condition>: held when the condition, a she
     return 0
 }
 
-at_terminal() {  # at_terminal <log> <command>: as tester at a pseudo-terminal; the exit code is the command's
+at_terminal() {  # at_terminal <log> <command>: as tester at a pseudo-terminal, without colour so rows match as text; the exit code is the command's
+    local log=$1 command=$2
+    at_coloured_terminal "$log" "export NO_COLOR=1; $command"
+    return
+}
+
+at_coloured_terminal() {  # at_coloured_terminal <log> <command>: as tester at a pseudo-terminal, as a person sees it; the exit code is the command's
     local log=$1 command=$2
     /proof/terminal.exp "$command" >"$EVIDENCE/$log.log" 2>&1
     return
@@ -260,6 +266,9 @@ cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, a
     verdict 10 "it shows would change, with the diff" 'row_in_log cell10 system "will change" && grep -q "^+++ " "$EVIDENCE/cell10.log"'
     verdict DK4 "the dry run on a Docker still on json-file shows the log-driver line and the restart as changes, and writes nothing" \
         'in_log cell10 "+    \"log-driver\": \"journald\"" && grep -A2 "TASK \[Restart Docker\]" "$EVIDENCE/cell10.log" | grep -q "^changed:" && [ ! -e "$DAEMON_JSON" ]'
+    at_coloured_terminal cell10-colour "export TERM=xterm; $HOME_BIN setup"
+    verdict C1 "a dry run at a terminal colours its rows and its verdict; the run with NO_COLOR above has no escape code" \
+        'grep -qP "^  \x1b\[[0-9;]+m\S+\x1b\[0m system " "$EVIDENCE/cell10-colour.log" && grep -qP "^\x1b\[1;[0-9;]+m\S+ setup plan" "$EVIDENCE/cell10-colour.log" && ! grep -qP "\x1b" "$EVIDENCE/cell10.log"'
     return
 }
 
