@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol, TextIO
+from typing import NamedTuple, Protocol, TextIO
 
 from census_client import Mount
 from egress import ProbeFailed
@@ -46,6 +46,7 @@ class Refusal(StrEnum):
     )
     WRITABLE_ROOT = "the service's root file system is not read-only"
     LOG_DRIVER = "a started service does not log through the local driver"
+    SCRATCH_IN_LOGIN = "TMPDIR lies inside the login directory"
 
 
 class LoginFailed(ProbeFailed):
@@ -221,10 +222,11 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
     run = probe[0]
     entered = stage("setup", run.__enter__)  # a failed enter tears itself down
     if entered:
-        stage("drive", run.drive)
-        signal.alarm(0)  # an alarm or a SIGTERM inside the teardown would leave the stack standing
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        stage("teardown", run.__exit__)
+        try:
+            stage("drive", run.drive)
+        finally:  # a signal between the drive and here must not skip the teardown
+            begin_teardown()
+            stage("teardown", run.__exit__)
     if stopped or run.failed or run.not_driven:
         problems = [
             *(f"failed {name}" for name in (*stopped, *run.failed)),
@@ -234,6 +236,22 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
         return 1
     print(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
     return 0
+
+
+def begin_teardown() -> None:
+    """From here an alarm or a SIGTERM cannot abort the teardown and leave the stack, and with it
+    the operator's login bind, standing."""
+    signal.alarm(0)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
+def scratch_parent(login: Login, environment: Mapping[str, str]) -> Path:
+    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that lies in the login
+    directory, because making scratch there would write into it."""
+    parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch
+    if login.directory in (parent, *parent.parents):
+        raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
+    return parent
 
 
 def stop_on_signal(*_: object) -> None:
@@ -319,3 +337,58 @@ def unlisted_roots(mounts: Mapping[str, Mount]) -> int:
 
 def token_files(mounts: Mapping[str, Mount]) -> int:
     return sum(mount.token_files for mount in mounts.values())
+
+
+UNREAD_REASONS = frozenset(
+    skip.value for skip in (Skip.REPLACED, Skip.REFUSED, Skip.TOO_DEEP, Skip.VANISHED)
+)  # what a skip leaves unread for the token count
+
+
+def unread_entries(mounts: Mapping[str, Mount]) -> int:
+    """How many entries the token count could not read; zero hits over those prove nothing."""
+    return sum(
+        count
+        for mount in mounts.values()
+        for reason, count in mount.skips
+        if reason in UNREAD_REASONS
+    )
+
+
+class Outcome(StrEnum):
+    HELD = "held"
+    FAILED = "FAILED"
+    NOT_DRIVEN = "NOT DRIVEN"
+
+
+class Verdict(NamedTuple):
+    cell: str
+    outcome: Outcome
+    evidence: str  # counts only
+
+
+def s00_verdicts(mounts: Mapping[str, Mount]) -> tuple[Verdict, Verdict]:
+    """edge's two frame checks over the S00 census: every directory root was listed, and no file
+    outside the login directory holds the token. A token count over entries it could not read
+    is not driven rather than held."""
+    unlisted = unlisted_roots(mounts)
+    if unlisted:
+        roots = Verdict(
+            "S00 (roots)", Outcome.NOT_DRIVEN, f"{unlisted} directory roots were not listed"
+        )
+    else:
+        roots = Verdict(
+            "S00 (roots)", Outcome.HELD, f"every directory root of {len(mounts)} mounts was listed"
+        )
+    leaked = token_files(mounts)
+    unread = unread_entries(mounts)
+    if leaked:
+        token = Verdict("S00 (token)", Outcome.FAILED, f"{leaked} files hold the login token")
+    elif unread:
+        token = Verdict(
+            "S00 (token)", Outcome.NOT_DRIVEN, f"{unread} entries could not be read for the token"
+        )
+    else:
+        token = Verdict(
+            "S00 (token)", Outcome.HELD, "0 files outside the login directory hold the login token"
+        )
+    return roots, token

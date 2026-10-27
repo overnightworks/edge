@@ -6,6 +6,7 @@ under `cells_12b.py --login-directory`."""
 from __future__ import annotations
 
 import copy
+import json
 import os
 import signal
 import subprocess
@@ -64,12 +65,14 @@ def refusal(probe, text: str) -> str:
 
 
 def test_a_login_is_read_with_its_token_stripped(probe, tmp_path):
+    """#457 row 4: the token file ends in a newline and the login holds it stripped."""
     login = probe.checks.read_login(str(make_login(tmp_path / "login")))
     assert login.token == TOKEN
     assert TOKEN not in repr(login)
 
 
 def test_a_login_behind_a_symlinked_ancestor_is_resolved_and_accepted(probe, tmp_path):
+    """#457 row 2: a path reached through a symlink resolves and is accepted."""
     real = tmp_path / "real"
     real.mkdir()
     make_login(real / "login")
@@ -79,6 +82,7 @@ def test_a_login_behind_a_symlinked_ancestor_is_resolved_and_accepted(probe, tmp
 
 
 def test_a_missing_directory_and_a_file_are_refused(probe, tmp_path):
+    """#457 row 2: no directory is refused naming the flag only."""
     (tmp_path / "file").write_text("x", encoding="utf-8")
     for text in (str(tmp_path / "missing"), str(tmp_path / "file")):
         assert refusal(probe, text) == probe.checks.Refusal.NOT_A_DIRECTORY
@@ -108,6 +112,7 @@ def test_a_missing_directory_and_a_file_are_refused(probe, tmp_path):
 def test_a_login_without_a_usable_token_is_refused_without_its_path(
     probe, tmp_path, arrange, reason
 ):
+    """#457 row 2: an unusable token is refused without a path."""
     login = tmp_path / "login"
     login.mkdir()
     arrange(login)
@@ -118,24 +123,25 @@ def test_a_login_without_a_usable_token_is_refused_without_its_path(
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root opens any file")
 def test_a_token_that_cannot_be_opened_is_refused(probe, tmp_path):
+    """#457 row 2: an unreadable token is refused."""
     login = make_login(tmp_path / "login")
     (login / "token").chmod(0)
     assert refusal(probe, str(login)) == probe.checks.Refusal.TOKEN_UNREADABLE
 
 
-def test_the_missing_flag_stops_the_command_before_it_starts_anything(probe, monkeypatch):
-    monkeypatch.setattr(probe.cells, "run_command", lambda *_: pytest.fail("started"))
-    monkeypatch.setattr(sys, "argv", ["cells_12b.py"])
+def never_started(login) -> int:
+    pytest.fail("started")
+
+
+def test_the_missing_flag_stops_the_command_before_it_starts_anything(probe):
+    """#457 row 2: a missing flag stops the command before anything starts."""
     with pytest.raises(SystemExit):
-        probe.cells.main()
+        probe.cells.main([], never_started)
 
 
-def test_a_refused_login_prints_the_reason_and_exits_1_before_the_lock(
-    probe, monkeypatch, tmp_path, capsys
-):
-    monkeypatch.setattr(probe.cells, "run_command", lambda *_: pytest.fail("started"))
-    monkeypatch.setattr(sys, "argv", ["cells_12b.py", "--login-directory", str(tmp_path / "x")])
-    assert probe.cells.main() == 1
+def test_a_refused_login_prints_the_reason_and_exits_1_before_the_lock(probe, tmp_path, capsys):
+    """#457 row 2: a refused login prints the reason and starts nothing."""
+    assert probe.cells.main(["--login-directory", str(tmp_path / "x")], never_started) == 1
     assert capsys.readouterr().out == f"PROBE FAILED: {probe.checks.Refusal.NOT_A_DIRECTORY}\n"
 
 
@@ -226,6 +232,7 @@ def second_bind(index: int) -> Callable[[dict], None]:
     ],
 )
 def test_a_resolved_configuration_that_binds_anything_else_is_refused(probe, mutate, reason):
+    """#457 row 3 and 16: a resolved configuration with another bind is refused before up."""
     config = resolved()
     mutate(config)
     with pytest.raises(probe.checks.LoginFailed) as raised:
@@ -234,6 +241,7 @@ def test_a_resolved_configuration_that_binds_anything_else_is_refused(probe, mut
 
 
 def test_the_expected_resolved_configuration_passes(probe):
+    """#457 row 3 and 16: the expected resolved configuration passes."""
     preflight(probe, resolved())
 
 
@@ -243,6 +251,7 @@ def test_the_expected_resolved_configuration_passes(probe):
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 @pytest.mark.parametrize("secret", [TOKEN, "census-key-hex", "minted-token"])
 def test_a_line_with_a_known_secret_is_replaced_and_counted(probe, capsys, stream, secret):
+    """#457 row 4: a printed line holding a known secret is replaced and counted."""
     with probe.checks.gating([TOKEN, "census-key-hex", "minted-token"]) as gate:
         print(f"before {secret} after", file=getattr(sys, stream), flush=True)
     shown = getattr(capsys.readouterr(), "out" if stream == "stdout" else "err")
@@ -251,6 +260,7 @@ def test_a_line_with_a_known_secret_is_replaced_and_counted(probe, capsys, strea
 
 
 def test_a_last_write_without_a_newline_is_checked_at_exit(probe, capsys):
+    """#457 row 4: the unterminated last write is checked at exit."""
     with probe.checks.gating([TOKEN]) as gate:
         sys.stdout.write(f"tail {TOKEN}")
     assert capsys.readouterr().out == "tail [secret]"
@@ -258,6 +268,7 @@ def test_a_last_write_without_a_newline_is_checked_at_exit(probe, capsys):
 
 
 def test_a_secret_split_over_two_writes_of_one_line_is_replaced(probe, capsys):
+    """#457 row 4: a secret split over two writes of one line is replaced."""
     with probe.checks.gating([TOKEN]):
         sys.stdout.write(TOKEN[:5])
         sys.stdout.write(TOKEN[5:] + "\n")
@@ -265,6 +276,7 @@ def test_a_secret_split_over_two_writes_of_one_line_is_replaced(probe, capsys):
 
 
 def test_a_secret_added_later_is_gated_and_a_clean_line_passes(probe, capsys):
+    """#457 row 4: a secret added later is gated."""
     with probe.checks.gating([TOKEN]) as gate:
         gate.add("late-key")
         gate.add("")
@@ -275,6 +287,7 @@ def test_a_secret_added_later_is_gated_and_a_clean_line_passes(probe, capsys):
 
 
 def test_the_streams_are_restored_after_the_gate(probe):
+    """#457 row 4: the gate restores the streams."""
     before = sys.stdout, sys.stderr
     with probe.checks.gating([TOKEN]):
         assert sys.stdout is not before[0]
@@ -325,10 +338,12 @@ def test_the_streams_are_restored_after_the_gate(probe):
     ],
 )
 def test_a_failed_command_is_named_by_its_verb_alone(probe, command, verb):
+    """#457 row 5: a failed command is named by its verb and exit code."""
     assert str(probe.checks.failed_command(command, 3)) == f"{verb} exited 3"
 
 
 def test_a_failed_command_of_the_probe_relays_no_output(probe):
+    """#457 row 5: a failed command relays none of its output."""
     run = object.__new__(probe.cells.LoginProbe)
     run.texts = []
     run.environment = {}
@@ -341,11 +356,14 @@ def test_a_failed_command_of_the_probe_relays_no_output(probe):
 
 
 def test_a_command_may_fail_unchecked_and_its_output_stays_in_memory(probe):
+    """#457 row 5: an unchecked command keeps its output in memory."""
     run = object.__new__(probe.cells.LoginProbe)
     run.texts = []
     run.environment = {}
-    result = run.run([sys.executable, "-c", "import sys; sys.exit(2)"], check=False)
+    code = f"import sys; print({MARKER!r}); sys.exit(2)"
+    result = run.run([sys.executable, "-c", code], check=False)
     assert result.returncode == 2
+    assert run.texts == [f"{MARKER}\n"]
 
 
 class FakeRun:
@@ -383,12 +401,8 @@ def run(probe, fake: FakeRun | Exception) -> int:
     return probe.checks.run_login(open_probe)
 
 
-@pytest.fixture
-def untouched_signals(restored_signals):
-    return restored_signals
-
-
-def test_every_cell_held_passes(probe, capsys, untouched_signals):
+def test_every_cell_held_passes(probe, capsys, restored_signals):
+    """#457 row 1: every cell held ends in PROBE PASSED."""
     fake = FakeRun()
     assert run(probe, fake) == 0
     assert capsys.readouterr().out == "PROBE PASSED: held A\n"
@@ -404,8 +418,9 @@ def test_every_cell_held_passes(probe, capsys, untouched_signals):
 )
 @pytest.mark.parametrize("stage", ["enter", "drive", "leave"])
 def test_an_unexpected_exception_prints_its_type_name_and_the_teardown_runs(
-    probe, capsys, untouched_signals, stage, error, shown
+    probe, capsys, restored_signals, stage, error, shown
 ):
+    """#457 row 6: an unexpected exception prints its type name and the teardown runs."""
     fake = FakeRun(**{stage: error})
     assert run(probe, fake) == 1
     output = capsys.readouterr().out
@@ -418,8 +433,9 @@ def test_an_unexpected_exception_prints_its_type_name_and_the_teardown_runs(
 
 @pytest.mark.parametrize("which", ["egress", "image", "timeout"])
 def test_a_probe_failure_is_withheld_in_setup_and_in_a_stage(
-    probe, capsys, untouched_signals, which
+    probe, capsys, restored_signals, which
 ):
+    """#457 row 11: a probe failure is withheld in setup and in a stage."""
     errors = {
         "egress": probe.egress.ProbeFailed(MARKER),
         "image": probe.image.ProbeFailed(MARKER),
@@ -435,7 +451,8 @@ def test_a_probe_failure_is_withheld_in_setup_and_in_a_stage(
     assert "drive FAILED (reason withheld)" in output
 
 
-def test_a_login_failure_prints_its_own_message(probe, capsys, untouched_signals):
+def test_a_login_failure_prints_its_own_message(probe, capsys, restored_signals):
+    """#457 row 5: a LoginFailed prints its own fixed message."""
     failure = probe.checks.LoginFailed("up exited 1")
     assert run(probe, FakeRun(drive=failure)) == 1
     assert "drive FAILED: up exited 1" in capsys.readouterr().out
@@ -445,6 +462,7 @@ def test_a_login_failure_prints_its_own_message(probe, capsys, untouched_signals
 def test_a_signal_during_a_stage_unwinds_it_and_the_teardown_runs(
     probe, capsys, restored_signals, number
 ):
+    """#457 row 17: a signal during a stage unwinds it and the teardown runs."""
     probe.checks.start_time_bound(1000)
     fake = FakeRun()
     fake.steps["drive"] = None
@@ -461,13 +479,15 @@ def test_a_signal_during_a_stage_unwinds_it_and_the_teardown_runs(
     assert output.splitlines()[-1].startswith("PROBE FAILED")
 
 
-def test_a_failed_or_not_driven_cell_fails_the_run_and_is_named(probe, capsys, untouched_signals):
+def test_a_failed_or_not_driven_cell_fails_the_run_and_is_named(probe, capsys, restored_signals):
+    """#457 row 9: a failed or not driven cell fails the run and is named."""
     fake = FakeRun(failed=["U2"], not_driven=["S00 (roots)"])
     assert run(probe, fake) == 1
     assert capsys.readouterr().out == ("PROBE FAILED: held A; failed U2; not driven S00 (roots)\n")
 
 
 def test_the_teardown_ignores_sigterm_and_cancels_the_alarm(probe, restored_signals):
+    """#457 row 17: the teardown ignores SIGTERM and cancels the alarm."""
     probe.checks.start_time_bound(1000)
     seen = {}
 
@@ -482,6 +502,7 @@ def test_the_teardown_ignores_sigterm_and_cancels_the_alarm(probe, restored_sign
 
 @pytest.mark.parametrize("failing", ["ProbeFailed", "ValueError"])
 def test_a_failing_cell_is_named_and_the_next_cells_still_run(probe, capsys, failing):
+    """#457 row 11: a failing cell is named and the next cells still run."""
     checks = probe.checks
     failed: list[str] = []
     error = probe.egress.ProbeFailed(MARKER) if failing == "ProbeFailed" else ValueError(MARKER)
@@ -508,6 +529,7 @@ def stub_probe(probe) -> SimpleNamespace:
 
 
 def test_a_cell_that_fails_does_not_stop_the_cells_after_it(probe, capsys):
+    """#457 row 11: a failing cell does not stop the cells after it."""
     run = stub_probe(probe)
 
     def fails():
@@ -521,6 +543,7 @@ def test_a_cell_that_fails_does_not_stop_the_cells_after_it(probe, capsys):
 
 
 def test_no_cell_runs_when_the_service_does_not_listen(probe, capsys):
+    """#457 row 11: no cell runs when the service does not listen."""
     run = stub_probe(probe)
 
     def silent():
@@ -532,6 +555,7 @@ def test_no_cell_runs_when_the_service_does_not_listen(probe, capsys):
 
 
 def test_a_reused_cell_is_held_by_its_name_alone(probe, capsys):
+    """#457 row 11: a reused cell is held by its name alone."""
     run = object.__new__(probe.cells.LoginProbe)
     run.held = []
     run.hold("U2", MARKER)
@@ -551,9 +575,8 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
     run.held, run.failed = [], []
     run.login = SimpleNamespace(token=TOKEN)
     run.gate = SimpleNamespace(hits=hits)
-    log = TOKEN * in_log
-    run.container_log = lambda service: log
-    run.texts = [log, TOKEN * in_other]
+    run.container_log = lambda service: TOKEN * in_log
+    run.texts = [TOKEN * in_other]
     run.cell_s1()
     output = capsys.readouterr().out
     assert TOKEN not in output
@@ -606,6 +629,7 @@ def mount(probe, *, entries=0, skips=(), token_files=0):
     ids=["entries", "empty", "entries and a skip", "root not listed", "unknown reason"],
 )
 def test_a_mount_line_says_listed_or_not_listed_with_its_reason(probe, entries, skips, line):
+    """#457 row 8: a mount line says listed or not listed with its reason."""
     assert probe.checks.mount_line("role", mount(probe, entries=entries, skips=skips)) == line
 
 
@@ -623,19 +647,152 @@ def test_a_mount_line_says_listed_or_not_listed_with_its_reason(probe, entries, 
 def test_a_directory_root_that_was_not_listed_is_counted_and_a_file_mount_is_not(
     probe, skips, unlisted
 ):
+    """#457 row 9: an unlisted directory root is counted, a file mount is not."""
     mounts = {"/tmp": mount(probe, entries=1), "n-0": mount(probe, skips=skips)}
     assert probe.checks.unlisted_roots(mounts) == unlisted
 
 
 def test_token_files_are_summed_over_every_mount(probe):
+    """#457 row 10: token files are summed over every mount."""
     mounts = {"/tmp": mount(probe, token_files=1), "n-0": mount(probe, token_files=2)}
     assert probe.checks.token_files(mounts) == 3
+
+
+def census_stub(mounts):
+    return SimpleNamespace(
+        key=b"\x01",
+        mounts=lambda: mounts,
+        working_root="/work",
+        names=SimpleNamespace(show_mount=lambda root: root),
+    )
+
+
+def s00_run(probe, mounts):
+    run = object.__new__(probe.cells.LoginProbe)
+    run.held, run.failed, run.not_driven = [], [], []
+    run.gate = probe.checks.Gate([])
+    run.census = lambda: census_stub(mounts)
+    run.container = lambda service: service
+    run.cell_s00()
+    return run
+
+
+@pytest.mark.parametrize(
+    ("mounts", "held", "failed", "not_driven", "line"),
+    [
+        ({"/tmp": ((), 0)}, ["S00 (roots)", "S00 (token)"], [], [], "S00 (token) held: 0 files"),
+        (
+            {"n-0": ((("replaced", 1),), 0)},
+            [],
+            [],
+            ["S00 (roots)", "S00 (token)"],
+            "S00 (roots) NOT DRIVEN: 1 directory roots were not listed",
+        ),
+        (
+            {"/tmp": ((), 2)},
+            ["S00 (roots)"],
+            ["S00 (token)"],
+            [],
+            "S00 (token) FAILED: 2 files hold the login token",
+        ),
+        (
+            {"/tmp": ((("refused", 1),), 0)},
+            ["S00 (roots)"],
+            [],
+            ["S00 (token)"],
+            "S00 (token) NOT DRIVEN: 1 entries could not be read for the token",
+        ),
+    ],
+    ids=["clean", "root not listed", "token found", "unreadable file"],
+)
+def test_the_s00_verdicts_decide_the_cells_and_the_run(
+    probe, capsys, mounts, held, failed, not_driven, line
+):
+    """#457 rows 9 and 10: the cell turns the census into held, failed and not driven."""
+    census_mounts = {
+        shown: probe.census.Mount((("n-0", "file"),) if shown == "/tmp" else (), skips, token_files)
+        for shown, (skips, token_files) in mounts.items()
+    }
+    run = s00_run(probe, census_mounts)
+    assert (run.held, run.failed, run.not_driven) == (held, failed, not_driven)
+    assert line in capsys.readouterr().out
+
+
+def test_the_census_key_joins_the_gate(probe):
+    """#457 row 4: the census key is gated from the moment the cell asks for it."""
+    run = s00_run(probe, {})
+    assert run.gate.secrets == ["01"]
+
+
+# --- the setup of the command ------------------------------------------------------------------
+
+
+def test_a_lock_that_cannot_be_opened_prints_the_type_alone_and_exits_1(
+    probe, tmp_path, capsys, restored_signals
+):
+    """#457 row 6: a failure before the gate prints no exception text."""
+    login = probe.checks.read_login(str(make_login(tmp_path / "login")))
+    assert probe.cells.run_command(login, tmp_path / "missing" / "lock", {}) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "setup FAILED (FileNotFoundError)\nPROBE FAILED: setup\n"
+    assert captured.err == ""
+
+
+def test_a_scratch_directory_inside_the_login_directory_is_refused_and_nothing_is_written(
+    probe, tmp_path, capsys, restored_signals
+):
+    """#457 row 2: the login directory is never written to."""
+    directory = make_login(tmp_path / "login")
+    (directory / "inner").mkdir()
+    login = probe.checks.read_login(str(directory))
+    for inside in (directory, directory / "inner"):
+        assert probe.cells.run_command(login, tmp_path / "lock", {"TMPDIR": str(inside)}) == 1
+        assert capsys.readouterr().out == (
+            f"setup FAILED: {probe.checks.Refusal.SCRATCH_IN_LOGIN}\nPROBE FAILED: setup\n"
+        )
+    assert sorted(path.name for path in directory.iterdir()) == ["inner", "token"]
+    assert not (tmp_path / "lock").exists()
+
+
+def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
+    probe, tmp_path, restored_signals
+):
+    """#457 row 17: a signal during the teardown after a failed enter cannot leave the stack."""
+    config = resolved(login_source=str(tmp_path / "login"), configuration_source="/scratch/c.toml")
+    config["services"]["agent-service"]["volumes"][0]["target"] = probe.cells.login_directory()
+    config["services"]["agent-service"]["volumes"][1]["target"] = CONFIGURATION
+    seen = []
+
+    def compose(*arguments, **_):
+        if arguments[0] == "up":
+            raise probe.egress.ProbeFailed(MARKER)
+        return SimpleNamespace(stdout=json.dumps(config))
+
+    run = object.__new__(probe.cells.LoginProbe)
+    run.login = SimpleNamespace(directory=tmp_path / "login")
+    run.configuration = Path("/scratch/c.toml")
+    run.listener, run.windows = None, []
+    run.compose_file = run.static_file = tmp_path / "unused"
+    run.compose = compose
+    run.write_on_probe_subnet = lambda *_: None
+    run.guard = SimpleNamespace(expect_clean_teardown=lambda: None)
+
+    def docker(command, **_):
+        seen.append((signal.getsignal(signal.SIGTERM), signal.alarm(0)))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    run.run = docker
+    probe.checks.start_time_bound(1000)
+    with pytest.raises(probe.egress.ProbeFailed):
+        run.__enter__()
+    assert seen[-1] == (signal.SIG_IGN, 0)
 
 
 # --- the lock ----------------------------------------------------------------------------------
 
 
 def test_the_command_says_it_waits_for_another_holder_and_starts_after_the_release(probe, tmp_path):
+    """#457 row 15: the command says it waits and starts after the release."""
     lock = tmp_path / "lock"
     waiting = threading.Event()
     started = threading.Event()

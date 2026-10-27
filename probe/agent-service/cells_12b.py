@@ -9,7 +9,7 @@ verdicts, counts and role names. An agent runs it only with a dummy login made w
     python3 probe/agent-service/cells_12b.py --login-directory DIR
 
 The command holds /tmp/probe-stack.lock itself, so it runs without an outer flock. Exit 0: every
-cell held, 1: a cell failed or was not driven.
+cell held, 1: a cell failed or was not driven, 2: no `--login-directory` was given.
 """
 
 from __future__ import annotations
@@ -17,9 +17,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
@@ -33,7 +35,11 @@ from login_checks import (
     Gate,
     Login,
     LoginFailed,
+    Outcome,
+    Verdict,
+    begin_teardown,
     check_resolved,
+    describe,
     failed_command,
     gating,
     guarded,
@@ -41,15 +47,15 @@ from login_checks import (
     probe_lock,
     read_login,
     run_login,
+    s00_verdicts,
+    scratch_parent,
     start_time_bound,
-    token_files,
-    unlisted_roots,
 )
 from service_log import BOOTSTRAP
 from unit import SERVICE, ServiceConditions, login_directory
 
 PROBE_LOCK = Path("/tmp/probe-stack.lock")  # NOSONAR(S5443) the lock every probe run shares
-COMMAND_SECONDS = 1500  # of the command's own 1800 s `timeout` budget, leaving the teardown's
+COMMAND_SECONDS = 1500  # the alarm: the drive stops here and the teardown still has time to run
 GATEWAY = "agent-egress"
 STARTED = (GATEWAY, ISSUER_SERVICE, SERVICE)
 CONFIGURATION_TARGET = "/etc/agent-service/service.toml"
@@ -124,6 +130,10 @@ class LoginProbe(ServiceConditions, IssuerProbe):
         super().__enter__()
         return self
 
+    def __exit__(self, *arguments: object) -> None:
+        begin_teardown()  # also after a failed enter, whose signals are still armed
+        super().__exit__(*arguments)
+
     def verdict(self, cell: str, evidence: str) -> None:
         """A cell of the command's own: its evidence is built from counts and role names."""
         print(f"{cell} held: {evidence}", flush=True)
@@ -156,27 +166,28 @@ class LoginProbe(ServiceConditions, IssuerProbe):
         image.cell_i6(inspected.stdout.strip(), IMAGE_OPTIONS)
         self.hold("I6", "")
 
+    def census(self) -> CensusClient:
+        return CensusClient(self, self.container(SERVICE), self.configuration)
+
     def cell_s00(self) -> None:
         """B8's S00 snapshot of every writable mount as an observation, then edge's two frame
         checks over it."""
-        census = CensusClient(self, self.container(SERVICE), self.configuration)
+        census = self.census()
         self.gate.add(census.key.hex())
         mounts = census.mounts()
         roles = {census.names.show_mount(census.working_root): "working root"}
         for shown, mount in sorted(mounts.items()):
             print(mount_line(roles.get(shown, shown), mount), flush=True)
-        unlisted = unlisted_roots(mounts)
-        if unlisted:
-            self.not_driven.append("S00 (roots)")
-            print(f"S00 (roots) NOT DRIVEN: {unlisted} directory roots were not listed", flush=True)
-        else:
-            self.verdict("S00 (roots)", f"every directory root of {len(mounts)} mounts was listed")
-        leaked = token_files(mounts)
-        if leaked:
-            self.failed.append("S00 (token)")
-            print(f"S00 (token) FAILED: {leaked} files hold the login token", flush=True)
-        else:
-            self.verdict("S00 (token)", "0 files outside the login directory hold the login token")
+        for verdict in s00_verdicts(mounts):
+            self.record(verdict)
+
+    def record(self, verdict: Verdict) -> None:
+        if verdict.outcome is Outcome.HELD:
+            self.verdict(verdict.cell, verdict.evidence)
+            return
+        failures = self.failed if verdict.outcome is Outcome.FAILED else self.not_driven
+        failures.append(verdict.cell)
+        print(f"{verdict.cell} {verdict.outcome}: {verdict.evidence}", flush=True)
 
     def cell_s1(self) -> None:
         """The no-token cell: the gate changed no line, and no text in memory holds the token."""
@@ -186,21 +197,24 @@ class LoginProbe(ServiceConditions, IssuerProbe):
             f"{self.gate.hits} gate hits, {in_log} in the service log, "
             f"{in_texts} in all command outputs"
         )
-        if self.gate.hits or in_texts:
+        if self.gate.hits or in_log or in_texts:
             self.failed.append("S1")
             print(f"S1 FAILED: {counts}", flush=True)
         else:
             self.verdict("S1", counts)
 
 
-def run_command(login: Login, lock: Path = PROBE_LOCK) -> int:
+def run_command(
+    login: Login, lock: Path = PROBE_LOCK, environment: Mapping[str, str] = os.environ
+) -> int:
     def announce() -> None:
         print("waiting for the probe lock", flush=True)
 
     try:
+        parent = scratch_parent(login, environment)
         with probe_lock(lock, announce):
             start_time_bound(COMMAND_SECONDS)
-            scratch = Path(tempfile.mkdtemp(prefix="login-probe-")).resolve()
+            scratch = Path(tempfile.mkdtemp(prefix="login-probe-", dir=parent)).resolve()
             try:
                 with gating([login.token]) as gate:
                     return run_login(lambda: LoginProbe(scratch, login, gate))
@@ -209,18 +223,23 @@ def run_command(login: Login, lock: Path = PROBE_LOCK) -> int:
     except KeyboardInterrupt:
         print("interrupted", flush=True)
         return 1
+    except Exception as problem:  # the lock, the scratch directory: nothing but the type is printed
+        print(describe("setup", problem), flush=True)
+        print("PROBE FAILED: setup", flush=True)
+        return 1
 
 
-def main() -> int:
+def main(
+    arguments: Sequence[str] | None = None, start: Callable[[Login], int] = run_command
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--login-directory", required=True)
-    arguments = parser.parse_args()
     try:
-        login = read_login(arguments.login_directory)
+        login = read_login(parser.parse_args(arguments).login_directory)
     except LoginFailed as refusal:
         print(f"PROBE FAILED: {refusal}", flush=True)
         return 1
-    return run_command(login)
+    return start(login)
 
 
 if __name__ == "__main__":
