@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import socket
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -14,10 +16,25 @@ from edge_backup_support import (
 )
 from live_stack import LIVE_STACK_PORTS
 
+from edge import appkit_step
 from edge_backup import host
 from hal import cli
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
+
+
+@pytest.fixture
+def seed_appkit() -> Callable[[Path], Path]:
+    """Puts the installed appkit's files where the step serves them in a fake repository, as a
+    finished apply leaves them; returns that directory. A fixture, because a test module that
+    imports from `conftest` breaks in a full run."""
+
+    def seed(repository: Path) -> Path:
+        served = appkit_step.served_directory(repository)
+        shutil.copytree(appkit_step.installed_static(), served)
+        return served
+
+    return seed
 
 
 @pytest.fixture

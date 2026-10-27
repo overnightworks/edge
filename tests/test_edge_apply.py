@@ -472,9 +472,12 @@ def trusted_environment(_tree: Path) -> None:
 
 
 @pytest.fixture
-def repository(home: Path) -> Path:
-    """The live checkout `$HOME/git/edge` of the test's own HOME (#79 cell 1)."""
-    return edge_tree(home / "git" / "edge")
+def repository(home: Path, seed_appkit) -> Path:
+    """The live checkout `$HOME/git/edge` of the test's own HOME (#79 cell 1), with the appkit
+    files the last apply left."""
+    tree = edge_tree(home / "git" / "edge")
+    seed_appkit(tree)
+    return tree
 
 
 @dataclass

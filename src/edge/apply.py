@@ -33,7 +33,9 @@ newest release tag is checked out, built, started and recorded once its containe
 While `services.legal` is enabled the three legal pages are built from `legal/frame` and
 `legal/sections` through the validator (`legal_step.py`); a refused section is exit 2, and the
 plan names each page that is new or changes. After `yes` the pages are written to `legal/built/`
-before any unit switches, which the legal unit serves.
+before any unit switches, which the legal unit serves. The appkit step (`appkit_step.py`) comes
+first and runs with or without the legal unit: it writes the installed appkit's tokens and fonts
+to `legal/assets/appkit-<version>/`; a missing appkit is exit 2.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
@@ -61,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
+from edge.appkit_step import AppkitError, AppkitPlan, plan_appkit
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.built_image import BuiltRecreate
 from edge.legal_section import LegalError
@@ -110,6 +113,7 @@ CANNOT_PLAN_ERRORS = (
     AppError,
     checkout.GitError,
     LegalError,
+    AppkitError,
 )
 
 
@@ -125,6 +129,7 @@ class Plan:
     images: list[KeptImage]
     realm: reconcile.RealmPlan
     app_plans: AppsPlan
+    appkit: AppkitPlan
     legal: LegalPlan
 
     @property
@@ -137,6 +142,7 @@ class Plan:
             and not self.built
             and not self.recreates
             and self.app_plans.changes_nothing
+            and self.appkit.changes_nothing
             and self.legal.changes_nothing
         )
 
@@ -150,6 +156,7 @@ class Plan:
             *self.images,
         )
         return [
+            *self.appkit.describe(),
             *self.legal.describe(),
             *(plan.describe() for plan in plans),
             *self.realm.lines,
@@ -203,6 +210,7 @@ def _plan(
         reconcile.restart_of(plans, unit_services.recreates),
     )
     app_plans = plan_apps(repository, fleet, app_runtime, marks)
+    appkit = plan_appkit(repository)
     legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
         fleet,
@@ -215,6 +223,7 @@ def _plan(
         unit_services.images,
         realm,
         app_plans,
+        appkit,
         legal,
     )
 
@@ -734,8 +743,10 @@ def _confirm_and_switch(
     progress = Progress()
     withheld: dict[str, str] = {}
     try:
-        if failure := planned.legal.write(progress) or core_phase.run(
-            engine, planned, marks, progress
+        if failure := (
+            planned.appkit.write(progress)
+            or planned.legal.write(progress)
+            or core_phase.run(engine, planned, marks, progress)
         ):
             print(
                 f"{COMMAND}: partial, {failure}; no unit switched; run `{COMMAND}` again",
