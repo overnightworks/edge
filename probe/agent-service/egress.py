@@ -57,7 +57,7 @@ sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with 
 import edge_copy  # noqa: E402
 import egress_observe  # noqa: E402
 from agent_networks import cell_p36, service_networks  # noqa: E402
-from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect  # noqa: E402
+from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect, scratch_directory  # noqa: E402
 from egress_observe import (  # noqa: E402
     PUBLIC_RESOLVER,
     PUBLIC_RESOLVER_V6,
@@ -142,15 +142,6 @@ def write_login_directory(home: Path) -> None:
     for folder in (directory, directory.parent, directory.parent.parent):
         folder.chmod(0o700)
     write_dummy_token(directory / "token")
-
-
-def scratch_directory(text: str) -> Path:
-    """The `--scratch` argument as an absolute path of an existing directory the operator can
-    write to; anything else is refused where the command line is read."""
-    path = Path(text).resolve()
-    if not path.is_dir() or not os.access(path, os.W_OK):
-        raise argparse.ArgumentTypeError(f"{text} is not a writable directory")
-    return path
 
 
 def classify_syns(

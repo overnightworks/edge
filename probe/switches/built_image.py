@@ -18,7 +18,7 @@ It removes its containers, networks, volumes and tags. It never names the projec
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/built_image.py --scratch DIR
 
-Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) and the local
+Needs an existing, empty --scratch directory, `uv` (it runs `uv sync` in the copy) and the local
 images busybox:1.36 and busybox:1.37.0.
 """
 
@@ -28,7 +28,6 @@ import argparse
 import grp
 import json
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +40,7 @@ import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
 from edge import compose  # noqa: E402
+from edge.built_image import ENDS_RUNS  # noqa: E402
 
 PROJECT = "edge-built-image-probe"
 UNIT = "built-probe"
@@ -65,10 +65,8 @@ SERVICE_TEXT = """\
 
 """
 COMPOSE_FILE = "compose.yaml"
-ENDS_RUNS = "in-flight requests end"
 NOTHING_TO_CHANGE = "nothing to change"
 COMPOSE_SECONDS = 300
-NOT_RUNNABLE = 3
 STOP_THE_LANE = "stop the lane (body, Acceptance): ps Image is neither the reference nor the id"
 
 
@@ -108,14 +106,7 @@ class Drive:
 
     def engine(self) -> compose.Compose:
         """edge's own Compose reader, over the copy and the drive's project."""
-
-        def run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                command, capture_output=True, text=True, env=self.environment, cwd=self.copy,
-                check=False, timeout=timeout,
-            )  # fmt: skip
-
-        return compose.Compose(run, self.copy)
+        return edge_copy.compose_engine(self.environment, self.copy)
 
     def container(self) -> dict:
         """The unit's container as `docker compose ps` shows it, and as Docker inspects it."""
@@ -306,30 +297,11 @@ def prove(drive: Drive) -> int:
     return 0
 
 
-def raise_interrupt(_signal: int, _frame: object) -> None:
-    raise KeyboardInterrupt
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument("--scratch", type=edge_copy.scratch_directory, required=True)
     arguments = parser.parse_args(argv)
-    if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
-        print("PROBE FAILED: --scratch is not empty")
-        return NOT_RUNNABLE
-    arguments.scratch.mkdir(parents=True, exist_ok=True)
-    drive = Drive(arguments.scratch)
-    signal.signal(signal.SIGTERM, raise_interrupt)  # `timeout` ends the drive with SIGTERM
-    exit_code = prove(drive)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    try:
-        drive.teardown()
-    except (ProbeFailed, subprocess.TimeoutExpired) as failure:
-        print(f"PROBE FAILED: teardown, {failure}")
-        exit_code = 1
-    if exit_code == 0:
-        print("PROBE PASSED: #482 D1a-D1d hold")
-    return exit_code
+    return edge_copy.run_probe(arguments.scratch, Drive, prove, "PROBE PASSED: #482 D1a-D1d hold")
 
 
 if __name__ == "__main__":

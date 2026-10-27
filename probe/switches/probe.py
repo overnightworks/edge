@@ -47,7 +47,7 @@ or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down whi
     flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
         python3 probe/switches/probe.py --scratch DIR
 
-Needs an empty or new --scratch directory, and `uv`: it runs `uv sync` in the copy.
+Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
 """
 
 from __future__ import annotations
@@ -59,7 +59,6 @@ import json
 import os
 import re
 import secrets
-import signal
 import socket
 import subprocess
 import sys
@@ -102,7 +101,6 @@ BEHIND_BARRIER_SECONDS = 10
 REQUEST_SECONDS = 3
 POLL_SECONDS = 0.2
 COMPOSE_SECONDS = 300
-NOT_RUNNABLE = 3
 SYSTEMCTL_SECONDS = 60
 BOOT_DROP_IN_SOURCE = REPO / "tunnel" / f"{tunnel.CLOUDFLARED_UNIT}.d" / tunnel.BOOT_DROP_IN
 TUNNEL_UNIT_TEXT = "[Service]\nExecStart=/usr/bin/sleep infinity\n"
@@ -173,14 +171,7 @@ class Probe:
 
     def engine(self) -> compose.Compose:
         """edge's own Compose reader, over the copy and the probe's project."""
-
-        def run(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                command, capture_output=True, text=True, env=self.environment, cwd=self.copy,
-                check=False, timeout=timeout,
-            )  # fmt: skip
-
-        return compose.Compose(run, self.copy)
+        return edge_copy.compose_engine(self.environment, self.copy)
 
     def created(self, container_id: str) -> datetime:
         """When Docker created the container, to the microsecond."""
@@ -735,10 +726,6 @@ def port_is_busy() -> bool:
         return probe.connect_ex(EDGE_ADDRESS) == 0
 
 
-def raise_interrupt(_signal: int, _frame: object) -> None:
-    raise KeyboardInterrupt
-
-
 def prove(probe: Probe) -> int:
     try:
         probe.bring_up()
@@ -782,30 +769,18 @@ def prove(probe: Probe) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=Path, required=True)
+    parser.add_argument("--scratch", type=edge_copy.scratch_directory, required=True)
     arguments = parser.parse_args(argv)
-    if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
-        print("PROBE FAILED: --scratch is not empty")
-        return NOT_RUNNABLE
-    if port_is_busy():
-        print("PROBE FAILED: 127.0.0.1:8081 is in use, the live edge must be down")
-        return NOT_RUNNABLE
-    arguments.scratch.mkdir(parents=True, exist_ok=True)
-    probe = Probe(arguments.scratch)
-    signal.signal(signal.SIGTERM, raise_interrupt)  # `timeout` ends the probe with SIGTERM
-    exit_code = prove(probe)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    try:
-        probe.teardown()
-    except (ProbeFailed, subprocess.TimeoutExpired) as failure:
-        print(f"PROBE FAILED: teardown, {failure}")
-        exit_code = 1
-    if exit_code == 0:
-        print(
-            "PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3, "
-            "#95 P1-P2, #98 P1 hold"
-        )
-    return exit_code
+    return edge_copy.run_probe(
+        arguments.scratch,
+        Probe,
+        prove,
+        "PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3, "
+        "#95 P1-P2, #98 P1 hold",
+        blocker=lambda: (
+            "127.0.0.1:8081 is in use, the live edge must be down" if port_is_busy() else None
+        ),
+    )
 
 
 if __name__ == "__main__":
