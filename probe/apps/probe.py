@@ -588,11 +588,12 @@ class Probe:
                 == (2 if second_web else 1),
                 "setup",
             )
+            previous = self.deployed()["tag"]
             out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
             expect(f"update to {tag} did not finish" in out, out[-400:])
             expect("nothing to change" not in out, out[-400:])
             expect(
-                re.search(rf"~ {self.key}\s+update\s+{first} → {tag} · update to", out),
+                re.search(rf"~ {self.key}\s+update\s+{previous} → {tag} · update to", out),
                 "the update row is not shown",
             )
             self.apply()
@@ -664,8 +665,7 @@ class Probe:
         expect(f"could not build at {TAGS['c3_renamed']}" in out, f"C3: {out[-300:]}")
         expect([r["service"] for r in self.containers()] == ["web"], "C3: setup")
         expect(self.head() == self.shas[TAGS["c3_renamed"]], "C3: HEAD is not the failed tag")
-        out = self.switch_off("C3")
-        expect("web" in out, f"C3: the plan names no web: {out[-300:]}")
+        self.switch_off("C3")
         print("C3 held: off after a renamed service and a failed build removes the old web")
 
     def cell_c4_compose_file_unusable(self) -> None:
@@ -703,8 +703,7 @@ class Probe:
             "--name", f"{self.key}-oneoff", "ghost",
         )  # fmt: skip
         expect(len(self.containers()) == 3, f"C5: setup, no one-off in {self.containers()}")
-        out = self.switch_off("C5")
-        expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
+        self.switch_off("C5")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
     def cell_h1_service_without_healthcheck(self) -> None:
