@@ -186,7 +186,7 @@ def _replace(directory: Path, page: str, text: str) -> None:
     """The page's new bytes under a temporary name in the same directory, then renamed over it."""
     descriptor, temporary = tempfile.mkstemp(dir=directory, prefix=f".{page}.", suffix=".tmp")
     try:
-        os.fchmod(descriptor, _BUILT_MODE)
+        os.fchmod(descriptor, _BUILT_MODE)  # NOSONAR python:S2612 a public page, read by nginx
         with os.fdopen(descriptor, "wb") as file:
             file.write(text.encode())
         os.replace(temporary, directory / f"{page}.html")
