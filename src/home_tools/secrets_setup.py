@@ -54,7 +54,7 @@ from home_tools.secrets_view import (
     stat_matches,
     unfit_folder,
 )
-from home_tools.tidy_home import Config
+from home_tools.config import Config
 from home_tools.layout import Layout
 
 if TYPE_CHECKING:

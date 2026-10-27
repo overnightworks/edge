@@ -1,5 +1,5 @@
 [Unit]
-Description=home check: berichtet, was von ~/README.md und dem Geheimnis-Manifest abweicht; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet
+Description=home check: berichtet, was am PC und beim Geheimnis-Manifest nicht stimmt; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet
 
 [Service]
 Type=oneshot

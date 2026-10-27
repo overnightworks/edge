@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -102,49 +102,17 @@ class Arrangement:
 
     wizard_secret_missing: bool = False
     unknown_secret_files: int = 0
-    unknown_home_entries: int = 0
-    git_litter: int = 0
-    old_downloads: int = 0
-    old_codex_sessions: int = 0
     loose_secret: bool = False
-    pasted_image: bool = False
     manifest_unreadable: bool = False
-    readme_missing: bool = False
 
 
-OLD = (NOW - timedelta(days=30)).timestamp()
-# Past the 90 days after which `home tidy` reports a Codex session.
-ANCIENT = (NOW - timedelta(days=100)).timestamp()
-
-
-def arrange(home: Path, use_manifest: Callable[[str], Path], leave_pasted_image: Callable[..., Path], cell: Arrangement) -> None:
+def arrange(home: Path, use_manifest: Callable[[str], Path], cell: Arrangement) -> None:
     use_manifest("[[secret]\n" if cell.manifest_unreadable else TEST_MANIFEST + (WIZARD_ENTRY if cell.wizard_secret_missing else ""))
-    if cell.readme_missing:
-        (home / "README.md").unlink(missing_ok=True)
-    else:
-        (home / "README.md").write_text(HOME_README + "`~/Downloads` and `~/.codex` too.\n")
     for number in range(cell.unknown_secret_files):
         (home / ".secrets" / f"stray-{number}.json").write_text("{}")
         (home / ".secrets" / f"stray-{number}.json").chmod(0o600)
-    for number in range(cell.unknown_home_entries):
-        (home / f".stray-{number}").mkdir()
-    for number in range(cell.git_litter):
-        (home / "git" / f"loose-{number}.txt").parent.mkdir(exist_ok=True)
-        (home / "git" / f"loose-{number}.txt").write_text("")
-    for number in range(cell.old_downloads):
-        download = home / "Downloads" / f"download-{number}.pdf"
-        download.parent.mkdir(exist_ok=True)
-        download.write_text("")
-        os.utime(download, (OLD, OLD))
-    for number in range(cell.old_codex_sessions):
-        session = home / ".codex" / "sessions" / f"rollout-{number}.jsonl"
-        session.parent.mkdir(parents=True, exist_ok=True)
-        session.write_text("")
-        os.utime(session, (ANCIENT, ANCIENT))
     if cell.loose_secret:
         (home / ".secrets" / "gitlab").chmod(0o664)
-    if cell.pasted_image:
-        leave_pasted_image(home / "git")
 
 
 LOOSE_GITLAB = (
@@ -157,22 +125,17 @@ LOOSE_GITLAB = (
     ("cell", "expected"),
     [
         pytest.param(
-            Arrangement(wizard_secret_missing=True, unknown_secret_files=4, unknown_home_entries=25, old_downloads=13),
+            Arrangement(wizard_secret_missing=True, unknown_secret_files=4),
             [
                 f"1. {WIZARD_STEP}",
-                "Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets, 25 Home-Einträge, 13 Downloads. " + AGENT_SORTS_IT_IN,
+                f"Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets. {AGENT_SORTS_IT_IN}",
             ],
             id="N1-one-wizard-step-in-its-own-terminal-window-and-one-count-line",
         ),
         pytest.param(
-            Arrangement(unknown_home_entries=2, old_downloads=3),
-            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 Home-Einträge, 3 Downloads. {AGENT_SORTS_IT_IN}"],
+            Arrangement(unknown_secret_files=2),
+            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 unbekannte Dateien in ~/.secrets. {AGENT_SORTS_IT_IN}"],
             id="N2-only-bookkeeping-is-nothing-for-you",
-        ),
-        pytest.param(
-            Arrangement(readme_missing=True, unknown_home_entries=2),
-            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: ~/README.md fehlt. {AGENT_SORTS_IT_IN}"],
-            id="N2-a-missing-readme-is-its-own-kind-and-no-home-entry",
         ),
         pytest.param(Arrangement(), ["Nichts zu tun."], id="N3-nothing-at-all"),
         pytest.param(
@@ -180,50 +143,25 @@ LOOSE_GITLAB = (
             [f"1. {LOOSE_GITLAB}", f"Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets. {AGENT_SORTS_IT_IN}"],
             id="N4-a-loose-mode-is-still-a-step-with-its-chmod",
         ),
-        pytest.param(
-            Arrangement(pasted_image=True),
-            ["1. home tidy --apply (beliebiges Terminal) — erwartet: Apply | 2 Funde"],
-            id="N5-tidy-clean-findings-are-one-apply-step",
-        ),
-        pytest.param(
-            Arrangement(manifest_unreadable=True, unknown_home_entries=2),
-            [UNREADABLE_SECRETS, "Sonst nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 Home-Einträge. {AGENT_SORTS_IT_IN}"],
-            id="N6-an-unreadable-source-keeps-its-line",
-        ),
-        pytest.param(
-            Arrangement(old_downloads=1, git_litter=1, unknown_home_entries=1, unknown_secret_files=1),
-            [
-                "Nichts für dich zu tun.",
-                "Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets, 1 Home-Eintrag, 1 Rest in ~/git, 1 Download. "
-                + AGENT_SORTS_IT_IN,
-            ],
-            id="N7-the-count-line-names-no-path-and-keeps-a-fixed-order-of-kinds",
-        ),
-        pytest.param(
-            Arrangement(old_codex_sessions=3),
-            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 3 alte Codex-Sitzungen. {AGENT_SORTS_IT_IN}"],
-            id="N7-old-codex-sessions-are-counted-each-although-home-tidy-sums-them-in-one-finding",
-        ),
     ],
 )
 def test_home_next_lists_only_your_steps_and_counts_the_bookkeeping_in_one_line(
-    home: Path, use_manifest, leave_pasted_image, probe: FakeProbe, capsys, cell: Arrangement, expected: list[str]
+    home: Path, use_manifest, probe: FakeProbe, capsys, cell: Arrangement, expected: list[str]
 ) -> None:
     """#41 lines 1-4: a step is what only the operator can do; every finding an agent sorts in is one count per kind, last."""
-    arrange(home, use_manifest, leave_pasted_image, cell)
+    arrange(home, use_manifest, cell)
 
     assert home_next(home, probe, capsys) == (0, expected)
 
 
 @pytest.mark.usefixtures("hook_installed")
 def test_every_open_step_names_its_command_where_to_run_it_and_what_to_expect_most_blocking_first(
-    home: Path, use_manifest, probe: FakeProbe, leave_pasted_image, capsys
+    home: Path, use_manifest, probe: FakeProbe, capsys
 ) -> None:
-    """#37 lines 1, 2 and 4: missing secrets give the wizard and the by-hand page, then the failed login, the revocation and tidying."""
+    """#37 lines 1, 2 and 4: missing secrets give the wizard and the by-hand page, then the failed login and the revocation."""
     use_manifest(TEST_MANIFEST + OPEN_ENTRIES)
     (home / ".secrets" / "gitlab").unlink()
     probe.code = 1
-    leave_pasted_image(home)
 
     code, lines = home_next(home, probe, capsys)
 
@@ -234,23 +172,7 @@ def test_every_open_step_names_its_command_where_to_run_it_and_what_to_expect_mo
         " — erwartet: home secrets zeigt gitlab vorhanden",
         "3. gh auth login --web (beliebiges Terminal) — erwartet: home secrets zeigt gh geprüft: gültig",
         "4. https://github.com/settings/tokens (Browser, github/old widerrufen) — erwartet: das Token steht dort nicht mehr",
-        "5. home tidy --apply (beliebiges Terminal) — erwartet: Apply | 2 Funde",
     ]
-
-
-@pytest.mark.usefixtures("hook_installed")
-def test_the_tidy_step_expects_what_home_tidy_apply_really_prints(home: Path, probe: FakeProbe, leave_pasted_image, capsys) -> None:
-    """#37 line 1: the expectation quotes the real output, so running the step as printed shows it."""
-    leave_pasted_image(home)
-    leave_pasted_image(home / "Bilder")
-    (home / ".stray").mkdir()
-    _code, lines = home_next(home, probe, capsys)
-    tidy_step = next(line for line in lines if "home tidy --apply" in line)
-    expected = tidy_step.split(" — erwartet: ", 1)[1]
-
-    cli.main(["tidy", "--apply"], home=home, run=RunnerWithRealGitAndQuality(), now=NOW)
-
-    assert expected in capsys.readouterr().out
 
 
 SSH_KEY_ENTRY = """
@@ -362,7 +284,7 @@ def test_an_unreadable_source_with_no_steps_left_does_not_claim_nothing_to_do(ho
 @pytest.fixture(
     params=[
         pytest.param((".config/home/config.toml", "bogus = 1\n"), id="unknown-key"),
-        pytest.param((".config/tidy-home/config.toml", "[tidy]\n"), id="left-behind-old-config"),
+        pytest.param((".config/home/config.toml", "[tidy]\n"), id="tidy-table"),
     ]
 )
 def invalid_config(request: pytest.FixtureRequest, home: Path) -> None:
@@ -373,15 +295,9 @@ def invalid_config(request: pytest.FixtureRequest, home: Path) -> None:
 
 
 @pytest.mark.usefixtures("hook_installed", "invalid_config")
-def test_an_invalid_config_is_the_tidy_step_and_home_next_still_exits_0(home: Path, probe: FakeProbe, capsys) -> None:
-    """#37 lines 4 and 7: exit 0 even with steps.
-
-    Only home tidy reads the config, so an invalid one makes its source the one unreadable step.
-    """
-    assert home_next(home, probe, capsys) == (
-        0,
-        ["1. konnte das Home (home tidy) nicht lesen; den Fehler zeigt: home tidy", "Sonst nichts zu tun."],
-    )
+def test_home_next_reads_no_config_so_an_invalid_one_changes_nothing(home: Path, probe: FakeProbe, capsys) -> None:
+    """#37 lines 4 and 7: exit 0 whatever the config file holds."""
+    assert home_next(home, probe, capsys) == (0, ["Nichts zu tun."])
 
 
 def test_it_never_shows_a_secret_value_and_changes_nothing(home: Path, use_manifest, probe: FakeProbe, capsys) -> None:

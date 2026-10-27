@@ -35,26 +35,12 @@ class Layout:
         return self.home / ".config" / "home" / "config.toml"
 
     @property
-    def legacy_config_file(self) -> Path:
-        return self.home / ".config" / "tidy-home" / "config.toml"
-
-    @property
-    def pasted_image_dirs(self) -> tuple[Path, ...]:
-        return (self.home, self.git, self.home / "Dokumente", self.home / "Schreibtisch")
-
-    @property
     def local_dir(self) -> Path:
         return self.home / ".local"
 
     @property
     def data_dir(self) -> Path:
         return self.local_dir / "share"
-
-    @property
-    def trash_dirs(self) -> tuple[Path, ...]:
-        gnome = self.data_dir / "Trash"
-        vscode_snap = sorted((self.home / "snap" / "code").glob("*/.local/share/Trash"))
-        return (gnome, *vscode_snap)
 
     @property
     def state_dir(self) -> Path:
@@ -64,10 +50,6 @@ class Layout:
     def system_step_record(self) -> Path:
         """The digest of what the system step rendered at its last verified run; the next-steps command compares it, never sudo."""
         return self.state_dir / "system-step.sha256"
-
-    @property
-    def tidy_report_file(self) -> Path:
-        return self.state_dir / "tidy-report.md"
 
     @property
     def check_report_file(self) -> Path:
@@ -115,7 +97,6 @@ class Layout:
         return self.state_dir / "secrets-report.md"
 
 
-IssueStateLookup = Callable[[Path, int], str | None]
 CommandRunner = Callable[[Sequence[str]], str | None]
 
 COMMAND_TIMEOUT_SECONDS = 120

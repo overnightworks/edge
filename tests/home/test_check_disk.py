@@ -68,14 +68,14 @@ def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_are
     assert body.count("Dienste: Handlungsbedarf") == 1
 
 
-def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, leave_pasted_image, runner, fake_disk) -> None:
+def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, runner, fake_disk) -> None:
     """#460 Decision, #340 S5: no rule of its own for a filesystem that cannot be read."""
     fake_disk.unreadable = True
-    leave_pasted_image(clean_home)
+    (clean_home / ".secrets" / "gitlab").unlink()
 
     code = home_check(clean_home, runner, disk=fake_disk)
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 3
     assert "Prüfung platform fehlgeschlagen (OSError)" in report
-    assert "| pasted-images |" in report
+    assert "| missing | gitlab |" in report

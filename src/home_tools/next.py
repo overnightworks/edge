@@ -1,7 +1,7 @@
 """`home next`: what only the operator can do right now, one numbered step each, with its exact command.
 
 It only reads, through the owners that decide each fact: the plan of `hal setup`, the view of `home secrets`
-(presence by `stat`, never a value), the hook check and the dry run of `home tidy`. Each rule's owner says who
+(presence by `stat`, never a value) and the hook check. Each rule's owner says who
 closes its findings: a step for the operator, or bookkeeping an agent sorts in, which one closing line counts.
 It changes nothing, asks for no password and needs no terminal, so agents may run it. A source it cannot read
 becomes one line, and the other sources' steps still show. Exit code: always 0, because it is a view, not a check.
@@ -16,9 +16,9 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from home_tools import hook_check, secrets_setup, secrets_view, setup, tidy_home
+from home_tools import hook_check, secrets_setup, secrets_view, setup
 from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.tidy_home import Config
+from home_tools.config import Config
 from home_tools.layout import Layout
 from home_tools.report import ClosedBy, Tally
 
@@ -163,27 +163,11 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
             yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, cleared)
 
 
-def _tidy_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Bookkeeping]:
-    """The clean findings are one `home tidy --apply`; every audit rule is bookkeeping, so its findings are counted.
-
-    What `--apply` removes takes its audit findings with it, so those are neither a step nor counted. Only home tidy reads
-    the config here, so an invalid one makes this source unreadable, and `home tidy` shows its error.
-    """
-    findings, _report = tidy_home.dry_run(layout, ports.now, tidy_home.load_config(layout).tidy, ports.run)
-    if findings.clean:
-        yield OperatorStep("home tidy --apply", ANY_TERMINAL, tidy_home.mode_summary(findings, apply=True))
-    cleaned = {finding.subject for finding in findings.clean}
-    left = [(finding, tidy_home.rule_of(finding)) for finding in findings.audit if finding.subject not in cleaned]
-    bookkeeping = ((rule.tally, finding.count) for finding, rule in left if rule.closed_by is ClosedBy.BOOKKEEPING)
-    yield from _bookkeeping((rule.tally for rule in tidy_home.ALL_RULES), bookkeeping)
-
-
-# Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit, tidying only frees space.
+# Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit.
 SOURCES = (
     Source("die Geheimnisse", _secrets_steps, "home secrets"),
     Source("den Stand von hal setup", _setup_steps, "hal setup"),
     Source("die Hook-Prüfung", _hook_steps, "home check"),
-    Source("das Home (home tidy)", _tidy_steps, "home tidy"),
 )
 
 
@@ -259,7 +243,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         "next",
         help="was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl",
         description=(
-            "Zeigt die Schritte, die nur du tun kannst, aus hal setup, home secrets, der Hook-Prüfung und home tidy,"
+            "Zeigt die Schritte, die nur du tun kannst, aus hal setup, home secrets und der Hook-Prüfung,"
             " und zählt in einer Zeile, was ein Agent einsortiert; ändert nichts."
         ),
         epilog=NEXT_EXAMPLES,
