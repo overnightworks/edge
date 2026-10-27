@@ -29,3 +29,14 @@ postgres_major = 17
 def test_apps_toml_refuses_a_document_that_is_no_table_of_named_apps(text, message):
     with pytest.raises(AppsError, match=re.escape(message)):
         parse_apps(text)
+
+
+def test_a_refused_dump_names_the_plain_values_it_allows():
+    text = f"[app.keycloak]\n{KEYCLOAK_RECORD.replace('pg_dump_custom', 'sh')}"
+
+    with pytest.raises(AppsError) as refusal:
+        parse_apps(text)
+
+    assert str(refusal.value).endswith(
+        "dump must be one of ['pg_dump_custom', 'sqlite_online_copy'], not 'sh'"
+    )

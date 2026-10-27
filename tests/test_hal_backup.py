@@ -134,7 +134,7 @@ def test_a_failed_backup_exits_3_with_an_error_line_and_a_next_line_and_frees_th
     assert outcome.exit_code == 3
     [error, next_step] = outcome.err.splitlines()
     assert error.startswith("error: ")
-    assert "fehlgeschlagen" not in error
+    assert "failed" not in error
     assert next_step.startswith("next: hal backup")
     assert machine._host_lock_is_free()
 
@@ -162,7 +162,7 @@ def test_a_failed_maintenance_or_restore_step_exits_3_with_one_error_line_and_fr
 
     assert outcome.exit_code == 3
     [line] = outcome.err.splitlines()
-    assert line.startswith(f"error: hal {command[0]}: fehlgeschlagen: ")
+    assert line.startswith(f"error: hal {command[0]}: failed: ")
     assert machine._host_lock_is_free()
 
 
@@ -200,6 +200,18 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
         "next: hal backup keycloak",
     ]
     assert "restic forget" not in machine.labels()
+
+
+def test_a_single_failed_app_is_named_on_the_error_line(edge_backup, machine):
+    machine.other_db_containers["edge"] = []
+
+    outcome = edge_backup(*declare_shipped_apps(), "backup", "keycloak")
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines() == [
+        "error: keycloak not backed up",
+        "next: hal backup keycloak",
+    ]
 
 
 def test_pre_apply_json_names_the_failed_apps_reason_on_the_error_line_and_prints_no_row(
@@ -245,7 +257,7 @@ def test_an_interrupted_unlock_keeps_its_plain_error_line_without_a_next_step(ed
     outcome = edge_backup("backup", "--unlock")
 
     assert outcome.exit_code == 130
-    assert outcome.err.splitlines() == ["error: hal backup: fehlgeschlagen: abgebrochen"]
+    assert outcome.err.splitlines() == ["error: hal backup: failed: interrupted"]
 
 
 @pytest.mark.parametrize(
@@ -425,3 +437,34 @@ def test_a_restore_test_interrupted_outside_any_app_says_only_that_it_was_interr
 
     assert outcome.exit_code == 130
     assert outcome.err.splitlines() == ["error: interrupted", "next: hal restore --test"]
+
+
+def test_init_says_the_repository_was_created(edge_backup):
+    outcome = edge_backup("backup", "--init")
+
+    assert (outcome.exit_code, outcome.out) == (0, "hal backup: repository created\n")
+
+
+def test_restore_says_which_snapshot_of_which_app_was_restored_into_the_target(
+    edge_backup, machine, home
+):
+    edge_backup("backup")
+    target = home / "restored"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(target))
+
+    snapshot = machine.snapshots[-1]["id"][:8]
+    assert outcome.exit_code == 0, outcome.err
+    assert outcome.out == f"hal restore: snapshot {snapshot} of songmaker restored into {target}\n"
+
+
+def test_a_single_app_that_is_not_proven_is_named_on_the_error_line(edge_backup, machine):
+    edge_backup("backup")
+
+    outcome = edge_backup(*declare_shipped_apps(), "restore", "--test", "keycloak")
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines() == [
+        "error: keycloak not proven",
+        "next: hal restore --test keycloak",
+    ]

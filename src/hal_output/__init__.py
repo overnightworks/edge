@@ -130,12 +130,13 @@ def printable(text: str) -> str:
     )
 
 
-def _counted(number: int, label: StrEnum) -> str:
-    text = printable(str(label))
-    if isinstance(label, Noun) and number != 1:
+def counted(count: int, noun: StrEnum) -> str:
+    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`."""
+    text = printable(str(noun))
+    if isinstance(noun, Noun) and count != 1:
         first, separator, rest = text.partition(" ")
         text = f"{first}s{separator}{rest}"
-    return f"{number} {text}"
+    return f"{count} {text}"
 
 
 def write_row(row: Row) -> None:
@@ -143,7 +144,7 @@ def write_row(row: Row) -> None:
     On a terminal only the glyph is coloured and the fact dim; a `·` row is dim as a whole."""
     stdout = sys.stdout
     subject = printable(row.subject)
-    event = printable(str(row.event)) if row.count is None else _counted(row.count, row.event)
+    event = printable(str(row.event)) if row.count is None else counted(row.count, row.event)
     fact = printable(row.fact).rstrip()
     columns = f"{subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}"
     if row.glyph is Glyph.UNCHANGED:
@@ -160,13 +161,13 @@ def write_verdict(verdict: Verdict) -> None:
     the hint. On a terminal the glyph and summary are bold in the glyph's colour, the counts and
     the run time dim; a `next:` line follows when the verdict has a next step."""
     stdout = sys.stdout
-    counted = ", ".join(_counted(number, label) for number, label in verdict.counts if number)
+    shown_counts = ", ".join(counted(number, label) for number, label in verdict.counts if number)
     hint = [printable(verdict.hint)] if verdict.hint else []
-    headline_text = printable(verdict.summary) or counted
+    headline_text = printable(verdict.summary) or shown_counts
     headline = _styled(
         f"{verdict.glyph.value} {headline_text}", verdict.glyph.verdict_style, stdout
     )
-    counts = [_styled(counted, _DIM, stdout)] if counted and verdict.summary else []
+    counts = [_styled(shown_counts, _DIM, stdout)] if shown_counts and verdict.summary else []
     details = [_styled(printable(detail), _DIM, stdout) for detail in verdict.details]
     run_time = (
         [_styled(format_duration(verdict.elapsed_seconds), _DIM, stdout)]

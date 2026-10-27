@@ -12,6 +12,7 @@ from hal_output import (
     Row,
     Tone,
     Verdict,
+    counted,
     format_duration,
     write_detail,
     write_error,
@@ -328,6 +329,16 @@ def test_a_rows_count_carries_the_plural_of_a_noun_event(
     write_row(Row(Glyph.NEEDS_YOU, "backup", Finding.ACTION, "a fact", count))
 
     assert capsys.readouterr().out == f"  ! backup          {shown:<13}  a fact\n"
+
+
+@pytest.mark.parametrize(
+    ("count", "shown"),
+    [(1, "1 area checked"), (3, "3 areas checked")],
+)
+def test_counted_puts_the_count_before_the_noun_and_pluralises_its_first_word(
+    count: int, shown: str
+) -> None:
+    assert counted(count, Finding.AREA_CHECKED) == shown
 
 
 def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next_step(
