@@ -144,6 +144,8 @@ def test_the_same_findings_on_the_next_run_say_that_nothing_new_went_out(clean_h
         ("absent", False, True, True, "1 action, 1 note", "no mail set up"),
         ("ok", True, False, True, "1 action", "notifications off"),
         ("absent", True, True, False, "1 action, 1 note", "popup failed, retries next run"),
+        ("ok", True, True, False, "1 action", "mail sent"),
+        ("failing", True, True, False, "1 action", "mail failed, retries next run"),
     ],
 )
 def test_the_verdict_says_what_happened_to_the_news(clean_home, runner, mail_stub, capsys, mail_state, session_active, notify_enabled, popup_delivers, counts, phrase) -> None:
