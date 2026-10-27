@@ -2,7 +2,7 @@
 
 An app is switched on at the newest release of its repository: a `vYYYY.MM.DD.N` tag on origin's
 default branch (`releases.py`), checked out in `~/srv/<key>` (`deploy_checkout.py`) and run by
-Compose as project `<key>` (`app_compose.py`). The plan shows tag and full sha and waits for the
+Compose as project `<key>` (`app_compose.py`). The plan shows the tag and waits for the
 operator's `yes`, which is the gate: whoever can put a tag on a merged commit offers code to run
 here (E1). Nothing of an app is read, created or printed that is a secret, and no output of
 Compose is printed (E7).
