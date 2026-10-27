@@ -28,6 +28,10 @@ COMPOSE = (
     f"services:\n  {KEY}:\n    build: .\n    restart: unless-stopped\n"
     "    healthcheck: {test: [CMD, 'true']}\n"
 )
+TWO_SERVICES = (
+    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
+    "  worker:\n    build: .\n    restart: unless-stopped\n"
+)
 FLEET = (
     f"github:\n  org: {ORGANISATION}\n\nservices:\n  {KEY}:\n"
     "    repo: {default_branch: master}\n    run: {enabled: true}\n"

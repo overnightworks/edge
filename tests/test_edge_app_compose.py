@@ -106,6 +106,7 @@ def test_the_containers_carry_their_state_and_health():
 def test_a_container_is_settled_when_it_runs_and_is_healthy_where_it_reports_health(
     state, health, settled
 ):
+    """H2 of #444: health is asked for only where the container reports it."""
     container = app_compose.AppContainer("n", "i", "web", state, health)
 
     assert container.settled is settled

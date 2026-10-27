@@ -16,6 +16,7 @@ from app_support import (
     HOSTED_COMPOSE,
     HOSTED_FLEET,
     KEY,
+    TWO_SERVICES,
     Clock,
     ScriptedDocker,
     origin_at,
@@ -220,10 +221,6 @@ def test_a_disabled_app_is_neither_fetched_nor_run(app_world):
 
 
 RELEASE = "v2026.10.22.1"
-TWO_SERVICES = (
-    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
-    "  worker:\n    build: .\n    restart: unless-stopped\n"
-)
 
 
 @dataclass
@@ -385,6 +382,7 @@ def test_hal_start_starts_the_stopped_containers_ends_the_switch_and_says_so(app
 
 
 def test_hal_start_waits_for_health_only_where_a_container_has_a_healthcheck(app_world, hal):
+    """H3 of #444: `hal start` is done once a helper without a healthcheck runs."""
     app_world.docker.without_health = frozenset({"worker"})
     app_world.origin.release(RELEASE, {"compose.yaml": TWO_SERVICES})
     assert app_world.apply()[0] == 0

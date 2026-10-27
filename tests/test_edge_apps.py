@@ -15,6 +15,7 @@ from app_support import (
     KEY,
     NOW,
     SENTINEL,
+    TWO_SERVICES,
     Clock,
     Origin,
     ScriptedDocker,
@@ -29,10 +30,6 @@ from edge.unit_plans import Fleet, Progress
 EDGE_FLEET = Fleet({"name": "edge"}, {}, ())
 
 FIRST, SECOND, THIRD = "v2026.10.22.1", "v2026.10.22.2", "v2026.10.22.3"
-TWO_SERVICES = (
-    "services:\n  web:\n    build: .\n    restart: unless-stopped\n"
-    "  worker:\n    build: .\n    restart: unless-stopped\n"
-)
 
 
 @pytest.fixture(autouse=True)
@@ -215,6 +212,7 @@ def test_a_new_tag_that_fails_health_stays_partial_with_the_record_on_the_old_on
 def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_nothing_to_change(
     world, origin, docker
 ):
+    """H1 of #444: a running helper that reports no health is settled."""
     docker.without_health = frozenset({"worker"})
 
     deploy(world, origin, FIRST, {"compose.yaml": TWO_SERVICES})
@@ -230,6 +228,7 @@ def test_a_helper_without_a_healthcheck_that_runs_is_recorded_and_the_plan_has_n
 def test_a_helper_without_a_healthcheck_that_does_not_run_leaves_the_app_unrecorded(
     world, origin, docker, helper_state
 ):
+    """H2 of #444: a helper that does not run is unsettled even without a healthcheck."""
     origin.release(FIRST, {"compose.yaml": TWO_SERVICES})
     docker.without_health = frozenset({"worker"})
     docker.during["start"] = lambda: docker.rows[1].update(State=helper_state)
