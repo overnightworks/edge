@@ -1,8 +1,0 @@
-claim_id = "5f069463ee424da18785dbb640326037"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "9d5c4ea68796d8baf96349a2fe6f4ed7c96acbbe"
-branch = "claude/issue-527-s2g1b-wizard-entry-rows"
-scope = ["docs/home.md", "quality/baseline.toml", "src/home_tools/next.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_next.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_verification.py", "tests/home/test_secrets_view.py", "tests/old_names_baseline.toml"]
-opened_commit = "549851005e6ef381a14097af0560dbade68203ae"
-whole_reason = "One surface: the wizard's per-entry result rows, the home next step that quotes them, their pins and ratchets."
