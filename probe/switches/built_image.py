@@ -216,7 +216,7 @@ class Drive:
         self.use_service(new)
         out = self.hal()
         expect(f"recreate {UNIT} (image {old} \N{RIGHTWARDS ARROW} {new})" in out, out[-400:])
-        expect(f"{UNIT} is on" in out, f"D1b the unit was not switched on: {out[-300:]}")
+        expect(f"{UNIT} is recreated" in out, f"D1b the unit was not recreated: {out[-300:]}")
         after = self.container()
         print(f"D1b after one apply: {after}")
         expect(after["state"] == "running" and after["ps_image"] == new, "D1b not running new")
