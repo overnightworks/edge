@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "a6f933d057012af3b60133366f2006cd63ab4902"
 branch = "claude/issue-528-h5m6-2-bare-hal-check-daily"
-scope = ["README.md", "docs/backup.md", "docs/design/hal-output.html", "docs/external.md", "docs/home.md", "src/hal/check_commands.py", "src/home_tools/check.py", "tests/home/test_check.py", "tests/old_names_baseline.toml", "tests/test_hal_check.py"]
+scope = ["README.md", "docs/backup.md", "docs/design/hal-output.html", "docs/external.md", "docs/home.md", "src/hal/check_commands.py", "src/home_tools/check.py", "tests/home/test_check.py", "tests/home/test_hal_check_daily.py", "tests/old_names_baseline.toml", "tests/test_hal_check.py"]
 opened_commit = "f891fc83054dc87c3996e83c6e054e9ddf804cc5"
 whole_reason = "One entry: hal's bare check becomes the daily check, with its error pairs, the step text that names it, its pins and the docs that describe a bare hal check."
