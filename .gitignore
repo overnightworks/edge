@@ -11,3 +11,7 @@ crash.log
 
 # Emergency barriers written by `edge stop` (dynamic/.gitkeep stays tracked)
 /dynamic/switch-*
+
+# The legal pages `edge apply` builds (legal/built/.gitkeep stays tracked)
+/legal/built/*
+!/legal/built/.gitkeep
