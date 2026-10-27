@@ -212,6 +212,16 @@ capability it receives verifies against `public.pem` (signature, `kid`, `aud`, t
 capability. It needs `[apps.songmaker] mcp_origin` in `service.toml`. It also refuses once anything but traefik-mcp is on songmaker's MCP network; from then on
 songmaker's own call is the proof.
 
+**The login command** is `python3 probe/agent-service/cells_12b.py --login-directory DIR` (it takes the
+probe-stack lock itself). It starts the service in a throwaway project with `DIR` bound read-only as the
+login, a stand-in issuer, the bootstrapped entrypoint and `max_parallel_cli_runs = 1` in a scratch
+`service.toml` only, and holds agent-runtime#440's A1d conditions there (`config`, U2, U3, U6, U7, U8, and I6
+against the container's own image), the S00 census of every writable mount and S1, the no-token cell. It
+refuses before starting anything unless the resolved compose configuration binds exactly that
+directory and that scratch file read-only. It prints only verdicts, counts, role names and a docker verb
+with an exit code, and an exact-secret gate over its output is the second line. Agents give it only a `mktemp`
+directory with a dummy token.
+
 **The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
 with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the
