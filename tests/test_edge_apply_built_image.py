@@ -494,10 +494,9 @@ def test_a_state_that_cannot_be_planned_is_exit_2_and_changes_nothing(
 
     exit_code, _, err = switch()
 
-    assert exit_code == 2
+    assert (exit_code, scripted.changing_verbs()) == (2, [])
     assert "cannot plan" in err
     assert cause in err
-    assert scripted.changing_verbs() == []
 
 
 def test_a_second_run_after_a_recreate_has_nothing_to_change(running, switch, scripted):
