@@ -50,10 +50,10 @@ revoke_url = "https://github.com/settings/tokens"
 """
 )
 
-# What the wizard says at the end of a walk that stores opentofu/passphrase: its stored line and its one `next:` line.
+# What the wizard says at the end of a walk that stores opentofu/passphrase: its stored line and the step after it.
 WIZARD_STEP = (
     "home secrets --setup (eigenes Terminalfenster) — erwartet: erzeugt und gespeichert: ~/.secrets/opentofu/passphrase (600);"
-    " zuletzt next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
+    " then hal apply"
 )
 NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 UNREADABLE_SECRETS = "1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets"

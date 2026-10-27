@@ -68,12 +68,6 @@ OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
 PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
 SKIPPED = "übersprungen; nichts gespeichert"
 NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
-PLAN_READER = "edge external plan"
-NEXT_STEP = "next: `uv run edge external plan` in ~/git/edge (expected: No changes)"
-PLAN_NEEDS = "next: erst {names} anlegen; `uv run edge external plan` in ~/git/edge braucht sie"
-RETRY_STEP = "next: {first}`hal setup --apply` noch einmal"
-STILL_OPEN = "noch offen: "
-BY_HAND_STEP = "von Hand offen, siehe oben: "
 UNSENDABLE_PASTE = (
     "abgelehnt: ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft, nichts gespeichert."
     " Noch einmal einfügen oder leer lassen."
@@ -536,28 +530,6 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     return Step.STORED if stored else Step.STILL_MISSING
 
 
-def next_line(still_open: list[SecretEntry], by_hand: list[SecretEntry], unblocking: list[str]) -> str:
-    """The walk's one `next:` line: what unblocks the open entries and the walk again, else the plan step or what it lacks."""
-    if still_open:
-        return RETRY_STEP.format(first="".join(f"{command}, dann " for command in unblocking))
-    plan_lacks = [entry.name for entry in by_hand if PLAN_READER in entry.read_by]
-    return PLAN_NEEDS.format(names=", ".join(plan_lacks)) if plan_lacks else NEXT_STEP
-
-
-def _ending(still_open: list[SecretEntry], by_hand: list[SecretEntry], unblocking: list[str]) -> list[str]:
-    """What is still open and what is left by hand, then the one `next:` line."""
-    lines = [STILL_OPEN + ", ".join(entry.name for entry in still_open)] if still_open else []
-    if by_hand:
-        lines.append(BY_HAND_STEP + ", ".join(entry.name for entry in by_hand))
-    return [*lines, next_line(still_open, by_hand, unblocking)]
-
-
-def _unblocking(still_open: list[SecretEntry], layout: Layout) -> list[str]:
-    """The commands that clear what the store still refuses for the open entries, each once, as the disk shows it now."""
-    refusals = (_store_refusal(layout, entry.place) for entry in still_open if entry.written_by_setup)
-    return list(dict.fromkeys(refusal.fix for refusal in refusals if refusal))
-
-
 def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step | None:
     """One live entry: kept, skipped or set up; None when it is kept or optional."""
     found = _presence_on_disk(entry, layout)
@@ -571,7 +543,7 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
 
 
 def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    """Every live entry in manifest order; the closing lines name what is still open and the plan step."""
+    """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
     by_hand: list[SecretEntry] = []
     for entry in live_entries():
@@ -580,7 +552,6 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    _say("", *_ending(still_open, by_hand, _unblocking(still_open, layout)))
     return 1 if still_open or by_hand else 0
 
 
