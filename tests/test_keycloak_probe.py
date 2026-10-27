@@ -564,7 +564,7 @@ def run_hold(
     monkeypatch.setattr(sys, "stdin", OperatorInput(after_ready))
     if while_ready_is_written:
         monkeypatch.setattr(sys, "stdout", SignallingStdout(sys.stdout, while_ready_is_written))
-    return probe.main(lambda stack_scratch: probe.Stack(stack_scratch, admin_url))
+    return probe.main(lambda path: probe.Stack(path, admin_url, write_appkit=lambda: None))
 
 
 def test_the_admin_url_is_not_part_of_the_command_line(
