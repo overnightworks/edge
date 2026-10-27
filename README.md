@@ -39,8 +39,8 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 
 `hal` is the daily door of the workstation (`bin/hal`); `hal --help` lists its commands and
 `hal <command> --help` shows one. Every command ends with an exit code and prints errors as
-`error: <what>` with, where there is a way on, one `next: <command>` line; the shared grammar is
-`src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
+`error: <what>` with, where there is a way on, one `next: <command>` line; the error form is
+`src/hal_output/__init__.py`, the exit codes are in `src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
 ([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--apply]` moves a
 renamed repository's clones on this PC ([docs/naming.md](docs/naming.md), P1).

@@ -63,7 +63,7 @@
 "tunnel/cloudflared.service.d/30-edge-global-stop.conf" = 1
 
 [edge-script]
-".github/workflows/ci.yml" = 7
+".github/workflows/ci.yml" = 6
 "docs/architecture.md" = 2
 "docs/backup.md" = 5
 "docs/naming.md" = 2

@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from hal import (
     backup_commands,
     check_commands,
-    grammar,
     legal_commands,
     rename_commands,
     setup_commands,
@@ -16,6 +15,7 @@ from hal import (
     version,
 )
 from hal.grammar import Command, ExitCode
+from hal_output import write_error
 
 DESCRIPTION = "hal, the daily door of the workstation."
 COMMANDS = (
@@ -33,7 +33,7 @@ class _Parser(argparse.ArgumentParser):
     """A usage error is one `error:`/`next:` pair that names the parser's own help, exit 2."""
 
     def error(self, message: str):
-        grammar.write_error(message, f"{self.prog} --help")
+        write_error(message, f"{self.prog} --help")
         raise SystemExit(ExitCode.USAGE)
 
     def parse_known_args(self, args=None, namespace=None):
@@ -69,5 +69,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         return ExitCode.INTERRUPTED
     except Exception as error:
         # Only the type: a message may hold a path, a token or a line of someone else's text.
-        grammar.write_error(f"unexpected error ({type(error).__name__})")
+        write_error(f"unexpected error ({type(error).__name__})")
         return ExitCode.FAILURE

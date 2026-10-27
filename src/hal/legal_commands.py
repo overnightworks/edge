@@ -7,8 +7,8 @@ from pathlib import Path
 
 from edge import compose, legal_step
 from edge.legal_section import LegalError
-from hal import grammar
 from hal.grammar import Asks, Command, ExitCode
+from hal_output import write_error
 
 
 def _configure(parser: argparse.ArgumentParser) -> None:
@@ -32,14 +32,14 @@ def _configure(parser: argparse.ArgumentParser) -> None:
 
 def _legal(arguments: argparse.Namespace) -> ExitCode:
     if not arguments.directory.is_dir():
-        grammar.write_error(f"{arguments.directory} is not a directory")
+        write_error(f"{arguments.directory} is not a directory")
         return ExitCode.FAILURE
     try:
         files = legal_step.check_app(
             arguments.repository, arguments.key, arguments.directory, date.today()
         )
     except LegalError as error:
-        grammar.write_error(str(error))
+        write_error(str(error))
         return ExitCode.FINDINGS
     print(f"legal: {arguments.key}: {', '.join(files)} are valid")
     return ExitCode.OK

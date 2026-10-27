@@ -47,6 +47,7 @@ from edge.realm.observe import (
     keys,
 )
 from edge.unit_plans import Action, Recreate, UnitPlan
+from hal_output import printable
 
 REALM_UNIT = "keycloak"
 KEYCLOAK_SERVICE = "keycloak"
@@ -335,7 +336,7 @@ def _cause(result: subprocess.CompletedProcess[str]) -> str:
     hal's own."""
     output = result.stderr + result.stdout
     errors = _ERROR_LINE.findall(output)
-    return compose.printable(errors[-1].strip()) if errors else compose.last_line(output)
+    return printable(errors[-1].strip()) if errors else compose.last_line(output)
 
 
 class Stage(StrEnum):
@@ -537,12 +538,12 @@ def _made_by_the_operator(kind: str, entity: Entity) -> bool:
 
 
 def _only_in_keycloak_line(item: OnlyInKeycloak) -> str:
-    identity = compose.printable(item.identity)
-    return f"realm: only in Keycloak: {compose.printable(item.realm)} {item.kind} {identity}"
+    identity = printable(item.identity)
+    return f"realm: only in Keycloak: {printable(item.realm)} {item.kind} {identity}"
 
 
 def _absent_realm_line(realm: str) -> str:
-    return f"realm: only in Keycloak: {compose.printable(realm)} not listed, it was not observed"
+    return f"realm: only in Keycloak: {printable(realm)} not listed, it was not observed"
 
 
 def _not_read_line() -> str:

@@ -16,7 +16,8 @@ profile (the operator's credential helper, ruling of 18.10.2026).
 from dataclasses import dataclass
 from pathlib import Path
 
-from edge import checkout, compose
+from edge import checkout
+from hal_output import printable
 
 ORIGIN = "origin"
 TAG_NAMESPACE = "refs/edge/releases/"
@@ -113,12 +114,12 @@ class AppCheckout:
         answer = self.git.call(["config", "--get", f"remote.{ORIGIN}.url"], accepted=(0, 1))
         configured = _text(answer.stdout).strip()
         if configured != self.url:
-            shown = checkout.without_credentials(compose.printable(configured)) or "nothing"
+            shown = checkout.without_credentials(printable(configured)) or "nothing"
             raise CheckoutRefused(f"has origin {shown}, not {self.url}")
 
     def _refuse_unusual_head(self) -> None:
         if (branch := self.git.branch()) is not None and self.git.has_commit():
-            raise CheckoutRefused(f"is on branch {compose.printable(branch)}, not detached")
+            raise CheckoutRefused(f"is on branch {printable(branch)}, not detached")
 
     def _refuse_changes(self) -> None:
         if not (changed := self.git.changed_paths()):
@@ -132,7 +133,7 @@ class AppCheckout:
         for line in _text(self.git.call(arguments).stdout).splitlines():
             fields = line.split(" ")
             if len(fields) != 3 or not fields[0].startswith(TAG_NAMESPACE):
-                raise checkout.GitError(f"`git for-each-ref` answered '{compose.printable(line)}'")
+                raise checkout.GitError(f"`git for-each-ref` answered '{printable(line)}'")
             names.append(fields[0].removeprefix(TAG_NAMESPACE))
         return tuple(names)
 

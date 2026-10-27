@@ -83,7 +83,7 @@ socket directory volume is tmpfs and holds nothing; remove its definition alone 
 
 ## Exception E: where the five stack commands and `hal setup` deviate
 
-`hal`'s exit codes and error form are in `src/hal/grammar.py` and `hal --help`. Until slice H5a2 of
+`hal`'s exit codes are in `src/hal/grammar.py`, its error form in `src/hal_output/__init__.py`, and `hal --help` shows both. Until slice H5a2 of
 overnightworks/edge#207 (after H5e) classifies the stack's outcomes in their owners, `hal apply`,
 `stop`, `start`, `offline` and `online` end with 0, or with 3 for every outcome of the stack that is
 not "applied or nothing to do". They deviate in exactly three ways:
