@@ -15,7 +15,6 @@ from scratch_secrets import issue_certificate
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
-ORIGIN_LINE = re.compile(r'^mcp_origin = ".*"$', re.MULTILINE)
 APP_LINE = re.compile(
     r"method=(?:initialize|notifications/initialized|tools/list|other) "
     r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
@@ -32,10 +31,11 @@ class Mode(StrEnum):
     CANARY = "canary"
 
 
-def with_app_origin(text: str) -> str:
-    """The service's configuration with the fake app's origin in place of songmaker's."""
-    expect(len(ORIGIN_LINE.findall(text)) == 1, "service.toml: no single mcp_origin")
-    return ORIGIN_LINE.sub(f'mcp_origin = "{APP_ORIGIN}"', text)
+def with_setting(text: str, key: str, value: str) -> str:
+    """The service's configuration with the one `key = "..."` line set to `value`."""
+    line = re.compile(rf'^{re.escape(key)} = ".*"$', re.MULTILINE)
+    expect(len(line.findall(text)) == 1, f"service.toml: no single {key}")
+    return line.sub(lambda _: f'{key} = "{value}"', text)
 
 
 class FakeApp:
@@ -57,7 +57,8 @@ class FakeApp:
         for name in (certificate, key):
             name.chmod(0o644)
         self.configuration.write_text(
-            with_app_origin(self.configuration.read_text(encoding="utf-8")), encoding="utf-8"
+            with_setting(self.configuration.read_text(encoding="utf-8"), "mcp_origin", APP_ORIGIN),
+            encoding="utf-8",
         )
         program = Path(__file__).resolve().with_name("app_tools.py")
         overlay = scratch / "compose.app.yaml"

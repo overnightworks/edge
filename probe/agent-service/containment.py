@@ -34,6 +34,7 @@ from fake_app import (
     APP_SERVICE,
     FakeApp,
     Mode,
+    with_setting,
 )
 from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe
 from refusals import SMOKE_SERVICE
@@ -49,7 +50,6 @@ from service_log import (
 )
 from smoke import RUN_END_EVENTS, Tokens
 
-BINARY_LINE = re.compile(r'^binary = ".*"$', re.MULTILINE)
 WRAPPER_DIRECTORY = "/opt/probe-wrapper"
 WRAPPER = f"{WRAPPER_DIRECTORY}/claude"
 PLANT_FLAG = "plant"
@@ -406,8 +406,7 @@ def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verd
 def with_containment(text: str) -> str:
     """The service's configuration with the wrapper in place of the CLI; the signing key and the
     CA come from the repository's own `[signing]` and `[mcp]`."""
-    expect(len(BINARY_LINE.findall(text)) == 1, "service.toml: no single binary")
-    return BINARY_LINE.sub(f'binary = "{WRAPPER}"', text)
+    return with_setting(text, "binary", WRAPPER)
 
 
 def wrapper_text(cli: str) -> str:
