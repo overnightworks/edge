@@ -71,7 +71,9 @@ def test_the_dry_run_lists_hopins_session_secret_as_missing_and_writes_nothing(
 ) -> None:
     output = run_packaged_setup(packaged_home, capsys)
 
-    assert "fehlt: hopin/session-secret" in output
+    assert ["!", "secrets", "missing", "hopin/session-secret"] in [
+        line.split() for line in output.splitlines()
+    ]
     assert not (packaged_home.home / HOPIN_SESSION_SECRET).exists()
 
 
