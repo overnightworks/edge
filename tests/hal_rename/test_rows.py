@@ -4,6 +4,7 @@ findings and its refusals."""
 import pytest
 from rename_support import HTTPS, make_clone, squeezed
 
+import hal_output
 from hal import cli
 from hal.grammar import ExitCode
 
@@ -51,10 +52,10 @@ def test_the_plan_rows_follow_the_order_the_steps_run(everything, through_cli):
     assert [line.split()[1] for line in out.splitlines()[:-2]] == [
         "clone",
         "worktrees",
+        "origin",
         "worktrees",
-        "origin",
-        "origin",
         "memory",
+        "origin",
         "venv",
     ]
 
@@ -88,6 +89,30 @@ def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
     assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
 
 
+def test_the_next_line_of_a_plan_is_coloured_like_every_command_on_a_terminal(
+    everything, through_cli, monkeypatch
+):
+    monkeypatch.setattr(hal_output, "_colour_on", lambda stream: True)
+
+    _, out, _ = through_cli("old", "fresh")
+
+    assert out.splitlines()[-1] == "\x1b[36mnext:\x1b[0m hal rename old fresh --apply"
+
+
+def test_an_apply_with_a_finding_ends_with_a_needs_you_verdict_that_counts_it(
+    home, repository, through_cli
+):
+    link = home / ".local" / "bin" / "tool"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(repository / "bin" / "tool")
+
+    code, out, _ = through_cli("old", "fresh", "--apply")
+
+    assert code == ExitCode.FINDINGS
+    assert out.splitlines()[-1].startswith("! renamed old → fresh · ")
+    assert out.splitlines()[-1].endswith(", 1 finding")
+
+
 def test_an_apply_prints_each_step_as_done_and_ends_with_the_count(everything, through_cli):
     code, out, err = through_cli("old", "fresh", "--apply")
 
@@ -95,10 +120,10 @@ def test_an_apply_prints_each_step_as_done_and_ends_with_the_count(everything, t
     assert out.splitlines() == [
         "✓ clone moved ~/git/old → ~/git/fresh",
         "✓ worktrees moved ~/git/old-worktrees → ~/git/fresh-worktrees",
-        "✓ worktrees repaired 2 in ~/git/fresh-worktrees",
         "✓ origin url set git@github.com:overnightworks/fresh.git",
-        "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
+        "✓ worktrees repaired 2 in ~/git/fresh-worktrees",
         "✓ memory moved Claude project memory of the clone",
+        "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
         "✓ venv uv synced in ~/git/fresh",
         "✓ renamed old → fresh · 7 steps",
     ]

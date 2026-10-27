@@ -589,9 +589,8 @@ def _process_refusals(world: World, disk: Disk, relocations: Sequence[Relocation
     ]
 
 
-def _move_step(disk: Disk, move: Move, site: Site) -> Step:
-    kinds = {site.clone: StepKind.MOVE_CLONE, site.worktrees: StepKind.MOVE_WORKTREES}
-    row = StepRow.of_move(kinds.get(move, StepKind.MOVE_MEMORY), move.source, move.target)
+def _move_step(disk: Disk, move: Move, kind: StepKind) -> Step:
+    row = StepRow.of_move(kind, move.source, move.target)
     return Step(f"move {move.source} -> {move.target}", disk.move_action(move), row)
 
 
@@ -647,18 +646,19 @@ def _sync_step(world: World, disk: Disk, sync: Sync) -> Step:
     )
 
 
+def _clone_move_kind(move: Move, site: Site) -> StepKind:
+    return StepKind.MOVE_CLONE if move == site.clone else StepKind.MOVE_WORKTREES
+
+
 def _steps(
     world: World, disk: Disk, relocations: Sequence[Relocation], deploy: Sequence[DeployCheckout]
 ) -> tuple[Step, ...]:
     """The work still to do, in the order that is safe: every move first, because a worktree
     of one clone can lie inside another clone's `-worktrees`."""
     steps = [
-        _move_step(disk, move, relocation.site)
+        _move_step(disk, move, _clone_move_kind(move, relocation.site))
         for relocation in relocations
         for move in relocation.clone_moves
-    ]
-    steps += [
-        _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
     ]
     steps += [
         _origin_step(disk, relocation.site.clone.target, relocation.new_url)
@@ -666,12 +666,15 @@ def _steps(
         if relocation.new_url
     ]
     steps += [
-        _origin_step(disk, checkout.path, checkout.new_url, deploy=True) for checkout in deploy
+        _repair_step(disk, relocation) for relocation in relocations if relocation.needs_repair
     ]
     steps += [
-        _move_step(disk, relocation.memory_move, relocation.site)
+        _move_step(disk, relocation.memory_move, StepKind.MOVE_MEMORY)
         for relocation in relocations
         if relocation.memory_move
+    ]
+    steps += [
+        _origin_step(disk, checkout.path, checkout.new_url, deploy=True) for checkout in deploy
     ]
     steps += [
         _sync_step(world, disk, sync) for relocation in relocations for sync in relocation.syncs
@@ -736,7 +739,7 @@ def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
     if halfway:
         _report_halfway(halfway, old, new)
         return ExitCode.FAILURE
-    rename_rows.write_renamed(old, new, len(plan.steps))
+    rename_rows.write_renamed(old, new, len(plan.steps), len(plan.findings))
     return ExitCode.FINDINGS if plan.findings else ExitCode.OK
 
 

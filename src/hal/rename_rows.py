@@ -12,24 +12,37 @@ from typing import Protocol
 from hal_output import Glyph, Noun, Row, Verdict, write_error, write_row, write_verdict
 
 
+class Event(StrEnum):
+    """The event column: what a step will do, what it did, and what a finding is."""
+
+    MOVE = "move"
+    MOVED = "moved"
+    REPAIR = "repair"
+    REPAIRED = "repaired"
+    SET_URL = "set url"
+    URL_SET = "url set"
+    UV_SYNC = "uv sync"
+    UV_SYNCED = "uv synced"
+    CHECK = "check"
+
+
 class StepKind(Enum):
     """A step's row subject, its event while planned and its event once done."""
 
-    MOVE_CLONE = ("clone", "move", "moved")
-    MOVE_WORKTREES = ("worktrees", "move", "moved")
-    REPAIR_WORKTREES = ("worktrees", "repair", "repaired")
-    SET_URL = ("origin", "set url", "url set")
-    MOVE_MEMORY = ("memory", "move", "moved")
-    SYNC = ("venv", "uv sync", "uv synced")
+    MOVE_CLONE = ("clone", Event.MOVE, Event.MOVED)
+    MOVE_WORKTREES = ("worktrees", Event.MOVE, Event.MOVED)
+    REPAIR_WORKTREES = ("worktrees", Event.REPAIR, Event.REPAIRED)
+    SET_URL = ("origin", Event.SET_URL, Event.URL_SET)
+    MOVE_MEMORY = ("memory", Event.MOVE, Event.MOVED)
+    SYNC = ("venv", Event.UV_SYNC, Event.UV_SYNCED)
 
 
 @dataclass(frozen=True)
 class StepRow:
-    """The row of one step; `count` is the number of things a repair covers."""
+    """The row of one step."""
 
     kind: StepKind
     fact: str
-    count: int = 0
 
     @classmethod
     def of_move(cls, kind: StepKind, source: Path, target: Path) -> "StepRow":
@@ -39,7 +52,7 @@ class StepRow:
 
     @classmethod
     def of_repair(cls, worktrees: Path, count: int) -> "StepRow":
-        return cls(StepKind.REPAIR_WORKTREES, f"in {worktrees}", count)
+        return cls(StepKind.REPAIR_WORKTREES, f"{count} in {worktrees}")
 
     @classmethod
     def of_origin(cls, url: str, deploy_checkout: Path | None) -> "StepRow":
@@ -61,12 +74,7 @@ class HasRow(Protocol):
 
 class Label(Noun):
     STEP = "step"
-
-
-def _event(word: str, count: int) -> StrEnum:
-    """The event column is a closed word plus, for a repair, how many worktrees it covers."""
-    text = f"{word} {count}" if count else word
-    return StrEnum("Event", {"EVENT": text}).EVENT
+    FINDING = "finding"
 
 
 def _home_as_tilde(text: str, home: Path) -> str:
@@ -75,13 +83,13 @@ def _home_as_tilde(text: str, home: Path) -> str:
 
 def write_done_row(row: StepRow, home: Path) -> None:
     subject, _, done = row.kind.value
-    write_row(Row(Glyph.DONE, subject, _event(done, row.count), _home_as_tilde(row.fact, home)))
+    write_row(Row(Glyph.DONE, subject, done, _home_as_tilde(row.fact, home)))
 
 
 def write_findings(findings: Sequence[Finding], home: Path) -> None:
     for finding in findings:
         sentence = _home_as_tilde(finding.sentence, home)
-        write_row(Row(Glyph.NEEDS_YOU, finding.subject, _event("check", 0), sentence))
+        write_row(Row(Glyph.NEEDS_YOU, finding.subject, Event.CHECK, sentence))
 
 
 def write_plan(
@@ -91,18 +99,20 @@ def write_plan(
     for row in (step.row for step in steps):
         subject, planned, _ = row.kind.value
         fact = _home_as_tilde(row.fact, home)
-        write_row(Row(Glyph.CHANGE, subject, _event(planned, row.count), fact))
+        write_row(Row(Glyph.CHANGE, subject, planned, fact))
     write_findings(findings, home)
-    write_verdict(Verdict(Glyph.UNCHANGED, "plan only, nothing changed", ()))
-    print(f"next: hal rename {old} {new} --apply")
+    next_step = f"hal rename {old} {new} --apply"
+    write_verdict(Verdict(Glyph.UNCHANGED, "plan only, nothing changed", (), next_step=next_step))
 
 
 def write_nothing_to_do(old: str) -> None:
     write_verdict(Verdict(Glyph.UNCHANGED, f"nothing to do, no clone of {old} to move", ()))
 
 
-def write_renamed(old: str, new: str, steps: int) -> None:
-    write_verdict(Verdict(Glyph.DONE, f"renamed {old} → {new}", ((steps, Label.STEP),)))
+def write_renamed(old: str, new: str, steps: int, findings: int) -> None:
+    glyph = Glyph.NEEDS_YOU if findings else Glyph.DONE
+    counts = ((steps, Label.STEP), (findings, Label.FINDING))
+    write_verdict(Verdict(glyph, f"renamed {old} → {new}", counts))
 
 
 def write_refusals(reasons: Sequence[str]) -> None:

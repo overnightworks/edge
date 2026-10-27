@@ -597,7 +597,7 @@ def test_a_failure_in_a_middle_step_names_it_and_what_is_done_and_not_done(
     assert code == ExitCode.FAILURE
     assert lines[0].startswith("error: stopped halfway at `origin of ")
     assert f"done: move {repository} -> {home / 'git' / 'fresh'}" in lines
-    assert any(line.startswith("done: repair 2 worktrees") for line in lines)
+    assert any(line.startswith("not done: repair 2 worktrees") for line in lines)
     assert any(line.startswith("not done: move ") and "projects" in line for line in lines)
     assert lines[-1] == "next: hal rename fresh old --apply"
     assert "! unit check ~/.config/systemd/user/old.service points into a moved clone" in squeezed(
