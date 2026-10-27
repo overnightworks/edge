@@ -38,7 +38,7 @@ def test_a_first_run_with_an_action_writes_one_report_and_sends_one_notification
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 1
-    assert report.startswith("# home check ")
+    assert report.startswith("# hal check ")
     assert "| container-restarting |" in report
     assert runner.notifications == [ACTION_TITLE]
     assert runner.notification_bodies == [f"presentator-live keeps restarting and is therefore unreachable.\nEverything in detail: {REPORT_DISPLAY}"]
@@ -50,7 +50,7 @@ def test_the_logs_check_runs_inside_home_check_and_its_finding_is_in_the_report(
     code = home_check(clean_home, runner)
 
     assert code == 1
-    assert "container-json-file | songmaker-api-1" in (clean_home / ".local/state/home/check-report.md").read_text()
+    assert "container-json-file | songmaker-api-1" in (clean_home / ".local/state/hal/check-report.md").read_text()
 
 
 def test_a_container_that_turns_unhealthy_is_reported_and_notified_and_leaves_the_report_when_fixed(clean_home, runner) -> None:
@@ -170,8 +170,8 @@ def test_a_clean_home_exits_0_without_notifying(clean_home, runner) -> None:
 
     assert code == 0
     assert runner.notifications == []
-    assert Layout(clean_home).check_report_file.read_text().startswith("# home check ")
-    assert "| 0 Funde" in Layout(clean_home).check_report_file.read_text().splitlines()[0]
+    assert Layout(clean_home).check_report_file.read_text().startswith("# hal check ")
+    assert "| 0 findings" in Layout(clean_home).check_report_file.read_text().splitlines()[0]
 
 
 def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, runner) -> None:
@@ -220,7 +220,7 @@ def test_a_note_joins_the_report_but_sends_nothing(clean_home, runner) -> None:
 
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 1
-    assert report.splitlines()[0].endswith("| 1 Fund")
+    assert report.splitlines()[0].endswith("| 1 finding")
     assert "# home secrets " in report
     assert "| missing | gitlab |" in report
     assert runner.notifications == []
@@ -333,26 +333,26 @@ def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     clean_home, runner, capsys, plant_memory: Callable[[Path], None], refusal: str
 ) -> None:
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.hal_state_dir.mkdir(parents=True, exist_ok=True)
     plant_memory(layout.check_findings_file)
 
     code = home_check(clean_home, runner)
 
     assert code == 3
     assert capsys.readouterr().err.startswith(f"home: unerwarteter Fehler ({refusal})")
-    assert layout.check_report_file.read_text().startswith("# home check ")
+    assert layout.check_report_file.read_text().startswith("# hal check ")
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
 def test_a_symlinked_findings_memory_is_refused_and_never_carried_into_the_state(clean_home, runner, tmp_path) -> None:
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.hal_state_dir.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside.json"
     outside.write_text('["platform\\tcontainer-dead\\tleaked-secret"]')
     layout.check_findings_file.symlink_to(outside)
     code = home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
-    state_files = [path for path in layout.state_dir.iterdir() if path.is_file() and not path.is_symlink()]
+    state_files = [path for path in layout.hal_state_dir.iterdir() if path.is_file() and not path.is_symlink()]
     assert code == 3
     assert state_files
     assert not any("leaked-secret" in path.read_text() for path in state_files)
@@ -473,10 +473,48 @@ def test_unchanged_actions_and_a_home_that_was_never_in_trouble_send_no_second_m
     assert len(mail_stub.sent) == 1
 
 
+def test_the_report_and_the_findings_memory_land_in_the_hal_state_directory(clean_home, runner) -> None:
+    restarting_containers(runner)
+
+    home_check(clean_home, runner)
+
+    hal_state = clean_home / ".local/state/hal"
+    assert (hal_state / "check-report.md").is_file()
+    assert (hal_state / "check-findings.txt").is_file()
+    assert not (clean_home / ".local/state/home/check-report.md").exists()
+    assert not (clean_home / ".local/state/home/check-findings.txt").exists()
+
+
+def test_a_findings_memory_left_behind_in_the_old_directory_is_ignored_so_the_run_is_news_again(clean_home, runner, mail_stub) -> None:
+    restarting_containers(runner)
+    home_check(clean_home, runner)
+    layout = Layout(clean_home)
+    old_memory = clean_home / ".local/state/home/check-findings.txt"
+    old_memory.parent.mkdir(parents=True, exist_ok=True)
+    old_memory.write_text(layout.check_findings_file.read_text())
+    layout.check_findings_file.unlink()
+
+    home_check(clean_home, runner)
+
+    assert len(mail_stub.sent) == 2
+
+
+def test_the_report_speaks_english_in_its_header_section_headers_and_table_head(clean_home, runner) -> None:
+    restarting_containers(runner)
+
+    home_check(clean_home, runner)
+
+    lines = Layout(clean_home).check_report_file.read_text().splitlines()
+    assert lines[0].endswith("| 1 finding")
+    assert lines[0].startswith("# hal check ")
+    assert any(line.startswith("# platform ") and line.endswith("| 1 finding") for line in lines)
+    assert "| Rule | Subject | Finding |" in lines
+
+
 def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
     """#390 C3 and #415 Z4: a recovered check is an action that went and is mailed."""
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.hal_state_dir.mkdir(parents=True, exist_ok=True)
     layout.check_findings_file.write_text('["platform\\tcheck-failed"]')
 
     home_check(clean_home, runner)
@@ -488,7 +526,7 @@ def test_a_recovered_check_is_mailed(clean_home, runner, mail_stub) -> None:
 def test_a_remembered_tidy_finding_is_dropped_without_a_mail_and_the_run_exits_0(clean_home, runner, mail_stub) -> None:
     """#486 D4: identities of the removed tidy check are neither news nor recovered, and the next write forgets them."""
     layout = Layout(clean_home)
-    layout.state_dir.mkdir(parents=True, exist_ok=True)
+    layout.hal_state_dir.mkdir(parents=True, exist_ok=True)
     layout.check_findings_file.write_text('["tidy\\tcheck-failed", "tidy\\tpasted-images\\tx.png"]')
 
     code = home_check(clean_home, runner)

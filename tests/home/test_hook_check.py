@@ -73,7 +73,7 @@ def test_the_report_of_a_clean_machine_says_so(machine: Machine) -> None:
     """#23 rule 1: the check has one report, which says so when nothing is found."""
     _, report = hook_check.inspect(machine.layout, run_command, NOW)
 
-    assert report.splitlines() == ["# home hook 16.10.2026 12:00 | 0 Funde", "", "Keine Funde."]
+    assert report.splitlines() == ["# hook 16.10.2026 12:00 | 0 findings", "", "No findings."]
 
 
 def fix_command(fix: str) -> list[str]:
@@ -296,7 +296,7 @@ def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_c
     code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(), probe=FakeProbe(), disk_space=FakeDisk())
     report = layout.check_report_file.read_text()
     assert code == 1
-    assert "# home hook " in report
+    assert "# hook " in report
     assert f"| quality | {layout.quality_executable} |" in report
 
     code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(broken=["worktree"]), probe=FakeProbe(), disk_space=FakeDisk())

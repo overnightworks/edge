@@ -202,7 +202,7 @@ def test_a_bare_check_runs_the_daily_check_in_a_real_process_without_reading_std
     assert result.returncode in (1, 3)
     assert "services" in result.stdout
     assert any(call.startswith("systemd-run") for call in calls)
-    assert (home / ".local/state/home/check-report.md").is_file()
+    assert (home / ".local/state/hal/check-report.md").is_file()
 
 
 @pytest.mark.parametrize("problem", list(Problem))

@@ -175,12 +175,12 @@ def collect_findings(layout: Layout, run: CommandRunner) -> list[HookFinding]:
 
 
 def render_report(findings: list[HookFinding], now: datetime) -> str:
-    lines = [f"# home hook {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
+    lines = [f"# hook {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
     if findings:
         rows = [[f.rule, f.subject, f.detail, f.fix] for f in findings]
-        lines += markdown_table(["Regel", "Gegenstand", "Befund", "Korrektur"], rows)
+        lines += markdown_table(["Rule", "Subject", "Finding", "Fix"], rows)
     else:
-        lines.append("Keine Funde.")
+        lines.append("No findings.")
     return "\n".join(lines) + "\n"
 
 
