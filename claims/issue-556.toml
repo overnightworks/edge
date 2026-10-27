@@ -1,8 +1,0 @@
-claim_id = "bb78a95fc1e54207bdf94775d1faa9bb"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "8491021d2aa1407c8672bce2f426fbf4620bb72d"
-branch = "claude/issue-556-s2g2b-2-prefilled-prose"
-scope = ["docs/home.md", "src/home_tools/secrets_setup.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_setup_rights.py"]
-opened_commit = "00d1a0d97a03d0f56cb52ef758c76086947d55db"
-whole_reason = "One display function, its new unit test, the one pinned walk line and the doc example; they change together or the pins disagree."
