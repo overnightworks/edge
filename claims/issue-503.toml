@@ -1,8 +1,0 @@
-claim_id = "9cce46d4d7d7410895a850d1b761b74f"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "9b128cfa05b7a2e133bca110a80376dc2fa868bc"
-branch = "claude/issue-503-s2g1a-wizard-ending-moves-to-setup"
-scope = ["docs/design/hal-output.html", "docs/home.md", "quality/baseline.toml", "src/home_tools/next.py", "src/home_tools/secrets_setup.py", "src/home_tools/setup.py", "tests/home/test_app_secrets.py", "tests/home/test_next.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_view.py", "tests/home/test_setup.py", "tests/old_names_baseline.toml"]
-opened_commit = "e08b8abea9a81146df67c8b747ea49aa29a96299"
-whole_reason = "One ending moves owner: the wizard's closing lines go, setup's verdict gains next: hal apply, and every pin of the removed lines changes with them."
