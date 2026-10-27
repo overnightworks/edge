@@ -330,6 +330,7 @@ def test_a_reused_cell_is_held_by_its_name_alone(probe, capsys):
 def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
     probe, capsys, hits, in_log, in_other, verdict
 ):
+    """#457 row S1 held: the cell holds only when the gate and every text are clean."""
     run = object.__new__(probe.cells.LoginProbe)
     run.held, run.failed = [], []
     run.login = SimpleNamespace(token=TOKEN)
@@ -344,6 +345,7 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
 
 
 def test_u2_expects_each_probes_own_command(probe):
+    """#457 row 11: U2 expects each probe's own command, as the A1d reuse row does."""
     bootstrap = probe.cells.BOOTSTRAP
     config = probe.cells.SERVICE_COMMAND
     login = object.__new__(probe.cells.LoginProbe)
@@ -402,10 +404,10 @@ def s00_run(probe, mounts):
         ),
         (
             {"/tmp": ((), 0), "n-0": ((("file mount", 1),), 0)},
-            ["S00 (roots)"],
+            ["S00 (roots)", "S00 (token)"],
             [],
-            ["S00 (token)"],
-            "S00 (token) NOT DRIVEN: 1 entries could not be read for the token",
+            [],
+            "S00 (token) held: 0 files",
         ),
         (
             {},

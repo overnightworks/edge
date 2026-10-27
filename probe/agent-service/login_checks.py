@@ -339,10 +339,10 @@ def token_files(mounts: Mapping[str, Mount]) -> int:
     return sum(mount.token_files for mount in mounts.values())
 
 
+# A file mount is no gap: Docker's rw file binds are root-owned 0644, unwritable for the login uid.
 UNREAD_REASONS = frozenset(
-    skip.value
-    for skip in (Skip.REPLACED, Skip.REFUSED, Skip.TOO_DEEP, Skip.VANISHED, Skip.FILE_MOUNT)
-)  # what a skip leaves unread for the token count
+    skip.value for skip in (Skip.REPLACED, Skip.REFUSED, Skip.TOO_DEEP, Skip.VANISHED)
+)
 
 
 def unread_entries(mounts: Mapping[str, Mount]) -> int:
