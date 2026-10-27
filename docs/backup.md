@@ -60,9 +60,14 @@ what the restore test asks the restored database). There is no hook language. Au
 or nothing: Keycloak is DB-only. The database container and the volume are found by their
 `com.docker.compose.*` labels; exactly one of each must match.
 
+A SQLite app declares `dump = "sqlite_online_copy"`, the compose volume `database_volume`, the
+`database_file` in that volume's root (one plain file name, no path) and the same `restore_test` table.
+That form refuses the Postgres keys and audio, and a Postgres record refuses the SQLite keys.
+
 restic runs from the official image, pinned by version and digest (stages of `src/edge_backup/images/Dockerfile`, which Dependabot keeps current), with no
 network, no capabilities and a read-only root, as your own user. Backup and restore test first check that
-the pinned restic image and each app's Postgres restore image are present; `docker image prune -a`
+the pinned restic image, each Postgres app's restore image and, for a SQLite app, the pinned `sqlite`
+stage (the python pin of `compose.yaml`) are present; `docker image prune -a`
 removes them and the next run pulls them again by digest, failing early, before staging anything. The
 password file is mounted read-only at `/run/secrets/restic-password` and handed to restic only as
 `--password-file`; neither command ever reads, prints or logs it.
@@ -132,6 +137,19 @@ app with audio, `audio/` (the volume, read live). No service is stopped or start
 crash-consistent: a file written during the scan may be missing or partial. The restore test catches
 exactly that, so such a backup never counts as good.
 
+A SQLite app's snapshot holds `db/db.sqlite3` instead of the dump, and `db/manifest.json` also names the
+`rows` of the restore test's table in that copy. The copy is a consistent online copy, not a
+crash-consistent one: a container of the pinned `sqlite` stage (no network, a read-only root, no
+capabilities, the script `src/edge_backup/sqlite_copy.py` mounted read-only) runs as the database file's
+owner with the volume mounted writable, because a WAL reader keeps its read lock in the `-shm` file. Its
+connection is read-only, so it never writes or checkpoints the database file. It takes one read snapshot
+with SQLite's backup API into memory and writes it to stdout, which becomes the staged file. It may create
+and leave an empty `-wal` and a `-shm` beside the database, owned by the database owner with the file's
+mode; the app's next last close removes them, and after a crash the copy rebuilds the `-shm` index. A
+missing file fails the backup and creates nothing. Before restic stores it, the staged copy must pass
+`PRAGMA integrity_check` with exactly `ok`: a bad copy fails in the phase `manifest` and never becomes the
+last successful backup.
+
 Keycloak's dump holds its realm signing keys, the credential hashes and the client secrets. In the
 repository it exists only encrypted. In plain text it exists in exactly three places, each mode 0700:
 the staging directory during a backup, the restore test's directory during a restore test (both removed
@@ -152,10 +170,14 @@ and checks:
   PostgreSQL quotes row values in them: a failure shows the step and the exit code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for Keycloak
   (`require_rows = true`) it is above zero;
+- for a SQLite app there is no throwaway server: a container of the `sqlite` stage mounts only the
+  restored directory, read-only, and the file passes `PRAGMA integrity_check` with exactly `ok` and its
+  table holds the manifest's `rows` (a manifest without `rows` fails; `require_rows` applies as above);
 - for an app with audio: the restored audio file count equals the manifest's, and every audio file the
   restored database references (`generations.mp3_path`) exists in the copy with a size above zero.
 
-It never touches the live database or volume. Backup and restore test stage their plaintext in
+The restore test never touches a live database or volume. (The SQLite backup's copy only reads the
+database file, as described above.) Backup and restore test stage their plaintext in
 `~/.cache/edge-backup` and remove it when they end. A run killed outright cannot, so the plaintext stays
 until the next backup or restore test, which removes it first; that sweep removes only directories a run
 marked as its own.

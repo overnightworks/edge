@@ -1,5 +1,6 @@
 """The SQLite copy script against real database files, without Docker."""
 
+import json
 import os
 import sqlite3
 import stat
@@ -8,8 +9,20 @@ import sys
 from pathlib import Path
 
 import pytest
+from edge_backup_support import (
+    SONGMAKER_TOML,
+    SQLITE_COPY,
+    SQLITE_TOML,
+    STATUS_KEYS,
+    Machine,
+    app_history,
+    declare_apps,
+)
 
 from edge_backup import sqlite_copy
+from edge_backup.apps import AppsError, SqliteDatabase, parse_apps
+from edge_backup.settings import SQLITE_IMAGE
+from edge_backup.verify import Manifest, VerificationError
 
 WRITER = """
 import sqlite3, sys
@@ -67,7 +80,9 @@ def test_a_copy_of_a_cleanly_closed_database_leaves_at_most_empty_sidecars_that_
     source = _database(tmp_path / "source.sqlite3")
     assert sorted(path.name for path in tmp_path.iterdir()) == ["source.sqlite3"]
 
-    assert sqlite_copy.check(_copied(source, tmp_path.parent / f"{tmp_path.name}.copy"), "users") == 3
+    assert (
+        sqlite_copy.check(_copied(source, tmp_path.parent / f"{tmp_path.name}.copy"), "users") == 3
+    )
 
     base = source.stat()
     left = {path.name: path.stat() for path in tmp_path.iterdir() if path != source}
@@ -147,3 +162,333 @@ def test_the_script_fails_quietly_on_a_missing_file(tmp_path):
 
     assert (result.returncode, result.stdout) == (1, b"")
     assert list(tmp_path.iterdir()) == []
+
+
+# The app record and the runner, through the scripted Docker host.
+
+SQLITE_RECORD = SQLITE_TOML.strip().splitlines()
+
+
+def _mounts(argv: list[str]) -> list[str]:
+    return [argv[i + 1] for i, argument in enumerate(argv) if argument == "--mount"]
+
+
+def _record_with(*extra_lines: str, without: str | None = None) -> str:
+    lines = [line for line in SQLITE_RECORD if without is None or not line.startswith(without)]
+    lines.insert(1, "\n".join(extra_lines))
+    return "\n".join(lines)
+
+
+def test_a_sqlite_record_parses_into_the_sqlite_variant():
+    [app] = parse_apps(SQLITE_TOML)
+
+    assert app.database == SqliteDatabase("database", "presentator.sqlite3")
+    assert (app.name, app.compose_project, app.restore_test.count_table) == (
+        "presentator",
+        "presentator",
+        "users",
+    )
+
+
+@pytest.mark.parametrize(
+    "key_line",
+    [
+        'db_user = "presentator"',
+        "postgres_major = 16",
+        'volume = "audiofiles"',
+        'db_service = "postgres"',
+    ],
+)
+def test_a_sqlite_record_refuses_the_postgres_keys(key_line):
+    with pytest.raises(AppsError, match=key_line.split(" ")[0]):
+        parse_apps(_record_with(key_line))
+
+
+def test_a_sqlite_record_refuses_audio_references():
+    toml = SQLITE_TOML + 'audio_reference_table = "generations"\n'
+
+    with pytest.raises(AppsError, match="audio_reference_table"):
+        parse_apps(toml)
+
+
+@pytest.mark.parametrize("missing", ["database_volume", "database_file"])
+def test_a_sqlite_record_needs_its_volume_and_file(missing):
+    with pytest.raises(AppsError, match=missing):
+        parse_apps(_record_with(without=missing))
+
+
+@pytest.mark.parametrize(
+    "file_name", ["", "a/b.sqlite3", "../db", ".hidden", "a?b", "a%2fb", "a#b", "x" * 129]
+)
+def test_a_sqlite_record_refuses_a_file_name_that_is_not_one_plain_segment(file_name):
+    toml = SQLITE_TOML.replace("presentator.sqlite3", file_name)
+
+    with pytest.raises(AppsError, match="database_file"):
+        parse_apps(toml)
+
+
+def test_a_postgres_record_refuses_the_sqlite_keys():
+    with pytest.raises(AppsError, match="database_file"):
+        parse_apps(
+            SONGMAKER_TOML.replace("[app.songmaker]\n", '[app.songmaker]\ndatabase_file = "x"\n')
+        )
+
+
+@pytest.fixture
+def declared(machine, home):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    return declare_apps(home, SONGMAKER_TOML + SQLITE_TOML)
+
+
+def _sqlite_apps(home) -> tuple[str, str]:
+    return declare_apps(home, SQLITE_TOML)
+
+
+def test_a_sqlite_backup_stages_the_copy_and_a_manifest_with_the_rows(
+    edge_backup, machine, home, declared
+):
+    outcome = edge_backup("backup", *declared)
+
+    assert outcome.exit_code == 0, outcome.err
+    snapshot = next(s for s in machine.snapshots if s["app"] == "presentator")
+    assert snapshot["db"]["db.sqlite3"] == SQLITE_COPY
+    assert json.loads(snapshot["db"]["manifest.json"]) == {
+        "schema": 1,
+        "app": "presentator",
+        "audio_files": None,
+        "rows": 7,
+    }
+    assert snapshot["audio"] == {}
+    assert app_history(outcome.status, "presentator")["last_snapshot_id"] == snapshot["id"]
+    assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+def test_the_copy_runs_hardened_as_the_database_owner_with_exactly_the_one_volume(
+    edge_backup, machine, home
+):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    edge_backup("backup", *_sqlite_apps(home))
+
+    argv = machine.argv_of("Kopie der SQLite-Datenbank")
+
+    assert argv[:2] == ["docker", "run"]
+    assert SQLITE_IMAGE in argv
+    for flag, value in [
+        ("--network", "none"),
+        ("--user", "1001:1001"),
+        ("--log-driver", "none"),
+        ("--cap-drop", "ALL"),
+        ("--security-opt", "no-new-privileges"),
+    ]:
+        assert argv[argv.index(flag) + 1] == value
+    assert "--read-only" in argv
+    assert [a for a in argv if a.startswith("type=volume")] == [
+        "type=volume,source=presentator_database,target=/data"
+    ]
+    assert _mounts(argv)[0].endswith("target=/sqlite_copy.py,readonly")
+    assert argv[argv.index(SQLITE_IMAGE) + 1 :] == [
+        "-I",
+        "/sqlite_copy.py",
+        "copy",
+        "/data/presentator.sqlite3",
+    ]
+
+
+def test_the_owner_is_read_through_a_read_only_mount_as_the_operator(edge_backup, machine, home):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    edge_backup("backup", *_sqlite_apps(home))
+
+    argv = machine.argv_of("Lesen des SQLite-Besitzers")
+
+    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert next(m for m in _mounts(argv) if "target=/data" in m).endswith(",readonly")
+
+
+@pytest.mark.parametrize("owner", [b"0:0\n", b"garbage\n", b""])
+def test_an_owner_that_is_root_or_unreadable_is_refused_before_any_copy(
+    edge_backup, machine, home, owner
+):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    machine.sqlite_owner = owner
+
+    outcome = edge_backup("backup", *_sqlite_apps(home))
+
+    assert outcome.exit_code == 3
+    assert "Kopie der SQLite-Datenbank" not in machine.labels()
+    assert machine.snapshots == []
+
+
+@pytest.mark.parametrize("volumes", [[], ["presentator_database", "other_database"]])
+def test_zero_or_two_matching_volumes_fail_that_app_and_the_others_still_back_up(
+    edge_backup, machine, home, volumes
+):
+    machine.other_volumes["presentator"] = volumes
+
+    outcome = edge_backup("backup", *declare_apps(home, SONGMAKER_TOML + SQLITE_TOML))
+
+    assert outcome.exit_code == 3
+    assert [s["app"] for s in machine.snapshots] == ["songmaker"]
+    assert outcome.status["failing_app"] == "presentator"
+    assert outcome.status["exit_category"] == "configuration"
+    assert "Kopie der SQLite-Datenbank" not in machine.labels()
+
+
+def test_a_missing_database_file_fails_that_app_and_the_others_still_back_up(
+    edge_backup, machine, home, declared
+):
+    machine.sqlite_copy = None
+
+    outcome = edge_backup("backup", *declared)
+
+    assert outcome.exit_code == 3
+    assert [s["app"] for s in machine.snapshots] == ["songmaker"]
+    assert (outcome.status["failing_app"], outcome.status["failing_phase"]) == (
+        "presentator",
+        "dump",
+    )
+    assert list((home / ".cache/edge-backup").iterdir()) == []
+
+
+def test_a_staged_copy_that_fails_the_check_never_reaches_restic(edge_backup, machine, home):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    machine.sqlite_copy = b"torn"
+
+    outcome = edge_backup("backup", *_sqlite_apps(home))
+
+    assert outcome.exit_code == 3
+    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
+        "manifest",
+        "verification-failed",
+    )
+    assert "restic backup" not in machine.labels()
+    assert machine.snapshots == []
+
+
+@pytest.fixture
+def backed_up(edge_backup, machine, home):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    apps = _sqlite_apps(home)
+    assert edge_backup("backup", *apps).exit_code == 0
+    return apps
+
+
+def test_the_restore_test_passes_on_the_manifests_count(edge_backup, machine, backed_up):
+    outcome = edge_backup("restore", "--test", *backed_up)
+
+    assert outcome.exit_code == 0, outcome.err
+    assert app_history(outcome.status, "presentator")["last_successful_restore_test"]
+
+
+def test_the_restore_test_mounts_no_volume_and_the_restored_directory_read_only(
+    edge_backup, machine, backed_up
+):
+    edge_backup("restore", "--test", *backed_up)
+
+    argv = machine.argv_of("Prüfung der SQLite-Kopie")
+
+    assert not [a for a in argv if a.startswith("type=volume")]
+    assert next(m for m in _mounts(argv) if "target=/data" in m).endswith(",readonly")
+    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert "Start der Wegwerf-Datenbank" not in machine.labels()
+
+
+def _change_snapshot(machine: Machine, **replacements: bytes) -> None:
+    machine.snapshots[-1]["db"].update(replacements)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        pytest.param(lambda m: _change_snapshot(m, **{"db.sqlite3": b"SQLite rows=8"}), id="count"),
+        pytest.param(
+            lambda m: _change_snapshot(
+                m, **{"manifest.json": b'{"schema": 1, "app": "presentator", "audio_files": null}'}
+            ),
+            id="no-rows-in-the-manifest",
+        ),
+        pytest.param(lambda m: _change_snapshot(m, **{"db.sqlite3": b"torn"}), id="integrity"),
+    ],
+)
+def test_the_restore_test_fails_on_a_different_count_a_missing_rows_or_a_bad_copy(
+    edge_backup, machine, backed_up, tamper
+):
+    tamper(machine)
+
+    outcome = edge_backup("restore", "--test", *backed_up)
+
+    assert outcome.exit_code == 3
+    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
+        "verify",
+        "verification-failed",
+    )
+
+
+@pytest.mark.parametrize(("require_rows", "exit_code"), [(False, 0), (True, 3)])
+def test_an_empty_table_passes_unless_the_record_requires_rows(
+    edge_backup, machine, home, require_rows, exit_code
+):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+    machine.sqlite_copy = b"SQLite rows=0"
+    toml = SQLITE_TOML + ("require_rows = true\n" if require_rows else "")
+    apps = declare_apps(home, toml)
+    assert edge_backup("backup", *apps).exit_code == 0
+
+    assert edge_backup("restore", "--test", *apps).exit_code == exit_code
+
+
+def test_a_container_that_will_not_run_is_a_failed_command_not_a_verification(
+    edge_backup, machine, backed_up
+):
+    machine.failing["Prüfung der SQLite-Kopie"] = 125
+
+    outcome = edge_backup("restore", "--test", *backed_up)
+
+    assert outcome.status["exit_category"] == "command-failed"
+
+
+@pytest.mark.parametrize(
+    ("toml", "pulled"),
+    [
+        (SONGMAKER_TOML, False),
+        (SQLITE_TOML, True),
+        (SONGMAKER_TOML + SQLITE_TOML, True),
+    ],
+)
+def test_the_sqlite_image_is_checked_and_pulled_only_for_a_sqlite_app(
+    edge_backup, machine, home, toml, pulled
+):
+    machine.missing_images = {SQLITE_IMAGE}
+    machine.other_volumes["presentator"] = ["presentator_database"]
+
+    edge_backup("backup", *declare_apps(home, toml))
+
+    assert (
+        SQLITE_IMAGE in {argv[-1] for label, argv in machine.calls if label == "docker pull"}
+    ) is pulled
+
+
+def test_the_status_of_a_sqlite_app_has_no_path_and_the_same_keys(edge_backup, machine, home):
+    machine.other_volumes["presentator"] = ["presentator_database"]
+
+    outcome = edge_backup("backup", *_sqlite_apps(home))
+
+    assert outcome.status.keys() == STATUS_KEYS
+    assert "sqlite3" not in json.dumps(outcome.status)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        '{"schema": 1, "app": "songmaker", "audio_files": 3}',
+        '{"schema": 1, "app": "songmaker", "audio_files": null, "rows": 4}',
+    ],
+)
+def test_a_schema_one_manifest_reads_with_or_without_rows(manifest):
+    parsed = Manifest.from_json(manifest)
+
+    assert Manifest.from_json(parsed.as_json()) == parsed
+
+
+def test_a_manifest_of_another_schema_is_refused():
+    with pytest.raises(VerificationError):
+        Manifest.from_json('{"schema": 2, "app": "songmaker", "audio_files": null}')

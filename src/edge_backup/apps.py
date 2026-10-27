@@ -4,6 +4,7 @@ import re
 import tomllib
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
+from typing import ClassVar
 
 PRE_APPLY_TAG = "pre-apply"
 """The restic tag of a pre-apply snapshot; no app may carry it as its own tag."""
@@ -11,17 +12,11 @@ PRE_APPLY_TAG = "pre-apply"
 # Names end up in `docker` filters, restic tags and SQL identifiers, so they stay this plain.
 _PLAIN_NAME = re.compile(r"[a-z_][a-z0-9_-]{0,62}")
 _SQL_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]{0,62}")
-_APP_KEYS = frozenset(
-    {
-        "compose_project",
-        "db_service",
-        "dump",
-        "db_user",
-        "db_name",
-        "postgres_major",
-        "restore_test",
-    }
-)
+# A SQLite file name is one path segment, so it stays inside its volume and is safe in a URI.
+_SQLITE_FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
+_COMMON_KEYS = frozenset({"compose_project", "dump", "restore_test"})
+_POSTGRES_KEYS = frozenset({"db_service", "db_user", "db_name", "postgres_major"})
+_SQLITE_KEYS = frozenset({"database_volume", "database_file"})
 _AUDIO_VOLUME_KEY = "volume"
 _AUDIO_REFERENCE_KEYS = frozenset({"audio_reference_table", "audio_reference_column"})
 _RESTORE_TEST_KEYS = frozenset({"count_table"})
@@ -34,6 +29,7 @@ class AppsError(ValueError):
 
 class DumpKind(StrEnum):
     PG_DUMP_CUSTOM = "pg_dump_custom"
+    SQLITE_ONLINE_COPY = "sqlite_online_copy"
 
 
 class PostgresMajor(IntEnum):
@@ -67,17 +63,33 @@ class RestoreTest:
 
 
 @dataclass(frozen=True)
-class App:
-    name: str
-    compose_project: str
+class PostgresDatabase:
     db_service: str
     dump: DumpKind
     db_user: str
     db_name: str
     postgres_major: PostgresMajor
-    restore_test: RestoreTest
     audio: Audio | None
     """None for a DB-only app: its snapshot holds the dump and manifest and mounts no volume."""
+
+
+@dataclass(frozen=True)
+class SqliteDatabase:
+    """A SQLite file in a compose volume, copied online; such an app has no audio."""
+
+    dump: ClassVar[DumpKind] = DumpKind.SQLITE_ONLINE_COPY
+    volume: str
+    """The compose volume (`com.docker.compose.volume`) that holds the file."""
+    file: str
+    """One path segment, in the volume's root."""
+
+
+@dataclass(frozen=True)
+class App:
+    name: str
+    compose_project: str
+    restore_test: RestoreTest
+    database: PostgresDatabase | SqliteDatabase
 
 
 def parse_apps(text: str) -> tuple[App, ...]:
@@ -101,23 +113,47 @@ def _parse_app(name: str, record: object) -> App:
         raise AppsError(f"{label}: der App-Name ist als restic-Tag {PRE_APPLY_TAG} belegt")
     if not isinstance(record, dict):
         raise AppsError(f"{label}: muss eine Tabelle sein")
-    _require_exact_keys(label, record, _APP_KEYS, optional=frozenset({_AUDIO_VOLUME_KEY}))
-    restore_test_record = _table(f"{label}.restore_test", record["restore_test"])
-    restore_test = _parse_restore_test(f"{label}.restore_test", restore_test_record)
-    dump = record["dump"]
-    if not isinstance(dump, str) or dump not in {kind.value for kind in DumpKind}:
-        raise AppsError(f"{label}: dump muss einer von {sorted(DumpKind)} sein, nicht {dump!r}")
+    dump = _dump_kind(label, record)
+    restore_test_label = f"{label}.restore_test"
+    if dump is DumpKind.SQLITE_ONLINE_COPY:
+        _require_exact_keys(label, record, _COMMON_KEYS | _SQLITE_KEYS)
+        restore_test_record = _table(restore_test_label, record["restore_test"])
+        database: PostgresDatabase | SqliteDatabase = SqliteDatabase(
+            volume=_plain(label, record, "database_volume"),
+            file=_matching(label, record, "database_file", _SQLITE_FILE_NAME),
+        )
+        audio_keys = frozenset()
+    else:
+        _require_exact_keys(
+            label,
+            record,
+            _COMMON_KEYS | _POSTGRES_KEYS,
+            optional=frozenset({_AUDIO_VOLUME_KEY}),
+        )
+        restore_test_record = _table(restore_test_label, record["restore_test"])
+        database = PostgresDatabase(
+            db_service=_plain(label, record, "db_service"),
+            dump=dump,
+            db_user=_plain(label, record, "db_user"),
+            db_name=_plain(label, record, "db_name"),
+            postgres_major=_postgres_major(label, record),
+            audio=_parse_audio(label, record, restore_test_record),
+        )
+        audio_keys = _AUDIO_REFERENCE_KEYS
     return App(
         name=name,
         compose_project=_plain(label, record, "compose_project"),
-        db_service=_plain(label, record, "db_service"),
-        dump=DumpKind(dump),
-        db_user=_plain(label, record, "db_user"),
-        db_name=_plain(label, record, "db_name"),
-        postgres_major=_postgres_major(label, record),
-        restore_test=restore_test,
-        audio=_parse_audio(label, record, restore_test_record),
+        restore_test=_parse_restore_test(restore_test_label, restore_test_record, audio_keys),
+        database=database,
     )
+
+
+def _dump_kind(label: str, record: dict) -> DumpKind:
+    """The `dump` key picks the record's variant, so it is read before the other keys."""
+    dump = record.get("dump")
+    if not isinstance(dump, str) or dump not in {kind.value for kind in DumpKind}:
+        raise AppsError(f"{label}: dump muss einer von {sorted(DumpKind)} sein, nicht {dump!r}")
+    return DumpKind(dump)
 
 
 def _postgres_major(label: str, record: dict) -> PostgresMajor:
@@ -136,9 +172,9 @@ def _table(label: str, record: object) -> dict:
     return record
 
 
-def _parse_restore_test(label: str, record: dict) -> RestoreTest:
+def _parse_restore_test(label: str, record: dict, audio_keys: frozenset[str]) -> RestoreTest:
     _require_exact_keys(
-        label, record, _RESTORE_TEST_KEYS, optional=_AUDIO_REFERENCE_KEYS | {_REQUIRE_ROWS_KEY}
+        label, record, _RESTORE_TEST_KEYS, optional=audio_keys | {_REQUIRE_ROWS_KEY}
     )
     require_rows = record.get(_REQUIRE_ROWS_KEY, False)
     if not isinstance(require_rows, bool):

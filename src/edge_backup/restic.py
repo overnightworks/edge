@@ -50,14 +50,21 @@ def app_source(app: str) -> str:
     return f"/backup/{app}"
 
 
-def container_argv(settings: Settings, *mounts: Mount, entrypoint: str | None = None) -> list[str]:
-    """`docker run` with no network, no privileges and a read-only root, as the operator's user."""
+def container_argv(
+    settings: Settings,
+    *mounts: Mount,
+    entrypoint: str | None = None,
+    image: str = RESTIC_IMAGE,
+    user: str | None = None,
+) -> list[str]:
+    """`docker run` with no network, no privileges and a read-only root, as the operator's user
+    unless the run names another."""
     argv = [
         "docker", "run", "--rm",
         "--log-driver", "none",
         "--network", "none",
         "--hostname", RESTIC_HOSTNAME,
-        "--user", f"{settings.uid}:{settings.gid}",
+        "--user", user or f"{settings.uid}:{settings.gid}",
         "--read-only",
         # restic stages pack files in TMPDIR: a tmpfs only this container's user can enter.
         "--tmpfs", f"{SCRATCH}:mode=0700,uid={settings.uid},gid={settings.gid}",
@@ -67,7 +74,7 @@ def container_argv(settings: Settings, *mounts: Mount, entrypoint: str | None = 
     argv += [argument for mount in mounts for argument in ("--mount", mount.as_argument())]
     if entrypoint is not None:
         argv += ["--entrypoint", entrypoint]
-    return [*argv, RESTIC_IMAGE]
+    return [*argv, image]
 
 
 def restic_argv(settings: Settings, command: list[str], *mounts: Mount) -> list[str]:

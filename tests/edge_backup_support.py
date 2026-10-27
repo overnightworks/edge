@@ -63,6 +63,16 @@ count_table = "songs"
 audio_reference_table = "generations"
 audio_reference_column = "mp3_path"
 """
+SQLITE_TOML = """
+[app.presentator]
+compose_project = "presentator"
+dump = "sqlite_online_copy"
+database_volume = "database"
+database_file = "presentator.sqlite3"
+[app.presentator.restore_test]
+count_table = "users"
+"""
+SQLITE_COPY = b"SQLite rows=7"
 SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 # The real boundary, kept before the `machine` fixture swaps it: exits and files go through it.
 REAL_HOST_RUN = host.run
@@ -123,6 +133,9 @@ class Machine:
     """Pinned images `docker pull` cannot fetch, as if the registry were unreachable."""
     daemon_down_polls: int = 0
     """How many `docker info` polls find the daemon not up yet; until then docker calls exit 1."""
+    sqlite_copy: bytes | None = SQLITE_COPY
+    """What the SQLite file copies to (`SQLite rows=N`); None: the file is missing."""
+    sqlite_owner: bytes = b"1001:1001\n"
     private_modes: dict[str, int] = field(default_factory=dict)
     """Modes of the staging and restore directories and files, seen while restic used them."""
 
@@ -158,6 +171,9 @@ class Machine:
             "docker volume ls": self._volumes,
             "pg_dump": self._pg_dump,
             "Zählen der Audiodateien": self._scan,
+            "Lesen des SQLite-Besitzers": self._sqlite_owner,
+            "Kopie der SQLite-Datenbank": self._sqlite_copy,
+            "Prüfung der SQLite-Kopie": self._sqlite_check,
             "restic backup": self._backup,
             "restic snapshots": self._snapshots,
             "restic restore": self._restore,
@@ -242,6 +258,23 @@ class Machine:
 
     def _pg_dump(self, argv, **_) -> bytes:
         return DUMP
+
+    def _sqlite_owner(self, argv, **_) -> bytes:
+        return self.sqlite_owner
+
+    def _sqlite_copy(self, argv, **_) -> bytes:
+        if self.sqlite_copy is None:
+            return exit_with("Kopie der SQLite-Datenbank", 1)
+        return self.sqlite_copy
+
+    def _sqlite_check(self, argv, **_) -> bytes:
+        """The script's `check` over a staged or restored directory: rows, or its exit 1."""
+        copied = Path(mount_source(argv, "/data")) / Path(argv[-2]).name
+        match re.fullmatch(rb"SQLite rows=(\d+)", copied.read_bytes()):
+            case None:
+                return exit_with("Prüfung der SQLite-Kopie", 1)
+            case found:
+                return found[1] + b"\n"
 
     def _scan(self, argv, **_) -> bytes:
         """`find /audio -type f -print0` over the live volume or a restored directory."""

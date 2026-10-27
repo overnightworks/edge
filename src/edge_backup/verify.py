@@ -7,6 +7,7 @@ from pathlib import Path
 MANIFEST_SCHEMA = 1
 MANIFEST_NAME = "manifest.json"
 DUMP_NAME = "db.dump"
+SQLITE_COPY_NAME = "db.sqlite3"
 
 
 class VerificationError(RuntimeError):
@@ -18,9 +19,13 @@ class Manifest:
     app: str
     audio_files: int | None
     """None for a DB-only app."""
+    rows: int | None = None
+    """The restore test's table count in the staged copy; only a SQLite app has one."""
 
     def as_json(self) -> str:
         document = {"schema": MANIFEST_SCHEMA, "app": self.app, "audio_files": self.audio_files}
+        if self.rows is not None:
+            document["rows"] = self.rows
         return json.dumps(document) + "\n"
 
     @classmethod
@@ -29,9 +34,11 @@ class Manifest:
             document = json.loads(text)
             if document["schema"] != MANIFEST_SCHEMA:
                 raise ValueError(document["schema"])
-            audio_files = document["audio_files"]
+            audio_files, rows = document["audio_files"], document.get("rows")
             return cls(
-                app=document["app"], audio_files=None if audio_files is None else int(audio_files)
+                app=document["app"],
+                audio_files=None if audio_files is None else int(audio_files),
+                rows=None if rows is None else int(rows),
             )
         except (ValueError, KeyError, TypeError) as error:
             raise VerificationError("das Manifest im Snapshot ist unlesbar") from error
@@ -41,6 +48,14 @@ def check_audio_count(manifest: Manifest, restored: int) -> None:
     if restored != manifest.audio_files:
         raise VerificationError(
             f"{restored} Audiodateien wiederhergestellt, das Manifest nennt {manifest.audio_files}"
+        )
+
+
+def check_rows(manifest: Manifest, restored: int) -> None:
+    """A SQLite app's restored table holds exactly the rows its staged copy held."""
+    if restored != manifest.rows:
+        raise VerificationError(
+            f"{restored} Zeilen wiederhergestellt, das Manifest nennt {manifest.rows}"
         )
 
 

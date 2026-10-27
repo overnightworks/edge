@@ -5,8 +5,8 @@ Each connection is read-only, so the script never writes or checkpoints the data
 """
 
 import sqlite3
-from contextlib import closing
 import sys
+from contextlib import closing
 from pathlib import Path
 
 

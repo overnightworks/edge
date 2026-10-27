@@ -980,24 +980,23 @@ def test_the_keycloak_record_is_db_only_on_major_17_next_to_songmakers_audio():
     """#107 T1: songmaker keeps its audio, keycloak is DB-only on major 17."""
     songmaker, keycloak = parse_apps(cli.DEFAULT_APPS.read_text())
 
-    assert (songmaker.name, songmaker.compose_project, songmaker.db_service) == (
-        "songmaker",
-        "songmaker",
-        "postgres",
+    songmaker_db, keycloak_db = songmaker.database, keycloak.database
+    assert (songmaker.name, songmaker.compose_project, songmaker_db.db_service) == (
+        ("songmaker", "songmaker", "postgres")
     )
-    assert (songmaker.dump, songmaker.postgres_major) == (
+    assert (songmaker_db.dump, songmaker_db.postgres_major) == (
         DumpKind.PG_DUMP_CUSTOM,
         PostgresMajor.SIXTEEN,
     )
-    assert songmaker.audio == Audio("audiofiles", "generations", "mp3_path")
+    assert songmaker_db.audio == Audio("audiofiles", "generations", "mp3_path")
     assert songmaker.restore_test.count_table == "songs"
-    assert (keycloak.name, keycloak.compose_project, keycloak.db_service) == (
+    assert (keycloak.name, keycloak.compose_project, keycloak_db.db_service) == (
         "keycloak",
         "edge",
         "keycloak-db",
     )
-    assert (keycloak.db_user, keycloak.db_name) == ("keycloak", "keycloak")
-    assert (keycloak.postgres_major, keycloak.audio) == (PostgresMajor.SEVENTEEN, None)
+    assert (keycloak_db.db_user, keycloak_db.db_name) == ("keycloak", "keycloak")
+    assert (keycloak_db.postgres_major, keycloak_db.audio) == (PostgresMajor.SEVENTEEN, None)
     assert keycloak.restore_test.count_table == "realm"
 
 
