@@ -62,19 +62,8 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from edge import (
-    appkit_step,
-    barrier,
-    catalog,
-    checkout,
-    compose,
-    core,
-    environment,
-    setup,
-    switches,
-    terminal,
-)
-from edge.appkit_step import AppkitError, AppkitPlan, plan_appkit
+from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
+from edge.appkit_step import AppkitError, AppkitPlan, Rename, plan_appkit
 from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
 from edge.built_image import BuiltRecreate
 from edge.legal_section import LegalError
@@ -188,7 +177,7 @@ def _plan(
     record: core.Record,
     repository: Path,
     app_runtime: AppRuntime,
-    rename: appkit_step.Rename = os.rename,
+    rename: Rename = os.rename,
 ) -> Plan:
     fleet = read_fleet(engine, repository)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
@@ -253,7 +242,7 @@ def apply_closed(
     ensure_environment: EnsureEnvironment = environment.ensure,
     realm_backup: reconcile.Backup | None = None,
     app_runtime: AppRuntime | None = None,
-    rename: appkit_step.Rename = os.rename,
+    rename: Rename = os.rename,
 ) -> int:
     if terminal.refused_without_terminal(COMMAND):
         return ApplyExit.REFUSED
@@ -356,7 +345,7 @@ def _plan_and_apply(
     waiting: Waiting,
     realm_backup: reconcile.Backup,
     app_runtime: AppRuntime,
-    rename: appkit_step.Rename,
+    rename: Rename,
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -446,11 +435,7 @@ def _ask_and_run_setups(
     for item in missing:
         print(f"{item.unit.key} is not set up: {item.check_line}")
         if not terminal.confirmed(f"run `{item.unit.setup}` now"):
-            print(
-                f"{COMMAND}: aborted, nothing changed; run `{item.unit.setup}` yourself "
-                "or answer yes",
-                file=sys.stderr,
-            )
+            _say(f"aborted, nothing changed; run `{item.unit.setup}` yourself or answer yes")
             return ApplyExit.REFUSED
     for item in missing:
         if (exit_code := _run_one_setup(item, repository, check, run_setup)) is not None:
@@ -471,17 +456,16 @@ def _run_one_setup(
         print(f"{COMMAND}: cannot start `{command}`, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     if ran.interrupted:
-        print(
-            f"\n{COMMAND}: interrupted during `{command}`; nothing switched; keys may already "
-            f"exist; run `{COMMAND}` again",
-            file=sys.stderr,
+        print(file=sys.stderr)
+        _say(
+            f"interrupted during `{command}`; nothing switched; keys may already "
+            f"exist; run `{COMMAND}` again"
         )
         return ApplyExit.REFUSED
     if ran.exit_code:
-        print(
-            f"{COMMAND}: `{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
-            f"already exist; run `{COMMAND}` again",
-            file=sys.stderr,
+        _say(
+            f"`{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
+            f"already exist; run `{COMMAND}` again"
         )
         return ApplyExit.REFUSED
     if line := setup.not_set_up_line(item.unit, repository, check):
@@ -734,6 +718,24 @@ def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> 
     return failed
 
 
+def _say_aborted(completed_setups: Sequence[str]) -> None:
+    _say(
+        f"aborted, setup of {', '.join(completed_setups)} completed; nothing switched"
+        if completed_setups
+        else "aborted, nothing changed"
+    )
+
+
+def _say_interrupted(progress: Progress, interruption: KeyboardInterrupt) -> None:
+    print(file=sys.stderr)
+    _say(
+        f"interrupted while changing {progress.unit} ({progress.step}); "
+        f"its state may be partial, run `{COMMAND}` to see"
+    )
+    for note in getattr(interruption, "__notes__", ()):
+        _say(note)
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
@@ -742,16 +744,11 @@ def _confirm_and_switch(
     completed_setups: Sequence[str],
     realm_backup: reconcile.Backup,
 ) -> int:
-    print(f"{COMMAND}: the plan")
+    _show("the plan")
     for line in planned.describe():
         print(f"  {line}")
     if not terminal.confirmed("apply exactly this plan"):
-        outcome = (
-            f"setup of {', '.join(completed_setups)} completed; nothing switched"
-            if completed_setups
-            else "nothing changed"
-        )
-        print(f"{COMMAND}: aborted, {outcome}", file=sys.stderr)
+        _say_aborted(completed_setups)
         return ApplyExit.REFUSED
     plans, read = planned.plans, planned.read
     changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
@@ -763,10 +760,7 @@ def _confirm_and_switch(
             or planned.legal.write(progress)
             or core_phase.run(engine, planned, marks, progress)
         ):
-            print(
-                f"{COMMAND}: partial, {failure}; no unit switched; run `{COMMAND}` again",
-                file=sys.stderr,
-            )
+            _say(f"partial, {failure}; no unit switched; run `{COMMAND}` again")
             return ApplyExit.REFUSED
         for plan in changes:
             if since := switch(engine, plan, progress, marks, read):
@@ -777,19 +771,10 @@ def _confirm_and_switch(
         realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
         apps_failed = _apply_apps(planned, marks, progress)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
-        print(
-            f"{COMMAND}: partial, {progress.unit}: could not {progress.step}, {error}",
-            file=sys.stderr,
-        )
+        _say(f"partial, {progress.unit}: could not {progress.step}, {error}")
         return ApplyExit.REFUSED
     except KeyboardInterrupt as interruption:
-        print(
-            f"\n{COMMAND}: interrupted while changing {progress.unit} ({progress.step}); "
-            f"its state may be partial, run `{COMMAND}` to see",
-            file=sys.stderr,
-        )
-        for note in getattr(interruption, "__notes__", ()):
-            print(f"{COMMAND}: {note}", file=sys.stderr)
+        _say_interrupted(progress, interruption)
         return ApplyExit.REFUSED
     return _report_switched(changes, withheld, mismatched, realm_failed or apps_failed)
 
@@ -801,16 +786,12 @@ def _report_switched(
     later_steps_failed: bool,
 ) -> int:
     for unit, since in withheld.items():
-        print(
-            f"{COMMAND}: partial, {unit} was switched off meanwhile "
-            f"(since {switches.describe_since(since)}); not started",
-            file=sys.stderr,
+        _say(
+            f"partial, {unit} was switched off meanwhile "
+            f"(since {switches.describe_since(since)}); not started"
         )
     for plan in mismatched:
-        print(
-            f"{COMMAND}: partial, {plan.unit.key} is not {plan.action} after the change",
-            file=sys.stderr,
-        )
+        _say(f"partial, {plan.unit.key} is not {plan.action} after the change")
     if mismatched or withheld or later_steps_failed:
         return ApplyExit.REFUSED
     for plan in changes:
