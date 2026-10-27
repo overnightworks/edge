@@ -211,7 +211,7 @@ def run_command(
         print("waiting for the probe lock", flush=True)
 
     try:
-        parent = scratch_parent(login, environment)
+        parent = scratch_parent(login, lock, environment)
         with probe_lock(lock, announce):
             start_time_bound(COMMAND_SECONDS)
             scratch = Path(tempfile.mkdtemp(prefix="login-probe-", dir=parent)).resolve()

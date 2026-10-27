@@ -49,6 +49,7 @@ class Refusal(StrEnum):
     WRITABLE_ROOT = "the service's root file system is not read-only"
     LOG_DRIVER = "a started service does not log through the local driver"
     SCRATCH_IN_LOGIN = "the scratch directory would lie inside the login directory"
+    LOCK_IN_LOGIN = "the probe lock would be created inside the login directory"
 
 
 class LoginFailed(ProbeFailed):
@@ -247,12 +248,16 @@ def begin_teardown() -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
-def scratch_parent(login: Login, environment: Mapping[str, str]) -> Path:
-    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that lies in the login
-    directory, because making scratch there would write into it."""
+def scratch_parent(login: Login, lock: Path, environment: Mapping[str, str]) -> Path:
+    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that, or the directory
+    the probe lock is opened in, lies in the login directory, because making either there would
+    write into it."""
     parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch
     if login.directory in (parent, *parent.parents):
         raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
+    lock_parent = lock.parent.resolve()
+    if login.directory in (lock_parent, *lock_parent.parents):
+        raise LoginFailed(Refusal.LOCK_IN_LOGIN)
     return parent
 
 

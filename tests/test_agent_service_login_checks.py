@@ -283,3 +283,33 @@ def test_token_files_are_summed_over_every_mount(probe):
     """#457 row 10: token files are summed over every mount."""
     mounts = {"/tmp": mount(probe, token_files=1), "n-0": mount(probe, token_files=2)}
     assert probe.checks.token_files(mounts) == 3
+
+
+# --- the setup of the command -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("lock_in", "tmpdir_in", "reason"),
+    [
+        ("", "elsewhere", "LOCK_IN_LOGIN"),
+        ("inner", "elsewhere", "LOCK_IN_LOGIN"),
+        ("", "", "SCRATCH_IN_LOGIN"),
+        ("elsewhere", "inner", "SCRATCH_IN_LOGIN"),
+    ],
+    ids=["lock in the login directory", "lock below it", "scratch in it", "scratch below it"],
+)
+def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
+    probe, tmp_path, lock_in, tmpdir_in, reason
+):
+    """#457 row 2: nothing is created inside the login directory, and the reason names no path."""
+    directory = make_login(tmp_path / "login")
+    (directory / "inner").mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    login = probe.checks.read_login(str(directory))
+    lock_parent = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path}[lock_in]
+    scratch = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path / "elsewhere"}[
+        tmpdir_in
+    ]
+    with pytest.raises(probe.checks.LoginFailed) as raised:
+        probe.checks.scratch_parent(login, lock_parent / "lock", {"TMPDIR": str(scratch)})
+    assert str(raised.value) == probe.checks.Refusal[reason]
