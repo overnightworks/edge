@@ -1,0 +1,8 @@
+claim_id = "4fa8f57d1b0a4967bcb7dc34de1031e6"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "dbded490ab5b5916a54496ee509ba2c8185ec778"
+branch = "claude/issue-540-s7e-2-backup-labels-english"
+scope = ["src/edge_backup/docker.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_edge_backup_files.py", "tests/test_edge_backup_sqlite.py"]
+opened_commit = "332285ff07637e1262fd1e379ff517355bd887eb"
+whole_reason = "One production owner of the labels and the four test modules that copy them; the strings and their copies change together."
