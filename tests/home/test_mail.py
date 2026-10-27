@@ -9,7 +9,7 @@ import pytest
 
 from home_tools.secrets_view import MANIFEST_PATH, SecretKind, load_manifest
 from home_tools.mail import AccountInvalid, MailAccount, load_account, sendmail_command
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 ACCOUNT = MailAccount(host="smtp.example.test", port=587, user="home@example.test", to="me@example.test")
 VALID_ACCOUNT_TEXT = 'host = "smtp.example.test"\nport = 587\nuser = "home@example.test"\nto = "me@example.test"\n'

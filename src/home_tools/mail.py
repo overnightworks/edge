@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 ACCOUNT_KEYS = frozenset({"host", "port", "user", "to"})
 IMPLICIT_TLS_PORT = 465

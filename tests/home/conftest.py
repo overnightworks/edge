@@ -16,7 +16,7 @@ import pytest
 from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
-from home_tools.tidy_home import Layout, run_command
+from home_tools.layout import Layout, run_command
 from home_tools.tunnel_config import TUNNEL_ID_PLACEHOLDER
 
 DAY_SECONDS = 24 * 60 * 60

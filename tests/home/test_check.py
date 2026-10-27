@@ -13,7 +13,7 @@ import pytest
 from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, FakeProbe, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
 
 from home_tools import check, mail
-from home_tools.tidy_home import Layout, run_command
+from home_tools.layout import Layout, run_command
 
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")

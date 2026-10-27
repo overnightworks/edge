@@ -6,7 +6,7 @@ import pytest
 from conftest import FakeDisk
 
 from home_tools import cli
-from home_tools.tidy_home import Layout
+from home_tools.layout import Layout
 
 
 def test_home_tidy_reports_findings_with_exit_1_and_leaves_the_notification_to_check(clean_home, leave_pasted_image, runner) -> None:

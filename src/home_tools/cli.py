@@ -14,7 +14,8 @@ from home_tools import next as next_steps
 from home_tools.platform_check import DiskSpaceReader, read_disk_space
 from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
-from home_tools.tidy_home import CommandRunner, Config, Layout, load_config, run_command
+from home_tools.tidy_home import Config, load_config
+from home_tools.layout import CommandRunner, Layout, run_command
 
 
 def edge_units_directory(layout: Layout) -> Path:
