@@ -39,6 +39,7 @@ services:
     run:
       enabled: true
       setup: agent-service/setup
+      build: agent-service/image
   keycloak:
     run:
       enabled: true

@@ -9,7 +9,7 @@
 [file_lines]
 "probe/keycloak/probe.py" = 2839
 "probe/step-ca/probe.py" = 1052
-"probe/switches/probe.py" = 812
+"probe/switches/probe.py" = 787
 "src/home_tools/secrets_view.py" = 855
 "tests/home/test_secrets_setup.py" = 913
 "tests/home/test_secrets_view.py" = 1089

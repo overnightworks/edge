@@ -172,8 +172,9 @@ class ScriptedCompose:
     labels: dict[str, str | None] = field(default_factory=dict)  # service -> its container's
     # service -> the image its container was created from; None: its ps line names no `Image`
     images: dict[str, str | None] = field(default_factory=dict)
-    # reference -> the id Docker gives it now, if not the one of OTHER_LABELS' image label
-    image_ids: dict[str, str] = field(default_factory=dict)
+    # reference -> the id Docker gives it now, if not the one of OTHER_LABELS' image label; "" is a
+    # tag that is not built (`image ls` answers nothing), None a lookup that exits 1
+    image_ids: dict[str, str | None] = field(default_factory=dict)
     hash_answer: str | None = None  # what `config --hash` answers instead of the hashes
     containers_created: int = 0
     volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
@@ -196,10 +197,9 @@ class ScriptedCompose:
     def run(
         self, command: list[str], _timeout: int, _stdin: str | None = None
     ) -> subprocess.CompletedProcess[str]:
-        if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(
-                command, 0, self.image_ids.get(command[-1], LABELLED_IMAGE_ID), ""
-            )
+        if command[:2] == ["docker", "image"]:
+            image_id = self.image_ids.get(command[-1].removeprefix("reference="), LABELLED_IMAGE_ID)
+            return subprocess.CompletedProcess(command, int(image_id is None), image_id or "", "")
         self.calls.append(command[PROJECT_PREFIX:])
         _, profile, verb, *arguments = command[PROJECT_PREFIX:]
         refused = NEVER_RUN & {verb, *arguments}
@@ -920,11 +920,11 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
 
 @pytest.fixture
 def agent_service_unit(repository, scripted) -> None:
-    """The repository's own `agent-service` unit of fleet.yaml and its compose.yaml, with the
-    other units off (their containers and setups are not the question here)."""
+    """The repository's `agent-service` unit and compose.yaml, the other units off."""
     real = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["services"]["agent-service"]
     fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
     write_fleet(repository, yaml.safe_dump(fleet))
+    shutil.copytree(REPOSITORY / "agent-service" / "image", repository / "agent-service" / "image")
     services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
     for name, definition in services.items():
         if "agent-service" in definition.get("profiles", ()):
@@ -4196,8 +4196,8 @@ def kept_line(service: str, running: str, configured: str, unit: str = "step-ca"
     """#91 rule 4: the wording of a kept image."""
     return (
         f"{unit}: {service} runs {running}, compose.yaml names {configured}; edge apply never "
-        "swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; "
-        "Keycloak with a dump first, K11b)"
+        "swaps the image of a running unit it does not build, so it keeps running; the upgrade "
+        "is yours (block 6; Keycloak with a dump first, K11b)"
     )
 
 
