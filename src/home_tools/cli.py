@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="home",
         add_help=False,
-        description="Hält das Home in der Form, die ~/README.md beschreibt.",
+        description="Zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
