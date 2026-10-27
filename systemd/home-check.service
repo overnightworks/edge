@@ -1,8 +1,0 @@
-[Unit]
-Description=home check: berichtet, was am PC und beim Geheimnis-Manifest nicht stimmt; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet
-
-[Service]
-Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/home check
-# Exit 1 means "findings exist": news, not a failure. Exit 2 (invalid config) and 3 (unexpected error) still fail the unit.
-SuccessExitStatus=1
