@@ -1,6 +1,6 @@
 """The keycloak probe's Admin: it mints a fresh token once when Keycloak answers 401."""
 
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -36,6 +36,7 @@ def admin_minting(probe: ModuleType) -> tuple[Any, list[int]]:
 def test_expired_token_is_replaced_once_and_the_call_is_repeated(
     keycloak_probe: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """T1 of #456: a 401 mints one fresh token and repeats the call with it."""
     bearers = answering(keycloak_probe, monkeypatch, [401, 200])
     admin, minted = admin_minting(keycloak_probe)
     assert minted == [1]
@@ -50,6 +51,7 @@ def test_expired_token_is_replaced_once_and_the_call_is_repeated(
 def test_a_401_after_the_fresh_token_stays_the_failure(
     keycloak_probe: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """T2 of #456: a 401 after the fresh token is the failure, with no third mint."""
     answering(keycloak_probe, monkeypatch, [401] * 6)
     admin, minted = admin_minting(keycloak_probe)
 
@@ -59,3 +61,26 @@ def test_a_401_after_the_fresh_token_stays_the_failure(
         admin.get("/realm")
     with pytest.raises(keycloak_probe.ProbeFailure, match="DELETE /realm answered 401"):
         admin.must("DELETE", "/realm")
+
+
+def test_every_admin_mint_is_kept_as_a_secret_under_its_own_name(
+    keycloak_probe: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invariant of #456: each admin token is registered for proof 7, the renewed one too."""
+    minted = iter(["first-access", "second-access"])
+    answers = iter([401, 200])
+
+    def http(_method: str, url: str, **_kwargs: Any) -> Any:
+        if url == "http://keycloak/token":
+            return keycloak_probe.Response(
+                200, {}, f'{{"access_token": "{next(minted)}"}}'.encode()
+            )
+        return keycloak_probe.Response(next(answers), {}, b"{}")
+
+    monkeypatch.setattr(keycloak_probe, "http", http)
+    stack = SimpleNamespace(master_token_url="http://keycloak/token", admin_url="http://keycloak")
+    probe = keycloak_probe.Probe(stack)
+
+    assert probe.admin_with_client("s").call("GET", "/realm").status == 200
+
+    assert sorted(probe.secret_values.values()) == ["first-access", "second-access"]
