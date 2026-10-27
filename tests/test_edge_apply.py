@@ -458,10 +458,6 @@ def docker_group(name: str) -> SimpleNamespace:
     return SimpleNamespace(gr_gid=DOCKER_GID)
 
 
-def without_docker_group(name: str) -> SimpleNamespace:
-    raise KeyError(name)
-
-
 def writing_environment(group_lookup=docker_group) -> apply.EnsureEnvironment:
     """The real `.env` step on a PC with that group lookup."""
     return partial(environment.ensure, group_lookup=group_lookup)
@@ -472,9 +468,9 @@ def trusted_environment(_tree: Path) -> None:
 
 
 @pytest.fixture
-def repository(home: Path) -> Path:
+def repository(home: Path, seed_appkit) -> Path:
     """The live checkout `$HOME/git/edge` of the test's own HOME (#79 cell 1)."""
-    return edge_tree(home / "git" / "edge")
+    return seed_appkit(edge_tree(home / "git" / "edge"))
 
 
 @dataclass
@@ -597,8 +593,7 @@ def switch(
     repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
     scripted_git, monkeypatch, realm_backup,
 ):  # fmt: skip
-    """Run `edge apply --closed` from the live checkout, a clean `main` (or from `tree`, with
-    `git`); the operator types `yes` at a terminal unless told otherwise."""
+    """Run `edge apply --closed` from the live checkout (or `tree`); `yes` at a terminal."""
 
     def run(
         answer: str = "yes",
@@ -612,6 +607,7 @@ def switch(
         ensure_environment: apply.EnsureEnvironment = trusted_environment,
         installed_backup: bool = False,
         app_runtime: apps.AppRuntime | None = None,
+        rename=os.rename,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -630,6 +626,7 @@ def switch(
             ensure_environment,
             None if installed_backup else realm_backup,
             app_runtime,
+            rename,
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 
@@ -1464,7 +1461,9 @@ def test_without_a_docker_group_it_refuses_and_writes_nothing(switch, repository
     """#136 E7: exit 2 naming the group."""
     (repository / ".env").unlink()
 
-    exit_code, _, err = switch(ensure_environment=writing_environment(without_docker_group))
+    no_docker_group = {}.__getitem__  # every lookup raises KeyError
+
+    exit_code, _, err = switch(ensure_environment=writing_environment(no_docker_group))
 
     assert exit_code == 2
     assert "`docker` group" in err
