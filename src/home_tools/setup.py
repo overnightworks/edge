@@ -319,6 +319,8 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
             " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
+            " The system step makes the journal Docker's default log driver and restarts Docker while its default"
+            " driver is not journald: every container stops meanwhile, and one without a restart policy stays down."
             " Last it walks you through every missing secret at the terminal, never showing a value."
         ),
         epilog=SETUP_EXAMPLES,

@@ -15,6 +15,13 @@
 # `apt install rsyslog`, puts the package back; the deleted lines stay gone, and a purge discards a conffile of
 # rsyslog that was modified.
 #
+# It merges `"log-driver": "journald"` into /etc/docker/daemon.json (every other key stays; the file is checked with
+# `dockerd --validate` and, when it changes, backed up with edge's files) and restarts Docker while `docker info` does
+# not say `docker_log_driver`: with live-restore off, every container stops meanwhile and one without a restart policy
+# stays down. A malformed file, a `log-opts` key, another `log-driver` or a Docker that does not answer is refused before
+# anything is written. When the restart fails or Docker does not say journald, the file is written back without
+# `log-driver` and Docker restarted again; that is the last task, so edge's other files are already in place.
+#
 # It also installs msmtp and ca-certificates (never msmtp-mta) once the refusals above passed, for the mail of `home check`.
 #
 # The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
@@ -37,6 +44,7 @@
     agent_home: "/home/{{ agent_user }}"
     agent_nologin: /usr/sbin/nologin
     cron_deny: /etc/cron.deny
+    docker_config_path: /etc/docker/daemon.json
     retention_units:
       - dest: "{{ unit_dir }}/hal-journal-retention.service"
         content: |
@@ -206,6 +214,57 @@
         fail_msg: "{{ agent_user }} exists with {{ agent_foreign_shape | join(', ') }}; nothing was written"
         quiet: true
 
+    - name: Look at Docker's daemon.json
+      ansible.builtin.stat:
+        path: "{{ docker_config_path }}"
+      register: docker_config_stat
+
+    - name: Read Docker's daemon.json
+      ansible.builtin.slurp:
+        src: "{{ docker_config_path }}"
+      register: docker_config_file
+      when: docker_config_stat.stat.exists
+
+    # An absent file is `{}`; an empty one is malformed. The rescue names the file, which `from_json` would not.
+    - name: Parse Docker's daemon.json
+      block:
+        - name: Take the settings in daemon.json
+          ansible.builtin.set_fact:
+            docker_config: "{{ (docker_config_file.content | b64decode | from_json) if docker_config_stat.stat.exists else {} }}"
+      rescue:
+        - name: Refuse a daemon.json that is not JSON
+          ansible.builtin.fail:
+            msg: "{{ docker_config_path }} is not valid JSON; nothing was written"
+
+    - name: Refuse before writing anything when daemon.json cannot take the journal as its default
+      ansible.builtin.assert:
+        that:
+          - docker_config is mapping
+          - "'log-opts' not in docker_config"
+          - docker_config['log-driver'] | default(docker_log_driver) == docker_log_driver
+        fail_msg: >-
+          {{ docker_config_path }} is not a JSON object, or carries `log-opts` or a `log-driver` other than
+          {{ docker_log_driver }}; nothing was written
+        quiet: true
+
+    - name: Merge the journal into the settings, keeping every other key
+      ansible.builtin.set_fact:
+        docker_config_merged: "{{ docker_config | combine({'log-driver': docker_log_driver}) | to_nice_json(indent=4) }}"
+
+    - name: Read the default log driver Docker reports
+      ansible.builtin.command:
+        argv: [docker, info, --format, "{% raw %}{{.LoggingDriver}}{% endraw %}"]
+      register: docker_driver
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse before writing anything when Docker does not answer
+      ansible.builtin.assert:
+        that: docker_driver.rc | default(1) == 0
+        fail_msg: "Docker does not answer `docker info`; nothing was written"
+        quiet: true
+
     # `home check` mails its news through msmtp, which needs the system's trust store for the server certificate.
     # Recommends are off: msmtp-mta (Postfix's replacement as the system mailer) is only suggested and must stay out.
     - name: Install msmtp and the certificate authorities it checks the mail server against
@@ -247,7 +306,7 @@
     - name: Look at what is in place
       ansible.builtin.stat:
         path: "{{ item.dest }}"
-      loop: "{{ rendered_files + [{'dest': retired_drop_in}] }}"
+      loop: "{{ rendered_files + [{'dest': retired_drop_in}, {'dest': docker_config_path, 'content': docker_config_merged}] }}"
       loop_control:
         label: "{{ item.dest }}"
       register: in_place
@@ -419,6 +478,64 @@
         enabled: true
         state: started
       when: not (ansible_check_mode and retention_written.changed)
+
+    # Sorted keys put `log-driver` before `runtimes`, so the diff of the PC's file is one new line.
+    - name: Write Docker's daemon.json, root-owned, mode 644
+      ansible.builtin.copy:
+        content: "{{ docker_config_merged }}"
+        dest: "{{ docker_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"  # NOSONAR ansible:S2612 dockerd and the docker CLI read this as their own users; root-owned 644 is the ruled mode
+        validate: dockerd --validate --config-file %s
+
+    # The trigger is the driver Docker reports, not a changed file, so a run interrupted after the write restarts next time.
+    # The rescue is one rule for every state of the file: without `log-driver`, JSON-equal to the file before this play wrote it.
+    - name: Restart Docker until it reports the journal as its default log driver
+      when: docker_driver.stdout | trim != docker_log_driver
+      block:
+        - name: Restart Docker
+          ansible.builtin.systemd_service:
+            name: docker
+            state: restarted
+
+        - name: Read the default log driver Docker reports now
+          ansible.builtin.command:
+            argv: [docker, info, --format, "{% raw %}{{.LoggingDriver}}{% endraw %}"]
+          register: docker_driver_after
+          changed_when: false
+          when: not ansible_check_mode
+
+        - name: Fail unless Docker reports the journal now
+          ansible.builtin.assert:
+            that: docker_driver_after.stdout | trim == docker_log_driver
+            fail_msg: "Docker reports {{ docker_driver_after.stdout | trim }}, not {{ docker_log_driver }}"
+            quiet: true
+          when: not ansible_check_mode
+      rescue:
+        - name: Write daemon.json back without log-driver
+          ansible.builtin.copy:
+            content: "{{ docker_config | dict2items | rejectattr('key', 'equalto', 'log-driver') | list | items2dict | to_nice_json(indent=4) }}"
+            dest: "{{ docker_config_path }}"
+            owner: root
+            group: root
+            mode: "0644"  # NOSONAR ansible:S2612 dockerd and the docker CLI read this as their own users; root-owned 644 is the ruled mode
+
+        - name: Clear the unit's start limit
+          ansible.builtin.command:
+            argv: [systemctl, reset-failed, docker]
+          changed_when: true
+
+        - name: Restart Docker without log-driver
+          ansible.builtin.systemd_service:
+            name: docker
+            state: restarted
+
+        - name: Fail again, with daemon.json back as it was
+          ansible.builtin.fail:
+            msg: >-
+              Docker did not come up reporting {{ docker_log_driver }}; {{ docker_config_path }} was written back without
+              `log-driver` and Docker restarted again
 
   handlers:
     - name: Reload systemd
