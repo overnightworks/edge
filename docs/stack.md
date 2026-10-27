@@ -29,8 +29,8 @@ and `edge apply --closed` writes it again.
   the live checkout by `git -C ~/git/edge pull --ff-only` (until S2.4c); a local edit leaves the tree
   dirty and the apply refuses it, naming the path.
 - **The legal unit.** `legal` (nginx, profile `legal`, switched by `services.legal.run.enabled`) serves
-  the imprint, the privacy notice and the terms from `legal/built/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and the
-  login theme's fonts (one copy) answer under `/_rechtliches/`, every other path with 404. The catalog gives
+  the imprint, the privacy notice and the terms from `legal/built/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and appkit's
+  tokens and fonts (`legal/assets/appkit-<version>/`, which `hal apply` writes from the installed appkit) answer under `/_rechtliches/`, every other path with 404. The catalog gives
   it the apex as its host, which the Cloudflare redirect leaves to it for the three pages, `/favicon.ico` (answered 404) and
   `/_rechtliches/` (`cloudflare.redirect.serve`). The pages are built by `hal apply` from `legal/frame` and `legal/sections` (the plan names each page that is
   new or changes) and go live when it has written them; before the first build they answer 404. The stylesheet goes live once the live checkout is
