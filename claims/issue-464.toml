@@ -1,0 +1,8 @@
+claim_id = "5d5ea33abb2441a687c596ba2ef1a7bb"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ee5e4f5b2bc63fa65afdbb2409d8261470b427d6"
+branch = "claude/issue-464-fake-app-owner"
+scope = ["docs/agent-service.md", "probe/agent-service/containment.py", "probe/agent-service/fake_app.py", "probe/agent-service/service_log.py", "probe/agent-service/signer.py", "sonar-project.properties", "tests/test_agent_service_containment.py"]
+opened_commit = "52e70fe01fb9b8de4b39e5d1e2169eda509c2ed6"
+whole_reason = "The fake app's move, its one user and the two C5 fold-ins in the same file must land together, or containment.py would not import; the docs sentence, the Sonar entry and the one test pin keep that run true."
