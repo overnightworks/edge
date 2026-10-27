@@ -1,10 +1,12 @@
 """`hal check` driven through `hal.cli.main`, with a fake `docker` and `ss` first on PATH."""
 
 import errno
+import io
 import json
 import os
 import shlex
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -351,26 +353,29 @@ def test_an_interrupt_before_the_output_exits_130_with_stdout_empty(run_hosts, i
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 def test_an_interrupt_while_the_output_is_written_leaves_the_whole_document_and_the_verdict(
-    hosts_home, monkeypatch, capsys, interrupt
+    hosts_home, monkeypatch, interrupt
 ):
-    from hal import check_commands
+    class InterruptedHalfway(io.StringIO):
+        delivered = False
 
-    real_print = print
+        def write(self, text: str) -> int:
+            if self.delivered or len(text) < 2:
+                return super().write(text)
+            self.delivered = True
+            middle = len(text) // 2
+            super().write(text[:middle])
+            os.kill(os.getpid(), interrupt)
+            return middle + super().write(text[middle:])
 
-    def interrupted_halfway(text: str, *rest, **keywords) -> None:
-        middle = len(text) // 2
-        real_print(text[:middle], end="")
-        os.kill(os.getpid(), interrupt)
-        real_print(text[middle:])
-
-    monkeypatch.setattr(check_commands, "print", interrupted_halfway, raising=False)
+    stdout = InterruptedHalfway()
+    monkeypatch.setattr(sys, "stdout", stdout)
     monkeypatch.setattr(cloudflare_read, "CloudflareClient", FakeCloudflare(FINDING_SNAPSHOT))
     monkeypatch.setattr(host_probe, "HttpProber", AnsweringProber())
 
     exit_code = cli.main(["check", "hosts", "--json"])
 
     assert exit_code == 1
-    assert len(json.loads(capsys.readouterr().out)["hosts"]) == 2
+    assert len(json.loads(stdout.getvalue())["hosts"]) == 2
 
 
 def test_the_allow_list_belongs_to_the_exposure_area(run_hosts):
