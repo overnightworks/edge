@@ -310,6 +310,21 @@ def test_a_switched_off_agent_service_stays_stopped_and_is_not_recreated(
     assert scripted.changing_verbs() == []
 
 
+def test_a_switched_off_agent_service_with_a_running_container_gets_no_kept_image_line(
+    running, switch, scripted, state
+):
+    """E5: the plan shows only that it stays stopped, not that hal never swaps its image."""
+    bump(scripted)
+    switch_off(state, unit="agent-service")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
+    assert NEVER_SWAPS not in out
+    assert scripted.changing_verbs() == []
+
+
 def test_a_marker_that_appears_after_the_yes_prevents_the_recreate(
     running, switch, scripted, state
 ):

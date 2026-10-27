@@ -156,13 +156,19 @@ def plan_kept_images(
     """Each live service of a unit whose container's image is not the exact reference its
     resolved definition names, in catalog and file order (#91 rules 2, 3). The core has no
     profile, the services in `planned_elsewhere` (the followers and the built services) have their
-    own plan, a unit planned off loses its containers, and a service whose definition names no
-    image has no pin to compare."""
+    own plan, a unit planned off loses its containers, a built unit that stays stopped is edge's to
+    build and only shown as stopped, and a service whose definition names no image has no pin to
+    compare."""
     planned_off = {plan.unit.key for plan in plans if plan.action is Action.OFF}
+    built_and_stopped = {
+        plan.unit.key
+        for plan in plans
+        if plan.action is Action.STAYS_STOPPED and plan.unit.build is not None
+    }
     live = [container for container in containers if container.live]
     kept: dict[KeptImage, None] = {}
     for unit in units:
-        if unit.key not in planned_off:
+        if unit.key not in planned_off | built_and_stopped:
             services = [
                 service
                 for service in profile_services[unit.key]
