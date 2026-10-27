@@ -10,8 +10,10 @@ from hal_output import (
     Glyph,
     Noun,
     Row,
+    Tone,
     Verdict,
     format_duration,
+    write_detail,
     write_error,
     write_row,
     write_verdict,
@@ -351,3 +353,26 @@ def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next
         "✓ all well · 5 areas checked",
         "✓ all well · 1 area checked",
     ]
+
+
+def test_a_plain_detail_line_is_indented_and_escaped(capsys: pytest.CaptureFixture[str]) -> None:
+    """#564: text from outside stays one line under a row."""
+
+    write_detail("why: a reason", "[ ] step\x1b[31m")
+
+    assert capsys.readouterr().out.splitlines() == ["    why: a reason", "    [ ] step\\x1b[31m"]
+
+
+@pytest.mark.parametrize(
+    ("tone", "style"), [(Tone.DIM, "2"), (Tone.WARNING, "33")], ids=["dim", "warning is yellow"]
+)
+def test_on_a_terminal_a_toned_detail_line_is_styled_as_a_whole_and_a_plain_one_is_not(
+    monkeypatch: pytest.MonkeyPatch, tone: Tone, style: str
+) -> None:
+    """#564: the tone styles the indented line; plain carries no style."""
+
+    out, _err = put_on_terminals(monkeypatch)
+    write_detail("a line", tone=tone)
+    write_detail("a line")
+
+    assert out.getvalue() == f"\x1b[{style}m    a line\x1b[0m\n    a line\n"
