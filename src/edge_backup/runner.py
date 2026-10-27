@@ -473,13 +473,13 @@ def _restore_test(settings: Settings, app: App, run: Run, snapshot_prefix: str |
 def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
     """Only what the copy shows fails verification; a container that will not run is a command."""
     restored_db = restored / DB_FOLDER
-    manifest_file = _restored_file(restored_db / MANIFEST_NAME, "kein Manifest")
+    manifest_file = _restored_file(restored_db / MANIFEST_NAME, "no manifest")
     manifest = Manifest.from_json(manifest_file.read_text(encoding="utf-8"))
     match app.database:
         case PostgresDatabase() as database:
             _verify_postgres(settings, app, database, restored, manifest, run)
         case SqliteDatabase(files=files):
-            _restored_file(restored_db / SQLITE_COPY_NAME, "keine SQLite-Datenbank")
+            _restored_file(restored_db / SQLITE_COPY_NAME, "no SQLite database")
             with run.phase(Phase.VERIFY):
                 if files:
                     _verify_files(settings, restored / files.volume, files.skip, manifest)
@@ -494,9 +494,9 @@ def _verify(settings: Settings, app: App, restored: Path, run: Run) -> None:
 
 def _verify_files(settings: Settings, restored: Path, skip: str | None, manifest: Manifest) -> None:
     if not restored.is_dir():
-        raise VerificationError("der Snapshot enthält kein Verzeichnis der Dateien")
+        raise VerificationError("the snapshot holds no file list")
     check_file_count(
-        manifest.files, docker.count_files(settings, MountKind.BIND, str(restored), skip), "Dateien"
+        manifest.files, docker.count_files(settings, MountKind.BIND, str(restored), skip), "files"
     )
 
 
@@ -509,13 +509,13 @@ def _verify_postgres(
     run: Run,
 ) -> None:
     restored_db, restored_audio = restored / DB_FOLDER, restored / restic.AUDIO_FOLDER
-    dump = _restored_file(restored_db / DUMP_NAME, "keinen Datenbank-Dump")
+    dump = _restored_file(restored_db / DUMP_NAME, "no database dump")
     audio = database.audio
     if audio:
         check_file_count(
             manifest.audio_files,
             docker.count_files(settings, MountKind.BIND, str(restored_audio)),
-            "Audiodateien",
+            "audio files",
         )
     with docker.restore_server(RESTORE_IMAGES[database.postgres_major]) as server:
         _wait_until_ready(
@@ -610,12 +610,12 @@ def _resolved[T](probe: Callable[[], T]) -> T:
 
 def _ready_or_raise(server: docker.RestoreServer) -> None:
     if not server.is_ready():
-        raise docker.NotReadyError("die Wegwerf-Datenbank startet nicht")
+        raise docker.NotReadyError("the throwaway database does not start")
 
 
 def _restored_file(path: Path, missing: str) -> Path:
     if not path.is_file():
-        raise VerificationError(f"der Snapshot enthält {missing}")
+        raise VerificationError(f"the snapshot holds {missing}")
     return path
 
 
