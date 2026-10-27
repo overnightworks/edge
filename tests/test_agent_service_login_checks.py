@@ -4,7 +4,9 @@ preflight of the resolved configuration, the exact-secret gate and the S00 censu
 from __future__ import annotations
 
 import copy
+import io
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -495,3 +497,51 @@ def test_the_start_wait_is_bounded_by_its_seconds(probe):
     assert not probe.checks.wait_until(lambda: False, 30, lambda: time.now, time.sleep)
     assert time.now == 30
     assert probe.checks.wait_until(lambda: True, 30, lambda: time.now, time.sleep)
+
+
+class FakeProcess:
+    """A `Popen` whose stdin may be closed on the far side."""
+
+    def __init__(self, *, broken=False, outlives=False) -> None:
+        self.broken, self.outlives = broken, outlives
+        self.written: list[str] = []
+        self.killed = False
+        self.stdout = io.StringIO("answer 200\nCompose says hello\n")
+        self.stdin = SimpleNamespace(write=self.write, flush=lambda: None, close=self.close_stdin)
+
+    def write(self, text: str) -> None:
+        if self.broken:
+            raise BrokenPipeError
+        self.written.append(text)
+
+    def close_stdin(self) -> None:
+        if self.broken:
+            raise BrokenPipeError
+
+    def poll(self):
+        return None if self.outlives and not self.killed else 0
+
+    def wait(self, timeout=None):
+        if self.outlives and not self.killed and timeout is not None:
+            raise subprocess.TimeoutExpired("client", timeout)
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def test_close_written_to_a_client_that_exited_is_no_failure(probe):
+    """Matrix row 16: the broken pipe is caught; the client's output decides."""
+    client = probe.cells.ClientProcess(FakeProcess(broken=True))
+    client.say_close()
+    client.finish(1)
+    assert client.report().answer == 200
+    assert client.report().unmatched == 1
+
+
+def test_a_client_that_outlives_its_read_time_is_killed_and_what_it_printed_counts(probe):
+    process = FakeProcess(outlives=True)
+    client = probe.cells.ClientProcess(process)
+    client.say_close()
+    client.finish(1)
+    assert (process.written, process.killed) == (["close\n"], True)
+    assert client.report().answer == 200

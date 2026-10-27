@@ -4,17 +4,15 @@ working root that a script changes between two samples, on fake clocks."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import shutil
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from probe_support import probe_imports
 
-PROGRAM = Path(__file__).resolve().parent.parent / "probe" / "agent-service" / "tree_census.py"
 KEY = bytes(range(32))
 SERVICE, CLI, TOOL = 7, 20, 21
 INTERVAL = 0.01
@@ -23,16 +21,10 @@ REPORT_KEYS = {"group_seen", "group_gone_at", "tree_seen", "tree_gone_at", "samp
 
 @pytest.fixture(scope="module")
 def census() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("agent_probe_tree_census_watch", PROGRAM)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    try:
-        spec.loader.exec_module(module)
-        yield module
-    finally:
-        del sys.modules[spec.name]
+    with probe_imports():
+        import tree_census
+
+        yield tree_census
 
 
 def clear(directory: Path) -> None:
