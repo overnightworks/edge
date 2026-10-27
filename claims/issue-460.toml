@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "e26feb05786de449b20185945a7ea1d8d7e5c022"
 branch = "claude/issue-460-disk-low"
-scope = ["docs/architecture.md", "docs/home.md", "src/home_tools/check.py", "src/home_tools/platform_check.py", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_platform_check.py"]
+scope = ["docs/architecture.md", "docs/home.md", "src/home_tools/check.py", "src/home_tools/cli.py", "src/home_tools/platform_check.py", "tests/home/conftest.py", "tests/home/test_check.py", "tests/home/test_platform_check.py"]
 opened_commit = "986134d1a78d64ef7fc587c54a573c6efc173f73"
 whole_reason = "One rule needs its finding, its level row and the fake that keeps every home check test off the real disk at once, because a rule without a level fails test_check_levels and a real disk reading makes the suite depend on the runner."
