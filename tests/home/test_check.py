@@ -780,7 +780,8 @@ def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_are
     home_check(clean_home, runner, disk=fake_disk)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert "1. " in body and "2. " in body
+    assert "1. " in body
+    assert "2. " in body
     assert "weniger als 10 % frei" in body
     assert "edge-a startet ständig neu" in body
     assert body.count("Dienste: Handlungsbedarf") == 1
