@@ -16,6 +16,7 @@ from edge_backup_support import (
 )
 
 from edge_backup.apps import AppsError, SqliteDatabase, SqliteFiles, parse_apps
+from edge_backup.docker import FILE_COUNT_LABEL
 
 BUILDS = {
     "run1/out/talk/index.html": b"x",
@@ -133,7 +134,7 @@ def test_the_count_runs_hardened_read_only_with_the_skip_pruned_at_every_depth(
     apps, _ = _backup(edge_backup, home)
     edge_backup("restore", "--test", *apps)
 
-    scans = [argv for label, argv in builds.calls if label == "Zählen der Dateien"]
+    scans = [argv for label, argv in builds.calls if label == FILE_COUNT_LABEL]
 
     assert [mount_of(argv, "/scanned")["type"] for argv in scans] == ["volume", "bind"]
     assert len({tuple(argv[argv.index("--entrypoint") :]) for argv in scans}) == 1
@@ -238,7 +239,7 @@ def test_the_restore_test_mounts_no_volume_for_the_files_count(edge_backup, buil
     """#468 M10."""
     edge_backup("restore", "--test", *backed_up)
 
-    argv = [argv for label, argv in builds.calls if label == "Zählen der Dateien"][-1]
+    argv = [argv for label, argv in builds.calls if label == FILE_COUNT_LABEL][-1]
 
     assert mount_of(argv, "/scanned")["type"] == "bind"
     assert not [a for a in argv if a.startswith("type=volume")]
