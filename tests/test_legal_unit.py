@@ -1,12 +1,14 @@
 """The legal unit (#285): the repository's real compose.yaml, fleet.yaml and legal/ tree."""
 
 import re
+from datetime import date
+from functools import cache
 from pathlib import Path
 
 import pytest
 import yaml
 
-from edge import catalog, compose
+from edge import catalog, compose, legal_pages, legal_step
 
 ROOT = Path(__file__).resolve().parents[1]
 FONTS = "./keycloak/themes/hallucinai/login/resources/fonts"
@@ -45,7 +47,7 @@ def test_every_bind_is_read_only_and_the_fonts_are_the_login_themes_copy(legal):
     assert sorted(legal["volumes"]) == sorted(
         [
             "./legal/nginx:/etc/nginx/conf.d:ro",
-            "./legal/pages:/srv/pages:ro",
+            "./legal/built:/srv/pages:ro",
             "./legal/assets:/srv/assets:ro",
             f"{FONTS}:/srv/fonts:ro",
         ]
@@ -96,15 +98,23 @@ PAGES = ("impressum", "datenschutz", "nutzungsbedingungen")
 TEXT_PAGES = PAGES[1:]
 
 
+@cache
+def built_pages() -> dict[str, str]:
+    """The pages `hal apply` builds from this repository's frame and sections, at a fixed date."""
+    keys = catalog.read(ROOT / "fleet.yaml")["services"]
+    blocks = legal_step.read_blocks(ROOT, keys, lambda _path: date(2026, 1, 1))
+    return legal_pages.build_pages(legal_step.read_frame(ROOT), blocks)
+
+
 def read_page(name: str) -> str:
-    return (ROOT / "legal/pages" / f"{name}.html").read_text()
+    return built_pages()[name]
 
 
 @pytest.mark.parametrize("name", PAGES)
 def test_each_page_file_exists_and_the_config_resolves_paths_through_try_files(name):
     config = (ROOT / "legal/nginx/default.conf").read_text()
     assert "try_files $uri.html =404;" in config
-    assert (ROOT / "legal/pages" / f"{name}.html").is_file()
+    assert read_page(name)
 
 
 @pytest.mark.parametrize("name", PAGES)
@@ -194,10 +204,14 @@ def test_the_songmaker_section_has_an_anchored_heading_and_subsection_ids(name):
     assert 'id="songmaker-' in page
 
 
-@pytest.mark.parametrize(
-    "path",
-    [f"legal/pages/{name}.html" for name in PAGES] + ["docs/design/legal-pages.html"],
-)
+TEXT_SOURCES = [
+    path.relative_to(ROOT).as_posix()
+    for pattern in ("legal/frame/*.html", "legal/frame/blocks/*.html", "legal/sections/*/*.html")
+    for path in sorted(ROOT.glob(pattern))
+]
+
+
+@pytest.mark.parametrize("path", [*TEXT_SOURCES, "docs/design/legal-pages.html"])
 @pytest.mark.parametrize(
     "mark",
     [
