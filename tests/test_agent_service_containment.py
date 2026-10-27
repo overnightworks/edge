@@ -533,9 +533,11 @@ def test_b5_log_lines_follow_the_probes_handler_format(containment):
     import io
     import logging
 
+    from service_log import LOG_FORMAT
+
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
-    handler.setFormatter(logging.Formatter(containment.LOG_FORMAT))
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
     logger = logging.getLogger("agent_runtime_service.run_events")
     logger.propagate = False
     logger.addHandler(handler)
