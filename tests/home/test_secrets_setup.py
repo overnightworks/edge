@@ -602,7 +602,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
         "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
         "› github/read new token the link fills name, owner, expiry and rights",
         "why: liest GitHub",
-        "prefilled: metadata read, organization_secrets read",
+        "prefilled: Metadata read, Organization secrets read",
         "[ ] Repository access: All repositories",
         "[ ] compare the rights in the form with the line above",
         "[ ] Generate token, copy the value",
