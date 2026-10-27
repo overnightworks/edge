@@ -56,10 +56,6 @@ class CheckResult:
     finding_identities: frozenset[str]
     error: Exception | None = None
 
-    @property
-    def failure(self) -> str:
-        return _failure_line(self.name, self.error) if self.error else ""
-
 
 def _failure_line(name: str, error: Exception) -> str:
     return f"Prüfung {name} fehlgeschlagen ({type(error).__name__}): {error}"
