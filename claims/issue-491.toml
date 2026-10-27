@@ -1,0 +1,8 @@
+claim_id = "e7194f978362440384c76c70f0cd8fcc"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "da6a8d083bdcc9b550dc4f5b206fc064259ed320"
+branch = "claude/issue-491-s2a-setup-rows"
+scope = ["README.md", "docs/design/hal-output.html", "docs/home.md", "docs/stack.md", "scripts/system-proof/drive.sh", "src/hal_output/__init__.py", "src/home_tools/setup.py", "src/home_tools/system_step.py", "tests/home/test_setup.py", "tests/test_hal_output.py"]
+opened_commit = "7136653116685cd4d116b1ca6d0afe4f4f34ed42"
+whole_reason = "One row model and its one caller: the model without setup has no caller, and setup without the model prints the old lines."
