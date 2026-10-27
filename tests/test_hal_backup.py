@@ -437,3 +437,34 @@ def test_a_restore_test_interrupted_outside_any_app_says_only_that_it_was_interr
 
     assert outcome.exit_code == 130
     assert outcome.err.splitlines() == ["error: interrupted", "next: hal restore --test"]
+
+
+def test_init_says_the_repository_was_created(edge_backup):
+    outcome = edge_backup("backup", "--init")
+
+    assert (outcome.exit_code, outcome.out) == (0, "hal backup: repository created\n")
+
+
+def test_restore_says_which_snapshot_of_which_app_was_restored_into_the_target(
+    edge_backup, machine, home
+):
+    edge_backup("backup")
+    target = home / "restored"
+
+    outcome = edge_backup("restore", "songmaker", "--target", str(target))
+
+    snapshot = machine.snapshots[-1]["id"][:8]
+    assert outcome.exit_code == 0, outcome.err
+    assert outcome.out == f"hal restore: snapshot {snapshot} of songmaker restored into {target}\n"
+
+
+def test_a_single_app_that_is_not_proven_is_named_on_the_error_line(edge_backup, machine):
+    edge_backup("backup")
+
+    outcome = edge_backup(*declare_shipped_apps(), "restore", "--test", "keycloak")
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines() == [
+        "error: keycloak not proven",
+        "next: hal restore --test keycloak",
+    ]
