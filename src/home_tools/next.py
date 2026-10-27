@@ -161,7 +161,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
 
 def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     for finding in hook_check.collect_findings(layout, ports.run):
-        cleared = f"home check meldet {finding.rule} für {finding.subject} nicht mehr"
+        cleared = f"hal check meldet {finding.rule} für {finding.subject} nicht mehr"
         if finding.fix == hook_check.SETUP_APPLY:
             yield _setup_apply_step(ports, cleared)
         else:
@@ -172,7 +172,7 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
 SOURCES = (
     Source("die Geheimnisse", _secrets_steps, "home secrets"),
     Source("den Stand von hal setup", _setup_steps, "hal setup"),
-    Source("die Hook-Prüfung", _hook_steps, "home check"),
+    Source("die Hook-Prüfung", _hook_steps, "hal check"),
 )
 
 

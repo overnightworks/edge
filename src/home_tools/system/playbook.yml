@@ -22,7 +22,7 @@
 # anything is written. When the restart fails or Docker does not say journald, the file is written back without
 # `log-driver` and Docker restarted again; that is the last task, so edge's other files are already in place.
 #
-# It also installs msmtp and ca-certificates (never msmtp-mta) once the refusals above passed, for the mail of `home check`.
+# It also installs msmtp and ca-certificates (never msmtp-mta) once the refusals above passed, for the mail of `hal check`.
 #
 # The agents' account is dormant: nothing runs as it until a door exists. It has its own group only, a locked
 # password, the shell nologin, a 0700 home, no subuid or subgid range, no linger, and a line in /etc/cron.deny
@@ -265,7 +265,7 @@
         fail_msg: "Docker does not answer `docker info`; nothing was written"
         quiet: true
 
-    # `home check` mails its news through msmtp, which needs the system's trust store for the server certificate.
+    # `hal check` mails its news through msmtp, which needs the system's trust store for the server certificate.
     # Recommends are off: msmtp-mta (Postfix's replacement as the system mailer) is only suggested and must stay out.
     - name: Install msmtp and the certificate authorities it checks the mail server against
       ansible.builtin.apt:

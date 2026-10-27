@@ -837,7 +837,7 @@ def render_by_service(manifest: tuple[SecretEntry, ...]) -> str:
 
 
 def inspect(layout: Layout, probe: ExitCodeProbe, now: datetime) -> tuple[SecretsView, str]:
-    """What `home secrets` without options shows; `home check` reads the secrets through this."""
+    """What `home secrets` without options shows; `hal check` reads the secrets through this."""
     manifest = load_manifest(MANIFEST_PATH)
     view = build_view(manifest, observe(manifest, layout, probe))
     return view, render_view(view, now)
