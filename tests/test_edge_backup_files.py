@@ -9,8 +9,8 @@ from edge_backup_support import (
     SQLITE_TOML,
     STATUS_KEYS,
     Machine,
-    assert_the_restore_test_fails_verification,
     app_history,
+    assert_the_restore_test_fails_verification,
     declare_apps,
     mount_of,
 )
