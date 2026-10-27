@@ -241,14 +241,18 @@ workload_client = "probe-client"
 """
 
 
+PROBE_APP_TABLE = "[apps.probe]"
 LEFTOVER_CONFIGURATION = {
     "identity.subscription_group": (
         "[server]",
         'subscription_group = "/services/agent-service/subscription"\n\n[server]',
     ),
-    "purposes": ("[apps.probe]", '[purposes.chat]\ncli_provider = "claude"\n\n[apps.probe]'),
-    "apps.probe.tools": ("[apps.probe]", "[apps.probe.tools]\n\n[apps.probe]"),
-    "apps.probe.models": ("[apps.probe]", "[apps.probe.models]\n\n[apps.probe]"),
+    "purposes": (
+        PROBE_APP_TABLE,
+        f'[purposes.chat]\ncli_provider = "claude"\n\n{PROBE_APP_TABLE}',
+    ),
+    "apps.probe.tools": (PROBE_APP_TABLE, f"[apps.probe.tools]\n\n{PROBE_APP_TABLE}"),
+    "apps.probe.models": (PROBE_APP_TABLE, f"[apps.probe.models]\n\n{PROBE_APP_TABLE}"),
     "profiles.subscription.background": ("background = false\n", ""),
 }
 
