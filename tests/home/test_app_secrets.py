@@ -214,10 +214,15 @@ def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboa
 
     _, output = run_turn_setup(turn_home, capsys, terminal)
 
-    assert packaged_entry("cloudflare/turn-hopin/key-id").recreate in output
+    key_id = packaged_entry("cloudflare/turn-hopin/key-id")
+    lines = [" ".join(line.split()) for line in output.splitlines()]
+    assert "› cloudflare/turn-hopin/key-id new token Cloudflare cannot check this one" in lines
+    assert f"why: {key_id.purpose}" in lines
+    assert f"create: {key_id.recreate}" in lines
     assert OPEN_PROMPT in terminal.prompts
     assert set(terminal.opened) == {CLOUDFLARE_DASHBOARD}
-    assert f"Kein Browser ließ sich öffnen; die Seite von Hand öffnen: {CLOUDFLARE_DASHBOARD}" in output
+    assert f"no browser opened · open it yourself: {CLOUDFLARE_DASHBOARD}" in lines
+    assert not any(line.startswith("opened ") for line in lines)
 
 
 def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:

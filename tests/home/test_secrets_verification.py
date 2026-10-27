@@ -29,8 +29,8 @@ GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
 CLOUDFLARE = TokenSource(Provider.CLOUDFLARE, "example.invalid", ("Zone › DNS › Read",), 30)
 
 
-CLOUDFLARE_DISABLED = "Cloudflare meldet das Token als disabled, nicht active"
-CLOUDFLARE_UNREADABLE = "Cloudflare meldet das Token als unbekannt, nicht active"
+CLOUDFLARE_DISABLED = "Cloudflare reports the token as disabled, not active"
+CLOUDFLARE_UNREADABLE = "Cloudflare reports the token as unknown, not active"
 
 
 def cloudflare_answer(status: object, not_before: object = None, *, with_start: bool = False) -> bytes:
@@ -55,13 +55,13 @@ CLOUDFLARE_NOT_YET_VALID = not_yet_valid("30.12.2026 23:00")
     ("source", "response", "expected"),
     [
         (GITHUB, Response(200, b"{}"), Verdict(Outcome.ACCEPTED)),
-        (GITHUB, Response(401, b""), Verdict(Outcome.REFUSED, "GitHub antwortet 401")),
+        (GITHUB, Response(401, b""), Verdict(Outcome.REFUSED, "GitHub answers 401")),
         (CLOUDFLARE, Response(200, cloudflare_answer("active")), Verdict(Outcome.ACCEPTED)),
         (CLOUDFLARE, Response(200, cloudflare_answer("disabled")), Verdict(Outcome.REFUSED, CLOUDFLARE_DISABLED)),
         (CLOUDFLARE, Response(200, b"[]"), Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE)),
         (CLOUDFLARE, Response(200, b"not json"), Verdict(Outcome.REFUSED, CLOUDFLARE_UNREADABLE)),
-        (CLOUDFLARE, Response(403, b""), Verdict(Outcome.REFUSED, "Cloudflare antwortet 403")),
-        (CLOUDFLARE, None, Verdict(Outcome.UNREACHABLE, "Cloudflare nicht erreichbar; später noch einmal")),
+        (CLOUDFLARE, Response(403, b""), Verdict(Outcome.REFUSED, "Cloudflare answers 403")),
+        (CLOUDFLARE, None, Verdict(Outcome.UNREACHABLE, "Cloudflare unreachable; try again later")),
     ],
 )
 def test_a_token_counts_only_once_its_provider_confirms_it(source: TokenSource, response: Response | None, expected: Verdict) -> None:
@@ -260,4 +260,4 @@ def test_a_value_http_cannot_send_is_refused_without_quoting_it(local_server: Lo
     """#36 rule 3 / #10 line 2: a value the HTTP layer refuses to send is a refusal whose detail never quotes the value."""
     verdict = verify_token(GITHUB, canary_with(character), local_server.fetch("/ok"))
 
-    assert verdict == Verdict(Outcome.REFUSED, "der Wert lässt sich GitHub nicht als Token senden")
+    assert verdict == Verdict(Outcome.REFUSED, "the value cannot be sent to GitHub as a token")
