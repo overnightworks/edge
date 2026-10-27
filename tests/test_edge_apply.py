@@ -711,8 +711,7 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert "volumes step-ca, traefik-mcp-acme stay" in out
-    assert "step-ca is off" in out
+    assert all(part in out for part in ("volumes step-ca, traefik-mcp-acme stay", "step-ca is off"))
 
 
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
@@ -2129,8 +2128,7 @@ def test_stop_records_the_time_in_a_private_marker_before_closing(
 
     assert exit_code == 0
     assert seen_at_stop == [NOW.isoformat(timespec="seconds")]
-    assert "✓ step-ca" in out
-    assert "switched off" in out
+    assert all(part in out for part in ("✓ step-ca", "switched off"))
     assert stat.S_IMODE((state / "stopped").stat().st_mode) == 0o700
     assert stat.S_IMODE((state / "stopped" / "step-ca").stat().st_mode) == 0o600
 
@@ -2173,11 +2171,9 @@ def test_a_stop_that_fails_leaves_the_switch_and_says_partial(stop, scripted, re
 
     assert exit_code == 1
     assert marker(state) is not None
-    assert "partial" in out
-    assert "switch recorded" in out
+    assert all(part in out for part in ("partial", "switch recorded"))
     assert "error: step-ca is only partly off" in err
-    assert "next: hal stop step-ca" in err
-    assert "last line" in err
+    assert all(part in err for part in ("next: hal stop step-ca", "last line"))
     assert "switched off" not in out + err
 
 
@@ -2546,8 +2542,7 @@ def test_stop_of_a_disabled_stopped_unit_with_a_marker_changes_nothing(
     exit_code, out, _ = stop()
 
     assert exit_code == 0
-    assert "· step-ca" in out
-    assert "disabled" in out
+    assert all(part in out for part in ("· step-ca", "disabled"))
     assert "nothing of it runs" in out
     assert (state / "stopped" / "step-ca").stat().st_ino == inode
 
@@ -2619,8 +2614,7 @@ def test_stop_writes_the_barrier_before_the_stop_and_reports_only_what_was_verif
     assert exit_code == 0
     assert events == ["stop with barrier verified"]
     assert ingress.asked == ["barrier"]
-    assert "✓ probe" in out
-    assert "barrier up · stopped" in out
+    assert all(part in out for part in ("✓ probe", "barrier up · stopped"))
     assert ingress.barrier_file().exists()
     assert marker(state, "probe") == NOW.isoformat(timespec="seconds")
 
@@ -2670,8 +2664,7 @@ def test_stop_of_a_switched_off_unit_renders_a_lost_barrier_again_and_verifies_i
     exit_code, out, _ = stop("probe")
 
     assert exit_code == 0
-    assert "barrier back" in out
-    assert "off since 17.10. 22:10" in out
+    assert all(part in out for part in ("barrier back", "off since 17.10. 22:10"))
     assert ingress.barrier_file().exists()
     assert ingress.asked == ["barrier"]
     assert scripted.changing_verbs() == []
@@ -3954,8 +3947,7 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_o
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert held in out
-    assert "nothing to change" in out
+    assert all(part in out for part in (held, "nothing to change"))
     assert scripted.changing_verbs() == []
     assert follower_entry(state) == entry
 
