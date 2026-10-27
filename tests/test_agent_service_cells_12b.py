@@ -345,7 +345,7 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
 
 
 def test_u2_expects_each_probes_own_command(probe):
-    """#457 row 11: U2 expects each probe's own command, as the A1d reuse row does."""
+    """#457 row 12: each probe's serves holds only its own command."""
     bootstrap = probe.cells.BOOTSTRAP
     config = probe.cells.SERVICE_COMMAND
     login = object.__new__(probe.cells.LoginProbe)
