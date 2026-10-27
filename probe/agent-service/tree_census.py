@@ -438,6 +438,75 @@ def sample_for(
         os.close(proc_fd)
 
 
+INIT_PID = 1
+
+
+@dataclass
+class Disappearance:
+    """Whether something was seen, and the wall time it was first seen gone afterwards."""
+
+    seen: bool = False
+    gone_at: float | None = None
+
+    def observe(self, present: bool, moment: float) -> None:
+        if present:
+            self.seen = True
+        elif self.seen and self.gone_at is None:
+            self.gone_at = moment
+
+    @property
+    def settled(self) -> bool:
+        return self.gone_at is not None
+
+
+def cli_group_leader(records: list[ProcessRecord]) -> int | None:
+    """The service is the lowest process below init; the CLI is its child that leads a group."""
+    service = min(
+        (r.pid for r in records if r.ppid == INIT_PID and r.pid != INIT_PID), default=None
+    )
+    return next((r.pid for r in records if r.ppid == service and r.pgid == r.pid), None)
+
+
+def watch_for(
+    proc_path: str,
+    root_path: str,
+    names: Names,
+    deadline: float,
+    interval: float,
+    stop_path: str,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    wall: Callable[[], float] = time.time,
+) -> dict:
+    """Samples the processes and the working root's entries until the CLI group and the run tree
+    were each seen and then seen gone, the stop file appears, or `deadline` seconds have passed.
+    Only booleans, wall times and the number of samples leave."""
+    proc_fd = os.open(proc_path, DIRECTORY_FLAGS)
+    root_fd = _open_root(root_path)
+    group, tree = Disappearance(), Disappearance()
+    leader: int | None = None
+    samples = 0
+    try:
+        end = clock() + deadline
+        while True:
+            records = sample_processes(proc_fd, names)
+            moment = wall()
+            leader = leader if leader is not None else cli_group_leader(records)
+            group.observe(any(r.pgid == leader for r in records), moment)
+            tree.observe(bool(list(_listing_names(root_fd) or ())), moment)
+            samples += 1
+            if (group.settled and tree.settled) or clock() >= end or os.path.exists(stop_path):
+                break
+            sleep(interval)
+    finally:
+        os.close(proc_fd)
+        os.close(root_fd)
+    return {
+        "group_seen": group.seen, "group_gone_at": group.gone_at,
+        "tree_seen": tree.seen, "tree_gone_at": tree.gone_at, "samples": samples,
+    }  # fmt: skip
+
+
 def start_up_children_only(records: list[ProcessRecord], group_leader: int) -> tuple[bool, int]:
     """The B7 verdict: whether every other process of the leader's group is an expected
     start-up child, and how many there were. No executable name is part of it."""
@@ -491,11 +560,20 @@ def _sample_report(settings: dict, names: Names) -> dict:
     }
 
 
+def _watch_report(settings: dict, names: Names) -> dict:
+    return watch_for(
+        settings["proc"], settings["working_root"], names, settings["deadline"],
+        settings["interval"], settings["stop_path"],
+    )  # fmt: skip
+
+
 def run(settings_text: str) -> dict:
     settings = json.loads(settings_text)
     names = Names(bytes.fromhex(settings["key"]), os.getuid())
     if settings["mode"] == "census":
         return _census_report(settings, names)
+    if settings["mode"] == "watch":
+        return _watch_report(settings, names)
     return _sample_report(settings, names)
 
 
