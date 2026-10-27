@@ -559,11 +559,12 @@ def test_loopback_listeners_counts_127_and_ipv6_loopback(containment, names, cou
 
 
 def test_b5_is_not_driven_when_the_working_root_or_tmp_skipped_something(containment):
+    working_roots = roots(containment)
     for reason in ("replaced", "refused", "login excluded", "too deep"):
         skipped = {"/work": mount(containment, skips={reason: 1}), "/tmp": mount(containment)}
         seen = look(containment, mounts=skipped)
         with pytest.raises(containment.NotDriven):
-            containment.expect_comparable(seen, seen, roots(containment))
+            containment.expect_comparable(seen, seen, working_roots)
 
 
 def test_b5_is_not_driven_when_any_skip_changed(containment):
