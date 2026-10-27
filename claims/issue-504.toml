@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "0b7c7381d2931d4814ac8d6c47a57889fa11be1a"
 branch = "claude/issue-504-h5c2-hal-check-hosts"
-scope = ["README.md", "docs/architecture.md", "docs/backup.md", "docs/external.md", "docs/stack.md", "src/edge/cli.py", "src/edge/external/apply.py", "src/edge/external/cli.py", "src/hal/check_commands.py", "src/home_tools/secrets_manifest.toml", "tests/test_edge_apply_publish.py", "tests/test_edge_external.py", "tests/test_hal_check.py", "tests/test_hal_cli.py"]
+scope = ["README.md", "docs/architecture.md", "docs/backup.md", "docs/external.md", "docs/stack.md", "quality/baseline.toml", "src/edge/cli.py", "src/edge/external/apply.py", "src/edge/external/cli.py", "src/hal/check_commands.py", "src/home_tools/secrets_manifest.toml", "tests/old_names_baseline.toml", "tests/test_edge_apply_publish.py", "tests/test_edge_external.py", "tests/test_hal_check.py", "tests/test_hal_cli.py"]
 opened_commit = "10f28ed04ffc55236801ed270641a751c7a37f69"
 whole_reason = "One verb moves: the hosts area enters hal check and edge external check leaves, with every text and pin that names it."
