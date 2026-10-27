@@ -23,7 +23,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
-from census_client import CensusClient, Process
+from census_client import SERVICE_UID, CensusClient, Process
 from egress import CLI_BINARY, LABEL, REPO, NotDriven, ProbeFailed, expect
 from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe, wait_for_listening
 from refusals import SMOKE_SERVICE
@@ -160,8 +160,8 @@ class Snapshot(NamedTuple):
         return tuple(seen for seen in self.processes if seen.name == self.sleep)
 
     def plain_markers(self) -> tuple[Process, ...]:
-        """Marker A: a child of the CLI, the leader of its own process group."""
-        return tuple(m for m in self.sleepers() if m.ppid == m.pgid != m.pid)
+        """Marker A: any marker that leads no session, so one orphaned under init counts too."""
+        return tuple(m for m in self.sleepers() if m.sid != m.pid)
 
     def session_markers(self) -> tuple[Process, ...]:
         """Marker B: the leader of a session of its own."""
@@ -344,12 +344,14 @@ class ContainmentProbe(IssuerProbe):
         for cell in ("B1 (a)", "B2 (a)"):
             print(f"{cell} NOT DRIVEN: the loopback capture is #339 C2's", flush=True)
         census = CensusClient(self, self.container(SERVICE), self.configuration)
-        service_pid = self.baseline(census)
-        detached, snapshot = self.cell_b3(census, tokens)
-        failed += self.judge(snapshot)
-        failed += self.judge(self.cell_b4(census, service_pid, detached))
-        self.expect_no_token(tokens, dummy)
-        self.cell_s2()
+        service_pids = self.baseline(census)
+        try:
+            detached, snapshot = self.cell_b3(census, tokens)
+            failed += self.judge(snapshot)
+            failed += self.judge(self.cell_b4(census, service_pids, detached))
+        finally:
+            self.expect_no_token(tokens, dummy)
+            self.cell_s2()
         if failed:
             raise ProbeFailed(f"cells failed: {', '.join(failed)}")
 
@@ -372,19 +374,17 @@ class ContainmentProbe(IssuerProbe):
                 f"{len(seen.app)} lines; {smoke_evidence(seen)}"
             )
 
-    def baseline(self, census: CensusClient) -> int:
-        """The service's pid, from a look at the transparent wrapper's start: no marker exists."""
+    def baseline(self, census: CensusClient) -> tuple[int, ...]:
+        """The pids below init, from a look at the transparent wrapper's start: no marker exists."""
         looked = self.snapshot(census)
         expect(not looked.sleepers(), "the wrapper planted a marker before the run")
         pids = looked.service_pids()
-        if len(pids) != 1:
-            raise NotDriven(f"B4: {len(pids)} processes below init, not one service")
         print(
             f"baseline: no marker, {looked.working_root} working-root entries and "
             f"{looked.temporary} /tmp entries",
             flush=True,
         )
-        return pids[0]
+        return pids
 
     def snapshot(self, census: CensusClient) -> Snapshot:
         working_root, temporary = census.listed(census.working_root, TEMPORARY)
@@ -440,9 +440,14 @@ class ContainmentProbe(IssuerProbe):
         self.shown.append("".join(lines))
         return frame, later
 
-    def cell_b4(self, census: CensusClient, service_pid: int, detached: str) -> Verdicts:
+    def cell_b4(
+        self, census: CensusClient, service_pids: tuple[int, ...], detached: str
+    ) -> Verdicts:
         """The service killed by its pid, as its own user, while marker B lives; the container
         is the one the guarded compose resolves."""
+        if len(service_pids) != 1:
+            raise NotDriven(f"B4: {len(service_pids)} processes below init, not one service")
+        (service_pid,) = service_pids
         container = self.container(SERVICE)
         before_kill = self.snapshot(census)
         found = self.host_markers(detached)
@@ -451,10 +456,11 @@ class ContainmentProbe(IssuerProbe):
                 f"B4: marker B seen by the container {len(before_kill.session_markers())} and "
                 f"by the host {found} times; both must see it"
             )
+        service_user = f"{SERVICE_UID}:{SERVICE_UID}"
         restarts_before = self.restart_count(container)
         killed_at = int(time.time())
         self.run(
-            ["docker", "exec", "--user", "1000:1000", container, "python", "-I", "-c",
+            ["docker", "exec", "--user", service_user, container, "python", "-I", "-c",
              f"import os, signal; os.kill({service_pid}, signal.SIGKILL)"],
             check=False,
         )  # fmt: skip

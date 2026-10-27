@@ -1,5 +1,6 @@
-"""The containment probe's counting of B2 (c) and its diagnostics (agent-runtime#440), on
-synthetic service logs: the probe's cells themselves run live under `unit.py --cell containment`."""
+"""The containment probe's counting of B2 (c), its B3 and B4 verdicts and the transparent
+wrapper (agent-runtime#440), on synthetic service logs and stub tools:
+the probe's cells themselves run live under `unit.py --cell containment`."""
 
 from __future__ import annotations
 
@@ -156,8 +157,16 @@ def test_b3_holds_when_a_dies_with_the_run_and_b_lives_on_under_init(containment
         ([], 0),
         ([(42, CLI_PID, 42, 42)], 0),
         ([(42, 1, 42, 42), (43, 1, 43, 43)], 0),
+        ([(41, 1, CLI_PID, CLI_PID), (42, 1, 42, 42)], 0),
     ],
-    ids=["A survives", "the run tree survives", "B is dead", "B keeps the CLI as parent", "two Bs"],
+    ids=[
+        "A survives",
+        "the run tree survives",
+        "B is dead",
+        "B keeps the CLI as parent",
+        "two Bs",
+        "A survives orphaned under init",
+    ],
 )
 def test_b3_fails_six_seconds_after_the_frame_when_the_run_left_something_else(
     containment, survivors, working_root
@@ -192,6 +201,7 @@ def test_b3_is_not_driven_when_one_marker_was_not_seen(containment, missing):
 
 
 def test_a_marker_is_told_from_the_cli_by_its_name(containment):
+    """B3: only the opaque marker name counts as a marker."""
     other = process(containment, 50, CLI_PID, CLI_PID, CLI_PID, "n-0000")
     assert snapshot(containment, other).plain_markers() == ()
 
@@ -240,6 +250,7 @@ def test_b4_fails_on_each_condition_alone(containment, cell, arguments):
 
 
 def test_the_service_is_the_one_process_below_init(containment):
+    """B4: the service's pid is the one process below init."""
     init = process(containment, 1, 0, 1, 1, "n-1")
     service = process(containment, SERVICE_PID, 1, SERVICE_PID, SERVICE_PID, "n-5")
     child = process(containment, 30, SERVICE_PID, SERVICE_PID, SERVICE_PID, "n-6")
@@ -247,6 +258,7 @@ def test_the_service_is_the_one_process_below_init(containment):
 
 
 def test_the_configuration_runs_the_wrapper_in_place_of_the_cli(containment):
+    """#438 transparent wrapper: B1/B2 run through it, in place of the CLI."""
     text = '[cli.claude]\nbinary = "/opt/claude/claude"\nmcp_origin = "https://x"\n'
     assert f'binary = "{containment.WRAPPER}"' in containment.with_containment(text)
 
@@ -280,6 +292,7 @@ def stub_tools(tmp_path):
 def test_the_wrapper_passes_the_arguments_on_and_plants_nothing_without_the_flag_file(
     containment, tmp_path, arguments
 ):
+    """#438 transparent wrapper: arguments pass on and nothing is planted without the flag."""
     program, _ = wrapper(containment, tmp_path, cli_body='echo "$@" > "$OUT"\n')
     out = tmp_path / "out"
     environment = {
@@ -300,12 +313,18 @@ def test_the_wrapper_passes_the_arguments_on_and_plants_nothing_without_the_flag
 def test_the_wrapper_plants_two_markers_on_a_run_only_when_the_flag_file_is_there(
     containment, tmp_path, arguments, planted_count
 ):
+    """#438 transparent wrapper: `-p` plants A and B; `--version` plants nothing, proven by a
+    flag file that blocks any reader."""
     cli_body = (
         'exec 3<>"$LOG"\n'
         'for _ in $(seq "$WAIT"); do read -r line <&3; echo "$line" >> "$OUT"; done\n'
     )
     program, directory = wrapper(containment, tmp_path, cli_body=cli_body)
-    (directory / containment.PLANT_FLAG).write_text("3000.11 3000.22\n", encoding="utf-8")
+    flag = directory / containment.PLANT_FLAG
+    if planted_count:
+        flag.write_text("3000.11 3000.22\n", encoding="utf-8")
+    else:
+        os.mkfifo(flag)
     log = tmp_path / "log"
     os.mkfifo(log)
     out = tmp_path / "out"
