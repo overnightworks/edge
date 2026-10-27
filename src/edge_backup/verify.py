@@ -21,11 +21,15 @@ class Manifest:
     """None for a DB-only app."""
     rows: int | None = None
     """The restore test's table count in the staged copy; only a SQLite app has one."""
+    files: int | None = None
+    """The files in a SQLite app's kept volume; absent when it declares none."""
 
     def as_json(self) -> str:
         document = {"schema": MANIFEST_SCHEMA, "app": self.app, "audio_files": self.audio_files}
         if self.rows is not None:
             document["rows"] = self.rows
+        if self.files is not None:
+            document["files"] = self.files
         return json.dumps(document) + "\n"
 
     @classmethod
@@ -35,20 +39,22 @@ class Manifest:
             if document["schema"] != MANIFEST_SCHEMA:
                 raise ValueError(document["schema"])
             audio_files, rows = document["audio_files"], document.get("rows")
+            files = document.get("files")
             return cls(
                 app=document["app"],
                 audio_files=None if audio_files is None else int(audio_files),
                 rows=None if rows is None else int(rows),
+                files=None if files is None else int(files),
             )
         except (ValueError, KeyError, TypeError) as error:
             raise VerificationError("das Manifest im Snapshot ist unlesbar") from error
 
 
-def check_audio_count(manifest: Manifest, restored: int) -> None:
-    if restored != manifest.audio_files:
-        raise VerificationError(
-            f"{restored} Audiodateien wiederhergestellt, das Manifest nennt {manifest.audio_files}"
-        )
+def check_file_count(expected: int | None, restored: int, noun: str) -> None:
+    """The restored kept volume holds exactly the files the manifest counted."""
+    if restored != expected:
+        named = "keine Zahl" if expected is None else expected
+        raise VerificationError(f"{restored} {noun} wiederhergestellt, das Manifest nennt {named}")
 
 
 def check_rows(manifest: Manifest, restored: int) -> None:
