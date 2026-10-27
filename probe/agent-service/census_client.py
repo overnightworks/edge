@@ -26,6 +26,14 @@ class Process(NamedTuple):
     name: str  # as `tree_census.Names` shows it
 
 
+class Mount(NamedTuple):
+    """What the census shows of one writable mount: its entries as (shown path, kind) and why
+    it skipped some, as (reason, count) pairs."""
+
+    listings: tuple[tuple[str, str], ...]
+    skips: tuple[tuple[str, int], ...]
+
+
 class CensusClient:
     def __init__(self, probe: Probe, container: str, configuration: Path) -> None:
         settings = tomllib.loads(configuration.read_text(encoding="utf-8"))
@@ -49,15 +57,27 @@ class CensusClient:
         })  # fmt: skip
         return tuple(Process(*record) for record in report["processes"])
 
+    def mounts(self) -> dict[str, Mount]:
+        """Every writable mount the census shows, by its shown name."""
+        report = self.ask({"mode": "census", "token_file": self.token_file, "harness_owned": []})
+        shown = {
+            entry["mount"]: Mount(
+                tuple((path, kind) for path, kind, _ in entry["listings"]),
+                tuple(sorted(entry["skips"].items())),
+            )
+            for entry in report["mounts"]
+        }
+        expect(len(shown) == len(report["mounts"]), "the census shows one writable mount twice")
+        return shown
+
     def listed(self, *mounts: str) -> tuple[int, ...]:
         """How many entries the census lists below each writable mount (a path), in order."""
-        report = self.ask({"mode": "census", "token_file": self.token_file, "harness_owned": []})
+        seen = self.mounts()
         counts = []
         for mount in mounts:
             shown = self.names.show_mount(mount)
-            found = [entry["listings"] for entry in report["mounts"] if entry["mount"] == shown]
-            expect(len(found) == 1, f"the census shows {len(found)} writable mounts for one asked")
-            counts.append(len(found[0]))
+            expect(shown in seen, "the census shows no writable mount for one asked")
+            counts.append(len(seen[shown].listings))
         return tuple(counts)
 
     def ask(self, settings: dict) -> dict:

@@ -1,4 +1,4 @@
-"""The containment cells (`unit.py --cell containment`, agent-runtime#440 B1 and B2): a run whose
+"""The containment cells (`unit.py --cell containment`, agent-runtime#440 B1 to B5): a run whose
 app lists tools, in the stand-in issuer's project with a fake app on `agent-songmaker`
 (app_tools.py), asked by the repository's own `agent-smoke --tool`.
 
@@ -7,11 +7,14 @@ the run reaches the upstream, which refuses the dummy login. B2 plants the run c
 signature in a tool description: the relay's owner fails with `CapabilityReflected`, and the
 runner's failure is `CapabilityReflected` too, with no announcement verdict (a
 `RELAY_NOT_CONNECTED` line is tolerated, any other verdict fails the cell) and no run reaching
-`CliLoginRefusedError`; the run fails. A cell reads verdicts, counts and event names, never a
-token, and none of them prints a log line. The (a) parts, the loopback capture, are #339 C2's."""
+`CliLoginRefusedError`; the run fails. B3 and B4 plant markers through a wrapper in place of the
+CLI; B5 runs the smoke a hundred times with it transparent and compares what the service container
+holds before and after. A cell reads verdicts, counts and event names, never a token, and none of
+them prints a log line. The (a) parts, the loopback capture, are not built (#339)."""
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
@@ -23,12 +26,22 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
 
-from census_client import SERVICE_UID, CensusClient, Process
+from census_client import SERVICE_UID, CensusClient, Mount, Process
 from egress import CLI_BINARY, LABEL, REPO, NotDriven, ProbeFailed, expect
-from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe, wait_for_listening
+from issuer import ISSUER_SERVICE, SERVICE, IssuerProbe
 from refusals import SMOKE_SERVICE
 from scratch_secrets import issue_certificate
-from smoke import Tokens
+from service_log import (
+    BOOTSTRAP,
+    LOGIN_REFUSED,
+    REFUSED_ANNOUNCEMENT,
+    RELAY_NOT_CONNECTED,
+    RELAY_OWNER_FAILED,
+    RUNNER_FAILED,
+    LogClasses,
+    classify_log,
+)
+from smoke import RUN_END_EVENTS, Tokens
 
 APP_SERVICE = "agent-app"
 APP_PORT = 8444
@@ -44,18 +57,14 @@ WINDOW_SECONDS = 60  # the sampler's window, which covers the whole run
 REAP_SECONDS = 6  # the reap's bound is 5 s
 DIE_SECONDS = 30
 SMOKE_TOOLS = ("step:read_only", "bare:read_only")
-REFUSED_ANNOUNCEMENT = "A CLI run's start announcement was refused ("
-RELAY_NOT_CONNECTED = f"{REFUSED_ANNOUNCEMENT}RELAY_NOT_CONNECTED)"
-LOGIN_REFUSED = "CliLoginRefusedError"
-RELAY_OWNER_FAILED = re.compile(
-    r"The owner of the relay of run \S+ failed: CapabilityReflected at "
-)
-RUNNER_FAILED = re.compile(r"The runner of run \S+ failed: CapabilityReflected at ")
 APP_LINE = re.compile(
     r"method=(?:initialize|notifications/initialized|tools/list|other) "
     r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
 )
 LOG_SECONDS = 30
+RUNS = 100
+SERVICE_COMMAND = ["--config", "/etc/agent-service/service.toml"]
+SKIPS_THAT_HIDE_ENTRIES = ("replaced", "refused", "login excluded", "too deep")
 
 
 APP_HANDSHAKE = (
@@ -146,6 +155,16 @@ def b2_verdicts(seen: Observed) -> Verdicts:
     }
 
 
+def loopback_listeners(names: list[str]) -> int:
+    """How many of the TCP listener names (`host:port`, `[host]:port`) sit on loopback."""
+    count = 0
+    for name in names:
+        address = ipaddress.ip_address(name.rpartition(":")[0].strip("[]"))
+        mapped = getattr(address, "ipv4_mapped", None)
+        count += (mapped or address).is_loopback
+    return count
+
+
 class Snapshot(NamedTuple):
     """One look inside the service container: its processes and how many entries the census
     lists in the working root and in /tmp. `sleep` is the opaque name the census shows `sleep`
@@ -202,16 +221,18 @@ def b3_verdicts(window: Snapshot, frame: Snapshot, later: Snapshot) -> Verdicts:
         "B3 (frame)": (
             bool(frame.session_markers()),
             f"{len(frame.session_markers())} markers in their own session alive (asserted); "
-            f"{len(frame.stray_markers())} markers in the CLI's group, {frame.working_root} "
-            f"working-root entries, parent of B is init: {frame.markers_below_init()} (reported)",
+            f"{len(frame.stray_markers())} markers outside a session of their own, "
+            f"{frame.working_root} working-root entries, parent of B is init: "
+            f"{frame.markers_below_init()} (reported)",
         ),
         "B3 (6 s)": (
             not later.stray_markers()
             and later.working_root == 0
             and len(survivors) == 1
             and later.markers_below_init(),
-            f"{len(later.stray_markers())} markers in the CLI's group, {later.working_root} "
-            f"working-root entries, {len(survivors)} markers in their own session, "
+            f"{len(later.stray_markers())} markers outside a session of their own, "
+            f"{later.working_root} working-root entries, {len(survivors)} markers in their own "
+            f"session, "
             f"parent of B is init: {later.markers_below_init()}",
         ),
     }
@@ -234,6 +255,140 @@ def b4_verdicts(
             restarted.working_root == 0 and restarted.temporary == 0,
             f"{restarted.working_root} working-root entries and {restarted.temporary} /tmp "
             f"entries after the restart",
+        ),
+    }
+
+
+class Roots(NamedTuple):
+    """The shown names of the two mounts B5's contract is about."""
+
+    working: str
+    temporary: str
+
+
+class Look(NamedTuple):
+    """What B5 compares before and after the runs: the processes, every writable mount, the
+    loopback listeners and the whole service log by class."""
+
+    processes: tuple[Process, ...]
+    mounts: dict[str, Mount]
+    listeners: int
+    log: LogClasses
+
+    def resident(self) -> frozenset[int]:
+        """The pids that are init or have a parent; the census starts below no process."""
+        return frozenset(seen.pid for seen in self.processes if seen.pid == 1 or seen.ppid != 0)
+
+    def service_pids(self) -> tuple[int, ...]:
+        return Snapshot(self.processes, "", 0, 0).service_pids()
+
+
+def expect_clean_before(before: Look, roots: Roots) -> None:
+    unclean = before.mounts[roots.working].listings or len(before.service_pids()) != 1
+    unclean = unclean or len(before.resident()) != 2
+    if unclean:
+        raise NotDriven(
+            f"B5: before the runs there were {len(before.resident())} processes and "
+            f"{len(before.mounts[roots.working].listings)} working-root entries; the reap of "
+            f"the earlier run may not have finished"
+        )
+
+
+def expect_comparable(before: Look, after: Look, roots: Roots) -> None:
+    """A skipped root is never read as an empty census, and a changed skip is no comparison."""
+    for look in (before, after):
+        for root in (roots.working, roots.temporary):
+            hidden = [
+                reason for reason, _ in look.mounts[root].skips if reason in SKIPS_THAT_HIDE_ENTRIES
+            ]
+            if hidden:
+                raise NotDriven(f"B5: the census skipped entries of {root} ({', '.join(hidden)})")
+    if {name: found.skips for name, found in before.mounts.items()} != {
+        name: found.skips for name, found in after.mounts.items()
+    }:
+        raise NotDriven("B5: the census skipped different entries before and after the runs")
+
+
+def changed_mounts(
+    before: Look, after: Look, roots: Roots
+) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Each writable mount beside the working root and /tmp whose listing changed, with its
+    listing after the runs."""
+    beside = set(after.mounts) - {roots.working, roots.temporary}
+    return {
+        name: after.mounts[name].listings
+        for name in sorted(beside)
+        if after.mounts[name].listings != before.mounts.get(name, Mount((), ())).listings
+    }
+
+
+def reached_terminal(output: str, number: int) -> bool:
+    """Whether the smoke's output holds a terminal event; a run the service refused for its token
+    reached none, and that is the harness's fault."""
+    lines = output.splitlines()
+    if any(f"event: {event}" in lines for event in RUN_END_EVENTS):
+        return True
+    refusal = re.search(r"refused with (\d+)", output)
+    if refusal:
+        raise NotDriven(f"B5: run {number} was refused with {refusal[1]} (its token), not a result")
+    return False
+
+
+def expect_relay_attached(app_lines: list[str], per_run: int, listing: str) -> None:
+    found = app_lines.count(listing)
+    if found < per_run * RUNS:
+        raise NotDriven(
+            f"B5: the fake app logged {found} tool listings, fewer than the {per_run * RUNS} of "
+            f"{RUNS} runs with the relay attached"
+        )
+
+
+def b5_terminals(terminals: int) -> Verdicts:
+    return {
+        "B5 (terminals)": (
+            terminals == RUNS,
+            f"{terminals} of {RUNS} runs reached a terminal"
+            + ("" if terminals == RUNS else f"; run {terminals + 1} did not"),
+        )
+    }
+
+
+def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verdicts:
+    new = after.log.since(before.log)
+    temporary_same = (
+        after.mounts[roots.temporary].listings == before.mounts[roots.temporary].listings
+    )
+    socks = any(
+        f"cc-socks-{SERVICE_UID}" in path for path, _ in after.mounts[roots.temporary].listings
+    )
+    working = len(after.mounts[roots.working].listings)
+    return {
+        **b5_terminals(terminals),
+        "B5 (processes)": (
+            after.resident() == before.resident(),
+            f"{len(after.resident())} processes remain, the service pids are "
+            f"{'the same' if after.service_pids() == before.service_pids() else 'different'}",
+        ),
+        "B5 (mounts)": (
+            working == 0 and temporary_same,
+            f"{working} working-root entries, /tmp listing unchanged: {temporary_same}, "
+            f"cc-socks-{SERVICE_UID} in /tmp: {socks} (reported)",
+        ),
+        "B5 (listeners)": (
+            after.listeners == before.listeners,
+            f"{before.listeners} loopback listeners before, {after.listeners} after",
+        ),
+        "B5 (log)": (
+            new.login_refused == RUNS
+            and len(new.run_ids) == RUNS
+            and new.other_errors == 0
+            and new.refused == 0
+            and new.escaped == 0,
+            f"{new.login_refused} runner lines of CliLoginRefusedError for {len(new.run_ids)} "
+            f"runs, {new.other_errors} other ERRORs, {new.refused} refused announcements, "
+            f"{new.escaped} bare lines continuing no record; warnings: {new.agent_warnings} "
+            f"agent_runtime*, {new.uvicorn_warnings} uvicorn*, {new.other_warnings} other "
+            f"(not a full detector of output that escaped logging)",
         ),
     }
 
@@ -279,6 +434,7 @@ class ContainmentProbe(IssuerProbe):
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch)
         self.shown: list[str] = []
+        self.minted: list[Tokens] = []
         directory = scratch / "containment"
         directory.mkdir()
         app = directory / "app"
@@ -319,6 +475,8 @@ class ContainmentProbe(IssuerProbe):
                     ],
                 },
                 SERVICE: {
+                    "entrypoint": ["python", "-I", "-c", BOOTSTRAP],
+                    "command": SERVICE_COMMAND,
                     "volumes": [
                         {"type": "bind", "source": str(self.wrapper_directory),
                          "target": WRAPPER_DIRECTORY, "read_only": True},
@@ -338,7 +496,7 @@ class ContainmentProbe(IssuerProbe):
 
     def drive(self) -> None:
         self.wait_until_listening()
-        tokens = self.tokens()
+        tokens = self.mint()
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
         relay = self.run_with(Mode.RELAY, tokens)
         canary = self.run_with(Mode.CANARY, tokens)
@@ -346,18 +504,32 @@ class ContainmentProbe(IssuerProbe):
         self.expect_driven("B2", canary, [APP_LISTING.format(canary=1)])
         failed = [*self.judge(b1_verdicts(relay)), *self.judge(b2_verdicts(canary))]
         for cell in ("B1 (a)", "B2 (a)"):
-            print(f"{cell} NOT DRIVEN: the loopback capture is #339 C2's", flush=True)
+            print(
+                f"{cell} NOT DRIVEN: the loopback capture is not built (#339); B1 (b), "
+                f"B2 (b)(c) and agent-runtime's CI cover the relay side",
+                flush=True,
+            )
         census = CensusClient(self, self.container(SERVICE), self.configuration)
-        service_pids = self.baseline(census)
         try:
-            detached, snapshot = self.cell_b3(census, tokens)
+            failed += self.drive_b5(census, relay)
+            service_pids = self.baseline(census)
+            detached, snapshot = self.cell_b3(census)
             failed += self.judge(snapshot)
             failed += self.judge(self.cell_b4(census, service_pids, detached))
         finally:
-            self.expect_no_token(tokens, dummy)
+            self.expect_no_token(dummy)
             self.cell_s2()
         if failed:
             raise ProbeFailed(f"cells failed: {', '.join(failed)}")
+
+    def drive_b5(self, census: CensusClient, relay: Observed) -> list[str]:
+        """B5's failed names; a cell that could not be driven fails the probe without stopping
+        the cells after it."""
+        try:
+            return self.judge(self.cell_b5(census, relay.app.count(APP_LISTING.format(canary=0))))
+        except NotDriven as error:
+            print(f"B5 NOT DRIVEN: {error}", flush=True)
+            return ["B5"]
 
     # --- the cells ----------------------------------------------------------------------------
 
@@ -390,11 +562,64 @@ class ContainmentProbe(IssuerProbe):
         )
         return pids
 
+    def cell_b5(self, census: CensusClient, listings_per_run: int) -> Verdicts:
+        """`RUNS` runs one after another, each with its own tokens and the relay attached, the
+        wrapper transparent. The census, the loopback listeners and the log are looked at before
+        the first and `REAP_SECONDS` after the last."""
+        expect(
+            not (self.wrapper_directory / PLANT_FLAG).exists(), "B5: the wrapper's flag file exists"
+        )
+        self.write_mode(Mode.RELAY)
+        roots = Roots(
+            census.names.show_mount(census.working_root), census.names.show_mount(TEMPORARY)
+        )
+        time.sleep(REAP_SECONDS)
+        before = self.look(census, classify_log(self.service_log()))
+        expect_clean_before(before, roots)
+        app_before = len(self.app_lines())
+        terminals = 0
+        while terminals < RUNS and reached_terminal(self.smoke_output(self.mint()), terminals + 1):
+            terminals += 1
+        if terminals < RUNS:
+            return b5_terminals(terminals)
+        time.sleep(REAP_SECONDS)
+        after = self.look(census, self.wait_for_runner_lines(before.log))
+        expect_relay_attached(
+            self.app_lines()[app_before:], listings_per_run, APP_LISTING.format(canary=0)
+        )
+        expect_comparable(before, after, roots)
+        for name, listing in changed_mounts(before, after, roots).items():
+            print(
+                f"B5 (reported): the listing of {name} changed to {len(listing)} entries "
+                f"{[list(entry) for entry in listing]}",
+                flush=True,
+            )
+        return b5_verdicts(before, after, terminals, roots)
+
+    def look(self, census: CensusClient, log: LogClasses) -> Look:
+        listeners = self.client_with(["exec", "-i", self.container(SERVICE)], ("listeners",))
+        return Look(census.processes(), census.mounts(), loopback_listeners(listeners["tcp"]), log)
+
+    def wait_for_runner_lines(self, before: LogClasses) -> LogClasses:
+        """The service logs a run's verdict a moment after the smoke saw its end."""
+        deadline = time.monotonic() + LOG_SECONDS
+        classes = classify_log(self.service_log())
+        while classes.since(before).login_refused < RUNS and time.monotonic() < deadline:
+            time.sleep(0.5)
+            classes = classify_log(self.service_log())
+        return classes
+
+    def mint(self) -> Tokens:
+        """A token pair; every one is kept so that S1 checks the output against all of them."""
+        tokens = self.tokens()
+        self.minted.append(tokens)
+        return tokens
+
     def snapshot(self, census: CensusClient) -> Snapshot:
         working_root, temporary = census.listed(census.working_root, TEMPORARY)
         return Snapshot(census.processes(), census.sleep, working_root, temporary)
 
-    def cell_b3(self, census: CensusClient, tokens: Tokens) -> tuple[str, Verdicts]:
+    def cell_b3(self, census: CensusClient) -> tuple[str, Verdicts]:
         """The run with the markers planted: the process sampler's window covers all of it, then
         a look at the terminal frame and one `REAP_SECONDS` after it. Returns marker B's number."""
         plain, detached = (f"3000.{secrets.randbelow(10**9):09d}" for _ in range(2))
@@ -405,18 +630,18 @@ class ContainmentProbe(IssuerProbe):
         try:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 sampled = pool.submit(census.processes, WINDOW_SECONDS)
-                frame, later = self.run_until_frame_and_after(census, tokens)
+                frame, later = self.run_until_frame_and_after(census)
                 window = Snapshot(sampled.result(), census.sleep, 0, 0)
         finally:
             flag.unlink(missing_ok=True)
         expect_planted(window)
         return detached, b3_verdicts(window, frame, later)
 
-    def run_until_frame_and_after(
-        self, census: CensusClient, tokens: Tokens
-    ) -> tuple[Snapshot, Snapshot]:
+    def run_until_frame_and_after(self, census: CensusClient) -> tuple[Snapshot, Snapshot]:
         """One run, its output read as it comes: a look when the terminal frame arrives, another
-        `REAP_SECONDS` later by the monotonic clock, then the rest of the run's output."""
+        `REAP_SECONDS` later by the monotonic clock, then the rest of the run's output. The tokens
+        are minted here: B5 takes minutes and the issuer's tokens expire."""
+        tokens = self.mint()
         self.write_mode(Mode.RELAY)
         smoke = subprocess.Popen(
             self.smoke_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -469,9 +694,7 @@ class ContainmentProbe(IssuerProbe):
             check=False,
         )  # fmt: skip
         dies = self.wait_for_die(container, killed_at)
-        wait_for_listening(
-            lambda: self.log_since(container, killed_at), "the restarted service did not listen"
-        )
+        self.wait_until_listening(since=killed_at)
         return b4_verdicts(
             dies,
             restarts_before,
@@ -497,12 +720,6 @@ class ContainmentProbe(IssuerProbe):
             self.run(["docker", "inspect", "--format", "{{.RestartCount}}", container]).stdout
         )
 
-    def log_since(self, container: str, since: int) -> str:
-        logs = self.run(["docker", "logs", "--since", str(since), container], check=False)
-        if logs.returncode != 0:
-            raise ProbeFailed(f"docker logs {container} exited {logs.returncode}")
-        return logs.stdout + logs.stderr
-
     def host_markers(self, marker: str) -> int:
         """How many host processes run `sleep <marker>`; the pattern holds no raw name."""
         found = self.run(["pgrep", "-f", f"sleep {re.escape(marker)}"], check=False)
@@ -513,9 +730,10 @@ class ContainmentProbe(IssuerProbe):
         expect(not stray, f"S2: the fake app logged {len(stray)} lines outside its vocabulary")
         self.held.append("S2")
 
-    def expect_no_token(self, tokens: Tokens, dummy: str) -> None:
+    def expect_no_token(self, dummy: str) -> None:
         shown = "\n".join([*self.shown, self.service_log(), *self.app_lines()])
-        for secret in (tokens.person, tokens.workload, dummy):
+        minted = [token for pair in self.minted for token in (pair.person, pair.workload)]
+        for secret in (dummy, *minted):
             expect(secret not in shown, "S1: a token was printed")
         self.held.append("S1")
 
@@ -525,15 +743,21 @@ class ContainmentProbe(IssuerProbe):
         self.write_mode(mode)
         app_before = len(self.app_lines())
         before = self.verdict_counts()
+        output = self.smoke_output(tokens)
+        new = self.wait_for_a_verdict(before).since(before)
+        return Observed(output.splitlines(), self.app_lines()[app_before:], new)
+
+    def smoke_output(self, tokens: Tokens) -> str:
+        """One run of the smoke; its output is kept for S1."""
         smoke = self.run(
             self.smoke_command(),
             stdin=f"{tokens.person}\n{tokens.workload}\n",
             check=False,
             timeout=240,
         )
-        self.shown.append(smoke.stdout + smoke.stderr)
-        new = self.wait_for_a_verdict(before).since(before)
-        return Observed(smoke.stdout.splitlines(), self.app_lines()[app_before:], new)
+        output = smoke.stdout + smoke.stderr
+        self.shown.append(output)
+        return output
 
     def smoke_command(self) -> list[str]:
         tools = [argument for tool in SMOKE_TOOLS for argument in ("--tool", tool)]
