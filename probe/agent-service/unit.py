@@ -155,7 +155,10 @@ class Inside:
                 left, _, right = line.partition(" - ")
                 fields, tail = left.split(), right.split()
                 options = fields[5].split(",") + tail[2].split(",")
-                rows.append({"point": fields[4], "type": tail[0], "options": options})
+                rows.append({
+                    "point": fields[4], "type": tail[0], "options": options,
+                    "own_options": fields[5].split(","),
+                })  # fmt: skip
         return {"mounts": rows}
 
     @staticmethod
@@ -244,7 +247,112 @@ def refusal_is_complete(cell: str, logs: str, fields: list[str]) -> bool:
     return all(field in logs for field in fields)
 
 
-class UnitProbe(Probe):
+class ServiceConditions:
+    """The conditions of a started service that agent-runtime#440's A1d names (U2, U3, U6, U7 and
+    U8), for the probes that start the service: `serves` says what its init's child runs."""
+
+    def serves(self, command: list[str]) -> bool:
+        raise NotImplementedError
+
+    def inside(self, *arguments: str) -> dict:
+        container = self.container(SERVICE)
+        return self.client_with(["exec", "-i", container], arguments, INSIDE_PROGRAM)
+
+    def service_process(self) -> dict:
+        processes = self.inside("processes")["processes"]
+        children = [found for found in processes if found["parent"] == 1]
+        expect(len(children) == 1, f"U2: the init has children {children}")
+        init = next(found for found in processes if found["pid"] == 1)
+        expect(Path(init["command"][0]).name == INIT_COMMAND, f"U2: PID 1 is {init['command']}")
+        return children[0]
+
+    def cell_u2(self) -> None:
+        listed = self.run(
+            ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}",
+             "--filter", f"label=com.docker.compose.service={SERVICE}"],
+        ).stdout.split()  # fmt: skip
+        expect(len(listed) == 1, f"U2: {len(listed)} service containers")
+        configured = json.loads(self.compose("config", "--format", "json").stdout)["services"]
+        expect("deploy" not in configured[SERVICE], "U2: the service has a deploy section")
+        service = self.service_process()
+        expect(self.serves(service["command"]), f"U2: the init's child is {service['command']}")
+        expect("--workers" not in service["command"], f"U2: {service['command']}")
+        processes = self.inside("processes")["processes"]
+        grandchildren = [found for found in processes if found["parent"] == service["pid"]]
+        expect(not grandchildren, f"U2: the service has children {grandchildren}")
+        self.hold(
+            "U2",
+            f"one container; PID 1 is docker-init and its one child {service['command'][-3:]} "
+            "runs no worker",
+        )
+
+    def cell_u3(self) -> None:
+        pid = str(self.service_process()["pid"])
+        process = self.inside("process", pid)
+        expect(
+            set(process["uid"]) == {str(UID)} and set(process["gid"]) == {str(UID)},
+            f"U3: {process['uid']} {process['gid']}",
+        )
+        expect(int(process["capabilities"], 16) == 0, f"U3: CapEff {process['capabilities']}")
+        expect(process["no_new_privileges"] == "1", "U3: NoNewPrivs is not 1")
+        expect(process["core_limit"] == ["0", "0"], f"U3: core limit {process['core_limit']}")
+        expect(process["environ_owner"] == 0, f"U3: environ is owned by {process['environ_owner']}")
+        expect(
+            set(process["opens"].values()) == {"EACCES"},
+            f"U3: a same-uid process opens {process['opens']}",
+        )
+        written = self.inside("write", "/probe-write")["result"]
+        expect(written == "EROFS", f"U3: a write to / gave {written}")
+        self.hold(
+            "U3",
+            f"uid:gid {UID}:{UID}, CapEff 0, NoNewPrivs 1, core 0:0, non-dumpable (environ owned "
+            f"by root, environ and mem refused to a same-uid process: {process['opens']}), "
+            f"a write to / gives {written}",
+        )
+
+    def cell_u6(self) -> None:
+        mounts = {m["point"]: m for m in self.inside("mounts")["mounts"]}
+        for directory in (CONTAINER_TMP, working_root()):
+            mount = mounts[directory]
+            owned = self.inside("stat", directory)
+            expect(mount["type"] == "tmpfs", f"U6: {directory} is {mount['type']}")
+            expect(
+                owned["uid"] == UID and owned["mode"] == OWNER_ONLY,
+                f"U6: {directory} is owned by {owned['uid']} with mode {owned['mode']:o}",
+            )
+        self.hold("U6", f"/tmp and {working_root()} are tmpfs owned by {UID} with mode 0700")
+
+    def cell_u7(self) -> None:
+        options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
+        for directory in (CONTAINER_TMP, working_root()):
+            expect(
+                {"nosuid", "nodev", "noexec"} <= set(options[directory]),
+                f"U7: {directory} mounts with {options[directory]}",
+            )
+        ran = self.inside("run_copy", working_root())["result"]
+        expect(ran == "EACCES", f"U7: a copied binary in the working root gave {ran}")
+        version = self.run(
+            ["docker", "exec", self.container(SERVICE), "/opt/claude/claude", "--version"]
+        ).stdout.strip()
+        expect(version.startswith("2.1.302"), f"U7: the CLI says {version!r}")
+        self.hold(
+            "U7",
+            "nosuid,nodev,noexec on /tmp and the working root; a copied binary there gives "
+            f"{ran}; the CLI ({version}) starts",
+        )
+
+    def cell_u8(self) -> None:
+        own_options = {m["point"]: m["own_options"] for m in self.inside("mounts")["mounts"]}
+        expect("ro" in own_options.get(login_directory(), []), "U8: the login mount is writable")
+        token = self.inside("stat", token_path())
+        expect(
+            token["uid"] == UID and token["mode"] == TOKEN_MODE,
+            f"U8: the token is owned by {token['uid']} with mode {token['mode']:o}",
+        )
+        self.hold("U8", f"the login mount is read-only; the token is 0600 owned by {UID}")
+
+
+class UnitProbe(ServiceConditions, Probe):
     """The egress probe's stack with the service alone, driven cell by cell."""
 
     def __init__(self, scratch: Path) -> None:
@@ -254,9 +362,8 @@ class UnitProbe(Probe):
     def services_to_start(self) -> tuple[str, ...]:
         return (SERVICE,)
 
-    def inside(self, *arguments: str) -> dict:
-        container = self.container(SERVICE)
-        return self.client_with(["exec", "-i", container], arguments, INSIDE_PROGRAM)
+    def serves(self, command: list[str]) -> bool:
+        return any(Path(part).name == SERVICE_COMMAND for part in command)
 
     def service_containers(self) -> list[str]:
         """The service's containers, stopped ones included."""
@@ -338,61 +445,6 @@ class UnitProbe(Probe):
             "an unauthenticated POST /runs answers 401",
         )
 
-    def service_process(self) -> dict:
-        processes = self.inside("processes")["processes"]
-        children = [found for found in processes if found["parent"] == 1]
-        expect(len(children) == 1, f"U2: the init has children {children}")
-        init = next(found for found in processes if found["pid"] == 1)
-        expect(Path(init["command"][0]).name == INIT_COMMAND, f"U2: PID 1 is {init['command']}")
-        return children[0]
-
-    def cell_u2(self) -> None:
-        listed = self.run(
-            ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}",
-             "--filter", f"label=com.docker.compose.service={SERVICE}"],
-        ).stdout.split()  # fmt: skip
-        expect(len(listed) == 1, f"U2: {len(listed)} service containers")
-        configured = json.loads(self.compose("config", "--format", "json").stdout)["services"]
-        expect("deploy" not in configured[SERVICE], "U2: the service has a deploy section")
-        service = self.service_process()
-        expect(
-            any(Path(part).name == SERVICE_COMMAND for part in service["command"]),
-            f"U2: the init's child is {service['command']}",
-        )
-        expect("--workers" not in service["command"], f"U2: {service['command']}")
-        processes = self.inside("processes")["processes"]
-        grandchildren = [found for found in processes if found["parent"] == service["pid"]]
-        expect(not grandchildren, f"U2: the service has children {grandchildren}")
-        self.hold(
-            "U2",
-            f"one container; PID 1 is docker-init and its one child {service['command'][-3:]} "
-            "runs no worker",
-        )
-
-    def cell_u3(self) -> None:
-        pid = str(self.service_process()["pid"])
-        process = self.inside("process", pid)
-        expect(
-            set(process["uid"]) == {str(UID)} and set(process["gid"]) == {str(UID)},
-            f"U3: {process['uid']} {process['gid']}",
-        )
-        expect(int(process["capabilities"], 16) == 0, f"U3: CapEff {process['capabilities']}")
-        expect(process["no_new_privileges"] == "1", "U3: NoNewPrivs is not 1")
-        expect(process["core_limit"] == ["0", "0"], f"U3: core limit {process['core_limit']}")
-        expect(process["environ_owner"] == 0, f"U3: environ is owned by {process['environ_owner']}")
-        expect(
-            set(process["opens"].values()) == {"EACCES"},
-            f"U3: a same-uid process opens {process['opens']}",
-        )
-        written = self.inside("write", "/probe-write")["result"]
-        expect(written == "EROFS", f"U3: a write to / gave {written}")
-        self.hold(
-            "U3",
-            f"uid:gid {UID}:{UID}, CapEff 0, NoNewPrivs 1, core 0:0, non-dumpable (environ owned "
-            f"by root, environ and mem refused to a same-uid process: {process['opens']}), "
-            f"a write to / gives {written}",
-        )
-
     def cell_u4(self) -> None:
         mounts = self.inside("mounts")["mounts"]
         over_proc = [
@@ -417,49 +469,6 @@ class UnitProbe(Probe):
             "U5",
             f"the service and an exec'd process run under {label}; a same-uid group with a "
             f"descendant is gone {killed['seconds']:.2f} s after SIGKILL",
-        )
-
-    def cell_u6(self) -> None:
-        mounts = {m["point"]: m for m in self.inside("mounts")["mounts"]}
-        for directory in (CONTAINER_TMP, working_root()):
-            mount = mounts[directory]
-            owned = self.inside("stat", directory)
-            expect(mount["type"] == "tmpfs", f"U6: {directory} is {mount['type']}")
-            expect(
-                owned["uid"] == UID and owned["mode"] == OWNER_ONLY,
-                f"U6: {directory} is owned by {owned['uid']} with mode {owned['mode']:o}",
-            )
-        self.hold("U6", f"/tmp and {working_root()} are tmpfs owned by {UID} with mode 0700")
-
-    def cell_u7(self) -> None:
-        options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
-        for directory in (CONTAINER_TMP, working_root()):
-            expect(
-                {"nosuid", "nodev", "noexec"} <= set(options[directory]),
-                f"U7: {directory} mounts with {options[directory]}",
-            )
-        ran = self.inside("run_copy", working_root())["result"]
-        expect(ran == "EACCES", f"U7: a copied binary in the working root gave {ran}")
-        version = self.run(
-            ["docker", "exec", self.container(SERVICE), "/opt/claude/claude", "--version"]
-        ).stdout.strip()
-        expect(version.startswith("2.1.302"), f"U7: the CLI says {version!r}")
-        self.hold(
-            "U7",
-            "nosuid,nodev,noexec on /tmp and the working root; a copied binary there gives "
-            f"{ran}; the CLI ({version}) starts",
-        )
-
-    def cell_u8(self) -> None:
-        written = self.inside("write", f"{login_directory()}/probe-write")["result"]
-        expect(written == "EROFS", f"U8: a write into the login directory gave {written}")
-        token = self.inside("stat", token_path())
-        expect(
-            token["uid"] == UID and token["mode"] == TOKEN_MODE,
-            f"U8: the token is owned by {token['uid']} with mode {token['mode']:o}",
-        )
-        self.hold(
-            "U8", f"the login directory is read-only ({written}); the token is 0600 owned by {UID}"
         )
 
     def started_at(self) -> str:

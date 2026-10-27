@@ -30,6 +30,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -181,7 +182,13 @@ def cell_i3(output: Path) -> None:
 
 
 def run_in_image(
-    arguments: Sequence[str], *, entrypoint: str, user: str = "1000:1000", read_only: bool = True
+    arguments: Sequence[str],
+    *,
+    entrypoint: str,
+    user: str = "1000:1000",
+    read_only: bool = True,
+    image: str = IMAGE,
+    options: Sequence[str] = (),
 ) -> subprocess.CompletedProcess[str]:
     return docker(
         [
@@ -191,7 +198,8 @@ def run_in_image(
             f"--user={user}",
             *(["--read-only"] if read_only else []),
             f"--entrypoint={entrypoint}",
-            IMAGE,
+            *options,
+            image,
             *arguments,
         ],
         check=False,
@@ -369,19 +377,21 @@ def bite_check_failure(bitten: subprocess.CompletedProcess[str], planted: str) -
     return None
 
 
-def cell_i6() -> None:
+def cell_i6(image: str = IMAGE, options: Sequence[str] = ()) -> None:
     """Both searches run as root over the whole file system, so no directory hides from them,
-    and any error of a search fails the cell."""
+    and any error of a search fails the cell. `image` and `options` name another image and the
+    docker options of its containers."""
+    run = partial(run_in_image, image=image, options=options)
     names = " -o ".join(f"-name '{name}'" for name in LOGIN_PATHS)
-    found = run_in_image(["-c", f"find / -xdev \\( {names} \\)"], entrypoint="sh", user="0:0")
+    found = run(["-c", f"find / -xdev \\( {names} \\)"], entrypoint="sh", user="0:0")
     expect(found.returncode == 0, f"I6: the login search failed: {found.stderr[-300:]!r}")
     expect(found.stdout.strip() == "", f"I6: the image holds login files: {found.stdout!r}")
-    tokens = run_in_image(["-c", TOKEN_SEARCH], entrypoint="sh", user="0:0")
+    tokens = run(["-c", TOKEN_SEARCH], entrypoint="sh", user="0:0")
     expect(tokens.returncode == 0, f"I6: the token search failed: {tokens.stderr[-300:]!r}")
     expect(tokens.stdout.strip() == "", f"I6: a token-shaped text is in {tokens.stdout!r}")
     planted = "/usr/local/planted.bin"
     fake_token = "sk-ant-" + "api03-" + "a" * 30
-    bitten = run_in_image(
+    bitten = run(
         ["-c", f"printf '\\000{fake_token}\\000' > {planted} && {TOKEN_SEARCH}"],
         entrypoint="sh",
         user="0:0",
@@ -390,7 +400,7 @@ def cell_i6() -> None:
     failure = bite_check_failure(bitten, planted)
     expect(failure is None, f"I6: {failure}")
     environment = json.loads(
-        docker(["image", "inspect", IMAGE, "--format", "{{json .Config.Env}}"]).stdout
+        docker(["image", "inspect", image, "--format", "{{json .Config.Env}}"]).stdout
     )
     expect(
         not any(re.match(r"(CLAUDE|ANTHROPIC)", entry) for entry in environment),
