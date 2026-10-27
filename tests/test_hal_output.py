@@ -199,7 +199,7 @@ def test_a_terminal_that_asks_for_no_colour_gets_the_plain_bytes(
 def test_an_empty_no_colour_does_not_turn_colour_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The no-color.org convention: only a non-empty NO_COLOR counts."""
+    """#495: only a non-empty NO_COLOR turns colour off."""
 
     _out, err = put_on_terminals(monkeypatch)
     monkeypatch.setenv("NO_COLOR", "")
