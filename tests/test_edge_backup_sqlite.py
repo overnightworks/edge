@@ -17,6 +17,7 @@ from edge_backup_support import (
     STATUS_KEYS,
     Machine,
     app_history,
+    assert_the_restore_test_fails_verification,
     declare_apps,
 )
 
@@ -241,7 +242,8 @@ def test_a_sqlite_record_needs_its_volume_and_file(missing):
 
 
 @pytest.mark.parametrize(
-    "file_name", ["", "a/b.sqlite3", "../db", ".hidden", "a?b", "a%2fb", "a#b", "x" * 129]
+    "file_name",
+    ["", "é.sqlite3", "a/b.sqlite3", "../db", ".hidden", "a?b", "a%2fb", "a#b", "x" * 129],
 )
 def test_a_sqlite_record_refuses_a_file_name_that_is_not_one_plain_segment(file_name):
     """#461 A1 M3: the file name is one plain segment."""
@@ -417,7 +419,7 @@ def test_a_failing_sqlite_run_shows_no_path_or_row_value_in_stderr(
     outcome = edge_backup("backup", *_sqlite_apps(home))
 
     assert outcome.exit_code == 3
-    assert "presentator.sqlite3" not in outcome.err
+    assert "/data/" not in outcome.err
     assert "secret-name" not in outcome.err
 
 
@@ -474,13 +476,7 @@ def test_the_restore_test_fails_on_a_different_count_a_missing_rows_or_a_bad_cop
     """#461 A5 M11: a different count, missing rows or a bad copy fail."""
     tamper(machine)
 
-    outcome = edge_backup("restore", "--test", *backed_up)
-
-    assert outcome.exit_code == 3
-    assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
-        "verify",
-        "verification-failed",
-    )
+    assert_the_restore_test_fails_verification(edge_backup, backed_up)
 
 
 @pytest.mark.parametrize(("require_rows", "exit_code"), [(False, 0), (True, 3)])
