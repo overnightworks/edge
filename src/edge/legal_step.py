@@ -5,17 +5,21 @@ The step runs only while `services.legal` is in the catalog and enabled. Every r
 plan time, before the question, and nothing is written on one.
 """
 
+import json
 import os
 import tempfile
 from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
+from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 
-from edge import catalog, checkout, legal_record
+from edge import catalog, checkout
 from edge.legal_pages import (
     TEMPLATES,
     Block,
+    BlockFingerprint,
     BlockKind,
     Frame,
     PageFingerprint,
@@ -69,8 +73,8 @@ class LegalPlan:
                 failed = f"{BUILT_DIRECTORY}/{page}.html"
                 _replace(self.repository / BUILT_DIRECTORY, page, self.pages[page])
             if self.changed:
-                failed = legal_record.RECORD_FILE
-                legal_record.write(self.repository, self.fingerprints)
+                failed = RECORD_FILE
+                write_record(self.repository, self.fingerprints)
         except OSError as error:
             return f"legal: could not write {failed} ({error.strerror})"
         finally:
@@ -106,8 +110,8 @@ def _changes_of(repository: Path, page: str, current: PageFingerprint) -> tuple[
         built = (repository / BUILT_DIRECTORY / f"{page}.html").read_bytes()
     except FileNotFoundError:
         built = None
-    previous = None if built is None else legal_record.read_page(repository, built, page)
-    return legal_record.changes(page, previous, current)
+    previous = None if built is None else read_recorded_page(repository, built, page)
+    return block_changes(page, previous, current)
 
 
 def _named(lines: tuple[str, ...]) -> str:
@@ -196,3 +200,70 @@ def _replace(directory: Path, page: str, text: str) -> None:
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+# The record of what the step last wrote sits beside `legal/built/`, not in it: nginx serves that
+# directory. A page's entry is trusted only while the built page still has the bytes the entry was
+# made from; a missing, unreadable or stale entry makes every block of the page new.
+RECORD_FILE = "legal/built-record.json"
+_RECORD_MODE = 0o600
+
+
+class Change(StrEnum):
+    NEW = "new"
+    CHANGED = "changed"
+    LEFT = "left"
+
+
+def read_recorded_page(repository: Path, built_text: bytes, page: str) -> PageFingerprint | None:
+    """The page's entry, or None when there is none or it does not describe `built_text`."""
+    try:
+        entry = json.loads((repository / RECORD_FILE).read_text())[page]
+        fingerprint = PageFingerprint(
+            entry["page_sha256"],
+            entry["frame_sha256"],
+            tuple(
+                BlockFingerprint(
+                    block["path"], block["anchor"], BlockKind(block["kind"]), block["sha256"]
+                )
+                for block in entry["blocks"]
+            ),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return fingerprint if fingerprint.page_sha256 == sha256(built_text).hexdigest() else None
+
+
+def write_record(repository: Path, fingerprints: Mapping[str, PageFingerprint]) -> None:
+    """The whole record under a temporary name, then renamed over the old one."""
+    text = json.dumps({page: asdict(one) for page, one in fingerprints.items()}, indent=1)
+    target = repository / RECORD_FILE
+    temporary = target.with_name(f".{target.name}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _RECORD_MODE)
+    with os.fdopen(descriptor, "w") as file:
+        file.write(text)
+    os.replace(temporary, target)
+
+
+def block_changes(
+    page: str, previous: PageFingerprint | None, current: PageFingerprint
+) -> tuple[str, ...]:
+    """The lines naming what the new build changes on the page against what was written."""
+    if previous is None:
+        return tuple(_change_line(block, Change.NEW) for block in current.blocks)
+    before = {(block.path, block.anchor): block for block in previous.blocks}
+    after = {(block.path, block.anchor): block for block in current.blocks}
+    lines = []
+    if previous.frame_sha256 != current.frame_sha256:
+        lines.append(f"{frame_page_path(page)} {Change.CHANGED}")
+    for key, block in after.items():
+        if key not in before:
+            lines.append(_change_line(block, Change.NEW))
+        elif before[key] != block:
+            lines.append(_change_line(block, Change.CHANGED))
+    lines += (_change_line(block, Change.LEFT) for key, block in before.items() if key not in after)
+    return tuple(lines)
+
+
+def _change_line(block: BlockFingerprint, change: Change) -> str:
+    return f"{block.path}#{block.anchor} {change}"
