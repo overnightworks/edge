@@ -45,7 +45,7 @@ def cell_p36(
     }
     target = probe.target.compose_service
     reached = "connected" if service_listens else "ECONNREFUSED"
-    for caller, other in itertools.permutations(AGENT_NETWORKS):
+    for caller, other in itertools.permutations(AGENT_NETWORKS, 2):
         beside = names[caller]
         seen = probe.client_in_namespace_of(beside, "connect", addresses[other], str(CALLER_PORT))[
             "result"

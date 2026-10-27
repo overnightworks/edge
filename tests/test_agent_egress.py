@@ -17,7 +17,7 @@ import sys
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -564,3 +564,44 @@ def test_a_failed_listing_or_inspection_fails_the_cell_never_reads_as_down(
     probe.environment = {}
     with pytest.raises(unit.ProbeFailed):
         probe.service_state()
+
+
+@pytest.fixture
+def agent_networks(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    for directory in (PROBE, ROOT / "probe", ROOT / "agent-service"):
+        monkeypatch.syspath_prepend(str(directory))  # it imports its sibling modules by name
+    yield from probe_module("agent_networks")
+
+
+def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_networks, monkeypatch):
+    target = "agent-service-1"
+    refused_pairs = []
+
+    class Probe:
+        def __init__(self):
+            self.target = SimpleNamespace(compose_service=target)
+
+        def client_in_namespace_of(self, beside, action, *arguments):
+            if action == "resolve":
+                return {"addresses": []}
+            if arguments[0] == target:
+                return {"result": "connected"}
+            refused_pairs.append((beside, arguments[0]))
+            return {"result": "ENETUNREACH"}
+
+        def container(self, name):
+            return "id"
+
+        def inspect_network(self, network):
+            return {"Containers": {"id": {}}}
+
+        def hold(self, cell, text):
+            self.held = cell
+
+    monkeypatch.setattr(
+        agent_networks, "start_caller", lambda probe, project, label, network, name: f"ip-{name}"
+    )
+    probe = Probe()
+    agent_networks.cell_p36(probe, project="p", label="l", service_port=80, service_listens=True)
+    assert probe.held == "P36"
+    assert len(refused_pairs) == len(set(refused_pairs)) == 6
