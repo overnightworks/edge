@@ -1,0 +1,7 @@
+claim_id = "eb04afdcf139435c959a7692e2b800f1"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "b284d3d2ba7279494e795c5d27a37c89437b177f"
+branch = "docs/ai-access-groups"
+scope = ["docs/agent-service.md"]
+opened_commit = "224ce434b4632371af4f8427be6e8f6e53115f02"
