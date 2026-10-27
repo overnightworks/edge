@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from edge import barrier, catalog, compose, core, switches
+from edge import barrier, built_image, catalog, compose, core, switches
 
 
 class Action(StrEnum):
@@ -140,8 +140,8 @@ class KeptImage:
     def describe(self) -> str:
         return (
             f"{self.unit}: {self.service} runs {self.running}, compose.yaml names "
-            f"{self.configured}; edge apply never swaps the image of a running unit, so it "
-            f"keeps running; {KEPT_IMAGE_OWNER}"
+            f"{self.configured}; edge apply never swaps the image of a running unit it does not "
+            f"build, so it keeps running; {KEPT_IMAGE_OWNER}"
         )
 
 
@@ -151,19 +151,22 @@ def plan_kept_images(
     config: Mapping[str, Any],
     containers: Sequence[compose.Container],
     plans: Sequence[UnitPlan],
-    followers: Collection[str],
+    planned_elsewhere: Collection[str],
 ) -> list[KeptImage]:
     """Each live service of a unit whose container's image is not the exact reference its
     resolved definition names, in catalog and file order (#91 rules 2, 3). The core has no
-    profile, the followers are recreated by their own plan, a unit planned off loses its
-    containers, and a service whose definition names no image has no pin to compare."""
+    profile, the services in `planned_elsewhere` (the followers and the built services) have their
+    own plan, a unit planned off loses its containers, and a service whose definition names no
+    image has no pin to compare."""
     planned_off = {plan.unit.key for plan in plans if plan.action is Action.OFF}
     live = [container for container in containers if container.live]
     kept: dict[KeptImage, None] = {}
     for unit in units:
         if unit.key not in planned_off:
             services = [
-                service for service in profile_services[unit.key] if service not in followers
+                service
+                for service in profile_services[unit.key]
+                if service not in planned_elsewhere
             ]
             kept.update(dict.fromkeys(_kept_images_of(unit.key, services, config, live)))
     return list(kept)
@@ -219,17 +222,17 @@ def plan_recreates(
     containers: Sequence[compose.Container],
     hashes: Mapping[str, str],
     plans: Sequence[UnitPlan],
-    followers: Collection[str],
+    planned_elsewhere: Collection[str],
     kept: Sequence[KeptImage],
     image_id: Callable[[str], str],
 ) -> RecreatePlans:
     """Each live service of an enabled unit that is not switched on, off or kept stopped by a
     plan, whose container is labelled with another definition hash than `hashes` (from
     `docker compose config --hash`), in catalog order and, within a unit, after the services it
-    depends on. The followers have their own plan, a service whose image differs is only named
-    (#91), and a container without the label cannot be planned (#376). A reference that is not
-    pinned by digest may name another image than the container runs (a rebuilt local tag), which
-    a recreate would swap in: that service is named, not recreated."""
+    depends on. The services in `planned_elsewhere` have their own plan, a service whose image
+    differs is only named (#91), and a container without the label cannot be planned (#376). A
+    reference that is not pinned by digest may name another image than the container runs (a
+    rebuilt local tag), which a recreate would swap in: that service is named, not recreated."""
     planned = {plan.unit.key for plan in plans}
     kept_services = {image.service for image in kept}
     live = [container for container in containers if container.live]
@@ -241,7 +244,7 @@ def plan_recreates(
         services = [
             service
             for service in profile_services[unit.key]
-            if service not in followers and service not in kept_services
+            if service not in planned_elsewhere and service not in kept_services
         ]
         changed = core.changed_definitions(live, services, hashes)
         for service in core.dependency_order(config, services):
@@ -280,6 +283,48 @@ def _swapped_image(
                 unit, service, f"{reference} ({container.image_id})", f"{reference} ({current})"
             )
     return None
+
+
+class UnitServicePlans(NamedTuple):
+    built: list[built_image.BuiltRecreate]
+    recreates: list[Recreate]
+    images: list[KeptImage]
+
+
+def plan_unit_services(
+    fleet: Fleet,
+    containers: Sequence[compose.Container],
+    hashes: Mapping[str, str],
+    plans: Sequence[UnitPlan],
+    followers: Collection[str],
+    gates: Mapping[str, core.Gate],
+    engine: compose.Compose,
+) -> UnitServicePlans:
+    """What the services of the units need besides their switch: the built service is recreated
+    onto its image, every other live service whose definition changed is recreated, and every
+    other whose image differs is named (#91)."""
+    built_services = built_image.built_services(
+        fleet.units, fleet.profile_services, fleet.config, gates
+    )
+    built = built_image.plan_built_images(
+        built_services, fleet.config, containers, hashes, engine.built_image_id
+    )
+    planned_elsewhere = {*followers, *built_services.values()}
+    images = plan_kept_images(
+        fleet.units, fleet.profile_services, fleet.config, containers, plans, planned_elsewhere
+    )
+    recreates, moved = plan_recreates(
+        fleet.units,
+        fleet.profile_services,
+        fleet.config,
+        containers,
+        hashes,
+        plans,
+        planned_elsewhere,
+        images,
+        engine.image_id,
+    )
+    return UnitServicePlans(built, recreates, [*images, *moved])
 
 
 @dataclass

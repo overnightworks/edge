@@ -1,0 +1,531 @@
+"""`hal apply` swaps the image of agent-service, the one service whose unit has `run.build`, in one
+recreate under the one yes, on the scripted boundaries of `test_edge_apply` (#482, E1-E5)."""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+import test_edge_apply as base
+import yaml
+from test_edge_apply import (
+    LABELLED_IMAGE_ID,
+    NEVER_SWAPS,
+    RECREATE_TRAEFIK,
+    STEP_CA_BUMP,
+    STEP_CA_KEPT,
+    SWITCHED_OFF_AT,
+    ZONE,
+    ScriptedCompose,
+    switch_off,
+    up_calls,
+    write_fleet,
+)
+
+from edge import catalog, core
+from edge.unit_plans import stays_stopped_line
+
+BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
+REBUILT_ID = f"sha256:{'e' * 64}"
+BUMPED_ID = f"sha256:{'d' * 64}"
+OTHER_ID = f"sha256:{'c' * 64}"
+RECREATE_AGENT_SERVICE = [*RECREATE_TRAEFIK[:-1], "agent-service"]
+RECREATE_EGRESS = [*RECREATE_TRAEFIK[:-1], "agent-egress"]
+IN_FLIGHT_END = "in-flight requests end"
+DEFINITION_LINE = (
+    f"agent-service: recreate agent-service ({core.DEFINITION_CHANGED}); {IN_FLIGHT_END}"
+)
+
+
+# The fixtures of `test_edge_apply` this module's tests request by name.
+agent_service_unit = base.agent_service_unit
+at_terminal = base.at_terminal
+core_files = base.core_files
+home = base.home
+ingress = base.ingress
+realm_backup = base.realm_backup
+repository = base.repository
+scripted_git = base.scripted_git
+setup_check = base.setup_check
+setup_run = base.setup_run
+start = base.start
+state = base.state
+step_ca_applied = base.step_ca_applied
+switch = base.switch
+applied_core = base.applied_core
+
+
+@dataclass
+class BuildingCompose(ScriptedCompose):
+    """Compose whose new container carries the id its image reference has when it is created."""
+
+    created_ids: dict[str, str | None] = field(default_factory=dict)
+
+    def create_container(self, service: str) -> None:
+        super().create_container(service)
+        reference = self.configured_image(service)
+        self.created_ids[service] = self.image_ids.get(reference) or LABELLED_IMAGE_ID
+
+    def labels_of(self, service: str) -> str:
+        labels = super().labels_of(service)
+        created = self.created_ids.get(service)
+        if created is None:
+            return labels.replace(f"com.docker.compose.image={LABELLED_IMAGE_ID},", "")
+        return labels.replace(LABELLED_IMAGE_ID, created)
+
+
+@pytest.fixture
+def scripted() -> BuildingCompose:
+    return BuildingCompose()
+
+
+@pytest.fixture
+def running(agent_service_unit, switch, scripted) -> None:
+    """agent-service on from the current definitions and tag; the calls so far are forgotten."""
+    assert switch()[0] == 0
+    scripted.calls.clear()
+
+
+def configured(scripted: BuildingCompose) -> str:
+    return scripted.config["services"]["agent-service"]["image"]
+
+
+def bump(scripted: BuildingCompose) -> str:
+    """compose.yaml now names a newer built tag; the old container keeps its image. Returns the
+    old reference."""
+    old = configured(scripted)
+    scripted.change_image("agent-service", BUMPED_TAG)
+    scripted.image_ids[BUMPED_TAG] = BUMPED_ID
+    return old
+
+
+def bump_line(old: str) -> str:
+    return (
+        f"agent-service: recreate agent-service (image {old} \N{RIGHTWARDS ARROW} {BUMPED_TAG}); "
+        f"{IN_FLIGHT_END}"
+    )
+
+
+def rebuilt_line(reference: str) -> str:
+    return (
+        f"agent-service: recreate agent-service (the image {reference} was rebuilt); "
+        f"{IN_FLIGHT_END}"
+    )
+
+
+def show_container_id(scripted: BuildingCompose) -> None:
+    """`ps` names the container's own image id, not the reference, as it may once the tag moved."""
+    scripted.images["agent-service"] = LABELLED_IMAGE_ID
+
+
+def switch_on_call(scripted: BuildingCompose) -> list[str]:
+    return next(call for call in up_calls(scripted) if "--no-recreate" in call)
+
+
+def test_a_reference_bump_recreates_agent_service_once_under_the_one_yes(running, switch, scripted):
+    """M1, E1, E2: the line names both tags and the end of runs; one question; one recreate."""
+    ids = dict(scripted.container_ids)
+    old = bump(scripted)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert bump_line(old) in out
+    assert out.count("apply exactly this plan") == 1
+    assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+    assert scripted.container_ids["agent-service"] != ids["agent-service"]
+    assert scripted.container_ids["agent-egress"] == ids["agent-egress"]
+    assert scripted.image_of("agent-service") == BUMPED_TAG
+
+
+def test_a_declined_yes_runs_no_changing_verb(running, switch, scripted):
+    """M2, E2: no image swap, the old container runs on."""
+    ids = dict(scripted.container_ids)
+    bump(scripted)
+
+    switch(answer="no")
+
+    assert scripted.changing_verbs() == []
+    assert scripted.container_ids == ids
+
+
+@pytest.mark.parametrize("ps_shows_the_id", [False, True], ids=["reference", "container id"])
+def test_a_rebuilt_tag_names_the_reference_never_an_id(running, switch, scripted, ps_shows_the_id):
+    """M3 (a, b), E1, U9: the same tag now names another image."""
+    reference = configured(scripted)
+    scripted.image_ids[reference] = REBUILT_ID
+    if ps_shows_the_id:
+        show_container_id(scripted)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert rebuilt_line(reference) in out
+    assert LABELLED_IMAGE_ID not in out
+    assert REBUILT_ID not in out
+    assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+
+
+def test_a_bump_beside_a_definition_change_gives_the_bump_line_once(running, switch, scripted):
+    """M4 (a), E1."""
+    old = bump(scripted)
+    scripted.change_definition("agent-service")
+
+    _, out, _ = switch()
+
+    assert bump_line(old) in out
+    assert out.count("recreate agent-service") == 1
+    assert core.DEFINITION_CHANGED not in out
+
+
+def test_a_bump_whose_old_tag_is_gone_gives_the_definition_line_not_an_id(
+    running, switch, scripted
+):
+    """M4 (b), U9: `ps` shows the container's id, which is no reference."""
+    bump(scripted)
+    show_container_id(scripted)
+
+    _, out, _ = switch()
+
+    assert DEFINITION_LINE in out
+    assert LABELLED_IMAGE_ID not in out
+    assert "image " not in DEFINITION_LINE and "image sha256" not in out
+
+
+def test_a_definition_change_alone_gives_the_definition_line(running, switch, scripted):
+    """M5, E1."""
+    scripted.change_definition("agent-service")
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert DEFINITION_LINE in out
+    assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+
+
+def test_a_restarting_container_on_the_old_image_is_recreated_before_the_switch_on(
+    running, switch, scripted
+):
+    """M6, the incident: the crash-looping 0.7.0 container is replaced, and the unit's `on` keeps
+    the new one."""
+    old = bump(scripted)
+    scripted.containers["agent-service"] = "restarting"
+    ids = dict(scripted.container_ids)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert out.index(bump_line(old)) < out.index("agent-service: on (")
+    assert up_calls(scripted)[0] == RECREATE_AGENT_SERVICE
+    assert "--no-recreate" in up_calls(scripted)[1]
+    assert scripted.container_ids["agent-service"] != ids["agent-service"]
+    assert scripted.containers["agent-service"] == "running"
+    assert scripted.image_of("agent-service") == BUMPED_TAG
+
+
+@pytest.mark.parametrize("differing", [False, True], ids=["equal image", "differing image"])
+def test_an_exited_sibling_switches_the_unit_on_and_recreates_only_a_differing_image(
+    running, switch, scripted, differing
+):
+    """M7: agent-egress exited gives `on`; agent-service is recreated only when its image
+    differs."""
+    scripted.containers["agent-egress"] = "exited"
+    if differing:
+        bump(scripted)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert ("recreate agent-service" in out) is differing
+    assert [call for call in up_calls(scripted) if "--force-recreate" in call] == (
+        [RECREATE_AGENT_SERVICE] if differing else []
+    )
+    assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
+
+
+def test_an_agent_service_exited_by_hand_with_a_differing_image_is_recreated(
+    running, switch, scripted
+):
+    """M8, E1: the exited container is not started as it is."""
+    bump(scripted)
+    scripted.containers["agent-service"] = "exited"
+
+    exit_code, _, _ = switch()
+
+    assert exit_code == 0
+    assert up_calls(scripted)[0] == RECREATE_AGENT_SERVICE
+    assert scripted.image_of("agent-service") == BUMPED_TAG
+
+
+def test_an_agent_service_without_a_container_gets_no_line_and_is_created_as_is(
+    running, switch, scripted
+):
+    """M9: the unit's switch-on creates it, never a recreate."""
+    del scripted.containers["agent-service"]
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "recreate agent-service" not in out
+    assert "--no-recreate" in switch_on_call(scripted)
+    assert scripted.containers["agent-service"] == "running"
+
+
+def test_a_bump_to_an_unbuilt_tag_is_planned_after_the_setup_ran(
+    running, switch, scripted, setup_check, setup_run
+):
+    """M10, E2: the tag is missing, so the setup is asked first; the fresh plan holds the
+    recreate."""
+    old = bump(scripted)
+    scripted.image_ids[BUMPED_TAG] = ""
+    setup_check.exit_code, setup_check.line = 1, "agent-service/setup --check: not set up"
+
+    exit_code, out, _ = switch("yes\nyes")
+
+    assert exit_code == 0
+    assert len(setup_run.commands) == 1
+    assert bump_line(old) in out
+    assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+
+
+def test_an_image_of_a_unit_that_is_not_built_is_only_named(step_ca_applied, switch, scripted):
+    """M11, E1 counterexample, #91: step-ca keeps its image and gets the naming line."""
+    scripted.change_image("step-ca", STEP_CA_BUMP)
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert STEP_CA_KEPT in out
+    assert f"{NEVER_SWAPS} it does not build" in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_switched_off_agent_service_stays_stopped_and_is_not_recreated(
+    running, switch, scripted, state
+):
+    """M12, E5: the marker keeps it off whatever its image."""
+    bump(scripted)
+    scripted.containers.update({"agent-service": "exited", "agent-egress": "exited"})
+    switch_off(state, unit="agent-service")
+
+    exit_code, out, _ = switch(answer="no")
+
+    assert exit_code == 0
+    assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
+    assert "recreate agent-service" not in out
+    assert scripted.changing_verbs() == []
+
+
+def test_a_marker_that_appears_after_the_yes_prevents_the_recreate(
+    running, switch, scripted, state
+):
+    """M13, P7: the marker is read again under the switch lock."""
+    bump(scripted)
+
+    exit_code, _, err = switch(while_prompt_waits=lambda: switch_off(state, unit="agent-service"))
+
+    assert exit_code == 1
+    assert "agent-service was switched off meanwhile" in err
+    assert up_calls(scripted) == []
+
+
+def test_a_changed_follower_is_recreated_before_agent_service(running, switch, scripted):
+    """M14: agent-egress goes first, then agent-service."""
+    scripted.change_definition("agent-egress")
+    bump(scripted)
+
+    exit_code, _, _ = switch()
+
+    assert exit_code == 0
+    assert up_calls(scripted) == [RECREATE_EGRESS, RECREATE_AGENT_SERVICE]
+
+
+def test_hal_start_keeps_the_stopped_container_whatever_image_waits(
+    running, start, scripted, state
+):
+    """M15, E5, #75: the start is `--no-recreate`, so the container keeps its id."""
+    scripted.containers.update({"agent-service": "exited", "agent-egress": "exited"})
+    switch_off(state, unit="agent-service")
+    bump(scripted)
+    ids = dict(scripted.container_ids)
+
+    exit_code, _, _ = start(unit="agent-service")
+
+    assert exit_code == 0
+    assert scripted.container_ids == ids
+    assert all("--force-recreate" not in call for call in up_calls(scripted))
+
+
+def test_an_up_that_fails_before_replacing_the_container_plans_the_recreate_again(
+    running, switch, scripted
+):
+    """M16: no record is kept, so the next run reads the old reference and plans it again."""
+    old = bump(scripted)
+    ids = dict(scripted.container_ids)
+    scripted.failing_verb = "up"
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "partial" in err
+    assert scripted.container_ids == ids
+
+    scripted.failing_verb = None
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert bump_line(old) in out
+    assert scripted.image_of("agent-service") == BUMPED_TAG
+
+
+def test_a_new_container_that_crash_loops_is_partial_and_the_next_run_plans_only_on(
+    running, switch, scripted
+):
+    """M17: the recreate is not observed running; the replaced container is the intended one."""
+    bump(scripted)
+    scripted.crash_loops.add("agent-service")
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 1
+    assert "agent-service is not running after the agent-service recreate" in err
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert "recreate agent-service" not in out
+    assert "agent-service: on (" in out
+    assert "agent-service is not on after the change" in err
+
+
+def test_a_new_container_that_recovers_after_the_watch_leaves_nothing_to_change(
+    running, switch, scripted
+):
+    """M18."""
+    bump(scripted)
+    scripted.crash_loops.add("agent-service")
+    assert switch()[0] == 1
+    scripted.crash_loops.clear()
+    scripted.containers["agent-service"] = "running"
+    scripted.calls.clear()
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+def write_unit_fleet(repository: Path, build: str | None = "agent-service/image") -> None:
+    unit = {"run": {"enabled": True, "setup": "agent-service/setup"}}
+    if build is not None:
+        unit["run"]["build"] = build
+    write_fleet(
+        repository,
+        yaml.safe_dump({"cloudflare": {"zone": ZONE}, "services": {"agent-service": unit}}),
+    )
+
+
+def refuse_a_build_that_is_no_recipe_directory(scripted, repository) -> None:
+    write_unit_fleet(repository, "agent-service")
+
+
+def refuse_a_build_on_an_app(scripted, repository) -> None:
+    fleet = yaml.safe_load((repository / "fleet.yaml").read_text())
+    fleet["github"] = {"org": "overnightworks"}
+    fleet["services"]["hopin"] = {
+        "repo": {"default_branch": "main"},
+        "run": {"enabled": True, "build": "agent-service/image"},
+    }
+    write_fleet(repository, yaml.safe_dump(fleet))
+
+
+def refuse_a_unit_without_a_never_pulled_service(scripted, repository) -> None:
+    del scripted.config["services"]["agent-service"]["pull_policy"]
+
+
+def refuse_a_container_without_its_image(scripted, repository) -> None:
+    scripted.images["agent-service"] = None
+
+
+def refuse_a_container_without_its_definition_label(scripted, repository) -> None:
+    scripted.labels["agent-service"] = None
+
+
+def refuse_a_container_without_its_image_id_label(scripted, repository) -> None:
+    scripted.created_ids["agent-service"] = None
+
+
+def refuse_a_failing_lookup(scripted, repository) -> None:
+    scripted.image_ids[configured(scripted)] = None
+
+
+def refuse_a_lookup_naming_two_images(scripted, repository) -> None:
+    scripted.image_ids[configured(scripted)] = f"{REBUILT_ID}\n{OTHER_ID}"
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        refuse_a_build_that_is_no_recipe_directory,
+        refuse_a_build_on_an_app,
+        refuse_a_unit_without_a_never_pulled_service,
+        refuse_a_container_without_its_image,
+        refuse_a_container_without_its_definition_label,
+        refuse_a_container_without_its_image_id_label,
+        refuse_a_failing_lookup,
+        refuse_a_lookup_naming_two_images,
+    ],
+)
+def test_a_state_that_cannot_be_planned_is_exit_2_and_changes_nothing(
+    running, switch, scripted, repository, arrange
+):
+    """M19: each is `cannot plan`, before a changing verb."""
+    arrange(scripted, repository)
+
+    exit_code, _, err = switch()
+
+    assert exit_code == 2
+    assert "cannot plan" in err
+    assert scripted.changing_verbs() == []
+
+
+def test_a_second_run_after_a_recreate_has_nothing_to_change(running, switch, scripted):
+    """M20, invariant 8: the new container matches compose.yaml and the tag."""
+    bump(scripted)
+    assert switch()[0] == 0
+    scripted.calls.clear()
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.changing_verbs() == []
+
+
+@pytest.mark.parametrize("ps_shows_the_id", [False, True], ids=["reference", "container id"])
+def test_a_tag_removed_by_hand_plans_no_recreate_and_still_asks_the_setup(
+    running, switch, scripted, setup_check, setup_run, ps_shows_the_id
+):
+    """M21 (a, b), U8, U9: a tag gone means no recreate; the setup is asked as before."""
+    scripted.image_ids[configured(scripted)] = ""
+    if ps_shows_the_id:
+        show_container_id(scripted)
+    setup_check.exit_code, setup_check.line = 1, "agent-service/setup --check: not set up"
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert len(setup_run.commands) == 1
+    assert "recreate agent-service" not in out
+    assert scripted.changing_verbs() == []
+
+
+def test_the_catalog_reads_the_build_of_a_unit(repository):
+    """The key lives in the catalog beside `enabled` and `setup`."""
+    (repository / "agent-service" / "image").mkdir()
+    (repository / "agent-service" / "image" / "Dockerfile").write_text("FROM scratch\n")
+    write_unit_fleet(repository)
+
+    units = catalog.load(repository, {"agent-service": ("agent-service",)})
+
+    assert [unit.build for unit in units] == ["agent-service/image"]

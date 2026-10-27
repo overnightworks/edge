@@ -505,15 +505,15 @@ edge apply: nothing published</pre>
 <span class="b">  ~</span> traefik-mcp     recreate       <span class="d">definition changed</span>
 <span class="hd">units</span>
 <span class="b">  ~</span> legal           recreate       <span class="d">definition changed</span>
+<span class="b">  ~</span> agent-service   recreate       <span class="d">image 0.7.0-2.1.302 → 0.8.0-2.1.302 · in-flight requests end</span>
 <span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
-<span class="y">  !</span> agent-service   old image      <span class="d">0.7.0-2.1.302 · compose.yaml 0.8.0-2.1.302</span>
 <span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
 <span class="y">  !</span> keycloak        realm skipped  <span class="d">does not answer</span>
 <span class="hd">apps</span>
 <span class="b">  ~</span> hopin           update         <span class="d">v2026.10.26.1 → v2026.10.27.1</span>
 <span class="hd">cloudflare</span>
 <span class="d">  · publish         later          own plan after a clean local run</span>
-Type <span class="w">yes</span> to apply 7 changes: yes
+Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="g">  ✓</span> legal           pages written  <span class="d">datenschutz, nutzungsbedingungen</span>
 <span class="hd">core</span>
 <span class="g">  ✓</span> traefik         recreated      <span class="d">barriers proven · 9s</span>
@@ -521,19 +521,19 @@ Type <span class="w">yes</span> to apply 7 changes: yes
 <span class="g">  ✓</span> traefik-mcp     recreated      <span class="d">3s</span>
 <span class="hd">units</span>
 <span class="g">  ✓</span> legal           recreated      <span class="d">2s</span>
+<span class="g">  ✓</span> agent-service   recreated      <span class="d">3s</span>
 <span class="r">  ✗</span> agent-service   not running    <span class="d">exited within 5s of the start</span>
 <span class="y">  !</span> keycloak        realm skipped  <span class="d">does not answer</span>
 <span class="hd">apps</span>
 <span class="live">  <span class="spin"></span> hopin           build at v2026.10.27.1 · 48s</span>  <span class="n">← nur live</span>
 <span class="g">  ✓</span> hopin           updated        <span class="d">v2026.10.27.1 · healthy · 1m42s</span>
-<span class="rw">error:</span> 1 of 7 failed, 1 skipped · Cloudflare not touched
+<span class="rw">error:</span> 1 of 8 failed, 1 skipped · Cloudflare not touched
 <span class="c">next:</span> docker logs --tail 50 edge-agent-service-1</pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu</span> der häufigste Fall: nichts zu tun</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
 <span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
-<span class="y">  !</span> agent-service   old image      <span class="d">0.7.0-2.1.302 · compose.yaml 0.8.0-2.1.302</span>
 <span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
 <span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
       </figure>

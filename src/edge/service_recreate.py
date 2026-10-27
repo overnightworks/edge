@@ -1,12 +1,12 @@
 """The recreate of a live service that is not a core service, alone and under the switch lock:
 a follower whose file or definition changed, a service of a unit that runs on whose definition
-changed (#89, #376)."""
+changed, the built service whose image or definition changed (#89, #376)."""
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from edge import compose, core, switches
+from edge import built_image, compose, core, switches
 from edge.unit_plans import Progress, Recreate, since_of
 
 
@@ -58,10 +58,12 @@ class ServiceRecreator:
         self.progress.step = f"mark {plan.service} unfinished in {core.APPLIED_FILE}"
         record.mark_unfinished([plan.service], followed)
 
-    def unit_services(self, recreates: Sequence[Recreate]) -> str | None:
-        """Recreate each live service of a unit that runs on whose definition changed, in the
-        order planned. A volume is kept and the image is the container's own, never swapped
-        (#376)."""
+    def unit_services(
+        self, recreates: Sequence[Recreate | built_image.BuiltRecreate]
+    ) -> str | None:
+        """Recreate each live service of a unit that runs on whose definition changed, and each
+        built service, in the order planned. A volume is kept; the image is the container's own
+        except for the built service, which runs the image its tag names (#376)."""
         try:
             for plan in recreates:
                 self.progress.unit = plan.service
