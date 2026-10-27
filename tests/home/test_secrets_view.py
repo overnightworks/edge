@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, FakeProbe, home_check, plant_secrets, symlinked_folder_fix
+from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_report_command, symlinked_folder_fix
 
 from home_tools import cli, secrets_view
 from home_tools.secrets_setup import Boundaries, Terminal
@@ -171,15 +171,6 @@ def secret_contents(layout: Layout) -> dict[Path, str]:
 
 def state_file_of(layout: Layout, command: str) -> Path:
     return {"secrets": layout.secrets_report_file, "check": layout.check_report_file}[command]
-
-
-UNEXPECTED_ERROR_PREFIX = {"secrets": "home: unerwarteter Fehler (", "check": "error: unexpected error ("}
-
-
-def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
-    if command == "check":
-        return home_check(home, runner, probe)
-    return cli.main([command], home=home, run=runner, probe=probe, now=NOW)
 
 
 @pytest.mark.parametrize("plant_link", [symlink_the_report_file, hard_link_the_report_file])

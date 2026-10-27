@@ -502,6 +502,15 @@ def home_check(
         return hal_cli.main(["check", *arguments])
 
 
+UNEXPECTED_ERROR_PREFIX = {"secrets": "home: unerwarteter Fehler (", "check": "error: unexpected error ("}
+
+
+def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
+    if command == "check":
+        return home_check(home, runner, probe)
+    return cli.main([command], home=home, run=runner, probe=probe)
+
+
 REPORT_DISPLAY = "~/.local/state/hal/check-report.md"
 
 
