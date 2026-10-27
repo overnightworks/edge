@@ -20,13 +20,9 @@ from conftest import FAKE_SECRET_VALUE, FakeProbe, symlinked_folder_fix
 
 from home_tools import cli, secrets_setup
 from home_tools.secrets_setup import (
-    BY_HAND_STEP,
     CLOUDFLARE_TOKEN_PAGE,
     EXPOSED_INPUT_REFUSAL,
-    NEXT_STEP,
     NO_BROWSER,
-    RETRY_STEP,
-    STILL_OPEN,
     TERMINAL_BOUNDARIES,
     UNSENDABLE_PASTE,
     Boundaries,
@@ -228,10 +224,10 @@ def files_under(home: Path) -> set[str]:
     return {str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()}
 
 
-def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_with_the_next_step(
+def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_without_a_next_line(
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, verifier: FakeVerifier, capsys
 ) -> None:
-    """#36 rule 2 / rule 5: the walk takes the missing entries one at a time in manifest order and ends with the plan step."""
+    """#36 rule 2 / rule 5: the walk takes the missing entries one at a time in manifest order and prints no ending of its own."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
     code = home_secrets_setup(home, boundaries)
@@ -247,7 +243,7 @@ def test_the_walk_takes_every_missing_entry_in_manifest_order_and_ends_with_the_
     assert [urlsplit(page).netloc for page in terminal.opened] == ["dash.cloudflare.com", "github.com"]
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
-    assert output.splitlines()[-1] == NEXT_STEP
+    assert not [line for line in output.splitlines() if line.startswith("next:")]
 
 
 def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:
@@ -375,7 +371,7 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
     assert code == 1
     assert f"abgelehnt: {refusal.detail}; nichts gespeichert. Noch einmal einfügen oder leer lassen." in lines
     assert files_under(home) == {".secrets/github/read", PASSPHRASE_FILE}
-    assert lines[-2:] == [STILL_OPEN + "cloudflare/read", RETRY_STEP.format(first="")]
+    assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
 def interrupt_at_the_open_prompt(terminal: FakeTerminal, _disk: FakeDisk) -> None:
@@ -537,7 +533,7 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, damage: Callable[[Path], tuple[str, str]]
 ) -> None:
     """#36 rule 2.5 / #17 finding 21 (c, d): an unfit secrets directory is named before a page opens, so no fresh token is lost;
-    the one `next:` line repeats the command that clears it before the walk again."""
+    the walk prints no `next:` line, setup's row and error say it."""
     reason, fix = damage(home)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
@@ -546,7 +542,7 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     output = capsys.readouterr().out
     assert code == 1
     assert output.count(f"nicht gespeichert: {reason}: erst {fix}") == 3
-    assert [line for line in output.splitlines() if line.startswith("next:")] == [RETRY_STEP.format(first=f"{fix}, dann ")]
+    assert not [line for line in output.splitlines() if line.startswith("next:")]
     assert (terminal.opened, terminal.prompts) == ([], [])
     assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
 
@@ -570,11 +566,7 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert "locked/token: nicht feststellbar, ob vorhanden (Ordner nicht lesbar); übersprungen" in lines
     assert not any("github/old" in line for line in lines)
     assert "ssh/key.ppk: fehlt, ist optional; übersprungen" in lines
-    assert lines[-3:] == [
-        STILL_OPEN + "locked/token",
-        BY_HAND_STEP + "gitlab",
-        RETRY_STEP.format(first="`chmod 700 ~/.secrets/locked`, dann "),
-    ]
+    assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
 def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, capsys) -> None:

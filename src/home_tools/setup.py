@@ -54,6 +54,7 @@ SYSTEM_WHY = (
 SUDO_WILL_BE_ASKED_FOR = "tunnel, polkit, journal, mail, agent account"
 SKIPPED_FOR_THE_AGENT = "the operator's step"
 RERUN = "hal setup --apply"
+APPLY_PLAN = "hal apply"
 
 
 class SetupRow(StrEnum):
@@ -143,7 +144,8 @@ def verdict_of(outcomes: Sequence[Outcome], apply: bool, elapsed_seconds: float)
     tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
     counts = tuple((tallies[tally], tally) for tally in Tally)
     if apply:
-        return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds)
+        walk_stored = any(outcome.event is SetupEvent.STORED for outcome in outcomes)
+        return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds, next_step=APPLY_PLAN if walk_stored else "")
     if tallies[Tally.OPEN]:
         return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}", elapsed_seconds)
     return Verdict(Glyph.DONE, "setup up to date", counts, elapsed_seconds=elapsed_seconds)
