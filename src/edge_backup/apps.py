@@ -114,23 +114,23 @@ def parse_apps(text: str) -> tuple[App, ...]:
     try:
         document = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
-        raise AppsError(f"apps.toml ist kein gültiges TOML: {error}") from error
+        raise AppsError(f"apps.toml is not valid TOML: {error}") from error
     if unknown := set(document) - {"app"}:
-        raise AppsError(f"apps.toml: unbekannter Schlüssel {sorted(unknown)}")
+        raise AppsError(f"apps.toml: unknown key {sorted(unknown)}")
     apps = document.get("app", {})
     if not isinstance(apps, dict) or not apps:
-        raise AppsError("apps.toml deklariert keine App ([app.<name>])")
+        raise AppsError("apps.toml declares no app ([app.<name>])")
     return tuple(_parse_app(name, record) for name, record in apps.items())
 
 
 def _parse_app(name: str, record: object) -> App:
     label = f"apps.toml [app.{name}]"
     if not _PLAIN_NAME.fullmatch(name):
-        raise AppsError(f"{label}: der App-Name ist nicht schlicht genug")
+        raise AppsError(f"{label}: the app name is not plain enough")
     if name == PRE_APPLY_TAG:
-        raise AppsError(f"{label}: der App-Name ist als restic-Tag {PRE_APPLY_TAG} belegt")
+        raise AppsError(f"{label}: the app name is taken by the restic tag {PRE_APPLY_TAG}")
     if not isinstance(record, dict):
-        raise AppsError(f"{label}: muss eine Tabelle sein")
+        raise AppsError(f"{label}: must be a table")
     dump = _dump_kind(label, record)
     restore_test_label = f"{label}.restore_test"
     if dump is DumpKind.SQLITE_ONLINE_COPY:
@@ -175,7 +175,7 @@ def _dump_kind(label: str, record: dict) -> DumpKind:
     """The `dump` key picks the record's variant, so it is read before the other keys."""
     dump = record.get("dump")
     if not isinstance(dump, str) or dump not in {kind.value for kind in DumpKind}:
-        raise AppsError(f"{label}: dump muss einer von {sorted(DumpKind)} sein, nicht {dump!r}")
+        raise AppsError(f"{label}: dump must be one of {sorted(DumpKind)}, not {dump!r}")
     return DumpKind(dump)
 
 
@@ -183,15 +183,15 @@ def _postgres_major(label: str, record: dict) -> PostgresMajor:
     value = record["postgres_major"]
     if type(value) is not int or value not in {major.value for major in PostgresMajor}:
         raise AppsError(
-            f"{label}: postgres_major muss einer von {[m.value for m in PostgresMajor]} sein, "
-            f"nicht {value!r}"
+            f"{label}: postgres_major must be one of {[m.value for m in PostgresMajor]}, "
+            f"not {value!r}"
         )
     return PostgresMajor(value)
 
 
 def _table(label: str, record: object) -> dict:
     if not isinstance(record, dict):
-        raise AppsError(f"{label}: muss eine Tabelle sein")
+        raise AppsError(f"{label}: must be a table")
     return record
 
 
@@ -201,9 +201,7 @@ def _parse_restore_test(label: str, record: dict, audio_keys: frozenset[str]) ->
     )
     require_rows = record.get(_REQUIRE_ROWS_KEY, False)
     if not isinstance(require_rows, bool):
-        raise AppsError(
-            f"{label}: {_REQUIRE_ROWS_KEY} muss true oder false sein, nicht {require_rows!r}"
-        )
+        raise AppsError(f"{label}: {_REQUIRE_ROWS_KEY} must be true or false, not {require_rows!r}")
     return RestoreTest(
         count_table=_identifier(label, record, "count_table"), require_rows=require_rows
     )
@@ -213,12 +211,12 @@ def _parse_files(label: str, record: dict) -> SqliteFiles | None:
     """The files volume is optional; its skip needs it, and it is never the database's own."""
     if _FILES_VOLUME_KEY not in record:
         if _FILES_SKIP_KEY in record:
-            raise AppsError(f"{label}: {_FILES_SKIP_KEY} braucht {_FILES_VOLUME_KEY}")
+            raise AppsError(f"{label}: {_FILES_SKIP_KEY} needs {_FILES_VOLUME_KEY}")
         return None
     volume = _plain(label, record, _FILES_VOLUME_KEY)
     if volume in {DB_FOLDER, record["database_volume"]}:
         raise AppsError(
-            f"{label}: {_FILES_VOLUME_KEY} darf weder {DB_FOLDER!r} noch das Datenbank-Volume sein"
+            f"{label}: {_FILES_VOLUME_KEY} may be neither {DB_FOLDER!r} nor the database volume"
         )
     skip = (
         _matching(label, record, _FILES_SKIP_KEY, _FILES_SKIP)
@@ -235,8 +233,8 @@ def _parse_audio(label: str, record: dict, restore_test_record: dict) -> Audio |
         return None
     if declared != {_AUDIO_VOLUME_KEY} | _AUDIO_REFERENCE_KEYS:
         raise AppsError(
-            f"{label}: Audio braucht volume und audio_reference_table/_column zusammen, "
-            f"es steht nur {sorted(declared)}"
+            f"{label}: audio needs volume and audio_reference_table/_column together; "
+            f"only {sorted(declared)} is set"
         )
     restore_label = f"{label}.restore_test"
     return Audio(
@@ -250,9 +248,9 @@ def _require_exact_keys(
     label: str, record: dict, keys: frozenset[str], optional: frozenset[str] = frozenset()
 ) -> None:
     if unknown := set(record) - keys - optional:
-        raise AppsError(f"{label}: unbekannter Schlüssel {sorted(unknown)}")
+        raise AppsError(f"{label}: unknown key {sorted(unknown)}")
     if missing := keys - set(record):
-        raise AppsError(f"{label}: es fehlt {sorted(missing)}")
+        raise AppsError(f"{label}: missing {sorted(missing)}")
 
 
 def _plain(label: str, record: dict, key: str) -> str:
@@ -266,5 +264,5 @@ def _identifier(label: str, record: dict, key: str) -> str:
 def _matching(label: str, record: dict, key: str, pattern: re.Pattern[str]) -> str:
     value = record[key]
     if not isinstance(value, str) or not pattern.fullmatch(value):
-        raise AppsError(f"{label}: {key} muss {pattern.pattern} entsprechen, nicht {value!r}")
+        raise AppsError(f"{label}: {key} must match {pattern.pattern}, not {value!r}")
     return value
