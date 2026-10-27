@@ -744,3 +744,68 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
     assert f"Sicherung: in Ordnung, zuletzt {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
+
+
+DISK_LOW_MAIL = """Handlungsbedarf
+
+1. Auf der Festplatte ist weniger als 10 % frei. (neu)
+   Nächster Schritt: Sag einem Agenten „Die Festplatte ist fast voll, schau nach“.
+"""
+
+
+def test_a_nearly_full_disk_is_mailed_as_one_action_under_services_without_a_figure(clean_home, runner, mail_stub, fake_disk) -> None:
+    """#460 D1, D2, D3: the sentence and step, no GB figure in the mail, the figures in the report."""
+    fake_disk.free_share = 0.09
+
+    home_check(clean_home, runner)
+
+    (sent,) = mail_stub.sent
+    news = message_of(sent)
+    assert news["Subject"] == ACTION_TITLE
+    assert DISK_LOW_MAIL in news.get_content()
+    assert "Dienste: Handlungsbedarf" in news.get_content()
+    assert "GB" not in news.get_content()
+    assert "| disk-low | / | 90 GB von 1000 GB frei (9 %) |" in Layout(clean_home).check_report_file.read_text()
+
+
+def test_a_disk_that_stays_low_sends_no_second_mail_and_one_that_clears_is_mailed_as_done(clean_home, runner, mail_stub, fake_disk) -> None:
+    """#460 D1 and #415 Z4, Z5: once on appearing, once on going, however much less is free in between."""
+    fake_disk.free_share = 0.09
+    home_check(clean_home, runner)
+    fake_disk.free_share = 0.07
+    home_check(clean_home, runner)
+    fake_disk.free_share = 0.30
+
+    home_check(clean_home, runner)
+
+    first, done = mail_stub.sent
+    assert "weniger als 10 % frei" in message_of(first).get_content()
+    assert message_of(done)["Subject"] == "PC-Check: alles in Ordnung"
+    assert "Erledigt\n\n- Auf der Festplatte sind wieder mindestens 10 % frei." in message_of(done).get_content()
+
+
+def test_a_nearly_full_disk_and_a_restarting_container_are_two_items_and_one_area_line(clean_home, runner, mail_stub, fake_disk) -> None:
+    fake_disk.free_share = 0.09
+    restarting_containers(runner, "edge-a")
+
+    home_check(clean_home, runner)
+
+    body = message_of(mail_stub.sent[0]).get_content()
+    assert "1. " in body
+    assert "2. " in body
+    assert "weniger als 10 % frei" in body
+    assert "edge-a startet ständig neu" in body
+    assert body.count("Dienste: Handlungsbedarf") == 1
+
+
+def test_a_disk_that_cannot_be_read_breaks_the_platform_check_and_leaves_the_other_findings(clean_home, leave_pasted_image, runner, fake_disk) -> None:
+    """#460 Decision, #340 S5: no rule of its own for a filesystem that cannot be read."""
+    fake_disk.unreadable = True
+    leave_pasted_image(clean_home)
+
+    code = home_check(clean_home, runner)
+
+    report = Layout(clean_home).check_report_file.read_text()
+    assert code == 3
+    assert "Prüfung platform fehlgeschlagen (OSError)" in report
+    assert "| pasted-images |" in report

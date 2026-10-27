@@ -25,10 +25,13 @@ from typing import TYPE_CHECKING
 
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view, tidy_home
 from home_tools.logs_check import LOG_DIRECTORY
-from home_tools.platform_check import REBOOT_REQUIRED_FILE
+from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE
 from home_tools.report import Level, findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe, FindingRule, SecretKind
 from home_tools.tidy_home import CommandRunner, Config, Layout
+
+DISK_SPACE = platform_check.read_disk_space
+MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
@@ -98,7 +101,7 @@ def _logs_check(ctx: CheckContext) -> CheckFindings:
 
 
 def _platform_check(ctx: CheckContext) -> CheckFindings:
-    findings, report = platform_check.inspect(ctx.run, ctx.now, REBOOT_REQUIRED_FILE)
+    findings, report = platform_check.inspect(ctx.run, ctx.now, REBOOT_REQUIRED_FILE, DISK_SPACE)
     return report, frozenset(finding.identity for finding in findings)
 
 
@@ -231,6 +234,10 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("platform", "container-unhealthy"): _container_report("{subject} läuft, meldet sich aber krank.", "meldet sich krank", "{subject} meldet sich nicht mehr krank."),
     ("platform", "container-exited"): _container_report("{subject} hat sich mit einem Fehler beendet.", "hat sich mit einem Fehler beendet", "{subject} meldet keinen Fehlerabbruch mehr."),
     ("platform", "docker-unreadable"): RuleReport(ACTION, "Der Check kann Docker nicht lesen; ob die Dienste laufen, ist unbekannt.", AGENT_STEP, resolved="Der Check kann Docker wieder lesen.", hides_state=True),
+    ("platform", "disk-low"): RuleReport(
+        ACTION, f"Auf der Festplatte ist weniger als {MINIMUM_FREE_PERCENT} % frei.", "Sag einem Agenten „Die Festplatte ist fast voll, schau nach“.",
+        resolved=f"Auf der Festplatte sind wieder mindestens {MINIMUM_FREE_PERCENT} % frei.", describes_shared_state=True,
+    ),
     ("platform", "reboot-pending"): RuleReport(NOTE, "Ein Neustart des PCs steht aus.", area_note="ein Neustart des PCs steht aus"),
     ("backup", "backup-stale"): RuleReport(ACTION, "{subject} wurde zu lange nicht gesichert.", BACKUP_NOW, resolved="{subject} wurde wieder gesichert."),
     ("backup", "backup-failed"): RuleReport(ACTION, "Die letzte Sicherung ist fehlgeschlagen.", BACKUP_NOW, resolved="Die Sicherung meldet keinen Fehler mehr.", describes_shared_state=True),

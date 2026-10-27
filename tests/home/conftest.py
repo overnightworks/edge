@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import backup_check, check, cli, logs_check, secrets_view, system_step, tunnel_config
+from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.tidy_home import Layout, run_command
@@ -84,6 +84,31 @@ verify = "gh auth status"
 def empty_log_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The logs check looks at /var/log, which this machine fills; the tests look at an empty directory."""
     monkeypatch.setattr(check, "LOG_DIRECTORY", tmp_path / "var-log")
+
+
+class FakeDisk:
+    """The disk the platform check reads; the free share is the scenario, never this machine's."""
+
+    TOTAL = 1000 * platform_check.BYTES_PER_GIGABYTE
+
+    def __init__(self) -> None:
+        self.free_share = 0.5
+        self.unreadable = False
+        self.asked: list[Path] = []
+
+    def __call__(self, path: Path) -> platform_check.DiskSpace:
+        self.asked.append(path)
+        if self.unreadable:
+            raise OSError("no disk")
+        return platform_check.DiskSpace(self.TOTAL, round(self.TOTAL * self.free_share))
+
+
+@pytest.fixture(autouse=True)
+def fake_disk(monkeypatch: pytest.MonkeyPatch) -> FakeDisk:
+    """A runner's disk may be over 90 % full, and a nearly full disk is an action: every `home check` test reads a roomy fake."""
+    disk = FakeDisk()
+    monkeypatch.setattr(check, "DISK_SPACE", disk)
+    return disk
 
 
 @pytest.fixture(autouse=True)
