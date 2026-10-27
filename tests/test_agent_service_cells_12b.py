@@ -339,7 +339,8 @@ def test_s1_holds_only_when_the_gate_and_every_text_are_clean(
     output = capsys.readouterr().out
     assert TOKEN not in output
     expected = (["S1"], []) if verdict == "held" else ([], ["S1"])
-    assert (run.held, run.failed) == expected
+    actual = run.held, run.failed
+    assert actual == expected
     assert output.startswith(f"S1 {'held' if verdict == 'held' else 'FAILED'}: {hits} gate hits")
 
 
