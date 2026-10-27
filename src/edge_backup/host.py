@@ -58,12 +58,12 @@ def run(
                 timeout=seconds,
             )
         except FileNotFoundError as error:
-            raise HostCommandError(label, "ist nicht installiert") from error
+            raise HostCommandError(label, "is not installed") from error
         except subprocess.TimeoutExpired as error:
-            raise HostCommandError(label, f"antwortete nicht binnen {seconds:g} s") from error
+            raise HostCommandError(label, f"did not answer within {seconds:g} s") from error
     if completed.returncode != 0:
         exit_code = completed.returncode
-        raise HostCommandError(label, f"endete mit Exit {exit_code}", exit_code)
+        raise HostCommandError(label, f"ended with exit {exit_code}", exit_code)
     return completed.stdout or b""
 
 

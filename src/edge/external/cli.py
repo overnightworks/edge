@@ -39,17 +39,6 @@ def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
         "apply", help="apply the shown plan to the live services, at a terminal, after `yes`"
     )
     apply_parser.set_defaults(run=lambda _arguments: apply_command(Path.home()))
-    check = actions.add_parser(
-        "check", help="compare what Cloudflare holds with the hosts fleet.yaml declares (read-only)"
-    )
-    check.add_argument(
-        "--hosts",
-        action="store_true",
-        required=True,
-        help="the host check: records and Access apps",
-    )
-    check.add_argument("--json", action="store_true", help="print the findings as a JSON list")
-    check.set_defaults(run=lambda arguments: check_command(Path.home(), as_json=arguments.json))
 
 
 def plan_command(home: Path) -> int:
@@ -165,7 +154,7 @@ _CLOSING_LINES = {
         "the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_NO_CHANGES, INTERRUPTED): (
-        "the host check was interrupted; run edge external check --hosts"
+        "the host check was interrupted; run hal check hosts"
     ),
     (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.FINDINGS): (
         "applied; the host check has findings, see above"
@@ -174,7 +163,7 @@ _CLOSING_LINES = {
         "applied, but the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_APPLIED, INTERRUPTED): (
-        "applied; the host check was interrupted; run edge external check --hosts"
+        "applied; the host check was interrupted; run hal check hosts"
     ),
     (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CLEAN): (
         "the apply failed; the host check ran"
@@ -186,7 +175,7 @@ _CLOSING_LINES = {
         "the apply failed; the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_APPLY_FAILED, INTERRUPTED): (
-        "the apply failed; the host check was interrupted; run edge external check --hosts"
+        "the apply failed; the host check was interrupted; run hal check hosts"
     ),
 }
 
@@ -217,27 +206,42 @@ def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
     return None
 
 
-def check_command(
+@dataclass(frozen=True)
+class HostCheckOutcome:
+    """How one host check ended: the exit code (`host_check.CheckExit`, or `INTERRUPTED`) and, for
+    a check that could not run, its cause with every token redacted, one line each."""
+
+    exit_code: int
+    cause: tuple[str, ...] = ()
+
+
+def _write_line_to_stdout(text: str) -> None:
+    sys.stdout.write(f"{text}\n")
+
+
+def run_host_check(
     home: Path,
     *,
     as_json: bool = False,
-    cloudflare: Callable[[str], cloudflare_read.CloudflareRead] = cloudflare_read.CloudflareClient,
-    prober: Callable[[], host_probe.Prober] = host_probe.HttpProber,
-    emit: Callable[[str], None] = lambda text: sys.stdout.write(f"{text}\n"),
-) -> int:
+    cloudflare: Callable[[str], cloudflare_read.CloudflareRead] | None = None,
+    prober: Callable[[], host_probe.Prober] | None = None,
+    emit: Callable[[str], None] = _write_line_to_stdout,
+) -> HostCheckOutcome:
     """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `prober` the
-    unauthenticated host probe, `emit` writes the one output: an interrupt before it leaves stdout
-    empty, none during it cuts the document."""
+    unauthenticated host probe, `emit` writes the one output, redacted, with stop signals ignored:
+    an interrupt before it leaves stdout empty, none during it cuts the document. The caller
+    reports the outcome; nothing here writes to stderr."""
     token_values: dict[str, str] = {}
     verdict_stands: host_check.CheckExit | None = None
     try:
         with apply.terminate_like_interrupt():
-            valid = _valid_catalog("check")
-            if valid is None:
-                return host_check.CheckExit.CANNOT_CHECK
+            valid = _read_catalog()
             token_values = {"CLOUDFLARE_API_TOKEN": secrets.read_cloudflare_token(home)}
+            reader = (cloudflare or cloudflare_read.CloudflareClient)(
+                token_values["CLOUDFLARE_API_TOKEN"]
+            )
             result = host_check.check_hosts(
-                valid.document, cloudflare(token_values["CLOUDFLARE_API_TOKEN"]), prober()
+                valid.document, reader, (prober or host_probe.HttpProber)()
             )
             rendered = host_check.as_json(result) if as_json else host_check.as_text(result)
             text = secrets.redact(rendered, token_values)
@@ -245,27 +249,41 @@ def check_command(
                 verdict_stands = result.exit_code
                 emit(text)
                 sys.stdout.flush()
-            return result.exit_code
+            return HostCheckOutcome(result.exit_code)
     except KeyboardInterrupt:
-        if verdict_stands is not None:
-            return verdict_stands
-        print("edge external check: interrupted", file=sys.stderr)
-        return INTERRUPTED
-    except (secrets.SecretFileError, cloudflare_read.CloudflareReadError) as error:
-        _report(f"edge external check: cannot check, {error}", error, token_values, "check")
+        return HostCheckOutcome(verdict_stands if verdict_stands is not None else INTERRUPTED)
+    except (
+        catalog.CatalogError,
+        secrets.SecretFileError,
+        cloudflare_read.CloudflareReadError,
+    ) as error:
+        return _cannot_check(str(error), error, token_values)
     except OSError as error:
-        _report(
-            f"edge external check: cannot check, {_describe(error)}", error, token_values, "check"
-        )
+        return _cannot_check(_describe(error), error, token_values)
     except ValueError as error:
         # Only the type: a decode error's message can quote bytes of a token file.
-        _report(
-            f"edge external check: cannot check, {type(error).__name__}",
-            error,
-            token_values,
-            "check",
-        )
-    return host_check.CheckExit.CANNOT_CHECK
+        return _cannot_check(type(error).__name__, error, token_values)
+
+
+def _cannot_check(message: str, error: Exception, token_values: dict[str, str]) -> HostCheckOutcome:
+    lines = (message, *getattr(error, "__notes__", ()))
+    cause = tuple(secrets.redact(line, token_values) for line in lines)
+    return HostCheckOutcome(host_check.CheckExit.CANNOT_CHECK, cause)
+
+
+def check_command(
+    home: Path,
+    *,
+    cloudflare: Callable[[str], cloudflare_read.CloudflareRead] | None = None,
+    prober: Callable[[], host_probe.Prober] | None = None,
+    emit: Callable[[str], None] = _write_line_to_stdout,
+) -> int:
+    """The host check that closes `edge external apply`: its findings on stdout, why it could not
+    run on stderr."""
+    outcome = run_host_check(home, cloudflare=cloudflare, prober=prober, emit=emit)
+    for line in outcome.cause:
+        print(f"edge external apply: host check: cannot check, {line}", file=sys.stderr)
+    return outcome.exit_code
 
 
 # The protected region of the result's write: inside it, the verdict's exit code stands. A name of
@@ -293,13 +311,17 @@ class _ValidCatalog:
     hosts: tuple[catalog.Host, ...]
 
 
+def _read_catalog() -> _ValidCatalog:
+    file = tofu.PROJECT_ROOT / catalog.FLEET_FILE
+    raw = catalog.read_bytes(file)
+    document = catalog.parse(raw, file.name)
+    return _ValidCatalog(raw, document, catalog.hosts(document))
+
+
 def _valid_catalog(command: str) -> _ValidCatalog | None:
     """The catalog tofu reads, or None after naming the key when it is not valid (#131 rule 5)."""
-    file = tofu.PROJECT_ROOT / catalog.FLEET_FILE
     try:
-        raw = catalog.read_bytes(file)
-        document = catalog.parse(raw, file.name)
-        return _ValidCatalog(raw, document, catalog.hosts(document))
+        return _read_catalog()
     except catalog.CatalogError as error:
         print(f"edge external {command}: {error}", file=sys.stderr)
         return None

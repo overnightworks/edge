@@ -243,13 +243,25 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
     code = home_check_with_a_secrets_check_that_breaks(clean_home, runner)
 
     report = Layout(clean_home).check_report_file.read_text()
-    error = capsys.readouterr().err
+    captured = capsys.readouterr()
+    error = captured.err
     assert code == 3
+    assert captured.out.splitlines() == [
+        "  ! services        1 action       edge is running but reports being unwell",
+        "  ✓ backup          ok",
+        "  ✓ commit hook     ok",
+        "  ✗ secrets         not checked    the check did not run · details in the report",
+        "  ✓ server logs     ok",
+    ]
     assert "| fehlgeschlagen: secrets" in report.splitlines()[0]
     assert "Prüfung secrets fehlgeschlagen (PermissionError)" in report
     assert "container-unhealthy | edge" in report
-    assert error.startswith("home: unerwarteter Fehler (CheckFailed): ")
-    assert error.count("\n") == 1
+    error_lines = error.splitlines()
+    assert error_lines[0] == "error: 1 of 5 areas could not check · news sent"
+    assert error_lines[1].startswith("next: ")
+    assert "`" not in error_lines[1]
+    assert not error_lines[1].endswith(".")
+    assert len(error_lines) == 2
     assert len(runner.notifications) == 1
 
 

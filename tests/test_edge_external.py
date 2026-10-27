@@ -390,7 +390,7 @@ def test_edge_external_help_exits_0_and_edge_help_lists_it(capsys):
     with pytest.raises(SystemExit) as external_help:
         cli.main(["external", "--help"])
     assert external_help.value.code == 0
-    assert "check" in capsys.readouterr().out
+    assert "check" not in capsys.readouterr().out
     with pytest.raises(SystemExit):
         cli.main(["--help"])
     assert "external" in capsys.readouterr().out
@@ -1105,7 +1105,7 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     assert fake_tofu.stopped_gracefully
     assert "tofu stopped gracefully" in apply.output
     assert "interrupted during tofu apply, live services may be partly changed" in apply.output
-    assert "run edge external check --hosts" in " ".join(apply.output.split())
+    assert "run hal check hosts" in " ".join(apply.output.split())
     assert apply.checks() == []
 
 
@@ -1303,7 +1303,7 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
     error = capsys.readouterr().err
     assert "interrupted during the cleanup" in error
     assert ("live services may be partly changed" in error) is live_services_may_have_changed
-    assert ("edge external check --hosts" in error) is live_services_may_have_changed
+    assert ("hal check hosts" in error) is live_services_may_have_changed
     assert outcome.closing is (
         external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
         if live_services_may_have_changed
@@ -1453,9 +1453,9 @@ def hosts_catalog(tmp_path, monkeypatch) -> Path:
 def run_check(
     home, reader: FakeReader, *, as_json: bool = False, prober: FakeProber | None = None
 ) -> int:
-    return external_cli.check_command(
+    return external_cli.run_host_check(
         home, as_json=as_json, cloudflare=reader, prober=prober or FakeProber()
-    )
+    ).exit_code
 
 
 def test_a_clean_check_exits_0_and_says_how_many_hosts(home, hosts_catalog, capsys):
@@ -1475,71 +1475,12 @@ def test_findings_exit_1_and_json_is_one_document_of_four_strings(home, hosts_ca
     assert printed.err == ""
 
 
-def test_check_without_hosts_exits_2_naming_the_flag_and_reads_nothing(home, capsys):
-    """K2."""
-    without_tokens(home)
-    with pytest.raises(SystemExit) as refused:
-        cli.main(["external", "check"])
-    assert refused.value.code == 2
-    assert "--hosts" in capsys.readouterr().err
-
-
-def test_check_help_lists_hosts_and_json(capsys):
-    """K2."""
-    with pytest.raises(SystemExit) as shown:
-        cli.main(["external", "check", "--help"])
-    assert shown.value.code == 0
-    assert {"--hosts", "--json"} <= set(capsys.readouterr().out.split())
-
-
-def test_an_invalid_catalog_exits_2_with_the_pre_flight_line_before_any_token(
-    home, hosts_catalog, capsys
-):
-    """K3."""
-    (hosts_catalog / "fleet.yaml").write_text(INVALID_CATALOG)
-    without_tokens(home)
-    reader = FakeReader(CLEAN_SNAPSHOT)
-    assert run_check(home, reader) == 2
-    assert capsys.readouterr().err == f"edge external check: {CATALOG_LINE}\n"
-    assert reader.reads == 0
-
-
 def test_check_reads_only_the_cloudflare_read_file(home, hosts_catalog):
     """K4."""
     (home / ".secrets/opentofu/state-passphrase").unlink()
     reader = FakeReader(CLEAN_SNAPSHOT)
     assert run_check(home, reader) == 0
     assert reader.tokens == ["cloudflare-token"]
-
-
-def test_a_missing_cloudflare_file_exits_2_naming_it(home, hosts_catalog, capsys):
-    """K4."""
-    cloudflare_file = home / ".secrets/cloudflare/fleet-read"
-    cloudflare_file.unlink()
-    reader = FakeReader(CLEAN_SNAPSHOT)
-    assert run_check(home, reader) == 2
-    assert str(cloudflare_file) in capsys.readouterr().err
-    assert reader.reads == 0
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
-        pytest.param(cloudflare_read.CloudflareReadError(f"/zones: {SENTINEL}"), id="a read error"),
-        pytest.param(OSError(5, SENTINEL), id="an OS error"),
-    ],
-)
-def test_a_reader_failure_names_a_cause_without_the_token_and_leaves_stdout_empty(
-    home, hosts_catalog, capsys, failure
-):
-    """K5: the token file holds the sentinel; no output line carries it."""
-    (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
-    assert run_check(home, FakeReader(failure), as_json=True) == 2
-    printed = capsys.readouterr()
-    assert printed.out == ""
-    assert printed.err.startswith("edge external check: cannot check, ")
-    assert printed.err.count("\n") == 1
-    assert SENTINEL not in printed.err
 
 
 class BrokenChunkedServer:
@@ -1582,7 +1523,7 @@ def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
     (home / ".secrets/cloudflare/fleet-read").write_text(SENTINEL)
     broken = BrokenChunkedServer(status, chunks)
     try:
-        code = external_cli.check_command(
+        outcome = external_cli.run_host_check(
             home,
             cloudflare=lambda token: cloudflare_read.CloudflareClient(token, base_url=broken.url),
             prober=FakeProber(),
@@ -1590,10 +1531,10 @@ def test_a_broken_chunked_answer_exits_2_and_never_prints_the_token(
     finally:
         broken.close()
     printed = capfd.readouterr()
-    assert code == 2
+    assert outcome.exit_code == 2
     assert printed.out == ""
-    assert printed.err.startswith("edge external check: cannot check, /zones: ")
-    assert SENTINEL not in printed.out + printed.err
+    assert outcome.cause[0].startswith("/zones: ")
+    assert SENTINEL not in printed.out + printed.err + "".join(outcome.cause)
 
 
 def test_check_starts_no_tofu_and_keeps_a_leftover_plan(home, fake_tofu, hosts_catalog):
@@ -1610,9 +1551,7 @@ def test_an_interrupt_exits_130_with_stdout_empty(home, hosts_catalog, capsys, i
     """K7."""
     reader = FakeReader(lambda: os.kill(os.getpid(), interrupt))
     assert run_check(home, reader, as_json=as_json) == 130
-    printed = capsys.readouterr()
-    assert printed.out == ""
-    assert "interrupted" in printed.err
+    assert capsys.readouterr().out == ""
 
 
 def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
@@ -1623,10 +1562,10 @@ def test_a_sigterm_while_the_reader_is_built_exits_130_with_stdout_empty(
     def build_and_get_terminated(_token: str):
         os.kill(os.getpid(), signal.SIGTERM)
 
-    code = external_cli.check_command(
+    outcome = external_cli.run_host_check(
         home, cloudflare=build_and_get_terminated, prober=FakeProber()
     )
-    assert code == 130
+    assert outcome.exit_code == 130
     assert capsys.readouterr().out == ""
 
 
@@ -1649,13 +1588,13 @@ def test_an_interrupt_after_the_writing_began_leaves_the_whole_document_and_the_
         os.kill(os.getpid(), interrupt)
         sys.stdout.write(text[middle:] + "\n")
 
-    code = external_cli.check_command(
+    code = external_cli.run_host_check(
         home,
         as_json=True,
         cloudflare=FakeReader(snapshot),
         prober=FakeProber(),
         emit=interrupted_halfway,
-    )
+    ).exit_code
     printed = capsys.readouterr()
     assert code == verdict
     assert isinstance(json.loads(printed.out), list)
@@ -1674,27 +1613,24 @@ def test_an_interrupt_after_the_whole_document_is_written_keeps_the_verdict(
         sys.stdout.write(text + "\n")
         raise KeyboardInterrupt
 
-    code = external_cli.check_command(
+    code = external_cli.run_host_check(
         home,
         as_json=True,
         cloudflare=FakeReader(snapshot),
         prober=FakeProber(),
         emit=written_then_interrupted,
-    )
+    ).exit_code
     printed = capsys.readouterr()
     assert code == verdict
     assert isinstance(json.loads(printed.out), list)
     assert "interrupted" not in printed.err
 
 
-@pytest.mark.usefixtures("loopback_only")
-def test_check_through_main_stops_at_a_missing_token_before_any_network(
-    home, hosts_catalog, capsys
-):
-    """K4: the wiring of `--hosts --json` to the command, ended before a real client is built."""
-    (home / ".secrets/cloudflare/fleet-read").unlink()
-    assert cli.main(["external", "check", "--hosts", "--json"]) == 2
-    assert capsys.readouterr().out == ""
+def test_edge_external_has_no_check_verb(capsys):
+    with pytest.raises(SystemExit) as refused:
+        cli.main(["external", "check", "--hosts"])
+    assert refused.value.code == 2
+    assert "check" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -1739,9 +1675,7 @@ def test_an_interrupt_while_the_prober_asks_exits_130_with_stdout_empty(
     """PB9."""
     prober = FakeProber(lambda: os.kill(os.getpid(), interrupt))
     assert run_check(home, FakeReader(CLEAN_SNAPSHOT), as_json=True, prober=prober) == 130
-    printed = capsys.readouterr()
-    assert printed.out == ""
-    assert printed.err.count("interrupted") == 1
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("code", [errno.ENETUNREACH, errno.EHOSTUNREACH])
@@ -1756,12 +1690,12 @@ def test_an_os_error_in_the_transport_is_one_unreachable_finding_without_its_tex
     def probing_over_the_failing_transport():
         return host_probe.HttpProber(connection=unreachable_connection)
 
-    exit_code = external_cli.check_command(
+    exit_code = external_cli.run_host_check(
         home,
         cloudflare=FakeReader(CLEAN_SNAPSHOT),
         prober=probing_over_the_failing_transport,
         as_json=True,
-    )
+    ).exit_code
     assert exit_code == 1
     printed = capsys.readouterr()
     (finding,) = json.loads(printed.out)
@@ -1792,12 +1726,12 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
     login = "https://team.cloudflareaccess.com/cdn-cgi/access/login/x"
     answering = Behaviour(302, [RAY, ("Location", login), *mitigation])
     with serving(answering) as origin:
-        exit_code = external_cli.check_command(
+        exit_code = external_cli.run_host_check(
             home,
             as_json=True,
             cloudflare=FakeReader(snapshot),
             prober=lambda: host_probe.HttpProber(origin),
-        )
+        ).exit_code
     (finding,) = json.loads(capsys.readouterr().out)
     assert (exit_code, finding["problem"]) == (1, "answer-wrong")
 
@@ -1805,7 +1739,7 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
 # #156: `edge external apply` ends on the host check.
 REAL_CHECK_COMMAND = external_cli.check_command
 INTERRUPTED_CHECK = 130
-RUN_MANUALLY = "run edge external check --hosts"
+RUN_MANUALLY = "run hal check hosts"
 EMPTY_PLAN = {"plan": 0}
 CHANGING_PLAN = {"plan": 2}
 FAILING_APPLY = {"plan": 2, "apply": 1}

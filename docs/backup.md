@@ -9,8 +9,9 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
 default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
-Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has one
-area today, `exposure`: `hal check` and `hal check exposure` are the same run.
+Run `hal check` (human table) or `hal check --json` (the same findings for machines). It has two
+areas, `exposure` (local) and `hosts` (reads Cloudflare, see docs/external.md), one per run:
+`hal check` and `hal check exposure` are the same run.
 
 It runs `docker ps --all`, `docker inspect` and `ss -H -ltnupe` (fixed arguments, no shell, nothing
 written) and reports, by `problem`:
@@ -125,8 +126,9 @@ other apps' entries in the status file stay as they are, and a name `apps.toml` 
 the one the status file names (it needs the app's name); `hal apply` uses it on the snapshot its own backup
 just made, so a timer backup in between cannot swap the snapshot under test.
 
-`hal backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, prints its ID (with
-`--json` one object, `{"snapshot": "<ID>"}`, which `hal apply` reads) and
+`hal backup <app> --pre-apply` additionally tags the snapshot `pre-apply`, and with
+`--json` prints nothing but one object, `{"snapshot": "<ID>"}`, which `hal apply` reads (a failure is then one
+`error: <app>: <reason>` line on stderr). It
 keeps the last 10 pre-apply snapshots of that app (`forget --keep-last 10`, scoped to both tags),
 without touching the app's other snapshots. The 10 apply per complete tag set: a snapshot with a
 third tag forms another group and keeps its own ten. An app cannot be named `pre-apply`; `apps.toml`
@@ -243,8 +245,13 @@ path or file name.
   freshness per app: `last_successful_backup` no older than about 8 days,
   `last_successful_restore_test` no older than about 5 weeks.
 
-Exit 0: every phase succeeded. Exit 3: a run failed; `error: hal backup: fehlgeschlagen: …` (or
-`hal restore`) names why. Exit 2: the flags do not fit together (`--pre-apply` without an app, for
+`hal backup` prints a row per app (`✓ <app>  backed up  <snapshot>` or `✗ <app>  not backed up  <reason>`;
+a failed app does not stop the others), a `repository` row (`pruned` after forget and check, `not pruned`
+when an app failed) and, on success, `✓ backup done · N apps · <time>`.
+
+Exit 0: every phase succeeded. Exit 3: a run failed; `error: 1 of N apps not backed up` with
+`next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
+(`hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: fehlgeschlagen: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
 example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 
 ### Restore one app

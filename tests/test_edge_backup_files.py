@@ -309,9 +309,9 @@ def test_a_missing_database_file_is_named_without_a_path_or_a_row_value(edge_bac
 
     outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML))
 
-    assert "presentator.sqlite3 fehlt oder ist unlesbar" in outcome.err
-    assert "/data/" not in outcome.err
-    assert "secret-name" not in outcome.err
+    assert "presentator.sqlite3 is missing or unreadable" in outcome.out
+    assert "/data/" not in outcome.out
+    assert "secret-name" not in outcome.out
     assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
         "dump",
         "command-failed",
@@ -327,8 +327,8 @@ def test_an_owner_run_that_fails_for_another_reason_is_not_called_a_missing_file
 
     outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML))
 
-    assert "Lesen des SQLite-Besitzers endete mit Exit 125" in outcome.err
-    assert "fehlt oder ist unlesbar" not in outcome.err
+    assert "Lesen des SQLite-Besitzers ended with exit 125" in outcome.out
+    assert "is missing or unreadable" not in outcome.out
     assert (outcome.status["failing_phase"], outcome.status["exit_category"]) == (
         "dump",
         "command-failed",
