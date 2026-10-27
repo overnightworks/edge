@@ -185,6 +185,26 @@ def test_a_failed_restore_keeps_the_previous_copy_and_names_where(world):
     assert (kept / "appkit.css").read_text() == "previous"
 
 
+def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
+    served = world.served
+    (served / "appkit.css").write_text("previous")
+    calls = []
+
+    def rename(source, destination):
+        calls.append(source)
+        if len(calls) == 2:
+            raise OSError(5, "interrupted")
+        if len(calls) == 3:
+            raise KeyboardInterrupt
+        os.rename(source, destination)
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        appkit_step._replace_directory(appkit_step.installed_static(), served, rename)
+
+    kept = Path(caught.value.__notes__[0].rsplit(" ", 1)[1])
+    assert (kept / "appkit.css").read_text() == "previous"
+
+
 def test_a_missing_assets_directory_is_named_at_plan_time(world):
     assets = world.served.parent
     shutil.rmtree(assets)

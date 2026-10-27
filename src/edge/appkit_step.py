@@ -123,14 +123,18 @@ def _replace_directory(
             rename(temporary / "files", directory)
         except BaseException:
             if displaced.exists():
+                previous_copy_is_only_in_temporary = True
                 try:
                     rename(displaced, directory)
                 except OSError as restore_error:
-                    previous_copy_is_only_in_temporary = True
                     raise OSError(
                         restore_error.errno,
                         f"{restore_error.strerror}; the previous copy is kept in {displaced}",
                     ) from restore_error
+                except BaseException as interruption:
+                    interruption.add_note(f"the previous copy is kept in {displaced}")
+                    raise
+                previous_copy_is_only_in_temporary = False
             raise
     finally:
         if not previous_copy_is_only_in_temporary:
