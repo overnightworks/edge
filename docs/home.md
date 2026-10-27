@@ -80,6 +80,8 @@ home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Bena
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
+Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 3 ein Bereich konnte nicht prüfen oder Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
+
 Auf dem Terminal steht davon eine englische Zeile je Bereich in der Reihenfolge der Mail (`ok`, `N action(s)`,
 `N note(s)` mit dem Satz des ersten Funds und `+N more`, oder `not checked`) und ein Urteil, das sagt, ob eine Mail
 rausging und wo der Bericht liegt; `next:` nennt den Schritt des ersten Handlungsbedarfs. Ein Bereich, der nicht
@@ -99,7 +101,7 @@ Commit protection, Secrets, Server logs). Die Stufe und der Satz je Regel stehen
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 
-Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `home check`).
+Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `hal check`).
 
 **Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
 wenn eine Action-needed-Stufe neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
