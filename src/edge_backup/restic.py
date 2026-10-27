@@ -173,7 +173,7 @@ def snapshot_ids(settings: Settings, app: str, *options: str) -> list[str]:
     try:
         return [snapshot["id"] for snapshot in json.loads(output)]
     except (ValueError, KeyError, TypeError) as error:
-        raise host.UnreadableOutputError("restic snapshots ist unlesbar") from error
+        raise host.UnreadableOutputError("restic snapshots output is unreadable") from error
 
 
 def restore(settings: Settings, app: str, snapshot_id: str, target: Path) -> None:

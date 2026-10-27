@@ -47,34 +47,32 @@ class Manifest:
                 files=None if files is None else int(files),
             )
         except (ValueError, KeyError, TypeError) as error:
-            raise VerificationError("das Manifest im Snapshot ist unlesbar") from error
+            raise VerificationError("the snapshot's manifest is unreadable") from error
 
 
 def check_file_count(expected: int | None, restored: int, noun: str) -> None:
     """The restored kept volume holds exactly the files the manifest counted."""
     if restored != expected:
-        named = "keine Zahl" if expected is None else expected
-        raise VerificationError(f"{restored} {noun} wiederhergestellt, das Manifest nennt {named}")
+        named = "no number" if expected is None else expected
+        raise VerificationError(f"{restored} {noun} restored, the manifest names {named}")
 
 
 def check_rows(manifest: Manifest, restored: int) -> None:
     """A SQLite app's restored table holds exactly the rows its staged copy held."""
     if restored != manifest.rows:
-        raise VerificationError(
-            f"{restored} Zeilen wiederhergestellt, das Manifest nennt {manifest.rows}"
-        )
+        raise VerificationError(f"{restored} rows restored, the manifest names {manifest.rows}")
 
 
 def check_row_count(table: str, rows: int, *, require_rows: bool) -> None:
     if require_rows and rows == 0:
-        raise VerificationError(f"die wiederhergestellte Tabelle {table} ist leer")
+        raise VerificationError(f"the restored table {table} is empty")
 
 
 def check_audio_references(references: list[str], restored_audio: Path) -> None:
     """Every audio file the restored database names exists in the copy with a size above zero."""
     if missing := sum(1 for reference in references if not _present(restored_audio, reference)):
         raise VerificationError(
-            f"{missing} von {len(references)} referenzierten Audiodateien fehlen oder sind leer"
+            f"{missing} of {len(references)} referenced audio files are missing or empty"
         )
 
 

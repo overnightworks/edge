@@ -600,13 +600,13 @@ def _lose_the_manifest(machine: Machine) -> None:
 @pytest.mark.parametrize(
     ("break_backup", "message"),
     [
-        (_lose_a_file_written_during_the_scan, "4 Audiodateien wiederhergestellt"),
-        (_reference_a_missing_file, "1 von 3 referenzierten Audiodateien fehlen"),
-        (_reference_an_empty_file, "1 von 3 referenzierten Audiodateien fehlen"),
-        (_reference_outside_the_audio_volume, "1 von 3 referenzierten Audiodateien fehlen"),
+        (_lose_a_file_written_during_the_scan, "4 audio files restored"),
+        (_reference_a_missing_file, "1 of 3 referenced audio files are missing"),
+        (_reference_an_empty_file, "1 of 3 referenced audio files are missing"),
+        (_reference_outside_the_audio_volume, "1 of 3 referenced audio files are missing"),
         (_corrupt_the_dump, "pg_restore ended with exit 1"),
-        (_lose_the_dump, "der Snapshot enthält keinen Datenbank-Dump"),
-        (_lose_the_manifest, "der Snapshot enthält kein Manifest"),
+        (_lose_the_dump, "the snapshot holds no database dump"),
+        (_lose_the_manifest, "the snapshot holds no manifest"),
     ],
 )
 def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
@@ -1082,7 +1082,7 @@ def test_a_restored_table_without_rows_fails_the_restore_test(edge_backup, machi
     outcome = edge_backup(*shipped, "restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "die wiederhergestellte Tabelle realm ist leer" in outcome.out
+    assert "the restored table realm is empty" in outcome.out
     assert outcome.status["failing_app"] == "keycloak"
     assert outcome.status["exit_category"] == "verification-failed"
 
