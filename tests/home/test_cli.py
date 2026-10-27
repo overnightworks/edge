@@ -80,9 +80,9 @@ def test_home_without_a_subcommand_is_a_usage_error() -> None:
 def test_an_unexpected_error_exits_3_with_one_german_line_never_1(
     clean_home, runner, probe, capsys: pytest.CaptureFixture[str], subcommand: str
 ) -> None:
-    state_dir = Layout(clean_home).state_dir
-    state_dir.parent.mkdir(parents=True)
-    state_dir.write_text("a file where the state directory belongs")
+    hal_state_dir = Layout(clean_home).hal_state_dir
+    hal_state_dir.parent.mkdir(parents=True)
+    hal_state_dir.write_text("a file where the state directory belongs")
 
     code = cli.main([subcommand], home=clean_home, run=runner, probe=probe, disk_space=FakeDisk())
 

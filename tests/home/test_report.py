@@ -8,8 +8,8 @@ import pytest
 from home_tools.report import findings_count, markdown_table, write_state_file
 
 
-@pytest.mark.parametrize(("count", "expected"), [(0, "0 Funde"), (1, "1 Fund"), (2, "2 Funde")])
-def test_a_count_of_findings_reads_as_german_singular_or_plural(count: int, expected: str) -> None:
+@pytest.mark.parametrize(("count", "expected"), [(0, "0 findings"), (1, "1 finding"), (2, "2 findings")])
+def test_a_count_of_findings_reads_as_english_singular_or_plural(count: int, expected: str) -> None:
     assert findings_count(count) == expected
 
 

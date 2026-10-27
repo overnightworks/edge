@@ -960,7 +960,7 @@ MAIL_HOST=mail.proof.test
 MAIL_DIR=/proof/mail
 MAIL_CANARY=$(openssl rand -hex 24)
 export MAIL_CANARY
-MAIL_STATE=/home/tester/.local/state/home
+MAIL_STATE=/home/tester/.local/state/hal
 SINK_PID_FILE=$EVIDENCE/mail-sink.pid
 
 make_mail_ca() {  # make_mail_ca <name>: a CA and a certificate for $MAIL_HOST signed by it, in $MAIL_DIR
