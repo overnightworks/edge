@@ -64,8 +64,8 @@ GENERATED_SECRET = '''
 name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
-read_by = ["edge external plan"]
-recreate = "home secrets --setup"
+read_by = ["hal apply"]
+recreate = "hal secrets --setup"
 '''
 
 

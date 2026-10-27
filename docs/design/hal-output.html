@@ -565,7 +565,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> secrets         stored
 <span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 2m14s</span>
 <span class="c">next:</span> hal apply</pre>
-        <p class="was">heute: <code>next: `uv run edge external plan` in ~/git/edge (expected: No changes)</code></p>
+        <p class="was">heute: ein eigenes <code>next:</code> mit dem alten Plan-Befehl im Repository</p>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2g</span> falsch eingefügt, dann leer gelassen</figcaption>
@@ -628,8 +628,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Eine Zeile je Eintrag:</b> <code>›</code> kündigt an, was du gleich tust, <code>✓</code> sagt, was gespeichert ist, <code>·</code> heißt nichts zu tun, <code>!</code> heißt, du musst selbst ran. Die Checkliste darunter bleibt, weil du sie im Browser abhakst.</li>
     <li><b>Ein Warum vor der Eingabe:</b> <code>why:</code> ist der Zweck aus dem Manifest. Er wird Englisch, wie jede Terminalzeile. Bei GitHub wird er auch die Beschreibung des Tokens.</li>
     <li><b>Enter, dann Browser:</b> du liest die Liste, bevor der Browser das Terminal verdeckt. Die Cloudflare-Figur unten ist darauf angepasst.</li>
-    <li><b>Das Ende sagt <code>setup</code>:</b> der Assistent druckt kein eigenes „noch offen“ und kein eigenes <code>next:</code> mehr. Die <code>secrets</code>-Zeile und das Urteil von <code>hal setup</code> sagen es. Ist alles gespeichert, zeigt <code>next: hal apply</code> den Plan statt <code>uv run edge external plan</code>.</li>
-    <li><b>Nicht in diesem Bild:</b> der Bericht von <code>home secrets</code> ohne <code>--setup</code>, mit seinem Hilfetext. Er kommt, wenn er einen <code>hal</code>-Befehl bekommt.</li>
+    <li><b>Das Ende sagt <code>setup</code>:</b> der Assistent druckt kein eigenes „noch offen“ und kein eigenes <code>next:</code> mehr. Die <code>secrets</code>-Zeile und das Urteil von <code>hal setup</code> sagen es. Ist alles gespeichert, zeigt <code>next: hal apply</code> den Plan statt des alten Plan-Befehls.</li>
+    <li><b>Nicht in diesem Bild:</b> der Bericht des Geheimnis-Befehls ohne <code>--setup</code>, mit seinem Hilfetext. Er kommt, wenn er einen <code>hal</code>-Befehl bekommt.</li>
   </ul>
 </section>
 

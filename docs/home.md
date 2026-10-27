@@ -409,7 +409,7 @@ erzeugt und gespeichert: ~/.secrets/opentofu/state-passphrase (600)
 
 Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
 `next: hal apply`; es zeigt den Plan vor seinem Ja. Allein gefahren endet
-`home secrets --setup` mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
+der Assistent mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
 Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
