@@ -370,12 +370,13 @@ BARE_COMMAND_STEP = re.compile(r"Run `(.+)`\.")
 
 @dataclass(frozen=True)
 class AreaSummary:
-    """What the terminal says of one area: its level and, at that level, how many findings there are and the first one's sentence."""
+    """What the terminal says of one area: its level, how many findings are at that level, the first one's sentence and how many other findings the area has."""
 
     check: str
     level: Level
     count: int
     sentence: str
+    others: int
 
 
 def area_summaries(items: list[Item]) -> list[AreaSummary]:
@@ -383,8 +384,10 @@ def area_summaries(items: list[Item]) -> list[AreaSummary]:
     summaries = []
     for name, _ in AREAS:
         level = _area_level(items, name)
-        at_level = [item for item in items if item.check == name and item.level is level and level is not Level.OK]
-        summaries.append(AreaSummary(name, level, len(at_level), at_level[0].sentence.removesuffix(".") if at_level else ""))
+        in_area = [item for item in items if item.check == name]
+        at_level = [item for item in in_area if item.level is level and level is not Level.OK]
+        sentence = at_level[0].sentence.removesuffix(".") if at_level else ""
+        summaries.append(AreaSummary(name, level, len(at_level), sentence, len(in_area) - len(at_level) if at_level else 0))
     return summaries
 
 
@@ -400,7 +403,7 @@ def _area_row(summary: AreaSummary, broken: bool) -> Row:
         return Row(Glyph.FAILED, label, AreaState.NOT_CHECKED, BROKEN_AREA_FACT)
     if summary.level is Level.OK:
         return Row(Glyph.DONE, label, AreaState.OK)
-    more = MORE_FINDINGS.format(count=summary.count - 1) if summary.count > 1 else ""
+    more = MORE_FINDINGS.format(count=summary.count - 1 + summary.others) if summary.count + summary.others > 1 else ""
     return Row(LEVEL_GLYPHS[summary.level], label, LEVEL_FINDINGS[summary.level], summary.sentence + more, summary.count)
 
 

@@ -37,20 +37,25 @@ OK_ROWS = {
 FIRST_STEP = 'next: Tell an agent: "edge-a keeps restarting, please look"'
 
 
-def arrange_clean(home, runner) -> None:
+def arrange_clean(home, runner, tmp_path) -> None:
     pass
 
 
-def arrange_an_action_and_a_note(home, runner) -> None:
+def arrange_an_action_and_a_note(home, runner, tmp_path) -> None:
     restarting_containers(runner, "edge-a")
     (home / ".secrets" / "gitlab").unlink()
 
 
-def arrange_two_actions_in_one_area(home, runner) -> None:
+def arrange_two_actions_in_one_area(home, runner, tmp_path) -> None:
     restarting_containers(runner, "edge-a", "edge-b")
 
 
-def arrange_a_note_only(home, runner) -> None:
+def arrange_an_action_and_a_note_in_one_area(home, runner, tmp_path) -> None:
+    restarting_containers(runner, "edge-a")
+    (tmp_path / "reboot-required").touch()
+
+
+def arrange_a_note_only(home, runner, tmp_path) -> None:
     (home / ".secrets" / "gitlab").unlink()
 
 
@@ -85,6 +90,19 @@ def arrange_a_note_only(home, runner) -> None:
             id="two actions in one area",
         ),
         pytest.param(
+            arrange_an_action_and_a_note_in_one_area,
+            [
+                f"{ACTION_ROW} · +1 more",
+                OK_ROWS["backup"],
+                OK_ROWS["commit hook"],
+                OK_ROWS["secrets"],
+                OK_ROWS["server logs"],
+                f"! 1 action, 1 note · mail sent · report {REPORT_DISPLAY}",
+                FIRST_STEP,
+            ],
+            id="an action and a note in one area",
+        ),
+        pytest.param(
             arrange_a_note_only,
             [
                 OK_ROWS["services"],
@@ -98,17 +116,17 @@ def arrange_a_note_only(home, runner) -> None:
         ),
     ],
 )
-def test_the_terminal_shows_one_row_per_area_and_the_verdict(clean_home, runner, mail_stub, capsys, arrange, expected) -> None:
+def test_the_terminal_shows_one_row_per_area_and_the_verdict(clean_home, runner, mail_stub, capsys, tmp_path, arrange, expected) -> None:
     """#493: the blessed rows in the mail's order, then the verdict and the step of the first action."""
-    arrange(clean_home, runner)
+    arrange(clean_home, runner, tmp_path)
 
     home_check(clean_home, runner)
 
     assert capsys.readouterr().out.splitlines() == expected
 
 
-def test_the_same_findings_on_the_next_run_say_that_nothing_new_went_out(clean_home, runner, mail_stub, capsys) -> None:
-    arrange_an_action_and_a_note(clean_home, runner)
+def test_the_same_findings_on_the_next_run_say_that_nothing_new_went_out(clean_home, runner, mail_stub, capsys, tmp_path) -> None:
+    arrange_an_action_and_a_note(clean_home, runner, tmp_path)
     home_check(clean_home, runner)
     capsys.readouterr()
 
