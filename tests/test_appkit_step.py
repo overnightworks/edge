@@ -1,4 +1,4 @@
-"""The appkit step of `edge apply --closed` (#514): the installed appkit's static files, served by
+"""The appkit step of the closed apply (#514): the installed appkit's static files, served by
 the legal unit from `legal/assets/appkit-<version>/`, on the scripted boundaries of
 `test_edge_apply`."""
 
@@ -34,7 +34,7 @@ VERSION = metadata.version("overnightworks-appkit")
 
 @dataclass
 class World:
-    """The repository fixture with its appkit files, and how to run `edge apply --closed`."""
+    """The repository fixture with its appkit files, and how to run the closed apply."""
 
     repository: Path
     switch: Callable[..., tuple[int, str, str]]
@@ -163,10 +163,10 @@ def test_a_failed_final_rename_keeps_the_previous_directory(world):
     served = world.served
     (served / "appkit.css").write_text("previous")
 
+    static, rename = appkit_step.installed_static(), _rename_failing_on(2)
+
     with pytest.raises(OSError, match="interrupted"):
-        appkit_step._replace_directory(
-            appkit_step.installed_static(), served, _rename_failing_on(2)
-        )
+        appkit_step._replace_directory(static, served, rename)
 
     assert (served / "appkit.css").read_text() == "previous"
     assert [path.name for path in served.parent.iterdir()] == [served.name]
@@ -176,10 +176,10 @@ def test_a_failed_restore_keeps_the_previous_copy_and_names_where(world):
     served = world.served
     (served / "appkit.css").write_text("previous")
 
+    static, rename = appkit_step.installed_static(), _rename_failing_on(2, 3)
+
     with pytest.raises(OSError, match="the previous copy is kept in") as caught:
-        appkit_step._replace_directory(
-            appkit_step.installed_static(), served, _rename_failing_on(2, 3)
-        )
+        appkit_step._replace_directory(static, served, rename)
 
     kept = Path(str(caught.value.strerror).rsplit(" ", 1)[1])
     assert (kept / "appkit.css").read_text() == "previous"
@@ -198,8 +198,10 @@ def test_an_interrupted_restore_keeps_the_previous_copy_and_names_where(world):
             raise KeyboardInterrupt
         os.rename(source, destination)
 
+    static = appkit_step.installed_static()
+
     with pytest.raises(KeyboardInterrupt) as caught:
-        appkit_step._replace_directory(appkit_step.installed_static(), served, rename)
+        appkit_step._replace_directory(static, served, rename)
 
     kept = Path(caught.value.__notes__[0].rsplit(" ", 1)[1])
     assert (kept / "appkit.css").read_text() == "previous"
