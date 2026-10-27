@@ -114,7 +114,7 @@ def test_the_notification_waits_detached_for_a_click_that_opens_the_report(clean
     (waiter,) = runner.notification_calls
     assert waiter[: waiter.index("sh")] == ["systemd-run", "--user", "--collect", "-p", "Type=notify", "-p", "NotifyAccess=all"]
     assert waiter[-1] == str(Layout(clean_home).check_report_file)
-    assert '--action="open=Open report"' in waiter[waiter.index("-c") + 1]
+    assert f'--action="{check.OPEN_REPORT_ACTION}"' in waiter[waiter.index("-c") + 1]
 
 
 def test_an_action_that_stays_never_notifies_again_even_as_it_ages(clean_home, runner) -> None:

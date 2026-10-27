@@ -478,7 +478,7 @@ REPORT_DISPLAY = "~/.local/state/home/check-report.md"
 
 
 def restarting_containers(runner, *names: str) -> None:
-    """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
+    """A finding at Action needed: each container restarts all the time (#415 Z3)."""
     runner.platform_listing = "".join(f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",))
 
 

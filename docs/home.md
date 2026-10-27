@@ -97,7 +97,7 @@ Commit protection, Secrets, Server logs). Die Stufe und der Satz je Regel stehen
 Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `home check`).
 
 **Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
-wenn ein Action needed neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
+wenn eine Action-needed-Stufe neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
 wieder laufender Lauf einer Prüfung ist so einer. Ändern sich nur Notes, kommt nichts. Ein Fund ist Regel plus
 Gegenstand: Derselbe Fund, der nur älter oder größer wird, nervt nicht erneut; wechselt ein Container von „startet
 neu“ zu „beendet“, ist das ein neuer Punkt.
@@ -206,7 +206,7 @@ eigener Fund, nie ein sauberer Lauf.
   kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
   Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
-  Datum“); eine Note, die nie eine Mail auslöst.
+  Datum“); ein Fund der Stufe Note, der nie eine Mail auslöst.
 - **`platform`, Festplatte.** Nur die Platte, auf der `/` liegt (`shutil.disk_usage`: was ein unprivilegierter Prozess
   noch nutzen kann): `disk-low` (Action needed), wenn weniger als 10 % frei sind; genau 10 % ist kein Fund. Der Fund
   hat den Gegenstand `/`, der freie Platz gehört nicht zur Identität. Die Mail nennt keine Zahl, der Bericht GB frei,
