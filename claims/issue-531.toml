@@ -1,8 +1,0 @@
-claim_id = "08535369ab6b4965837d6cfa53896938"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "716de82acd16d05da9a93e1c6c59f59fed70976f"
-branch = "claude/issue-531-s2g2a-wizard-walk-english"
-scope = ["docs/home.md", "quality/baseline.toml", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_verification.py", "tests/old_names_baseline.toml"]
-opened_commit = "b42be4bdb12c049fe14639af5f5fd519a741e4b6"
-whole_reason = "One surface: the wizard walk's own English text, its pins, ratchets and the worked example in the doc."
