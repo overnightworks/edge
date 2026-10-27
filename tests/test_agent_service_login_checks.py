@@ -327,3 +327,171 @@ def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixe
     with pytest.raises(probe.checks.LoginFailed) as raised:
         probe.checks.scratch_parent(login, lock, {"TMPDIR": str(scratch)})
     assert str(raised.value) == probe.checks.Refusal[reason]
+
+
+# --- B9 (#469) ---------------------------------------------------------------------------------
+
+T0 = 1000.0
+SEEN_GONE = {
+    "group_seen": True, "group_gone_at": T0 + 1.5,
+    "tree_seen": True, "tree_gone_at": T0 + 2.0, "samples": 400,
+}  # fmt: skip
+HELD_CLIENT = {"state": "cancelled", "loss": "disconnected", "closed_at": T0}
+QUIET_LOG = (0, 0, 0, 0, 0, 0, 0, ())
+
+
+def b9_result(probe, *, client=None, watch=None, released=T0 + 1.8, before=0, log=None):
+    """The verdicts of a run that held on every cell, changed by what the test passes; a watch
+    of "never" is a watch that reported nothing."""
+    checks = probe.checks
+    watched = None if watch == "never" else probe.census.Watched(**{**SEEN_GONE, **(watch or {})})
+    return checks.b9_verdicts(
+        checks.B9Evidence(
+            checks.ClientReport(**{**HELD_CLIENT, **(client or {})}),
+            watched,
+            checks.AppCall(True, released),
+            checks.LogClasses(*(log or QUIET_LOG)),
+            before,
+        )
+    )
+
+
+def outcomes(result) -> dict[str, str]:
+    return {verdict.cell: str(verdict.outcome) for verdict in result.verdicts}
+
+
+def test_a_run_that_held_every_cell_reports_held_and_the_timing(probe):
+    """Matrix row 3: (a)-(e) held, and the observed timing is printed with no bound claimed."""
+    result = b9_result(probe)
+    assert set(outcomes(result).values()) == {"held"}
+    assert result.timing == (
+        "B9 timing (observed, no bound): max(t_reap, t_tree, t_up) - t0 = 2.00 s; "
+        "t_up - t_reap = 0.30 s"
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "cell", "outcome"),
+    [
+        ({"client": {"loss": "none"}}, "B9 (a)", "FAILED"),
+        ({"client": {"state": "running", "loss": "none"}}, "B9 (a)", "FAILED"),
+        ({"client": {"state": "refused", "loss": "forbidden"}}, "B9 (a)", "NOT DRIVEN"),
+        ({"client": {"state": None, "loss": None}}, "B9 (a)", "NOT DRIVEN"),
+        ({"watch": {"group_gone_at": None}}, "B9 (b)", "FAILED"),
+        ({"watch": {"group_gone_at": T0 - 0.1}}, "B9 (b)", "FAILED"),
+        ({"watch": {"tree_gone_at": None}}, "B9 (c)", "FAILED"),
+        ({"watch": {"tree_gone_at": T0 - 0.1}}, "B9 (c)", "FAILED"),
+        ({"released": None}, "B9 (d)", "FAILED"),
+        ({"released": T0 - 0.1}, "B9 (d)", "FAILED"),
+        ({"watch": {"group_seen": False, "group_gone_at": None}}, "B9 (b)", "NOT DRIVEN"),
+        ({"watch": {"tree_seen": False, "tree_gone_at": None}}, "B9 (c)", "NOT DRIVEN"),
+        ({"watch": "never"}, "B9 (b)", "NOT DRIVEN"),
+        ({"watch": "never"}, "B9 (c)", "NOT DRIVEN"),
+        ({"before": 2}, "B9 (c)", "NOT DRIVEN"),
+        ({"client": {"closed_at": None}}, "B9 (b)", "NOT DRIVEN"),
+        ({"client": {"closed_at": None}}, "B9 (d)", "NOT DRIVEN"),
+        ({"log": (1, 0, 0, 0, 0, 0, 0, ())}, "B9 (e)", "FAILED"),
+        ({"log": (0, 3, 0, 0, 0, 0, 0, ())}, "B9 (e)", "FAILED"),
+    ],
+    ids=lambda value: str(value)[:40],
+)
+def test_each_b9_cell_fails_or_is_not_driven_as_agent_runtime_440_says(
+    probe, change, cell, outcome
+):
+    """Matrix rows 4-7: one change to the evidence turns one cell, and no timing is printed unless
+    (b), (c) and (d) held."""
+    result = b9_result(probe, **change)
+    assert outcomes(result)[cell] == outcome
+    if cell in ("B9 (b)", "B9 (c)", "B9 (d)"):
+        assert result.timing is None
+
+
+def test_a_log_with_no_error_holds_e_and_its_evidence_counts_the_records(probe):
+    verdict = b9_result(probe, log=(0, 0, 2, 1, 1, 1, 4, ())).verdicts[4]
+    assert verdict.outcome == "held"
+    assert verdict.evidence == "0 other ERROR records, 0 login-refused, 4 bare lines"
+
+
+def test_not_driven_covers_the_five_cells_with_one_reason(probe):
+    verdicts = probe.checks.b9_not_driven("no call reached the fake app")
+    assert [v.cell for v in verdicts] == [f"B9 ({letter})" for letter in "abcde"]
+    assert {(v.outcome, v.evidence) for v in verdicts} == {
+        (probe.checks.Outcome.NOT_DRIVEN, "no call reached the fake app")
+    }
+
+
+def test_a_client_line_enters_a_report_only_after_it_fullmatched(probe):
+    """Matrix row 17: compose's stderr or a marker is counted, never kept; the fields come from the
+    lines of the closed vocabulary."""
+    report = probe.checks.read_client_output([
+        "answer 200", "event run_started", "event other", "closed at=1000.123",
+        "status cancelled disconnected", "broke off OSError",
+        f"closed at=1.5 {TOKEN}", f"event {TOKEN}", "Container x Creating", "",
+    ])  # fmt: skip
+    assert report == probe.checks.ClientReport(
+        answer=200, events=("run_started", "other"), closed_at=1000.123, state="cancelled",
+        loss="disconnected", broke_off=True, unmatched=4,
+    )  # fmt: skip
+    assert report.started
+
+
+def test_a_refusal_keeps_its_status_and_code(probe):
+    report = probe.checks.read_client_output(["answer 409 busy"])
+    assert (report.answer, report.answer_code, report.started) == (409, "busy", False)
+
+
+def test_the_app_call_is_read_from_its_lines(probe):
+    lines = [
+        "method=initialize offered=- canary=0 bearer=1",
+        "method=tools/call tool=step held",
+        "method=tools/call tool=step released at=1000.250",
+    ]
+    assert probe.checks.app_call(lines[:1]) == probe.checks.AppCall(False, None)
+    assert probe.checks.app_call(lines[:2]) == probe.checks.AppCall(True, None)
+    assert probe.checks.app_call(lines) == probe.checks.AppCall(True, 1000.25)
+
+
+class FakeTime:
+    """A monotonic clock that only `sleep` advances."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept = 0
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+        self.slept += 1
+
+
+HELD = "method=tools/call tool=step held"
+
+
+@pytest.mark.parametrize(
+    ("appears_after", "alive_until", "expected"),
+    [(3, 1000, "held"), (None, 5, "the client exited"), (None, 1000, "no call within the time")],
+    ids=["held line", "client exited", "timeout"],
+)
+def test_the_wait_for_a_call_ends_on_a_held_line_a_dead_client_or_the_time(
+    probe, appears_after, alive_until, expected
+):
+    """Matrix rows 14 and 15: the wait is bounded by R2_CALL_SECONDS on a fake clock."""
+    time = FakeTime()
+    polls = probe.checks.CALL_POLL_SECONDS
+
+    def lines():
+        return [HELD] if appears_after is not None and time.slept >= appears_after else []
+
+    outcome = probe.checks.wait_for_call(
+        lambda: time.now, time.sleep, lines, lambda: time.slept < alive_until
+    )
+    assert outcome == expected
+    if expected == "no call within the time":
+        assert time.now == probe.checks.R2_CALL_SECONDS
+        assert time.slept == probe.checks.R2_CALL_SECONDS / polls
+
+
+def test_the_start_wait_is_bounded_by_its_seconds(probe):
+    time = FakeTime()
+    assert not probe.checks.wait_until(lambda: False, 30, lambda: time.now, time.sleep)
+    assert time.now == 30
+    assert probe.checks.wait_until(lambda: True, 30, lambda: time.now, time.sleep)
