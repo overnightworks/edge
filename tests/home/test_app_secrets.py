@@ -672,7 +672,7 @@ class TerminalOutput(io.StringIO):
 def test_on_a_terminal_the_walk_shows_an_opened_page_dim_and_short(
     turn_home: Sandbox, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#564, picture s-s2g: `opened` shows host and path, with `?\u2026` only for a page that has a query."""
+    """The `opened` shows host and path, with `?\u2026` only for a page that has a query."""
     shown = walk_on_a_terminal(turn_home, monkeypatch, browser_opens=True)
 
     assert [line for line in shown if "opened" in line and "Enter opens" not in line] == [
@@ -685,7 +685,7 @@ def test_on_a_terminal_the_walk_shows_an_opened_page_dim_and_short(
 def test_on_a_terminal_the_walk_shows_a_page_nobody_opened_yellow_and_whole(
     turn_home: Sandbox, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#564, picture s-s2g: the operator opens it by hand, so the whole address shows."""
+    """The operator opens it by hand, so the whole address shows."""
     shown = walk_on_a_terminal(turn_home, monkeypatch, browser_opens=False)
 
     unopened = [line for line in shown if "no browser opened" in line]

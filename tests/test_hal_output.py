@@ -367,7 +367,7 @@ def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next
 
 
 def test_a_plain_detail_line_is_indented_and_escaped(capsys: pytest.CaptureFixture[str]) -> None:
-    """#564: text from outside stays one line under a row."""
+    """Text from outside stays one line under a row."""
 
     write_detail("why: a reason", "[ ] step\x1b[31m")
 
@@ -380,7 +380,7 @@ def test_a_plain_detail_line_is_indented_and_escaped(capsys: pytest.CaptureFixtu
 def test_on_a_terminal_a_toned_detail_line_is_styled_as_a_whole_and_a_plain_one_is_not(
     monkeypatch: pytest.MonkeyPatch, tone: Tone, style: str
 ) -> None:
-    """#564: the tone styles the indented line; plain carries no style."""
+    """The tone styles the indented line; plain carries no style."""
 
     out, _err = put_on_terminals(monkeypatch)
     write_detail("a line", tone=tone)
