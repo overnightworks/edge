@@ -1,8 +1,0 @@
-claim_id = "43d46fb2205f45a7816e1ea418a04090"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "5253bcd1778efd4bec774c7e78d70f89321d2913"
-branch = "docs/app-integration-principles"
-scope = ["docs/architecture.md", "docs/backup.md", "docs/keycloak.md"]
-opened_commit = "de45744bfed1240456ac4c0a1b7ccb0a7756c7f2"
-whole_reason = "one harvest of the platform-wide app-integration rulings into their three owner documents"
