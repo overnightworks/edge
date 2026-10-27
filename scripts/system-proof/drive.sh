@@ -399,6 +399,7 @@ cell_t5() {
         '[ "$(systemctl is-enabled $RETENTION_TIMER 2>&1)" != enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" != active ]'
     at_terminal t5-first "$HOME_BIN setup --apply"
     first=$?
+    journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/t5-docker-unit.txt" 2>&1
     verdict T5 "apply converges: the timer is enabled and active" \
         '[ $first -eq 0 ] && [ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" = active ]'
     at_terminal t5-second "$HOME_BIN setup --apply"
@@ -1502,8 +1503,9 @@ cells_dk7() {
     cell_dk7_case "file created in this run" created '{}'
     cell_dk7_case "file merged in this run" merged '{"runtimes": {"nvidia": {"args": [], "path": "nvidia-container-runtime"}}}'
     cell_dk7_case "file merged by an earlier run, Docker still on json-file" earlier '{}'
-    systemctl restart docker
-    wait_for_engine
+    engine_on_json_file_with ""
+    at_terminal dk7-converge "$HOME_BIN setup --apply"
+    docker info >/dev/null 2>&1 || journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/dk7-docker-unit.txt" 2>&1
     return
 }
 
