@@ -322,6 +322,23 @@ def test_a_failed_app_has_its_row_while_the_others_are_proven_and_the_repository
     ]
 
 
+def test_a_failed_restore_test_of_one_snapshot_keeps_its_reason_in_the_error_line(
+    edge_backup, machine
+):
+    edge_backup("backup")
+
+    outcome = edge_backup(
+        *declare_shipped_apps(), "restore", "--test", "keycloak", "--snapshot", "0" * 12
+    )
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines() == [
+        "error: keycloak: 000000000000 nennt keinen einzelnen Snapshot von keycloak "
+        "(mindestens 8 Zeichen der ID aus `hal restore --list`)",
+        "next: hal restore --test keycloak",
+    ]
+
+
 def test_a_restore_test_that_cannot_start_prints_only_the_error_pair(edge_backup, machine, home):
     edge_backup(*declare_two_apps(home), "backup")
     (home / ".secrets/restic/password").unlink()
