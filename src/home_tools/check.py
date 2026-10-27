@@ -1,4 +1,4 @@
-"""`home check` runs every read-only check of `home` and says in plain words whether all is well and what to do.
+"""`hal check` runs every read-only check of `home` and says in plain words whether all is well and what to do.
 
 It writes one report and sends at most one desktop notification and one e-mail, and only when an action appears or
 goes: every finding has one level (OK, Note, Action needed), notes alone and findings that merely persist
@@ -12,7 +12,6 @@ in the report.
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -22,7 +21,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from enum import StrEnum
-from typing import TYPE_CHECKING
 
 from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
 from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view
@@ -34,9 +32,6 @@ from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 
 MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
-
-if TYPE_CHECKING:
-    from home_tools.cli import Ports
 
 
 @dataclass(frozen=True)
@@ -166,7 +161,7 @@ def _is_of_the_removed_check(identity: object) -> bool:
 
 
 def _parse_identities(text: str) -> frozenset[str]:
-    """Only identities `home check` itself remembers pass, so nothing else is ever carried into the state file.
+    """Only identities `hal check` itself remembers pass, so nothing else is ever carried into the state file.
 
     The findings of the removed tidy check are dropped unseen: they are neither news nor recovered.
     """
@@ -654,27 +649,3 @@ def check(ctx: CheckContext) -> int:
     _write_verdict(items, len(AREAS), outcome, f"~/{layout.check_report_file.relative_to(layout.home)}")
     return 1 if current else 0
 
-
-CHECK_EXAMPLES = """\
-Beispiele:
-  home check    alle Prüfungen, ein Bericht, höchstens eine Benachrichtigung und eine Mail
-
-Meldet (Desktop-Benachrichtigung; Mail über msmtp, wenn ~/.secrets/smtp/account.toml da ist) nur, wenn ein Handlungsbedarf neu auftaucht
-oder verschwindet; Hinweise allein melden nichts. Bericht: ~/.local/state/hal/check-report.md
-Exit-Code: 0 sauber, 1 Funde, 2 Konfiguration oder Manifest ungültig, 3 unerwarteter Fehler.
-"""
-
-
-def _check_from_args(_args: argparse.Namespace, layout: Layout, config: Config, ports: Ports) -> int:
-    return check(CheckContext(layout, config, ports.run, ports.probe, ports.now, ports.disk_space))
-
-
-def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
-    parser = add_parser(
-        "check",
-        help="alle Prüfungen ohne Änderung; meldet nur, wenn ein Handlungsbedarf neu auftaucht oder verschwindet",
-        description="Führt jede Prüfung von home lesend aus und schreibt einen Bericht.",
-        epilog=CHECK_EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.set_defaults(handler=_check_from_args)

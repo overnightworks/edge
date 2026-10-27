@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import FakeDisk, FakeProbe, Sandbox
+from conftest import Sandbox, home_check
 
 from home_tools import cli, hook_check
 from home_tools.hook_check import HookCheckUnavailable
@@ -289,17 +289,17 @@ def test_git_that_cannot_be_run_makes_the_check_fail_instead_of_clean(machine: M
 
 
 def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(machine: Machine, capsys) -> None:
-    """#23 rule 1 and 4: `home check` joins a hook finding into its one report and shows a broken hook check as failed."""
+    """#23 rule 1 and 4: `hal check` joins a hook finding into its one report and shows a broken hook check as failed."""
     delete_quality(machine)
     layout = machine.layout
 
-    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(), probe=FakeProbe(), disk_space=FakeDisk())
+    code = home_check(machine.sandbox.home, delegating_to_git_only())
     report = layout.check_report_file.read_text()
     assert code == 1
     assert "# hook " in report
     assert "| Rule | Subject | Finding | Fix |" in report.splitlines()
     assert f"| quality | {layout.quality_executable} |" in report
 
-    code = cli.main(["check"], home=machine.sandbox.home, run=delegating_to_git_only(broken=["worktree"]), probe=FakeProbe(), disk_space=FakeDisk())
+    code = home_check(machine.sandbox.home, delegating_to_git_only(broken=["worktree"]))
     assert code == 3
     assert "check hook failed (HookCheckUnavailable)" in layout.check_report_file.read_text()

@@ -10,9 +10,12 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
+from hal import check_commands
+from hal import cli as hal_cli
 from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
@@ -104,7 +107,7 @@ class FakeDisk:
 
 @pytest.fixture
 def fake_disk() -> FakeDisk:
-    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `home check` test hands in this roomy fake."""
+    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `hal check` test hands in this roomy fake."""
     return FakeDisk()
 
 
@@ -490,8 +493,13 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     assert cli.main(["setup", "--apply"], home=clean_home) == 0
 
 
-def home_check(home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None) -> int:
-    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
+def home_check(
+    home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None, *, arguments: Sequence[str] = ()
+) -> int:
+    """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine."""
+    ports = lambda: cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())  # noqa: E731
+    with mock.patch.object(check_commands, "build_layout_and_ports", ports):
+        return hal_cli.main(["check", *arguments])
 
 
 REPORT_DISPLAY = "~/.local/state/hal/check-report.md"

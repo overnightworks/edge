@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
-from conftest import FakeDisk, FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, message_of, restarting_containers
+from conftest import FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, restarting_containers
 
-from hal import check_commands
 from hal import cli as hal_cli
-from home_tools import cli as home_cli
 from home_tools.layout import Layout
 
 
@@ -30,13 +29,11 @@ def runner() -> RunnerWithCleanLogs:
 
 
 @pytest.fixture
-def hal_check(clean_home, runner, monkeypatch, capsys) -> Callable[..., tuple[int, str, str]]:
+def hal_check(clean_home, runner, capsys) -> Callable[..., tuple[int, str, str]]:
     """`hal check` through `hal.cli.main`, over the clean home and the fake runner instead of this machine."""
 
     def run(*arguments: str, probe: FakeProbe | None = None) -> tuple[int, str, str]:
-        ports = lambda: home_cli.build_layout_and_ports(home=clean_home, run=runner, probe=probe or FakeProbe(), disk_space=FakeDisk())  # noqa: E731
-        monkeypatch.setattr(check_commands, "build_layout_and_ports", ports)
-        exit_code = hal_cli.main(["check", *arguments])
+        exit_code = home_check(clean_home, runner, probe, arguments=arguments)
         captured = capsys.readouterr()
         return exit_code, captured.out, captured.err
 
@@ -95,7 +92,19 @@ def test_a_bare_hal_check_with_an_invalid_manifest_keeps_the_rows_and_names_the_
     assert err.count("\n") == 1
 
 
-@pytest.mark.parametrize("config_text", ["this is not toml\n", "bogus = 1\n"], ids=["syntax error", "unknown key"])
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "this is not toml\n",
+        "bogus = 1\n",
+        "[notify]\nnot_a_real_key = 1\n",
+        "[notify]\nenabled = [\n",
+        "[other]\nenabled = true\n",
+        '[notify]\nenabled = "yes"\n',
+        "notify = 1\n",
+    ],
+    ids=["syntax error", "unknown key", "unknown notify key", "unclosed array", "unknown table", "wrong type", "table is a number"],
+)
 def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_nothing(
     hal_check, clean_home, config_text
 ) -> None:
@@ -109,6 +118,33 @@ def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_
     assert err.startswith("error: ")
     assert err.count(str(config_file)) == 1
     assert err.count("\n") == 1
+
+
+def test_a_tidy_table_in_the_config_is_refused_by_name(hal_check, clean_home) -> None:
+    """#486 D1: the operator's old file holds only a [tidy] table, so the message says to delete it."""
+    config_file = Layout(clean_home).config_file
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("[tidy]\ntrash_days = 5\n")
+
+    exit_code, _, err = hal_check()
+
+    assert exit_code == 2
+    assert err == f"error: the [tidy] table is no longer read; delete it from {config_file}\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+def test_a_bare_hal_check_with_an_unreadable_config_exits_2(hal_check, clean_home) -> None:
+    config_file = Layout(clean_home).config_file
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("[notify]\nenabled = true\n")
+    config_file.chmod(0)
+    try:
+        exit_code, _, err = hal_check()
+    finally:
+        config_file.chmod(0o600)
+
+    assert exit_code == 2
+    assert err.startswith("error: ")
 
 
 def test_a_bare_hal_check_is_not_a_json_command(hal_check, runner) -> None:

@@ -1,4 +1,4 @@
-"""Tests of `home check`; the #390 mail tests name the cells of the item's scenario matrix in their docstrings."""
+"""Tests of `hal check`; the #390 mail tests name the cells of the item's scenario matrix in their docstrings."""
 
 from __future__ import annotations
 
@@ -298,22 +298,6 @@ def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(cle
     assert runner.notifications[2] == "PC check: all well"
 
 
-def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2(clean_home, runner, use_manifest, capsys) -> None:
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
-    manifest = use_manifest('[[secret]]\nname = "e"\n')
-
-    code = home_check(clean_home, runner)
-
-    report = Layout(clean_home).check_report_file.read_text()
-    error = capsys.readouterr().err
-    assert code == 2
-    assert "| failed: secrets" in report.splitlines()[0]
-    assert "check secrets failed (ManifestError)" in report
-    assert "container-unhealthy | edge" in report
-    assert error.startswith(f"home: {manifest}: ")
-    assert error.count("\n") == 1
-
-
 class RunnerWithEmptyDockerInfo(RunnerWithCleanLogs):
     """`docker info` prints nothing, so the logs check finds a default driver with an empty subject."""
 
@@ -331,7 +315,7 @@ def test_a_finding_without_a_subject_survives_the_memory_and_the_next_run_exits_
 
     assert (first, second) == (1, 1)
     assert "logs\\tdocker-default-driver\\t" in remembered
-    assert "unerwarteter Fehler" not in capsys.readouterr().err
+    assert "unexpected error" not in capsys.readouterr().err
 
 
 def memory_text(text: str) -> Callable[[Path], None]:
@@ -361,7 +345,7 @@ def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     code = home_check(clean_home, runner)
 
     assert code == 3
-    assert capsys.readouterr().err.startswith(f"home: unerwarteter Fehler ({refusal})")
+    assert capsys.readouterr().err.startswith(f"error: unexpected error ({refusal})")
     assert layout.check_report_file.read_text().startswith("# hal check ")
 
 

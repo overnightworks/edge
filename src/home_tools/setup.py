@@ -30,7 +30,6 @@ from home_tools.system_step import (
     SystemStep,
     UnresolvableRunningUser,
 )
-from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UnitsApplied, UserUnits
 
@@ -577,7 +576,7 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     return 0
 
 
-def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _setup_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     try:
         return setup(layout, ports, args.apply)
     except KeyboardInterrupt:
