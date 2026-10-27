@@ -435,14 +435,12 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
 
 @pytest.mark.parametrize("present", [False, True], ids=["absent", "present at 0644"])
 def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_generate(
-    tmp_path: Path, use_manifest, boundaries: Boundaries, present: bool
+    home: Path, use_manifest, boundaries: Boundaries, present: bool
 ) -> None:
     """#195: those units own their four generated passwords; the packaged entries are optional, so `--setup` leaves them as they are."""
     generated = ("step-ca/password", "keycloak/db-password", "keycloak/config-cli-secret", "keycloak/bootstrap-admin-password")
     blocks = PACKAGED_MANIFEST.read_text().split("[[secret]]")[1:]
     use_manifest("".join(f"[[secret]]{block}" for block in blocks if any(f'name = "{name}"' in block for name in generated)))
-    home = tmp_path / "home"
-    home.mkdir()
     for name in generated if present else ():
         file = private_directory(home, f".secrets/{Path(name).parent}") / Path(name).name
         file.write_text("FAKE-OLD-VALUE")
@@ -624,7 +622,8 @@ def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
     terminal.pastes = [PASTED_VALUE]
     assert home_secrets_setup(tmp_path, boundaries) == 0
     output = capsys.readouterr().out
-    assert squeezed(output)[0].startswith("› turn new token") and "why:" not in output
+    assert squeezed(output)[0].startswith("› turn new token")
+    assert "why:" not in output
 
 
 def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_on(
