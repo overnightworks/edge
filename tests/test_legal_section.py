@@ -43,6 +43,7 @@ def in_paragraph(inline: str) -> str:
 
 
 def test_a_section_in_the_grammar_hands_its_bytes_on_unchanged():
+    """L14."""
     parsed = fragment(GOOD)
 
     (heading,) = parsed.headings
@@ -57,6 +58,7 @@ def test_a_section_in_the_grammar_hands_its_bytes_on_unchanged():
 
 
 def test_a_refusal_names_the_file_and_the_line_and_the_rule():
+    """L11."""
     text = '<h2 id="hopin">HopIn</h2>\n<img src="x">\n'
 
     assert refusal(text) == f"legal: {PATH}: line 2: <img> is not allowed ({ALLOWED})"
@@ -89,6 +91,7 @@ def test_a_refusal_names_the_file_and_the_line_and_the_rule():
     ],
 )
 def test_a_token_outside_the_allow_list_is_refused(text, rule):
+    """L7."""
     assert rule in refusal(text)
 
 
@@ -122,10 +125,12 @@ def test_a_token_outside_the_allow_list_is_refused(text, rule):
     ],
 )
 def test_the_content_model_of_the_grammar_is_enforced(text, rule):
+    """L7."""
     assert rule in refusal(text)
 
 
 def test_a_section_inside_a_section_is_refused():
+    """L7."""
     inner = '<section id="hopin-a">\n<h3>A</h3>\n<section id="hopin-b">\n'
 
     assert "<section> is not allowed here" in refusal(f'<h2 id="hopin">HopIn</h2>\n{inner}')
@@ -148,10 +153,12 @@ def test_a_section_inside_a_section_is_refused():
     ],
 )
 def test_a_text_that_is_not_in_canonical_form_is_refused_at_the_first_differing_line(text, line):
+    """L14."""
     assert refusal(text) == f"legal: {PATH}: line {line}: {CANONICAL_RULE}"
 
 
 def test_the_three_character_references_are_the_canonical_way_to_write_them():
+    """L14."""
     parsed = fragment(in_paragraph("a &amp; b &lt; c &gt; d"))
 
     assert parsed.headings[0].content == "\n<p>a &amp; b &lt; c &gt; d</p>\n"
@@ -168,10 +175,12 @@ def test_the_three_character_references_are_the_canonical_way_to_write_them():
     ],
 )
 def test_an_encoding_or_line_end_the_contract_does_not_allow_is_refused(data, rule):
+    """L14."""
     assert rule in refusal(data)
 
 
 def test_a_section_over_64_kib_is_refused_with_its_size():
+    """L11."""
     text = in_paragraph("x" * MAXIMUM_BYTES)
 
     message = refusal(text)
@@ -180,6 +189,7 @@ def test_a_section_over_64_kib_is_refused_with_its_size():
 
 
 def test_a_section_of_exactly_64_kib_is_accepted():
+    """L11."""
     shell = len(in_paragraph("").encode())
 
     assert fragment(in_paragraph("x" * (MAXIMUM_BYTES - shell)))
@@ -199,6 +209,7 @@ def test_a_section_of_exactly_64_kib_is_accepted():
     ],
 )
 def test_ids_follow_the_app_key(text):
+    """L6."""
     assert "id must be" in refusal(text) or "may not end in titel" in refusal(text)
 
 
@@ -229,6 +240,7 @@ def test_ids_follow_the_app_key(text):
     ],
 )
 def test_a_link_beyond_https_mailto_and_the_three_pages_is_refused(href):
+    """L7."""
     assert "link is not allowed" in refusal(in_paragraph(f'<a href="{href}">x</a>'))
 
 
@@ -246,10 +258,12 @@ def test_a_link_beyond_https_mailto_and_the_three_pages_is_refused(href):
     ],
 )
 def test_a_link_the_contract_allows_is_accepted(href):
+    """L7."""
     assert fragment(in_paragraph(f'<a href="{href}">x</a>'))
 
 
 def test_a_link_to_an_id_is_reported_with_its_page_and_line():
+    """L13."""
     text = in_paragraph(
         '<a href="#hopin-daten">a</a> <a href="/datenschutz#anmeldung">b</a> '
         '<a href="/impressum">c</a>'
@@ -262,6 +276,7 @@ def test_a_link_to_an_id_is_reported_with_its_page_and_line():
 
 
 def test_a_refusal_never_quotes_the_text():
+    """L11."""
     marker = "geheimerwortlaut"
 
     for text in (
@@ -288,6 +303,7 @@ def general(text: str):
 
 
 def test_the_general_part_reads_several_headings_in_the_files_order():
+    """L14."""
     parsed = general(GENERAL)
 
     assert [heading.id for heading in parsed.headings] == ["verantwortlicher", "rechte"]
@@ -312,6 +328,7 @@ def test_the_general_part_reads_several_headings_in_the_files_order():
     ],
 )
 def test_the_general_part_is_refused_by_its_own_grammar(text, rule):
+    """L7."""
     with pytest.raises(LegalError) as refused:
         general(text)
 

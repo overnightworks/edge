@@ -107,6 +107,7 @@ def private_umask():
 
 @pytest.mark.usefixtures("private_umask")
 def test_the_first_apply_names_and_writes_the_three_pages_readable_by_the_unit(world):
+    """L3."""
     exit_code, out, err = world.switch()
 
     assert exit_code == 0, err
@@ -122,6 +123,7 @@ def test_the_first_apply_names_and_writes_the_three_pages_readable_by_the_unit(w
 
 
 def test_the_second_apply_changes_nothing_and_says_so(world):
+    """L3."""
     world.switch()
     world.scripted.calls.clear()
 
@@ -134,6 +136,7 @@ def test_the_second_apply_changes_nothing_and_says_so(world):
 
 
 def test_a_changed_text_goes_live_only_after_yes_and_the_plan_names_its_page(world):
+    """L3."""
     world.switch()
     world.edit(PRIVACY, lambda text: text + NEW_HEADING)
 
@@ -152,6 +155,7 @@ def test_a_changed_text_goes_live_only_after_yes_and_the_plan_names_its_page(wor
 
 
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
+    """L3."""
     world.switch()
     assert 'id="agent-dienst"' in world.built_page("datenschutz")
     write_fleet(world.repository, WITHOUT_AGENT)
@@ -164,6 +168,7 @@ def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
 
 
 def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):
+    """L3."""
     switch_off(world.state, unit="legal")
 
     exit_code, out, _ = world.switch()
@@ -205,6 +210,7 @@ def link_to_the_agent_service(text: bytes) -> bytes:
 def test_a_refused_section_stops_the_run_before_the_question_and_writes_nothing(
     world, path, change, line
 ):
+    """L11."""
     world.edit(path, change)
 
     exit_code, out, err = world.switch()
@@ -216,6 +222,7 @@ def test_a_refused_section_stops_the_run_before_the_question_and_writes_nothing(
 
 
 def test_a_link_to_a_block_that_left_refuses_the_run(world):
+    """L13."""
     world.edit(PRIVACY, link_to_the_agent_service)
     assert world.switch(answer="no")[0] == 1
     write_fleet(world.repository, WITHOUT_AGENT)
@@ -234,6 +241,7 @@ def test_a_link_to_a_block_that_left_refuses_the_run(world):
     [(PRIVACY, "the general part"), ("legal/frame/datenschutz.html", "the frame")],
 )
 def test_a_missing_general_part_or_frame_is_cannot_plan(world, missing, what):
+    """L11."""
     (world.repository / missing).unlink()
 
     exit_code, _, err = world.switch()
@@ -247,6 +255,7 @@ def test_a_missing_general_part_or_frame_is_cannot_plan(world, missing, what):
 
 @pytest.mark.parametrize("services", ["{}", "\n  legal:\n    run: {enabled: false}"])
 def test_without_an_enabled_legal_unit_there_is_no_step_and_no_line(world, services):
+    """L3."""
     write_fleet(world.repository, f"cloudflare:\n  zone: {ZONE}\nservices: {services}\n")
     (world.repository / PRIVACY).write_bytes(b"<script>not even read</script>")
 
@@ -258,6 +267,7 @@ def test_without_an_enabled_legal_unit_there_is_no_step_and_no_line(world, servi
 
 
 def test_a_write_that_fails_is_partial_and_switches_no_unit(world):
+    """L3."""
     world.built.chmod(0o500)
     try:
         exit_code, _, err = world.switch()
@@ -274,6 +284,7 @@ def test_a_write_that_fails_is_partial_and_switches_no_unit(world):
 
 @pytest.mark.usefixtures("unreadable_profile_bind")
 def test_a_core_failure_after_the_write_names_its_own_step_and_never_legal(world):
+    """L3."""
     edit_traefik_yml(world.repository)
 
     exit_code, _, err = world.switch()
@@ -293,6 +304,7 @@ def test_a_core_failure_after_the_write_names_its_own_step_and_never_legal(world
     ],
 )
 def test_the_ignore_rules_keep_the_built_pages_and_leftovers_out_of_the_tree(path, ignored):
+    """L3."""
     result = subprocess.run(
         ["git", "-C", str(REPOSITORY), "check-ignore", "--quiet", path],
         stdin=subprocess.DEVNULL,

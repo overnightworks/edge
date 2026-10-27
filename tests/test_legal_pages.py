@@ -75,6 +75,7 @@ SECTIONS = '<section id="zeta-eins">\n<h3>Eins</h3>\n<p>x</p>\n</section>\n'
 
 
 def test_the_groups_stand_where_the_frame_puts_them_and_each_group_is_sorted_by_anchor():
+    """L6."""
     blocks = [app("zeta"), service("anmeldung"), app("alpha"), general(), service("agent-dienst")]
 
     page = built(blocks)
@@ -89,6 +90,7 @@ def test_the_groups_stand_where_the_frame_puts_them_and_each_group_is_sorted_by_
 
 
 def test_the_build_is_the_same_for_every_order_of_the_blocks():
+    """L14."""
     blocks = [
         general(),
         service("anmeldung"),
@@ -105,6 +107,7 @@ def test_the_build_is_the_same_for_every_order_of_the_blocks():
 
 
 def test_the_general_part_keeps_the_files_order_of_its_headings():
+    """L14."""
     text = '<h2 id="zebra">Z</h2>\n<p>z</p>\n<h2 id="apfel">A</h2>\n<p>a</p>\n'
 
     page = built([general(text)])
@@ -113,6 +116,7 @@ def test_the_general_part_keeps_the_files_order_of_its_headings():
 
 
 def test_an_app_with_sections_gets_a_nested_table_of_contents_entry_and_one_without_a_plain_one():
+    """L6."""
     page = built([general(), app("alpha"), app("zeta", sections=SECTIONS)])
 
     assert "[toc <li>Recht</li>||<li>Alpha</li><li>Zeta<ol><li>Eins</li></ol></li>]" in page
@@ -123,10 +127,12 @@ def test_an_app_with_sections_gets_a_nested_table_of_contents_entry_and_one_with
 
 
 def test_a_group_without_blocks_emits_nothing():
+    """L14."""
     assert '[body <h2 id="recht">Recht</h2>\n<p>a</p>\n||]' in built([general()])
 
 
 def test_stand_is_the_newest_date_of_the_pages_sections_in_german():
+    """L12."""
     blocks = [
         general(day=date(2026, 3, 9)),
         app("alpha", day=date(2026, 10, 27)),
@@ -137,6 +143,7 @@ def test_stand_is_the_newest_date_of_the_pages_sections_in_german():
 
 
 def test_stand_of_a_page_counts_only_the_sections_of_that_page():
+    """L12."""
     pages = build_pages(
         FRAME,
         [
@@ -154,10 +161,12 @@ def test_stand_of_a_page_counts_only_the_sections_of_that_page():
 
 
 def test_the_imprint_is_the_frame_as_it_is():
+    """L14."""
     assert built([general()], "impressum") == FRAME.pages["impressum"]
 
 
 def test_an_id_used_by_two_blocks_is_refused_naming_both_files():
+    """L6."""
     other = general('<h2 id="alpha">A</h2>\n<p>a</p>\n')
 
     message = refusal([other, app("alpha")])
@@ -169,12 +178,14 @@ def test_an_id_used_by_two_blocks_is_refused_naming_both_files():
 
 
 def test_an_id_of_the_frame_cannot_be_taken_by_a_block():
+    """L6."""
     message = refusal([general('<h2 id="inhalt">I</h2>\n<p>a</p>\n')])
 
     assert message.endswith('id "inhalt" is already used by frame')
 
 
 def test_a_subsection_id_that_is_also_a_heading_of_the_general_part_is_refused():
+    """L6."""
     clash = general('<h2 id="zeta-eins">E</h2>\n<p>a</p>\n')
 
     assert 'id "zeta-eins" is already used by' in refusal([clash, app("zeta", sections=SECTIONS)])
@@ -185,6 +196,7 @@ def test_a_subsection_id_that_is_also_a_heading_of_the_general_part_is_refused()
     ["#alpha", "#alpha-eins", "/datenschutz#alpha", "/nutzungsbedingungen"],
 )
 def test_a_text_may_link_its_own_ids_and_the_pages(link):
+    """L13."""
     sections = '<section id="alpha-eins">\n<h3>Eins</h3>\n<p>x</p>\n</section>\n'
     linking = app("alpha", body=f'<p><a href="{link}">l</a></p>\n', sections=sections)
 
@@ -192,12 +204,14 @@ def test_a_text_may_link_its_own_ids_and_the_pages(link):
 
 
 def test_a_text_may_link_a_stable_id_of_another_block_while_its_target_exists():
+    """L13."""
     linking = app("alpha", body='<p><a href="#anmeldung">l</a></p>\n')
 
     assert built([general(), service("anmeldung"), linking])
 
 
 def test_a_link_to_a_stable_id_whose_block_left_refuses_the_run():
+    """L13."""
     linking = app("alpha", body='<p><a href="#anmeldung">l</a></p>\n')
 
     assert refusal([general(), linking]).endswith(
@@ -206,6 +220,7 @@ def test_a_link_to_a_stable_id_whose_block_left_refuses_the_run():
 
 
 def test_a_link_to_another_apps_id_is_refused_naming_its_owner():
+    """L13."""
     linking = app("alpha", body='<p><a href="#zeta-eins">l</a></p>\n')
 
     message = refusal([general(), linking, app("zeta", sections=SECTIONS)])
@@ -218,12 +233,14 @@ def test_a_link_to_another_apps_id_is_refused_naming_its_owner():
 
 
 def test_a_link_to_an_unknown_id_is_refused():
+    """L13."""
     linking = app("alpha", body='<p><a href="/datenschutz#nirgends">l</a></p>\n')
 
     assert "link to #nirgends on /datenschutz is not allowed" in refusal([general(), linking])
 
 
 def test_a_terms_text_may_link_a_stable_id_of_the_privacy_page():
+    """L13."""
     terms = app(
         "alpha",
         body='<p><a href="/datenschutz#anmeldung">l</a></p>\n',
@@ -234,6 +251,7 @@ def test_a_terms_text_may_link_a_stable_id_of_the_privacy_page():
 
 
 def test_a_link_to_the_imprints_stable_ids_resolves_through_the_frame():
+    """L13."""
     linking = app("alpha", body='<p><a href="/impressum#kontakt">l</a></p>\n')
 
     assert built([general(), linking])
@@ -241,6 +259,7 @@ def test_a_link_to_the_imprints_stable_ids_resolves_through_the_frame():
 
 @pytest.mark.parametrize("name", TEMPLATES)
 def test_a_template_with_an_unknown_field_is_refused_naming_its_file(name):
+    """L14."""
     templates = {**FRAME.templates, name: FRAME.templates[name] + "$unknown"}
     blocks = [general(), service("anmeldung"), app("zeta", sections=SECTIONS)]
 
@@ -251,6 +270,7 @@ def test_a_template_with_an_unknown_field_is_refused_naming_its_file(name):
 
 
 def test_a_template_with_a_stray_dollar_sign_is_refused():
+    """L14."""
     templates = {**FRAME.templates, "general": "cost $ 5"}
 
     with pytest.raises(LegalError, match=r"legal/frame/blocks/general.html: a \$ that starts no"):
