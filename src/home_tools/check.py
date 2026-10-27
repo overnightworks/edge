@@ -189,7 +189,7 @@ def _remember(layout: Layout, identities: frozenset[str]) -> None:
     write_state_file(layout.home, layout.check_findings_file, json.dumps(sorted(identities), indent=0) + "\n")
 
 
-NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again\n"
+NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again"
 
 
 @dataclass(frozen=True)
@@ -516,7 +516,7 @@ def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | Non
         return None
     delivered = _notify(ctx.run, summary, body, ctx.layout.check_report_file)
     if not delivered:
-        sys.stderr.write(NOTIFY_FAILED)
+        sys.stderr.write(printable(NOTIFY_FAILED) + "\n")
     return delivered
 
 
