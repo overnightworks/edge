@@ -16,8 +16,11 @@ APP_SERVICE = "agent-app"
 APP_PORT = 8444
 APP_ORIGIN = f"https://{APP_SERVICE}:{APP_PORT}"
 APP_LINE = re.compile(
-    r"method=(?:initialize|notifications/initialized|tools/list|other) "
-    r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01]"
+    r"(?:method=(?:initialize|notifications/initialized|tools/list|other) "
+    r"offered=(?:-|step,bare,extra) canary=[01] bearer=[01])"
+    r"|method=tools/call tool=step held"
+    r"|method=tools/call tool=step released at=\d+\.\d{3}"
+    r"|method=tools/call tool=other"
 )
 APP_HANDSHAKE = (
     "method=initialize offered=- canary=0 bearer=1",
@@ -29,6 +32,7 @@ APP_LISTING = "method=tools/list offered=step,bare,extra canary={canary} bearer=
 class Mode(StrEnum):
     RELAY = "relay"
     CANARY = "canary"
+    HOLD = "hold"
 
 
 def with_setting(text: str, key: str, value: str) -> str:
