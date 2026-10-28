@@ -238,8 +238,9 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
 
     guarded = tuple(replace(one, run=forbidden) if one is command else one for one in cli.COMMANDS)
     monkeypatch.setattr(cli, "COMMANDS", guarded)
+    line = [command.name, *VALID_ARGUMENTS.get(command.name, ()), "--apply"]
     with pytest.raises(SystemExit) as stop:
-        cli.main([command.name, *VALID_ARGUMENTS.get(command.name, ()), "--apply"])
+        cli.main(line)
 
     captured = capsys.readouterr()
     assert (stop.value.code, captured.out) == (ExitCode.USAGE, "")
