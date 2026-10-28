@@ -618,7 +618,7 @@ def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_re
     deployed(app_world)
     with_a_setup = FLEET.replace("services:\n", ENABLED)
     write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{with_a_setup}")
-    setup_check.exit_code, setup_check.line = 1, "step-ca/init --check: not set up"
+    setup_check.exit_code, setup_check.line = 1, "password is not done"
     setup_run.meanwhile = lambda: switches.Switches(app_world.state).record(KEY, NOW)
     changes_before = app_world.scripted.changing_verbs()
 

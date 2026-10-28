@@ -1047,7 +1047,7 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
     assert "may be partial" in err
 
 
-NOT_SET_UP_LINE = "step-ca/init --check: not set up: password is not done"
+NOT_SET_UP_LINE = "password is not done"
 QUESTION = "Type yes to run `step-ca/init` now"
 
 

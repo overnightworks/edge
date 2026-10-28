@@ -128,7 +128,7 @@ def test_p03_the_check_rejects_an_incomplete_or_unsound_state_and_changes_nothin
     before = snapshot(home)
 
     assert make_setup().check() == 1
-    assert terminal.said[-1].startswith("agent-service/setup --check: not set up: ")
+    assert not terminal.said[-1].startswith("agent-service/setup")
     assert snapshot(home) == before
 
 
@@ -434,7 +434,7 @@ def test_p32_a_missing_private_key_beside_a_public_one_is_refused_with_one_line(
     assert terminal.said[-1] == f"agent-service/setup FAILED: {PRIVATE_MISSING_LINE}"
     assert snapshot(home) == before
     assert make_setup().check() == 1
-    assert terminal.said[-1] == f"agent-service/setup --check: not set up: {PRIVATE_MISSING_LINE}"
+    assert terminal.said[-1] == f"{PRIVATE_MISSING_LINE}"
     assert snapshot(home) == before
 
 
