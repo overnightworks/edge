@@ -1,0 +1,8 @@
+claim_id = "75dcffeb7a904451ab9a1c158e6e71d4"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "43bbdbcce3d8a4ca0afa399562ab6007f51a346b"
+branch = "claude/issue-602-s7d2-last-good-backup"
+scope = ["docs/backup.md", "docs/design/hal-output.html", "src/edge_backup/cli.py", "src/edge_backup/runner.py", "src/edge_backup/status.py", "src/hal_output/__init__.py", "tests/conftest.py", "tests/edge_backup_support.py", "tests/home/conftest.py", "tests/test_hal_backup.py", "tests/test_hal_output.py"]
+opened_commit = "54f875afd39d75c2bf289473a5d3717798e41366"
+whole_reason = "One fact's path (status record, Run, error line, hal_output form) plus the pruned row's span on the same backup frame; a split leaves a reader-less method or a second lane on the same rows, docs paragraph and test pins."
