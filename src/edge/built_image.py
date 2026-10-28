@@ -5,6 +5,7 @@ tag's id), so it keeps no record and every interruption is planned again from wh
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from edge import catalog, compose, core
@@ -20,10 +21,16 @@ class BuiltRecreate:
 
     unit: str
     service: str
-    reasons: tuple[str, ...]
+    reference: str
+    moved_from: tuple[str, ...]  # the distinct `ps` images that are neither the tag nor its id
+    definition_changed: bool
+    rebuilt: bool
 
-    def describe(self) -> str:
-        return f"{self.unit}: recreate {self.service} ({'; '.join(self.reasons)}); {ENDS_RUNS}"
+
+class Reason(StrEnum):
+    IMAGE_MOVED = "image moved"
+    DEFINITION_CHANGED = "definition changed"
+    REBUILT = "rebuilt"
 
 
 def built_services(
@@ -67,13 +74,27 @@ def plan_built_images(
     for unit, service in services.items():
         reference = config["services"][service]["image"]
         reasons = {
-            reason
+            container: reason
             for container in containers
             if container.service == service
             if (reason := _reason(container, reference, hashes[service], built_image_id))
         }
         if reasons:
-            plans.append(BuiltRecreate(unit, service, tuple(text for _, text in sorted(reasons))))
+            moved_from = {
+                container.image
+                for container, reason in reasons.items()
+                if reason is Reason.IMAGE_MOVED and container.image is not None
+            }
+            plans.append(
+                BuiltRecreate(
+                    unit,
+                    service,
+                    reference,
+                    tuple(sorted(moved_from)),
+                    Reason.DEFINITION_CHANGED in reasons.values(),
+                    Reason.REBUILT in reasons.values(),
+                )
+            )
     return plans
 
 
@@ -82,18 +103,18 @@ def _reason(
     reference: str,
     current_hash: str,
     built_image_id: Callable[[str], str | None],
-) -> tuple[int, str] | None:
-    """The first reason that applies, ranked in the order they are named. A `ps` image that is the
+) -> Reason | None:
+    """The first reason that applies, in the order they are named. A `ps` image that is the
     container's own image id is no reference: once its tag moved or is gone, Compose may show the
     id, and a recreate onto the tag is then named by the definition or the rebuilt tag. An empty
     tag lookup gives no reason, so the unit's setup still builds it."""
     _require_facts(container)
     if container.image not in (container.image_id, reference):
-        return 0, f"image {container.image} \N{RIGHTWARDS ARROW} {reference}"
+        return Reason.IMAGE_MOVED
     if container.config_hash != current_hash:
-        return 1, core.DEFINITION_CHANGED
+        return Reason.DEFINITION_CHANGED
     if (built := built_image_id(reference)) and built != container.image_id:
-        return 2, f"the image {reference} was rebuilt"
+        return Reason.REBUILT
     return None
 
 
