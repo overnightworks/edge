@@ -33,6 +33,7 @@ OK_ROWS = {
     "commit hook": "  ✓ commit hook     ok",
     "secrets": "  ✓ secrets         ok",
     "server logs": "  ✓ server logs     ok",
+    "exposure": "  ✓ exposure        ok",
 }
 FIRST_STEP = 'next: Tell an agent: "edge-a keeps restarting, please look"'
 
@@ -62,7 +63,7 @@ def arrange_a_note_only(home, runner, tmp_path) -> None:
 @pytest.mark.parametrize(
     ("arrange", "expected"),
     [
-        pytest.param(arrange_clean, [*OK_ROWS.values(), "✓ all well · 5 areas checked"], id="all well"),
+        pytest.param(arrange_clean, [*OK_ROWS.values(), "✓ all well · 6 areas checked"], id="all well"),
         pytest.param(
             arrange_an_action_and_a_note,
             [
@@ -71,6 +72,7 @@ def arrange_a_note_only(home, runner, tmp_path) -> None:
                 OK_ROWS["commit hook"],
                 NOTE_ROW,
                 OK_ROWS["server logs"],
+                OK_ROWS["exposure"],
                 f"! 1 action, 1 note · mail sent · report {REPORT_DISPLAY}",
                 FIRST_STEP,
             ],
@@ -84,6 +86,7 @@ def arrange_a_note_only(home, runner, tmp_path) -> None:
                 OK_ROWS["commit hook"],
                 OK_ROWS["secrets"],
                 OK_ROWS["server logs"],
+                OK_ROWS["exposure"],
                 f"! 2 actions · mail sent · report {REPORT_DISPLAY}",
                 FIRST_STEP,
             ],
@@ -97,6 +100,7 @@ def arrange_a_note_only(home, runner, tmp_path) -> None:
                 OK_ROWS["commit hook"],
                 OK_ROWS["secrets"],
                 OK_ROWS["server logs"],
+                OK_ROWS["exposure"],
                 f"! 1 action, 1 note · mail sent · report {REPORT_DISPLAY}",
                 FIRST_STEP,
             ],
@@ -110,6 +114,7 @@ def arrange_a_note_only(home, runner, tmp_path) -> None:
                 OK_ROWS["commit hook"],
                 NOTE_ROW,
                 OK_ROWS["server logs"],
+                OK_ROWS["exposure"],
                 f"· 1 note · {NOTHING_NEW_VERDICT}",
             ],
             id="a note only",
