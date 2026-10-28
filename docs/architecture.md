@@ -210,7 +210,7 @@ The apex and `www` are hosts only as the catalog's `cloudflare.redirect` (the ap
 
 | Fact | Owner | The catalog… |
 |---|---|---|
-| Containers, images, ports, volumes, the `edge.name` label | the service repo's `compose.yaml` | names only the host. a planned area of `hal check` reports an enabled host without a running container that carries its `edge.name`, a running `edge.name` that no enabled host lists, and a long-running service container whose restart policy is not `unless-stopped` (section 8: switches must survive a reboot). |
+| Containers, images, ports, volumes, the `edge.name` label | the service repo's `compose.yaml` | names only the host. A planned area of `hal check` reports an enabled host without a running container that carries its `edge.name`, a running `edge.name` that no enabled host lists, and a long-running service container whose restart policy is not `unless-stopped` (section 8: switches must survive a reboot). |
 | Keycloak groups | `keycloak/realm.yaml` | references nothing today: the catalog has no `login_group` (planned, above), and no check compares the catalog with the groups of `realm.yaml` |
 | What to back up | `backup/apps.toml` | says nothing. No check compares `apps.toml` with the catalog |
 | DNS, Access app, tunnel line, repo settings | the catalog itself (rendered by OpenTofu) | is the owner |
@@ -696,8 +696,8 @@ A cell names what changes; everything it does not name stays as it is. "→ B" m
 | `hal start S` (operator) | no change | → A: clears the switch, removes the barrier, starts the containers when stopped, resumes S's watcher | no change | → C: clears the switch, removes the barrier, starts the containers on loopback. The watcher stays paused and cloudflared stays off until `hal online` | refused: "S is disabled in the catalog; enable it by PR and `hal apply`" |
 | `hal online` (operator) | no change | no change: S's switch stays | → A: repeats the host check of the publish phase and refuses on any failure; then starts cloudflared (asks the operator's password); then resumes S's watcher | → B: the same check and the same cloudflared start; S's watcher stays paused, so S stays closed: barrier, paused watcher, containers as they are | S stays in E; the global stop ends for the PC |
 | `hal unskip S T` (operator) | allowed: removes T from S's skip list; the watcher may pick T at its next tick | allowed: the same; the watcher stays paused | allowed: the same; the watcher stays paused | allowed: the same; the watcher stays paused | allowed: the same; it matters once S is enabled again |
-| `hal secrets --rotate <name>` (operator) | allowed: stores the new value, restarts S if S reads it | allowed: stores the value; restarts S only if its containers run after a restore, else they read it at their next start | allowed: as A; never starts cloudflared, even when it reads the secret | allowed: as B; cloudflared stays off | allowed: stores the value; nothing restarts |
-| `hal check`, `hal status` (planned) | allowed, read-only | allowed, read-only | allowed, read-only | allowed, read-only | allowed, read-only |
+| `hal secrets --rotate <name>` (operator; `--rotate` planned) | allowed: stores the new value, restarts S if S reads it | allowed: stores the value; restarts S only if its containers run after a restore, else they read it at their next start | allowed: as A; never starts cloudflared, even when it reads the secret | allowed: as B; cloudflared stays off | allowed: stores the value; nothing restarts |
+| `hal check`, the planned `hal status` | allowed, read-only | allowed, read-only | allowed, read-only | allowed, read-only | allowed, read-only |
 | boot | Docker restarts S (`restart: unless-stopped`), cloudflared starts, the watcher runs | Docker does not restart S, because it was stopped explicitly; barrier and paused watcher stay | cloudflared's drop-in keeps it stopped; S restarts on loopback; its watcher stays paused | both: S stopped, cloudflared off | nothing of S starts |
 
 **How the planned state check of `hal check` proves the table.** It places every service in its column (E when the applied catalog says `enabled: false`, otherwise A–D from the markers) and checks that column's facts against reality:
@@ -724,7 +724,7 @@ Example: `hal stop hopin` at 22:10 records the switch, and `hal check` no longer
 - **home-tools** owns the PC, the agent user and the secrets.
 - **aco** owns agent sessions.
 
-Each command exists in exactly one tool; every `hal` verb or flag here that `hal --help` does not list yet is planned. What it does in each state is the state table above; this table names its owner, its undo and who may run it. The last column is the rule; today it is policy only (see "Honest limit" below).
+Each command exists in exactly one tool; every `hal` verb or flag here that `hal <verb> --help` does not list yet is planned. What it does in each state is the state table above; this table names its owner, its undo and who may run it. The last column is the rule; today it is policy only (see "Honest limit" below).
 
 | Command | Owner | Does | Undo | May an agent run it? |
 |---|---|---|---|---|
@@ -741,7 +741,7 @@ Each command exists in exactly one tool; every `hal` verb or flag here that `hal
 | `hal secrets --emergency` | home-tools (ruled: home-tools#10 line 16) | the revoke guide: per entry it opens the revoke or sign-out page (GitHub tokens and sessions, SonarCloud, Cloudflare tokens and Access sessions, Telegram BotFather, Google), says what to click, and is checked off with Enter. It never claims a revocation happened | — | **no** (key rotation and revocation are the operator's own) |
 | `hal secrets --rotate <name>` | home-tools (#10) | replaces one secret: page, hidden input, verify, store, then restart its readers as the state table allows | — | **no** |
 
-**No `hal revoke`:** revoking is about secrets, so it lives once, in `hal secrets --emergency`. `hal status` prints "secrets: run `hal secrets --emergency`" as a hint, nothing more.
+**No `hal revoke`:** revoking is about secrets, so it lives once, in the planned `hal secrets --emergency`. `hal status` prints "secrets: run `hal secrets --emergency`" as a hint, nothing more.
 
 **One tool name per owner.** `edge` gets subcommands, the way `home` did: `edge check` (today `edge-check`), `edge external` (E3's separate external script, not built yet), `edge apply`, `edge release`, `edge status`, `edge stop/start`, `edge restore`, `edge rollback`, `edge unskip`, `edge lock`, `edge people`. One command to remember (D11).
 
@@ -772,11 +772,11 @@ Each recovery below is a walk through the state table (its states in brackets). 
 | A user account is abused | lock it and end its sessions | `hal lock <user>`; done only when every app says `ended`. An app that says `still active` or `unverified` is stopped until it can (`hal stop <app>`; for a host that bypasses Traefik `hal offline`, which stays until the session is proven ended) | operator |
 | The login itself is in doubt | end every session | `hal lock --everyone`, with the same per-app evidence | operator |
 | Keycloak's signing key may be known | rotate the realm keys **and** end every session, then prove it per app | guided page: `hal people --keys` opens Realm settings → Keys; add a new key provider, disable the old one; then `hal lock --everyone`. Rotation alone is not enough: an app that cached the old public key, and an app session already issued, keep working until the app itself checks again (Keycloak documents that revocation reaches a client only when it checks). The step is done only when each app reports no session older than the rotation; an app that cannot report is `unverified` and is stopped as in the account-abuse row (for a host that bypasses Traefik: `hal offline`, which stays until the session is proven ended) | operator |
-| A token or password leaked | revoke it at the provider, then create a new one | the planned `hal secrets --emergency`, then `hal secrets --rotate <name>` | operator |
-| The operator's GitHub account is in doubt | sign out every session, review SSH keys and tokens | part of `hal secrets --emergency` (github.com/settings/sessions, /keys, /tokens) | operator |
-| A Cloudflare session or token is in doubt | revoke Access sessions; roll the API tokens | part of `hal secrets --emergency` (Zero Trust → Users → revoke session; API Tokens → roll) | operator |
+| A token or password leaked | revoke it at the provider, then create a new one | the planned `hal secrets --emergency`, then the planned `hal secrets --rotate <name>` | operator |
+| The operator's GitHub account is in doubt | sign out every session, review SSH keys and tokens | part of the planned `hal secrets --emergency` (github.com/settings/sessions, /keys, /tokens) | operator |
+| A Cloudflare session or token is in doubt | revoke Access sessions; roll the API tokens | part of the planned `hal secrets --emergency` (Zero Trust → Users → revoke session; API Tokens → roll) | operator |
 | The tunnel's credential leaked | stop, delete the tunnel, create a new one | `hal offline` (A → C); a guided step: the operator deletes the tunnel, creates a new one (remotely managed, D6) and stores the new credential; then `hal apply` (C): its plan finds the one new tunnel, repoints each record and, once X6a (#168) lands, writes its ingress lines; `hal online` (C → A) | operator |
-| The phone or laptop is lost | sign out the device everywhere | `hal secrets --emergency` (Google, GitHub, Tailscale device removal, Cloudflare Access) and the travel checklist section D | operator |
+| The phone or laptop is lost | sign out the device everywhere | the planned `hal secrets --emergency` (Google, GitHub, Tailscale device removal, Cloudflare Access) and the travel checklist section D | operator |
 | An agent misbehaves on the PC | stop every agent session, then treat every secret it could read as leaked | **gap:** aco has no "stop all" command (section 7 row 34). Until D14, a misbehaving agent could read every secret, so the "token leaked" row applies to all of them | operator |
 | Who did what? | read the login and admin events, and the journal | the LOOK page's login-anomaly light, linking to Keycloak's Events page (logins and failed logins kept 90 days, admin events 1 year), plus Grafana and `journalctl` | operator; an agent may read |
 | Data was destroyed or tampered with | restore from the last good backup | `hal stop <app>` (A → B); `hal restore <app> --live` (B; section 7 row 18); a check on the container itself; `hal start <app>` (B → A). For a host that bypasses Traefik: `hal offline` (A → C), the same restore (C), a check on loopback, `hal online` (C → A) | operator |
