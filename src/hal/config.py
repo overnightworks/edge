@@ -41,6 +41,8 @@ def _read(path: Path) -> dict[str, object]:
         return {}
     except tomllib.TOMLDecodeError as error:
         raise ConfigInvalid(path, str(error)) from error
+    except UnicodeDecodeError as error:
+        raise ConfigInvalid(path, "not UTF-8") from error
     except OSError as error:
         raise ConfigInvalid(path, error.strerror or type(error).__name__) from error
 

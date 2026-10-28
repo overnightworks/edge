@@ -121,6 +121,18 @@ def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_
     assert err.count("\n") == 1
 
 
+def test_a_bare_hal_check_with_a_config_that_is_not_utf8_names_the_file_once(hal_check, clean_home) -> None:
+    config_file = write_hal_config(clean_home, "")
+    config_file.write_bytes(b"\xff")
+
+    exit_code, out, err = hal_check()
+
+    assert (exit_code, out) == (2, "")
+    assert err.startswith("error: ")
+    assert err.count(str(config_file)) == 1
+    assert err.count("\n") == 1
+
+
 def test_an_unknown_table_is_named_in_the_error(hal_check, clean_home) -> None:
     config_file = write_hal_config(clean_home, "[notify]\nenabled = false\n")
 
