@@ -202,7 +202,7 @@ def test_a_symlink_on_the_way_to_the_state_directory_is_refused_and_never_carrie
     code = run_report_command(command, clean_home, runner, probe)
 
     assert code == 3
-    assert capsys.readouterr().err.startswith(UNEXPECTED_ERROR_PREFIX[command])
+    assert capsys.readouterr().err.startswith(UNEXPECTED_ERROR_PREFIX)
     assert secret_contents(layout) == secrets_before
 
 
@@ -736,7 +736,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             name="cloudflared/tunnel",
             kind=SecretKind.TOOL_LOGIN,
             paths=(PurePosixPath(".secrets/cloudflared/{tunnel_id}.json"),),
-            read_by=("cloudflared tunnel run (von Hand; credentials-file in /etc/cloudflared/config.yml)",),
+            read_by=("cloudflared tunnel run (by hand; credentials-file in /etc/cloudflared/config.yml)",),
             recreate="`cloudflared tunnel create` (new tunnel) or copy the file from /etc/cloudflared",
             elsewhere="/etc/cloudflared (root), the copy the running tunnel reads via LoadCredential",
         ),
@@ -744,7 +744,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
             name="claude-measure-token",
             kind=SecretKind.TOKEN,
             paths=(PurePosixPath(".secrets/claude-measure-token"),),
-            read_by=("agent-runtime#115, Messläufe 0b2/0e",),
+            read_by=("agent-runtime#115, measurement runs 0b2/0e",),
             recreate="`claude setup-token` in the browser",
             purpose="The measurement runs start Claude with it under their own revocable login.",
             optional=True,
@@ -827,7 +827,7 @@ def test_an_invalid_manifest_exits_2_naming_the_file(use_manifest, clean_home: P
     code = home_secrets(clean_home, probe)
 
     assert code == 2
-    assert capsys.readouterr().err.startswith(f"home: {manifest}: ")
+    assert capsys.readouterr().err.startswith(f"error: {manifest}: ")
 
 
 ENTRY = '[[secret]]\nname = "e"\nkind = "token"\npaths = ["~/.secrets/e"]\nread_by = []\nrecreate = "r"\n'
