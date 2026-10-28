@@ -124,12 +124,12 @@ def test_the_service_toml_paths_are_the_services_mount_targets(
     """U13: the working root is a tmpfs, the token file lies in the login bind, the binary is the
     image's, and the image's default command reads the configuration bind."""
     dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
-    token_file = PurePosixPath(configuration["profiles"]["claude"]["token_file"])
+    token_file = PurePosixPath(configuration["cli"]["anthropic"]["token_file"])
 
     assert configuration["cli"]["working_root"] in tmpfs_options
     assert str(token_file.parent) in binds
     assert token_file.name == "token"
-    binary = configuration["cli"]["claude"]["binary"]
+    binary = configuration["cli"]["anthropic"]["binary"]
     assert f"--chmod=0555 /tmp/claude {binary}\n" in dockerfile
     assert 'CMD ["--config", "/etc/agent-service/service.toml"]' in dockerfile
     assert "/etc/agent-service/service.toml" in binds
@@ -142,7 +142,7 @@ def test_the_service_listens_on_every_interface_and_pins_the_cli_it_runs(configu
     pinned = re.search(r"^ARG CLAUDE_VERSION=(\S+)$", dockerfile, re.MULTILINE).group(1)
 
     assert configuration["server"] == {"host": "0.0.0.0"}
-    assert configuration["cli"]["claude"]["version"] == pinned
+    assert configuration["cli"]["anthropic"]["version"] == pinned
 
 
 def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
@@ -190,18 +190,18 @@ def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subs
     configuration,
 ):
     """Edge holds no API provider key, so there is no `[route]` and no `api_groups`."""
-    assert not {"purposes", "route"} & configuration.keys()
-    assert configuration["cli"]["claude"]["models"] == ["opus", "sonnet", "haiku"]
+    assert not {"purposes", "route", "profiles"} & configuration.keys()
+    assert configuration["cli"]["anthropic"]["models"] == ["opus", "sonnet", "haiku"]
 
 
-def test_the_one_profile_is_claude_with_its_token_file(configuration):
-    assert configuration["profiles"] == {
-        "claude": {
-            "provider": "claude",
-            "token_file": "/run/agent-service/login/claude/token",
-            "background": False,
-        }
-    }
+def test_the_login_is_the_anthropic_token_file_and_every_app_runs_the_default_opus(
+    configuration,
+):
+    anthropic = configuration["cli"]["anthropic"]
+
+    assert anthropic["token_file"] == "/run/agent-service/login/claude/token"
+    assert configuration["defaults"] == {"model": "anthropic/opus"}
+    assert configuration["defaults"]["model"].removeprefix("anthropic/") in anthropic["models"]
 
 
 def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_mcp_origin(
