@@ -510,7 +510,12 @@ come before the system step, which is the one that asks for sudo:
    It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
-   It asks once for sudo.
+   It runs as root under one `sudo` call, which asks once; Ansible asks for nothing, and `sudo -k` follows
+   the call, so `hal setup --apply` leaves no cached sudo ticket. Root executes the operator-writable
+   `~/.local/bin/ansible-playbook`, the same trust the operator's Ansible had as the producer of root's modules until the
+   agents get their own user. sudo logs its whole argv, so the play's extra vars never carry a secret. Ansible keeps its state
+   in root's `~/.ansible`, never the operator's; a sudoers that keeps `HOME` would leave a root-owned `~/.ansible`, and
+   `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup --apply` as themselves, never `sudo hal`.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
@@ -534,7 +539,7 @@ a minute, `1h02m` from an hour) and stands after the counts and before the hint;
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit ends with the wizard's own error pair; setup prints no secrets row and no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit ends with the wizard's own error pair; setup prints no secrets row and no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
@@ -626,7 +631,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
   A revert keeps the user and its home.
 - **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
-  `hal setup --apply` ask once for the sudo password. Without a terminal,
+  `hal setup --apply` ask once for the sudo password, at the system's own prompt. Without a terminal,
   the dry run says `! system  not checked  needs sudo at a terminal` and
   `--apply` ends the row `✗ system  not started` with `error: setup stopped at system · /etc unchanged`
   and `next: hal setup --apply`; neither waits for a prompt.

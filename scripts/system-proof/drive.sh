@@ -71,9 +71,9 @@ asked_once() {
     return
 }
 
-announced_before_prompt() {  # announced_before_prompt <log>: the `needs sudo` row is printed, then Ansible's password prompt
+announced_before_prompt() {  # announced_before_prompt <log>: the `needs sudo` row is printed, then the system's own password prompt
     local log=$1
-    awk '/^  › system +needs sudo/ { announced = NR } /BECOME password/ && announced { found = 1 } END { exit !found }' "$EVIDENCE/$log.log"
+    awk '/^  › system +needs sudo/ { announced = NR } /\[sudo[^]]*\] [Pp]ass/ && announced { found = 1 } END { exit !found }' "$EVIDENCE/$log.log"
     return
 }
 
@@ -288,7 +288,7 @@ cell_1() {
     at_terminal cell1 "$HOME_BIN setup --apply"
     code=$?
     verdict 1 "apply exits 0 after one prompt" '[ $code -eq 0 ] && asked_once cell1 && row_in_log cell1 system changed'
-    verdict 1 "the apply announces needs sudo once, before Ansible's password prompt" \
+    verdict 1 "the apply announces needs sudo once, before the system's password prompt" \
         '[ "$(grep -c "^  › system  *needs sudo" "$EVIDENCE/cell1.log")" -eq 1 ] && announced_before_prompt cell1'
     verdict 1 "the four files are root-owned, mode 644" '[ "$(stat -c "%U %a" "${SYSTEM_FILES[@]}" | sort -u)" = "root 644" ]'
     verdict 1 "every placeholder is filled" 'all_exist "${SYSTEM_FILES[@]}" && ! grep -lE "@[A-Z_]+@" "${SYSTEM_FILES[@]}"'
@@ -1583,11 +1583,139 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
     return
 }
 
+# The sudo cells (P1-P10): the system step is one `sudo` call under each variant of the system's sudo, the classic one
+# (suffix c) and sudo-rs (suffix r). Each cell asserts the active sudo first.
+SUDO_CLASSIC=/usr/bin/sudo.ws
+SUDO_RS=/usr/lib/cargo/bin/sudo
+
+active_sudo_is() {  # active_sudo_is <alternative>
+    [[ $(readlink -f /usr/bin/sudo) == "$(readlink -f "$1")" ]]
+    return
+}
+
+at_sudo_terminal() {  # at_sudo_terminal <log> <ticket: none|present> <hal args>: hal at a terminal, then the sudo ticket asked for in the same session
+    # `sudo -k` first makes "none" true; "present" answers `sudo -v` first, counted apart from hal's prompts. `trap : INT` catches
+    # Ctrl-C without ignoring it, so hal and sudo still get it and the shell survives to print TICKET=.
+    local log=$1 ticket=$2 arguments=$3 preauth=""
+    [[ $ticket == present ]] && preauth="sudo -v; "
+    PROOF_PREAUTH=1 at_terminal "$log" \
+        "trap : INT; sudo -k; ${preauth}echo @@HAL@@; $HOME_BIN $arguments; code=\$?; sudo -n true; echo TICKET=\$?; exit \$code"
+    return
+}
+
+hal_prompts_are() {  # hal_prompts_are <log> <count> [<count before hal>]
+    local log=$1
+    grep -qx "PROMPTS=$2" "$EVIDENCE/$log.log" && { [[ -z ${3:-} ]] || grep -qx "PREPROMPTS=$3" "$EVIDENCE/$log.log"; }
+    return
+}
+
+ticket_is_gone() {  # ticket_is_gone <log>: the line is there and sudo -n failed
+    local log=$1
+    grep -qE '^TICKET=[1-9]' "$EVIDENCE/$log.log"
+    return
+}
+
+no_become_prompt() {
+    local log=$1
+    ! grep -q 'BECOME password' "$EVIDENCE/$log.log"
+    return
+}
+
+home_is_untouched() {
+    [[ ! -e /home/tester/.ansible && -z $(find /home/tester -xdev -user root) ]]
+    return
+}
+
+cell_p_applies() {  # cell_p_applies <cell> <log> <ticket> <prompts>: a successful apply
+    local cell=$1 log=$2 ticket=$3 prompts=$4 code
+    at_sudo_terminal "$log" "$ticket" "setup --apply"
+    code=$?
+    verdict "$cell" "apply succeeds, hal asks $prompts time(s), no BECOME, the ticket is gone" \
+        "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && no_become_prompt $log && ticket_is_gone $log && row_in_log $log system '(changed|unchanged)'"
+    return
+}
+
+cell_p_fails_in_the_play() {  # cell_p_fails_in_the_play <cell> <log> <ticket> <prompts>: the play fails after the password
+    local cell=$1 log=$2 ticket=$3 prompts=$4 code
+    cp /etc/cloudflared/config.yml /proof/config.yml.saved
+    sed -i '/^tunnel:/d' /etc/cloudflared/config.yml
+    at_sudo_terminal "$log" "$ticket" "setup --apply"
+    code=$?
+    cp /proof/config.yml.saved /etc/cloudflared/config.yml
+    verdict "$cell" "the step fails after $prompts prompt(s) and the ticket is gone" \
+        "[ \$code -eq 1 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && row_in_log $log system failed && ticket_is_gone $log"
+    return
+}
+
+cell_p_interrupted() {  # cell_p_interrupted <cell> <log> <ticket>: Ctrl-C at the first task
+    local cell=$1 log=$2 ticket=$3 code
+    PROOF_INTERRUPT='TASK \[' at_sudo_terminal "$log" "$ticket" "setup --apply"
+    code=$?
+    verdict "$cell" "Ctrl-C mid-play stops the step with 130 and the ticket is gone" \
+        "[ \$code -eq 130 ] && active_sudo_is \"\$sudo_alternative\" && ticket_is_gone $log"
+    return
+}
+
+cell_p_dry_run() {  # cell_p_dry_run <cell> <log> <ticket> <prompts>
+    local cell=$1 log=$2 ticket=$3 prompts=$4 code
+    at_sudo_terminal "$log" "$ticket" setup
+    code=$?
+    verdict "$cell" "a dry run asks $prompts time(s), no BECOME, the ticket is gone" \
+        "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && no_become_prompt $log && ticket_is_gone $log"
+    return
+}
+
+cell_p_wrong_password() {  # cell_p_wrong_password <cell> <log>: sudo refuses three tries and the play never starts
+    local cell=$1 log=$2 code before
+    before=$(snapshot)
+    PROOF_PASSWORD="not-the-password" at_sudo_terminal "$log" none "setup --apply"
+    code=$?
+    verdict "$cell" "a wrong password: three prompts, hal fails, the play never started, /etc unchanged, the ticket is gone" \
+        "[ \$code -eq 1 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log 3 && row_in_log $log system failed && ! grep -q 'PLAY \[' \"\$EVIDENCE/$log.log\" && [ \"\$before\" = \"\$(snapshot)\" ] && ticket_is_gone $log"
+    return
+}
+
+cell_p_config_of_root() {  # cell_p_config_of_root <cell> <log>: root's own ansible.cfg does not override the packaged one
+    local cell=$1 log=$2 code python package ansible_playbook=/home/tester/.local/bin/ansible-playbook outside inside
+    python=$(head -n 1 "$HOME_BIN" | sed 's/^#!//')
+    package=$("$python" -c 'import home_tools, pathlib; print(pathlib.Path(home_tools.__file__).parent / "system")')
+    printf '[defaults]\nstdout_callback = json\n' >/root/.ansible.cfg
+    outside=$(sudo sh -c "cd / && $ansible_playbook --version" 2>&1)
+    inside=$(sudo sh -c "cd $package && $ansible_playbook --version" 2>&1)
+    at_sudo_terminal "$log" none "setup --apply"
+    code=$?
+    rm -f /root/.ansible.cfg
+    verdict "$cell" "the recap is read although root's cfg selects json; the control shows which cfg wins where" \
+        "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && row_in_log $log system '(changed|unchanged)' && [[ \$outside == *'config file = /root/.ansible.cfg'* && \$inside == *'config file = $package/ansible.cfg'* ]]"
+    return
+}
+
+cells_sudo() {  # cells_sudo <suffix> <alternative>: P1-P10 under one variant of sudo
+    local suffix=$1 sudo_alternative=$2
+    update-alternatives --set sudo "$sudo_alternative" >/dev/null
+    verdict "P0$suffix" "the active sudo is $sudo_alternative" 'active_sudo_is "$sudo_alternative"'
+    cell_p_applies "P1$suffix" "p1$suffix" none 1
+    verdict "P1$suffix" "the operator's home holds no .ansible and no root-owned file" 'home_is_untouched'
+    cell_p_applies "P2$suffix" "p2$suffix" present 0
+    cell_p_fails_in_the_play "P3$suffix" "p3$suffix" none 1
+    cell_p_fails_in_the_play "P4$suffix" "p4$suffix" present 0
+    cell_p_wrong_password "P5$suffix" "p5$suffix"
+    cell_p_interrupted "P6$suffix" "p6$suffix" none
+    cell_p_interrupted "P7$suffix" "p7$suffix" present
+    at_sudo_terminal "p-converge$suffix" none "setup --apply"
+    cell_p_dry_run "P8$suffix" "p8$suffix" none 1
+    cell_p_dry_run "P9$suffix" "p9$suffix" present 0
+    cell_p_config_of_root "P10$suffix" "p10$suffix"
+    return
+}
+
 case "${1:?stage}" in
     install) install_home ;;
     fresh) cell_dk1; plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_dk3_before_the_first_apply; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cells_docker; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
     after-unmarked-reboot) cell_8; cell_r5 ;;
     prepared) wait_for_engine; prepare_today; cell_2 ;;
+    sudo-classic) cells_sudo c "$SUDO_CLASSIC" ;;
+    sudo-rs) cells_sudo r "$SUDO_RS" ;;
     *) echo "unknown stage $1" >&2; exit 2 ;;
 esac
