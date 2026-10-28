@@ -21,7 +21,7 @@ from urllib.parse import parse_qs
 
 import pytest
 
-from edge import switches
+from hal.stack import switches
 
 SCRIPT = Path(__file__).resolve().parents[1] / "keycloak" / "go-live"
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")

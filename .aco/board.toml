@@ -9,5 +9,5 @@ dependency_paths = [
   "probe/keycloak/compose.probe.yaml",
   "probe/step-ca/compose.probe.yaml",
   "scripts/system-proof/Dockerfile",
-  "src/edge_backup/images/Dockerfile",
+  "src/hal/backup/images/Dockerfile",
 ]

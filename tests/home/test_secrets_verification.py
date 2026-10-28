@@ -21,8 +21,8 @@ from test_secrets_setup import (  # noqa: F401 the fixtures, requested by name
     terminal,
 )
 
-from home_tools.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
-from home_tools.secrets_view import Provider, TokenSource
+from hal.workstation.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
+from hal.workstation.secrets_view import Provider, TokenSource
 
 GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
 CLOUDFLARE = TokenSource(Provider.CLOUDFLARE, "example.invalid", ("Zone › DNS › Read",), 30)

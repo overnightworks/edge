@@ -36,7 +36,7 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import find_row, plain
 
-from edge.plan_rows import PlanEvent
+from hal.stack.plan_rows import PlanEvent
 
 RECREATE_STEP_CA = [*RECREATE_TRAEFIK[:-1], "step-ca"]
 RECREATE_KEYCLOAK_DB = [*RECREATE_TRAEFIK[:-1], "keycloak-db"]

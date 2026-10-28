@@ -24,8 +24,8 @@ from app_support import (
 )
 from git_support import head_of, plain_git
 
-from edge import apps, compose, releases, switches
-from edge.unit_plans import Fleet, Progress
+from hal.stack import apps, compose, releases, switches
+from hal.stack.unit_plans import Fleet, Progress
 
 EDGE_FLEET = Fleet({"name": "edge"}, {}, ())
 

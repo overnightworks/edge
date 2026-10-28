@@ -188,8 +188,8 @@ only Cloudflare's copy; a browser that already holds the old file keeps it.
 >
 >   A change to a declared object is made in the file, by an agent, never in the console. Deleting
 >   a group, client or role is done in the admin console, after a backup, with your yes. The realm
->   observer (`realm-observer`, `src/edge/realm/observe.py`) reads the realms before and after,
->   and `edge.realm` compares the two reads and prints one line per change with its realm.
+>   observer (`realm-observer`, `src/hal/stack/realm/observe.py`) reads the realms before and after,
+>   and `hal.stack.realm` compares the two reads and prints one line per change with its realm.
 
 ## Secrets
 
@@ -250,7 +250,7 @@ client scope, realm role, top-level flow and identity provider that the files do
 identity providers`, and one line naming the kinds it cannot read (`defaultGroups`, `workflows`
 and the like, as the realm files name them). Keycloak's
 own objects are left out: flows by their `builtIn` flag, the rest by a list pinned to Keycloak
-26.8.1 in `src/edge/realm/reconcile.py`, which the probe's proof 3a keeps true in both
+26.8.1 in `src/hal/stack/realm/reconcile.py`, which the probe's proof 3a keeps true in both
 directions: a fresh import holds nothing only in Keycloak, and holds every pinned entry. The list appears
 only when the step runs and never changes its outcome. A console change to a declared object is
 reset by the next apply that runs the step, not by every apply.

@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from edge import catalog
-from edge.catalog import Exposure
-from edge.external import host_check
-from edge.external.cloudflare_read import (
+from hal.stack import catalog
+from hal.stack.catalog import Exposure
+from hal.stack.external import host_check
+from hal.stack.external.cloudflare_read import (
     SELF_HOSTED,
     AccessGroup,
     App,
@@ -20,8 +20,8 @@ from edge.external.cloudflare_read import (
     Record,
     Snapshot,
 )
-from edge.external.host_check import Problem
-from edge.external.host_probe import Answer, FailureKind, Unreachable
+from hal.stack.external.host_check import Problem
+from hal.stack.external.host_probe import Answer, FailureKind, Unreachable
 
 ZONE = "example.test"
 TUNNEL = "t-1"

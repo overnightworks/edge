@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools.report import findings_count, markdown_table, write_state_file
+from hal.workstation.report import findings_count, markdown_table, write_state_file
 
 
 @pytest.mark.parametrize(("count", "expected"), [(0, "0 findings"), (1, "1 finding"), (2, "2 findings")])

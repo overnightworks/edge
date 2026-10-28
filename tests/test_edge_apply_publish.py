@@ -45,11 +45,11 @@ from test_edge_external import (
 )
 from test_edge_plan_rows import plain
 
-from edge import apply, compose
-from edge.external import cli as external_cli
-from edge.external import cloudflare_read, tofu
 from hal import cli
 from hal.grammar import ExitCode
+from hal.stack import apply, compose
+from hal.stack.external import cli as external_cli
+from hal.stack.external import cloudflare_read, tofu
 
 REAL_APPLY_LOCAL = apply.apply_local
 REAL_PUBLISH = external_cli.apply_command

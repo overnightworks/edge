@@ -11,11 +11,11 @@ import pytest
 from conftest import Sandbox, run_hal_setup
 
 from hal.grammar import ExitCode
-from home_tools import ports
-from home_tools.ports import edge_units_directory
-from home_tools.system_step import Applied, CheckState, StepFailed
-from home_tools.layout import Layout, run_command
-from home_tools.user_units import UserUnits
+from hal.workstation import ports
+from hal.workstation.ports import edge_units_directory
+from hal.workstation.system_step import Applied, CheckState, StepFailed
+from hal.workstation.layout import Layout, run_command
+from hal.workstation.user_units import UserUnits
 
 USER_UNITS_STEP = "User units"
 SERVICE = "backup.service"

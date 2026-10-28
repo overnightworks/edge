@@ -25,10 +25,10 @@ import pytest
 from live_stack import LIVE_STACK_PORTS
 from test_edge_host_probe import RAY, Behaviour, serving
 
-from edge import catalog, checkout
-from edge.external import apply as external_apply
-from edge.external import cli as external_cli
-from edge.external import cloudflare_read, host_probe, secrets, tofu
+from hal.stack import catalog, checkout
+from hal.stack.external import apply as external_apply
+from hal.stack.external import cli as external_cli
+from hal.stack.external import cloudflare_read, host_probe, secrets, tofu
 
 SENTINEL = "sentinel-4b1d-never-print-me"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -551,8 +551,8 @@ class Terminal:
 CHILD_PROGRAM = """
 import functools, json, socket, sys, time
 from pathlib import Path
-from edge.external import cli as external_cli
-from edge.external import host_probe, tofu
+from hal.stack.external import cli as external_cli
+from hal.stack.external import host_probe, tofu
 
 config = json.loads(Path(sys.argv.pop(1)).read_text())
 scratch = Path(config["scratch"])

@@ -33,12 +33,12 @@ from edge_backup_support import (
     removed_servers,
 )
 
-from edge_backup import cli, docker, host
-from edge_backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
-from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
-from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
-from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
 from hal import cli as hal_cli
+from hal.backup import cli, docker, host
+from hal.backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
+from hal.backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
+from hal.backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
+from hal.backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
 
 
 def test_backup_puts_dump_manifest_and_audio_into_one_snapshot(edge_backup, machine, home):

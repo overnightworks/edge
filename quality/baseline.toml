@@ -9,7 +9,7 @@
 [file_lines]
 "probe/keycloak/probe.py" = 2829
 "probe/step-ca/probe.py" = 1052
-"src/home_tools/secrets_view.py" = 841
+"src/hal/workstation/secrets_view.py" = 841
 "tests/home/test_secrets_view.py" = 1085
 "tests/test_edge_apply.py" = 4486
 "tests/test_edge_backup.py" = 1232
@@ -27,7 +27,7 @@
 "Probe.public_issuer_and_paths" = 86
 "Probe.the_realm_step" = 145
 
-[function_lines."src/edge/external/cli.py"]
+[function_lines."src/hal/stack/external/cli.py"]
 "apply_command" = 70
 
 [function_lines."tests/realm_fake.py"]

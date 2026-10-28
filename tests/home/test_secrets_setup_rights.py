@@ -1,6 +1,6 @@
 import pytest
 
-from home_tools.secrets_setup import github_rights_prose
+from hal.workstation.secrets_setup import github_rights_prose
 
 
 @pytest.mark.parametrize(

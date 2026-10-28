@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from home_tools import logs_check
-from home_tools.system_step import LOG_RETENTION_DAYS
+from hal.workstation import logs_check
+from hal.workstation.system_step import LOG_RETENTION_DAYS
 
 NOW = datetime(2026, 10, 22, 12, 0)
 

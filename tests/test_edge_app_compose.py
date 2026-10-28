@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from app_support import KEY, SENTINEL
 
-from edge import app_compose, compose
+from hal.stack import app_compose, compose
 
 DIRECTORY = Path("/home/test/srv") / KEY
 TAG = "v2026.10.22.1"

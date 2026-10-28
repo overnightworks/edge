@@ -36,7 +36,7 @@ from git_support import (
 from test_edge_core import bind, bind_core_files, sha256
 from test_edge_plan_rows import detail_lines, find_row, plain, row_at
 
-from edge import (
+from hal.stack import (
     apply,
     apps,
     barrier,
@@ -50,9 +50,9 @@ from edge import (
     switches,
     tunnel,
 )
-from edge.plan_rows import PlanEvent
-from edge.realm import reconcile
-from edge.unit_plans import ImageReference, KeptImage, plan_kept_images
+from hal.stack.plan_rows import PlanEvent
+from hal.stack.realm import reconcile
+from hal.stack.unit_plans import ImageReference, KeptImage, plan_kept_images
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F

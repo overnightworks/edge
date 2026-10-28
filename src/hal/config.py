@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from home_tools.check import CheckSettings
+from hal.workstation.check import CheckSettings
 
 CONFIG_PATH_IN_HOME = Path(".config") / "hal" / "config.toml"
 CHECK_TABLE = "check"

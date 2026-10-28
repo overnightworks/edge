@@ -1,13 +1,13 @@
 """`hal apply`, `hal stop`, `hal start`, `hal offline` and `hal online`: the stack's switches behind
-hal's door. Each calls a typed function of `edge.cli`, so the guards, the prompts, the state files
-and the lines are the stack's own; only the exit number is hal's."""
+hal's door. Each calls a typed function of `hal.stack.cli`, so the guards, the prompts, the state
+files and the lines are the stack's own; only the exit number is hal's."""
 
 import argparse
 
-from edge import apply
-from edge import cli as stack
 from hal.grammar import Asks, Command, ExitCode
-from hal_output.command import Verb
+from hal.output.command import Verb
+from hal.stack import apply
+from hal.stack import cli as stack
 
 # Every outcome of the stack means "the command could not do its job"; the finer split waits until
 # the owners classify their own outcomes. Naming every member keeps a new one from passing as 0.

@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from edge_backup.apps import PRE_APPLY_TAG, AppsError, parse_apps
+from hal.backup.apps import PRE_APPLY_TAG, AppsError, parse_apps
 
 KEYCLOAK_RECORD = """\
 compose_project = "edge"

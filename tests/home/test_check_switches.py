@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from conftest import RunnerWithCleanLogs, Sandbox, home_check, message_of
 
-from edge import switches
-from home_tools.layout import Layout
+from hal.stack import switches
+from hal.workstation.layout import Layout
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")
 

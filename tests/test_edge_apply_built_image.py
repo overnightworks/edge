@@ -22,8 +22,8 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import find_row, plain
 
-from edge import switches
-from edge.plan_rows import PlanEvent
+from hal.stack import switches
+from hal.stack.plan_rows import PlanEvent
 
 BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
 REBUILT_ID = f"sha256:{'e' * 64}"

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import appkit_step, catalog, compose, legal_pages, legal_step
+from hal.stack import appkit_step, catalog, compose, legal_pages, legal_step
 
 ROOT = Path(__file__).resolve().parents[1]
 

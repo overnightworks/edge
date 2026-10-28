@@ -20,7 +20,7 @@ requires = ["uv_build>=0.10,<0.11"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["edge", "edge_check", "edge_backup", "home_tools", "hal", "hal_output"]
+module-name = "hal"
 
 [tool.ruff]
 line-length = 100
@@ -30,7 +30,7 @@ extend-include = ["keycloak/go-live", "step-ca/init", "agent-service/setup"]
 [tool.ruff.format]
 # home's tree is imported as it is: home-tools#56 / home-tools#45 move its texts.
 # Deletion target: home-tools#45, or one mechanical reformat item, whichever lands first.
-exclude = ["src/home_tools/**", "tests/home/**"]
+exclude = ["src/hal/workstation/**", "tests/home/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -39,7 +39,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 # Same reason and deletion target as [tool.ruff.format]. E501: home's lines run to 140;
 # RUF001: the German strings carry U+203A; I001/RUF009/RUF043/RUF100: single imported lines
 # (the last three only in the tests).
-"src/home_tools/**" = ["E501", "I001", "RUF001"]
+"src/hal/workstation/**" = ["E501", "I001", "RUF001"]
 "tests/home/**" = ["E501", "I001", "RUF001", "RUF009", "RUF043", "RUF100"]
 
 [tool.coverage.run]
@@ -56,35 +56,40 @@ testpaths = ["tests"]
 addopts = ["--strict-markers"]
 pythonpath = ["src", "scripts"]
 
-# hal is the door above the tools it drives; hal_output, which prints for all of them, and
-# edge_check are the lowest shared pieces.
+# hal's door modules sit above the stack, the backup runner and the workstation tool, which
+# stand apart; the exposure check sits below the stack, and hal.output, which prints for all of
+# them, is the lowest piece. exhaustive: a new module under hal must take its place here.
+# The forbidden contract keeps the five from importing the exact module hal (a container's layers
+# name only its children); as_packages = false with the ** sources keeps hal.output importable.
 [tool.importlinter]
-root_packages = ["edge", "edge_check", "edge_backup", "home_tools", "hal", "hal_output"]
+root_packages = ["hal"]
 
 [[tool.importlinter.contracts]]
-name = "hal sits above edge, which sits above edge_check"
+name = "the door sits above stack, backup and workstation, which sit above exposure and output"
 type = "layers"
-layers = ["hal", "edge", "edge_check"]
+containers = ["hal"]
+layers = [
+    "backup_commands : check_commands : cli : config : exposure_rows : grammar : legal_commands : rename_commands : rename_rows : secrets_commands : setup_commands : stack_commands : version",
+    "stack | backup | workstation",
+    "exposure",
+    "output",
+]
+exhaustive = true
 
 [[tool.importlinter.contracts]]
-name = "edge_backup, edge_check and home_tools stand apart"
+name = "hal.backup, hal.exposure and hal.workstation stand apart"
 type = "independence"
-modules = ["edge_backup", "edge_check", "home_tools"]
+modules = ["hal.backup", "hal.exposure", "hal.workstation"]
 
 [[tool.importlinter.contracts]]
-name = "edge_backup and home_tools never reach up into edge or hal"
+name = "the five packages never import the hal root module"
 type = "forbidden"
-source_modules = ["edge_backup", "home_tools"]
-forbidden_modules = ["edge", "hal"]
-
-[[tool.importlinter.contracts]]
-name = "edge never imports the workstation tool or the backup runner"
-type = "forbidden"
-source_modules = ["edge"]
-forbidden_modules = ["home_tools", "edge_backup"]
-
-[[tool.importlinter.contracts]]
-name = "hal_output imports nothing else of this repository"
-type = "forbidden"
-source_modules = ["hal_output"]
-forbidden_modules = ["edge", "edge_check", "edge_backup", "home_tools", "hal"]
+source_modules = [
+    "hal.stack", "hal.stack.**",
+    "hal.backup", "hal.backup.**",
+    "hal.exposure", "hal.exposure.**",
+    "hal.output", "hal.output.**",
+    "hal.workstation", "hal.workstation.**",
+]
+forbidden_modules = ["hal"]
+as_packages = false

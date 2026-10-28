@@ -46,11 +46,11 @@ from test_hal_stack_commands import (
     systemd,  # noqa: F401 the fixture, used by `fakes`
 )
 
-from edge import barrier, catalog, emergency, switch_events, switches
-from edge import cli as stack
-from edge.switch_events import SwitchEvent
 from hal.grammar import ExitCode
-from hal_output import EVENT_WIDTH
+from hal.output import EVENT_WIDTH
+from hal.stack import barrier, catalog, emergency, switch_events, switches
+from hal.stack import cli as stack
+from hal.stack.switch_events import SwitchEvent
 
 # --- hal stop <unit> -------------------------------------------------------------------------
 

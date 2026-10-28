@@ -1,6 +1,6 @@
 import pytest
 
-from edge_backup.verify import Manifest, VerificationError, check_file_count, check_rows
+from hal.backup.verify import Manifest, VerificationError, check_file_count, check_rows
 
 
 @pytest.mark.parametrize(

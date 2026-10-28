@@ -1,5 +1,5 @@
 """`hal backup` and `hal restore`: the backup runner behind hal's door. The steps are the typed
-functions of `edge_backup.cli`; this module adds the grammar, the one host lock around every run,
+functions of `hal.backup.cli`; this module adds the grammar, the one host lock around every run,
 the SIGTERM that systemd stops a unit with, and the exit code."""
 
 import argparse
@@ -8,14 +8,14 @@ import signal
 from collections.abc import Callable
 from pathlib import Path
 
-from edge_backup import cli as steps
-from edge_backup import host, restic
-from edge_backup.apps import PRE_APPLY_TAG
-from edge_backup.runner import Interrupted, StepFailed
-from edge_backup.settings import Settings
+from hal.backup import cli as steps
+from hal.backup import host, restic
+from hal.backup.apps import PRE_APPLY_TAG
+from hal.backup.runner import Interrupted, StepFailed
+from hal.backup.settings import Settings
 from hal.grammar import Asks, Command, ExitCode
-from hal_output import write_error
-from hal_output.command import Verb, command
+from hal.output import write_error
+from hal.output.command import Verb, command
 
 HAL_BACKUP = command(Verb.BACKUP)
 HAL_RESTORE = command(Verb.RESTORE)

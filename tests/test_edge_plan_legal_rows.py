@@ -11,11 +11,11 @@ from test_edge_plan_rows import (
     plain,
 )
 
-from edge.appkit_step import TARGETS, AppkitPlan
-from edge.apps import AppKind
-from edge.legal_step import BlockChange, Change, LegalPlan, PageChange
-from edge.plan_rows import LegalEvent, PlanEvent, PlanGroup
-from hal_output import EVENT_WIDTH, Glyph, Row, counted, write_groups
+from hal.output import EVENT_WIDTH, Glyph, Row, counted, write_groups
+from hal.stack.appkit_step import TARGETS, AppkitPlan
+from hal.stack.apps import AppKind
+from hal.stack.legal_step import BlockChange, Change, LegalPlan, PageChange
+from hal.stack.plan_rows import LegalEvent, PlanEvent, PlanGroup
 
 
 def legal_plan(

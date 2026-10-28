@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import system_step
-from home_tools.system_step import PlaybookRun
+from hal.workstation import system_step
+from hal.workstation.system_step import PlaybookRun
 
 RECAP_LINE = "localhost                  : ok=9    changed={changed}    unreachable={unreachable}    failed={failed}    skipped=2"
 

@@ -16,9 +16,9 @@ from hal import (
     version,
 )
 from hal.grammar import Command, ExitCode
-from hal_output import write_error
-from hal_output.command import PROGRAM
-from home_tools import secrets_view
+from hal.output import write_error
+from hal.output.command import PROGRAM
+from hal.workstation import secrets_view
 
 DESCRIPTION = "hal, the daily door of the workstation."
 COMMANDS = (

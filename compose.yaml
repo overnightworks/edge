@@ -253,7 +253,7 @@ services:
       - ./keycloak:/config:ro
 
   # Reads both realms through the admin API, GET only, and prints one JSON inventory
-  # (src/edge/realm/observe.py). No depends_on: an observe never starts Keycloak. Run it as
+  # (src/hal/stack/realm/observe.py). No depends_on: an observe never starts Keycloak. Run it as
   # `compose run -T --rm --no-deps realm-observer` with the per-run digest key on stdin, or with
   # `--import-checksums` after it, which needs no key and prints config-cli's import checksums.
   realm-observer:
@@ -281,7 +281,7 @@ services:
       - source: keycloak_config_cli_secret
         target: config_cli_secret
     volumes:
-      - ./src/edge/realm/observe.py:/opt/observer/observe.py:ro
+      - ./src/hal/stack/realm/observe.py:/opt/observer/observe.py:ro
 
   step-ca:
     profiles: [step-ca]

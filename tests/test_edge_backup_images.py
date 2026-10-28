@@ -4,13 +4,13 @@ import re
 from importlib import resources
 from pathlib import Path
 
-import edge_backup
-from edge_backup.apps import PostgresMajor
-from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES, SQLITE_IMAGE
+import hal.backup
+from hal.backup.apps import PostgresMajor
+from hal.backup.settings import RESTIC_IMAGE, RESTORE_IMAGES, SQLITE_IMAGE
 
 
 def test_settings_returns_the_reference_of_each_stage_of_the_packaged_dockerfile():
-    dockerfile = resources.files("edge_backup").joinpath("images", "Dockerfile").read_text()
+    dockerfile = resources.files("hal.backup").joinpath("images", "Dockerfile").read_text()
     stages = {
         stage: image for image, stage in re.findall(r"^FROM (\S+) AS (\S+)$", dockerfile, re.M)
     }
@@ -25,7 +25,7 @@ def test_settings_returns_the_reference_of_each_stage_of_the_packaged_dockerfile
 
 def test_no_python_source_pins_an_image_digest():
     """Image pins live in compose and Dockerfiles, where Dependabot proposes their updates."""
-    source = Path(edge_backup.__file__).parents[1]
+    source = Path(hal.backup.__file__).parents[1]
 
     pinning = [path for path in source.rglob("*.py") if "@sha256:" in path.read_text()]
 

@@ -28,7 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from edge import catalog, checkout, compose
+from hal.stack import catalog, checkout, compose
 
 APPLY_SECONDS = 600
 NOT_RUNNABLE = 3  # a probe's exit when its preconditions fail, before it touches anything

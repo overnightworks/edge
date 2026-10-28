@@ -26,7 +26,7 @@ from git_support import (
 
 from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
-from hal_output.command import Verb
+from hal.output.command import Verb
 
 LOCK = SOURCE.parent / "uv.lock"
 DEADLINE_SECONDS = 30

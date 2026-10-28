@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from edge_check import host, inspection
 from hal import cli
+from hal.exposure import host, inspection
 
 ALLOW_AVAHI = """
 [[allow]]

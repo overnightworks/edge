@@ -213,7 +213,7 @@ hal secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
 ```
 
 `hal secrets` zeigt jedes Geheimnis, das das Manifest
-`src/home_tools/secrets_manifest.toml` nennt, und ändert nichts außer seinem
+`src/hal/workstation/secrets_manifest.toml` nennt, und ändert nichts außer seinem
 Bericht `~/.local/state/home/secrets-report.md`. Es braucht kein Terminal;
 Agenten dürfen es fahren. Einrichten geht nur mit `hal setup` (unten);
 eine Option dafür hat `hal secrets` nicht, ein unbekanntes Argument endet mit Exit 2. Exit-Code: `0` sauber, `1` Funde, `2` das Manifest ist ungültig
@@ -415,7 +415,7 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links the checkout's user units and runs the system step.
-`hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal_output.confirmed`: nur genau `yes`,
+`hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal.output.confirmed`: nur genau `yes`,
 Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
 `hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
 als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print four rows (below) and a verdict.
@@ -427,7 +427,7 @@ sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
 
 1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
-   `src/home_tools/setup.py`, einem Commit-SHA von overnightworks/quality (ein
+   `src/hal/workstation/setup.py`, einem Commit-SHA von overnightworks/quality (ein
    Tag gibt es noch nicht; eine neue Version ist eine Zeile). Der Schritt
    läuft auch, wenn `~/.local/bin/quality` fehlt oder nicht ausführbar ist.
 2. **Engines.** `quality engines install` nach
@@ -457,10 +457,10 @@ come before the system step, which is the one that asks for sudo:
    verified when every unit is linked, nothing needs a reload, every timer is
    enabled and active, and no link dangles.
 6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
-   `src/home_tools/setup.py`, a pinned `ansible-core`; like quality, it runs
+   `src/hal/workstation/setup.py`, a pinned `ansible-core`; like quality, it runs
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
-7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
+7. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
@@ -473,7 +473,7 @@ come before the system step, which is the one that asks for sudo:
    `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup` as themselves, never `sudo hal`.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
-(`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
+(`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
 Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 3.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 3 with a line saying so.
@@ -494,7 +494,7 @@ sentence, every later row as `not run`, and then `error: setup stopped at <row>`
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
 system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
 `--dry-run` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
-labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
+labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/hal/workstation/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
 `.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
@@ -530,7 +530,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   and starts the timer, and reloads systemd on every run, so an interrupted run
   converges on the next. The timer is `OnCalendar=daily` with `Persistent=true`;
   the service runs `journalctl --rotate --vacuum-time=28d`. Nothing restarts
-  journald. `LOG_RETENTION_DAYS` (30) in `src/home_tools/system_step.py` is the
+  journald. `LOG_RETENTION_DAYS` (30) in `src/hal/workstation/system_step.py` is the
   one owner of the value; 28 is two days less, one for the span of a journal
   file and one of slack.
   - **The bound.** While the PC runs, no journal line is older than 29 days,
@@ -551,7 +551,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 - **rsyslog is removed.** After the refusals below pass, the play purges the package `rsyslog` (apt, no autoremove) and then
   deletes `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err` and `ufw.log` with every rotation (`name` and `name.*`
   directly under `/var/log`, files only) **without a copy**, not even to `/var/backups/home-setup`: a copy would outlive the
-  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `hal check` reads the
+  30 days. `RSYSLOG_FILE_NAMES` in `src/hal/workstation/system_step.py` is the one owner of the six names; `hal check` reads the
   same list. The purge comes first, so a running rsyslog cannot recreate a deleted file. Both tasks work by state, so a run
   interrupted between them is finished by the next `hal setup`, and a second one reports `changed=0`. The dry run lists the
   purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
@@ -606,7 +606,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 
   Or roll back as described.
 - **Docker's log default.** The same run merges `"log-driver": "journald"` into `/etc/docker/daemon.json` (`DOCKER_LOG_DRIVER`
-  in `src/home_tools/system_step.py`, which `hal check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
+  in `src/hal/workstation/system_step.py`, which `hal check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
   written root-owned, mode 644, with sorted keys, so the diff of a file that only holds the runtime is one new line, and it is
   checked with `dockerd --validate` before it replaces the old one. A file that does not parse, one that is not an object, a
   `log-opts` key, another `log-driver`, and a Docker that does not answer `docker info` are refused before anything is
@@ -731,7 +731,7 @@ uv run pytest --cov    # zusätzlich die 100-%-Grenze aus pyproject.toml
 uv run ruff check .
 ```
 
-`src/home_tools/` hält 100 %
+`src/hal/workstation/` hält 100 %
 Zeilen- und Branch-Abdeckung; `fail_under = 100` in `pyproject.toml` lässt
 jeden Coverage-Lauf rot werden, der darunter bleibt. Die Layout-Prüfung des
 Wurzelverzeichnisses gehört der Qualitätsschranke (`quality / verdict`); was dort liegt und nicht auf

@@ -3,7 +3,7 @@ Docker that holds the containers of its compose project (#255).
 
 `Origin` is real git under `tmp_path`, reached through `url.<bare>.insteadOf` in the test's own
 global git config, as the probe reaches it. `ScriptedDocker` answers the calls of
-`edge.app_compose` and fails the test that makes one the contract forbids (a `down`, a `-v`, a
+`hal.stack.app_compose` and fails the test that makes one the contract forbids (a `down`, a `-v`, a
 file-bound `ps`)."""
 
 import fcntl
@@ -18,7 +18,7 @@ from pathlib import Path
 import yaml
 from git_support import plain_git
 
-from edge import apps, compose, switches
+from hal.stack import apps, compose, switches
 
 KEY = "hopin"
 ORGANISATION = "overnightworks"

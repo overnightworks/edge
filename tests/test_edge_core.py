@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from edge import compose, core
+from hal.stack import compose, core
 
 TRAEFIK_FILE = "traefik.yml"
 CORE = ("socket-proxy", "traefik")

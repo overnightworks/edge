@@ -26,9 +26,9 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import detail_lines, find_row, plain
 
-from edge import checkout
-from edge.apply import ApplyExit
-from edge.plan_rows import CHECKOUT, CheckoutEvent, PlanEvent
+from hal.stack import checkout
+from hal.stack.apply import ApplyExit
+from hal.stack.plan_rows import CHECKOUT, CheckoutEvent, PlanEvent
 
 OLD_TEXT = (
     "fetched main from",

@@ -53,17 +53,17 @@ from urllib.request import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
-# The probe runs from a bare checkout with the system python; edge.realm is standard library only.
+# The probe runs from a bare checkout with system python; hal.stack.realm is standard library only.
 sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
 import device_grant_cell  # noqa: E402
 import logout_actions_cell  # noqa: E402
 from admin import AdminToken  # noqa: E402
 
-from edge import compose as edge_compose  # noqa: E402
-from edge import core, switches  # noqa: E402
-from edge.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
-from edge.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
+from hal.stack import compose as edge_compose  # noqa: E402
+from hal.stack import core, switches  # noqa: E402
+from hal.stack.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
+from hal.stack.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
 
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
@@ -427,7 +427,7 @@ def write_appkit_files() -> None:
     """The themes bind appkit's files from this checkout, where no apply runs. The repository's own
     `uv run` writes them, because the interpreter this probe runs under may lack appkit."""
     result = subprocess.run(
-        ["uv", "run", "--project", str(REPO), "python", "-m", "edge.appkit_step", str(REPO)],
+        ["uv", "run", "--project", str(REPO), "python", "-m", "hal.stack.appkit_step", str(REPO)],
         capture_output=True,
         text=True,
         check=False,
@@ -956,7 +956,7 @@ def within_keycloak(
 
 @dataclass
 class RealmStepStand:
-    """What proof 12 drives `edge.realm.reconcile` with: this stack's Compose (its project and
+    """What proof 12 drives `hal.stack.realm.reconcile` with: this stack's Compose (its project and
     overlays), a repository of the realm files the stack's config-cli mounts, and hal
     under a scratch HOME that backs up this stack's Keycloak database and no other."""
 

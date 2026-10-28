@@ -7,7 +7,7 @@ import stat
 import threading
 from pathlib import Path
 
-from edge import setup
+from hal.stack import setup
 
 SETUP_SCRIPT = """#!/bin/sh
 trap 'sleep 0.3; echo cleaned > cleaned; exit 130' INT

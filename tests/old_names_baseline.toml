@@ -1,8 +1,8 @@
 [edge-verb]
 "docs/architecture.md" = 9
 "docs/design/hal-output.html" = 18
-"src/edge/barrier.py" = 2
-"src/edge/environment.py" = 1
+"src/hal/stack/barrier.py" = 2
+"src/hal/stack/environment.py" = 1
 "tests/test_edge_barrier.py" = 2
 "tunnel/cloudflared.service.d/30-edge-global-stop.conf" = 1
 
@@ -10,8 +10,8 @@
 "docs/architecture.md" = 1
 "docs/backup.md" = 5
 "docs/naming.md" = 2
-"src/edge_backup/runner.py" = 1
-"src/edge_backup/settings.py" = 1
+"src/hal/backup/runner.py" = 1
+"src/hal/backup/settings.py" = 1
 "tests/edge_backup_support.py" = 3
 "tests/home/test_user_units.py" = 3
 "tests/test_edge_backup.py" = 11
@@ -30,7 +30,7 @@
 "docs/naming.md" = 1
 "pyproject.toml" = 3
 "scripts/system-proof/run.sh" = 2
-"src/home_tools/secrets_manifest.toml" = 1
+"src/hal/workstation/secrets_manifest.toml" = 1
 "tests/home/test_commit_hook.py" = 1
 "tests/test_edge_global_stop.py" = 1
 "tests/test_edge_tunnel_files.py" = 3
@@ -39,4 +39,4 @@
 
 [state-directory]
 "docs/home.md" = 1
-"src/home_tools/secrets_view.py" = 1
+"src/hal/workstation/secrets_view.py" = 1

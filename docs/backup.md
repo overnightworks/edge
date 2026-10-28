@@ -1,7 +1,7 @@
 # hal check, hal backup and hal restore
 
 Reference for the operator. It says what the commands guarantee and what they do not; `hal check
---help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/edge_check/`, `src/edge_backup/` and `systemd/`
+--help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/hal/exposure/`, `src/hal/backup/` and `systemd/`
 hold the mechanics. The data layer and the re-setup path they serve: [architecture.md](architecture.md)
 (L5, section 6).
 
@@ -41,7 +41,7 @@ listed is unreadable too).
 
 ### The allow-list
 
-`src/edge_check/allow-list.toml` (or `hal check exposure --allow-list PATH`; a bare `hal check
+`src/hal/exposure/allow-list.toml` (or `hal check exposure --allow-list PATH`; a bare `hal check
 --allow-list` is a usage error, since only `exposure` takes it) names the known listeners beyond loopback. The default ships in the
 package, so it is found whatever the current directory. Docker publications are never
 allow-listed. Each `[[allow]]` entry needs a `reason` and a `port`, an `owner` (process name, or the
@@ -80,7 +80,7 @@ A SQLite record may also declare one `files_volume` (a plain compose volume name
 `database_volume`) that is backed up beside the copy, and a `files_skip` (only with it): one name glob,
 a plain prefix and exactly one trailing `*` (`staged-*`).
 
-restic runs from the official image, pinned by version and digest (stages of `src/edge_backup/images/Dockerfile`, which Dependabot keeps current), with no
+restic runs from the official image, pinned by version and digest (stages of `src/hal/backup/images/Dockerfile`, which Dependabot keeps current), with no
 network, no capabilities and a read-only root, as your own user. Backup and restore test first check that
 the pinned restic image, each Postgres app's restore image and, for a SQLite app, the pinned `sqlite`
 stage (the python pin of `compose.yaml`) are present; `docker image prune -a`
@@ -157,7 +157,7 @@ exactly that, so such a backup never counts as good.
 A SQLite app's snapshot holds `db/db.sqlite3` instead of the dump, and `db/manifest.json` also names the
 `rows` of the restore test's table in that copy. The copy is a consistent online copy, not a
 crash-consistent one: a container of the pinned `sqlite` stage (no network, a read-only root, no
-capabilities, the script `src/edge_backup/sqlite_copy.py` mounted read-only) runs as the database file's
+capabilities, the script `src/hal/backup/sqlite_copy.py` mounted read-only) runs as the database file's
 owner with the volume mounted writable, because a WAL reader keeps its read lock in the `-shm` file. Its
 connection is read-only, so it never writes or checkpoints the database file. It takes one read snapshot
 with SQLite's backup API into memory and writes it to stdout, which becomes the staged file. It may create
@@ -196,7 +196,7 @@ and checks:
 - `pg_restore --list` reads the dump;
 - the dump loads with `pg_restore --exit-on-error --single-transaction` into a throwaway PostgreSQL
   container without network, of the major the app's database runs (16 for Songmaker, 17 for Keycloak),
-  each image a stage of `src/edge_backup/images/Dockerfile`; the pin of major 17 equals `keycloak-db` in
+  each image a stage of `src/hal/backup/images/Dockerfile`; the pin of major 17 equals `keycloak-db` in
   `compose.yaml` and a test fails when they differ. The server's diagnostics are discarded because
   PostgreSQL quotes row values in them: a failure shows the step and the exit code only;
 - the row count of the app's table (`songs`, Keycloak's `realm`) answers; for Keycloak
@@ -219,7 +219,7 @@ marked as its own.
 ### Status
 
 `~/.local/state/edge/backup-status.json` is written atomically at every phase (schema 2; the shape is in
-`src/edge_backup/`). The run's verdict stands at the top (`state`: `running`, `ok` or `failed`, with
+`src/hal/backup/`). The run's verdict stands at the top (`state`: `running`, `ok` or `failed`, with
 `phase`, `failing_phase`, `failing_app`, `exit_category`, `last_attempt`); each app (its name, which is
 also its restic tag) has its own last good snapshot and times. The file holds no output, command line,
 path or file name.
@@ -305,7 +305,7 @@ restored=~/restore-songmaker
 # The copy runs in the backup runner's own restic image, pinned by version and digest: no
 # unpinned image ever gets write access to the live audio volume.
 image=$(cd ~/git/edge && .venv/bin/python -c \
-  'from edge_backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
+  'from hal.backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
 pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
   --filter label=com.docker.compose.service=postgres \
   --filter label=com.docker.compose.oneoff=False)

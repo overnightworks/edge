@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from edge import appkit_step, catalog, compose, unit_plans
+from hal.stack import appkit_step, catalog, compose, unit_plans
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 KEYCLOAK_SERVICES = ("keycloak-db", "keycloak")

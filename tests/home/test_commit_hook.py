@@ -13,7 +13,7 @@ import pytest
 from conftest import FAKE_KEY, Sandbox, run_hal_setup
 
 from hal.grammar import ExitCode
-from home_tools.setup import HOOK_NAMES
+from hal.workstation.setup import HOOK_NAMES
 
 REFUSAL_LINE = "quality: secret.txt fake-key sha256=0000"
 GIT_TIMEOUT_SECONDS = 30

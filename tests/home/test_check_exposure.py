@@ -16,7 +16,7 @@ from conftest import (
     write_hal_config,
 )
 
-from home_tools.layout import Layout
+from hal.workstation.layout import Layout
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")
 

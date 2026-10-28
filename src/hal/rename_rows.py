@@ -10,7 +10,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from hal_output import (
+from hal.output import (
     Glyph,
     Noun,
     Row,
@@ -22,7 +22,7 @@ from hal_output import (
     write_row,
     write_verdict,
 )
-from hal_output.command import Verb, command
+from hal.output.command import Verb, command
 
 
 class Event(StrEnum):

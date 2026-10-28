@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools.check import WAIT_FOR_CLICK_SCRIPT
+from hal.workstation.check import WAIT_FOR_CLICK_SCRIPT
 
 READY_DEADLINE_SECONDS = 30  # a pass returns at once; the deadline only bounds a hang under load
 

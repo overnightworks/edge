@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from conftest import FakeClock, Sandbox, run_captured_hal_setup, run_hal_setup
 
-import home_tools
+import hal.workstation
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
-from home_tools import system_step
-from home_tools.secrets_setup import Boundaries, Terminal
-from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
-from home_tools.system_step import AGENT_USER, CheckState, SystemStep
+from hal.workstation import system_step
+from hal.workstation.secrets_setup import Boundaries, Terminal
+from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
+from hal.workstation.system_step import AGENT_USER, CheckState, SystemStep
 
 COMMIT_HOOK, TIMERS, SYSTEM, SECRETS = "commit hook", "timers", "system", "secrets"
 ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
@@ -520,7 +520,7 @@ def test_the_playbook_is_given_the_journal_as_docker_log_driver(sandbox: Sandbox
 def test_the_playbook_ships_inside_the_package() -> None:
     """Rule 3: the playbook is read from beside the module, so a non-editable install carries it."""
     assert system_step.PLAYBOOK.is_file()
-    assert system_step.PLAYBOOK.is_relative_to(Path(home_tools.__file__).parent)
+    assert system_step.PLAYBOOK.is_relative_to(Path(hal.workstation.__file__).parent)
 
 
 @pytest.mark.parametrize(

@@ -16,11 +16,11 @@ from test_secrets_view import findings_of
 
 from terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
-from home_tools import ports as home_ports
-from home_tools import secrets_view
-from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
-from home_tools.setup import RERUN
-from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
+from hal.workstation import ports as home_ports
+from hal.workstation import secrets_view
+from hal.workstation.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
+from hal.workstation.setup import RERUN
+from hal.workstation.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
 
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
 HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"

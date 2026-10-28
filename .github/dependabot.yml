@@ -31,7 +31,7 @@ updates:
     directories:
       - /agent-service/image
       - /scripts/system-proof
-      - /src/edge_backup/images
+      - /src/hal/backup/images
     multi-ecosystem-group: images
     patterns: ["*"]
     ignore:

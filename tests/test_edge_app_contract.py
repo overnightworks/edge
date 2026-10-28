@@ -3,7 +3,7 @@ of the file alone."""
 
 import pytest
 
-from edge import app_contract
+from hal.stack import app_contract
 
 KEY, TAG = "hopin", "v2026.10.22.1"
 SERVICE = "restart: unless-stopped"

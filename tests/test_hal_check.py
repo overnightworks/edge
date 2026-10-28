@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 from git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
 
-from edge.external import cloudflare_read, host_probe, tofu
-from edge_check import inspection
-from edge_check.exposure import Finding, Problem, Protocol
 from hal import check_commands, cli, exposure_rows
-from home_tools import check
-from home_tools.exposure_check import ExposureRule
-from home_tools.layout import Layout
+from hal.exposure import inspection
+from hal.exposure.exposure import Finding, Problem, Protocol
+from hal.stack.external import cloudflare_read, host_probe, tofu
+from hal.workstation import check
+from hal.workstation.exposure_check import ExposureRule
+from hal.workstation.layout import Layout
 
 CLEAN_LINE = "✓ nothing reaches beyond loopback\n"
 SSHD_LISTENS_ON_ALL = 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->\n'

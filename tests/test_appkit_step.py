@@ -29,8 +29,8 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import find_row
 
-from edge import appkit_step
-from edge.plan_rows import PlanEvent
+from hal.stack import appkit_step
+from hal.stack.plan_rows import PlanEvent
 
 VERSION = metadata.version("overnightworks-appkit")
 
@@ -318,7 +318,7 @@ def test_the_module_writes_every_target_without_the_question(world):
             str(Path(__file__).parents[1]),
             "python",
             "-m",
-            "edge.appkit_step",
+            "hal.stack.appkit_step",
             str(world.repository),
         ],
         capture_output=True,

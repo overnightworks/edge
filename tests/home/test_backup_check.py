@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from home_tools import backup_check
+from hal.workstation import backup_check
 
 NOW = datetime(2026, 10, 23, 12, 0).astimezone()
 

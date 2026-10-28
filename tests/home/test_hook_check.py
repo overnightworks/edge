@@ -14,10 +14,10 @@ import pytest
 from conftest import Sandbox, home_check, run_hal_setup
 
 from hal.grammar import ExitCode
-from home_tools import hook_check
-from home_tools.hook_check import HookCheckUnavailable
-from home_tools.setup import HOOK_NAMES
-from home_tools.layout import Layout, run_command
+from hal.workstation import hook_check
+from hal.workstation.hook_check import HookCheckUnavailable
+from hal.workstation.setup import HOOK_NAMES
+from hal.workstation.layout import Layout, run_command
 
 NOW = datetime(2026, 10, 16, 12, 0)
 

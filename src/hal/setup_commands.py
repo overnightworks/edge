@@ -1,13 +1,14 @@
-"""`hal setup`: the typed function of `home_tools.setup`, with the layout and boundaries
-`home_tools.ports` builds, so the steps, the prompts and the lines are `home_tools`' own."""
+"""`hal setup`: the typed function of `hal.workstation.setup`, with the layout and boundaries
+`hal.workstation.ports` builds, so the steps, the prompts and the lines are
+`hal.workstation`' own."""
 
 import argparse
 
 from hal.grammar import Asks, Command, ExitCode, add_dry_run
-from hal_output.command import Verb
-from home_tools import setup
-from home_tools.ports import build_layout_and_ports
-from home_tools.setup import SetupEnd
+from hal.output.command import Verb
+from hal.workstation import setup
+from hal.workstation.ports import build_layout_and_ports
+from hal.workstation.setup import SetupEnd
 
 EXIT_OF_SETUP: dict[SetupEnd, ExitCode] = {
     SetupEnd.DONE: ExitCode.OK,

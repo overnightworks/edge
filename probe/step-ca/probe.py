@@ -72,7 +72,7 @@ from step_ca_names import (  # noqa: E402
     ROOT_IN_CLIENT,
 )
 
-from edge import core  # noqa: E402
+from hal.stack import core  # noqa: E402
 
 NETWORK = f"{PROJECT}_mcp-ca"
 PROVISIONER = "acme"

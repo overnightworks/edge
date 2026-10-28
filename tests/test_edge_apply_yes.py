@@ -45,11 +45,11 @@ from test_edge_plan_rows import (
     unit_plan,
 )
 
-from edge.external import cli as external_cli
-from edge.legal_step import PageChange
-from edge.plan_rows import changes_in
-from edge.realm.reconcile import RealmAction, RealmPlan
-from edge.unit_plans import Action, ImageReference
+from hal.stack.external import cli as external_cli
+from hal.stack.legal_step import PageChange
+from hal.stack.plan_rows import changes_in
+from hal.stack.realm.reconcile import RealmAction, RealmPlan
+from hal.stack.unit_plans import Action, ImageReference
 
 
 @dataclass

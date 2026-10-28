@@ -17,9 +17,9 @@ from edge_backup_support import (
 )
 from live_stack import LIVE_STACK_PORTS
 
-from edge import appkit_step
-from edge_backup import host
 from hal import cli
+from hal.backup import host
+from hal.stack import appkit_step
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 

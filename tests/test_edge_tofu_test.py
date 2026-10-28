@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from edge.external import tofu, tofu_test
+from hal.stack.external import tofu, tofu_test
 
 MOCKS = 'mock_provider "cloudflare" {}\n'
 INHERITED_FROM_THE_CALLER = {

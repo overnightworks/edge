@@ -10,8 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from edge.external import host_probe
-from edge.external.host_probe import Answer, FailureKind, HttpProber, Unreachable
+from hal.stack.external import host_probe
+from hal.stack.external.host_probe import Answer, FailureKind, HttpProber, Unreachable
 
 pytestmark = pytest.mark.usefixtures("loopback_only")
 
