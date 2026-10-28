@@ -11,7 +11,7 @@ from edge import apply, emergency, switches, tunnel
 from edge.external import cli as external_cli
 from hal_output.command import Verb, command
 
-COMMAND = "edge apply"
+COMMAND = command(Verb.APPLY)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -742,7 +742,7 @@ def with_a_stray_tfvars(live_checkout, _tmp_path) -> Path:
     return live_checkout
 
 
-REFUSAL = "edge external apply: "
+REFUSAL = "cloudflare: "
 LIVE_ONLY = f"{REFUSAL}runs only from the live checkout ~/git/edge ("
 MAIN_ONLY = f"{REFUSAL}runs only on main ("
 
@@ -793,7 +793,7 @@ def test_apply_with_a_failing_git_exits_2_saying_it_cannot_read_the_checkout(
     broken_git.chmod(0o755)
     apply = terminal()
     assert apply.finish() == 2
-    assert "edge external apply: cannot read the live checkout, " in apply.output
+    assert "cloudflare: cannot read the live checkout, " in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -877,7 +877,7 @@ def test_apply_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
     without_tokens(home)
     apply = terminal()
     assert apply.finish() == 2
-    assert f"edge external apply: {CATALOG_LINE}" in apply.output
+    assert f"cloudflare: {CATALOG_LINE}" in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -1667,7 +1667,7 @@ def said(output: str) -> str:
 
 
 def apply_line(text: str) -> str:
-    return f"edge external apply: {text}"
+    return f"cloudflare: {text}"
 
 
 @pytest.mark.parametrize(
@@ -1730,7 +1730,7 @@ def test_apply_ends_on_the_host_check_and_maps_its_verdict_to_the_exit(
     assert ("apply" in commands) is (configuration is not EMPTY_PLAN)
     printed = said(apply.output)
     if line is None:
-        assert "edge external apply:" not in printed
+        assert f"{external_apply.SENDER}:" not in printed
     else:
         assert apply_line(line) in printed
     if configuration is EMPTY_PLAN:

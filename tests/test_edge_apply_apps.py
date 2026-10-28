@@ -392,7 +392,7 @@ def test_hal_start_starts_the_stopped_containers_ends_the_switch_and_says_so(app
     exit_code, out, _ = hal.start()
 
     assert exit_code == 0
-    assert "edge start: hopin is on" in out
+    assert "hal start: hopin is on" in out
     assert switches.Switches(app_world.state).mark(KEY) is None
     assert {row["Health"] for row in app_world.docker.rows} == {"healthy"}
 
@@ -407,7 +407,7 @@ def test_hal_start_waits_for_health_only_where_a_container_has_a_healthcheck(app
     exit_code, out, _ = hal.start()
 
     assert exit_code == 0
-    assert "edge start: hopin is on" in out
+    assert "hal start: hopin is on" in out
     assert {row["Service"]: row["Health"] for row in app_world.docker.rows} == {
         "web": "healthy",
         "worker": "",

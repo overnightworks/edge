@@ -96,11 +96,9 @@ not "applied or nothing to do". They deviate in exactly three ways:
   reports the tunnel as observed: 3 with its `partial …` line while the tunnel still runs, 0 when it did
   stop, the marker is recorded and the boot drop-in is present. A Ctrl-C the stack does not catch ends
   with 130.
-- **E3:** the stack's lines keep their form `edge <verb>: …`, not `error:`/`next:`, and name `edge`
-  commands until H5e renames them; a number in such a line is edge's, not hal's process exit. Type
-  `hal stop <unit or app>` / `hal start <unit or app>` for `edge stop|start <unit or app>`, `hal offline` for
-  `edge stop --all`, `hal online` for `edge start --all`, `hal apply [--closed]` for
-  `edge apply [--closed]`, and `hal check hosts` for the host check.
+- **E3:** the stack's lines keep the form `<label>: …`, not `error:`/`next:`, until the output rows
+  replace them: `hal apply: …`, `hal start: …`, `hal offline: …` and, for the publish, `cloudflare: …`; a
+  number in such a line is the stack's own, not hal's process exit.
 
 `hal setup` deviates in one way:
 

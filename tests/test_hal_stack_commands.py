@@ -307,7 +307,7 @@ def test_apply_at_a_terminal_applies_the_local_part_then_publishes(hal, applying
     result = hal("apply", answers=("yes", "yes"))
 
     assert result.exit_code == ExitCode.OK
-    assert "edge apply: done" in result.err
+    assert "hal apply: done" in result.err
     assert applying.fake_tofu.call("apply")
 
 
@@ -329,7 +329,7 @@ def test_apply_while_another_apply_runs_changes_nothing(hal, applying):
 
     assert result.exit_code == ExitCode.FAILURE
     assert "another `hal apply` is running; nothing changed" in result.err
-    assert "edge apply: nothing published" in result.err
+    assert "hal apply: nothing published" in result.err
     assert applying.scripted.changing_verbs() == []
 
 
@@ -338,7 +338,7 @@ def test_apply_interrupted_at_the_plan_publishes_nothing_and_ends_with_3(hal, ap
     result = hal("apply", answers=("yes",), while_prompt_waits=ctrl_c)
 
     assert result.exit_code == ExitCode.FAILURE
-    assert "edge apply: interrupted, nothing published" in result.err
+    assert "hal apply: interrupted, nothing published" in result.err
     assert "Traceback" not in result.err
     assert applying.publish_never_began()
 
@@ -456,7 +456,7 @@ def test_start_without_a_terminal_is_refused_with_3_and_touches_nothing(
     result = run_door(tmp_path, system_commands, "start", UNIT)
 
     assert result.returncode == ExitCode.FAILURE
-    assert "edge start: refused, stdin and stdout must be a terminal" in result.stderr
+    assert "hal start: refused, stdin and stdout must be a terminal" in result.stderr
 
 
 # --- hal offline -----------------------------------------------------------------------------
@@ -482,7 +482,7 @@ def test_offline_with_an_invalid_tunnel_manager_cannot_plan(
     result = hal("offline")
 
     assert result.exit_code == ExitCode.FAILURE
-    assert "edge stop --all: cannot plan, " in result.err
+    assert "hal offline: cannot plan, " in result.err
     assert systemd.calls == []
     assert marks.global_mark() is None
 
@@ -652,7 +652,7 @@ def test_online_without_a_terminal_is_refused_with_3_and_touches_nothing(
     result = run_door(tmp_path, system_commands, "online")
 
     assert result.returncode == ExitCode.FAILURE
-    assert "edge start --all: refused, stdin and stdout must be a terminal" in result.stderr
+    assert "hal online: refused, stdin and stdout must be a terminal" in result.stderr
 
 
 def test_online_with_yes_declined_keeps_the_global_switch(

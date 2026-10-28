@@ -1,4 +1,4 @@
-"""`edge stop <unit>` and `edge start <unit>`: the emergency switch of one unit; with `--all`, of
+"""`hal stop <unit>` and `hal start <unit>`: the emergency switch of one unit; with `--all`, of
 the tunnel (`stop_all`, `start_all`).
 
 Stop records the switch, then stops the unit's services; it needs no terminal, so an agent may
@@ -37,8 +37,8 @@ from edge.switch_events import BarrierPart, CannotPlan, Closing, Interruption, S
 from hal_output import confirmed
 from hal_output.command import Verb, command
 
-STOP = "edge stop"
-START = "edge start"
+STOP = command(Verb.STOP)
+START = command(Verb.START)
 ABORTED_UNCHANGED = "aborted, nothing changed"
 
 
@@ -538,8 +538,8 @@ def _open(
     return ApplyExit.APPLIED_OR_NOTHING
 
 
-STOP_ALL = f"{STOP} --all"
-START_ALL = f"{START} --all"
+STOP_ALL = command(Verb.OFFLINE)
+START_ALL = command(Verb.ONLINE)
 
 
 def _record_global(

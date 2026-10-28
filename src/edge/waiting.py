@@ -1,4 +1,4 @@
-"""origin's `main` fetched and pinned for `edge apply`, and the refusals when the live checkout
+"""origin's `main` fetched and pinned for `hal apply`, and the refusals when the live checkout
 cannot go on from it (#98)."""
 
 from collections.abc import Callable
@@ -12,7 +12,8 @@ def fetched(git: checkout.Git, say: Callable[[str], None]) -> checkout.Origin | 
     try:
         origin = checkout.fetch_origin(git)
     except checkout.GitError as error:
-        say(f"cannot fetch {checkout.MAIN} from origin, {error}; nothing changed")
+        reason = str(error).removesuffix(".")
+        say(f"cannot fetch {checkout.MAIN} from origin, {reason}; nothing changed")
         return None
     if origin.standing in (checkout.Standing.AHEAD, checkout.Standing.DIVERGED):
         stands = (

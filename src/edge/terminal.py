@@ -1,4 +1,4 @@
-"""The operator guard shared by `edge external apply` and `edge apply --closed`.
+"""The operator guard shared by the publish and `hal apply`.
 
 It stops accidental and non-interactive runs; it does not identify the operator (D14).
 """

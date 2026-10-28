@@ -63,7 +63,7 @@ services:
 """
 SETUP_QUESTION = "Type yes to run `step-ca/init` now"
 PLAN_QUESTION = "Type yes to apply "
-NOTHING_PUBLISHED = "edge apply: nothing published"
+NOTHING_PUBLISHED = "hal apply: nothing published"
 INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `hal check hosts`"
 
 
@@ -383,7 +383,7 @@ def test_a_publish_that_does_not_end_clean_is_exit_1(world, arrange):
     result = world.run(*answers)
 
     assert result.exit_code == 1
-    assert "edge apply: the publish did not end clean (exit 1)" in result.err
+    assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
 def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
@@ -394,7 +394,7 @@ def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
 
     assert result.exit_code == 1
     assert "tofu plan failed (exit 1)" in result.err
-    assert "edge apply: the publish did not end clean (exit 1)" in result.err
+    assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
 def test_a_missing_write_token_after_the_local_part_is_exit_1_naming_the_file(world, home):  # noqa: F811
@@ -418,7 +418,7 @@ def test_ctrl_c_in_the_local_part_publishes_nothing_and_shows_no_traceback(world
     result = world.run(while_prompt_waits=ctrl_c)
 
     assert result.exit_code == 1
-    assert "edge apply: interrupted, nothing published" in result.err
+    assert "hal apply: interrupted, nothing published" in result.err
     assert "Traceback" not in result.err
     assert world.publish_never_began()
 
@@ -456,7 +456,7 @@ def test_ctrl_c_in_the_gap_after_the_local_part_publishes_nothing(world, monkeyp
     result = world.run("yes")
 
     assert result.exit_code == 1
-    assert "edge apply: interrupted, nothing published" in result.err
+    assert "hal apply: interrupted, nothing published" in result.err
     assert "step-ca is on" in result.out
     assert world.publish_never_began()
 
@@ -485,8 +485,11 @@ def test_ctrl_c_with_the_publish_started_names_the_check_to_run(world, monkeypat
 class InterruptedOnSummary(io.StringIO):
     """A stderr that takes a Ctrl-C when the composer writes its own line."""
 
+    fired = False
+
     def write(self, text: str) -> int:
-        if text.startswith("edge apply:"):
+        if text.startswith("hal apply:"):
+            self.fired = True
             raise KeyboardInterrupt
         return super().write(text)
 
@@ -498,9 +501,11 @@ def test_ctrl_c_after_the_publish_exit_is_recorded_leaves_that_exit(
     """C19: from the store on, the exit is binding."""
     local_part_returns(monkeypatch, 0)
     publish_returns(monkeypatch, publish_exit)
-    monkeypatch.setattr(sys, "stderr", InterruptedOnSummary())
+    stderr = InterruptedOnSummary()
+    monkeypatch.setattr(sys, "stderr", stderr)
 
     assert cli.main(["apply"]) == expected
+    assert stderr.fired
 
 
 def test_the_composer_installs_no_sigterm_handler(world, monkeypatch):

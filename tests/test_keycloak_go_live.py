@@ -442,7 +442,7 @@ def test_a_fresh_run_goes_live_and_retires_the_bootstrap(go_live, keycloak, sess
         "db-password",
     ]
     assert "Cloudflare" not in session.output
-    assert "`edge apply` publishes" in session.printed[-1]
+    assert "`hal apply` publishes" in session.printed[-1]
     assert len(session.asked) == 3  # backup, the admin's name, Enter
 
 
@@ -496,7 +496,7 @@ def test_a_second_run_changes_nothing(go_live, keycloak, session, secrets_dir):
 
     assert not Keycloak.changed_something(Keycloak(commands=keycloak.commands[commands_before:]))
     assert len(session.asked) == asked_before
-    assert "`edge apply` publishes" in session.printed[-1]
+    assert "`hal apply` publishes" in session.printed[-1]
 
 
 def test_a_run_whose_apply_failed_applies_again_and_goes_on(go_live, keycloak, session):
@@ -1230,7 +1230,7 @@ def test_help_lists_the_steps_in_plain_words():
     assert "6. admin created:" in result.stdout
     assert "7. bootstrap retired:" in result.stdout
     assert "Cloudflare" not in result.stdout
-    assert "`edge apply` publishes" in result.stdout
+    assert "`hal apply` publishes" in result.stdout
 
 
 def test_a_refused_backup_is_asked_again_on_the_next_run(go_live, keycloak, session, secrets_dir):
@@ -1418,7 +1418,7 @@ def test_a_switched_off_keycloak_refuses_at_the_start_and_asks_and_starts_nothin
 
     assert session.printed == [
         "go-live: refused, keycloak is switched off (since 17.10. 22:10); "
-        "`edge start keycloak` ends the switch"
+        "`hal start keycloak` ends the switch"
     ]
     assert session.asked == []
     assert keycloak.commands == []
@@ -1457,7 +1457,7 @@ def test_a_stop_made_before_a_start_wins_and_that_start_does_not_happen(
 
     assert session.printed[-1] == (
         f"go-live FAILED at {stopped_before}: keycloak is switched off (since 17.10. 22:10); "
-        "`edge start keycloak` ends the switch"
+        "`hal start keycloak` ends the switch"
     )
     assert not started_something_after(keycloak, commands_at_the_stop[0])
 
@@ -1494,7 +1494,7 @@ def test_a_stop_made_between_the_two_realm_attempts_wins(go_live, keycloak, mark
 
     assert session.printed[-1] == (
         "go-live FAILED at realms applied: keycloak is switched off (since 17.10. 22:10); "
-        "`edge start keycloak` ends the switch"
+        "`hal start keycloak` ends the switch"
     )
     assert sum("run" in command for command in keycloak.commands) == 1
 
