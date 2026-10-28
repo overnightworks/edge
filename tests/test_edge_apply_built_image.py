@@ -8,11 +8,11 @@ import pytest
 import test_edge_apply as base
 import yaml
 from test_edge_apply import (
+    ENABLED,
     LABELLED_IMAGE_ID,
-    NEVER_SWAPS,
+    OLD_IMAGE,
     RECREATE_TRAEFIK,
     STEP_CA_BUMP,
-    STEP_CA_KEPT,
     SWITCHED_OFF_AT,
     ZONE,
     ScriptedCompose,
@@ -23,7 +23,7 @@ from test_edge_apply import (
 
 from edge import core
 from edge.built_image import ENDS_RUNS
-from edge.unit_plans import KEPT_IMAGE_OWNER, stays_stopped_line
+from edge.unit_plans import stays_stopped_line
 
 BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
 REBUILT_ID = f"sha256:{'e' * 64}"
@@ -160,6 +160,25 @@ def test_a_rebuilt_tag_names_the_reference_never_an_id(running, switch, scripted
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
 
 
+def test_a_rebuilt_tag_of_a_service_two_enabled_profiles_share_gives_one_old_image_row(
+    step_ca_applied, switch, scripted, repository
+):
+    """Decision 4: each kept image prints as exactly one row."""
+    service = scripted.config["services"]["step-ca"]
+    service["image"] = "step-ca:local"
+    service["profiles"].append("echo")
+    scripted.config["services"]["echo"] = {"profiles": ["echo"]}
+    write_fleet(repository, ENABLED + "  echo:\n    run: {enabled: true}\n")
+    assert switch()[0] == 0
+    scripted.images["step-ca"] = "step-ca:local"
+    scripted.image_ids["step-ca:local"] = REBUILT_ID
+    scripted.change_definition("step-ca")
+
+    _, out, _ = switch()
+
+    assert out.count(OLD_IMAGE) == 1
+
+
 def test_a_bump_beside_a_definition_change_gives_the_bump_line_once(running, switch, scripted):
     """M4 (a), E1."""
     old = bump(scripted)
@@ -289,8 +308,7 @@ def test_an_image_of_a_unit_that_is_not_built_is_only_named(step_ca_applied, swi
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert STEP_CA_KEPT in out
-    assert f"{NEVER_SWAPS} it does not build" in out
+    assert OLD_IMAGE in out
     assert scripted.changing_verbs() == []
 
 
@@ -321,7 +339,7 @@ def test_a_switched_off_agent_service_with_a_running_container_gets_no_kept_imag
 
     assert exit_code == 0
     assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
-    assert KEPT_IMAGE_OWNER not in out
+    assert OLD_IMAGE not in out
     assert scripted.changing_verbs() == []
 
 
