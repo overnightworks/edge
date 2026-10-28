@@ -800,9 +800,8 @@ Type <span class="w">yes</span> to apply 8 changes: yes
 <pre class="term"><span class="p">$</span> <span class="u">python3 agent-service/live_smoke.py</span>
 Open https://auth.hallucinai.de/realms/hallucinai/device?user_code=WZUW-XUGZ and confirm the code WZUW-XUGZ
 recreate held: the service listens
-L8 the offer held: exit 0; claude/haiku: route cli, ready True, background False | claude/opus: route cli, ready True, background False | claude/sonnet: route cli, ready True, background False
 L2 the paid turn held: exit 0; events ['run_started', 'assistant_text', 'succeeded']; ok | ok
-L3 admission through the gateway held: run_started seen
+L3 admission through the gateway held: run_started names anthropic/opus on route cli
 L7 memory held: idle memory.current 63156224; memory.peak after the turn 177790976
 L4 the cancelled turn observed: smoke exit 0; CLI processes before (0) 0, while held (1 or more) 1, left after the cancel (0) 0; ERROR lines since (0) 0; holding the stream open 3 s | closing the stream before the answer
 L6 no secret anywhere held: docker inspect 0 (0); the service log 0 (0); the smoke output 0 (0)
@@ -822,9 +821,8 @@ E12 the gateway's listeners held: listening: ['tcp 172.31.252.10:443']</pre>
 <span class="g">  ✓</span> sign in         confirmed      <span class="d">38s</span>
 <span class="hd">service</span>
 <span class="g">  ✓</span> recreate        listens
-<span class="g">  ✓</span> L8 offer        <span class="d">haiku, opus, sonnet · route cli · ready · no background</span>
 <span class="g">  ✓</span> L2 paid turn    <span class="d">answered "ok" · ended succeeded</span>
-<span class="g">  ✓</span> L3 admission    <span class="d">run started through the gateway</span>
+<span class="g">  ✓</span> L3 admission    <span class="d">run started through the gateway · anthropic/opus · route cli</span>
 <span class="g">  ✓</span> L7 memory       <span class="d">60 MiB idle · 170 MiB peak</span>
 <span class="d">  · L4 cancel       observed: CLI 0 → 1 → 0 · 0 ERROR lines · held 3 s</span>
 <span class="hd">leaks</span>
