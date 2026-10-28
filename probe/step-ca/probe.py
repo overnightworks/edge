@@ -921,7 +921,7 @@ class Probe(McpNetworks):
         self.set_enabled(copy, False)
         self.edit_follower_file(copy)
         out = self.edge(copy, "apply", "--closed", terminal=True)
-        expect(held in out and "step-ca: off" in out, f"P13f: {out[-240:]}")
+        expect(held in out and "step-ca switch off" in out, f"P13f: {out[-240:]}")
         expect(not self.containers_of_unit(running_only=False), "P13f: containers are left")
         out = self.apply_says_nothing_to_change(copy, "P13f")
         expect(held in out, f"P13f: a second apply said {out[-240:]}")
