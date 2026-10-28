@@ -69,6 +69,7 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl hal restore --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal check --help
           python3 -m zipfile -l dist/edge_check-*.whl | grep -F edge_check/allow-list.toml
+          python3 -m zipfile -l dist/edge_check-*.whl | grep -F home_tools/system/ansible.cfg
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl

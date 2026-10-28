@@ -1,4 +1,4 @@
-"""The system step of `hal setup`: edge's cloudflared files and the stop-only polkit rule, written by Ansible under one sudo prompt.
+"""The system step of `hal setup`: edge's cloudflared files and the stop-only polkit rule, written by Ansible as root under one sudo call.
 
 The root work is `system/playbook.yml`. This module runs it with the terminal passed through, says what its check found in one
 of three states, and keeps the record of the last verified run, which lets `home next` see the step without Ansible or sudo.
@@ -13,7 +13,6 @@ import pwd
 import re
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -85,36 +84,33 @@ def read_recap(returncode: int, output: str) -> PlaybookRun:
     return PlaybookRun(succeeded, int(recap["changed"]))
 
 
-def run_playbook(argv: Sequence[str]) -> PlaybookRun:
-    """stdin and stderr stay the terminal's, for the become prompt; stdout is shown line by line and read for the recap.
+def _forget_the_sudo_ticket() -> None:
+    try:
+        subprocess.run(["sudo", "-k"], check=True)
+    except subprocess.CalledProcessError as failure:
+        raise StepFailed(f"sudo could not forget its ticket (exit {failure.returncode}) · it may still be valid") from failure
 
-    No timeout: a person types the sudo password, and without a terminal the step refuses before it gets here.
+
+def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
+    """Runs `argv` under one `sudo` in the packaged `system/` directory, then makes sudo forget its ticket.
+
+    The system asks for the password at the terminal, which stays stdin and stderr's; stdout is shown line by line and read for
+    the recap. No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
+    the play did, and a failing `sudo -k` fails the step; it never follows a sudo that did not start.
+    Root's Python writes no bytecode, which would leave root-owned files in the operator's tool environment.
+    No timeout: a person types the password, and without a terminal the step refuses before it gets here.
     """
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
     shown: list[str] = []
-    with (
-        tempfile.TemporaryDirectory(prefix="home-ansible-") as ansible_home,
-        subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, env=_run_scoped_environment(Path(ansible_home))) as playbook,
-    ):
-        for line in playbook.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-            shown.append(line)
+    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:
+        try:
+            for line in playbook.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                shown.append(line)
+        finally:
+            _forget_the_sudo_ticket()
     return read_recap(playbook.returncode, "".join(shown))
-
-
-def _run_scoped_environment(ansible_home: Path) -> dict[str, str]:
-    """Ansible keeps its state in the run's own directory, never in `~/.ansible`, which `hal check` would flag.
-
-    Plain output with the default callback, whatever the operator configured, keeps the recap readable.
-    """
-    return {
-        **os.environ,
-        "ANSIBLE_HOME": str(ansible_home),
-        "ANSIBLE_LOCAL_TEMP": str(ansible_home / "tmp"),
-        "ANSIBLE_REMOTE_TEMP": str(ansible_home / "remote-tmp"),
-        "ANSIBLE_NOCOLOR": "1",
-        "ANSIBLE_STDOUT_CALLBACK": "default",
-    }
 
 
 class UnresolvableRunningUser(ValueError):
@@ -135,7 +131,7 @@ def _running_user() -> str:
 
 @dataclass(frozen=True)
 class Boundaries:
-    """The terminal the become prompt needs, Ansible itself, and who runs `home`."""
+    """The terminal the sudo prompt needs, Ansible itself, and who runs `home`."""
 
     has_terminal: Callable[[], bool]
     run_playbook: PlaybookRunner
@@ -143,7 +139,7 @@ class Boundaries:
 
 
 # The terminal fact is the one `home secrets --setup` asks: both ends are a terminal.
-TERMINAL_BOUNDARIES = Boundaries(secrets_setup.TERMINAL_BOUNDARIES.terminal.is_interactive, run_playbook, _running_user)
+TERMINAL_BOUNDARIES = Boundaries(secrets_setup.TERMINAL_BOUNDARIES.terminal.is_interactive, run_playbook_as_root, _running_user)
 
 
 @dataclass(frozen=True)
@@ -152,7 +148,10 @@ class SystemStep:
     boundaries: Boundaries
 
     def extra_vars(self) -> dict[str, str | int | tuple[str, ...]]:
-        """The values the playbook fills in; the tunnel id it reads itself, as root, from cloudflared's config."""
+        """The values the playbook fills in; the tunnel id it reads itself, as root, from cloudflared's config.
+
+        sudo logs its whole argv, so nothing here may ever be a secret.
+        """
         return {
             "home": str(self.layout.home),
             "operator_user": self.boundaries.operator_user(),
@@ -180,7 +179,7 @@ class SystemStep:
             return False
 
     def will_ask_for_sudo(self) -> bool:
-        """An apply with a terminal runs the play, and Ansible asks for the password there."""
+        """An apply with a terminal runs the play, and sudo asks for the password there."""
         return self.boundaries.has_terminal()
 
     def needs_first(self) -> str:
@@ -220,7 +219,6 @@ class SystemStep:
             str(PLAYBOOK),
             "--inventory",
             "localhost,",
-            "--ask-become-pass",
             "--diff",
             "--extra-vars",
             json.dumps({**self.extra_vars(), "ansible_python_interpreter": "auto_silent"}),
