@@ -1,0 +1,8 @@
+claim_id = "970573db684a4f008a504ab3dd1727c7"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "4c8cafd64a92a9124a159369dd8d0df9785c0caf"
+branch = "claude/issue-596-s5-4-core-rows"
+scope = ["docs/design/hal-output.html", "probe/edge_copy.py", "probe/step-ca/probe.py", "probe/switches/probe.py", "quality/baseline.toml", "src/edge/core.py", "src/edge/plan.py", "src/edge/plan_rows.py", "tests/old_names_baseline.toml", "tests/test_edge_apply.py", "tests/test_edge_core.py", "tests/test_edge_plan_rows.py"]
+opened_commit = "a5085b28d0ffc679dcee064b91c0bfa9106b2d35"
+whole_reason = "The core group as rows: the core and follower rows, the typed causes that feed them and the describe strings and spellings that die with them land together, so nothing prints twice and no part of the plan keeps its old words."
