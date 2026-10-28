@@ -416,7 +416,8 @@ def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tof
     (home / ".secrets/cloudflare/fleet-read").write_bytes(b"\xff\xfe")
     assert publish() == 2
     error = capsys.readouterr().err
-    assert error.startswith(REFUSAL) and "not valid UTF-8" in error
+    assert error.startswith(REFUSAL)
+    assert "not valid UTF-8" in error
     assert fake_tofu.calls() == []
 
 
