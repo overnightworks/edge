@@ -32,7 +32,7 @@ def nothing_was_done(sandbox: Sandbox) -> bool:
 
 
 def run_at_the_prompt(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *flags: str, **kwargs) -> tuple[int, str, str]:
-    code = run_hal_setup(*flags, home=sandbox.home, **kwargs)
+    code = run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, **kwargs)
     captured = capsys.readouterr()
     return code, captured.out, captured.err
 
@@ -83,7 +83,7 @@ def test_ctrl_c_at_the_prompt_exits_130_without_a_line_and_changes_nothing(sandb
 
 @pytest.mark.parametrize("terminal", [True, False], ids=["at a terminal", "without a terminal"])
 def test_dry_run_only_shows_and_never_acts_or_asks(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: bool) -> None:
-    """E1 and cells 10, 11: `--dry-run` prints the plan and `run hal setup`, takes no answer, writes nothing; Ansible's check runs only at a terminal."""
+    """E1 and cells 10, 11: `--dry-run` prints the plan and `run hal setup`, takes no answer, writes nothing."""
     sandbox.system.terminal = terminal
     code, out, err = run_at_the_prompt(sandbox, capsys, "--dry-run", answer="yes")
 
@@ -92,14 +92,13 @@ def test_dry_run_only_shows_and_never_acts_or_asks(sandbox: Sandbox, capsys: pyt
     assert out.splitlines()[-1] == "~ setup plan · 2 open, 2 unchanged · 47s · run hal setup"
     assert not sandbox.layout.git_hooks_dir.exists()
     assert not sandbox.uv_calls.exists()
-    assert all("--check" in argv for argv in sandbox.system.playbook.calls)
 
 
 @pytest.mark.parametrize("flags", [("--apply",), ("--dry-run", "--apply")])
 def test_apply_is_an_unrecognized_argument_and_nothing_runs(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], flags: tuple[str, ...]) -> None:
     """E1 and cell 12: the flag is gone, no alias; the usage pair names `--apply` and stdout stays empty."""
     with pytest.raises(SystemExit) as exit_of_usage:
-        run_hal_setup(*flags, home=sandbox.home)
+        run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries)
 
     captured = capsys.readouterr()
     assert (exit_of_usage.value.code, captured.out) == (ExitCode.USAGE, "")

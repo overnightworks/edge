@@ -36,7 +36,7 @@ def write_repository_hook(repo: Path, body: str, name: str = "pre-commit") -> Pa
 
 @pytest.fixture
 def hooked(sandbox: Sandbox) -> Sandbox:
-    assert run_hal_setup(home=sandbox.home) == ExitCode.OK
+    assert run_hal_setup(home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
     return sandbox
 
 

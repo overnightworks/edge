@@ -47,7 +47,7 @@ class Machine:
         return {(f.rule, f.subject): f.fix for f in hook_check.collect_findings(self.layout, run_command)}
 
     def apply_setup(self) -> None:
-        assert run_hal_setup(home=self.sandbox.home) == ExitCode.OK
+        assert run_hal_setup(home=self.sandbox.home, secrets_setup_boundaries=self.sandbox.secrets_boundaries) == ExitCode.OK
 
 
 @pytest.fixture

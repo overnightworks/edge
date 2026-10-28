@@ -93,7 +93,7 @@ def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     the recap. No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
     the play did, and a failing `sudo -k` fails the step; it never follows a sudo that did not start.
     Root's Python writes no bytecode, which would leave root-owned files in the operator's tool environment.
-    No timeout: a person types the password; `hal setup` asks its yes at a terminal before it gets here.
+    No timeout: a person types the password; the run asks its yes at a terminal first and `--dry-run` reaches here only when `needs_first` finds one.
     """
     environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
     shown: list[str] = []

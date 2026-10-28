@@ -190,7 +190,7 @@ def verdict_of(outcomes: Sequence[Outcome], ran: bool, elapsed_seconds: float) -
     if ran:
         walk_stored = any(outcome.event is SetupEvent.STORED for outcome in outcomes)
         return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds, next_step=APPLY_PLAN if walk_stored else "")
-    if tallies[Tally.OPEN]:
+    if open_rows_of(outcomes):
         return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}", elapsed_seconds)
     return Verdict(Glyph.DONE, "setup up to date", counts, elapsed_seconds=elapsed_seconds)
 

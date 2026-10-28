@@ -72,7 +72,7 @@ QUALITY_URL = "https://github.com/overnightworks/quality"
 
 
 def run_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
-    return run_captured_hal_setup(capsys, *flags, home=sandbox.home)
+    return run_captured_hal_setup(capsys, *flags, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries)
 
 
 def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
@@ -80,7 +80,7 @@ def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
 ) -> None:
     """#500: setup measures from its start to its verdict with the monotonic clock of its ports."""
 
-    code = run_hal_setup("--dry-run", home=sandbox.home, clock=FakeClock(65))
+    code = run_hal_setup("--dry-run", home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, clock=FakeClock(65))
 
     assert (code, capsys.readouterr().out.splitlines()[-1]) == (
         0,

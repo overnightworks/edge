@@ -450,7 +450,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="r">  ✗</span> system          failed         <span class="d">Docker does not answer `docker info`</span>
 <span class="d">  · secrets         not run</span>
-<span class="rw">error:</span> setup stopped at system · /etc unchanged
+<span class="rw">error:</span> setup stopped at system · /etc may be partial
 <span class="c">next:</span> systemctl status docker</pre>
       </figure>
     </div>
@@ -462,7 +462,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Docker-Neustart</b> wird nur angesagt, wenn er kommt: <code>docker info</code> zeigt den Log-Treiber ohne sudo. Dann steht vor dem Passwort <code>! docker  restarts  all containers stop · 2 stay down</code> (die zwei ohne Restart-Policy). Antwortet Docker gar nicht, endet der Schritt dort, ohne Passwort.</li>
     <li><b>Scheitert der Play selbst,</b> ist sein Grund der Fakt der roten Zeile. Die <code>fail_msg</code> im Playbook werden dafür kurz, ohne <code>; nothing was written</code>: was geschrieben wurde, sagt die <code>error:</code>-Zeile.</li>
     <li><b>Vier Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
-    <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  failed  sudo refused</code> und <code>error:</code> mit <code>/etc unchanged</code>.</li>
+    <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  failed  sudo refused</code> und <code>error:</code> mit <code>/etc may be partial</code>.</li>
   </ul>
 </section>
 <section aria-labelledby="s-yes">
@@ -601,7 +601,7 @@ Type <span class="w">yes</span> to set up 1 open row: yes
   </div>
   <ul class="why">
     <li><b>Probelauf (Vorschlag des Kopfs):</b> <code>hal setup --dry-run</code> ändert nichts und fragt nicht. <code>~</code> heißt „würde sich ändern“, <code>!</code> heißt „nicht geprüft, du musst an ein Terminal“. Das Urteil zählt offene und unveränderte Zeilen und nennt den nächsten Befehl.</li>
-    <li><b>Gescheitert:</b> „failed“ heißt, ein Schritt brach ab; im Plan oder bei einer Weigerung vor jeder Änderung steht <code>/etc unchanged</code>, nach einem Lauf, der Ansible erreicht hat, <code>/etc may be partial</code>. Ohne Terminal kommt es nicht so weit, das zeigt „setup: Plan, yes, Lauf“. <code>next:</code> ist der verschluckte Befehl oder <code>hal setup</code>.</li>
+    <li><b>Gescheitert:</b> „failed“ heißt, ein Schritt brach ab; in einem gescheiterten Plan oder bei <code>--dry-run</code> steht <code>/etc unchanged</code>, nach dem yes, im Lauf des System-Schritts (auch wenn Docker oder sudo ihn verweigert), <code>/etc may be partial</code>. Ohne Terminal kommt es nicht so weit, das zeigt „setup: Plan, yes, Lauf“. <code>next:</code> ist der verschluckte Befehl oder <code>hal setup</code>.</li>
     <li><b>Agent-Lauf:</b> der Schritt, der einen Menschen braucht, wird übersprungen und gezählt, nicht als Fehler gemeldet.</li>
   </ul>
 </section>

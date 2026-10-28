@@ -632,3 +632,8 @@ def test_a_service_password_is_generated_fresh_for_each_home(
 
     assert passphrases[0] != passphrases[1]
     assert all(os.path.getsize(tmp_path / name / PASSPHRASE_FILE) >= 64 for name in ("first", "second"))
+
+
+def test_the_real_terminal_fact_is_false_while_stdio_is_captured(capsys: pytest.CaptureFixture[str]) -> None:
+    """A terminal needs both ends: under captured stdio the process the agents run is no terminal, which is what refuses the yes."""
+    assert secrets_setup.TERMINAL_BOUNDARIES.terminal.is_interactive() is False

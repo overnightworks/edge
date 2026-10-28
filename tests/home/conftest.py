@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import email.message
 import email.policy
-import dataclasses
 import fnmatch
 import json
 import os
@@ -15,6 +14,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -24,7 +24,8 @@ from hal import config as hal_config
 from hal.grammar import ExitCode
 from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools import ports as home_ports
-from home_tools.secrets_setup import TERMINAL_BOUNDARIES as REAL_SECRETS_BOUNDARIES
+from home_tools.secrets_setup import Boundaries as SecretsBoundaries
+from home_tools.secrets_setup import Terminal as SecretsTerminal
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.layout import Layout, run_command
@@ -425,6 +426,16 @@ class Sandbox:
     def layout(self) -> Layout:
         return Layout(self.home)
 
+    @property
+    def secrets_boundaries(self) -> SecretsBoundaries:
+        """The wizard's boundaries over the one sandbox terminal; asking a person, opening a page, the network and the disk sync fail the test."""
+
+        def never(*_arguments: object) -> NoReturn:
+            pytest.fail("the sandbox terminal answers no question, opens no page and reaches no network")
+
+        terminal = SecretsTerminal(lambda: self.system.terminal, never, never, never)
+        return SecretsBoundaries(terminal, never, never)
+
 
 @pytest.fixture
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
@@ -460,9 +471,6 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
-    # One terminal fact for the system step, the yes guard and the wizard: `sandbox.system.terminal`.
-    at_the_sandbox_terminal = dataclasses.replace(REAL_SECRETS_BOUNDARIES.terminal, is_interactive=lambda: system.terminal)
-    monkeypatch.setattr(home_ports, "TERMINAL_BOUNDARIES", dataclasses.replace(REAL_SECRETS_BOUNDARIES, terminal=at_the_sandbox_terminal))
     monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
     return Sandbox(home, global_git_config, uv_calls, system)
 
@@ -502,7 +510,7 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
-    assert run_hal_setup(home=clean_home) == ExitCode.OK
+    assert run_hal_setup(home=clean_home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
 
 
 def write_hal_config(home: Path, text: str) -> Path:

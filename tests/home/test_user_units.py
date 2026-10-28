@@ -163,7 +163,7 @@ def setup_apply_lines(
     def run(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
 
-    assert run_hal_setup(home=sandbox.home, run=run) == ExitCode.OK
+    assert run_hal_setup(home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, run=run) == ExitCode.OK
 
     return capsys.readouterr().out.splitlines()
 

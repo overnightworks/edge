@@ -417,7 +417,7 @@ Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links the checkout's user units and runs the system step.
 `hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal_output.confirmed`: nur genau `yes`,
 Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
-`hal setup --dry-run` zeigt nur und fragt nichts. Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
+`hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
 als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print four rows (below) and a verdict.
 Exit: 0 fertig oder nichts offen, 1 abgelehnt (`error: aborted, nothing changed`), 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal
 (`error: setup asks yes at a terminal · nothing changed`, `next: hal setup in your own terminal window`; der Plan steht, kein Schritt läuft), 130 unterbrochen.
