@@ -137,18 +137,18 @@ def stop_unit(
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     runtime = runtime or apps.AppRuntime.of(Path.home(), marks.directory)
-    recorded = _record_app_first(marks, key, now, repository)
+    attempted = False
+    recorded = False
     try:
-        read = _read_subject(engine, repository, key)
-        if isinstance(read, CannotPlan):
-            switch_events.report_cannot_plan(key, read, recorded)
-            return ApplyExit.CANNOT_PLAN
-        fleet, subject = read
-        target = _target_of(subject, fleet, engine, repository, verifier, runtime)
-        running = target.running()
-    except (compose.ComposeError, barrier.BarrierError) as error:
-        switch_events.report_cannot_plan(key, CannotPlan(str(error)), recorded)
+        attempted = _is_enabled_app(key, repository)
+        recorded = attempted and _recorded_first(marks, key, now)
+        planned = _planned(engine, repository, key, verifier, runtime)
+    except KeyboardInterrupt:
+        return _report_early_interrupt(marks, key, Interruption.PLANNING, attempted)
+    if isinstance(planned, CannotPlan):
+        switch_events.report_cannot_plan(key, planned, recorded)
         return ApplyExit.CANNOT_PLAN
+    target, running = planned
     if not running and not target.enabled:
         switch_events.report_disabled(key)
         return ApplyExit.APPLIED_OR_NOTHING
@@ -166,18 +166,63 @@ def stop_unit(
     return _close(marks, target, now)
 
 
-def _record_app_first(marks: switches.Switches, key: str, now: datetime, repository: Path) -> bool:
-    """Whether the marker of an enabled app was recorded before anything is planned, so apply
-    stops fetching and building it within the first moment of the stop (`compose config` and `ps`
-    take seconds). A failure here is not reported: the close records again and reports a record
-    that failed."""
+def _planned(
+    engine: compose.Compose,
+    repository: Path,
+    key: str,
+    verifier: barrier.Verifier,
+    runtime: apps.AppRuntime,
+) -> tuple[Target, bool] | CannotPlan:
+    """The target of the stop and whether it runs, or why it cannot be planned."""
     try:
-        if catalog.is_enabled_app(catalog.read(repository / catalog.FLEET_FILE), key):
-            marks.record(key, now)
-            return True
-    except (catalog.CatalogError, OSError, switches.SwitchError):
-        pass
-    return False
+        read = _read_subject(engine, repository, key)
+        if isinstance(read, CannotPlan):
+            return read
+        fleet, subject = read
+        target = _target_of(subject, fleet, engine, repository, verifier, runtime)
+        return target, target.running()
+    except (compose.ComposeError, barrier.BarrierError) as error:
+        return CannotPlan(str(error))
+
+
+def _is_enabled_app(key: str, repository: Path) -> bool:
+    """Whether the catalog names an enabled app under the key: the apps whose marker is recorded
+    before anything is planned, so apply stops fetching and building it within the first moment of
+    the stop (`compose config` and `ps` take seconds)."""
+    try:
+        return catalog.is_enabled_app(catalog.read(repository / catalog.FLEET_FILE), key)
+    except (catalog.CatalogError, OSError):
+        return False
+
+
+def _recorded_first(marks: switches.Switches, key: str, now: datetime) -> bool:
+    """Whether the record succeeded. A failure here is not reported: the close records again and
+    reports a record that failed."""
+    try:
+        marks.record(key, now)
+    except (OSError, switches.SwitchError):
+        return False
+    return True
+
+
+def _report_early_interrupt(
+    marks: switches.Switches, key: str, step: Interruption, attempted: bool
+) -> int:
+    """A Ctrl-C before the lock. The marker is read only when this run attempted a record, so a
+    marker of an earlier stop is never reported as this run's and no path is built from a key the
+    catalog did not resolve."""
+    if not attempted:
+        switch_events.report_interrupted_early(key, Interruption.PLANNING)
+        return ApplyExit.REFUSED
+    try:
+        mark = marks.mark(key)
+    except switches.SwitchError as error:
+        switch_events.report_interrupted_early(key, step, str(error))
+        return ApplyExit.REFUSED
+    if mark is None:
+        switch_events.report_interrupted_early(key, step)
+        return ApplyExit.REFUSED
+    return _report_close(key, Closing(interruption=step))
 
 
 def _confirmed_off(
@@ -243,8 +288,11 @@ def _stop_target(target: Target, closing: Closing) -> Closing:
 
 def _close(marks: switches.Switches, target: Target, now: datetime) -> int:
     key = target.key
-    with ExitStack() as held:
+    try:
         closing = Closing(record_failure=_recorded(marks, key, now))
+    except KeyboardInterrupt:
+        return _report_early_interrupt(marks, key, Interruption.RECORDING, attempted=True)
+    with ExitStack() as held:
         try:
             held.enter_context(marks.lock())
             # a start that cleared the marker meanwhile must not undo this

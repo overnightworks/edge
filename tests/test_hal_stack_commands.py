@@ -286,15 +286,15 @@ def test_the_table_names_every_member_of_the_stack_enum():
     assert set(stack_commands.EXIT_OF_STACK) == set(apply.ApplyExit)
 
 
-def test_a_ctrl_c_the_stack_does_not_catch_ends_with_130_and_no_traceback(hal, fakes):
-    """D4"""
-    fakes.scripted.verb_config = ctrl_c
+def test_a_ctrl_c_the_stack_does_not_catch_ends_with_130_and_no_traceback(hal, monkeypatch, capsys):
+    """D4: the door's 130, with nothing printed."""
+    monkeypatch.setattr(stack, "stop_unit", ctrl_c)
 
     result = hal("stop", UNIT)
 
     assert result.exit_code == ExitCode.INTERRUPTED
-    assert "Traceback" not in result.err
-    assert fakes.marker() is None
+    assert result.out == ""
+    assert result.err == ""
 
 
 # --- hal apply -------------------------------------------------------------------------------
