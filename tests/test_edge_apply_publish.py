@@ -566,3 +566,4 @@ def test_help_names_both_parts(capsys):
     said = " ".join(capsys.readouterr().out.split())
     assert "--closed" in said
     assert "the publish" in said
+    assert "edge external" not in said
