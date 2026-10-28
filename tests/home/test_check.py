@@ -759,3 +759,4 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
     assert f"Backup: OK, last backup {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
+

@@ -3,8 +3,9 @@
 It asks Docker for named fields only (name, state, health, exit code, the compose project label), never
 any other label or the full inspect JSON, which holds each container's environment, and never a log. From the reboot
 flag it reads whether the file exists and when it was changed; from the disk of `/` its total and free bytes; from
-the emergency switches only the names of the switched-off apps, never what the files hold.
-Nothing is started, stopped or repaired. Docker that
+the emergency switches only the names of the switched-off apps, never what the files hold; from systemd's user manager
+only the names of the failed `hal*` units, never a description or another column.
+Nothing is started, stopped or repaired. Docker or systemd that
 cannot be read is a finding of its own, never a pass.
 """
 
@@ -31,6 +32,8 @@ INSPECT_FORMAT = (
     '\t{{index .Config.Labels "com.docker.compose.project"}}'
 )
 SWITCHES_DIRECTORY = Path(".local/state/edge/stopped")  # below the home directory; one file per app switched off with `hal stop`, which `home` only reads
+FAILED_HAL_UNITS = ["systemctl", "--user", "list-units", "--state=failed", "--plain", "--no-legend", "--no-pager", "--full", "hal*"]
+HAL_UNIT_NAME = re.compile(r"hal(-[a-z0-9]+)*\.(service|timer)")
 COMPOSE_PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 BROKEN_STATES = {"restarting": "container-restarting", "dead": "container-dead"}
 
@@ -120,6 +123,15 @@ def _container_findings(run: CommandRunner, switched_off: frozenset[str]) -> tup
     return findings, lines
 
 
+def _job_findings(run: CommandRunner) -> tuple[list[Finding], list[str]]:
+    """Only the first column, the unit name, is read; a name that breaks the naming form counts as unreadable."""
+    listing = run(FAILED_HAL_UNITS)
+    names = [line.split()[0] for line in (listing or "").splitlines() if line.strip()]
+    if listing is None or not all(HAL_UNIT_NAME.fullmatch(name) for name in names):
+        return [Finding("systemd-unreadable", "systemd", "`systemctl --user list-units` is not readable")], []
+    return [Finding("job-failed", name, "failed on its last run") for name in names], [f"Failed hal units: {len(names)}"]
+
+
 def _reboot_findings(reboot_file: Path) -> tuple[list[Finding], list[str]]:
     """Only the file's existence and modification time are read, never its content."""
     try:
@@ -141,7 +153,8 @@ def _disk_findings(disk_space: DiskSpaceReader) -> tuple[list[Finding], list[str
 def inspect(run: CommandRunner, now: datetime, reboot_file: Path, disk_space: DiskSpaceReader, switched_off: frozenset[str]) -> tuple[list[Finding], str]:
     """What `hal check` reads of the platform; findings and their report."""
     container_findings, container_lines = _container_findings(run, switched_off)
+    job_findings, job_lines = _job_findings(run)
     reboot_findings, reboot_lines = _reboot_findings(reboot_file)
     disk_findings, disk_lines = _disk_findings(disk_space)
-    findings = container_findings + reboot_findings + disk_findings
-    return findings, render_findings_report("platform", now, container_lines + reboot_lines + disk_lines, findings)
+    findings = container_findings + job_findings + reboot_findings + disk_findings
+    return findings, render_findings_report("platform", now, container_lines + job_lines + reboot_lines + disk_lines, findings)
