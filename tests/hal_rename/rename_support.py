@@ -1,6 +1,7 @@
 """What the `hal rename` tests share: a temporary HOME, real git clones and fake boundaries
 for `gh`, the process scan and `uv`."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,10 +26,19 @@ class Fakes:
     terminal: bool = True
     now: float = 0.0
     seconds_per_uv_call: float = 0.0
+    seconds_per_scan: float = 0.0
 
     def uv(self, project: Path, arguments: tuple[str, ...]) -> None:
         self.uv_calls.append((project, arguments))
         self.now += self.seconds_per_uv_call
+
+    def scan(self, roots: Sequence[Path]) -> list[RunningProcess]:
+        self.now += self.seconds_per_scan
+        return [
+            session
+            for session in self.running
+            if any(session.directory.is_relative_to(root) for root in roots)
+        ]
 
     def clock(self) -> float:
         return self.now

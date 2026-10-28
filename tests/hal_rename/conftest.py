@@ -55,11 +55,7 @@ def world(home: Path, fakes: Fakes) -> World:
     return World(
         home=home,
         github_knows=lambda name: name in fakes.known,
-        running_in=lambda roots: [
-            session
-            for session in fakes.running
-            if any(session.directory.is_relative_to(root) for root in roots)
-        ],
+        running_in=fakes.scan,
         uv=fakes.uv,
         uv_tools=lambda: fakes.tools,
         is_interactive=lambda: fakes.terminal,

@@ -21,6 +21,7 @@ def after_the_prompt(out: str) -> list[str]:
 def test_the_run_shows_its_plan_asks_one_yes_and_prints_the_rows_of_the_figure(
     everything, through_cli, fakes
 ):
+    fakes.seconds_per_scan = 5
     fakes.seconds_per_uv_call = 7
 
     code, out, err = through_cli("old", "fresh")
@@ -35,7 +36,7 @@ def test_the_run_shows_its_plan_asks_one_yes_and_prints_the_rows_of_the_figure(
         "✓ memory moved Claude project memory of the clone",
         "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
         "✓ venv synced in ~/git/fresh · 14s",
-        "✓ rename done · 7 changed · 14s",
+        "✓ rename done · 7 changed · 19s",
     ]
 
 
