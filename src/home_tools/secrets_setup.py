@@ -27,15 +27,15 @@ import urllib.request
 import uuid
 import warnings
 import webbrowser
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
-from hal_output import Glyph, Row, printable, write_row
+from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -55,7 +55,6 @@ from home_tools.secrets_view import (
     stat_matches,
     unfit_folder,
 )
-from home_tools.config import Config
 from home_tools.layout import Layout
 
 if TYPE_CHECKING:
@@ -65,13 +64,11 @@ NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
 ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
-INDENT = "    "
-OPEN_PROMPT = f"{INDENT}Enter opens the page in your browser: "
-PASTE_PROMPT = f"{INDENT}paste the token (hidden, empty skips): "
+OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
+PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
 OPENED = "opened"
 NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
-EXPOSED_INPUT_REFUSAL = "abgebrochen: dieses Terminal kann die Eingabe nicht verbergen; nichts gelesen. Ein anderes Terminal nehmen."
 
 PASTE_AGAIN = "paste again or leave empty"
 PASSPHRASE_BYTES = 48
@@ -322,9 +319,22 @@ def github_page(entry: SecretEntry, source: TokenSource) -> str:
     return f"{GITHUB_TOKEN_PAGE}?{urlencode(fields, quote_via=quote)}"
 
 
+def github_rights_prose(scope: Iterable[str]) -> str:
+    """`name:level` rights as prose, one entry per permission with its levels folded, in first-appearance order."""
+    levels_by_permission: dict[str, list[str]] = {}
+    for right in scope:
+        name, level = right.split(":", 1)
+        levels_by_permission.setdefault(name, []).append(level)
+    entries = []
+    for name, levels in levels_by_permission.items():
+        words = name.replace("_", " ")
+        entries.append(f"{words[:1].upper()}{words[1:]} {' and '.join(levels)}")
+    return ", ".join(entries)
+
+
 def _github_briefing(_entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
     return [
-        f"prefilled: {', '.join(right.replace(':', ' ', 1) for right in source.scope)}",
+        f"prefilled: {github_rights_prose(source.scope)}",
         "[ ] Repository access: All repositories",
         "[ ] compare the rights in the form with the line above",
         "[ ] Generate token, copy the value",
@@ -377,12 +387,6 @@ class WizardEvent(StrEnum):
     NOT_CHECKED = "not checked"
     BY_HAND = "by hand"
     NOT_STORED = "not stored"
-
-
-def _say(*lines: str) -> None:
-    """Indented lines under an announce row; text from a manifest or a provider is made safe to show."""
-    for line in lines:
-        print(f"{INDENT}{printable(line)}")
 
 
 def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
@@ -447,22 +451,31 @@ def _accepted_paste(entry: SecretEntry, source: TokenSource, boundaries: Boundar
     return None
 
 
+def _shown_address(page: str) -> str:
+    """Host and path of the page, with `?…` when it has a query; the scheme and the prefilled parameters stay out of the walk."""
+    parts = urlsplit(page)
+    return f"{parts.netloc}{parts.path}{'?…' if parts.query else ''}"
+
+
 def _offer_page(terminal: Terminal, page: str) -> None:
     terminal.ask(OPEN_PROMPT)
-    _say(f"{OPENED} {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
+    if terminal.open_page(page):
+        write_detail(f"{OPENED} {_shown_address(page)}", tone=Tone.DIM)
+    else:
+        write_detail(f"{NO_BROWSER} {page}", tone=Tone.WARNING)
 
 
 def _announce(entry: SecretEntry, how: str) -> None:
     """The row that opens a walk for a token, then why it is needed."""
     _write_entry_row(Glyph.ANNOUNCE, entry.name, WizardEvent.NEW_TOKEN, how)
     if entry.purpose:
-        _say(f"why: {entry.purpose}")
+        write_detail(f"why: {entry.purpose}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
     guide = GUIDES[source.provider]
     _announce(entry, guide.how)
-    _say(*guide.briefing(entry, source, now))
+    write_detail(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(entry, source, boundaries)
     return value is not None and _stored(entry, layout, boundaries, value)
@@ -471,7 +484,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
     _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
-    _say(f"create: {entry.recreate}")
+    write_detail(f"create: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
@@ -489,10 +502,26 @@ class Step(Enum):
 
 # What an unexpected error left of the one entry it stopped, as the disk shows it afterwards.
 WHAT_FAILURE_LEFT = {
-    Presence.PRESENT: "{name} ist gespeichert",
-    Presence.MISSING: "für {name} nichts gespeichert",
-    Presence.UNKNOWN: "ob {name} gespeichert ist, ist nicht feststellbar",
+    Presence.PRESENT: "{name} is stored",
+    Presence.MISSING: "{name} is not stored",
+    Presence.UNKNOWN: "cannot tell whether {name} is stored",
 }
+
+
+class Interruption(StrEnum):
+    """How the person ended the walk at one entry."""
+
+    CTRL_C = "interrupted"
+    INPUT_ENDED = "input ended"
+
+
+class EntryInterrupted(Exception):
+    """The person interrupted the walk, or its input ended, while one entry was set up."""
+
+    def __init__(self, entry_name: str, cause: Interruption) -> None:
+        super().__init__(entry_name)
+        self.entry_name = entry_name
+        self.cause = cause
 
 
 class EntryFailed(Exception):
@@ -509,7 +538,7 @@ class EntryFailed(Exception):
 
     def report(self) -> str:
         left = WHAT_FAILURE_LEFT[self.left].format(name=self.entry_name)
-        return f"abgebrochen bei {self.entry_name}: unerwarteter Fehler ({self.error_type}); {left}. Weiter mit: hal setup --apply"
+        return f"stopped at {self.entry_name} · unexpected {self.error_type} · {left}"
 
 
 def _presence_on_disk(entry: SecretEntry, layout: Layout) -> Presence:
@@ -534,7 +563,11 @@ def open_entries(layout: Layout) -> list[tuple[SecretEntry, Presence]]:
 def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
     try:
         return _set_up(entry, layout, boundaries, now)
-    except (EOFError, getpass.GetPassWarning):
+    except KeyboardInterrupt:
+        raise EntryInterrupted(entry.name, Interruption.CTRL_C) from None
+    except EOFError:
+        raise EntryInterrupted(entry.name, Interruption.INPUT_ENDED) from None
+    except getpass.GetPassWarning:
         raise
     except Exception as error:
         raise EntryFailed(entry.name, error, _presence_on_disk(entry, layout)) from None
@@ -569,6 +602,9 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
+STILL_OPEN_EXIT = 1
+
+
 def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
@@ -579,23 +615,36 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return 1 if still_open or by_hand else 0
+    return STILL_OPEN_EXIT if still_open or by_hand else 0
+
+
+SETUP_NEXT_STEP = "hal setup --apply"
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
-        print("home secrets --setup läuft nur am eigenen Terminal; ohne --setup zeigt home secrets nur an.", file=sys.stderr)
+        write_error(
+            "secrets setup needs your own terminal window · nothing changed",
+            "hal setup --apply in your own terminal window",
+        )
         return NO_TERMINAL_EXIT
     try:
         return _walk(layout, boundaries, now)
-    except (KeyboardInterrupt, EOFError):
-        print("\nabgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply", file=sys.stderr)
+    except EntryInterrupted as interrupted:
+        write_error(
+            f"{interrupted.cause} at {interrupted.entry_name} · no file half written",
+            SETUP_NEXT_STEP,
+            fresh_line=True,
+        )
         return ABORTED_EXIT
     except getpass.GetPassWarning:
-        print(f"\n{EXPOSED_INPUT_REFUSAL}", file=sys.stderr)
+        write_error(
+            "this terminal cannot hide what you type · nothing read",
+            "hal setup --apply in another terminal window",
+        )
         return NO_TERMINAL_EXIT
     except EntryFailed as failed:
-        print(f"\n{failed.report()}", file=sys.stderr)
+        write_error(failed.report(), SETUP_NEXT_STEP)
         return ENTRY_FAILED_EXIT
 
 
@@ -615,7 +664,7 @@ unerwarteter Fehler bei einem Geheimnis, 3 sonst unerwarteter Fehler, 130 abgebr
 """
 
 
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     if args.setup:
         return run_setup(layout, ports.secrets_setup, ports.now)
     return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)

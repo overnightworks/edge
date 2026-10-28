@@ -17,7 +17,6 @@ from conftest import FAKE_SECRET_VALUE, FakeProbe, symlinked_folder_fix
 from home_tools import cli, secrets_setup
 from home_tools.secrets_setup import (
     CLOUDFLARE_TOKEN_PAGE,
-    EXPOSED_INPUT_REFUSAL,
     NO_BROWSER,
     OPEN_PROMPT,
     PASTE_PROMPT,
@@ -269,10 +268,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError); für cloudflare/read nichts gespeichert."
-        " Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cloudflare/read is not stored\nnext: hal setup --apply\n")
     for value in (PASTED_VALUE, *PASTED_VALUE_PARTS):
         assert value not in captured.out + captured.err
     assert files_under(home) == set()
@@ -296,10 +292,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (PermissionError); cloudflare/read ist gespeichert."
-        " Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected PermissionError · cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
     assert (home / TOKEN_FILES[0]).read_text() == PASTED_VALUE
 
@@ -327,10 +320,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError);"
-        " ob cloudflare/read gespeichert ist, ist nicht feststellbar. Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cannot tell whether cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
 
 
@@ -374,11 +364,17 @@ def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeDisk) 
 
 
 @pytest.mark.parametrize(
-    "interrupt",
-    [interrupt_at_the_open_prompt, interrupt_at_the_paste, end_the_input_at_the_paste, interrupt_while_the_file_is_written],
+    "interrupt, expected_error",
+    [
+        (interrupt_at_the_open_prompt, "error: interrupted at cloudflare/read · no file half written"),
+        (interrupt_at_the_paste, "error: interrupted at cloudflare/read · no file half written"),
+        (end_the_input_at_the_paste, "error: input ended at cloudflare/read · no file half written"),
+        (interrupt_while_the_file_is_written, "error: interrupted at cloudflare/read · no file half written"),
+    ],
+    ids=["open prompt", "paste", "input ended", "file write"],
 )
 def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None]
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None], expected_error: str
 ) -> None:
     """#36 rule 2.3 / #10 line 7: Ctrl-C or the end of the input leaves no file, and the next run goes on."""
     interrupt(terminal, disk)
@@ -387,7 +383,7 @@ def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
 
     assert code == 130
     assert files_under(home) == set()
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
+    assert capsys.readouterr().err == f"\n{expected_error}\nnext: hal setup --apply\n"
 
 
 @pytest.fixture
@@ -411,7 +407,7 @@ def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 130
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
+    assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup --apply\n")
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
 
@@ -492,7 +488,7 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    refused = "✗ github/read not stored ~/.secrets/github is not a folder: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
     output = capsys.readouterr().out
     assert refused in squeezed(output)
     assert PASTED_VALUE not in output
@@ -502,14 +498,14 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
 def loosen_the_secrets_directory(home: Path) -> tuple[str, str]:
     (home / ".secrets").mkdir(mode=0o700)
     (home / ".secrets").chmod(0o755)
-    return "~/.secrets hat Rechte 755, höchstens 700", "`chmod 700 ~/.secrets`"
+    return "~/.secrets has mode 755; at most 700 allowed", "`chmod 700 ~/.secrets`"
 
 
 def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
     elsewhere = home.parent / "elsewhere"
     elsewhere.mkdir(mode=0o700)
     (home / ".secrets").symlink_to(elsewhere)
-    return "~/.secrets ist ein Symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
+    return "~/.secrets is a symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
 
 
 @pytest.mark.parametrize("damage", [loosen_the_secrets_directory, make_the_secrets_directory_a_symlink])
@@ -560,7 +556,7 @@ def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, 
     code = home_secrets_setup(home)
 
     assert code == 2
-    assert capsys.readouterr().err.startswith("home secrets --setup läuft nur am eigenen Terminal")
+    assert capsys.readouterr().err.endswith("error: secrets setup needs your own terminal window · nothing changed\nnext: hal setup --apply in your own terminal window\n")
     assert list(home.iterdir()) == []
 
 
@@ -573,7 +569,7 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     code = home_secrets_setup(home, Boundaries(echoing, verifier, disk.sync))
 
     assert code == 2
-    assert capsys.readouterr().err.strip() == EXPOSED_INPUT_REFUSAL
+    assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup --apply in another terminal window\n")
     assert verifier.checked == []
     assert files_under(home) == set()
 
@@ -583,9 +579,8 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 ) -> None:
     """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-
     assert home_secrets_setup(home, boundaries) == 0
-    github, output = github_entry(), capsys.readouterr().out
+    output = capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
     assert squeezed(output) == [
@@ -598,20 +593,21 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
         "[ ] Zone Resources: Include › Specific zone › example.invalid",
         "[ ] TTL: leave the start date empty, set only the End Date 16.11.2026",
         "[ ] Continue to summary › Create Token, copy the value",
-        f"opened {CLOUDFLARE_TOKEN_PAGE}",
+        "opened dash.cloudflare.com/profile/api-tokens",
         "✓ cloudflare/read verified ~/.secrets/cloudflare/read (600)",
         "› github/read new token the link fills name, owner, expiry and rights",
         "why: liest GitHub",
-        "prefilled: metadata read, organization_secrets read",
+        "prefilled: Metadata read, Organization secrets read",
         "[ ] Repository access: All repositories",
         "[ ] compare the rights in the form with the line above",
         "[ ] Generate token, copy the value",
-        f"opened {github_page(github, github.source)}",
+        "opened github.com/settings/personal-access-tokens/new?…",
         "✓ github/read verified ~/.secrets/github/read (600)",
         "✓ opentofu/passphrase generated ~/.secrets/opentofu/passphrase (600) · never shown",
     ]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT, OPEN_PROMPT, PASTE_PROMPT]
     under_a_row = [line for line in output.splitlines() if line.lstrip().startswith(("why:", "[ ]", "prefilled:", "opened "))]
+    assert under_a_row
     assert all(line.startswith("    ") and not line.startswith("     ") for line in under_a_row)
 
 

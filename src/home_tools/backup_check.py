@@ -1,4 +1,4 @@
-"""`home check`'s backup check: reports a failed or dead backup run and every app whose last good backup is too old.
+"""`hal check`'s backup check: reports a failed or dead backup run and every app whose last good backup is too old.
 
 It reads one file, the status the backup writes (schema 2, documented in docs/backup.md), and only the fields named
 here; it never opens the backups, their repository or their password. `edge_backup` stays unimported because the two
@@ -113,7 +113,7 @@ def _read(home: Path) -> tuple[BackupStatus | None, str]:
 
 
 def inspect(home: Path, now: datetime) -> tuple[list[Finding], str]:
-    """What `home check` reads of the backup's status; findings and their report."""
+    """What `hal check` reads of the backup's status; findings and their report."""
     status, problem = _read(home)
     if status is None:
         return _unreadable(problem), render_findings_report("backup", now, [], _unreadable(problem))

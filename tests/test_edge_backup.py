@@ -148,7 +148,7 @@ def test_an_app_named_like_the_pre_apply_tag_is_refused_before_anything_runs(
     outcome = edge_backup(*declare_apps(home, pre_apply_app), "backup", "pre-apply")
 
     assert (outcome.exit_code, machine.calls) == (3, [])
-    assert "als restic-Tag pre-apply belegt" in outcome.err
+    assert "taken by the restic tag pre-apply" in outcome.err
     assert outcome.status is None
 
 
@@ -878,7 +878,7 @@ def test_an_unreadable_status_file_is_never_overwritten(
 
     assert outcome.exit_code == 3
     [line, *_] = outcome.err.splitlines()
-    assert "Statusdatei ist unlesbar" in line
+    assert "status file is unreadable" in line
     assert _identity_of(machine.status_file) == before
     assert machine.calls == []
 
@@ -1014,7 +1014,7 @@ def test_apps_toml_refuses_audio_that_is_not_declared_whole(dropped):
         if not any(line.startswith(f"{key} =") for key in dropped)
     )
 
-    with pytest.raises(AppsError, match="Audio braucht volume und audio_reference_table"):
+    with pytest.raises(AppsError, match="audio needs volume and audio_reference_table"):
         parse_apps(text)
 
 
@@ -1023,7 +1023,7 @@ def test_apps_toml_refuses_a_postgres_major_without_a_restore_image(major):
     """#107 rule 2: a major that is no pinned plain integer is refused at load."""
     text = cli.DEFAULT_APPS.read_text().replace("postgres_major = 17", f"postgres_major = {major}")
 
-    with pytest.raises(AppsError, match="postgres_major muss einer von"):
+    with pytest.raises(AppsError, match="postgres_major must be one of"):
         parse_apps(text)
 
 
@@ -1102,7 +1102,7 @@ def test_apps_toml_refuses_require_rows_that_is_not_a_boolean():
     """#107 rule 3: require_rows is a declared yes or no."""
     text = cli.DEFAULT_APPS.read_text().replace("require_rows = true", 'require_rows = "yes"')
 
-    with pytest.raises(AppsError, match="require_rows muss true oder false sein"):
+    with pytest.raises(AppsError, match="require_rows must be true or false"):
         parse_apps(text)
 
 
@@ -1176,10 +1176,10 @@ def test_no_output_or_status_holds_the_dump(edge_backup, machine):
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        (("dump", '"sh -c pg_dump"'), "dump muss einer von"),
-        (("volume", '"audio files"'), "volume muss"),
-        (("hook", '"rm -rf /"'), "unbekannter Schlüssel ['hook']"),
-        (("db_name", '"x; DROP TABLE songs"'), "db_name muss"),
+        (("dump", '"sh -c pg_dump"'), "dump must be one of"),
+        (("volume", '"audio files"'), "volume must match"),
+        (("hook", '"rm -rf /"'), "unknown key ['hook']"),
+        (("db_name", '"x; DROP TABLE songs"'), "db_name must match"),
     ],
 )
 def test_apps_toml_accepts_only_validated_records(change, message):
@@ -1199,7 +1199,7 @@ def test_apps_toml_accepts_only_validated_records(change, message):
 def test_apps_toml_rejects_an_unsafe_sql_identifier():
     text = cli.DEFAULT_APPS.read_text().replace('"songs"', '"songs\\"; --"')
 
-    with pytest.raises(AppsError, match="count_table muss"):
+    with pytest.raises(AppsError, match="count_table must match"):
         parse_apps(text)
 
 

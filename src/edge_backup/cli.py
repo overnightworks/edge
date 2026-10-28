@@ -5,7 +5,6 @@ signal and the exit."""
 import argparse
 import json
 from collections.abc import Callable
-from enum import StrEnum
 from pathlib import Path
 
 from edge_backup import host, restic, runner
@@ -13,7 +12,7 @@ from edge_backup.apps import App, AppsError, parse_apps
 from edge_backup.runner import Interrupted, Run, StepFailed
 from edge_backup.settings import Settings
 from edge_backup.status import ExitCategory, first_attempt
-from hal_output import Glyph, Verdict, write_row, write_verdict
+from hal_output import Glyph, Noun, Verdict, counted, write_row, write_verdict
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +23,7 @@ def init(settings: Settings, _: argparse.Namespace) -> None:
     runner.require_password_file(settings)
     settings.repository.mkdir(mode=0o700, parents=True, exist_ok=True)
     _command(restic.init, settings)
-    print("hal backup: Repository angelegt")
+    print("hal backup: repository created")
 
 
 def backup(settings: Settings, arguments: argparse.Namespace) -> None:
@@ -53,7 +52,7 @@ def backup(settings: Settings, arguments: argparse.Namespace) -> None:
         if arguments.json:
             print(json.dumps({"snapshot": run.snapshot_of(arguments.app)}))
         else:
-            noun = Noun.APP if run.backed_up_apps == 1 else Noun.APPS
+            noun = AppCount.APP
             write_verdict(
                 Verdict(
                     Glyph.DONE,
@@ -66,9 +65,8 @@ def backup(settings: Settings, arguments: argparse.Namespace) -> None:
     _recorded(settings, arguments, step, announce)
 
 
-class Noun(StrEnum):
+class AppCount(Noun):
     APP = "app"
-    APPS = "apps"
 
 
 def _app_failure_line(run: Run, failure: StepFailed) -> str:
@@ -77,14 +75,20 @@ def _app_failure_line(run: Run, failure: StepFailed) -> str:
     return f"{first.app}: {first}"
 
 
+def _failed_apps_line(failed: list[str], total: int, outcome: str) -> str:
+    """The one app that ran by name, else how many of the apps that ran."""
+    if total == 1:
+        return f"{failed[0]} {outcome}"
+    return f"{len(failed)} of {counted(total, AppCount.APP)} {outcome}"
+
+
 def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
     """The rows show each reason, so the error line counts; `--json` has no rows, so its error
     line carries the reason, which the realm step reads."""
     failed = run.failed_apps
     total = run.backed_up_apps + len(failed)
-    noun = Noun.APP if total == 1 else Noun.APPS
     failure.error_line = (
-        f"{len(failed)} of {total} {noun} not backed up"
+        _failed_apps_line(failed, total, "not backed up")
         if rows
         else _app_failure_line(run, failure)
     )
@@ -111,17 +115,16 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
             if run.failed_apps:
                 failed = run.failed_apps
                 total = run.proven_apps + len(failed)
-                noun = Noun.APP if total == 1 else Noun.APPS
                 failure.error_line = (
                     _app_failure_line(run, failure)
                     if arguments.snapshot
-                    else f"{len(failed)} of {total} {noun} not proven"
+                    else _failed_apps_line(failed, total, "not proven")
                 )
                 failure.next_step = f"hal restore --test {failed[0]}"
             raise
 
     def announce(run: Run) -> None:
-        noun = Noun.APP if run.proven_apps == 1 else Noun.APPS
+        noun = AppCount.APP
         write_verdict(
             Verdict(
                 Glyph.DONE,
@@ -151,7 +154,7 @@ def restore(settings: Settings, arguments: argparse.Namespace) -> None:
     snapshot_id = _command(
         runner.restore, settings, apps, app, arguments.target, arguments.snapshot
     )
-    print(f"hal restore: Snapshot {snapshot_id[:8]} von {app.name} liegt in {arguments.target}")
+    print(f"hal restore: snapshot {snapshot_id[:8]} of {app.name} restored into {arguments.target}")
 
 
 def _recorded(

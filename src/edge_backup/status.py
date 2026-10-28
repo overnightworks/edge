@@ -1,4 +1,4 @@
-"""The status contract a Gatus light and `home check` read: versioned JSON, written atomically.
+"""The status contract a Gatus light and `hal check` read: versioned JSON, written atomically.
 
 It never carries raw output, command lines, paths, file names or content.
 """
@@ -173,12 +173,12 @@ def read_status(path: Path) -> Status | None:
         return None
     except OSError as error:
         raise StatusFileError(
-            f"die bisherige Statusdatei ist unlesbar: {error.strerror}"
+            f"the previous status file is unreadable: {error.strerror}"
         ) from error
     try:
         return _parse(json.loads(raw))
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        raise StatusFileError("die bisherige Statusdatei ist unlesbar") from error
+        raise StatusFileError("the previous status file is unreadable") from error
 
 
 def write_status(path: Path, status: Status) -> None:

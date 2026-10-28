@@ -1,4 +1,4 @@
-"""The mail account of `home check` and the msmtp command line that sends through it.
+"""The mail account of `hal check` and the msmtp command line that sends through it.
 
 The account lives in `~/.secrets/smtp/account.toml`, the password only in `~/.secrets/smtp/password`: msmtp, run as the
 operator, reads the password at send time through `--passwordeval`, so hal never opens it. TLS is always on and the

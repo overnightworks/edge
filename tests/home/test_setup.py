@@ -704,7 +704,7 @@ def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, ca
 def test_a_run_leaves_no_ansible_state_in_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
     """Head ruling 18.10.2026 and rule 4 (the runner): Ansible's home and temp live in a run-scoped directory.
 
-    So no `~/.ansible` is left for `home check` to flag.
+    So no `~/.ansible` is left for `hal check` to flag.
     """
     home = tmp_path / "home"
     home.mkdir()

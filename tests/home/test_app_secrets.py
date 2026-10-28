@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import re
 import stat
+import sys
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -278,7 +280,7 @@ def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sa
 
     rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
-    assert all("Token, ungeprüft" in row and "nicht geprüft" in row for row in rows)
+    assert all("token, unverified" in row and "not checked" in row for row in rows)
 
 
 def test_home_next_says_the_missing_turn_values_are_stored_not_verified(
@@ -370,7 +372,7 @@ def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after
 
     secrets_rows = [line for line in lines if "secrets  " in line]
     assert secrets_rows == [
-        "  ! secrets         missing        opentofu/passphrase, hopin/session-secret",
+        "  ! secrets         2 missing      opentofu/passphrase, hopin/session-secret",
         "  ✓ secrets         stored",
     ]
     assert lines.index(secrets_rows[0]) + 1 < lines.index(secrets_rows[1])  # the wizard spoke between them
@@ -391,7 +393,7 @@ def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_e
     assert "✓ hopin/session-secret generated ~/.secrets/hopin/session-secret (644) · never shown" in [" ".join(line.split()) for line in lines]
 
 
-def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
+def test_apply_stops_at_secrets_with_the_open_count_when_the_wizard_leaves_a_secret_open(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     by_hand = '[[secret]]\nname = "gitlab"\nkind = "token"\npaths = ["~/.secrets/gitlab"]\nread_by = []\nrecreate = "von Hand"\n'
@@ -402,10 +404,8 @@ def test_apply_fails_the_secrets_step_when_the_wizard_leaves_a_secret_open(
     captured = capsys.readouterr()
 
     assert code == 1
-    assert captured.out.splitlines()[-1] == (
-        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open"
-    )
-    assert captured.err.splitlines() == ["error: setup stopped at secrets", f"next: {RERUN}"]
+    assert captured.out.splitlines()[-1] == "  ! secrets         1 open         gitlab (by hand)"
+    assert captured.err.splitlines() == ["error: setup stopped at secrets · 1 secret still open", f"next: {RERUN}"]
 
 
 def secret_entry(name: str, *, kind: str = "service-password", extra: str = "") -> str:
@@ -536,7 +536,31 @@ def test_hal_setup_apply_fails_the_secrets_step_when_an_entry_cannot_be_checked(
         code,
         "! closed/entry not checked its folder cannot be read" in [" ".join(line.split()) for line in lines],
     ) == (ExitCode.FAILURE, True)
-    assert error.splitlines()[0] == "error: setup stopped at secrets"
+    assert error.splitlines()[0] == "error: setup stopped at secrets · 1 secret still open"
+
+
+def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
+    hal_secrets: Callable[..., tuple[int, list[str], str]],
+) -> None:
+    code, lines, error = hal_secrets(secret_entry("first", kind="token") + secret_entry("second", kind="token"), "--apply")
+
+    assert (code, lines[-1], error.splitlines()[0]) == (
+        ExitCode.FAILURE,
+        "  ! secrets         2 open         first (by hand), second (by hand)",
+        "error: setup stopped at secrets · 2 secrets still open",
+    )
+
+
+def test_hal_setup_apply_keeps_the_failed_row_when_the_wizard_exits_for_another_reason(
+    hal_secrets: Callable[..., tuple[int, list[str], str]],
+) -> None:
+    code, lines, error = hal_secrets(secret_entry("first"), "--apply", at_a_terminal=False)
+
+    assert (code, lines[-1], error.splitlines()[-2]) == (
+        ExitCode.FAILURE,
+        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open",
+        "error: setup stopped at secrets",
+    )
 
 
 def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
@@ -604,12 +628,12 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
     )
 
     assert code == ExitCode.INTERRUPTED
-    assert "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply" in error
+    assert "error: interrupted at live · no file half written\nnext: hal setup --apply" in error
     assert "setup stopped" not in error
     assert not (sandbox.home / ".secrets" / "live").exists()
 
 
-def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_traceback(
+def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_interrupted_line_and_no_traceback(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     def interrupted(_descriptor: int) -> None:
@@ -625,7 +649,7 @@ def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_abort_line_and_no_t
     error = capsys.readouterr().err
 
     assert code == secrets_setup.ABORTED_EXIT
-    assert "abgebrochen; keine Datei halb geschrieben" in error
+    assert "error: interrupted at live · no file half written" in error
     assert "Traceback" not in error
 
 
@@ -638,3 +662,49 @@ def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_re
     assert lines[-1].startswith("  ✗ secrets         failed")
     assert error.splitlines()[0] == "error: setup stopped at secrets"
     assert "unexpected error" not in error
+
+
+class TerminalOutput(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_on_a_terminal_the_walk_shows_an_opened_page_dim_and_short(
+    turn_home: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `opened` shows host and path, with `?\u2026` only for a page that has a query."""
+    shown = walk_on_a_terminal(turn_home, monkeypatch, browser_opens=True)
+
+    assert [line for line in shown if "opened" in line and "Enter opens" not in line] == [
+        "\x1b[2m    opened github.com/settings/personal-access-tokens/new?\u2026\x1b[0m",
+        "\x1b[2m    opened dash.cloudflare.com/\x1b[0m",
+        "\x1b[2m    opened dash.cloudflare.com/\x1b[0m",
+    ]
+
+
+def test_on_a_terminal_the_walk_shows_a_page_nobody_opened_yellow_and_whole(
+    turn_home: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator opens it by hand, so the whole address shows."""
+    shown = walk_on_a_terminal(turn_home, monkeypatch, browser_opens=False)
+
+    unopened = [line for line in shown if "no browser opened" in line]
+    prefix = "\x1b[33m    no browser opened \u00b7 open it yourself: https://"
+    assert len(unopened) == 3
+    assert all(line.startswith(prefix) and line.endswith("\x1b[0m") for line in unopened)
+    assert unopened[0].count("?") == 1
+    assert unopened[1:] == [f"{prefix}dash.cloudflare.com/\x1b[0m"] * 2
+
+
+def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, browser_opens: bool) -> list[str]:
+    """The setup walk of the GitHub token and both TURN values with stdout on a terminal, nothing pasted."""
+    (sandbox.home / ".secrets/github/fleet-read").unlink()
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    stdout = TerminalOutput()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeDisk().sync)
+
+    main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
+
+    return stdout.getvalue().splitlines()

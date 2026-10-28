@@ -1,4 +1,4 @@
-"""`home check`'s platform check: reports every broken compose container, a pending reboot and a nearly full disk.
+"""`hal check`'s platform check: reports every broken compose container, a pending reboot and a nearly full disk.
 
 It asks Docker for named fields only (name, state, health, exit code, the compose project label), never
 any other label or the full inspect JSON, which holds each container's environment, and never a log. From the reboot
@@ -138,7 +138,7 @@ def _disk_findings(disk_space: DiskSpaceReader) -> tuple[list[Finding], list[str
 
 
 def inspect(run: CommandRunner, now: datetime, reboot_file: Path, disk_space: DiskSpaceReader, switched_off: frozenset[str]) -> tuple[list[Finding], str]:
-    """What `home check` reads of the platform; findings and their report."""
+    """What `hal check` reads of the platform; findings and their report."""
     container_findings, container_lines = _container_findings(run, switched_off)
     reboot_findings, reboot_lines = _reboot_findings(reboot_file)
     disk_findings, disk_lines = _disk_findings(disk_space)

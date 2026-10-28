@@ -1,4 +1,4 @@
-"""`home check`'s logs check: reports the age and the driver of every log store the 30-day bound covers.
+"""`hal check`'s logs check: reports the age and the driver of every log store the 30-day bound covers.
 
 It reads the container log drivers, Docker's default driver, the journal's oldest entry and the rsyslog files, and
 changes nothing. No message text is read: the journal's age comes from the boot list's timestamps. A store it cannot
@@ -127,6 +127,6 @@ def _without_repeats(findings: list[Finding]) -> list[Finding]:
 
 
 def inspect(run: CommandRunner, now: datetime, log_directory: Path) -> tuple[list[Finding], str]:
-    """What `home check` reads of the log stores; findings and their report."""
+    """What `hal check` reads of the log stores; findings and their report."""
     reading = collect(run, now, log_directory)
     return reading.findings, render_findings_report("logs", now, reading.status_lines, reading.findings)

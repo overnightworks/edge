@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING
 
 from hal_output import Row
 from home_tools import hook_check, secrets_setup, secrets_view, setup
-from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.config import Config
+from home_tools.secrets_view import FindingRule, Presence, SecretEntry, SecretFinding, Verification
 from home_tools.layout import Layout
 from home_tools.report import ClosedBy, Tally
 
@@ -95,7 +94,7 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
-        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} vorhanden")
+        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} {Presence.PRESENT.value}")
 
 
 def _cleared(finding: SecretFinding) -> str:
@@ -151,7 +150,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
     yield from _fix_steps(fixable)
     yield from _missing_secret_steps(entries_found_by(FindingRule.MISSING))
     for entry in entries_found_by(FindingRule.VERIFICATION_FAILED):
-        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} geprüft: gültig")
+        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} {Verification.PASSED.value}")
     for entry in entries_found_by(FindingRule.REVOCATION_UNCONFIRMED):
         yield OperatorStep(entry.revoke_url, f"Browser, {entry.name} widerrufen", "das Token steht dort nicht mehr")
     for findings in without_fix.values():
@@ -161,7 +160,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
 
 def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     for finding in hook_check.collect_findings(layout, ports.run):
-        cleared = f"home check meldet {finding.rule} für {finding.subject} nicht mehr"
+        cleared = f"hal check meldet {finding.rule} für {finding.subject} nicht mehr"
         if finding.fix == hook_check.SETUP_APPLY:
             yield _setup_apply_step(ports, cleared)
         else:
@@ -172,7 +171,7 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
 SOURCES = (
     Source("die Geheimnisse", _secrets_steps, "home secrets"),
     Source("den Stand von hal setup", _setup_steps, "hal setup"),
-    Source("die Hook-Prüfung", _hook_steps, "home check"),
+    Source("die Hook-Prüfung", _hook_steps, "hal check"),
 )
 
 
@@ -228,7 +227,7 @@ def render(plan: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _next_from_args(_args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _next_from_args(_args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     sys.stdout.write(render(collect(layout, ports)))
     return 0
 
@@ -255,4 +254,4 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # It reads the secrets view, so an unexpected error is shown without its message, as `home secrets` does.
-    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True, reads_config_as_a_source=True)
+    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True)

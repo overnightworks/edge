@@ -12,8 +12,11 @@ from hal_output import (
     Group,
     Noun,
     Row,
+    Tone,
     Verdict,
+    counted,
     format_duration,
+    write_detail,
     write_error,
     write_groups,
     write_row,
@@ -280,6 +283,16 @@ def test_colour_is_decided_per_stream(
     assert err.getvalue() == "\x1b[1;31merror:\x1b[0m stopped\n"
 
 
+def test_a_fresh_line_error_starts_with_one_bare_newline_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A hidden prompt leaves the cursor mid-line, so the pair starts on a fresh one."""
+
+    write_error("interrupted", "run it", fresh_line=True)
+
+    assert capsys.readouterr().err == "\nerror: interrupted\nnext: run it\n"
+
+
 @pytest.mark.parametrize(
     ("variable", "value"), [("NO_COLOR", "1"), ("NO_COLOR", "anything"), ("TERM", "dumb")]
 )
@@ -334,6 +347,16 @@ def test_a_rows_count_carries_the_plural_of_a_noun_event(
     write_row(Row(Glyph.NEEDS_YOU, "backup", Finding.ACTION, "a fact", count))
 
     assert capsys.readouterr().out == f"  ! backup          {shown:<13}  a fact\n"
+
+
+@pytest.mark.parametrize(
+    ("count", "shown"),
+    [(1, "1 area checked"), (3, "3 areas checked")],
+)
+def test_counted_puts_the_count_before_the_noun_and_pluralises_its_first_word(
+    count: int, shown: str
+) -> None:
+    assert counted(count, Finding.AREA_CHECKED) == shown
 
 
 def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next_step(
@@ -459,3 +482,26 @@ def test_with_no_colour_a_heading_and_the_add_and_remove_glyphs_are_plain(
         "  + hopin           changed",
         "  - legal           changed",
     ]
+
+
+def test_a_plain_detail_line_is_indented_and_escaped(capsys: pytest.CaptureFixture[str]) -> None:
+    """Text from outside stays one line under a row."""
+
+    write_detail("why: a reason", "[ ] step\x1b[31m")
+
+    assert capsys.readouterr().out.splitlines() == ["    why: a reason", "    [ ] step\\x1b[31m"]
+
+
+@pytest.mark.parametrize(
+    ("tone", "style"), [(Tone.DIM, "2"), (Tone.WARNING, "33")], ids=["dim", "warning is yellow"]
+)
+def test_on_a_terminal_a_toned_detail_line_is_styled_as_a_whole_and_a_plain_one_is_not(
+    monkeypatch: pytest.MonkeyPatch, tone: Tone, style: str
+) -> None:
+    """The tone styles the indented line; plain carries no style."""
+
+    out, _err = put_on_terminals(monkeypatch)
+    write_detail("a line", tone=tone)
+    write_detail("a line")
+
+    assert out.getvalue() == f"\x1b[{style}m    a line\x1b[0m\n    a line\n"

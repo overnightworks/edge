@@ -18,7 +18,7 @@ from shlex import join as shell_join
 from shlex import quote
 from typing import TYPE_CHECKING
 
-from hal_output import Glyph, Row, Verdict, write_error, write_row, write_verdict
+from hal_output import Glyph, Noun, Row, Verdict, counted, write_error, write_row, write_verdict
 from home_tools import secrets_setup
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
 from home_tools.system_step import (
@@ -30,7 +30,6 @@ from home_tools.system_step import (
     SystemStep,
     UnresolvableRunningUser,
 )
-from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UnitsApplied, UserUnits
 
@@ -79,6 +78,7 @@ class SetupEvent(StrEnum):
     NOT_STARTED = "not started"
     NOT_RUN = "not run"
     NEEDS_SUDO = "needs sudo"
+    OPEN = "open"
 
 
 class Tally(StrEnum):
@@ -104,6 +104,7 @@ EVENT_LOOK: dict[SetupEvent, EventLook] = {
     SetupEvent.NOT_STARTED: EventLook(Glyph.FAILED, 5, None),
     SetupEvent.NOT_CHECKED: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
     SetupEvent.MISSING: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
+    SetupEvent.OPEN: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
     SetupEvent.CHANGED: EventLook(Glyph.DONE, 3, Tally.CHANGED),
     SetupEvent.STORED: EventLook(Glyph.DONE, 3, Tally.CHANGED),
     SetupEvent.WILL_CHANGE: EventLook(Glyph.CHANGE, 3, Tally.OPEN),
@@ -115,15 +116,28 @@ EVENT_LOOK: dict[SetupEvent, EventLook] = {
 }
 
 
+class SecretsStillOpen(StepFailed):
+    """The wizard walked every secret and some are still open; `names` are their row names, from disk."""
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        super().__init__(SECRETS_LEFT_OPEN)
+        self.names = names
+
+
+class StillOpenSecret(Noun):
+    SECRET = "secret still open"
+
+
 @dataclass(frozen=True)
 class Outcome:
     """What a step, or the worst of a row's steps, found or did; `fact` is the one sentence the row shows."""
 
     event: SetupEvent
     fact: str = ""
+    count: int | None = None
 
     def row(self, subject: SetupRow) -> Row:
-        return Row(EVENT_LOOK[self.event].glyph, subject, self.event, self.fact)
+        return Row(EVENT_LOOK[self.event].glyph, subject, self.event, self.fact, self.count)
 
 
 @dataclass(frozen=True)
@@ -271,12 +285,18 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         exit_code = secrets_setup.run_setup(layout, boundaries, ports.now)
         if exit_code == secrets_setup.ABORTED_EXIT:
             raise KeyboardInterrupt  # the wizard has said so; the caller's own handling gives the exit code
+        if exit_code == secrets_setup.STILL_OPEN_EXIT:
+            raise SecretsStillOpen(_open_names(open_secrets()))
         if exit_code != 0:
             raise StepFailed(SECRETS_LEFT_OPEN)
         return Applied.CHANGED
 
     def open_names() -> str:
-        return ", ".join(_open_name(entry, found) for entry, found in open_secrets())
+        return ", ".join(_open_names(open_secrets()))
+
+    def announce_missing() -> Outcome | None:
+        missing = open_secrets()
+        return Outcome(SetupEvent.MISSING, ", ".join(_open_names(missing)), count=len(missing)) if missing else None
 
     return Step(
         "Geheimnisse",
@@ -287,11 +307,15 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         SECRETS_WHY,
         SECRETS_LEFT_OPEN,
         open_fact=open_names,
-        before_apply=lambda: Outcome(SetupEvent.MISSING, open_names()) if open_secrets() else None,
+        before_apply=announce_missing,
         events=SECRETS_EVENTS,
         listed_by_next=False,
         operators_only=True,
     )
+
+
+def _open_names(open_entries: list[tuple[SecretEntry, Presence]]) -> tuple[str, ...]:
+    return tuple(_open_name(entry, found) for entry, found in open_entries)
 
 
 def _open_name(entry: SecretEntry, found: Presence) -> str:
@@ -510,17 +534,18 @@ def _failure_sentence(step: Step, error: OSError | StepFailed) -> str:
     return f"{step.failure}: {error.strerror or type(error).__name__}"
 
 
-def _stopped(row: SetupRow, step: Step, event: SetupEvent, apply: bool) -> None:
-    """The error pair after a failed row: what stopped, what /etc is left as, and the command that goes on."""
+def _stopped(row: SetupRow, step: Step, event: SetupEvent, apply: bool, error: OSError | StepFailed) -> None:
+    """The error pair after a failed row: what stopped, what /etc is left as or how many secrets are open, and the command that goes on."""
     leaves = (
         "/etc may be partial"
         if step.may_leave_system_partial and apply and event is SetupEvent.FAILED
         else "/etc unchanged"
     )
-    write_error(
-        f"setup stopped at {row}" + (f" · {leaves}" if row is SetupRow.SYSTEM else ""),
-        step.next_step,
-    )
+    if isinstance(error, SecretsStillOpen):
+        detail = f" · {counted(len(error.names), StillOpenSecret.SECRET)}"
+    else:
+        detail = f" · {leaves}" if row is SetupRow.SYSTEM else ""
+    write_error(f"setup stopped at {row}{detail}", step.next_step)
 
 
 class _RowStopped(Exception):
@@ -546,11 +571,17 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply:
 
 
 def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
-    event = SetupEvent.NOT_STARTED if isinstance(stopped.error, StepRefused) else SetupEvent.FAILED
-    write_row(Outcome(event, _failure_sentence(stopped.step, stopped.error)).row(rows[position]))
+    error = stopped.error
+    if isinstance(error, SecretsStillOpen):
+        event = SetupEvent.OPEN
+        outcome = Outcome(event, ", ".join(error.names), count=len(error.names))
+    else:
+        event = SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
+        outcome = Outcome(event, _failure_sentence(stopped.step, error))
+    write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
         write_row(Outcome(SetupEvent.NOT_RUN).row(later))
-    _stopped(rows[position], stopped.step, event, apply)
+    _stopped(rows[position], stopped.step, event, apply, error)
 
 
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
@@ -577,7 +608,7 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     return 0
 
 
-def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _setup_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     try:
         return setup(layout, ports, args.apply)
     except KeyboardInterrupt:
@@ -591,7 +622,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         help="set up quality, the engines and the global commit hook, then the user units, the system step and the secrets",
         description=(
             "Shows what is missing, or with --apply sets up quality, the engines and the hook."
-            " Then it links, reloads and enables the checkout's user units (the backup and home-check timers),"
+            " Then it links, reloads and enables the checkout's user units (the backup and hal-check timers),"
             " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
             " which asks once for sudo at a terminal; the activation comes before the system step."
             " The system step makes the journal Docker's default log driver and restarts Docker while its default"
