@@ -540,7 +540,6 @@ class ScriptedGit:
             "symbolic-ref": self.reference,
             "rev-parse": SCRIPTED_SHA,
             "status": self.status,
-            "remote": b"file:///srv/origin.git\n",
             "fetch": b"",
             "rev-list": b"0\t0\n",
         }[verb]
@@ -1732,7 +1731,7 @@ def point_at_a_password_url(real_main: Path, _origin: Path) -> None:
                      "`git fetch` exited 128: fatal: Could not read from remote repository.",
                      id="B5 the remote removed"),
         pytest.param(point_at_a_password_url,
-                     "`git remote` exited 128: fatal: URL 'https://<redacted>@127.0.0.1:1/x' "
+                     "`git fetch` exited 128: fatal: URL 'https://<redacted>@127.0.0.1:1/x' "
                      "uses plaintext credentials", id="B6 a password in the URL"),
     ],
 )  # fmt: skip

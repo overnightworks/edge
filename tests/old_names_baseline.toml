@@ -26,7 +26,6 @@
 "src/edge/checkout.py" = 2
 "src/edge/cli.py" = 2
 "src/edge/compose.py" = 1
-"src/edge/core.py" = 3
 "src/edge/emergency.py" = 4
 "src/edge/environment.py" = 3
 "src/edge/external/apply.py" = 8
@@ -50,7 +49,6 @@
 "tests/test_edge_apply_legal.py" = 3
 "tests/test_edge_apply_publish.py" = 14
 "tests/test_edge_barrier.py" = 3
-"tests/test_edge_core.py" = 1
 "tests/test_edge_environment.py" = 2
 "tests/test_edge_external.py" = 12
 "tests/test_edge_global_stop.py" = 5
