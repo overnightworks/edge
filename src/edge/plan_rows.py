@@ -60,17 +60,18 @@ def plan_groups(plan: Plan) -> tuple[Group, ...]:
 
 def _appkit_rows(plan: AppkitPlan) -> tuple[Row, ...]:
     old_names = ", ".join(sorted({path.name for path in plan.stale}))
-    if not plan.changed:
-        if not old_names:
-            return ()
-        return (Row(Glyph.REMOVE, APPKIT_UNIT, PlanEvent.OLD_FILES, old_names),)
-    facts = [plan.version]
-    labels = plan.changed_labels
-    if len(labels) < len(TARGETS):
-        facts.append(f"only {', '.join(labels)}")
-    if old_names:
-        facts.append(f"removes {old_names}")
-    return (Row(Glyph.ADD, APPKIT_UNIT, PlanEvent.NEW_FILES, _SEPARATOR.join(facts)),)
+    rows = []
+    if plan.changed:
+        facts = [plan.version]
+        labels = plan.changed_labels
+        if len(labels) < len(TARGETS):
+            facts.append(f"only {', '.join(labels)}")
+        if old_names:
+            facts.append(f"removes {old_names}")
+        rows.append(Row(Glyph.ADD, APPKIT_UNIT, PlanEvent.NEW_FILES, _SEPARATOR.join(facts)))
+    elif old_names:
+        rows.append(Row(Glyph.REMOVE, APPKIT_UNIT, PlanEvent.OLD_FILES, old_names))
+    return tuple(rows)
 
 
 _PAGE_ROWS = (
