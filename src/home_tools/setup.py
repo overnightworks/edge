@@ -181,49 +181,6 @@ class ExecutionRole(Enum):
 
 
 @dataclass(frozen=True)
-class StepEvents:
-    """The words a step reports in; the secrets step says what its wizard did, not what a file did."""
-
-    changed: SetupEvent = SetupEvent.CHANGED
-    unchanged: SetupEvent = SetupEvent.UNCHANGED
-    open: SetupEvent = SetupEvent.WILL_CHANGE
-
-
-SECRETS_EVENTS = StepEvents(
-    changed=SetupEvent.STORED, unchanged=SetupEvent.COMPLETE, open=SetupEvent.MISSING
-)
-
-
-def verdict_of(outcomes: Sequence[Outcome], apply: bool, elapsed_seconds: float) -> Verdict:
-    tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
-    counts = tuple((tallies[tally], tally) for tally in Tally)
-    if apply:
-        walk_stored = any(outcome.event is SetupEvent.STORED for outcome in outcomes)
-        return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds, next_step=APPLY_PLAN if walk_stored else "")
-    if tallies[Tally.OPEN]:
-        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}", elapsed_seconds)
-    return Verdict(Glyph.DONE, "setup up to date", counts, elapsed_seconds=elapsed_seconds)
-
-
-class ExecutionRole(Enum):
-    """Who runs `hal setup`: exactly the agents' account, or anyone else (root and a sudoers-only admin included)."""
-
-    AGENT = "agent"
-    OPERATOR = "operator"
-
-    @classmethod
-    def of(cls, running_user: str) -> ExecutionRole:
-        return cls.AGENT if running_user == AGENT_USER else cls.OPERATOR
-
-
-SETUP_EXAMPLES = """\
-Examples:
-  home setup           shows which steps would change something
-  home setup --apply   runs them in order; the activation and the user units come before the system step, which asks once for sudo
-"""
-
-
-@dataclass(frozen=True)
 class Step:
     """`check` is the dry run, `apply` the run.
 

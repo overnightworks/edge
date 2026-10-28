@@ -17,7 +17,7 @@ from test_secrets_view import findings_of
 from terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from home_tools import ports as home_ports
-from home_tools import secrets_setup, secrets_view
+from home_tools import secrets_view
 from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
 from home_tools.setup import RERUN
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest

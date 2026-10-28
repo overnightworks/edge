@@ -62,7 +62,7 @@ jobs:
           path: coverage.xml
 
       # The wheel must ship every package, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check, home and hal
+      - name: The wheel installs edge-check and hal
         run: |
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
@@ -75,8 +75,8 @@ jobs:
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl
           cd "$scratch/work"
           export HOME="$scratch/home" PATH="$scratch/bin:$PATH"
-          home --help
           hal --help
+          [ ! -e "$scratch/bin/home" ]
           hal secrets --help
           hal secrets --by-service | grep -F "declared dependencies"
           version=$(hal version)

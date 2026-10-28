@@ -106,7 +106,7 @@ not "applied or nothing to do". They deviate in exactly three ways:
 
 - **E4:** `hal setup` prints four rows and a verdict, and a stop as an `error:`/`next:` pair
   ([docs/home.md](home.md), `hal setup`); it ends with 0 when nothing failed and with 3 for a failed
-  step or a refused system step (`home setup` keeps 1). Ansible's own stream stays until
+  step or a refused system step. Ansible's own stream stays until
   its output step; the password is the system's own `sudo` prompt, never Ansible's.
 
 ## Dienste an und aus
