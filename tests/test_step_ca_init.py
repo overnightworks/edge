@@ -515,6 +515,29 @@ def test_a_docker_failure_while_reading_compose_is_one_line(init, docker, sessio
     assert session.printed[-1].endswith("`docker compose config` exited 1: no docker daemon")
 
 
+@pytest.mark.parametrize(
+    ("read_only", "exit_code", "last_line"),
+    [
+        (True, 2, "unexpected answer at secrets directory (RuntimeError)"),
+        (False, 1, "step-ca/init FAILED at secrets directory: unexpected answer (RuntimeError)"),
+    ],
+)
+def test_an_unexpected_exception_is_one_line_in_both_modes(
+    make_init, monkeypatch, session, read_only, exit_code, last_line
+):
+    """#628 cell 5: --check says the fact bare with its step, a plain run prints as before."""
+
+    def crash(*_arguments, **_options):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("pathlib.Path.is_dir", crash)
+    init = make_init(read_only=read_only)
+
+    assert (init.check() if read_only else init.run()) == exit_code
+
+    assert session.printed[-1] == last_line
+
+
 # --- ca.json: the one config owner (#38 rule 2) -----------------------------------------------
 
 
