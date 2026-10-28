@@ -5,6 +5,7 @@ import sys
 from enum import StrEnum
 
 import pytest
+from terminal_support import put_on_terminals
 
 from hal_output import (
     HEADING_THRESHOLD,
@@ -153,24 +154,6 @@ def test_an_error_pair_goes_to_stderr_with_both_lines_escaped(
         "",
         ["error: stopped\\nat system", "next: run\\x1b[0m it"],
     )
-
-
-class Terminal(io.StringIO):
-    """A stream a person watches."""
-
-    def isatty(self) -> bool:
-        return True
-
-
-def put_on_terminals(monkeypatch: pytest.MonkeyPatch) -> tuple[Terminal, Terminal]:
-    """Both streams on a terminal, neither NO_COLOR nor TERM=dumb set. Called in the test body:
-    pytest swaps `sys.stdout` again between fixture setup and the call."""
-    monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setenv("TERM", "xterm-256color")
-    out, err = Terminal(), Terminal()
-    monkeypatch.setattr(sys, "stdout", out)
-    monkeypatch.setattr(sys, "stderr", err)
-    return out, err
 
 
 def test_on_a_terminal_a_row_colours_only_its_glyph_and_dims_its_fact(
