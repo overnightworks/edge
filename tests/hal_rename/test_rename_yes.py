@@ -225,6 +225,25 @@ def test_findings_that_change_while_the_prompt_waits_change_the_plan(
     assert (home / "git" / "old").is_dir()
 
 
+def test_inputs_that_change_while_the_prompt_waits_change_the_plan_though_its_rows_do_not(
+    home, locked, repository, through_cli, fakes
+):
+    pyvenv = locked / ".venv" / "pyvenv.cfg"
+    pyvenv.write_text("version_info = 3.12.1\n")
+
+    def python_changes():
+        pyvenv.write_text("version_info = 3.13.0\n")
+
+    code, out, err = through_cli("old", "fresh", while_waiting=python_changes)
+
+    assert code == ExitCode.REFUSED
+    assert err == "error: cannot rename, the plan changed since it was shown · nothing changed"
+    assert after_the_prompt(out) == []
+    assert fakes.uv_calls == []
+    assert (home / "git" / "old").is_dir()
+    assert origin_of(repository) == SSH.format("old")
+
+
 def test_the_help_offers_dry_run_not_apply_and_does_not_name_sudo(capsys):
     with pytest.raises(SystemExit):
         cli.main(["rename", "--help"])
