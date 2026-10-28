@@ -22,15 +22,7 @@ from hal import cli as hal_cli
 from hal import config as hal_config
 from hal.grammar import ExitCode
 from terminal_support import type_at_prompt
-from home_tools import (
-    backup_check,
-    check,
-    logs_check,
-    platform_check,
-    secrets_view,
-    system_step,
-    tunnel_config,
-)
+from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools import ports as home_ports
 from home_tools.secrets_setup import Boundaries as SecretsBoundaries
 from home_tools.secrets_setup import Terminal as SecretsTerminal
@@ -50,7 +42,7 @@ FAKE_SECRET_VALUE = "FAKE-SECRET-VALUE ghp_0000notarealtoken glpat-0000notarealt
 # The one `docker inspect --format` the platform check may send: named fields, and the compose project label.
 # A fake docker answers any other format with a line that carries the canary, so a wider projection shows in the report.
 ALLOWED_PLATFORM_INSPECT_FORMAT = (
-    "{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}"
+    '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{.State.ExitCode}}'
     '\t{{index .Config.Labels "com.docker.compose.project"}}'
 )
 INSPECT_CANARY = "CANARY-ENV-VALUE-s3cr3t"
@@ -120,9 +112,7 @@ def fake_disk() -> FakeDisk:
 
 
 @pytest.fixture(autouse=True)
-def stand_in_tunnel_config(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def stand_in_tunnel_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The tunnel config at /etc names this machine's tunnel; the tests read a stand-in naming a test tunnel."""
     config = tmp_path_factory.mktemp("etc-cloudflared") / "config.yml"
     config.write_text(f"tunnel: {TEST_TUNNEL_ID}\n")
@@ -147,9 +137,7 @@ def plant_secrets(home: Path) -> None:
     """Every place the active manifest names for a live entry gets a fake secret, with the modes a tidy ~/.secrets keeps."""
     for entry in load_manifest(secrets_view.MANIFEST_PATH):
         for pattern in () if entry.retired else entry.paths:
-            path = home / str(pattern).replace("*", "fake").replace(
-                TUNNEL_ID_PLACEHOLDER, TEST_TUNNEL_ID
-            )
+            path = home / str(pattern).replace("*", "fake").replace(TUNNEL_ID_PLACEHOLDER, TEST_TUNNEL_ID)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(FAKE_SECRET_VALUE)
             path.chmod(0o600)
@@ -223,19 +211,10 @@ class MailStub:
     @property
     def sent(self) -> list[SentMail]:
         calls = sorted(self.directory.glob("call.*"))
-        return [
-            SentMail(
-                (call / "argv").read_text().splitlines(),
-                (call / "stdin").read_text(),
-                (call / "password").read_text(),
-            )
-            for call in calls
-        ]
+        return [SentMail((call / "argv").read_text().splitlines(), (call / "stdin").read_text(), (call / "password").read_text()) for call in calls]
 
 
-def set_up_mail(
-    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int = 587
-) -> MailStub:
+def set_up_mail(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, port: int = 587) -> MailStub:
     """An account and password under home, a stub msmtp first on PATH, and a manifest that knows both files."""
     directory = tmp_path / "mail-stub"
     directory.mkdir(exist_ok=True)
@@ -247,17 +226,13 @@ def set_up_mail(
     monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
     smtp = Layout(home).secrets_dir / "smtp"
     smtp.mkdir(parents=True, exist_ok=True)
-    (smtp / "account.toml").write_text(
-        f'host = "smtp.example.test"\nport = {port}\nuser = "home@example.test"\nto = "me@example.test"\n'
-    )
+    (smtp / "account.toml").write_text(f'host = "smtp.example.test"\nport = {port}\nuser = "home@example.test"\nto = "me@example.test"\n')
     (smtp / "password").write_text(PASSWORD_CANARY)
     for file in smtp.iterdir():
         file.chmod(0o600)
     smtp.chmod(0o700)
     manifest = secrets_view.MANIFEST_PATH
-    assert tmp_path in manifest.parents, (
-        "set_up_mail edits the manifest; point it at a temporary copy first (use_manifest)"
-    )
+    assert tmp_path in manifest.parents, "set_up_mail edits the manifest; point it at a temporary copy first (use_manifest)"
     manifest.write_text(manifest.read_text() + SMTP_ENTRIES)
     return MailStub(directory)
 
@@ -266,11 +241,7 @@ def unit_listing_matching(listing: str | None, pattern: str) -> str | None:
     """What `systemctl list-units PATTERN` prints of a listing: only the lines whose unit name matches the pattern."""
     if listing is None:
         return None
-    return "".join(
-        line
-        for line in listing.splitlines(keepends=True)
-        if fnmatch.fnmatchcase(line.split(maxsplit=1)[0], pattern)
-    )
+    return "".join(line for line in listing.splitlines(keepends=True) if fnmatch.fnmatchcase(line.split(maxsplit=1)[0], pattern))
 
 
 class RecordingRunner:
@@ -280,9 +251,7 @@ class RecordingRunner:
         self.calls: list[list[str]] = []
         self.notify_delivers = True
         self.session_active = True
-        self.failed_units: str | None = (
-            ""  # what `systemctl --user list-units --state=failed` prints
-        )
+        self.failed_units: str | None = ""  # what `systemctl --user list-units --state=failed` prints
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         self.calls.append(list(argv))
@@ -372,9 +341,7 @@ exit 0
 """
 
 # The `git` value real uv 0.10.9 wrote to uv-receipt.toml after installing QUALITY_SOURCE's pinned SHA; only the revision follows the pin.
-RECORDED_RECEIPT_GIT = (
-    f"https://github.com/overnightworks/quality?rev={QUALITY_SOURCE.rpartition('@')[2]}"
-)
+RECORDED_RECEIPT_GIT = f"https://github.com/overnightworks/quality?rev={QUALITY_SOURCE.rpartition('@')[2]}"
 
 # Writes what `uv tool install` leaves behind for the requirement it is given: the tool's executable and uv's receipt for it.
 # Ansible's executable is a dummy, since the sandbox hands the system step a FakePlaybook instead of running it.
@@ -464,9 +431,7 @@ class Sandbox:
         """The wizard's boundaries over the one sandbox terminal; asking a person, opening a page, the network and the disk sync fail the test."""
 
         def never(*_arguments: object) -> NoReturn:
-            pytest.fail(
-                "the sandbox terminal answers no question, opens no page and reaches no network"
-            )
+            pytest.fail("the sandbox terminal answers no question, opens no page and reaches no network")
 
         terminal = SecretsTerminal(lambda: self.system.terminal, never, never, never)
         return SecretsBoundaries(terminal, never, never)
@@ -481,9 +446,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     _write_executable(stub_bin / "uv", STUB_UV)
     _write_executable(tmp_path / "stub-quality", STUB_QUALITY)
     global_git_config = tmp_path / "global-gitconfig"
-    global_git_config.write_text(
-        "[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n"
-    )
+    global_git_config.write_text("[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n")
     uv_calls = tmp_path / "uv-calls"
     unit_directory = tmp_path / "checkout-units"
     unit_directory.mkdir()
@@ -523,18 +486,10 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
             return f'[{{"index":0,"first_entry":{int(time.time() * 1_000_000)}}}]'
         if argv[:2] == ["docker", "inspect"] and argv[3] != logs_check.INSPECT_FORMAT:
             self.calls.append(list(argv))
-            return (
-                self.platform_listing
-                if argv[3] == ALLOWED_PLATFORM_INSPECT_FORMAT
-                else CANARY_INSPECT_LINE
-            )
+            return self.platform_listing if argv[3] == ALLOWED_PLATFORM_INSPECT_FORMAT else CANARY_INSPECT_LINE
         if argv[0] == "docker" and (argv[1] in {"ps", "inspect"} or "{{.LoggingDriver}}" in argv):
             self.calls.append(list(argv))
-            return {
-                "ps": "id0\n" if self.container_listing or self.platform_listing else "",
-                "info": "journald\n",
-                "inspect": self.container_listing or "/quiet-1\tjournald\t\n",
-            }[argv[1]]
+            return {"ps": "id0\n" if self.container_listing or self.platform_listing else "", "info": "journald\n", "inspect": self.container_listing or "/quiet-1\tjournald\t\n"}[argv[1]]
         if argv[0] == "sh":
             self.calls.append(list(argv))
             return run_command(argv)
@@ -543,13 +498,7 @@ class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
 
 def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | None = None) -> None:
     last_backup = last_backup or datetime.now().astimezone()
-    document = {
-        "schema": 2,
-        "state": state,
-        "last_attempt": last_backup.isoformat(),
-        "failing_app": None,
-        "exit_category": None,
-    }
+    document = {"schema": 2, "state": state, "last_attempt": last_backup.isoformat(), "failing_app": None, "exit_category": None}
     document["apps"] = {"songmaker": {"last_successful_backup": last_backup.isoformat()}}
     status_file = home / backup_check.STATUS_FILE
     status_file.parent.mkdir(parents=True, exist_ok=True)
@@ -557,16 +506,11 @@ def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | N
 
 
 @pytest.fixture
-def quiet_pc(
-    sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
-    assert (
-        run_hal_setup(home=clean_home, secrets_setup_boundaries=sandbox.secrets_boundaries)
-        == ExitCode.OK
-    )
+    assert run_hal_setup(home=clean_home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
 
 
 def write_hal_config(home: Path, text: str) -> Path:
@@ -602,9 +546,7 @@ def home_check(
     """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine; the exposure scan runs shimmed `docker` and `ss`."""
 
     def build_ports():
-        return home_ports.build_layout_and_ports(
-            home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk()
-        )
+        return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
     shims = home.parent / "host-shims"
     write_host_shims(shims, listeners, docker_script)
@@ -614,9 +556,7 @@ def home_check(
         return hal_cli.main(["check", *arguments])
 
 
-def run_hal_secrets(
-    home: Path, probe: FakeProbe, *options: str, now: datetime | None = None, runner=None
-) -> int:
+def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime | None = None, runner=None) -> int:
     """`hal secrets` through `hal.cli.main`, over the given home and probe instead of this machine."""
 
     def build_ports():
@@ -627,9 +567,7 @@ def run_hal_secrets(
         return hal_cli.main(["secrets", *options])
 
 
-def run_hal_setup(
-    *flags: str, answer: str | type[BaseException] | None = "yes", **port_overrides
-) -> int:
+def run_hal_setup(*flags: str, answer: str | type[BaseException] | None = "yes", **port_overrides) -> int:
     """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's.
 
     `answer` is what the person types at the yes prompt: a line, `None` for EOF, or an exception class raised as Ctrl-C is.
@@ -655,9 +593,7 @@ def split_at_the_prompt(output: str) -> tuple[list[str], list[str]]:
     return output[: prompt.start()].splitlines(), output[prompt.end() :].splitlines()
 
 
-def run_captured_hal_setup(
-    capsys: pytest.CaptureFixture[str], *flags: str, **port_overrides
-) -> tuple[int, list[str], str]:
+def run_captured_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str, **port_overrides) -> tuple[int, list[str], str]:
     """`run_hal_setup`, with what it printed: the exit code, the stdout lines of the run (all of them when no yes was asked) and the stderr text."""
     code = run_hal_setup(*flags, **port_overrides)
     captured = capsys.readouterr()
@@ -684,9 +620,7 @@ REPORT_DISPLAY = "~/.local/state/hal/check-report.md"
 
 def restarting_containers(runner, *names: str) -> None:
     """A finding at Handlungsbedarf: each container restarts all the time (#415 Z3)."""
-    runner.platform_listing = "".join(
-        f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",)
-    )
+    runner.platform_listing = "".join(f"/{name}-1\trestarting\t\t0\t{name}\n" for name in names or ("edge-a",))
 
 
 def no_container_restarts(runner) -> None:
