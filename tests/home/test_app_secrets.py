@@ -280,7 +280,7 @@ def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sa
 
     rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
-    assert all("Token, ungeprüft" in row and "nicht geprüft" in row for row in rows)
+    assert all("token, unverified" in row and "not checked" in row for row in rows)
 
 
 def test_home_next_says_the_missing_turn_values_are_stored_not_verified(
