@@ -1,6 +1,7 @@
 """`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
+import dataclasses
 import errno
 import fcntl
 import hashlib
@@ -624,14 +625,13 @@ def switch(
             setup_check,
             run_setup or setup_run,
             from_home or home,
-            ingress.verifier,
+            dataclasses.replace(ingress.verifier, clock=clock) if clock else ingress.verifier,
             ingress.watch,
             git or scripted_git,
             ensure_environment,
             None if installed_backup else realm_backup,
             app_runtime,
             rename,
-            **({"clock": clock} if clock else {}),
         )
         return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
 

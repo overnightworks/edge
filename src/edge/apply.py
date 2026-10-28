@@ -55,7 +55,6 @@ commits. Nothing in the checkout changes: only `.git` gains the fetched objects,
 
 import fcntl
 import os
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
@@ -209,9 +208,8 @@ def apply_closed(
     realm_backup: reconcile.Backup | None = None,
     app_runtime: AppRuntime | None = None,
     rename: Rename = os.rename,
-    clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    started = clock()
+    started = verifier.clock()
     if not terminal.at_terminal():
         write_error(terminal.NEEDS_TERMINAL)
         return ApplyExit.REFUSED
@@ -244,7 +242,7 @@ def apply_closed(
             realm_backup or reconcile.Backup.installed(repository, _tell),
             app_runtime or AppRuntime.of(home or Path.home(), state_directory),
             rename,
-            lambda: clock() - started,
+            lambda: verifier.clock() - started,
         )
     finally:
         os.close(lock)
