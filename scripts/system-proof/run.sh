@@ -92,10 +92,12 @@ stage "$fresh" after-unmarked-reboot
 prepared=$(start_container prepared)
 stage "$prepared" install
 stage "$prepared" prepared
+stage "$prepared" sudo-classic
+stage "$prepared" sudo-rs
 
-judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7 and T1-T5, T5b printed a held line and none printed a failed one
+judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b and P1-P10 under both sudos (suffix c and r) printed a held line and none printed a failed one
     local cells=$1 cell missing=()
-    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b; do
+    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b P{1..10}{c,r}; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
