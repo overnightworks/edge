@@ -1,7 +1,0 @@
-claim_id = "2732a7ff938b43dd8d41f8ef80b004bf"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "f7975f40251e32f13ce2254eb81f66529282eaca"
-branch = "claude/issue-640-architecture-names-hal"
-scope = ["docs/architecture.md", "tests/old_names_baseline.toml"]
-opened_commit = "c142f799705f6c3b4b9c3a043e86f5decf13cfcc"
