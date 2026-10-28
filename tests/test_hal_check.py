@@ -247,9 +247,12 @@ def test_every_problem_the_scan_reports_has_an_exposure_rule_with_a_level():
 
 def finding_of(problem: Problem) -> Finding:
     """A finding as the scan builds it: a socket problem names a protocol, a routing one a name."""
-    if problem in {Problem.PUBLICATION_BEYOND_LOOPBACK, Problem.PUBLICATION_WITHOUT_HOST_IP}:
-        return Finding(problem, "subject", Protocol.TCP)
-    if problem is Problem.LISTENER_BEYOND_LOOPBACK:
+    socket_problems = {
+        Problem.PUBLICATION_BEYOND_LOOPBACK,
+        Problem.PUBLICATION_WITHOUT_HOST_IP,
+        Problem.LISTENER_BEYOND_LOOPBACK,
+    }
+    if problem in socket_problems:
         return Finding(problem, "subject", Protocol.TCP)
     return Finding(problem, "subject", edge_name="name")
 

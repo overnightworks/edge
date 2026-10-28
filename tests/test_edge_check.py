@@ -54,6 +54,11 @@ udp UNCONN 0 0 *:33697       *:* uid:62260 cgroup:/system.slice/cloudflared.serv
 SS_SSHD = """\
 tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
 """
+SS_ONE_PROCESS_ON_THREE_PROTOCOLS = """\
+sctp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=3)) <->
+tcp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=4)) <->
+udp UNCONN 0 0 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=5)) <->
+"""
 SS_DHCP6_LINK_LOCAL = """\
 udp UNCONN 0 0 [fe80::d8e8:44d:1d8e:31f0]%wlp7s0:546      [::]:* ino:18742 sk:f <->
 """
@@ -204,6 +209,14 @@ HOSTS = {
     "tcp listener on 0.0.0.0 names its process": Host(
         ss=SS_LOOPBACK_ONLY + SS_SSHD,
         findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+    ),
+    "one process on all three protocols comes once": Host(
+        ss=SS_ONE_PROCESS_ON_THREE_PROTOCOLS,
+        findings=[
+            finding("listener-beyond-loopback", "diameterd", "sctp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "tcp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "udp", "0.0.0.0", 3868),
+        ],
     ),
     "udp listener on * names its systemd unit": Host(
         ss=SS_CLOUDFLARED,
@@ -360,6 +373,9 @@ ROWS = {
     "tcp listener on 0.0.0.0 names its process": [
         ("sshd", "listens", "1 TCP port beyond loopback")
     ],
+    "one process on all three protocols comes once": [
+        ("diameterd", "listens", "1 TCP port, 1 UDP port, 1 SCTP port beyond loopback")
+    ],
     "udp listener on * names its systemd unit": [
         ("cloudflared.service", "listens", "1 UDP port beyond loopback")
     ],
@@ -436,14 +452,26 @@ def test_every_host_with_findings_has_its_expected_rows():
     assert {name for name, state in HOSTS.items() if state.findings} == set(ROWS)
 
 
-def test_the_rows_hold_every_socket_finding_json_lists(run_edge_check):
-    """Conservation: the ports on the rows add up to the sockets `--json` lists."""
-    state = HOSTS["repeated sockets and mixed findings come once, in a stable order"]
-    _, out, _ = run_edge_check(state)
-    _, json_out, _ = run_edge_check(state, "--json")
+MIXED = "repeated sockets and mixed findings come once, in a stable order"
 
-    ports = sum(int(fact.split()[0]) for _, _, fact in printed_rows(out)[0])
+
+@pytest.mark.parametrize("name", [MIXED, "one process on all three protocols comes once"])
+def test_the_rows_hold_every_socket_finding_json_lists(run_edge_check, name):
+    """Conservation: the ports on the rows add up to the sockets `--json` lists."""
+    _, out, _ = run_edge_check(HOSTS[name])
+    _, json_out, _ = run_edge_check(HOSTS[name], "--json")
+
+    ports = sum(
+        int(count)
+        for _, _, fact in printed_rows(out)[0]
+        for count in re.findall(r"(\d+) \w+ port", fact)
+    )
     assert ports == len([item for item in json.loads(json_out)["exposure"] if item["protocol"]])
+
+
+def test_the_verdict_counts_findings_and_ports(run_edge_check):
+    _, out, _ = run_edge_check(HOSTS[MIXED])
+
     assert printed_rows(out)[1] == "! 4 findings · 5 ports · --json lists each"
 
 

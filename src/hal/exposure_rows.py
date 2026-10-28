@@ -61,7 +61,11 @@ def rows_of(findings: Sequence[Finding]) -> tuple[Row, ...]:
     rows = []
     for (problem, subject, routing_name), sockets in _groups(findings).items():
         event, template = _EVENT_AND_FACT[problem]
-        ports = ", ".join(counted(sockets[protocol], PORT_LABELS[protocol]) for protocol in sockets)
+        ports = ", ".join(
+            counted(sockets[protocol], label)
+            for protocol, label in PORT_LABELS.items()
+            if sockets[protocol]
+        )
         rows.append(
             Row(Glyph.NEEDS_YOU, subject, event, template.format(ports=ports, name=routing_name))
         )
