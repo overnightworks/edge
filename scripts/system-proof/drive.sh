@@ -887,7 +887,7 @@ cell_a1_3_cron_files() {  # the states of the files; the proof image has no cron
     return
 }
 
-install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that user's own home
+install_wheel_for() {  # install_wheel_for <user>: the packaged `hal`, in that user's own home
     local user=$1
     run_as "$user" "install-$user" uv tool install /proof/*.whl
     return
