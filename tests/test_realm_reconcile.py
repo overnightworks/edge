@@ -267,12 +267,12 @@ def test_a_catalog_without_keycloak_plans_nothing(world: World) -> None:
 
 def test_a_keycloak_that_cannot_be_read_is_planned_as_a_partial_step(world: World) -> None:
     world.failing.add("checksums")
-
     plan = world.plan()
+    failure = world.run(plan).failure
 
     assert (plan.action, plan.settled) == (RealmAction.UNREADABLE, False)
     assert plan.error == "checksums broke"
-    assert "not checked (checksums broke)" in str(world.run(plan).failure)
+    assert failure == "realm: Keycloak could not be read; not checked (checksums broke)"
     assert "backup" not in world.events
 
 
