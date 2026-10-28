@@ -7,7 +7,7 @@ import argparse
 from hal.grammar import Asks, Command, ExitCode
 from hal_output.command import Verb, command
 from home_tools import secrets_view
-from home_tools.cli import build_layout_and_ports
+from home_tools.ports import build_layout_and_ports
 
 HELP = f"""\
 {command(Verb.SECRETS)}             every secret of the manifest: file, check, expiry

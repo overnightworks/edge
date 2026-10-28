@@ -6,7 +6,6 @@ The user units come before the system step, which is the one that asks for sudo.
 
 from __future__ import annotations
 
-import argparse
 import os
 import tomllib
 from collections import Counter
@@ -36,7 +35,7 @@ from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UnitsApplied, UserUnits
 
 if TYPE_CHECKING:
-    from home_tools.cli import Ports
+    from home_tools.ports import Ports
 
 # Quality v0.5.1. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
 QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@d3a0466fc6dc87898431b722e9488921d729be42"
@@ -143,6 +142,42 @@ class Outcome:
 
     def row(self, subject: SetupRow) -> Row:
         return Row(EVENT_LOOK[self.event].glyph, subject, self.event, self.fact, self.count)
+
+
+@dataclass(frozen=True)
+class StepEvents:
+    """The words a step reports in; the secrets step says what its wizard did, not what a file did."""
+
+    changed: SetupEvent = SetupEvent.CHANGED
+    unchanged: SetupEvent = SetupEvent.UNCHANGED
+    open: SetupEvent = SetupEvent.WILL_CHANGE
+
+
+SECRETS_EVENTS = StepEvents(
+    changed=SetupEvent.STORED, unchanged=SetupEvent.COMPLETE, open=SetupEvent.MISSING
+)
+
+
+def verdict_of(outcomes: Sequence[Outcome], apply: bool, elapsed_seconds: float) -> Verdict:
+    tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
+    counts = tuple((tallies[tally], tally) for tally in Tally)
+    if apply:
+        walk_stored = any(outcome.event is SetupEvent.STORED for outcome in outcomes)
+        return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds, next_step=APPLY_PLAN if walk_stored else "")
+    if tallies[Tally.OPEN]:
+        return Verdict(Glyph.CHANGE, "setup plan", counts, f"run {RERUN}", elapsed_seconds)
+    return Verdict(Glyph.DONE, "setup up to date", counts, elapsed_seconds=elapsed_seconds)
+
+
+class ExecutionRole(Enum):
+    """Who runs `hal setup`: exactly the agents' account, or anyone else (root and a sudoers-only admin included)."""
+
+    AGENT = "agent"
+    OPERATOR = "operator"
+
+    @classmethod
+    def of(cls, running_user: str) -> ExecutionRole:
+        return cls.AGENT if running_user == AGENT_USER else cls.OPERATOR
 
 
 @dataclass(frozen=True)
@@ -577,31 +612,3 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     verdict = verdict_of(outcomes, apply, ports.clock() - started)
     write_verdict(verdict)
     return 0
-
-
-def _setup_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
-    try:
-        return setup(layout, ports, args.apply)
-    except KeyboardInterrupt:
-        # A Ctrl-C in any step ends with 130; only the wizard prints its abort line.
-        return WalkEnd.ABORTED.exit_code
-
-
-def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
-    parser = add_parser(
-        "setup",
-        help="set up quality, the engines and the global commit hook, then the user units, the system step and the secrets",
-        description=(
-            "Shows what is missing, or with --apply sets up quality, the engines and the hook."
-            " Then it links, reloads and enables the checkout's user units (the backup and hal-check timers),"
-            " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
-            " which asks once for sudo at a terminal; the activation comes before the system step."
-            " The system step makes the journal Docker's default log driver and restarts Docker while its default"
-            " driver is not journald: every container stops meanwhile, and one without a restart policy stays down."
-            " Last it walks you through every missing secret at the terminal, never showing a value."
-        ),
-        epilog=SETUP_EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--apply", action="store_true", help="run the steps instead of only showing them")
-    parser.set_defaults(handler=_setup_from_args)

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.usefixtures("quiet_pc")
 
 @pytest.fixture
 def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
-    """The conftest's clean home, inside the sandbox's HOME so that `home setup` can install the hook there."""
+    """The conftest's clean home, inside the sandbox's HOME so that `hal setup` can install the hook there."""
     return furnish_clean_home(sandbox.home)
 
 

@@ -16,7 +16,7 @@ from secrets_support import run_wizard
 from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
 
 from home_tools import secrets_view
-from home_tools.secrets_setup import Boundaries, Terminal
+from home_tools.secrets_setup import Boundaries, Terminal, WalkEnd
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 from home_tools.layout import Layout
 
@@ -788,13 +788,13 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
 
     view_code = run_hal_secrets(home, probe, now=NOW)
     view = capsys.readouterr().out
-    setup_code = run_wizard(home, operator_absent)
+    setup_end = run_wizard(home, operator_absent)
     setup = capsys.readouterr().out.splitlines()
 
     assert view_code == 1
     assert findings_of(view, "missing") == {"restic/password": ["-", "fetch it back, see the table"]}
     assert rows_of(view)["restic/password"][-1] == RESTIC_RECREATE
-    assert setup_code == 1
+    assert setup_end is WalkEnd.STILL_OPEN
     assert f"! restic/password by hand no wizard yet: {RESTIC_RECREATE}" in [" ".join(line.split()) for line in setup]
     assert not password.exists()
 

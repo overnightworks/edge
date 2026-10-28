@@ -15,10 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from hal import check_commands, secrets_commands
+from hal import check_commands, secrets_commands, setup_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
-from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from hal.grammar import ExitCode
+from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from home_tools import ports as home_ports
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.layout import Layout, run_command
@@ -447,14 +449,14 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
     # A real ~/git/edge in the sandbox home would be a repository the hook check reports on.
-    monkeypatch.setattr(cli, "edge_units_directory", lambda _layout: unit_directory)
+    monkeypatch.setattr(home_ports, "edge_units_directory", lambda _layout: unit_directory)
     # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup` looks at none unless a test names some.
     empty_manifest = tmp_path / "empty-secrets-manifest.toml"
     empty_manifest.write_text("secret = []\n")
     monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
-    monkeypatch.setattr(cli, "MONOTONIC_CLOCK", FakeClock())
+    monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
     return Sandbox(home, global_git_config, uv_calls, system)
 
 
@@ -493,7 +495,7 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
-    assert cli.main(["setup", "--apply"], home=clean_home) == 0
+    assert run_hal_setup("--apply", home=clean_home) == ExitCode.OK
 
 
 def write_hal_config(home: Path, text: str) -> Path:
@@ -528,13 +530,13 @@ def home_check(
 ) -> int:
     """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine; the exposure scan runs shimmed `docker` and `ss`."""
 
-    def ports():
-        return cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
+    def build_ports():
+        return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
     shims = home.parent / "host-shims"
     write_host_shims(shims, listeners, docker_script)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(check_commands, "build_layout_and_ports", ports)
+        patch.setattr(check_commands, "build_layout_and_ports", build_ports)
         patch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
         return hal_cli.main(["check", *arguments])
 
@@ -542,12 +544,30 @@ def home_check(
 def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime | None = None, runner=None) -> int:
     """`hal secrets` through `hal.cli.main`, over the given home and probe instead of this machine."""
 
-    def ports():
-        return cli.build_layout_and_ports(home=home, run=runner, probe=probe, now=now)
+    def build_ports():
+        return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe, now=now)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(secrets_commands, "build_layout_and_ports", ports)
+        patch.setattr(secrets_commands, "build_layout_and_ports", build_ports)
         return hal_cli.main(["secrets", *options])
+
+
+def run_hal_setup(*flags: str, **port_overrides) -> int:
+    """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's."""
+
+    def build_ports():
+        return home_ports.build_layout_and_ports(**port_overrides)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(setup_commands, "build_layout_and_ports", build_ports)
+        return hal_cli.main(["setup", *flags])
+
+
+def run_captured_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str, **port_overrides) -> tuple[int, list[str], str]:
+    """`run_hal_setup`, with what it printed: the exit code, the stdout lines and the stderr text."""
+    code = run_hal_setup(*flags, **port_overrides)
+    captured = capsys.readouterr()
+    return code, captured.out.splitlines(), captured.err
 
 
 UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("

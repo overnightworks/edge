@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from conftest import Sandbox
+from conftest import Sandbox, run_hal_setup
 
-from home_tools import cli
-from home_tools.cli import edge_units_directory, main
+from hal.grammar import ExitCode
+from home_tools import ports
+from home_tools.ports import edge_units_directory
 from home_tools.system_step import Applied, CheckState, StepFailed
 from home_tools.layout import Layout, run_command
 from home_tools.user_units import UserUnits
@@ -151,7 +152,7 @@ def test_a_second_apply_changes_nothing(machine: Machine) -> None:
 @pytest.fixture
 def sandboxed_machine(sandbox: Sandbox) -> Machine:
     """The sandbox's home and checkout units, with the fake systemd in place of the real one."""
-    return Machine(sandbox.home, cli.edge_units_directory(sandbox.layout))
+    return Machine(sandbox.home, ports.edge_units_directory(sandbox.layout))
 
 
 def setup_apply_lines(
@@ -162,7 +163,7 @@ def setup_apply_lines(
     def run(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
 
-    assert main(["setup", "--apply"], home=sandbox.home, run=run) == 0
+    assert run_hal_setup("--apply", home=sandbox.home, run=run) == ExitCode.OK
 
     return capsys.readouterr().out.splitlines()
 
@@ -407,7 +408,7 @@ def test_a_same_name_entry_the_checkout_does_not_own_is_never_replaced(
     assert machine.systemctl.changes == []
 
 
-def test_a_missing_checkout_unit_directory_is_an_error_never_verified(machine: Machine) -> None:
+def test_a_missing_checkout_unit_directory_fails_the_check_and_the_apply(machine: Machine) -> None:
     shutil.rmtree(machine.checkout_units)
 
     for action in (machine.step.apply, machine.step.check):
