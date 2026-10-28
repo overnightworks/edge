@@ -1,8 +1,0 @@
-claim_id = "a4dd7dd5f25442f68892ed592c0dc667"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "f33e18d726c901356e3c465d20b8ed37389687f4"
-branch = "claude/issue-649-packages-under-hal"
-scope = [".aco/board.toml", ".github/dependabot.yml", ".github/workflows/ci.yml", "README.md", "compose.yaml", "docs/architecture.md", "docs/backup.md", "docs/external.md", "docs/home.md", "docs/keycloak.md", "docs/naming.md", "docs/stack.md", "external/hosts.tf", "keycloak/go-live", "probe", "pyproject.toml", "quality/baseline.toml", "scripts/system-proof/drive.sh", "src", "tests"]
-opened_commit = "7c945db9c48f50a01c86f2283e2ce8587cfcad35"
-whole_reason = "One generated commit moves the five packages under hal: git mv, import and module-path rewrites across src, tests, probe, scripts, docs and CI, the depth pins, three import contracts of equal strength, regenerated baselines; test file names stay for H5f3."
