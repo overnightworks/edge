@@ -7,10 +7,10 @@ from test_edge_apply import (
     DISABLED,
     ENABLED,
     IMAGE,
+    OLD_IMAGE,
     RECREATE_FOLLOWER,
     RECREATE_TRAEFIK,
     STEP_CA_BUMP,
-    STEP_CA_KEPT,
     STEP_CA_ON,
     STEP_CA_SERVICES,
     applied_core,  # noqa: F401 the fixture, requested by name below
@@ -34,6 +34,8 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
+
+from edge.plan_rows import PlanEvent
 
 RECREATE_STEP_CA = [*RECREATE_TRAEFIK[:-1], "step-ca"]
 RECREATE_KEYCLOAK_DB = [*RECREATE_TRAEFIK[:-1], "keycloak-db"]
@@ -150,7 +152,7 @@ def test_keycloak_is_recreated_alone_with_its_database_and_volume_kept_and_its_r
 
     assert exit_code == 0
     assert KEYCLOAK_RECREATE_LINE in out
-    assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
+    assert PlanEvent.REALM_LATER in out
     assert up_calls(scripted) == [RECREATE_KEYCLOAK]
     assert scripted.container_ids["keycloak"] != ids["keycloak"]
     assert {s: scripted.container_ids[s] for s in ids if s != "keycloak"} == {
@@ -173,7 +175,7 @@ def test_a_recreate_of_only_the_keycloak_database_holds_the_realm_check_and_says
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "realm: not checked, its database restarts now; the next `hal apply` checks it" in out
+    assert PlanEvent.REALM_LATER in out
     assert "Keycloak starts now" not in out
 
 
@@ -207,7 +209,7 @@ def test_an_image_change_is_named_and_a_definition_change_beside_it_recreates_no
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert STEP_CA_KEPT in out
+    assert OLD_IMAGE in out
     assert "step-ca: recreate" not in out
     assert up_calls(scripted) == [RECREATE_FOLLOWER]
 
@@ -413,5 +415,5 @@ def test_a_local_tag_that_names_another_image_than_the_container_runs_is_named_n
 
     assert exit_code == 0
     assert (STEP_CA_RECREATE_LINE in out) == recreated
-    assert ("never swaps the image" in out) == rebuilt
+    assert (OLD_IMAGE in out) == rebuilt
     assert up_calls(scripted) == ([RECREATE_STEP_CA] if recreated else [])

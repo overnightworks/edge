@@ -48,11 +48,9 @@ class Plan:
             *self.built,
             *self.recreates,
             *self.plans,
-            *self.images,
         )
         return [
             *self.appkit.describe(),
             *self.legal.describe(),
             *(plan.describe() for plan in plans),
-            *self.realm.lines,
         ]

@@ -18,7 +18,7 @@
 "probe/keycloak/README.md" = 1
 "probe/keycloak/probe.py" = 2
 "probe/step-ca/probe.py" = 4
-"probe/switches/probe.py" = 12
+"probe/switches/probe.py" = 10
 "src/edge/apply.py" = 9
 "src/edge/apps.py" = 3
 "src/edge/barrier.py" = 3
@@ -37,7 +37,6 @@
 "src/edge/setup.py" = 2
 "src/edge/switches.py" = 2
 "src/edge/terminal.py" = 2
-"src/edge/unit_plans.py" = 1
 "src/edge/waiting.py" = 3
 "src/hal/version.py" = 1
 "src/home_tools/secrets_manifest.toml" = 26
@@ -45,7 +44,7 @@
 "tests/home/test_next.py" = 1
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 1
-"tests/test_edge_apply.py" = 48
+"tests/test_edge_apply.py" = 46
 "tests/test_edge_apply_apps.py" = 8
 "tests/test_edge_apply_legal.py" = 3
 "tests/test_edge_apply_publish.py" = 14

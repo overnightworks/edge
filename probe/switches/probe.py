@@ -74,6 +74,7 @@ import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
 from edge import apply, checkout, compose, core, tunnel  # noqa: E402
+from edge.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -109,7 +110,7 @@ PROBE_SERVICES = ("hello", "hello-mcp")
 WHOAMI_ANCHOR = f"image: &whoami {WHOAMI_IMAGE}"
 WHOAMI_ALIAS = "image: *whoami"
 RESPELLED_WHOAMI = f"docker.io/{WHOAMI_IMAGE}"  # the same digest, so nothing is pulled
-NEVER_SWAPS = "edge apply never swaps the image of a running unit"
+OLD_IMAGE = str(PlanEvent.OLD_IMAGE)
 
 
 class Probe:
@@ -123,6 +124,7 @@ class Probe:
             "COMPOSE_PROJECT_NAME": PROJECT,
             "EDGE_DOMAIN": DOMAIN,
             "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
+            "NO_COLOR": "1",
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
         self.copy = checkout.live_checkout(self.home)
@@ -543,11 +545,8 @@ class Probe:
         self.respell_hello_image()
         before = self.container_ids()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
-        named = (
-            f"{UNIT}: hello runs {WHOAMI_IMAGE}, compose.yaml names {RESPELLED_WHOAMI}; "
-            "edge apply never swaps the image of a running unit"
-        )
-        lines = [line for line in out.splitlines() if NEVER_SWAPS in line]
+        named = f"compose.yaml {RESPELLED_WHOAMI.split('@')[0]}@"
+        lines = [line for line in out.splitlines() if OLD_IMAGE in line and "hello" in line]
         print(f"#91 Z2 the line: {lines!r}")
         expect(
             len(lines) == 1 and named in lines[0] and NOTHING_TO_CHANGE in out,
@@ -563,7 +562,7 @@ class Probe:
         before = self.container_ids()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(
-            NEVER_SWAPS not in out and NOTHING_TO_CHANGE in out,
+            OLD_IMAGE not in out and NOTHING_TO_CHANGE in out,
             f"apply after the revert said: {out[-400:]}",
         )
         expect(self.container_ids() == before, "the revert replaced a container")
