@@ -47,6 +47,8 @@ expect {
     eof
 }
 lassign [wait] pid spawn_id os_error status
+# an interrupted prompt leaves its line unfinished; the counters start on a line of their own
+puts ""
 if {[info exists env(PROOF_PREAUTH)]} { puts "PREPROMPTS=$preprompts" }
 puts "PROMPTS=$prompts"
 puts "YESES=$yeses"
