@@ -35,7 +35,7 @@ While `services.legal` is enabled the three legal pages are built from `legal/fr
 plan names each page that is new or changes. After `yes` the pages are written to `legal/built/`
 before any unit switches, which the legal unit serves. The appkit step (`appkit_step.py`) comes
 first and runs with or without the legal unit: it writes the installed appkit's tokens and fonts
-to `legal/assets/appkit-<version>/`; a missing appkit is exit 2.
+to `appkit-<version>/` in `legal/assets/` and in both Keycloak themes; a missing appkit is exit 2.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
