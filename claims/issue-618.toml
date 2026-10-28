@@ -1,8 +1,0 @@
-claim_id = "ae17e07605a7400d98a9ab501af144ee"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "63a45e694c7e2113bc48524c590ccceb64bb5d3c"
-branch = "claude/issue-618-delete-orphaned-git-reads"
-scope = ["quality/baseline.toml", "src/edge/checkout.py", "src/edge/core.py", "tests/old_names_baseline.toml", "tests/test_edge_apply.py", "tests/test_edge_checkout.py", "tests/test_edge_core.py", "tests/test_edge_plan_rows.py"]
-opened_commit = "06a66da6476ea0ada1ea2bc24ccb8c379e555b70"
-whole_reason = "One cause, one proof move: two production files lose only dead code, and the tests, the two exact-line expectations and the baselines that pin those names must land with them or CI goes red."
