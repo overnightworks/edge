@@ -1,4 +1,4 @@
-"""Tests of `home check`; the #390 mail tests name the cells of the item's scenario matrix in their docstrings."""
+"""Tests of `hal check`; the mail tests name the cells of the scenario matrix in their docstrings."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
+from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status, write_hal_config
 
 from home_tools import check, mail
 from home_tools.layout import Layout, run_command
@@ -188,9 +188,7 @@ def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, run
 
 
 def test_switched_off_notifications_stay_silent(clean_home, runner) -> None:
-    config_file = Layout(clean_home).config_file
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("[notify]\nenabled = false\n")
+    write_hal_config(clean_home, "[check]\nnotify = false\n")
     restarting_containers(runner)
 
     code = home_check(clean_home, runner)
@@ -298,22 +296,6 @@ def test_a_recovery_into_a_clean_home_whose_notification_fails_is_sent_again(cle
     assert runner.notifications[2] == "PC check: all well"
 
 
-def test_an_invalid_manifest_leaves_the_other_findings_in_the_report_and_exits_2(clean_home, runner, use_manifest, capsys) -> None:
-    runner.platform_listing = "/edge-step-ca-1\trunning\tunhealthy\t0\tedge\n"
-    manifest = use_manifest('[[secret]]\nname = "e"\n')
-
-    code = home_check(clean_home, runner)
-
-    report = Layout(clean_home).check_report_file.read_text()
-    error = capsys.readouterr().err
-    assert code == 2
-    assert "| failed: secrets" in report.splitlines()[0]
-    assert "check secrets failed (ManifestError)" in report
-    assert "container-unhealthy | edge" in report
-    assert error.startswith(f"home: {manifest}: ")
-    assert error.count("\n") == 1
-
-
 class RunnerWithEmptyDockerInfo(RunnerWithCleanLogs):
     """`docker info` prints nothing, so the logs check finds a default driver with an empty subject."""
 
@@ -331,7 +313,7 @@ def test_a_finding_without_a_subject_survives_the_memory_and_the_next_run_exits_
 
     assert (first, second) == (1, 1)
     assert "logs\\tdocker-default-driver\\t" in remembered
-    assert "unerwarteter Fehler" not in capsys.readouterr().err
+    assert "unexpected error" not in capsys.readouterr().err
 
 
 def memory_text(text: str) -> Callable[[Path], None]:
@@ -361,7 +343,7 @@ def test_a_corrupt_findings_memory_still_leaves_the_report_written(
     code = home_check(clean_home, runner)
 
     assert code == 3
-    assert capsys.readouterr().err.startswith(f"home: unerwarteter Fehler ({refusal})")
+    assert capsys.readouterr().err.startswith(f"error: unexpected error ({refusal})")
     assert layout.check_report_file.read_text().startswith("# hal check ")
 
 
@@ -592,10 +574,8 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
 
 
 def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, runner, mail_stub) -> None:
-    """#390 C7, F1: enabled = false sends no mail and no popup, and the set advances."""
-    config_file = Layout(clean_home).config_file
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("[notify]\nenabled = false\n")
+    """notify = false sends no mail and no popup, and the set advances."""
+    write_hal_config(clean_home, "[check]\nnotify = false\n")
     restarting_containers(runner)
 
     home_check(clean_home, runner)

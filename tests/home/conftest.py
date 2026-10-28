@@ -10,9 +10,13 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
+from hal import check_commands
+from hal import cli as hal_cli
+from hal import config as hal_config
 from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
@@ -104,7 +108,7 @@ class FakeDisk:
 
 @pytest.fixture
 def fake_disk() -> FakeDisk:
-    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `home check` test hands in this roomy fake."""
+    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `hal check` test hands in this roomy fake."""
     return FakeDisk()
 
 
@@ -168,14 +172,14 @@ SMTP_ENTRIES = """
 name = "smtp/password"
 kind = "token"
 paths = ["~/.secrets/smtp/password"]
-read_by = ["home check"]
+read_by = ["hal check"]
 recreate = "r"
 
 [[secret]]
 name = "smtp/account.toml"
 kind = "configuration"
 paths = ["~/.secrets/smtp/account.toml"]
-read_by = ["home check"]
+read_by = ["hal check"]
 recreate = "r"
 """
 # Stands in for msmtp: records argv and stdin per call, runs --passwordeval through sh like msmtp does, exits as the `exit` file says.
@@ -490,8 +494,30 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     assert cli.main(["setup", "--apply"], home=clean_home) == 0
 
 
-def home_check(home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None) -> int:
-    return cli.main(["check"], home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
+def write_hal_config(home: Path, text: str) -> Path:
+    """Write hal's settings file under `home`, at the path `hal.config` reads."""
+    config_file = hal_config.config_path(home)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(text)
+    return config_file
+
+
+def home_check(
+    home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None, *, arguments: Sequence[str] = ()
+) -> int:
+    """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine."""
+    ports = lambda: cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())  # noqa: E731
+    with mock.patch.object(check_commands, "build_layout_and_ports", ports):
+        return hal_cli.main(["check", *arguments])
+
+
+UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
+
+
+def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
+    if command == "check":
+        return home_check(home, runner, probe)
+    return cli.main([command], home=home, run=runner, probe=probe)
 
 
 REPORT_DISPLAY = "~/.local/state/hal/check-report.md"

@@ -488,7 +488,7 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "✗ github/read not stored ~/.secrets/github ist kein Ordner: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
+    refused = "✗ github/read not stored ~/.secrets/github is not a folder: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
     output = capsys.readouterr().out
     assert refused in squeezed(output)
     assert PASTED_VALUE not in output
@@ -498,14 +498,14 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
 def loosen_the_secrets_directory(home: Path) -> tuple[str, str]:
     (home / ".secrets").mkdir(mode=0o700)
     (home / ".secrets").chmod(0o755)
-    return "~/.secrets hat Rechte 755, höchstens 700", "`chmod 700 ~/.secrets`"
+    return "~/.secrets has mode 755; at most 700 allowed", "`chmod 700 ~/.secrets`"
 
 
 def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
     elsewhere = home.parent / "elsewhere"
     elsewhere.mkdir(mode=0o700)
     (home / ".secrets").symlink_to(elsewhere)
-    return "~/.secrets ist ein Symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
+    return "~/.secrets is a symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
 
 
 @pytest.mark.parametrize("damage", [loosen_the_secrets_directory, make_the_secrets_directory_a_symlink])

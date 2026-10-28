@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import REPORT_DISPLAY, RunnerWithCleanLogs, Sandbox, home_check, restarting_containers
+from conftest import REPORT_DISPLAY, RunnerWithCleanLogs, Sandbox, home_check, restarting_containers, write_hal_config
 
 from home_tools.layout import Layout
 
@@ -158,8 +158,7 @@ def test_the_verdict_says_what_happened_to_the_news(clean_home, runner, mail_stu
     if mail_state == "absent":
         (Layout(clean_home).secrets_dir / "smtp" / "account.toml").unlink()
     if not notify_enabled:
-        Layout(clean_home).config_file.parent.mkdir(parents=True)
-        Layout(clean_home).config_file.write_text("[notify]\nenabled = false\n")
+        write_hal_config(clean_home, "[check]\nnotify = false\n")
 
     home_check(clean_home, runner)
 

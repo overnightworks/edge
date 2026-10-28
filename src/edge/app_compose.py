@@ -114,20 +114,6 @@ class AppCompose:
                 "its output is withheld, run the step to read it"
             )
 
-    def volumes(self) -> list[str]:
-        """The keys, in the compose file, of the volumes that Compose labelled with project
-        `<key>`; never their names, which Compose may have interpolated."""
-        label = f"label=com.docker.compose.project={self.key}"
-        key = '{{.Label "com.docker.compose.volume"}}'
-        command = ["docker", "volume", "ls", "--filter", label, "--format", key]
-        result = self.run(command, compose.READ_SECONDS)
-        if result.returncode != 0:
-            raise compose.ComposeError(
-                f"`docker volume ls` of {self.key} exited {result.returncode}; "
-                "its output is withheld, run the step to read it"
-            )
-        return [line for line in result.stdout.splitlines() if line.strip()]
-
     def _service_images(self, tag: str) -> dict[str, str]:
         output = self._call("config", ["--format", "json"], compose.READ_SECONDS, tag)
         try:

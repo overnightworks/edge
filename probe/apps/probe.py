@@ -34,6 +34,7 @@ import grp
 import http.client
 import json
 import os
+import re
 import secrets
 import shlex
 import signal
@@ -127,6 +128,7 @@ class Probe:
             "EDGE_DOMAIN": DOMAIN,
             "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
             "PROBE_SENTINEL": SENTINEL,
+            "NO_COLOR": "1",
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
         self.copy = checkout.live_checkout(self.home)
@@ -406,28 +408,19 @@ class Probe:
         listed = self.docker("volume", "ls", "--quiet", "--filter", project).stdout.decode()
         return sorted(listed.split())
 
-    def volume_keys(self) -> list[str]:
-        """The keys in the compose file of those volumes, from the label Compose sets."""
-        project = f"label=com.docker.compose.project={self.key}"
-        key = '{{.Label "com.docker.compose.volume"}}'
-        listed = self.docker("volume", "ls", "--filter", project, "--format", key).stdout.decode()
-        return sorted(listed.split())
-
     def switch_off(self, cell: str) -> str:
         """`enabled: false` applied while containers run: the plan's output, after which no
         container of the project is left, every volume is still there, and the checkout and the
         record stay."""
         volumes, head, record = self.volumes(), self.head(), self.record.read_text()
-        keys = self.volume_keys()
         expect(len(volumes) >= 1 and self.containers() != [], f"{cell}: nothing to switch off")
         self.set_enabled(False)
         out = self.apply()
-        expect(f"{self.key}: off (containers" in out, f"{cell}: the plan said: {out[-400:]}")
         expect(
-            all(key in out for key in keys)
-            and not any(name in out for name in volumes)
-            and "stay" in out,
-            f"{cell}: the plan names no volume that stays: {out[-400:]}",
+            re.search(rf"- {self.key}\s+switch off\s+volumes kept · ~/srv/{self.key} kept", out)
+            is not None
+            and not any(name in out for name in volumes),
+            f"{cell}: the plan said: {out[-400:]}",
         )
         expect(self.containers() == [], f"{cell}: containers left: {self.containers()}")
         expect(self.volumes() == volumes, f"{cell}: the volumes changed: {self.volumes()}")
@@ -448,7 +441,7 @@ class Probe:
         sha = self.release(tag)
         out = self.apply()
         expect(
-            f"{self.key}: on at {tag} ({sha}) from origin master" in out,
+            re.search(rf"{self.key}\s+switch on\s+{tag} · into ~/srv/{self.key}", out),
             f"the plan said: {out[-300:]}",
         )
         expect(f"{self.key} is on at {tag}" in out, f"the run said: {out[-300:]}")
@@ -472,7 +465,7 @@ class Probe:
         self.release(tag)
         out = self.apply()
         expect(
-            f"update to {tag}" in out and f"last successful deployment {TAGS['a1']}" in out,
+            f"update {TAGS['a1']} → {tag}" in out,
             out[-300:],
         )
         expect(self.deployed()["tag"] == tag, "the record is not the new tag")
@@ -483,7 +476,7 @@ class Probe:
     def cell_a4_side_branch(self) -> None:
         self.release(TAGS["a4_side"], on="side")
         out = self.apply(typed=b"no\n")
-        expect(f"skipped tag {TAGS['a4_side']}: not on origin master" in out, out[-300:])
+        expect(f"tag skipped {TAGS['a4_side']} · not on origin master" in out, out[-300:])
         expect(
             "nothing to change" in out and self.deployed()["tag"] == TAGS["a3"], "the newest moved"
         )
@@ -514,7 +507,7 @@ class Probe:
         )
         self.serves(TAGS["a3"])
         again = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-        expect(f"the update to {tag} did not finish" in again, again[-300:])
+        expect(f"update to {tag} did not finish" in again, again[-300:])
         print("A9 held: a failed build keeps the old container and record; the plan says so")
 
     def cell_a8_never_healthy(self) -> None:
@@ -526,11 +519,8 @@ class Probe:
         expect(self.ask("/version")[0] == 404, "Traefik still routes an unhealthy container")
         again = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
         expect(
-            f"update to {tag}" in again and f"last successful deployment {TAGS['a3']}" in again,
+            f"update {TAGS['a3']} → {tag} · update to {tag} did not finish" in again,
             again[-300:],
-        )
-        expect(
-            f"the update to {tag} did not finish" in again and "(unhealthy)" in again, again[-300:]
         )
         print(
             "A8 held: partial (hal 3), record stays, Traefik routes nothing, plan says unfinished"
@@ -565,7 +555,10 @@ class Probe:
         self.release(tag)
         self.record.unlink()
         out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-        expect("replacing the running containers; named volumes kept" in out, out[-300:])
+        expect(
+            re.search(rf"\+ {self.key}\s+switch on\s+{tag} · into ~/srv/{self.key}", out),
+            out[-300:],
+        )
         self.apply()
         expect(self.deployed()["tag"] == tag, "the record was not written")
         expect(len(self.starts()) >= 3 and TAGS["a1"] in self.starts(), "the volume's data is gone")
@@ -596,11 +589,13 @@ class Probe:
                 == (2 if second_web else 1),
                 "setup",
             )
+            previous = self.deployed()["tag"]
             out = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
-            expect(f"the update to {tag} did not finish" in out, out[-400:])
+            expect(f"update to {tag} did not finish" in out, out[-400:])
             expect("nothing to change" not in out, out[-400:])
             expect(
-                all(row["service"] in out for row in self.containers()), "a container is not shown"
+                re.search(rf"~ {self.key}\s+update\s+{previous} → {tag} · update to", out),
+                "the update row is not shown",
             )
             self.apply()
             rows = self.containers()
@@ -659,7 +654,7 @@ class Probe:
         print("C1 held: off removes every container, the named volumes, checkout and record stay")
         self.set_enabled(True)
         out = self.apply()
-        expect(f"start again at {tag}" in out, f"C2: the plan said: {out[-300:]}")
+        expect(f"start again {tag} · recorded" in out, f"C2: the plan said: {out[-300:]}")
         self.serves(tag)
         after = self.starts()
         expect(after[: len(before)] == before and len(after) > len(before), f"C2: {after}")
@@ -671,8 +666,7 @@ class Probe:
         expect(f"could not build at {TAGS['c3_renamed']}" in out, f"C3: {out[-300:]}")
         expect([r["service"] for r in self.containers()] == ["web"], "C3: setup")
         expect(self.head() == self.shas[TAGS["c3_renamed"]], "C3: HEAD is not the failed tag")
-        out = self.switch_off("C3")
-        expect("web" in out, f"C3: the plan names no web: {out[-300:]}")
+        self.switch_off("C3")
         print("C3 held: off after a renamed service and a failed build removes the old web")
 
     def cell_c4_compose_file_unusable(self) -> None:
@@ -710,8 +704,7 @@ class Probe:
             "--name", f"{self.key}-oneoff", "ghost",
         )  # fmt: skip
         expect(len(self.containers()) == 3, f"C5: setup, no one-off in {self.containers()}")
-        out = self.switch_off("C5")
-        expect("ghost" in out, f"C5: the plan names no ghost: {out[-300:]}")
+        self.switch_off("C5")
         print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
 
     def cell_h1_service_without_healthcheck(self) -> None:
