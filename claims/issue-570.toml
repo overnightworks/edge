@@ -1,0 +1,8 @@
+claim_id = "9b6a1df877bf401ca172ad1756b88b77"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "5b61670b34cc43ea5dc41614ae70b0583a4ede64"
+branch = "claude/issue-570-system-proof-26-04"
+scope = ["docs/home.md", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh"]
+opened_commit = "7a432c4c6bb822e26edaa3c3b55a4a54b66ca4ab"
+whole_reason = "The image's base, the cell fixtures a 26.04 fact needs and the docs that name the release move together, or the proof proves a release the docs do not name."
