@@ -6,10 +6,11 @@ from enum import StrEnum
 from edge import core, switches
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
 from edge.built_image import ENDS_RUNS, BuiltRecreate
+from edge.legal_step import BlockChange, LegalPlan, PageChange
 from edge.plan import Plan
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import Glyph, Group, Row
+from hal_output import Glyph, Group, Row, TrailingNoun
 
 _SEPARATOR = " · "
 _DIGEST_SHOWN = 4
@@ -33,6 +34,12 @@ class PlanEvent(StrEnum):
     REALM_SKIPPED = "realm skipped"
 
 
+class LegalEvent(TrailingNoun):
+    NEW_PAGE = "new page"
+    EDITED_PAGE = "edited page"
+    NEW_RECORD = "new record"
+
+
 class PlanGroup(StrEnum):
     CORE = "core"
     UNITS = "units"
@@ -41,10 +48,41 @@ class PlanGroup(StrEnum):
 
 def plan_groups(plan: Plan) -> tuple[Group, ...]:
     return (
+        Group(None, _legal_rows(plan.legal)),
         Group(PlanGroup.CORE, _core_rows(plan)),
         Group(PlanGroup.UNITS, _unit_rows(plan)),
         Group(PlanGroup.APPS, _app_rows(plan.app_plans)),
     )
+
+
+_PAGE_ROWS = (
+    (PageChange.NEW, Glyph.ADD, LegalEvent.NEW_PAGE),
+    (PageChange.CHANGED, Glyph.CHANGE, LegalEvent.EDITED_PAGE),
+    (PageChange.UNRECORDED, Glyph.CHANGE, LegalEvent.NEW_RECORD),
+)
+
+
+def _legal_rows(plan: LegalPlan) -> tuple[Row, ...]:
+    rows = []
+    for kind, glyph, event in _PAGE_ROWS:
+        pages = [page for page, change in plan.changed.items() if change is kind]
+        if pages:
+            details = (
+                tuple(
+                    _block_change_line(change)
+                    for page in pages
+                    for change in plan.changed_blocks[page]
+                )
+                if kind is PageChange.CHANGED
+                else ()
+            )
+            rows.append(Row(glyph, "legal", event, ", ".join(pages), len(pages), details))
+    return tuple(rows)
+
+
+def _block_change_line(change: BlockChange) -> str:
+    anchor = f"#{change.anchor}" if change.anchor else ""
+    return f"{change.path}{anchor} {change.change}"
 
 
 def _core_rows(plan: Plan) -> tuple[Row, ...]:

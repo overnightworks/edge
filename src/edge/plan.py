@@ -42,7 +42,4 @@ class Plan:
         )
 
     def describe(self) -> list[str]:
-        return [
-            *self.appkit.describe(),
-            *self.legal.describe(),
-        ]
+        return self.appkit.describe()

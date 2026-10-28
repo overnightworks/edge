@@ -83,16 +83,22 @@ class Noun(StrEnum):
     count other than one shows it with an `s` after its first word (`action`, `area checked`)."""
 
 
+class TrailingNoun(StrEnum):
+    """Like `Noun`, with the `s` after the last word (`new page`, `new pages`)."""
+
+
 @dataclass(frozen=True)
 class Row:
     """One thing a command did or found. The caller owns its event enum; `fact` is one sentence;
-    `count` is shown before the event, which takes the plural when it is a `Noun`."""
+    `count` is shown before the event, which takes the plural when it is a `Noun` or a
+    `TrailingNoun`. `details` are dim lines under the row."""
 
     glyph: Glyph
     subject: str
     event: StrEnum
     fact: str = ""
     count: int | None = None
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -167,11 +173,15 @@ def printable(text: str) -> str:
 
 
 def counted(count: int, noun: StrEnum) -> str:
-    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`."""
+    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`
+    (after its first word) or a `TrailingNoun` (after its last)."""
     text = printable(str(noun))
-    if isinstance(noun, Noun) and count != 1:
-        first, separator, rest = text.partition(" ")
-        text = f"{first}s{separator}{rest}"
+    if count != 1:
+        if isinstance(noun, Noun):
+            first, separator, rest = text.partition(" ")
+            text = f"{first}s{separator}{rest}"
+        elif isinstance(noun, TrailingNoun):
+            text = f"{text}s"
     return f"{count} {text}"
 
 
@@ -186,10 +196,11 @@ def write_row(row: Row) -> None:
     if row.glyph is Glyph.UNCHANGED:
         line = f"  {row.glyph.value} {columns} {fact}".rstrip()
         print(_styled(line, _DIM, stdout))
-        return
-    glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
-    line = f"  {glyph} {columns}"
-    print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+    else:
+        glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
+        line = f"  {glyph} {columns}"
+        print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+    write_detail(*row.details, tone=Tone.DIM)
 
 
 def write_groups(groups: Sequence[Group]) -> None:

@@ -482,7 +482,6 @@ def test_stop_of_a_running_app_interrupted_in_compose_config_says_the_switch_is_
     hal,  # noqa: F811
     fakes,  # noqa: F811
     app_world,  # noqa: F811
-    monkeypatch,
     marked,
 ):
     """Cells 4 and 6b: record-first wrote the marker, or it stood."""
@@ -491,8 +490,7 @@ def test_stop_of_a_running_app_interrupted_in_compose_config_says_the_switch_is_
         switches.Switches(app_world.state).record(KEY, datetime(2026, 10, 1, tzinfo=UTC))
     fakes.scripted.verb_config = ctrl_c
 
-    monkeypatch.setenv("NO_COLOR", "1")  # deployed left a terminal as stdout
-    assert_recorded(hal("stop", KEY, answers=()), KEY, PLANNING)
+    assert_recorded(hal("stop", KEY), KEY, PLANNING)
     assert app_marker(app_world) is not None
 
 
