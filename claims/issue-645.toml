@@ -1,8 +1,0 @@
-claim_id = "5ccd6014f36f4f8988a9149fee5a7781"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "2e0bfb35d4c78c57a9593f0240a7d05199ed794d"
-branch = "claude/issue-645-hal-rename-yes"
-scope = ["README.md", "docs/design/hal-output.html", "docs/naming.md", "src/hal/grammar.py", "src/hal/rename_commands.py", "src/hal/rename_rows.py", "src/hal/setup_commands.py", "tests/hal_rename/conftest.py", "tests/hal_rename/rename_support.py", "tests/hal_rename/test_rename.py", "tests/hal_rename/test_rename_yes.py", "tests/hal_rename/test_rows.py", "tests/home/conftest.py", "tests/terminal_support.py", "tests/test_hal_cli.py"]
-opened_commit = "5beb9baee56cda96291e8ce8f21dd4cd785c9f51"
-whole_reason = "The --apply flag, its hints and tests, the yes gate with its terminal and clock boundaries, the done-row and verdict form of the frozen figure, and the corrected shared --dry-run help go together, or a text names a missing flag, hal rename moves without a yes, or hal rename --help names sudo."
