@@ -1,0 +1,8 @@
+claim_id = "8e80933c07f549b4adba122fe8d78e25"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "6144e7a9f54b6de5e907fba0e8157357b35033bc"
+branch = "claude/issue-510-s3a-1-one-sudo-call"
+scope = [".github/workflows/ci.yml", "docs/design/hal-output.html", "docs/home.md", "docs/stack.md", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh", "scripts/system-proof/terminal.exp", "src/home_tools/system/ansible.cfg", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/conftest.py", "tests/home/test_setup.py"]
+opened_commit = "715467872dfb8fc776fc367612f1d1e0b6103f25"
+whole_reason = "One privilege path changes: the sudo call and its boundary, its configuration, the removed become, and the proof harness that drives both sudo variants move together."
