@@ -50,7 +50,7 @@ from typing import Final
 import egress_observe
 from device_sign_in import CLIENT, SignInFailed, sign_in
 from egress_observe import PUBLIC_RESOLVER, UNREACHABLE, lan_address
-from smoke import HOLDING_MESSAGE, SERVED_BY, Tokens
+from smoke import HOLDING_MESSAGE, SERVED_AFTER_RUN_STARTED, SERVED_BY, Tokens
 
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
@@ -229,9 +229,6 @@ def other_lines(output: str) -> str:
 
 JWT_SHAPE: Final = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")
 SUBSCRIPTION_ROUTE: Final = "cli"
-SERVED_LINE: Final = re.compile(
-    rf"^{SERVED_BY} (?P<model>\S+) on route (?P<route>\S+)$", re.MULTILINE
-)
 
 
 def jwt_lines(text: str) -> int:
@@ -268,7 +265,7 @@ def admission_cell(events: list[str], output: str) -> Cell:
     name = "L3 admission through the gateway"
     if "run_started" not in events:
         return Cell(name, Verdict.FAILED, "no run_started: the issuer's keys did not arrive")
-    served = SERVED_LINE.search(output)
+    served = SERVED_AFTER_RUN_STARTED.search(output)
     if served is None:
         return Cell(name, Verdict.FAILED, "run_started names no model or no route")
     shown = f"run_started names {served['model']} on route {served['route']}"

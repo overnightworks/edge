@@ -178,7 +178,7 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrid
     assert configuration["apps"]
     for app in configuration["apps"].values():
         assert app["workload_client"] in service_accounts
-        assert not {"tools", "purposes", "models"} & app.keys()
+        assert not {"tools", "purposes", "model", "agents"} & app.keys()
 
 
 def test_hopin_is_registered_with_its_realm_client_as_workload_and_no_tools(configuration):
@@ -189,8 +189,8 @@ def test_hopin_is_registered_with_its_realm_client_as_workload_and_no_tools(conf
 def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
     configuration,
 ):
-    """Edge holds no API provider key, so there is no `[route]` and no `api_groups`."""
-    assert not {"purposes", "route", "profiles"} & configuration.keys()
+    """Edge holds no API provider key, so there is no `[api]` and no `api_groups`."""
+    assert not {"purposes", "route", "api", "profiles"} & configuration.keys()
     assert configuration["cli"]["anthropic"]["models"] == ["opus", "sonnet", "haiku"]
 
 

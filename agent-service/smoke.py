@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -32,6 +33,10 @@ from typing import IO, NoReturn
 PROTOCOL_VERSION = 3
 AGENT = "chat"
 SERVED_BY = "served by"
+SERVED_AFTER_RUN_STARTED = re.compile(
+    rf"^event: run_started\n{SERVED_BY} (?P<model>\S+) on route (?P<route>\S+)$",
+    re.MULTILINE,
+)
 ROLES = ["admin", "user"]
 WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
@@ -217,9 +222,14 @@ class Smoke:
             self.say(text_of(frame, "text"))
         elif frame.event == "run_started":
             model, route = text_of(frame, "model"), text_of(frame, "route")
-            self.say(f"{SERVED_BY} {model} on route {route}")
+            self.say(served_line(model, route))
         elif frame.event == "failed":
             self.say(f"{text_of(frame, 'code')}: {text_of(frame, 'message')}")
+
+
+def served_line(model: str, route: str) -> str:
+    """The line under `event: run_started`; `SERVED_AFTER_RUN_STARTED` reads it back."""
+    return f"{SERVED_BY} {model} on route {route}"
 
 
 def tool_option(text: str) -> tuple[str, str]:

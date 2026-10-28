@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent-service"))
 
 from live_smoke import Secrets, Stack
-from smoke import Tokens
+from smoke import Tokens, served_line
 
 TOKENS = Tokens(person="person-token-0123456789", workload="workload-token-9876543210")
 KNOWN = Secrets(TOKENS, login_token="login-token-abcdef", client_secret="client-secret-fedcba")
@@ -30,7 +30,7 @@ SECRET_FILES = {
 }
 
 
-SERVED_LINE = "served by anthropic/opus on route cli"
+SERVED_LINE = served_line("anthropic/opus", "cli")
 PAID_OUTPUT = (
     f"event: run_started\n{SERVED_LINE}\nevent: assistant_text\nok\nevent: succeeded\nok\n"
 )

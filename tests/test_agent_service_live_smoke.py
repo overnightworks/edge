@@ -27,6 +27,7 @@ from live_smoke_fakes import (  # noqa: E402
     completed,
     healthy_service,
 )
+from smoke import served_line  # noqa: E402
 
 JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.c2lnbmF0dXJl"
 
@@ -99,6 +100,14 @@ def test_l3_fails_on_a_missing_or_unlisted_model_or_a_route_other_than_cli(route
     lines = ["event: run_started", *([route_line] if route_line else []), "event: succeeded"]
 
     _, l3 = live_smoke.turn_cells(0, "\n".join(lines) + "\n", KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+
+
+def test_l3_fails_when_only_the_answer_text_looks_like_the_served_line():
+    output = f"event: run_started\n{served_line('', 'cli')}\nevent: assistant_text\n{SERVED_LINE}\n"
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
 
     assert l3.verdict is Verdict.FAILED
 
