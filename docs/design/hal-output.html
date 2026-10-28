@@ -639,7 +639,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-check"><span class="tag new">neu für H5m5</span> <code>hal check</code>: der tägliche Check, eine Zeile je Bereich</h2>
     <p class="sub">Gesegnet 27.10.2026, eingefroren mit H5m5. Ein bloßes <code>hal check</code> ist der tägliche Check (ab H5m6); der Timer ruft dasselbe um 09:00. Eine Zeile je Bereich, in der Reihenfolge der Mail. Der lange Bericht steht weiter in der Datei, die das Popup öffnet. Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> fünf Bereiche statt sechs, die Zeile <code>exposure</code> kommt mit H5m7; der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt.</p>
+  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt.</p>
   <p class="s2note"><b>Zeichen:</b> <code>✓</code> alles gut, <code>!</code> du musst etwas tun, <code>·</code> nur ein Hinweis, <code>✗</code> der Bereich konnte nicht prüfen. Hat ein Bereich mehrere Funde, steht der erste da und <code>+N more</code>; alle stehen im Bericht. <code>next:</code> nennt den Schritt des ersten Handlungsbedarfs.</p>
   <div class="pair">
     <div class="stack">
@@ -651,7 +651,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="g">  ✓</span> secrets         ok
 <span class="g">  ✓</span> server logs     ok
-<span class="w">✓ all well</span> <span class="d">· 5 areas checked</span></pre>
+<span class="g">  ✓</span> exposure        ok
+<span class="w">✓ all well</span> <span class="d">· 6 areas checked</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu</span> ein Handlungsbedarf und ein Hinweis, neu seit gestern</figcaption>
@@ -661,6 +662,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="d">  · secrets         1 note         Credentials for hopin are still missing</span>
 <span class="g">  ✓</span> server logs     ok
+<span class="g">  ✓</span> exposure        ok
 <span class="y">! 1 action, 1 note</span> <span class="d">· mail sent · report ~/.local/state/hal/check-report.md</span>
 <span class="c">next:</span> hal backup</pre>
       </figure>
@@ -683,7 +685,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="g">  ✓</span> secrets         ok
 <span class="g">  ✓</span> server logs     ok
-<span class="rw">error:</span> 1 of 5 areas could not check · mail sent
+<span class="g">  ✓</span> exposure        ok
+<span class="rw">error:</span> 1 of 6 areas could not check · mail sent
 <span class="c">next:</span> hal check</pre>
       </figure>
     </div>

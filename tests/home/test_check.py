@@ -243,13 +243,14 @@ def test_one_failing_checker_leaves_the_others_findings_in_the_report_and_exits_
         "  ✓ commit hook     ok",
         "  ✗ secrets         not checked    the check did not run · details in the report",
         "  ✓ server logs     ok",
+        "  ✓ exposure        ok",
     ]
     assert "| failed: secrets" in report.splitlines()[0]
     assert "# secrets" in report.splitlines()
     assert "check secrets failed (PermissionError)" in report
     assert "container-unhealthy | edge" in report
     error_lines = error.splitlines()
-    assert error_lines[0] == "error: 1 of 5 areas could not check · news sent"
+    assert error_lines[0] == "error: 1 of 6 areas could not check · news sent"
     assert error_lines[1].startswith("next: ")
     assert "`" not in error_lines[1]
     assert not error_lines[1].endswith(".")
@@ -446,7 +447,7 @@ def test_twenty_one_actions_name_twenty_and_count_the_rest(clean_home, runner, m
     body = message_of(mail_stub.sent[0]).get_content()
     assert body.count("stopped with an error.") == 20
     assert "… and 1 more, see report" in body
-    assert body.count("OK") == 4
+    assert body.count("OK") == 5
 
 
 def test_a_hostile_subject_never_reaches_the_mail_unless_the_rule_names_it_and_runs_nothing(tmp_path, monkeypatch) -> None:
@@ -709,6 +710,7 @@ Backup: OK, last backup today 14:15
 Commit protection: OK
 Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
+Exposure: OK
 
 Notes are not urgent; home next shows what you can do.
 Everything in detail: {REPORT_DISPLAY}

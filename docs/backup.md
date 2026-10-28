@@ -7,8 +7,8 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 ## hal check
 
-A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
-default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
+A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. Docker's loopback default is not set yet (edge#291), so a publication can bind every
+interface; the daily `hal check` reports it as its exposure area.
 Run `hal check exposure` (human table) or `hal check exposure --json` (the same findings for
 machines). It has two areas, `exposure` (local) and `hosts` (reads Cloudflare, see
 docs/external.md), one per run. A bare `hal check` is not an area: it is the daily check, which also
