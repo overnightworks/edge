@@ -19,7 +19,6 @@ def main(argv: list[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="subcommand", required=True)
     add_apply_subcommand(subcommands)
     add_switch_subcommands(subcommands)
-    external_cli.add_subcommand(subcommands)
     arguments = parser.parse_args(argv)
     return arguments.run(arguments)
 

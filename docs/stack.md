@@ -119,7 +119,7 @@ schaltet das Profil ab; `run.setup` nennt optional den Befehl, der den Schluesse
 [architecture.md](architecture.md) (Abschnitt 8) und wird hier nicht wiederholt.
 
 **Zwei Teile.** Das blosse `edge apply` fuehrt den lokalen Teil (`edge apply --closed`) aus und, nur
-wenn der mit Exit 0 endete, die Publish-Phase (`edge external apply`, [external.md](external.md)). Jeder
+wenn der mit Exit 0 endete, die Publish-Phase (`hal apply`'s publish, [external.md](external.md)). Jeder
 Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt es nirgends etwas zu aendern,
 fragt `edge apply` nichts. Endet der lokale Teil nicht mit 0, steht eine Zeile "nothing published", es
 laeuft kein tofu, und der Exit ist der des lokalen Teils. Ein Ctrl-C (SIGINT) vor der Publish-Phase

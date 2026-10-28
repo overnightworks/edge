@@ -383,6 +383,34 @@ def test_findings_in_json_are_one_object_keyed_by_the_area_without_the_token(run
 
 
 @pytest.mark.parametrize(
+    "reads, prober, problem, next_step",
+    [
+        (snapshot_with(), None, "record-missing", "`hal apply`"),
+        (
+            snapshot_with(cloudflare_read.Record("example.test", "A", "192.0.2.1", True)),
+            None,
+            "record-wrong",
+            "`hal apply` shows the Cloudflare plan before its yes; nothing is converted (D12), "
+            "so fix a foreign type by hand",
+        ),
+        (
+            CLEAN_SNAPSHOT,
+            AnsweringProber(host_probe.Answer(200, None, False, False)),
+            "answer-wrong",
+            "`hal apply` shows the Cloudflare plan before its yes",
+        ),
+    ],
+)
+def test_a_finding_that_apply_fixes_or_shows_names_hal_apply_as_its_next_step(
+    run_hosts, reads, prober, problem, next_step
+):
+    _, out, _ = run_hosts("--json", reads=reads, prober=prober)
+
+    hosts = {item["problem"]: item["next"] for item in json.loads(out)["hosts"]}
+    assert hosts[problem] == next_step
+
+
+@pytest.mark.parametrize(
     "outcome, problem",
     [
         (host_probe.Unreachable(host_probe.FailureKind.TIMEOUT), "unreachable"),

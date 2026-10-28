@@ -1,11 +1,8 @@
-"""`edge external plan` (exit 0 no changes, 1 changes pending, 2 if unable), `apply` (which ends on
-the host check) and `check`."""
+"""`apply_command`, the publish phase of `hal apply`, which ends on the host check."""
 
-import argparse
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
@@ -14,43 +11,6 @@ from edge.external import apply, cloudflare_read, host_check, host_probe, secret
 from hal_output.command import Verb, command
 
 INTERRUPTED = 130
-
-
-class ExitCode(IntEnum):
-    NO_CHANGES = 0
-    CHANGES = 1
-    CANNOT_PLAN = 2
-
-
-_PLAN_TO_EXIT = {
-    tofu.PlanExit.NO_CHANGES: ExitCode.NO_CHANGES,
-    tofu.PlanExit.CHANGES: ExitCode.CHANGES,
-    tofu.PlanExit.FAILED: ExitCode.CANNOT_PLAN,
-}
-
-
-def add_subcommand(subcommands: argparse._SubParsersAction) -> None:
-    external = subcommands.add_parser("external", help="Cloudflare as code (OpenTofu)")
-    actions = external.add_subparsers(dest="action", required=True)
-    plan = actions.add_parser(
-        "plan", help="show what differs between external/ and the live services"
-    )
-    plan.set_defaults(run=lambda _arguments: plan_command(Path.home()))
-    apply_parser = actions.add_parser(
-        "apply", help="apply the shown plan to the live services, at a terminal, after `yes`"
-    )
-    apply_parser.set_defaults(run=lambda _arguments: apply_command(Path.home()))
-
-
-def plan_command(home: Path) -> int:
-    return _guarded(
-        "plan",
-        home,
-        secrets.Access.READ,
-        _plan,
-        ExitCode.CANNOT_PLAN,
-        refusal=lambda: _refusal_invalid_catalog("plan"),
-    )
 
 
 def apply_command(
@@ -88,7 +48,7 @@ def apply_command(
                     return refused
                 planned_catalog = _valid_catalog("apply")
                 if planned_catalog is None:
-                    return ExitCode.CANNOT_PLAN
+                    return apply.ApplyExit.CANNOT_PLAN
                 return _refusal_unreadable_cloudflare_read_file(home)
 
             def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
@@ -204,7 +164,7 @@ def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
         secrets.read_cloudflare_token(home)
     except secrets.SecretFileError as error:
         print(f"edge external apply: {error}", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
+        return apply.ApplyExit.CANNOT_PLAN
     return None
 
 
@@ -303,7 +263,7 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
         refusals = []
     for line in refusals:
         print(f"edge external apply: {line}", file=sys.stderr)
-    return ExitCode.CANNOT_PLAN if refusals else None
+    return apply.ApplyExit.CANNOT_PLAN if refusals else None
 
 
 def _refusal_lines(refusal: checkout.Refusal) -> list[str]:
@@ -338,10 +298,6 @@ def _valid_catalog(command: str) -> _ValidCatalog | None:
     except catalog.CatalogError as error:
         print(f"edge external {command}: {error}", file=sys.stderr)
         return None
-
-
-def _refusal_invalid_catalog(command: str) -> int | None:
-    return ExitCode.CANNOT_PLAN if _valid_catalog(command) is None else None
 
 
 def _guarded(
@@ -404,26 +360,3 @@ def _report(message: str, error: Exception, token_values: dict[str, str], comman
     print(secrets.redact(message, token_values), file=sys.stderr)
     for note in getattr(error, "__notes__", []):
         print(secrets.redact(f"edge external {command}: {note}", token_values), file=sys.stderr)
-
-
-def _plan(home: Path, token_values: dict[str, str]) -> int:
-    try:
-        with apply.terminate_like_interrupt(), tofu.session(home, token_values) as session:
-            planned = tofu.run(session.tofu, tofu.PLAN_ARGUMENTS, session.environment)
-    except tofu.Interrupted as interrupted:
-        apply.print_interrupted_output(interrupted, token_values)
-        print("edge external plan: interrupted during the plan, no plan was made", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
-    except KeyboardInterrupt:
-        print("edge external plan: interrupted during the plan, no plan was made", file=sys.stderr)
-        return ExitCode.CANNOT_PLAN
-    exit_code = _PLAN_TO_EXIT.get(planned.exit_code, ExitCode.CANNOT_PLAN)
-    redacted_output = secrets.redact(planned.output, token_values)
-    if exit_code is ExitCode.CANNOT_PLAN:
-        apply.show_tofu_output(redacted_output, sys.stderr)
-        print(f"edge external plan: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
-        return exit_code
-    apply.show_tofu_output(redacted_output.rstrip("\n"), sys.stdout)
-    if exit_code is ExitCode.CHANGES:
-        print("edge external plan: changes pending, the live services differ from external/")
-    return exit_code
