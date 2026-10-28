@@ -10,6 +10,7 @@ from hal import (
     check_commands,
     legal_commands,
     rename_commands,
+    secrets_commands,
     setup_commands,
     stack_commands,
     version,
@@ -17,12 +18,14 @@ from hal import (
 from hal.grammar import Command, ExitCode
 from hal_output import write_error
 from hal_output.command import PROGRAM
+from home_tools import secrets_view
 
 DESCRIPTION = "hal, the daily door of the workstation."
 COMMANDS = (
     *stack_commands.COMMANDS,
     *backup_commands.COMMANDS,
     *check_commands.COMMANDS,
+    *secrets_commands.COMMANDS,
     *setup_commands.COMMANDS,
     *rename_commands.COMMANDS,
     *legal_commands.COMMANDS,
@@ -68,6 +71,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return parsed.run(parsed)
     except KeyboardInterrupt:
         return ExitCode.INTERRUPTED
+    except secrets_view.ManifestError as error:
+        write_error(str(error))
+        return ExitCode.USAGE
     except Exception as error:
         # Only the type: a message may hold a path, a token or a line of someone else's text.
         write_error(f"unexpected error ({type(error).__name__})")

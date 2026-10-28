@@ -40,7 +40,6 @@
 "src/hal/version.py" = 1
 "src/home_tools/secrets_manifest.toml" = 26
 "step-ca/init" = 4
-"tests/home/test_next.py" = 1
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 1
 "tests/test_edge_apply.py" = 38
@@ -76,30 +75,17 @@
 "uv.lock" = 1
 
 [home-verb]
-".github/workflows/ci.yml" = 2
-"docs/agent-service.md" = 2
-"docs/architecture.md" = 14
+"docs/architecture.md" = 11
 "docs/design/hal-output.html" = 1
-"docs/home.md" = 32
+"docs/home.md" = 1
 "docs/stack.md" = 1
 "scripts/system-proof/Dockerfile" = 1
-"scripts/system-proof/drive.sh" = 3
+"scripts/system-proof/drive.sh" = 2
 "src/hal/setup_commands.py" = 3
-"src/home_tools/check.py" = 2
-"src/home_tools/cli.py" = 5
-"src/home_tools/next.py" = 10
-"src/home_tools/secrets_manifest.toml" = 3
-"src/home_tools/secrets_setup.py" = 7
-"src/home_tools/secrets_view.py" = 11
-"src/home_tools/setup.py" = 7
+"src/home_tools/cli.py" = 2
+"src/home_tools/setup.py" = 2
 "src/home_tools/system/playbook.yml" = 1
-"src/home_tools/system_step.py" = 3
-"tests/home/conftest.py" = 2
-"tests/home/test_app_secrets.py" = 1
-"tests/home/test_check.py" = 4
-"tests/home/test_next.py" = 16
-"tests/home/test_secrets_setup.py" = 2
-"tests/home/test_secrets_view.py" = 2
+"tests/home/test_check.py" = 1
 "tests/home/test_setup.py" = 3
 
 [home-tools]
@@ -118,6 +104,5 @@
 [config-directory]
 
 [state-directory]
-"docs/home.md" = 2
-"src/home_tools/secrets_setup.py" = 1
+"docs/home.md" = 1
 "src/home_tools/secrets_view.py" = 1

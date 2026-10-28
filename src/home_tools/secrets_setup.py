@@ -1,4 +1,4 @@
-"""`home secrets --setup` walks every missing secret of the manifest, one at a time, and never shows a value.
+"""The wizard of `hal setup --apply` walks every missing secret of the manifest, one at a time, and never shows a value.
 
 A person stays in the loop on purpose: only someone with more rights than a token can create it, GitHub has no API
 for fine-grained tokens, and on Cloudflare the wizard would need an admin key on disk. So the browser login stays the
@@ -6,15 +6,14 @@ operator's. The wizard does everything else: it says what comes and why, opens t
 value without echo, has the provider confirm it and only then writes the file, 0600 in a 0700 directory. A service
 password is generated and written unseen. A file already present stays untouched. It runs only at a terminal.
 
-This module also wires the `home secrets` command; its read-only view is `secrets_view`.
+Its read-only view is `secrets_view`.
 
-Exit code of `--setup`: 0 when nothing is missing any more, 1 when something still is or the store refuses a place, 2 without a terminal, at one that
+Exit code of the walk: 0 when nothing is missing any more, 1 when something still is or the store refuses a place, 2 without a terminal, at one that
 cannot hide the input, with an invalid manifest or after an unexpected error at an entry, 130 after Ctrl-C.
 """
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import getpass
 import json
@@ -33,7 +32,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode, urlsplit
 
 from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
@@ -52,15 +50,10 @@ from home_tools.secrets_view import (
     TokenSource,
     load_manifest,
     presence,
-    show,
-    show_by_service,
     stat_matches,
     unfit_folder,
 )
 from home_tools.layout import Layout
-
-if TYPE_CHECKING:
-    from home_tools.cli import Ports
 
 OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
 PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
@@ -190,9 +183,6 @@ def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch, clo
 
 
 # --- the terminal boundary -------------------------------------------------
-
-# The one fact both `run_setup`'s refusal and `home next`'s "eigenes Terminalfenster" read: the walk asks a person.
-SETUP_NEEDS_A_TERMINAL = True
 
 
 def _both_ends_are_a_terminal() -> bool:
@@ -672,7 +662,7 @@ SETUP_NEXT_STEP = command(Verb.SETUP, "--apply")
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
-    if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
+    if not boundaries.terminal.is_interactive():
         write_error(
             "secrets setup needs your own terminal window · nothing changed",
             f"{SETUP_NEXT_STEP} in your own terminal window",
@@ -701,38 +691,3 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
         write_error(failed.report(), SETUP_NEXT_STEP)
         return WalkEnd.ENTRY_FAILED
 
-
-# --- the `home secrets` command --------------------------------------------
-
-SECRETS_EXAMPLES = """\
-Examples:
-  home secrets                shows every secret of the manifest: file, check, expiry
-  home secrets --by-service   which service reads which secret (declared)
-  home secrets --setup        walks through every missing secret: page, paste, check, save
-
-Without --setup it never shows a value and changes nothing except the report
-~/.local/state/home/secrets-report.md. It needs no terminal; agents may run it.
---setup runs only at your own terminal; agents never run it.
-Exit code: 0 clean, 1 findings (with --setup: something is still missing or the store refuses a place), 2 invalid manifest, no terminal or
-an unexpected error at one secret, 3 any other unexpected error, 130 interrupted.
-"""
-
-
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
-    if args.setup:
-        return run_setup(layout, ports.secrets_setup, ports.now).exit_code
-    return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
-
-
-def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
-    parser = add_parser(
-        "secrets",
-        help="show secrets and set up missing ones; never a value",
-        description="Shows every secret of the manifest, reads files by stat only and changes nothing; --setup sets up missing ones.",
-        epilog=SECRETS_EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--by-service", action="store_true", help="grouped by service: declared dependencies")
-    mode.add_argument("--setup", action="store_true", help="walks you through every missing secret at a terminal, one after the other")
-    parser.set_defaults(handler=_secrets_from_args, error_may_quote_a_secret=True)

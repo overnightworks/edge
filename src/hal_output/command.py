@@ -19,6 +19,7 @@ class Verb(StrEnum):
     VERSION = "version"
     LEGAL = "legal"
     RENAME = "rename"
+    SECRETS = "secrets"
 
 
 def command(verb: Verb, *arguments: str) -> str:

@@ -10,8 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hal_output import write_error
-from home_tools import secrets_setup, secrets_view, setup, system_step
-from home_tools import next as next_steps
+from home_tools import setup, system_step
 from home_tools.platform_check import DiskSpaceReader, read_disk_space
 from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from home_tools.secrets_view import ExitCodeProbe, probe_exit_code
@@ -40,15 +39,11 @@ class Ports:
 # Looked up per call, so the tests can keep every run's time off this machine's clock.
 MONOTONIC_CLOCK: Callable[[], float] = time.monotonic
 
-SUBCOMMANDS = (next_steps, secrets_setup, setup)
+SUBCOMMANDS = (setup,)
 UNEXPECTED_ERROR_EXIT = 3
-MANIFEST_INVALID_EXIT = 2
 
 EXAMPLES = """\
 Examples:
-  home next            what you need to do now, each step with its exact command
-  home secrets         every secret, never a value
-  home secrets --setup walks you through every missing secret at a terminal
   home setup           shows what the commit hook against secrets still needs; at a terminal it asks once for sudo
   home setup --apply   sets up quality, the engines and the hook, then the system step (asks once for sudo)
   home <command> --help details of one command
@@ -86,11 +81,10 @@ def build_layout_and_ports(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="home",
-        description="Shows what this PC needs from you and walks you through the secrets.",
+        description="Sets up this PC: quality, the commit hook, the system step and the secrets.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.set_defaults(error_may_quote_a_secret=False)
     subcommands = parser.add_subparsers(title="Commands", metavar="<command>", required=True)
     for subcommand in SUBCOMMANDS:
         subcommand.register(subcommands.add_parser)
@@ -114,11 +108,6 @@ def main(
     # Exit 1 means "findings" and the timer counts it as success, so a crash must end with its own code.
     try:
         return args.handler(args, layout, ports)
-    except secrets_view.ManifestError as error:
-        write_error(str(error))
-        return MANIFEST_INVALID_EXIT
     except Exception as error:
-        # A subcommand that handles secrets never has an unexpected error's message shown: it may quote a value.
-        message = "" if args.error_may_quote_a_secret else f": {error}"
-        write_error(f"unexpected error ({type(error).__name__}){message}")
+        write_error(f"unexpected error ({type(error).__name__}): {error}")
         return UNEXPECTED_ERROR_EXIT

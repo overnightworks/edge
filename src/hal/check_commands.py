@@ -17,7 +17,6 @@ from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
 from hal_output.command import Verb, command
 from home_tools import check as daily_check
-from home_tools import secrets_view
 from home_tools.cli import build_layout_and_ports
 from home_tools.exposure_check import ExposureRule
 from home_tools.report import Finding
@@ -95,11 +94,7 @@ def _run_daily() -> ExitCode:
     context = daily_check.CheckContext(
         layout, settings.check, ports.run, ports.probe, ports.now, ports.disk_space, _read_exposure
     )
-    try:
-        return ExitCode(daily_check.check(context))
-    except secrets_view.ManifestError as error:
-        write_error(str(error))
-        return ExitCode.USAGE
+    return ExitCode(daily_check.check(context))
 
 
 def _run(arguments: argparse.Namespace) -> ExitCode:

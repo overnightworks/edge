@@ -5,7 +5,7 @@ import pytest
 from home_tools import cli
 
 
-@pytest.mark.parametrize("argv", [["--help"], ["secrets", "--help"], ["next", "--help"], ["setup", "--help"]])
+@pytest.mark.parametrize("argv", [["--help"], ["setup", "--help"]])
 def test_help_is_english_and_shows_examples(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         cli.main(argv)

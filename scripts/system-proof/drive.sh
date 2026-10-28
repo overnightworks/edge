@@ -894,21 +894,14 @@ install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that 
     return
 }
 
-A1_NEXT_AS_AGENT="1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed
-   warum: without the hook no commit is checked for secrets"
-
 cell_a1_4_and_5() {
-    local dry apply next
+    local dry apply
     install_wheel_for agent
     run_as agent a1-4-dry "$AGENT_HOME/.local/bin/home" setup
     dry=$?
     verdict A1-4 "as agent the dry run exits 0, shows the per-user steps and skips the operator's" \
         '[ $dry -eq 0 ] && row_in_log a1-4-dry "commit hook" "will change" &&
          row_in_log a1-4-dry timers skipped && row_in_log a1-4-dry system skipped && row_in_log a1-4-dry secrets skipped'
-    run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
-    next=$?
-    verdict A1-4 "home next exits 0 and lists exactly the per-user step, none of the operator's steps" \
-        '[ $next -eq 0 ] && [[ $(<"$EVIDENCE/a1-4-next.log") == "$A1_NEXT_AS_AGENT" ]]'
     run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
     apply=$?
     verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \

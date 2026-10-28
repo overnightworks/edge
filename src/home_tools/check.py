@@ -225,7 +225,7 @@ def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
 
 
 ACTION, NOTE = Level.ACTION, Level.NOTE
-HOME_NEXT = "Run `home next`."
+SECRETS_VIEW = f"Run `{command(Verb.SECRETS)}`."
 BACKUP_NOW = f"Run `{command(Verb.BACKUP)}`."
 SETUP_APPLY = f"Run `{command(Verb.SETUP, '--apply')}`."
 HOOK_BROKEN = RuleReport(
@@ -261,13 +261,13 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
-    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", HOME_NEXT, resolved="A secret is no longer readable by others."),
-    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", HOME_NEXT, resolved="A secret no longer sits behind a link."),
+    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
+    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
-        ACTION, "A retired key is not yet confirmed as revoked.", HOME_NEXT, resolved="A retired key is confirmed as revoked."
+        ACTION, "A retired key is not yet confirmed as revoked.", SECRETS_VIEW, resolved="A retired key is confirmed as revoked."
     ),
-    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "A login is no longer valid; what uses it fails.", HOME_NEXT, resolved="The check of a login reports no error any more."),
-    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "The backup password is missing; without it nothing can be restored.", HOME_NEXT, resolved="The backup password is no longer reported missing."),
+    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "A login is no longer valid; what uses it fails.", SECRETS_VIEW, resolved="The check of a login reports no error any more."),
+    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "The backup password is missing; without it nothing can be restored.", SECRETS_VIEW, resolved="The backup password is no longer reported missing."),
     ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Credentials{readers} are still missing."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
     ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
@@ -506,7 +506,7 @@ def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_f
         sections.append("Done\n\n" + "\n".join(gone))
     area_lines = "\n".join(_area_line(items, name, facts, now) for name, _ in AREAS)
     sections.append(f"How the PC stands ({now:%Y-%m-%d %H:%M})\n\n{area_lines}")
-    hint = "Notes are not urgent; home next shows what you can do.\n" if any(item.level is Level.NOTE for item in items) else ""
+    hint = "Notes are not urgent.\n" if any(item.level is Level.NOTE for item in items) else ""
     sections.append(f"{hint}Everything in detail: {report_file}")
     return "\n\n".join(sections) + "\n"
 
