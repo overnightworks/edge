@@ -716,7 +716,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
   traefik-mcp: recreate (its compose definition changed)
   legal: recreate legal (its compose definition changed)
   agent-service: on (services agent-egress, agent-service)
-  agent-service: agent-service runs edge-agent-service:0.7.0-2.1.302, compose.yaml names edge-agent-service:0.8.0-2.1.302; edge apply never swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; Keycloak with a dump first, K11b)
+  agent-service: agent-service runs edge-agent-service:0.7.0-2.1.302, compose.yaml names edge-agent-service:0.10.0-2.1.302; edge apply never swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; Keycloak with a dump first, K11b)
   keycloak: keycloak runs quay.io/keycloak/keycloak:26.8.1@sha256:79c6…, compose.yaml names quay.io/keycloak/keycloak:26.8.1@sha256:a78d…; edge apply never swaps the image of a running unit, so it keeps running; the upgrade is yours (block 6; Keycloak with a dump first, K11b)
   realm: Keycloak could not be read; not checked (the realm observer failed (`docker compose run` exited 1: realm-observer: Keycloak does not answer /realms/master/protocol/openid-connect/token (unreachable)))
   hopin: update to v2026.10.27.1 (79a51b4002833a0a46e729ce46193eb6ff53a383); last successful deployment v2026.10.26.1; now: hopin running (healthy)
@@ -742,7 +742,7 @@ edge apply: nothing published</pre>
 <span class="b">  ~</span> agent-egress    recreate       <span class="d">definition changed</span>
 <span class="b">  ~</span> traefik-mcp     recreate       <span class="d">definition changed</span>
 <span class="hd">units</span>
-<span class="b">  ~</span> agent-service   recreate       <span class="d">image edge-agent-service:0.7.0-2.1.302 → edge-agent-service:0.8.0-2.1.302 · in-flight requests end</span>
+<span class="b">  ~</span> agent-service   recreate       <span class="d">image edge-agent-service:0.7.0-2.1.302 → edge-agent-service:0.10.0-2.1.302 · in-flight requests end</span>
 <span class="b">  ~</span> legal           recreate       <span class="d">definition changed</span>
 <span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
 <span class="y">  !</span> keycloak        old image      <span class="d">quay.io/keycloak/keycloak:26.8.1@79c6… · compose.yaml @a78d…</span>

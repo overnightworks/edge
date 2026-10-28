@@ -176,7 +176,7 @@ def test_the_image_runs_the_service_as_uid_1000_without_a_login():
 
 
 def test_the_lock_names_its_release_tag_and_commit():
-    assert release_tag() == "v0.8.0"
+    assert release_tag() == "v0.10.0"
 
 
 def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():
