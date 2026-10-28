@@ -1,5 +1,4 @@
-"""The publish phase of `hal apply`: tokens only in the child, an allowlisted environment, the
-pinned tofu."""
+"""Publish phase of `hal apply`: tokens only in the child, an allowlisted env, the pinned tofu."""
 
 import errno
 import fcntl
