@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from git_support import hal_program, run_hal
-from test_edge_apply import (
+from test_stack_apply import (
     PROBE_ENABLED,
     SWITCHED_OFF_AT,
     Ingress,
@@ -37,7 +37,7 @@ from test_edge_apply import (
     state,  # noqa: F401 the fixture, requested by name below
     write_fleet,
 )
-from test_edge_apply_publish import (
+from test_stack_apply_publish import (
     World,
     failing_app,  # noqa: F401 the fixture, requested by name below
     fake_tofu,  # noqa: F401 the fixture, requested by name below
@@ -48,12 +48,12 @@ from test_edge_apply_publish import (
     start_fails,
     world,  # noqa: F401 the fixture, requested by name below
 )
-from test_edge_external import (
+from test_stack_external import (
     CHANGING_PLAN,
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from test_edge_global_stop import FakeSystemd, hosts_asked  # noqa: F401 the fixture, used by `fakes`
+from test_stack_global_stop import FakeSystemd, hosts_asked  # noqa: F401 the fixture, used by `fakes`
 
 from hal import cli, stack_commands
 from hal.grammar import ExitCode

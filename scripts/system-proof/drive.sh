@@ -208,7 +208,7 @@ PYTHON
 }
 
 # Today's PC, frozen literally, never derived from /proof/tunnel, so a changed hardening setting in edge's files shows
-# as a difference. The non-ExecStart lines come from edge's EFFECTIVE_UNIT_WITHOUT_EXEC_START (tests/test_edge_tunnel_files.py,
+# as a difference. The non-ExecStart lines come from edge's EFFECTIVE_UNIT_WITHOUT_EXEC_START (tests/test_stack_tunnel_files.py,
 # tunnel id as @TUNNEL_ID@); the ExecStart lines come from the head's read-only `systemctl cat cloudflared.service` of
 # 18.10.2026. The effective ExecStart is the one `10-root-binary.conf` sets; the base unit's is the operator's ~/bin one.
 write_todays_unit() {

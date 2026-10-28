@@ -3,7 +3,7 @@
 "docs/design/hal-output.html" = 18
 "src/hal/stack/barrier.py" = 2
 "src/hal/stack/environment.py" = 1
-"tests/test_edge_barrier.py" = 2
+"tests/test_stack_barrier.py" = 2
 "tunnel/cloudflared.service.d/30-edge-global-stop.conf" = 1
 
 [edge-script]
@@ -12,12 +12,12 @@
 "docs/naming.md" = 2
 "src/hal/backup/runner.py" = 1
 "src/hal/backup/settings.py" = 1
-"tests/edge_backup_support.py" = 3
-"tests/home/test_user_units.py" = 3
-"tests/test_edge_backup.py" = 11
-"tests/test_edge_backup_restore_safety.py" = 4
-"tests/test_edge_backup_sqlite.py" = 2
+"tests/backup_support.py" = 3
+"tests/test_backup_restore_safety.py" = 4
+"tests/test_backup_runner.py" = 11
+"tests/test_backup_sqlite.py" = 2
 "tests/test_hal_backup.py" = 1
+"tests/test_workstation_user_units.py" = 3
 
 [home-verb]
 "docs/design/hal-output.html" = 1
@@ -31,9 +31,9 @@
 "pyproject.toml" = 3
 "scripts/system-proof/run.sh" = 2
 "src/hal/workstation/secrets_manifest.toml" = 1
-"tests/home/test_commit_hook.py" = 1
-"tests/test_edge_global_stop.py" = 1
-"tests/test_edge_tunnel_files.py" = 3
+"tests/test_stack_global_stop.py" = 1
+"tests/test_stack_tunnel_files.py" = 3
+"tests/test_workstation_commit_hook.py" = 1
 
 [config-directory]
 

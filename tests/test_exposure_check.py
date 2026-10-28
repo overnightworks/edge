@@ -1,0 +1,724 @@
+"""The exposure check driven through `hal check exposure`, with fixture host command outputs."""
+
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+
+import pytest
+
+from hal import cli
+from hal.exposure import host, inspection
+
+ALLOW_AVAHI = """
+[[allow]]
+protocol = "udp"
+port = 5353
+reason = "mDNS: avahi answers service discovery on the local network"
+"""
+
+ALLOW_CLOUDFLARED = """
+[[allow]]
+protocol = "udp"
+owner = "cloudflared.service"
+reason = "the tunnel's QUIC client sockets use random ports"
+"""
+
+ALLOW_AVAHI_UNIT = """
+[[allow]]
+protocol = "udp"
+owner = "avahi-daemon.service"
+reason = "mDNS: avahi answers local-network service discovery"
+"""
+
+SS_LOOPBACK_ONLY = """\
+udp UNCONN 0 0 127.0.0.53%lo:53    0.0.0.0:* cgroup:/system.slice/systemd-resolved.service <->
+tcp LISTEN 0 4096 127.0.0.1:8081  0.0.0.0:* cgroup:/system.slice/docker.service <->
+tcp LISTEN 0 511 [::1]:6379     [::]:* users:(("redis-server",pid=4242,fd=7)) <->
+"""
+SS_AVAHI = """\
+udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* uid:108 cgroup:/system.slice/avahi-daemon.service <->
+"""
+SS_AVAHI_SEEN_BY_ROOT = """\
+udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* users:(("avahi-daemon",pid=812,fd=12)) uid:108 \
+cgroup:/system.slice/avahi-daemon.service <->
+"""
+SS_USER_SCOPE_NAMED_AVAHI = """\
+udp UNCONN 0 0 0.0.0.0:5353  0.0.0.0:* uid:1001 \
+cgroup:/user.slice/user-1001.slice/user@1001.service/app.slice/avahi-daemon.service <->
+"""
+SS_CLOUDFLARED = """\
+udp UNCONN 0 0 *:33697       *:* uid:62260 cgroup:/system.slice/cloudflared.service v6only:0 <->
+"""
+SS_SSHD = """\
+tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
+"""
+SS_ONE_PROCESS_ON_THREE_PROTOCOLS = """\
+sctp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=3)) <->
+tcp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=4)) <->
+udp UNCONN 0 0 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=5)) <->
+"""
+SS_DHCP6_LINK_LOCAL = """\
+udp UNCONN 0 0 [fe80::d8e8:44d:1d8e:31f0]%wlp7s0:546      [::]:* ino:18742 sk:f <->
+"""
+SS_DOCKER_PROXY_3000 = """\
+tcp LISTEN 0 4096 0.0.0.0:3000  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+"""
+SS_DOCKER_PROXY_8080_BOTH_FAMILIES = """\
+tcp LISTEN 0 4096 0.0.0.0:8080  0.0.0.0:* uid:0 cgroup:/system.slice/docker.service <->
+tcp LISTEN 0 4096    [::]:8080     [::]:* uid:0 cgroup:/system.slice/docker.service <->
+"""
+SS_CHROME_MDNS_TWICE = """\
+udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=49)) <->
+udp UNCONN 0 0 224.0.0.251:5353  0.0.0.0:* users:(("chrome",pid=16393,fd=48)) <->
+"""
+
+
+def container(
+    name: str,
+    port_bindings: dict[str, list[tuple[str, str]]] | None = None,
+    *,
+    exposed: tuple[str, ...] = (),
+    publish_all: bool = False,
+    labels: dict[str, str] | None = None,
+    running: bool = True,
+) -> dict:
+    """One `docker inspect` entry; port_bindings maps "80/tcp" to [(host_ip, host_port)]."""
+    return {
+        "Name": f"/{name}",
+        "State": {"Running": running},
+        "Config": {"ExposedPorts": {port: {} for port in exposed}, "Labels": labels},
+        "HostConfig": {
+            "PublishAllPorts": publish_all,
+            "PortBindings": {
+                container_port: [{"HostIp": ip, "HostPort": port} for ip, port in bindings]
+                for container_port, bindings in (port_bindings or {}).items()
+            },
+        },
+    }
+
+
+def inspect_json(*containers: dict) -> str:
+    return json.dumps(list(containers))
+
+
+def finding(
+    problem: str,
+    subject: str,
+    protocol: str | None = None,
+    address: str = "",
+    port: int | str | None = None,
+    *,
+    edge_name: str | None = None,
+) -> dict:
+    return {
+        "problem": problem,
+        "subject": subject,
+        "protocol": protocol,
+        "address": address,
+        "port": port,
+        "edge_name": edge_name,
+    }
+
+
+ROUTED = {"traefik.enable": "true"}
+
+
+@dataclass(frozen=True)
+class Host:
+    docker: str = "[]"
+    ss: str = ""
+    allow_list: str = ""
+    findings: list[dict] = field(default_factory=list)
+
+
+@pytest.fixture
+def run_edge_check(monkeypatch, tmp_path, capsys):
+    def run(state: Host, *arguments: str) -> tuple[int, str, str]:
+        monkeypatch.setattr(host, "docker_inspect_json", lambda: state.docker)
+        monkeypatch.setattr(host, "socket_listeners", lambda: state.ss)
+        allow_list = tmp_path / "allow-list.toml"
+        allow_list.write_text(state.allow_list, encoding="utf-8")
+        exit_code = cli.main(["check", "exposure", "--allow-list", str(allow_list), *arguments])
+        captured = capsys.readouterr()
+        return exit_code, captured.out, captured.err
+
+    return run
+
+
+HOSTS = {
+    "nothing runs": Host(),
+    "publications on 127.0.0.1 and ::1, listeners on loopback": Host(
+        docker=inspect_json(
+            container("traefik", {"8081/tcp": [("127.0.0.1", "8081")]}),
+            container("dns", {"53/udp": [("::1", "5353")]}),
+            container("worker", {}, exposed=("9000/tcp",)),
+        ),
+        ss=SS_LOOPBACK_ONLY,
+    ),
+    "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
+    "the project's allow-list permits the tunnel's QUIC and Chrome's mDNS sockets": Host(
+        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE,
+        allow_list=inspection.DEFAULT_ALLOW_LIST.read_text(),
+    ),
+    "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
+    "publication on 0.0.0.0": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+    ),
+    "publication on ::": Host(
+        docker=inspect_json(container("dns", {"53/udp": [("::", "53")]})),
+        findings=[finding("publication-beyond-loopback", "dns", "udp", "::", 53)],
+    ),
+    "publication on a loopback port range": Host(
+        docker=inspect_json(container("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
+    ),
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": Host(
+        docker=inspect_json(container("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
+        findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
+    ),
+    "publish-all publishes every exposed port not bound explicitly": Host(
+        docker=inspect_json(
+            container(
+                "lab",
+                {"9000/tcp": [("127.0.0.1", "9000")]},
+                exposed=("9000/tcp", "53/udp"),
+                publish_all=True,
+            )
+        ),
+        findings=[finding("publication-without-host-ip", "lab", "udp", "", None)],
+    ),
+    "publication without host IP or host port": Host(
+        docker=inspect_json(container("hello", {"80/tcp": [("", "")]})),
+        findings=[finding("publication-without-host-ip", "hello", "tcp", "", None)],
+    ),
+    "allow-listed system unit, run as root so ss shows the process": Host(
+        ss=SS_AVAHI_SEEN_BY_ROOT, allow_list=ALLOW_AVAHI_UNIT
+    ),
+    "allow-listed process name, run as root": Host(
+        ss=SS_AVAHI_SEEN_BY_ROOT, allow_list=ALLOW_AVAHI_UNIT.replace(".service", "")
+    ),
+    "a user unit named like an allow-listed system unit is not permitted": Host(
+        ss=SS_USER_SCOPE_NAMED_AVAHI,
+        allow_list=ALLOW_AVAHI_UNIT,
+        findings=[
+            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", "0.0.0.0", 5353)
+        ],
+    ),
+    "tcp listener on 0.0.0.0 names its process": Host(
+        ss=SS_LOOPBACK_ONLY + SS_SSHD,
+        findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+    ),
+    "one process on all three protocols comes once": Host(
+        ss=SS_ONE_PROCESS_ON_THREE_PROTOCOLS,
+        findings=[
+            finding("listener-beyond-loopback", "diameterd", "sctp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "tcp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "udp", "0.0.0.0", 3868),
+        ],
+    ),
+    "udp listener on * names its systemd unit": Host(
+        ss=SS_CLOUDFLARED,
+        findings=[finding("listener-beyond-loopback", "cloudflared.service", "udp", "*", 33697)],
+    ),
+    "link-local listener with unknown owner": Host(
+        ss=SS_DHCP6_LINK_LOCAL,
+        findings=[
+            finding(
+                "listener-beyond-loopback",
+                "unknown process",
+                "udp",
+                "fe80::d8e8:44d:1d8e:31f0",
+                546,
+            )
+        ],
+    ),
+    "allow-list entry for another protocol does not permit": Host(
+        ss=SS_AVAHI,
+        allow_list=ALLOW_AVAHI.replace('"udp"', '"tcp"'),
+        findings=[
+            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", "0.0.0.0", 5353)
+        ],
+    ),
+    "allow-list entry for another owner does not permit": Host(
+        ss=SS_SSHD,
+        allow_list=ALLOW_CLOUDFLARED.replace('"udp"', '"tcp"'),
+        findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+    ),
+    "a 0.0.0.0 publication and its docker-proxy listener are one finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+    ),
+    "a publication without host IP and docker-proxy on both families are one finding": Host(
+        docker=inspect_json(container("hello", {"80/tcp": [("", "8080")]})),
+        ss=SS_DOCKER_PROXY_8080_BOTH_FAMILIES,
+        findings=[finding("publication-without-host-ip", "hello", "tcp", "", 8080)],
+    ),
+    "another process on a published port is its own finding": Host(
+        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        ss=SS_SSHD.replace(":22 ", ":3000 "),
+        findings=[
+            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
+    ),
+    "a stopped container's publication does not hide a listener on its port": Host(
+        docker=inspect_json(
+            container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]}, running=False)
+        ),
+        ss=SS_DOCKER_PROXY_3000,
+        findings=[
+            finding("listener-beyond-loopback", "docker.service", "tcp", "0.0.0.0", 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+        ],
+    ),
+    "routed container with a valid, unique edge.name": Host(
+        docker=inspect_json(container("blog", labels=ROUTED | {"edge.name": "blog-2"})),
+    ),
+    "routed container without edge.name": Host(
+        docker=inspect_json(container("blog", labels=ROUTED)),
+        findings=[finding("routed-without-edge-name", "blog")],
+    ),
+    "edge.name outside [a-z0-9-]{1,63}": Host(
+        docker=inspect_json(container("blog", labels=ROUTED | {"edge.name": "Blog.App"})),
+        findings=[finding("invalid-edge-name", "blog", edge_name="Blog.App")],
+    ),
+    "edge.name longer than 63 characters": Host(
+        docker=inspect_json(container("blog", labels={"edge.name": "b" * 64})),
+        findings=[finding("invalid-edge-name", "blog", edge_name="b" * 64)],
+    ),
+    "two running containers with the same edge.name": Host(
+        docker=inspect_json(
+            container("blog-old", labels=ROUTED | {"edge.name": "blog"}),
+            container("blog-new", labels=ROUTED | {"edge.name": "blog"}),
+        ),
+        findings=[finding("duplicate-edge-name", "blog-new, blog-old", edge_name="blog")],
+    ),
+    "#445 R5: a valid alias on a routed container is silent": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "blog-talk"})
+        ),
+    ),
+    "#445 R5: edge.alias outside [a-z0-9-]{1,63}": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "Talk.App"})
+        ),
+        findings=[finding("invalid-edge-name", "web", edge_name="Talk.App")],
+    ),
+    "#445 R5: an alias claiming the host another container is named for": Host(
+        docker=inspect_json(
+            container("web", labels=ROUTED | {"edge.name": "blog", "edge.alias": "talk"}),
+            container("talk", labels=ROUTED | {"edge.name": "talk"}),
+        ),
+        findings=[finding("duplicate-edge-name", "talk, web", edge_name="talk")],
+    ),
+    "#445 R5: two aliases claiming one host": Host(
+        docker=inspect_json(
+            container("a", labels=ROUTED | {"edge.name": "a", "edge.alias": "talk"}),
+            container("b", labels=ROUTED | {"edge.name": "b", "edge.alias": "talk"}),
+        ),
+        findings=[finding("duplicate-edge-name", "a, b", edge_name="talk")],
+    ),
+    "a stopped container sharing an edge.name is no duplicate": Host(
+        docker=inspect_json(
+            container("blog-old", labels=ROUTED | {"edge.name": "blog"}, running=False),
+            container("blog-new", labels=ROUTED | {"edge.name": "blog"}),
+        ),
+    ),
+    "repeated sockets and mixed findings come once, in a stable order": Host(
+        docker=inspect_json(
+            container("web", {"8080/tcp": [("0.0.0.0", "8080"), ("::", "8080")]}),
+            container("api", {"9000/tcp": [("", "9000")]}),
+        ),
+        ss=SS_CHROME_MDNS_TWICE + SS_SSHD,
+        findings=[
+            finding("listener-beyond-loopback", "chrome", "udp", "224.0.0.251", 5353),
+            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22),
+            finding("publication-beyond-loopback", "web", "tcp", "0.0.0.0", 8080),
+            finding("publication-beyond-loopback", "web", "tcp", "::", 8080),
+            finding("publication-without-host-ip", "api", "tcp", "", 9000),
+        ],
+    ),
+}
+
+
+@pytest.mark.parametrize("state", HOSTS.values(), ids=HOSTS.keys())
+def test_exits_1_exactly_when_something_reaches_beyond_loopback(run_edge_check, state):
+    exit_code, out, err = run_edge_check(state, "--json")
+
+    assert (exit_code, json.loads(out)["exposure"], err) == (
+        1 if state.findings else 0,
+        state.findings,
+        "",
+    )
+
+
+ROWS = {
+    "publication on 0.0.0.0": [("grafana", "publishes", "1 TCP port beyond loopback")],
+    "publication on ::": [("dns", "publishes", "1 UDP port beyond loopback")],
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": [
+        ("ranged", "publishes", "1 TCP port beyond loopback")
+    ],
+    "publish-all publishes every exposed port not bound explicitly": [
+        ("lab", "publishes", "1 UDP port without a host IP")
+    ],
+    "publication without host IP or host port": [
+        ("hello", "publishes", "1 TCP port without a host IP")
+    ],
+    "a user unit named like an allow-listed system unit is not permitted": [
+        ("avahi-daemon.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "tcp listener on 0.0.0.0 names its process": [
+        ("sshd", "listens", "1 TCP port beyond loopback")
+    ],
+    "one process on all three protocols comes once": [
+        ("diameterd", "listens", "1 TCP port, 1 UDP port, 1 SCTP port beyond loopback")
+    ],
+    "udp listener on * names its systemd unit": [
+        ("cloudflared.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "link-local listener with unknown owner": [
+        ("unknown process", "listens", "1 UDP port beyond loopback")
+    ],
+    "allow-list entry for another protocol does not permit": [
+        ("avahi-daemon.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "allow-list entry for another owner does not permit": [
+        ("sshd", "listens", "1 TCP port beyond loopback")
+    ],
+    "a 0.0.0.0 publication and its docker-proxy listener are one finding": [
+        ("grafana", "publishes", "1 TCP port beyond loopback")
+    ],
+    "a publication without host IP and docker-proxy on both families are one finding": [
+        ("hello", "publishes", "1 TCP port without a host IP")
+    ],
+    "another process on a published port is its own finding": [
+        ("sshd", "listens", "1 TCP port beyond loopback"),
+        ("grafana", "publishes", "1 TCP port beyond loopback"),
+    ],
+    "a stopped container's publication does not hide a listener on its port": [
+        ("docker.service", "listens", "1 TCP port beyond loopback"),
+        ("grafana", "publishes", "1 TCP port beyond loopback"),
+    ],
+    "routed container without edge.name": [
+        ("blog", "routing name", "none, though Traefik routes it")
+    ],
+    "edge.name outside [a-z0-9-]{1,63}": [("blog", "routing name", "Blog.App is not a valid name")],
+    "edge.name longer than 63 characters": [
+        ("blog", "routing name", f"{'b' * 64} is not a valid name")
+    ],
+    "two running containers with the same edge.name": [
+        ("blog-new, blog-old", "routing name", "blog is claimed more than once")
+    ],
+    "#445 R5: edge.alias outside [a-z0-9-]{1,63}": [
+        ("web", "routing name", "Talk.App is not a valid name")
+    ],
+    "#445 R5: an alias claiming the host another container is named for": [
+        ("talk, web", "routing name", "talk is claimed more than once")
+    ],
+    "#445 R5: two aliases claiming one host": [
+        ("a, b", "routing name", "talk is claimed more than once")
+    ],
+    "repeated sockets and mixed findings come once, in a stable order": [
+        ("chrome", "listens", "1 UDP port beyond loopback"),
+        ("sshd", "listens", "1 TCP port beyond loopback"),
+        ("web", "publishes", "2 TCP ports beyond loopback"),
+        ("api", "publishes", "1 TCP port without a host IP"),
+    ],
+}
+
+
+def printed_rows(out: str) -> tuple[list[tuple[str, ...]], str]:
+    """The `!` rows as (subject, event, fact), and the verdict line."""
+    *rows, verdict = out.splitlines()
+    return [tuple(re.split(" {2,}", row.removeprefix("  ! ").strip())) for row in rows], verdict
+
+
+@pytest.mark.parametrize("name", HOSTS.keys())
+def test_one_row_per_process_or_container_and_none_for_a_clean_host(run_edge_check, name):
+    exit_code, out, _ = run_edge_check(HOSTS[name])
+
+    if not HOSTS[name].findings:
+        assert (exit_code, out) == (0, "✓ nothing reaches beyond loopback\n")
+        return
+    rows, verdict = printed_rows(out)
+    assert (exit_code, rows) == (1, ROWS[name])
+    assert verdict.startswith(f"! {len(rows)} finding")
+
+
+def test_every_host_with_findings_has_its_expected_rows():
+    assert {name for name, state in HOSTS.items() if state.findings} == set(ROWS)
+
+
+MIXED = "repeated sockets and mixed findings come once, in a stable order"
+
+
+@pytest.mark.parametrize("name", [MIXED, "one process on all three protocols comes once"])
+def test_the_rows_hold_every_socket_finding_json_lists(run_edge_check, name):
+    """Conservation: the ports on the rows add up to the sockets `--json` lists."""
+    _, out, _ = run_edge_check(HOSTS[name])
+    _, json_out, _ = run_edge_check(HOSTS[name], "--json")
+
+    ports = sum(
+        int(count)
+        for _, _, fact in printed_rows(out)[0]
+        for count in re.findall(r"(\d+) \w+ port", fact)
+    )
+    assert ports == len([item for item in json.loads(json_out)["exposure"] if item["protocol"]])
+
+
+def test_the_verdict_counts_findings_and_ports(run_edge_check):
+    _, out, _ = run_edge_check(HOSTS[MIXED])
+
+    assert printed_rows(out)[1] == "! 4 findings · 5 ports · --json lists each"
+
+
+@pytest.mark.parametrize("name", ["publication on 0.0.0.0", "edge.name outside [a-z0-9-]{1,63}"])
+def test_a_verdict_without_a_grouped_row_has_no_hint(run_edge_check, name):
+    _, out, _ = run_edge_check(HOSTS[name])
+
+    assert printed_rows(out)[1] == "! 1 finding"
+
+
+def test_the_rows_never_show_address_port_or_problem_code(run_edge_check):
+    state = Host(ss=SS_SSHD.replace("0.0.0.0:22", "192.0.2.7:61234"))
+    _, out, _ = run_edge_check(state)
+    _, json_out, _ = run_edge_check(state, "--json")
+
+    assert not any(text in out for text in ("192.0.2.7", "61234", "listener-beyond-loopback"))
+    assert "192.0.2.7" in json_out
+    assert "listener-beyond-loopback" in json_out
+
+
+VALID_ENTRY = 'protocol = "udp"\nport = 5353\nreason = "mDNS"\n'
+INVALID_ALLOW_LISTS = {
+    "unknown key": (VALID_ENTRY + 'adress = "0.0.0.0"', "allow entry 2 (udp 5353): unknown key"),
+    "port 0": ('protocol = "udp"\nport = 0\nreason = "x"', "allow entry 2 (udp 0): bad port 0"),
+    "port above 65535": (
+        'protocol = "tcp"\nport = 70000\nreason = "x"',
+        "allow entry 2 (tcp 70000): bad port 70000",
+    ),
+    "port as string": (
+        'protocol = "tcp"\nport = "22"\nreason = "x"',
+        "allow entry 2 (tcp 22): bad port '22'",
+    ),
+    "missing reason": ('protocol = "udp"\nport = 546', "allow entry 2 (udp 546): missing reason"),
+    "blank reason": (
+        'protocol = "udp"\nport = 546\nreason = " "',
+        "allow entry 2 (udp 546): missing reason",
+    ),
+    "unknown protocol": (
+        'protocol = "icmp"\nport = 1\nreason = "x"',
+        "allow entry 2 (icmp 1): protocol must be tcp or udp",
+    ),
+    "empty owner": (
+        'protocol = "tcp"\nowner = ""\nreason = "x"',
+        "allow entry 2 (tcp): owner must be a non-empty string",
+    ),
+    "neither port nor owner": (
+        'protocol = "udp"\nreason = "x"',
+        "allow entry 2 (udp): needs a port, an owner, or both",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("second_entry", "message"), INVALID_ALLOW_LISTS.values(), ids=INVALID_ALLOW_LISTS.keys()
+)
+def test_exits_3_naming_the_invalid_allow_list_entry(run_edge_check, second_entry, message):
+    allow_list = f"[[allow]]\n{VALID_ENTRY}\n[[allow]]\n{second_entry}\n"
+
+    exit_code, out, err = run_edge_check(Host(ss=SS_SSHD, allow_list=allow_list), "--json")
+
+    assert (exit_code, out) == (3, "")
+    assert message in err
+
+
+@pytest.mark.parametrize(
+    ("allow_list", "message"),
+    [
+        ("[[allow]\n", "not valid TOML"),
+        ("allowed = []\n", "unknown top-level key ['allowed']"),
+    ],
+    ids=["broken TOML", "unknown top-level key"],
+)
+def test_exits_3_on_an_unreadable_allow_list(run_edge_check, allow_list, message):
+    exit_code, _, err = run_edge_check(Host(allow_list=allow_list))
+
+    assert exit_code == 3
+    assert message in err
+
+
+def test_exits_3_when_the_allow_list_is_not_a_regular_file(run_edge_check, tmp_path):
+    """defect: pythonsecurity:S8707 -- the allow-list argument must name a regular file."""
+    exit_code, _, err = run_edge_check(Host(), "--allow-list", str(tmp_path))
+
+    assert exit_code == 3
+    assert "not a regular file" in err
+
+
+def _allow_list_in_unreadable_directory(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "allow-list.toml").write_text("", encoding="utf-8")
+    locked.chmod(0o000)
+    return locked / "allow-list.toml"
+
+
+def _allow_list_symlink_loop(tmp_path):
+    loop = tmp_path / "loop.toml"
+    loop.symlink_to(loop)
+    return loop
+
+
+@pytest.mark.parametrize(
+    ("make_allow_list", "reason"),
+    [
+        pytest.param(
+            _allow_list_in_unreadable_directory,
+            "Permission denied",
+            marks=pytest.mark.skipif(
+                os.geteuid() == 0, reason="root reads through a mode-000 directory"
+            ),
+        ),
+        (_allow_list_symlink_loop, "Too many levels of symbolic links"),
+        (lambda tmp_path: tmp_path / "absent.toml", "No such file or directory"),
+    ],
+    ids=["unreadable parent directory", "symlink loop", "missing file"],
+)
+def test_exits_3_naming_the_os_reason_an_allow_list_cannot_be_reached(
+    run_edge_check, tmp_path, make_allow_list, reason
+):
+    """defect: PR #115 review B1 -- an allow-list path failing in the OS must exit 3, not 1."""
+    allow_list = make_allow_list(tmp_path)
+    try:
+        exit_code, _, err = run_edge_check(Host(), "--allow-list", str(allow_list))
+    finally:
+        for locked in tmp_path.glob("locked"):
+            locked.chmod(0o700)
+
+    assert exit_code == 3
+    assert reason in err
+
+
+UNREADABLE_OUTPUTS = {
+    "docker output is not JSON": (Host(docker="Error: no such object"), "docker inspect"),
+    "docker output is JSON but not a list": (Host(docker="null"), "not a list of containers"),
+    "container without HostConfig": (
+        Host(docker=json.dumps([{"Name": "/broken"}])),
+        "container 'broken'",
+    ),
+    "host port that is not a number": (
+        Host(docker=inspect_json(container("web", {"80/tcp": [("127.0.0.1", "http")]}))),
+        "container 'web'",
+    ),
+    "host IP that is not an address": (
+        Host(docker=inspect_json(container("web", {"80/tcp": [("localhost", "80")]}))),
+        "container 'web'",
+    ),
+    "unknown ss socket type": (
+        Host(ss="raw UNCONN 0 0 0.0.0.0:255 0.0.0.0:* <->\n"),
+        "raw UNCONN 0 0 0.0.0.0:255",
+    ),
+    "ss address that is not an address": (
+        Host(ss="tcp LISTEN 0 128 eth0:22 0.0.0.0:* <->\n"),
+        "tcp LISTEN 0 128 eth0:22",
+    ),
+    "truncated ss line": (Host(ss="tcp LISTEN 0\n"), "tcp LISTEN 0"),
+}
+
+
+@pytest.mark.parametrize(
+    ("state", "message"), UNREADABLE_OUTPUTS.values(), ids=UNREADABLE_OUTPUTS.keys()
+)
+def test_exits_3_naming_the_command_output_it_cannot_read(run_edge_check, state, message):
+    exit_code, out, err = run_edge_check(state, "--json")
+
+    assert (exit_code, out) == (3, "")
+    assert message in err
+
+
+def test_exits_3_when_a_host_command_fails(monkeypatch, tmp_path, capsys):
+    def docker_is_down() -> str:
+        raise host.HostCommandError("docker ps failed with exit 1: daemon not running")
+
+    monkeypatch.setattr(host, "docker_inspect_json", docker_is_down)
+    monkeypatch.setattr(host, "socket_listeners", lambda: "")
+    allow_list = tmp_path / "allow-list.toml"
+    allow_list.write_text("", encoding="utf-8")
+
+    exit_code = cli.main(["check", "exposure", "--allow-list", str(allow_list)])
+
+    assert exit_code == 3
+    assert "docker ps failed" in capsys.readouterr().err
+
+
+def test_default_allow_list_is_the_projects_whatever_the_cwd(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
+    monkeypatch.setattr(host, "socket_listeners", lambda: "")
+
+    exit_code = cli.main(["check", "exposure", "--json"])
+
+    assert (exit_code, json.loads(capsys.readouterr().out)) == (0, {"exposure": []})
+
+
+def test_exits_3_when_the_allow_list_is_missing(tmp_path, capsys):
+    exit_code = cli.main(["check", "exposure", "--allow-list", str(tmp_path / "absent.toml")])
+
+    assert exit_code == 3
+    assert "cannot read" in capsys.readouterr().err
+
+
+def run_against_real_host_commands(tmp_path) -> int:
+    allow_list = tmp_path / "allow-list.toml"
+    allow_list.write_text("", encoding="utf-8")
+    return cli.main(["check", "exposure", "--allow-list", str(allow_list)])
+
+
+def process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_exits_3_naming_the_command_that_does_not_answer_in_time_and_kills_it(
+    fake_host, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
+    pid_file = tmp_path / "docker.pid"
+    fake_host(docker_script=f'echo $$ > "{pid_file}"\nexec sleep 30')
+
+    assert run_against_real_host_commands(tmp_path) == 3
+    assert "docker ps did not answer within 0.2 s" in capsys.readouterr().err
+    hung_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while process_is_running(hung_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not process_is_running(hung_pid)
+
+
+def test_names_ss_as_ss_when_it_does_not_answer_in_time(fake_host, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
+    fake_host()
+    (tmp_path / "bin" / "ss").write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+
+    assert run_against_real_host_commands(tmp_path) == 3
+    assert "ss did not answer within 0.2 s" in capsys.readouterr().err
+
+
+SHORT_INSPECT_ANSWERS = {"empty list": "[]", "one of two": '[{"Name": "/a"}]'}
+
+
+@pytest.mark.parametrize("answer", SHORT_INSPECT_ANSWERS.values(), ids=SHORT_INSPECT_ANSWERS.keys())
+def test_exits_3_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
+    fake_host, tmp_path, capsys, answer
+):
+    fake_host(docker_script=f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
+
+    assert run_against_real_host_commands(tmp_path) == 3
+    assert "docker ps listed 2" in capsys.readouterr().err

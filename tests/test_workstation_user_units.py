@@ -1,0 +1,505 @@
+"""The user-units step of `hal setup` against a sandboxed HOME and a fake `systemctl --user`."""
+
+from __future__ import annotations
+
+import shutil
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
+import pytest
+
+from workstation_support import Sandbox, run_hal_setup
+
+from hal.grammar import ExitCode
+from hal.workstation import ports
+from hal.workstation.ports import edge_units_directory
+from hal.workstation.system_step import Applied, CheckState, StepFailed
+from hal.workstation.layout import Layout, run_command
+from hal.workstation.user_units import UserUnits
+
+USER_UNITS_STEP = "User units"
+SERVICE = "backup.service"
+TIMER = "backup.timer"
+TIMERS_WANTS = "timers.target.wants"
+MUTATING_VERBS = {"daemon-reload", "enable", "disable", "stop"}
+
+
+class FakeSystemctl:
+    """systemd's view of the user units: what it loaded at the last reload, and what runs.
+
+    Like systemd 255 it keeps a unit loaded until the next reload, and it refuses to disable a
+    unit whose file is gone.
+    """
+
+    def __init__(self, user_units: Path) -> None:
+        self.user_units = user_units
+        self.calls: list[list[str]] = []
+        self.failing_verb: str | None = None
+        self.loaded: dict[str, str] = {}
+        self.active: set[str] = set()
+        self.starts_nothing = False
+        self.loaded_from: dict[str, str] = {}
+
+    def __call__(self, argv: Sequence[str]) -> str | None:
+        assert argv[:2] == ["systemctl", "--user"]
+        verb, *arguments = argv[2:]
+        self.calls.append([verb, *arguments])
+        if verb == self.failing_verb:
+            return None
+        if verb == "daemon-reload":
+            self.loaded = {
+                link.name: link.read_text() for link in self.user_units.iterdir() if link.is_file()
+            }
+        elif verb == "enable":
+            self.enable(arguments[-1])
+        elif verb == "disable":
+            return self.disable(arguments[-1])
+        elif verb == "stop":
+            return self.stop(arguments[-1])
+        else:
+            return self.show(arguments[0])
+        return ""
+
+    def enable(self, name: str) -> None:
+        wants = self.user_units / TIMERS_WANTS
+        wants.mkdir(exist_ok=True)
+        (wants / name).symlink_to((self.user_units / name).readlink())
+        if not self.starts_nothing:
+            self.active.add(name)
+
+    def disable(self, name: str) -> str | None:
+        if not (self.user_units / name).exists():
+            return None
+        (self.user_units / TIMERS_WANTS / name).unlink(missing_ok=True)
+        return ""
+
+    def stop(self, name: str) -> str | None:
+        if name not in self.loaded:
+            return None
+        self.active.discard(name)
+        return ""
+
+    def show(self, name: str) -> str:
+        link = self.user_units / name
+        stale = link.exists() and self.loaded.get(name) != link.read_text()
+        fragment_path = self.loaded_from.get(name, str(link) if name in self.loaded else "")
+        enabled = (self.user_units / TIMERS_WANTS / name).exists()
+        return "\n".join(
+            [
+                f"NeedDaemonReload={'yes' if stale else 'no'}",
+                f"UnitFileState={'enabled' if enabled else 'linked'}",
+                f"FragmentPath={fragment_path}",
+                f"ActiveState={'active' if name in self.active else 'inactive'}",
+            ]
+        )
+
+    @property
+    def changes(self) -> list[list[str]]:
+        return [call for call in self.calls if call[0] in MUTATING_VERBS]
+
+
+class Machine:
+    """A home whose checkout holds one service and its timer, with a fake systemd."""
+
+    def __init__(self, home: Path, checkout_units: Path) -> None:
+        self.layout = Layout(home)
+        self.checkout_units = checkout_units
+        self.user_units = home / ".config" / "systemd" / "user"
+        self.user_units.mkdir(parents=True)
+        self.checkout_units.mkdir(parents=True, exist_ok=True)
+        self.write_unit(SERVICE, "ExecStart=/checkout/bin/backup\n")
+        self.write_unit(TIMER, "OnCalendar=weekly\n")
+        self.systemctl = FakeSystemctl(self.user_units)
+        self.step = UserUnits(self.layout, self.checkout_units, self.systemctl)
+
+    def write_unit(self, name: str, content: str) -> None:
+        (self.checkout_units / name).write_text(content)
+
+
+@pytest.fixture
+def machine(tmp_path: Path) -> Machine:
+    home = tmp_path / "home"
+    return Machine(home, edge_units_directory(Layout(home)))
+
+
+def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) -> None:
+    assert machine.step.apply().applied is Applied.CHANGED
+
+    assert (machine.user_units / SERVICE).readlink() == machine.checkout_units / SERVICE
+    assert (machine.user_units / TIMER).readlink() == machine.checkout_units / TIMER
+    assert machine.systemctl.changes == [["daemon-reload"], ["enable", "--now", "backup.timer"]]
+    assert machine.step.verify()
+
+
+def test_a_dry_run_reports_a_change_and_touches_nothing(machine: Machine) -> None:
+    assert machine.step.check() is CheckState.WOULD_CHANGE
+
+    assert list(machine.user_units.iterdir()) == []
+    assert machine.systemctl.changes == []
+
+
+def test_a_second_apply_changes_nothing(machine: Machine) -> None:
+    machine.step.apply()
+    machine.systemctl.calls.clear()
+
+    assert (machine.step.apply().applied, machine.step.check()) == (
+        Applied.UNCHANGED,
+        CheckState.UNCHANGED,
+    )
+    assert machine.systemctl.changes == []
+
+
+@pytest.fixture
+def sandboxed_machine(sandbox: Sandbox) -> Machine:
+    """The sandbox's home and checkout units, with the fake systemd in place of the real one."""
+    return Machine(sandbox.home, ports.edge_units_directory(sandbox.layout))
+
+
+def setup_apply_lines(
+    machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> list[str]:
+    """The lines `hal setup` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
+
+    def run(argv: Sequence[str]) -> str | None:
+        return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
+
+    assert run_hal_setup(home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, run=run) == ExitCode.OK
+
+    return capsys.readouterr().out.splitlines()
+
+
+def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandboxed_machine.write_unit("hal-check.timer", "OnCalendar=daily\n")
+
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
+
+    assert "  \u2713 timers          changed        2 timers \u00b7 systemd reloaded" in lines
+
+
+def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandboxed_machine.step.apply()
+    sandboxed_machine.systemctl.active.clear()
+    (sandboxed_machine.user_units / TIMERS_WANTS / TIMER).unlink()
+
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
+
+    assert "  \u2713 timers          changed        1 timer" in lines
+
+
+def test_an_unchanged_timers_row_is_bare(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandboxed_machine.step.apply()
+
+    lines = setup_apply_lines(sandboxed_machine, sandbox, capsys)
+
+    assert "  \u00b7 timers          unchanged" in lines
+
+
+def test_no_loaded_unit_line_follows_the_timers_row(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = "\n".join(setup_apply_lines(sandboxed_machine, sandbox, capsys))
+
+    assert "ExecStart=" not in output
+    assert "Result=" not in output
+
+
+def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: Machine) -> None:
+    machine.step.apply()
+    machine.write_unit(SERVICE, "ExecStart=/checkout/bin/hal backup\n")
+
+    assert not machine.step.verify()
+    assert machine.step.apply().applied is Applied.CHANGED
+    assert machine.systemctl.changes[-1] == ["daemon-reload"]
+    assert machine.step.verify()
+
+
+def retire(machine: Machine, name: str, renamed_to: str | None) -> list[list[str]]:
+    """Run the step to a settled state, then rename or remove `name` in the checkout and apply."""
+    machine.step.apply()
+    machine.systemctl.active.add(name)
+    machine.systemctl.calls.clear()
+    if renamed_to:
+        (machine.checkout_units / name).rename(machine.checkout_units / renamed_to)
+    else:
+        (machine.checkout_units / name).unlink()
+    assert not machine.step.verify()
+    machine.step.apply()
+    return machine.systemctl.changes
+
+
+@pytest.mark.parametrize("name", [TIMER, SERVICE])
+def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_reload(
+    machine: Machine, name: str
+) -> None:
+    new_name = f"new-{name}"
+
+    changes = retire(machine, name, new_name)
+
+    assert changes[0] == ["stop", name]
+    assert changes.count(["daemon-reload"]) == 1
+    assert machine.systemctl.active.isdisjoint([name])
+    assert not (machine.user_units / name).is_symlink()
+    assert not (machine.user_units / TIMERS_WANTS / name).is_symlink()
+    assert (machine.user_units / new_name).readlink() == machine.checkout_units / new_name
+    assert machine.step.verify()
+
+
+@pytest.mark.parametrize(
+    ("old_prefix", "old_names", "new_timers"),
+    [
+        pytest.param(
+            "edge-backup",
+            [
+                f"edge-backup{stem}.{kind}"
+                for stem in ("", "-restore-test")
+                for kind in ("service", "timer")
+            ],
+            {"hal-backup.timer", "hal-backup-restore-test.timer"},
+            id="edge-backup-to-hal-backup",
+        ),
+        pytest.param(
+            "home-check",
+            ["home-check.service", "home-check.timer"],
+            {"hal-check.timer"},
+            id="home-check-to-hal-check",
+        ),
+    ],
+)
+def test_the_repository_units_replace_the_old_links_and_enable_the_hal_timers(
+    tmp_path: Path, old_prefix: str, old_names: list[str], new_timers: set[str]
+) -> None:
+    """The old unit names are gone and the hal timers run."""
+    repository_units = Path(__file__).parents[1] / "systemd"
+    home = tmp_path / "home"
+    user_units = home / ".config" / "systemd" / "user"
+    wants = user_units / TIMERS_WANTS
+    wants.mkdir(parents=True)
+    for old_name in old_names:
+        (user_units / old_name).symlink_to(repository_units / old_name)
+        if old_name.endswith(".timer"):
+            (wants / old_name).symlink_to(repository_units / old_name)
+    systemctl = FakeSystemctl(user_units)
+    step = UserUnits(Layout(home), repository_units, systemctl)
+
+    step.apply()
+
+    assert sorted(path.name for path in user_units.rglob(f"{old_prefix}*")) == []
+    assert new_timers <= systemctl.active
+    assert step.verify()
+
+
+def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> None:
+    changes = retire(machine, TIMER, None)
+
+    assert changes == [["stop", "backup.timer"], ["daemon-reload"]]
+    assert machine.systemctl.active.isdisjoint([TIMER])
+    assert sorted(path.name for path in machine.user_units.rglob("*") if path.is_symlink()) == [
+        SERVICE
+    ]
+    assert machine.step.verify()
+
+
+def test_a_removed_pair_stops_its_timer_before_its_service(machine: Machine) -> None:
+    machine.step.apply()
+    machine.systemctl.active.update([SERVICE, TIMER])
+    machine.systemctl.calls.clear()
+    for name in (SERVICE, TIMER):
+        (machine.checkout_units / name).unlink()
+
+    machine.step.apply()
+
+    assert machine.systemctl.changes == [["stop", TIMER], ["stop", SERVICE], ["daemon-reload"]]
+
+
+def test_a_retired_link_sharing_its_name_with_a_foreign_unit_stops_nothing(
+    machine: Machine, tmp_path: Path
+) -> None:
+    machine.step.apply()
+    foreign = tmp_path / "foreign.timer"
+    foreign.write_text("OnCalendar=daily\n")
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    (machine.user_units / TIMER).symlink_to(foreign)
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"{TIMERS_WANTS}/{TIMER}.*does not own that unit"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+
+
+def test_a_timer_that_does_not_run_after_enabling_fails_the_step_naming_it(
+    machine: Machine,
+) -> None:
+    machine.systemctl.starts_nothing = True
+
+    with pytest.raises(StepFailed, match=f"{TIMER} enabled but not active"):
+        machine.step.apply()
+
+
+def test_a_retired_unit_that_is_not_running_is_not_stopped(machine: Machine) -> None:
+    machine.step.apply()
+    (machine.checkout_units / SERVICE).unlink()
+
+    machine.step.apply()
+
+    assert machine.systemctl.changes.count(["stop", SERVICE]) == 0
+    assert machine.step.verify()
+
+
+def test_a_link_that_is_already_gone_is_not_an_error(machine: Machine) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    machine.systemctl.active.discard(TIMER)
+    machine.systemctl.calls.clear()
+
+    machine.step.apply()
+
+    assert machine.systemctl.changes == [["daemon-reload"]]
+    assert not (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+    assert machine.step.verify()
+
+
+def test_a_link_to_a_file_outside_the_checkout_is_left_alone(
+    machine: Machine, tmp_path: Path
+) -> None:
+    machine.step.apply()
+    foreign = machine.user_units / "foreign.service"
+    foreign.symlink_to(tmp_path / "gone.service")
+
+    assert machine.step.verify()
+    assert foreign.is_symlink()
+
+
+def foreign_link_elsewhere(entry: Path, tmp_path: Path) -> None:
+    entry.symlink_to(tmp_path / "another-project.service")
+
+
+def mask(entry: Path, tmp_path: Path) -> None:
+    entry.symlink_to("/dev/null")
+
+
+def file_of_its_own(entry: Path, tmp_path: Path) -> None:
+    entry.write_text("ExecStart=/mine\n")
+
+
+@pytest.mark.parametrize("occupy", [foreign_link_elsewhere, mask, file_of_its_own])
+def test_a_same_name_entry_the_checkout_does_not_own_is_never_replaced(
+    machine: Machine, tmp_path: Path, occupy: Callable[[Path, Path], None]
+) -> None:
+    entry = machine.user_units / SERVICE
+    occupy(entry, tmp_path)
+    before = (entry.is_symlink(), entry.is_symlink() and entry.readlink())
+
+    for action in (machine.step.apply, machine.step.check):
+        with pytest.raises(StepFailed, match=f"{entry}.*does not own it.*you decide"):
+            action()
+
+    assert before == (entry.is_symlink(), entry.is_symlink() and entry.readlink())
+    assert machine.systemctl.changes == []
+
+
+def test_a_missing_checkout_unit_directory_fails_the_check_and_the_apply(machine: Machine) -> None:
+    shutil.rmtree(machine.checkout_units)
+
+    for action in (machine.step.apply, machine.step.check):
+        with pytest.raises(StepFailed, match="is missing"):
+            action()
+
+
+@pytest.mark.parametrize("verb", ["daemon-reload", "enable", "show"])
+def test_a_failing_systemctl_fails_the_step_loudly(machine: Machine, verb: str) -> None:
+    machine.step.apply()
+    shutil.rmtree(machine.user_units / TIMERS_WANTS)
+    machine.write_unit(SERVICE, "ExecStart=/checkout/bin/hal backup\n")
+    machine.systemctl.failing_verb = verb
+
+    with pytest.raises(StepFailed, match=f"systemctl --user {verb}"):
+        machine.step.apply()
+
+
+def test_a_failing_stop_of_a_retired_unit_fails_the_step_loudly(machine: Machine) -> None:
+    machine.step.apply()
+    machine.systemctl.active.add(TIMER)
+    (machine.checkout_units / TIMER).unlink()
+    machine.systemctl.failing_verb = "stop"
+
+    with pytest.raises(StepFailed, match="systemctl --user stop"):
+        machine.step.apply()
+    assert (machine.user_units / TIMER).is_symlink()
+
+
+def test_the_dry_run_names_a_failing_systemctl_instead_of_reporting_a_change(
+    machine: Machine,
+) -> None:
+    machine.step.apply()
+    machine.systemctl.failing_verb = "show"
+
+    with pytest.raises(StepFailed, match="systemctl --user show"):
+        machine.step.check()
+
+
+def test_a_retired_link_whose_name_systemd_loaded_from_elsewhere_stops_nothing(
+    machine: Machine, tmp_path: Path
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    elsewhere = tmp_path / ".local" / "share" / "systemd" / "user" / TIMER
+    machine.systemctl.loaded_from[TIMER] = str(elsewhere)
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"{TIMERS_WANTS}/{TIMER}.*{elsewhere}"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+
+
+@pytest.mark.parametrize("fragment_path", ["", None])
+def test_a_running_retired_unit_without_a_top_level_entry_is_never_stopped(
+    machine: Machine, fragment_path: str | None
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    if fragment_path is not None:
+        machine.systemctl.loaded_from[TIMER] = fragment_path
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    with pytest.raises(StepFailed, match=f"systemctl --user stop {TIMER}"):
+        machine.step.apply()
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
+
+
+def test_a_unit_that_turns_active_after_the_preflight_is_not_stopped_without_proof(
+    machine: Machine,
+) -> None:
+    machine.step.apply()
+    (machine.checkout_units / TIMER).unlink()
+    (machine.user_units / TIMER).unlink()
+    machine.systemctl.active.discard(TIMER)
+    machine.step.refuse_foreign_entries()
+    machine.systemctl.active.add(TIMER)
+    machine.systemctl.calls.clear()
+
+    dangling = machine.step.dangling_links()
+
+    with pytest.raises(StepFailed, match=f"systemctl --user stop {TIMER}"):
+        machine.step.retire(dangling)
+
+    assert machine.systemctl.changes == []
+    assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()

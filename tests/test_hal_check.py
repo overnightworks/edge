@@ -5,7 +5,6 @@ import io
 import json
 import os
 import re
-import shlex
 import shutil
 import signal
 import subprocess
@@ -31,24 +30,6 @@ class Forbidden:
         raise AssertionError("stdin was touched")
 sys.stdin = Forbidden()
 """
-
-
-@pytest.fixture
-def fake_host(monkeypatch, tmp_path):
-    """A `docker` without containers and an `ss` printing the listeners, first on PATH; `docker`
-    can run another script."""
-    directory = tmp_path / "bin"
-    directory.mkdir()
-
-    def install(listeners: str = "", docker_script: str = "exit 0") -> None:
-        scripts = {"docker": docker_script, "ss": f"printf %s {shlex.quote(listeners)}"}
-        for name, script in scripts.items():
-            executable = directory / name
-            executable.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
-            executable.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{directory}:{os.environ['PATH']}")
-
-    return install
 
 
 @pytest.fixture
