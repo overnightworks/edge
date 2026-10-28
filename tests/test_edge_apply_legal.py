@@ -35,6 +35,9 @@ from test_edge_apply import (
     unreadable_profile_bind,  # noqa: F401 the fixture, requested by name below
     write_fleet,
 )
+from test_edge_plan_rows import detail_lines, find_row, plain
+
+from edge.plan_rows import LegalEvent
 
 FLEET = (
     f"cloudflare:\n  zone: {ZONE}\nservices:\n"
@@ -111,8 +114,11 @@ def test_the_first_apply_names_and_writes_the_three_pages_readable_by_the_unit(w
     exit_code, out, err = world.switch()
 
     assert exit_code == 0, err
-    for page in ("impressum", "datenschutz", "nutzungsbedingungen"):
-        assert f"legal: {page} new" in out
+    assert find_row(
+        out, "legal", LegalEvent.NEW_PAGE, "impressum, datenschutz, nutzungsbedingungen"
+    )
+    assert re.search(r"^  \+ legal +3 new pages ", plain(out), re.MULTILINE)
+    assert detail_lines(out) == []
     assert world.built_names() == THE_PAGES
     for name in THE_PAGES[1:]:
         assert stat.S_IMODE((world.built / name).stat().st_mode) == 0o644
@@ -130,7 +136,7 @@ def test_the_second_apply_changes_nothing_and_says_so(world):
     exit_code, out, _ = world.switch(answer="no")
 
     assert exit_code == 0
-    assert "legal: unchanged" in out
+    assert not re.search(r"^  \S legal\b", plain(out), re.MULTILINE)
     assert "nothing to change" in out
     assert world.scripted.changing_verbs() == []
 
@@ -143,14 +149,14 @@ def test_a_changed_text_goes_live_only_after_yes_and_the_plan_names_its_page(wor
     declined_exit, declined_out, _ = world.switch(answer="no")
 
     assert declined_exit == 1
-    assert "legal: datenschutz changes" in declined_out
+    assert find_row(declined_out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert "nutzungsbedingungen" not in declined_out
     assert 'id="neu"' not in world.built_page("datenschutz")
 
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert "legal: datenschutz changes" in out
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert 'id="neu"' in world.built_page("datenschutz")
 
 
@@ -161,8 +167,8 @@ def test_the_plan_names_the_block_whose_text_changed_and_no_other(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"legal: datenschutz changes: {AGENT}#agent-dienst changed" in out
-    assert PRIVACY not in out
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
+    assert detail_lines(out) == [f"{AGENT}#agent-dienst changed"]
 
 
 def test_the_plan_names_a_block_whose_title_was_only_shortened(world):
@@ -173,7 +179,8 @@ def test_the_plan_names_a_block_whose_title_was_only_shortened(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"legal: nutzungsbedingungen changes: {terms}#recht changed" in out
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "nutzungsbedingungen")
+    assert detail_lines(out) == [f"{terms}#recht changed"]
 
 
 def test_the_plan_names_a_general_block_whose_final_paragraph_was_removed(world):
@@ -186,7 +193,7 @@ def test_the_plan_names_a_general_block_whose_final_paragraph_was_removed(world)
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"legal: nutzungsbedingungen changes: {terms}#recht changed" in out
+    assert detail_lines(out) == [f"{terms}#recht changed"]
 
 
 def test_the_plan_names_a_general_block_whose_final_heading_was_removed(world):
@@ -200,7 +207,8 @@ def test_the_plan_names_a_general_block_whose_final_heading_was_removed(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert re.search(rf"legal: datenschutz changes: {PRIVACY}#[a-z-]+ left$", out, re.MULTILINE)
+    [line] = detail_lines(out)
+    assert re.fullmatch(rf"{PRIVACY}#[a-z-]+ left", line)
 
 
 def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
@@ -212,7 +220,7 @@ def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert "legal: datenschutz changes" in out
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert 'id="agent-dienst"' not in world.built_page("datenschutz")
 
 
@@ -223,8 +231,7 @@ def test_the_plan_names_a_block_that_left_and_no_other(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"legal: datenschutz changes: {AGENT}#agent-dienst left" in out
-    assert PRIVACY not in out
+    assert detail_lines(out) == [f"{AGENT}#agent-dienst left"]
 
 
 def test_the_plan_names_a_changed_frame_and_no_block(world):
@@ -234,7 +241,8 @@ def test_the_plan_names_a_changed_frame_and_no_block(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert "legal: datenschutz changes: legal/frame/datenschutz.html changed\n" in out
+    assert detail_lines(out) == ["legal/frame/datenschutz.html changed"]
+    assert "legal/sections/" not in out
 
 
 @pytest.mark.parametrize("record", [None, b"{not json"], ids=["missing", "unreadable"])
@@ -249,10 +257,12 @@ def test_without_a_usable_record_the_plan_names_every_block_as_new(world, record
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"{AGENT}#agent-dienst new" in out
-    assert f"{PRIVACY}#verantwortlicher new" in out
-    assert " changed" not in out
-    assert "legal: unchanged" not in out
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.NEW_RECORD, "impressum, nutzungsbedingungen")
+    lines = detail_lines(out)
+    assert f"{AGENT}#agent-dienst new" in lines
+    assert f"{PRIVACY}#verantwortlicher new" in lines
+    assert not any(line.endswith(" changed") for line in lines)
 
 
 @pytest.mark.parametrize("record", [None, b"{not json"], ids=["missing", "unreadable"])
@@ -265,12 +275,13 @@ def test_a_page_that_matches_is_planned_again_when_its_record_is_unusable(world,
         record_file.write_bytes(record)
 
     _, out, _ = world.switch(answer="no")
-    assert "legal: unchanged" not in out
-    assert f"{AGENT}#agent-dienst new" in out
+    assert find_row(out, "legal", LegalEvent.NEW_RECORD, "datenschutz")
+    assert detail_lines(out) == []
 
     world.switch()
     _, again, _ = world.switch(answer="no")
-    assert "legal: unchanged" in again
+    assert not re.search(r"^  \S legal\b", plain(again), re.MULTILINE)
+    assert "nothing to change" in again
 
 
 def test_the_plan_names_a_changed_table_of_contents_template(world):
@@ -282,7 +293,10 @@ def test_the_plan_names_a_changed_table_of_contents_template(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert "legal: datenschutz changes: legal/frame/datenschutz.html changed" in out
+    assert detail_lines(out) == [
+        "legal/frame/datenschutz.html changed",
+        "legal/frame/nutzungsbedingungen.html changed",
+    ]
 
 
 def test_a_built_page_edited_by_hand_makes_every_block_of_it_new(world):
@@ -293,7 +307,7 @@ def test_a_built_page_edited_by_hand_makes_every_block_of_it_new(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"{AGENT}#agent-dienst new" in out
+    assert f"{AGENT}#agent-dienst new" in detail_lines(out)
 
 
 def test_the_record_stays_out_of_the_directory_the_unit_serves(world):
@@ -308,7 +322,8 @@ def test_the_imprint_plan_line_names_the_page_and_no_block(world):
     """L3."""
     _, out, _ = world.switch(answer="no")
 
-    assert re.search(r"^\s*legal: impressum new$", out, re.MULTILINE)
+    assert find_row(out, "legal", LegalEvent.NEW_PAGE, "impressum")
+    assert detail_lines(out) == []
 
 
 def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):
@@ -318,7 +333,7 @@ def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert "legal: datenschutz new" in out
+    assert find_row(out, "legal", LegalEvent.NEW_PAGE, "datenschutz")
     assert world.built_names() == THE_PAGES
 
 

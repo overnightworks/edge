@@ -77,7 +77,7 @@ hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benac
 ```
 
 `hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
-`home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
+`home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung, die Plattform-Prüfung und die Exposure-Prüfung (was von außerhalb dieses PCs erreichbar ist, dieselbe Suche wie `hal check exposure`; `hal` führt sie aus und reicht die Funde herunter) — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
 Von Hand getippt liefert ein nacktes `hal check` Neuigkeiten aus wie der Timer: derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
@@ -89,8 +89,8 @@ prüfen konnte, endet den Lauf mit `error:` und Exit 3.
 
 **Stufen.** Jeder Fund hat genau eine Stufe. *OK*: nichts gefunden. *Note*: kann warten, nichts geht heute
 kaputt, nichts liegt offen. *Action needed*: etwas ist jetzt kaputt, ungeschützt oder unsichtbar. Der Stand eines
-Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner fünf Bereiche (Services, Backup,
-Commit protection, Secrets, Server logs). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
+Bereichs ist die schlimmste Stufe seiner Funde, der des PCs die schlimmste seiner sechs Bereiche (Services, Backup,
+Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Regel stehen in `RULE_REPORTS` in
 `check.py`; ein Test lässt jede Regel der Prüfungen ohne Stufe scheitern.
 
 | Prüfung | Action needed | Note |
@@ -100,8 +100,11 @@ Commit protection, Secrets, Server logs). Die Stufe und der Satz je Regel stehen
 | `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
+| `exposure` | `reachable-beyond-loopback` (Veröffentlichung oder Listener jenseits von Loopback, ein Fund je Prozess oder Container), `routing-name-unusable` (`routed-without-edge-name`, `invalid-edge-name`, `duplicate-edge-name`) | – |
 
-Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `hal check`).
+Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `hal check`); bei Exposure ist das auch Docker nicht erreichbar, `ss` fehlt oder die Erlaubnisliste unlesbar. Der Scan läuft als du, ohne sudo, und braucht bis zu 90 s (zwei `docker`-Aufrufe und `ss`, je 30 s).
+
+Die Funde von Exposure ändern sich mit ihrem Gegenstand, nicht mit dem Port: Wandert sshd von 22 auf 2222, kommt keine Mail; der Bericht zeigt jede Zeile des Scans.
 
 **Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
 wenn eine Action-needed-Stufe neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
@@ -142,13 +145,14 @@ Backup: OK, last backup today 14:15
 Commit protection: OK
 Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
+Exposure: OK
 
 Notes are not urgent; home next shows what you can do.
 Everything in detail: ~/.local/state/hal/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
-Containers, Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz und Logs steht nur, was los ist. Ein
+Containers oder Prozesses, bei Exposure der Name des Containers, Prozesses oder der Unit (nie Adresse, Port, Protokoll oder Erlaubnisliste), Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz und Logs steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active
@@ -539,7 +543,7 @@ a minute, `1h02m` from an hour) and stands after the counts and before the hint;
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit ends with the wizard's own error pair; setup prints no secrets row and no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup --apply` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen

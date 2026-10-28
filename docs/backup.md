@@ -7,8 +7,8 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 ## hal check
 
-A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. The Docker daemon
-default (operator step A7) enforces loopback publications; `hal check` reports what slipped through.
+A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. Docker's loopback default is not set yet (edge#291), so a publication can bind every
+interface; the daily `hal check` reports it as its exposure area.
 Run `hal check exposure` (human table) or `hal check exposure --json` (the same findings for
 machines). It has two areas, `exposure` (local) and `hosts` (reads Cloudflare, see
 docs/external.md), one per run. A bare `hal check` is not an area: it is the daily check, which also
@@ -246,8 +246,8 @@ path or file name.
   freshness per app: `last_successful_backup` no older than about 8 days,
   `last_successful_restore_test` no older than about 5 weeks.
 
-`hal backup` prints a row per app (`✓ <app>  backed up  <snapshot>` or `✗ <app>  not backed up  <reason>`;
-a failed app does not stop the others), a `repository` row (`pruned` after forget and check, `not pruned`
+`hal backup` prints a row per app (`✓ <app>  backed up  <snapshot> · <size> · <time>` or `✗ <app>  not backed up  <reason>`;
+a failed app does not stop the others; the size is restic's `total_bytes_processed`, the source size, and the time is the app's whole span from readiness to the status write; a backup summary without the id or the size fails the app), a `repository` row (`pruned` after forget and check, `not pruned`
 when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
 `hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`

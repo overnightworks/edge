@@ -2,6 +2,8 @@
 from typed fields, and the `find_row` helper the apply tests share."""
 
 import re
+from enum import StrEnum
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -19,12 +21,21 @@ from edge.apps import (
 )
 from edge.built_image import ENDS_RUNS, BuiltRecreate
 from edge.catalog import App, Unit
-from edge.core import Gate
+from edge.core import (
+    Cause,
+    CauseKind,
+    CoreAction,
+    CorePlan,
+    FollowerAction,
+    FollowerPlan,
+    Gate,
+)
+from edge.legal_step import BlockChange, Change, LegalPlan, PageChange
 from edge.plan import Plan
-from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
+from edge.plan_rows import LegalEvent, PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import Glyph, Group, Row
+from hal_output import DETAIL_INDENT, EVENT_WIDTH, Glyph, Group, Row, counted
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -46,40 +57,75 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
 
 
 NO_REALM = RealmPlan()
+NO_LEGAL = LegalPlan(Path(), Path(), {}, {})
 
 
 def groups_of(
     images: tuple[KeptImage, ...] = (),
     realm: RealmPlan = NO_REALM,
+    legal: LegalPlan = NO_LEGAL,
     **parts: Any,
 ) -> tuple[Group, ...]:
-    units = {key: parts.pop(key) for key in ("built", "recreates", "unit_plans") if key in parts}
+    units = {
+        key: parts.pop(key)
+        for key in ("built", "recreates", "unit_plans", "core", "followers")
+        if key in parts
+    }
     apps = AppsPlan(cast(AppRuntime, None), **parts)  # type: ignore[arg-type]
     plan = SimpleNamespace(
         app_plans=apps,
         images=list(images),
         realm=realm,
+        legal=legal,
         built=list(units.pop("built", ())),
         recreates=list(units.pop("recreates", ())),
         plans=list(units.pop("unit_plans", ())),
+        core=list(units.pop("core", ())),
+        followers=list(units.pop("followers", ())),
     )
     return plan_groups(cast(Plan, plan))
 
 
 def rows_of(**parts: object) -> tuple[Row, ...]:
-    [units, apps] = groups_of(**parts)
-    assert (units.heading, apps.heading) == (PlanGroup.UNITS, PlanGroup.APPS)
+    [legal, core, units, apps] = groups_of(**parts)
+    assert (legal.heading, core.heading, units.heading, apps.heading) == (
+        None,
+        PlanGroup.CORE,
+        PlanGroup.UNITS,
+        PlanGroup.APPS,
+    )
     return apps.rows
 
 
 def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
-    return groups_of(**plan)[0].rows
+    return groups_of(**plan)[2].rows
 
 
-def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Match[str] | None:
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
-    pattern = rf"^  \S {re.escape(subject)} +{re.escape(str(event))}\b.*{re.escape(fact)}"
-    return re.search(pattern, plain, re.MULTILINE)
+def plain(out: str) -> str:
+    """The output without colour."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", out)
+
+
+def find_row(out: str, subject: str, event: StrEnum, fact: str = "") -> re.Match[str] | None:
+    pattern = (
+        rf"^  \S {re.escape(subject)} +(?:\d+ )?{re.escape(str(event))}s?\b.*{re.escape(fact)}"
+    )
+    return re.search(pattern, plain(out), re.MULTILINE)
+
+
+def detail_lines(out: str) -> list[str]:
+    """The lines indented under a row, without colour."""
+    return [
+        line[len(DETAIL_INDENT) :]
+        for line in plain(out).splitlines()
+        if line.startswith(DETAIL_INDENT)
+    ]
+
+
+def row_at(out: str, subject: str, event: StrEnum, fact: str = "") -> int:
+    row = find_row(out, subject, event, fact)
+    assert row, out
+    return row.start()
 
 
 @pytest.mark.parametrize(
@@ -257,7 +303,7 @@ def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
     realm = RealmPlan(RealmAction.RUN, why="x")
 
-    units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
+    _, _, units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
 
     assert [row.event for row in units.rows] == [PlanEvent.OLD_IMAGE, PlanEvent.REALM_APPLY]
     assert apps.rows
@@ -390,7 +436,7 @@ def test_a_unit_part_is_one_row_of_its_typed_fields(parts: dict[str, Any], row: 
 def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_the_realm() -> None:
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
 
-    units, apps = groups_of(
+    _, _, units, apps = groups_of(
         built=(built(rebuilt=True),),
         recreates=(Recreate("keycloak", "keycloak-db"),),
         unit_plans=(unit_plan(Action.ON), unit_plan(Action.STAYS_STOPPED)),
@@ -408,3 +454,250 @@ def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_th
         (REALM_UNIT, PlanEvent.REALM_APPLY),
     ]
     assert apps.rows
+
+
+def core_rows_of(**parts: Any) -> tuple[Row, ...]:
+    return groups_of(**parts)[1].rows
+
+
+def core_plan(action: CoreAction, *why: Cause) -> CorePlan:
+    return CorePlan("socket-proxy", action, why, {}, False)
+
+
+def follower_plan(action: FollowerAction, gate: Gate, *why: Cause) -> FollowerPlan:
+    return FollowerPlan("traefik-mcp", "step-ca", action, why, {}, gate)
+
+
+DEFINITION = Cause(CauseKind.DEFINITION_CHANGED)
+FOLLOWER_FILE = Cause(CauseKind.FILE_UNRECORDED, "traefik-mcp.yml")
+
+
+@pytest.mark.parametrize(
+    ("cause", "fact"),
+    [
+        pytest.param(DEFINITION, "definition changed", id="definition changed"),
+        pytest.param(
+            Cause(CauseKind.FILE_CHANGED, "traefik.yml"), "traefik.yml changed", id="file"
+        ),
+        pytest.param(
+            Cause(CauseKind.FILE_UNRECORDED, "traefik.yml"),
+            "traefik.yml has no applied record",
+            id="file unrecorded",
+        ),
+        pytest.param(
+            Cause(CauseKind.UNFINISHED), "the last recreate did not finish", id="unfinished"
+        ),
+        pytest.param(
+            Cause(CauseKind.RECORD_UNTRUSTED, "/x/applied.json is malformed: it is not JSON"),
+            "/x/applied.json is malformed: it is not JSON",
+            id="record untrusted",
+        ),
+        pytest.param(
+            Cause(CauseKind.RECORD_NAMES_OTHERS, "old.yml, older.yml"),
+            "applied.json names old.yml, older.yml, which socket-proxy does not mount",
+            id="record names others",
+        ),
+        pytest.param(
+            Cause(CauseKind.PULLED_IN, "socket-proxy"), "socket-proxy is recreated", id="pulled in"
+        ),
+    ],
+)
+def test_every_cause_of_a_recreated_core_service_is_one_fact(cause: Cause, fact: str) -> None:
+    plan = core_plan(CoreAction.RECREATE, cause)
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(Glyph.CHANGE, "socket-proxy", PlanEvent.RECREATE, fact),
+    )
+
+
+def test_several_causes_are_one_row_in_the_order_they_are_planned() -> None:
+    plan = CorePlan(
+        "traefik",
+        CoreAction.RECREATE,
+        (DEFINITION, Cause(CauseKind.FILE_CHANGED, "traefik.yml")),
+        {},
+        False,
+    )
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(
+            Glyph.CHANGE, "traefik", PlanEvent.RECREATE, "definition changed · traefik.yml changed"
+        ),
+    )
+
+
+def test_a_core_service_that_is_not_running_is_a_row_that_says_it_is_not_started() -> None:
+    plan = core_plan(CoreAction.NOT_STARTED, DEFINITION)
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(
+            Glyph.UNCHANGED,
+            "socket-proxy",
+            PlanEvent.NOT_STARTED,
+            "definition changed · not running",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "gate", "row"),
+    [
+        pytest.param(
+            FollowerAction.RECREATE,
+            Gate.ON,
+            Row(
+                Glyph.CHANGE,
+                "traefik-mcp",
+                PlanEvent.RECREATE,
+                "traefik-mcp.yml has no applied record",
+            ),
+            id="recreate",
+        ),
+        pytest.param(
+            FollowerAction.STARTS_WITH_UNIT,
+            Gate.ON,
+            Row(
+                Glyph.CHANGE,
+                "traefik-mcp",
+                PlanEvent.STARTS_LATER,
+                "traefik-mcp.yml has no applied record · with step-ca",
+            ),
+            id="starts with its unit",
+        ),
+        pytest.param(
+            FollowerAction.HELD,
+            Gate.OFF,
+            Row(
+                Glyph.UNCHANGED,
+                "traefik-mcp",
+                PlanEvent.NOT_STARTED,
+                "traefik-mcp.yml has no applied record · step-ca is off",
+            ),
+            id="held, unit off",
+        ),
+        pytest.param(
+            FollowerAction.HELD,
+            Gate.SWITCHED_OFF,
+            Row(
+                Glyph.UNCHANGED,
+                "traefik-mcp",
+                PlanEvent.NOT_STARTED,
+                "traefik-mcp.yml has no applied record · step-ca is switched off",
+            ),
+            id="held, unit switched off",
+        ),
+    ],
+)
+def test_a_follower_is_one_row_and_a_waiting_one_ends_with_the_state_of_its_unit(
+    action: FollowerAction, gate: Gate, row: Row
+) -> None:
+    assert core_rows_of(followers=(follower_plan(action, gate, FOLLOWER_FILE),)) == (row,)
+
+
+def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_and_apps() -> None:
+    _, core, units, apps = groups_of(
+        core=(core_plan(CoreAction.RECREATE, DEFINITION),),
+        followers=(follower_plan(FollowerAction.RECREATE, Gate.ON, DEFINITION),),
+        unit_plans=(unit_plan(Action.ON),),
+        plans=(app_plan(AppKind.ON),),
+    )
+
+    assert [group.heading for group in (core, units, apps)] == list(PlanGroup)
+    assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]
+
+
+def legal_plan(
+    changed: dict[str, PageChange], blocks: dict[str, tuple[BlockChange, ...]] | None = None
+) -> LegalPlan:
+    return LegalPlan(Path(), Path(), {page: "" for page in changed}, changed, blocks or {})
+
+
+SECTION = "legal/sections/agent-service/datenschutz.html"
+FRAME = "legal/frame/datenschutz.html"
+
+
+@pytest.mark.parametrize(
+    ("plan", "expected"),
+    [
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.NEW}),
+            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz", 1)],
+            id="one new page",
+        ),
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.NEW, "nutzungsbedingungen": PageChange.NEW}),
+            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz, nutzungsbedingungen", 2)],
+            id="several new pages",
+        ),
+        pytest.param(
+            legal_plan(
+                {"datenschutz": PageChange.CHANGED},
+                {
+                    "datenschutz": (
+                        BlockChange(FRAME, Change.CHANGED),
+                        BlockChange(SECTION, Change.CHANGED, "agent-dienst"),
+                        BlockChange(SECTION, Change.LEFT, "alt"),
+                    )
+                },
+            ),
+            [
+                Row(
+                    Glyph.CHANGE,
+                    "legal",
+                    LegalEvent.EDITED_PAGE,
+                    "datenschutz",
+                    1,
+                    (f"{FRAME} changed", f"{SECTION}#agent-dienst changed", f"{SECTION}#alt left"),
+                )
+            ],
+            id="an edited page with frame, changed and left lines",
+        ),
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.UNRECORDED, "impressum": PageChange.UNRECORDED}),
+            [Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "datenschutz, impressum", 2)],
+            id="records only",
+        ),
+        pytest.param(
+            legal_plan(
+                {
+                    "a": PageChange.UNRECORDED,
+                    "b": PageChange.CHANGED,
+                    "c": PageChange.NEW,
+                },
+                {"b": (BlockChange(SECTION, Change.NEW, "x"),)},
+            ),
+            [
+                Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "c", 1),
+                Row(
+                    Glyph.CHANGE,
+                    "legal",
+                    LegalEvent.EDITED_PAGE,
+                    "b",
+                    1,
+                    (f"{SECTION}#x new",),
+                ),
+                Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "a", 1),
+            ],
+            id="the kinds stand new, changed, record",
+        ),
+        pytest.param(legal_plan({}), [], id="nothing changes"),
+    ],
+)
+def test_the_legal_pages_are_one_row_per_kind_with_a_count(
+    plan: LegalPlan, expected: list[Row]
+) -> None:
+    assert list(groups_of(legal=plan)[0].rows) == expected
+
+
+@pytest.mark.parametrize("event", list(LegalEvent))
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_every_legal_event_with_a_count_fits_the_event_column(
+    event: LegalEvent, count: int
+) -> None:
+    assert len(counted(count, event)) <= EVENT_WIDTH
+
+
+def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:
+    groups = groups_of(legal=legal_plan({"datenschutz": PageChange.NEW}))
+
+    assert [group.heading for group in groups] == [None, *PlanGroup]

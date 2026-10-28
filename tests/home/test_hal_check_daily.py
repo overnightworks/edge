@@ -76,7 +76,7 @@ def test_a_bare_hal_check_with_a_broken_area_exits_3_and_names_hal_check_as_the_
 
     assert exit_code == 3
     assert "  ✗ secrets         not checked" in out
-    assert err.splitlines() == ["error: 1 of 5 areas could not check · mail sent", "next: hal check"]
+    assert err.splitlines() == ["error: 1 of 6 areas could not check · mail sent", "next: hal check"]
     assert "Run `hal check`." in message_of(mail_stub.sent[0]).get_content()
     assert runner.notifications == ["PC check: action needed – Services, Secrets"]
 

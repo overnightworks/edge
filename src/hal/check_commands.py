@@ -10,21 +10,24 @@ from pathlib import Path
 
 from edge.external import cli as external
 from edge.external import host_check
-from edge_check import inspection
+from edge_check import exposure, inspection
 from hal import config as hal_config
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
 from home_tools import check as daily_check
 from home_tools import secrets_view
 from home_tools.cli import build_layout_and_ports
+from home_tools.exposure_check import ExposureRule
+from home_tools.report import Finding
 
 EXPOSURE = "exposure"
 HOSTS = "hosts"
 
 
 HELP = f"""\
-hal check             the daily check: services, backup, commit hook, secrets, server logs; it
-                      writes the report and mails and pops up what is new, as the timer's run does
+hal check             the daily check: services, backup, commit hook, secrets, server logs,
+                      exposure; it writes the report and mails and pops up what is new, as the
+                      timer's run does
                       settings: ~/.config/hal/config.toml, table [check] (docs/home.md)
 hal check {EXPOSURE}    what reaches beyond loopback on this PC
 hal check {HOSTS}       what Cloudflare holds against the hosts fleet.yaml declares
@@ -61,6 +64,24 @@ def _run_hosts(as_json: bool) -> ExitCode:
     return _HOST_CHECK_EXIT[outcome.exit_code]
 
 
+EXPOSURE_RULES = {
+    exposure.Problem.PUBLICATION_BEYOND_LOOPBACK: ExposureRule.REACHABLE_BEYOND_LOOPBACK,
+    exposure.Problem.PUBLICATION_WITHOUT_HOST_IP: ExposureRule.REACHABLE_BEYOND_LOOPBACK,
+    exposure.Problem.LISTENER_BEYOND_LOOPBACK: ExposureRule.REACHABLE_BEYOND_LOOPBACK,
+    exposure.Problem.ROUTED_WITHOUT_EDGE_NAME: ExposureRule.ROUTING_NAME_UNUSABLE,
+    exposure.Problem.INVALID_EDGE_NAME: ExposureRule.ROUTING_NAME_UNUSABLE,
+    exposure.Problem.DUPLICATE_EDGE_NAME: ExposureRule.ROUTING_NAME_UNUSABLE,
+}
+
+
+def _read_exposure() -> list[Finding]:
+    """The scan as the daily check's findings; a scan that cannot run raises."""
+    return [
+        Finding(EXPOSURE_RULES[found.problem].value, found.subject, json.dumps(found.as_json()))
+        for found in inspection.inspect(inspection.DEFAULT_ALLOW_LIST)
+    ]
+
+
 def _run_daily() -> ExitCode:
     layout, ports = build_layout_and_ports()
     try:
@@ -69,7 +90,7 @@ def _run_daily() -> ExitCode:
         write_error(f"{error.path}: {error.reason}")
         return ExitCode.USAGE  # exit 2 is "configuration or manifest invalid" for the daily check
     context = daily_check.CheckContext(
-        layout, settings.check, ports.run, ports.probe, ports.now, ports.disk_space
+        layout, settings.check, ports.run, ports.probe, ports.now, ports.disk_space, _read_exposure
     )
     try:
         return ExitCode(daily_check.check(context))
