@@ -2,7 +2,9 @@
 change rows, only `yes` applies, and every refusal is one `error:` with an optional `next:`."""
 
 import re
+import subprocess
 import sys
+from dataclasses import dataclass
 
 import pytest
 from test_edge_apply import (
@@ -10,6 +12,7 @@ from test_edge_apply import (
     ENABLED,
     PROBE_ENABLED,
     ScriptedGit,
+    Setup,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     docker_group,
     home,  # noqa: F401 the fixture, requested by name below
@@ -20,7 +23,6 @@ from test_edge_apply import (
     repository,  # noqa: F401 the fixture, requested by name below
     scripted,  # noqa: F401 the fixture, requested by name below
     scripted_git,  # noqa: F401 the fixture, requested by name below
-    setup_check,  # noqa: F401 the fixture, requested by name below
     setup_run,  # noqa: F401 the fixture, requested by name below
     start,  # noqa: F401 the fixture, requested by name below
     state,  # noqa: F401 the fixture, requested by name below
@@ -45,9 +47,30 @@ from test_edge_plan_rows import (
 from edge.external import cli as external_cli
 from edge.legal_step import PageChange
 from edge.plan_rows import changes_in
-from edge.realm import reconcile
 from edge.realm.reconcile import RealmAction, RealmPlan
 from edge.unit_plans import Action, ImageReference
+
+
+@dataclass
+class ForgetfulSetup(Setup):
+    """A setup check that answers not set up once it has been asked `forgets_after` times."""
+
+    forgets_after: int | None = None
+
+    def __call__(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        asked_too_often = (
+            self.forgets_after is not None and len(self.commands) >= self.forgets_after
+        )
+        if asked_too_often:
+            self.commands.append(command)
+            return subprocess.CompletedProcess(command, 1, "not set up again", "")
+        return super().__call__(command)
+
+
+@pytest.fixture
+def setup_check() -> ForgetfulSetup:
+    return ForgetfulSetup()
+
 
 CHANGE_ROW = re.compile(r"^  [+~-] ", re.MULTILINE)
 
@@ -169,12 +192,8 @@ def test_nothing_to_change_ends_in_the_done_verdict_with_the_run_time(
 def test_a_plan_that_only_cannot_read_the_realm_asks_nothing_and_refuses(
     switch,  # noqa: F811
     scripted,  # noqa: F811
-    monkeypatch,
 ):
-    def unreadable(_self):
-        raise reconcile.RealmError("checksums broke")
-
-    monkeypatch.setattr(reconcile.Observer, "checksums", unreadable)
+    scripted.failing_verb = "run"  # the observer reads the realm through `compose run`
 
     exit_code, out, err = switch()
 
@@ -182,10 +201,11 @@ def test_a_plan_that_only_cannot_read_the_realm_asks_nothing_and_refuses(
     assert "Type yes" not in out
     assert "realm skipped" in plain(out)
     assert lines_of(err) == [
-        "error: realm: Keycloak could not be read; not checked (checksums broke)",
+        "error: realm: Keycloak could not be read; not checked "
+        "(the realm observer failed (`docker compose run` exited 1: last line))",
         "next: hal apply",
     ]
-    assert scripted.changing_verbs() == []
+    assert scripted.changing_verbs() == ["run"]  # only the failed realm read
 
 
 def test_a_dirty_tree_is_a_failed_checkout_row_with_its_paths_then_one_error(
@@ -278,3 +298,29 @@ def test_a_setup_that_fails_is_one_error_and_next_hal_apply(switch, missing_setu
         "error: `step-ca/init` failed (exit 1); nothing switched; keys may already exist",
         "next: hal apply",
     ]
+
+
+def test_units_still_not_set_up_after_their_setups_ran_end_in_one_error(
+    switch,  # noqa: F811
+    repository,  # noqa: F811
+    missing_setup: ForgetfulSetup,  # noqa: F811
+    setup_run,  # noqa: F811
+    scripted,  # noqa: F811
+):
+    write_fleet(
+        repository,
+        ENABLED + "  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n",
+    )
+    missing_setup.forgets_after = 4  # two checks asking, two checks after each setup ran
+
+    exit_code, _, err = switch("yes\nyes\nyes")
+
+    assert exit_code == 1
+    assert lines_of(err) == [
+        "error: step-ca is not set up after the setups ran; nothing switched; "
+        "run `step-ca/init` first; not set up again; "
+        "keycloak is not set up after the setups ran; nothing switched; "
+        "run `keycloak/init` first; not set up again",
+        "next: hal apply",
+    ]
+    assert scripted.changing_verbs() == []

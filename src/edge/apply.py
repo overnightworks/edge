@@ -386,12 +386,14 @@ def _refusal(missing: Sequence[MissingSetup], planned: Plan, setups_ran: bool) -
         )
         return ApplyExit.REFUSED
     if setups_ran and missing:
-        for item in missing:
-            write_error(
+        write_error(
+            "; ".join(
                 f"{item.unit.key} is not set up after the setups ran; nothing switched; "
-                f"run `{item.unit.setup}` first; {item.check_line}",
-                command(Verb.APPLY) if item is missing[-1] else None,
-            )
+                f"run `{item.unit.setup}` first; {item.check_line}"
+                for item in missing
+            ),
+            command(Verb.APPLY),
+        )
         return ApplyExit.REFUSED
     return None
 

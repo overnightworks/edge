@@ -608,10 +608,11 @@ def test_on_a_terminal_the_yes_of_the_prompt_is_bold(monkeypatch: pytest.MonkeyP
 
 
 def test_a_ctrl_c_at_the_prompt_is_not_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    def interrupted(_prompt: str) -> str:
-        raise KeyboardInterrupt
+    class Interrupted(io.StringIO):
+        def readline(self, *_arguments: object) -> str:
+            raise KeyboardInterrupt
 
-    monkeypatch.setattr("builtins.input", interrupted)
+    monkeypatch.setattr(sys, "stdin", Interrupted())
 
     with pytest.raises(KeyboardInterrupt):
         confirmed("start hopin")
