@@ -1,8 +1,0 @@
-claim_id = "9f08aecce7f14514b43b9110efe5f8cb"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "d699881304b43d3ade281df9f7e19dba5ef81838"
-branch = "claude/issue-580-s2g3e-3-terminal-helper"
-scope = ["tests/hal_rename/test_rows.py", "tests/home/test_app_secrets.py", "tests/terminal_support.py", "tests/test_hal_output.py"]
-opened_commit = "472442c0705c44b43338e2148ea3d5ee2d51e6e3"
-whole_reason = "The terminal stand-in and its colour recipe get one owner, and its three copies go in the same change, or the contract stays duplicated."
