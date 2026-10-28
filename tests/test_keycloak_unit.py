@@ -4,13 +4,15 @@ import copy
 import dataclasses
 import json
 import re
+import subprocess
+from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from edge import catalog, compose, unit_plans
+from edge import appkit_step, catalog, compose, unit_plans
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 KEYCLOAK_SERVICES = ("keycloak-db", "keycloak")
@@ -188,6 +190,53 @@ def test_keycloaks_gzip_cache_is_a_tmpfs_owned_by_its_user_so_a_restart_empties_
 def theme_properties(path: Path) -> dict[str, str]:
     lines = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
     return dict(line.split("=", 1) for line in lines)
+
+
+THEME_AREAS = ("login", "account")
+PARENT_STYLESHEET = "css/styles.css"  # keycloak.v2's, in the image; a child's `styles=` replaces it
+
+
+def theme_styles(area: str) -> list[str]:
+    properties = REPOSITORY / "keycloak/themes/hallucinai" / area / "theme.properties"
+    return theme_properties(properties)["styles"].split()
+
+
+@pytest.mark.parametrize("area", THEME_AREAS)
+def test_a_theme_loads_the_pinned_appkit_stylesheet_first_and_every_other_entry_resolves(area):
+    """#532: appkit's tokens and fonts come first; an appkit bump that deletes the old target
+    cannot leave `styles=` dangling."""
+    resources = REPOSITORY / "keycloak/themes/hallucinai" / area / "resources"
+    first, *others = theme_styles(area)
+
+    assert first == f"appkit-{metadata.version(appkit_step.DISTRIBUTION)}/appkit.css"
+    assert all((resources / entry).is_file() or entry == PARENT_STYLESHEET for entry in others)
+    assert others[-1] == "css/edge.css"
+
+
+def test_no_tracked_theme_stylesheet_carries_a_font_face_or_a_family_token():
+    """#532: the tokens and fonts have one owner, appkit. Tracked files only: the written
+    `appkit-*/appkit.css` is git-ignored and does hold them."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "keycloak/themes"],
+        cwd=REPOSITORY,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    stylesheets = [REPOSITORY / name for name in tracked if name.endswith(".css")]
+    family_token = re.compile(
+        r"(?<![\w-])--(?:h-)?(?:bg|bg-deep|surface|surface-hover|border|text|text-muted|card-bg|glow-primary|header-bg|font-display|font-body)\s*:"
+    )
+
+    assert stylesheets
+    assert [
+        path.name
+        for path in stylesheets
+        if "@font-face" in path.read_text() or family_token.search(path.read_text())
+    ] == []
+    assert not [
+        name for name in tracked if name.endswith((".woff2", "OFL-oswald.txt", "OFL-open-sans.txt"))
+    ]
 
 
 def test_the_account_console_offers_no_groups_page():
