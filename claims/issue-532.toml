@@ -1,8 +1,0 @@
-claim_id = "197dcab70ae64c75b704af0037fdaa3f"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "2a3e34a4bb061934e21fb7394f75b33978c9f661"
-branch = "claude/issue-532-k1c-2-themes-appkit"
-scope = [".gitignore", "docs/architecture.md", "docs/keycloak.md", "keycloak/themes/hallucinai/account", "keycloak/themes/hallucinai/login", "probe/keycloak/README.md", "probe/keycloak/probe.py", "quality/baseline.toml", "src/edge/appkit_step.py", "src/edge/apply.py", "tests/conftest.py", "tests/test_appkit_step.py", "tests/test_edge_apply_publish.py", "tests/test_keycloak_probe.py", "tests/test_keycloak_probe_appkit.py", "tests/test_keycloak_unit.py"]
-opened_commit = "a9d7c1b5c1dee9cd41be26f39c63c668e9e28cce"
-whole_reason = "The appkit step's theme targets, both themes that read them and the probe that serves them switch together, so no page asks for a deleted font and no served copy lacks a reader."
