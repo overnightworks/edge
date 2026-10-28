@@ -20,7 +20,7 @@
 
 No secret value was read. No write API was called.
 
-**How to read it.** Each word in **bold caps** is one of the three places: **LOOK**, **PEOPLE**, **CHANGE**. "Today" means it exists and runs. "Planned" means a ruled plan or an open item. A `hal` command or flag the text calls planned is not built yet; `hal --help` lists what exists. "Proposed" means this document proposes it and the operator decides (section 9).
+**How to read it.** Each word in **bold caps** is one of the three places: **LOOK**, **PEOPLE**, **CHANGE**. "Today" means it exists and runs. "Planned" means a ruled plan or an open item. Every command is written `hal <verb>`. A verb that `hal --help` does not list, or a flag that `hal <verb> --help` does not list, is planned: not built yet, wherever this document names it. "Proposed" means this document proposes it and the operator decides (section 9).
 
 ---
 
@@ -111,7 +111,7 @@ flowchart TB
 1. **The way in.** Every name ends in one tunnel. Cloudflare Access is planned to block every name that is not explicitly opened (`*` = operator only, X8b on #30); the operator ruled on 20.10.2026 that Zero Trust is not needed for now and can be added at any time, so today `auth` goes live as `public` and the `*` protection waits for X8b. Traefik on loopback hands each name to the container with that `edge.name` label, and the alias of that container (`edge.alias`) too.
 2. **The login.** Keycloak at `auth.hallucinai.de` is the one login page. Every app checks the ID itself through webauth and its group `/apps/<name>`. songmaker joins only through its own cutover (section 3); until then it keeps its own login. Tools without their own login will sit behind Access (X8b); no login-less tool is published before it.
 3. **PEOPLE.** People and their groups exist only in the Keycloak admin, `http://localhost:8090/admin/`, on this PC (later via Tailscale).
-4. **CHANGE.** Every change is a pull request. A release (`hal release` sets a `v*` tag) is deployed by the service's watcher; whether the service is then reachable depends on its state (section 8 state table). The platform (edge) and the external services change when the operator runs `hal apply`.
+4. **CHANGE.** Every change is a pull request. A release (the planned `hal release` sets a `v*` tag) is deployed by the service's watcher; whether the service is then reachable depends on its state (section 8 state table). The platform (edge) and the external services change when the operator runs `hal apply`.
 5. **LOOK.** One traffic-light page answers "is it OK now?" for every service, the backup, the drift checks and the secrets. Grafana answers "why, and since when?" for every service. Both send alerts through one e-mail channel.
 6. **Agents.** Today agents run as the operator's user and can do whatever he can. Every "an agent may not" in this document is a request until D14 gives them their own user.
 
@@ -216,7 +216,7 @@ The apex and `www` are hosts only as the catalog's `cloudflare.redirect` (the ap
 | DNS, Access app, tunnel line, repo settings | the catalog itself (rendered by OpenTofu) | is the owner |
 | The LOOK page's service lights, Prometheus's scrape targets | the catalog | `hal apply` renders the Gatus endpoint list and the scrape list from the enabled entries |
 | The deploy watchers | the catalog | `hal apply` installs one watcher per enabled entry with `deploy: tags` |
-| The release branch | the catalog (`repo.default_branch`) | `hal release` tags that branch; hopin's is `master` |
+| The release branch | the catalog (`repo.default_branch`) | the planned `hal release` tags that branch; hopin's is `master` |
 
 **Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and deletes no undeclared top-level object or person: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (docs/keycloak.md). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
 
@@ -345,7 +345,7 @@ in the line is edge's, not the app's. Apps' own texts are not read from their re
 
 - **hopin#25 first:** login through webauth (`/apps/hopin`), Impressum and Datenschutz.
 - **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Hopin's container listens on 8080, which songmaker already uses on the host; Traefik reaches it by its bridge IP, so no host port is needed.
-- **Its first release:** `hal release hopin` tags the green tip of `master`.
+- **Its first release:** the planned `hal release hopin` tags the green tip of `master`.
 - **The catalog entry above;** then `hal apply`.
 - **Its SonarCloud project** already exists: hopin has `sonar-project.properties`.
 
@@ -481,7 +481,7 @@ Every finding names the subject and a page to fix it, never a value.
 **Rollback: only when the old code fits the data.**
 - **Why a rule.** songmaker migrates its database on every deploy. Code from the tag before may not understand the new schema. A blind rollback can break the app or the data.
 - **The schema is declared.** `hal release` writes the schema into the annotated tag message: `schema: <alembic head>`, or `schema: none` for a service without a database, and optionally `schema-min: <head>` for the oldest schema this code still reads. The compatibility evidence for a rollback is the live database's version (read as in step 5, not taken from the state file) lying between the target tag's `schema-min` (default: its `schema`) and its `schema`.
-- **`hal rollback hopin`** deploys the tag before the current one only when that tag's declared schema fits the live database. It writes the bad tag into the skip list, `skipped` in `~/.local/state/edge/<service>.toml` (the watcher's state file). The watcher never deploys a skipped tag; it follows the newest tag that is not skipped. A newer tag deploys normally, and the entry stays until the operator removes it with `hal unskip <service> <tag>`. `hal restore` writes the same entry (below). While a skip is active, the LOOK page shows hopin yellow with "rolled back to vX, vY skipped".
+- **The planned `hal rollback hopin`** deploys the tag before the current one only when that tag's declared schema fits the live database. It writes the bad tag into the skip list, `skipped` in `~/.local/state/edge/<service>.toml` (the watcher's state file). The watcher never deploys a skipped tag; it follows the newest tag that is not skipped. A newer tag deploys normally, and the entry stays until the operator removes it with the planned `hal unskip <service> <tag>`. The planned `hal restore <app> --tag <tag>` writes the same entry (below). While a skip is active, the LOOK page shows hopin yellow with "rolled back to vX, vY skipped".
 - **When the live schema is outside that range, it refuses.** It says: "vY changed the database. Stop the service (`hal stop hopin`) and ask the operator." The way back is then `hal restore hopin --tag vX` (planned flag). It restores the backup the watcher took before vY (step 3), then deploys the chosen tag, which must be schema-compatible with that data (the same range check as above). It writes the bad tag into the same skip list; a newer tag is still picked up. The full walk is the incident table's row "A bad release" (section 8).
 - This is a kill switch (ruling 12), not a change: the tags stay as they are.
 - In which states rollback and restore may run, and when the service opens again: section 8 state table. Who may run them: section 8's command table.
@@ -495,7 +495,7 @@ Every finding names the subject and a page to fix it, never a value.
 **The rhythm (proposed default, D5):**
 - **One batch release per service per working session,** after the last landing of a session, or when the operator asks ("release songmaker"). That is about 1–2 a day for songmaker, against 7 landings.
 - **A fix for something broken in production** gets its own release right after its landing.
-- **One release implementation, not one per repo: `hal release <service>`.** It reads the service's repo and default branch from the catalog. It refuses unless that branch's tip passes the gate above. It picks the next version, writes the PR titles since the last tag and the `schema:` line into an annotated tag on that tip, and pushes it. The head runs it as a mechanical step (the cheapest routing row, low effort); no review, because the tag adds no code.
+- **One release implementation, not one per repo: `hal release <service>` (planned).** It reads the service's repo and default branch from the catalog. It refuses unless that branch's tip passes the gate above. It picks the next version, writes the PR titles since the last tag and the `schema:` line into an annotated tag on that tip, and pushes it. The head runs it as a mechanical step (the cheapest routing row, low effort); no review, because the tag adds no code.
 - **Version form for services:** `vYYYY.MM.DD.N` (example `v2026.10.16.1`). A service has no API consumers who need SemVer, and a date says at a glance how old the running version is. Libraries such as webauth keep SemVer and their own release. Both match `v*`.
 - **aco's landing brief names the freed release.** "Landed, not released" is visible on the LOOK page as "the default branch is N landings ahead of the running tag", so nothing waits silently.
 
@@ -768,9 +768,9 @@ Each recovery below is a walk through the state table (its states in brackets). 
 |---|---|---|---|
 | One app misbehaves or leaks | take it offline | `hal stop <app>` (for a host that bypasses Traefik: `hal offline`) | operator or agent |
 | Unknown traffic, attack, or doubt | take the whole PC off the internet, keep it running | `hal offline` | operator or agent |
-| A bad release | go back one tag, if the schema allows | `hal rollback <app>` (stays in A). If it refuses: `hal stop <app>` (A → B); the operator's `hal restore <app> --tag <tag>` (B; `--tag` planned); a check on the container itself (`docker exec` against its health URL); `hal start <app>` (B → A). For a host that bypasses Traefik: `hal offline` (A → C), `hal restore <app> --tag <tag>` (C), a check on loopback, `hal online` (C → A) | operator or agent; the restore is the operator's |
-| A user account is abused | lock it and end its sessions | `hal lock <user>`; done only when every app says `ended`. An app that says `still active` or `unverified` is stopped until it can (`hal stop <app>`; for a host that bypasses Traefik `hal offline`, which stays until the session is proven ended) | operator |
-| The login itself is in doubt | end every session | `hal lock --everyone`, with the same per-app evidence | operator |
+| A bad release | go back one tag, if the schema allows | planned `hal rollback <app>` (stays in A). If it refuses: `hal stop <app>` (A → B); the operator's `hal restore <app> --tag <tag>` (B; `--tag` planned); a check on the container itself (`docker exec` against its health URL); `hal start <app>` (B → A). For a host that bypasses Traefik: `hal offline` (A → C), `hal restore <app> --tag <tag>` (C), a check on loopback, `hal online` (C → A) | operator or agent; the restore is the operator's |
+| A user account is abused | lock it and end its sessions | planned `hal lock <user>`; done only when every app says `ended`. An app that says `still active` or `unverified` is stopped until it can (`hal stop <app>`; for a host that bypasses Traefik `hal offline`, which stays until the session is proven ended) | operator |
+| The login itself is in doubt | end every session | planned `hal lock --everyone`, with the same per-app evidence | operator |
 | Keycloak's signing key may be known | rotate the realm keys **and** end every session, then prove it per app | guided page: `hal people --keys` opens Realm settings → Keys; add a new key provider, disable the old one; then `hal lock --everyone`. Rotation alone is not enough: an app that cached the old public key, and an app session already issued, keep working until the app itself checks again (Keycloak documents that revocation reaches a client only when it checks). The step is done only when each app reports no session older than the rotation; an app that cannot report is `unverified` and is stopped as in the account-abuse row (for a host that bypasses Traefik: `hal offline`, which stays until the session is proven ended) | operator |
 | A token or password leaked | revoke it at the provider, then create a new one | the planned `hal secrets --emergency`, then the planned `hal secrets --rotate <name>` | operator |
 | The operator's GitHub account is in doubt | sign out every session, review SSH keys and tokens | part of the planned `hal secrets --emergency` (github.com/settings/sessions, /keys, /tokens) | operator |
