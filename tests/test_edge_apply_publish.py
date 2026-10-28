@@ -386,6 +386,26 @@ def test_a_publish_that_does_not_end_clean_is_exit_1(world, arrange):
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
+def test_a_declined_publish_prints_the_aborted_line_under_the_cloudflare_label(world):
+    """C11."""
+    answers, plan = publish_is_declined(world)
+    world.fake_tofu.configure(**plan)
+
+    result = world.run(*answers)
+
+    assert "cloudflare: aborted, nothing applied" in result.err
+
+
+def test_a_host_check_that_cannot_run_names_cloudflare_as_the_sender(world):
+    """C12: the cause of a host check that could not run is printed under the publish's label."""
+    answers, plan = publish_cannot_check(world)
+    world.fake_tofu.configure(**plan)
+
+    result = world.run(*answers)
+
+    assert "cloudflare: host check: cannot check, " in result.err
+
+
 def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
     """C14: the publish's exit 2 becomes 1; only a local part can end `edge apply` with 2."""
     world.fake_tofu.configure(plan=1)
@@ -393,7 +413,7 @@ def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
     result = world.run("yes")
 
     assert result.exit_code == 1
-    assert "tofu plan failed (exit 1)" in result.err
+    assert "cloudflare: tofu plan failed (exit 1)" in result.err
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 

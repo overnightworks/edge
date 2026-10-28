@@ -14,7 +14,7 @@
 "tests/test_edge_apply.py" = 4497
 "tests/test_edge_backup.py" = 1232
 "tests/test_edge_cloudflare_read.py" = 906
-"tests/test_edge_external.py" = 2709
+"tests/test_edge_external.py" = 2708
 "tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1729
 "tests/test_keycloak_probe.py" = 1038
