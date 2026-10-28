@@ -95,7 +95,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 
 | Prüfung | Action needed | Note |
 |---|---|---|
-| `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `disk-low` | `reboot-pending` |
+| `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `job-failed`, `systemd-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
 | `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
@@ -216,6 +216,11 @@ eigener Fund, nie ein sauberer Lauf.
   abgeschaltet ist (eine Datei unter `~/.local/state/edge/stopped/`; nur der Name wird gelesen), ist mit jedem Code ungleich 0
   kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
   Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
+- **`platform`, Jobs.** `systemctl --user list-units --state=failed` für `hal*`: nur die erste Spalte, der Einheitenname
+  (`hal-backup.service`), wird gelesen, nie die Beschreibung. Jede fehlgeschlagene `hal*`-Einheit ist ein `job-failed`
+  (Action needed, Gegenstand der Name samt Endung); sie verschwindet mit `reset-failed` oder einem erfolgreichen Lauf. Passt ein Name nicht
+  zur Namensform oder lässt sich systemd nicht lesen, ist das `systemd-unreadable`. Der Lauf von `hal-check.service` sieht seinen eigenen
+  vorigen Fehler nicht, weil ein Start den Fehlerzustand löscht.
 - **`platform`, Neustart.** `/var/run/reboot-required`: nur Dasein und Änderungszeit (`reboot-pending`, „seit
   Datum“); ein Fund der Stufe Note, der nie eine Mail auslöst.
 - **`platform`, Festplatte.** Nur die Platte, auf der `/` liegt (`shutil.disk_usage`: was ein unprivilegierter Prozess

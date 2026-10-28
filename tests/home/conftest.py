@@ -236,9 +236,12 @@ class RecordingRunner:
         self.calls: list[list[str]] = []
         self.notify_delivers = True
         self.session_active = True
+        self.failed_units: str | None = ""  # what `systemctl --user list-units --state=failed` prints
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         self.calls.append(list(argv))
+        if argv[:3] == ["systemctl", "--user", "list-units"]:
+            return self.failed_units
         delivers = {"systemd-run": self.notify_delivers, "systemctl": self.session_active}
         return "" if delivers.get(argv[0], False) else None
 

@@ -759,3 +759,80 @@ def test_the_backup_line_says_when_the_last_backup_succeeded(clean_home, runner,
     write_backup_status(clean_home, last_backup=local_afternoon(days_ago))
 
     assert f"Backup: OK, last backup {said} 14:15" in mailed_area_lines(clean_home, runner, mail_stub)
+
+
+def failed_hal_units(runner, *names: str) -> None:
+    runner.failed_units = "".join(f"{name} loaded failed failed CANARY-DESC\n" for name in names)
+
+
+def test_a_failed_hal_job_is_an_action_in_services_with_its_words_and_is_remembered_by_unit(clean_home, runner, mail_stub) -> None:
+    """#606 E2: the Services row, the mail, the report and the memory name the unit and nothing else of it."""
+    failed_hal_units(runner, "hal-backup.service")
+
+    code = home_check(clean_home, runner)
+
+    layout = Layout(clean_home)
+    news = message_of(mail_stub.sent[0]).get_content()
+    assert code == 1
+    assert "hal-backup.service failed on its last run." in news
+    assert 'Tell an agent: "hal-backup.service failed, please look".' in news
+    assert "platform\\tjob-failed\\thal-backup.service" in layout.check_findings_file.read_text()
+    assert "job-failed | hal-backup.service" in layout.check_report_file.read_text()
+    assert runner.notifications == [ACTION_TITLE]
+    assert "CANARY" not in news + layout.check_report_file.read_text() + layout.check_findings_file.read_text()
+
+
+def test_a_job_that_stays_failed_never_notifies_again_and_a_reset_is_mailed_as_done(clean_home, runner, mail_stub) -> None:
+    failed_hal_units(runner, "hal-backup.service")
+    home_check(clean_home, runner)
+    home_check(clean_home, runner)
+    runner.failed_units = ""
+
+    code = home_check(clean_home, runner)
+
+    assert code == 0
+    assert len(mail_stub.sent) == 2
+    assert "Done\n\n- hal-backup.service no longer reports a failure." in message_of(mail_stub.sent[1]).get_content()
+
+
+def test_two_failed_hal_jobs_are_one_services_row_counting_two_actions(clean_home, runner, capsys) -> None:
+    failed_hal_units(runner, "hal-backup.service", "hal-check.timer")
+
+    home_check(clean_home, runner)
+
+    assert "! services        2 actions      hal-backup.service failed on its last run · +1 more" in capsys.readouterr().out
+
+
+def test_a_failed_backup_unit_and_a_failed_backup_status_are_two_actions(clean_home, runner) -> None:
+    write_backup_status(clean_home, state="failed")
+    failed_hal_units(runner, "hal-backup.service")
+
+    home_check(clean_home, runner)
+
+    report = Layout(clean_home).check_report_file.read_text()
+    assert "job-failed | hal-backup.service" in report
+    assert "backup-failed" in report
+
+
+def test_systemd_that_cannot_be_read_is_an_action_and_holds_back_container_recoveries(clean_home, runner, mail_stub) -> None:
+    restarting_containers(runner, "edge-a")
+    home_check(clean_home, runner)
+    no_container_restarts(runner)
+    runner.failed_units = None
+
+    home_check(clean_home, runner)
+
+    news = message_of(mail_stub.sent[-1]).get_content()
+    assert "The check cannot read systemd; whether the jobs ran is unknown." in news
+    assert "no longer keeps restarting" not in news
+
+
+def test_a_logged_out_session_still_reads_the_failed_jobs(clean_home, runner) -> None:
+    runner.session_active = False
+    failed_hal_units(runner, "hal-check.service")
+
+    home_check(clean_home, runner)
+
+    report = Layout(clean_home).check_report_file.read_text()
+    assert "job-failed | hal-check.service" in report
+    assert "systemd-unreadable" not in report
