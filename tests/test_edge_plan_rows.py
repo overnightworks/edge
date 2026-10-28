@@ -171,8 +171,8 @@ def kept(running: ImageReference, configured: ImageReference) -> KeptImage:
             id="differing names",
         ),
         pytest.param(
-            kept(ImageReference(KEYCLOAK, None), ImageReference("keycloak:27.0.0", None)),
-            f"{KEYCLOAK} · compose.yaml keycloak:27.0.0",
+            kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, None)),
+            f"{KEYCLOAK}@79c6… · compose.yaml {KEYCLOAK}",
             id="without a digest",
         ),
     ],
