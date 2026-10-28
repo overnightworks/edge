@@ -2,7 +2,7 @@
 fields (#296 S5-1)."""
 
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -17,9 +17,12 @@ from edge.apps import (
     StaysStoppedNote,
 )
 from edge.catalog import App
+from edge.core import Gate
 from edge.plan import Plan
 from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
-from hal_output import Glyph, Row
+from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
+from edge.unit_plans import ImageReference, KeptImage
+from hal_output import Glyph, Group, Row
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -40,11 +43,25 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
     return AppPlan(**{**fields, **overrides})  # type: ignore[arg-type]
 
 
-def rows_of(**parts: object) -> tuple[Row, ...]:
+NO_REALM = RealmPlan()
+
+
+def groups_of(
+    images: tuple[KeptImage, ...] = (), realm: RealmPlan = NO_REALM, **parts: object
+) -> tuple[Group, ...]:
     apps = AppsPlan(cast(AppRuntime, None), **parts)  # type: ignore[arg-type]
-    [group] = plan_groups(cast(Plan, SimpleNamespace(app_plans=apps)))
-    assert group.heading is PlanGroup.APPS
-    return group.rows
+    plan = SimpleNamespace(app_plans=apps, images=list(images), realm=realm)
+    return plan_groups(cast(Plan, plan))
+
+
+def rows_of(**parts: object) -> tuple[Row, ...]:
+    [units, apps] = groups_of(**parts)
+    assert (units.heading, apps.heading) == (PlanGroup.UNITS, PlanGroup.APPS)
+    return apps.rows
+
+
+def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
+    return groups_of(**plan)[0].rows
 
 
 @pytest.mark.parametrize(
@@ -127,3 +144,102 @@ def test_the_rows_stand_in_the_order_the_work_runs_notes_then_switch_offs_then_t
         PlanEvent.SWITCH_OFF,
         PlanEvent.SWITCH_ON,
     ]
+
+
+DIGEST_A, DIGEST_B = "79c6" + "0" * 60, "a78d" + "0" * 60
+KEYCLOAK = "quay.io/keycloak/keycloak:26.8.1"
+
+
+def kept(running: ImageReference, configured: ImageReference) -> KeptImage:
+    return KeptImage("keycloak", running, configured)
+
+
+@pytest.mark.parametrize(
+    ("image", "fact"),
+    [
+        pytest.param(
+            kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B)),
+            f"{KEYCLOAK}@79c6… · compose.yaml @a78d…",
+            id="same name",
+        ),
+        pytest.param(
+            kept(
+                ImageReference(KEYCLOAK, DIGEST_A),
+                ImageReference(f"docker.io/{KEYCLOAK}", DIGEST_B),
+            ),
+            f"{KEYCLOAK}@79c6… · compose.yaml docker.io/{KEYCLOAK}@a78d…",
+            id="differing names",
+        ),
+        pytest.param(
+            kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, None)),
+            f"{KEYCLOAK}@79c6… · compose.yaml {KEYCLOAK}",
+            id="without a digest",
+        ),
+    ],
+)
+def test_a_kept_image_is_one_needs_you_row_with_both_versions(image: KeptImage, fact: str) -> None:
+    assert unit_rows_of(images=(image,)) == (
+        Row(Glyph.NEEDS_YOU, "keycloak", PlanEvent.OLD_IMAGE, fact),
+    )
+
+
+@pytest.mark.parametrize(
+    ("realm", "expected"),
+    [
+        pytest.param(
+            RealmPlan(RealmAction.RUN, why="keycloak/realm.yaml changed"),
+            Row(
+                Glyph.CHANGE,
+                REALM_UNIT,
+                PlanEvent.REALM_APPLY,
+                "keycloak/*.yaml · keycloak/realm.yaml changed",
+            ),
+            id="run",
+        ),
+        pytest.param(
+            RealmPlan(RealmAction.HELD, why="no realm apply is recorded", gate=Gate.OFF),
+            Row(
+                Glyph.UNCHANGED,
+                REALM_UNIT,
+                PlanEvent.REALM_HELD,
+                "no realm apply is recorded · Keycloak is off",
+            ),
+            id="held",
+        ),
+        pytest.param(
+            RealmPlan(RealmAction.NOT_CHECKED, restart=RealmRestart.DATABASE),
+            Row(
+                Glyph.UNCHANGED,
+                REALM_UNIT,
+                PlanEvent.REALM_LATER,
+                "its database restarts now · next apply checks it",
+            ),
+            id="not checked",
+        ),
+        pytest.param(
+            RealmPlan(RealmAction.UNREADABLE, error="the realm observer failed (x)"),
+            Row(
+                Glyph.NEEDS_YOU,
+                REALM_UNIT,
+                PlanEvent.REALM_SKIPPED,
+                "the realm observer failed (x)",
+            ),
+            id="unreadable",
+        ),
+        pytest.param(RealmPlan(), None, id="nothing"),
+    ],
+)
+def test_a_realm_plan_is_one_row_for_its_action_and_none_when_nothing_changes(
+    realm: RealmPlan, expected: Row | None
+) -> None:
+    assert unit_rows_of(realm=realm) == (() if expected is None else (expected,))
+
+
+def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps() -> None:
+    image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
+    realm = RealmPlan(RealmAction.RUN, why="x")
+
+    units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
+
+    assert [row.event for row in units.rows] == [PlanEvent.OLD_IMAGE, PlanEvent.REALM_APPLY]
+    assert apps.rows
