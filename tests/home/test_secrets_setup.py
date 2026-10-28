@@ -465,11 +465,12 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    output = capsys.readouterr().out
-    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read appeared meanwhile and stays unchanged" in squeezed(output)
-    assert PASTED_VALUE not in output
+    captured = capsys.readouterr()
+    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read appeared meanwhile and stays unchanged" in squeezed(captured.out)
+    assert captured.err == "error: setup stopped at secrets · nothing stored for cloudflare/read\nnext: hal setup --apply\n"
+    assert PASTED_VALUE not in captured.out + captured.err
     assert rival.read_text() == "FAKE-RIVAL-VALUE"
-    assert files_under(home) == set(EVERY_FILE)
+    assert files_under(home) == {".secrets/cloudflare/read"}
 
 
 def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused_at_the_store(
@@ -488,45 +489,69 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     code = home_secrets_setup(home, boundaries)
 
     assert code == 1
-    refused = "✗ github/read not stored ~/.secrets/github is not a folder: first `mv -n ~/.secrets/github ~/.secrets/github.alt`"
-    output = capsys.readouterr().out
-    assert refused in squeezed(output)
-    assert PASTED_VALUE not in output
-    assert files_under(home) == {".secrets/github", PASSPHRASE_FILE}
+    captured = capsys.readouterr()
+    assert "✗ github/read not stored ~/.secrets/github is not a folder" in squeezed(captured.out)
+    assert captured.err.splitlines() == [
+        "error: setup stopped at secrets · nothing stored for github/read",
+        "next: mv -n ~/.secrets/github ~/.secrets/github.alt",
+    ]
+    assert PASTED_VALUE not in captured.out + captured.err
+    assert files_under(home) == {".secrets/github"}
+
+
+def test_a_group_that_is_a_file_when_the_walk_starts_is_refused_before_any_page_opens(home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys) -> None:
+    private_directory(home, ".secrets").joinpath("cloudflare").write_text("not a directory")
+
+    code = home_secrets_setup(home, boundaries)
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "✗ cloudflare/read not stored ~/.secrets/cloudflare is not a folder" in squeezed(captured.out)
+    assert "not checked" not in captured.out
+    assert captured.err.splitlines()[-1] == "next: mv -n ~/.secrets/cloudflare ~/.secrets/cloudflare.alt"
+    assert (terminal.opened, terminal.prompts) == ([], [])
 
 
 def loosen_the_secrets_directory(home: Path) -> tuple[str, str]:
     (home / ".secrets").mkdir(mode=0o700)
     (home / ".secrets").chmod(0o755)
-    return "~/.secrets has mode 755; at most 700 allowed", "`chmod 700 ~/.secrets`"
+    return "~/.secrets has mode 755; at most 700 allowed", "chmod 700 ~/.secrets"
+
+
+def loosen_the_secrets_directory_above_a_group_that_is_a_file(home: Path) -> tuple[str, str]:
+    reason, fix = loosen_the_secrets_directory(home)
+    (home / ".secrets" / "cloudflare").write_text("not a directory")
+    return reason, fix
 
 
 def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
     elsewhere = home.parent / "elsewhere"
     elsewhere.mkdir(mode=0o700)
     (home / ".secrets").symlink_to(elsewhere)
-    return "~/.secrets is a symlink", f"`{symlinked_folder_fix('~/.secrets')}`"
+    return "~/.secrets is a symlink", symlinked_folder_fix("~/.secrets")
 
 
-@pytest.mark.parametrize("damage", [loosen_the_secrets_directory, make_the_secrets_directory_a_symlink])
+@pytest.mark.parametrize(
+    "damage",
+    [loosen_the_secrets_directory, loosen_the_secrets_directory_above_a_group_that_is_a_file, make_the_secrets_directory_a_symlink],
+)
 def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_opens_and_nothing_is_written(
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, damage: Callable[[Path], tuple[str, str]]
 ) -> None:
     """#36 rule 2.5 / #17 finding 21 (c, d): an unfit secrets directory is named before a page opens, so no fresh token is lost;
-    the walk prints no `next:` line, setup's row and error say it."""
+    the walk stops at the first entry with one row and the pair that names the fix."""
     reason, fix = damage(home)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
     code = home_secrets_setup(home, boundaries)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert code == 1
-    assert [line for line in squeezed(output) if "not stored" in line] == [
-        f"✗ {name} not stored {reason}: first {fix}" for name in ("cloudflare/read", "github/read", "opentofu/passphrase")
-    ]
-    assert not [line for line in output.splitlines() if line.startswith("next:")]
+    assert [line for line in squeezed(captured.out) if "not stored" in line] == [f"✗ cloudflare/read not stored {reason}"]
+    assert captured.err.splitlines() == ["error: setup stopped at secrets · nothing stored for cloudflare/read", f"next: {fix}"]
+    assert PASTED_VALUE not in captured.out + captured.err
     assert (terminal.opened, terminal.prompts) == ([], [])
-    assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
+    assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets", "home/.secrets/cloudflare"}
 
 
 def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retired_ones_are_left_alone(

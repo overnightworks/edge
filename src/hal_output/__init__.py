@@ -6,6 +6,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TextIO
 
@@ -83,16 +84,22 @@ class Noun(StrEnum):
     count other than one shows it with an `s` after its first word (`action`, `area checked`)."""
 
 
+class TrailingNoun(StrEnum):
+    """Like `Noun`, with the `s` after the last word (`new page`, `new pages`)."""
+
+
 @dataclass(frozen=True)
 class Row:
     """One thing a command did or found. The caller owns its event enum; `fact` is one sentence;
-    `count` is shown before the event, which takes the plural when it is a `Noun`."""
+    `count` is shown before the event, which takes the plural when it is a `Noun` or a
+    `TrailingNoun`. `details` are dim lines under the row."""
 
     glyph: Glyph
     subject: str
     event: StrEnum
     fact: str = ""
     count: int | None = None
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -138,6 +145,34 @@ def format_duration(seconds: float) -> str:
     return f"{whole // SECONDS_PER_HOUR}h{minutes:02d}m"
 
 
+def format_moment(moment: datetime, now: datetime) -> str:
+    """The moment on this machine's wall clock: `18.10. 05:00`, with the year when it is not
+    the current one: `18.10.2026 05:00`."""
+    local = moment.astimezone()
+    if local.year == now.astimezone().year:
+        return f"{local:%d.%m. %H:%M}"
+    return f"{local:%d.%m.%Y %H:%M}"
+
+
+BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB")
+BYTES_PER_UNIT = 1024
+DECIMALS_BELOW = 10
+
+
+def format_bytes(size: int) -> str:
+    """Binary units, nearest rounding, the unit chosen after rounding: `999 B`, `1.0 KiB`,
+    `4.2 MiB`, `60 MiB`; one decimal below 10 of a unit, none from 10."""
+    value, unit = float(size), 0
+    while value >= BYTES_PER_UNIT - 0.5 and unit < len(BYTE_UNITS) - 1:
+        value /= BYTES_PER_UNIT
+        unit += 1
+    if unit == 0:
+        return f"{size} B"
+    if round(value, 1) < DECIMALS_BELOW:
+        return f"{value:.1f} {BYTE_UNITS[unit]}"
+    return f"{round(value)} {BYTE_UNITS[unit]}"
+
+
 def printable(text: str) -> str:
     """`text` with every character a terminal would act on escaped (a newline as `\\n`, ESC as
     `\\x1b`), so text from outside, a path or a command's line, stays one line of plain text."""
@@ -148,11 +183,15 @@ def printable(text: str) -> str:
 
 
 def counted(count: int, noun: StrEnum) -> str:
-    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`."""
+    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`
+    (after its first word) or a `TrailingNoun` (after its last)."""
     text = printable(str(noun))
-    if isinstance(noun, Noun) and count != 1:
-        first, separator, rest = text.partition(" ")
-        text = f"{first}s{separator}{rest}"
+    if count != 1:
+        if isinstance(noun, Noun):
+            first, separator, rest = text.partition(" ")
+            text = f"{first}s{separator}{rest}"
+        elif isinstance(noun, TrailingNoun):
+            text = f"{text}s"
     return f"{count} {text}"
 
 
@@ -167,10 +206,11 @@ def write_row(row: Row) -> None:
     if row.glyph is Glyph.UNCHANGED:
         line = f"  {row.glyph.value} {columns} {fact}".rstrip()
         print(_styled(line, _DIM, stdout))
-        return
-    glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
-    line = f"  {glyph} {columns}"
-    print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+    else:
+        glyph = _styled(row.glyph.value, _ROW_STYLES[row.glyph], stdout)
+        line = f"  {glyph} {columns}"
+        print(f"{line} {_styled(fact, _DIM, stdout)}" if fact else line.rstrip())
+    write_detail(*row.details, tone=Tone.DIM)
 
 
 def write_groups(groups: Sequence[Group]) -> None:

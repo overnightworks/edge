@@ -2,6 +2,7 @@
 
 import io
 import sys
+from datetime import UTC, datetime
 from enum import StrEnum
 
 import pytest
@@ -14,9 +15,12 @@ from hal_output import (
     Noun,
     Row,
     Tone,
+    TrailingNoun,
     Verdict,
     counted,
+    format_bytes,
     format_duration,
+    format_moment,
     write_detail,
     write_error,
     write_groups,
@@ -92,6 +96,49 @@ def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(
     """#500: under a second `<1s`, from 60 s `XmYYs`, from one hour `XhYYm`."""
 
     assert format_duration(seconds) == shown
+
+
+@pytest.mark.parametrize(
+    ("moment", "shown"),
+    [
+        (datetime(2026, 10, 18, 3, 0, tzinfo=UTC), "18.10. 05:00"),
+        (datetime(2026, 10, 25, 0, 30, tzinfo=UTC), "25.10. 02:30"),
+        (datetime(2026, 10, 25, 1, 30, tzinfo=UTC), "25.10. 02:30"),
+        (datetime(2026, 10, 17, 22, 30, tzinfo=UTC), "18.10. 00:30"),
+        (datetime(2025, 12, 31, 12, 0, tzinfo=UTC), "31.12.2025 13:00"),
+    ],
+    ids=[
+        "same year",
+        "before the clock change",
+        "after the clock change",
+        "other local day than UTC",
+        "other year",
+    ],
+)
+def test_a_moment_shows_on_the_local_wall_clock_with_the_year_only_when_it_is_not_this_one(
+    berlin_time, moment, shown
+):
+    assert format_moment(moment, datetime(2026, 10, 28, 8, 0, tzinfo=UTC)) == shown
+
+
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [
+        (0, "0 B"),
+        (999, "999 B"),
+        (1024, "1.0 KiB"),
+        (1536, "1.5 KiB"),
+        (1048575, "1.0 MiB"),
+        (1048064, "1.0 MiB"),
+        (4404019, "4.2 MiB"),
+        (int(9.96 * 1024**2), "10 MiB"),
+        (60 * 1024**2, "60 MiB"),
+        (2254857830, "2.1 GiB"),
+        (3 * 1024**4, "3.0 TiB"),
+    ],
+)
+def test_a_size_is_binary_units_rounded_with_one_decimal_below_ten(size: int, shown: str) -> None:
+    assert format_bytes(size) == shown
 
 
 def test_the_run_time_stands_after_the_counts_and_before_the_hint(
@@ -318,6 +365,10 @@ class Finding(Noun):
     AREA_CHECKED = "area checked"
 
 
+class Page(TrailingNoun):
+    NEW_PAGE = "new page"
+
+
 @pytest.mark.parametrize(
     ("count", "shown"),
     [(1, "1 action"), (2, "2 actions")],
@@ -340,6 +391,41 @@ def test_counted_puts_the_count_before_the_noun_and_pluralises_its_first_word(
     count: int, shown: str
 ) -> None:
     assert counted(count, Finding.AREA_CHECKED) == shown
+
+
+@pytest.mark.parametrize(
+    ("noun", "count", "shown"),
+    [
+        (Page.NEW_PAGE, 1, "1 new page"),
+        (Page.NEW_PAGE, 2, "2 new pages"),
+        (Page.NEW_PAGE, 0, "0 new pages"),
+        (Finding.AREA_CHECKED, 2, "2 areas checked"),
+    ],
+)
+def test_a_trailing_noun_takes_its_plural_after_the_last_word_and_a_noun_after_the_first(
+    noun: StrEnum, count: int, shown: str
+) -> None:
+    assert counted(count, noun) == shown
+
+
+def test_a_rows_details_print_indented_under_it_and_escaped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_row(Row(Glyph.CHANGE, "legal", Event.CHANGED, "a fact", details=("one", "t\x1b[31mwo")))
+
+    assert capsys.readouterr().out.splitlines() == [
+        "  ~ legal           changed        a fact",
+        "    one",
+        "    t\\x1b[31mwo",
+    ]
+
+
+def test_on_a_terminal_a_rows_details_are_dim(monkeypatch: pytest.MonkeyPatch) -> None:
+    out, _err = put_on_terminals(monkeypatch)
+
+    write_row(Row(Glyph.CHANGE, "legal", Event.CHANGED, details=("one",)))
+
+    assert out.getvalue().splitlines()[1] == "\x1b[2m    one\x1b[0m"
 
 
 def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next_step(

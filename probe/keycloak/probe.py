@@ -1049,7 +1049,7 @@ class RealmStepStand:
             self.configuration,
             self.repository,
             core.Gate.ON,
-            False,
+            None,
         )
 
     @property
@@ -2422,7 +2422,7 @@ class Probe:
             f"the restore test was asked {stand.asked[-1]}, not for the snapshot just made",
         )
         expect(stand.plan().settled, "the step is planned again right after it finished")
-        expect(stand.plan().lines == [], "a settled realm still says something")
+        expect(stand.plan().action is reconcile.RealmAction.NOTHING, "a settled realm plans work")
         asked = len(stand.asked)
         expect(stand.apply() == reconcile.StepResult(), "a settled realm's step did something")
         expect(stand.asked == stand.asked[:asked], "a settled realm's step called hal")
@@ -2441,7 +2441,7 @@ class Probe:
             ),
         )
         plan = stand.plan()
-        expect("keycloak/realm.yaml changed" in plan.line, f"the plan says {plan.line!r}")
+        expect("keycloak/realm.yaml changed" in plan.why, f"the plan says {plan.why!r}")
         console_made = self.make_console_objects()
         applied = stand.apply()
         expect(applied.failure is None, f"the changed realm step failed: {applied.failure}")
@@ -2459,7 +2459,7 @@ class Probe:
             self.admin.get(f"/{REALM}")["accessTokenLifespan"] == CHANGED_ACCESS_TOKEN_LIFESPAN,
             "the realm does not hold the changed lifespan",
         )
-        expect(stand.plan().settled and stand.plan().lines == [], "the next plan is not quiet")
+        expect(stand.plan().action is reconcile.RealmAction.NOTHING, "the next plan is not quiet")
         self.held(
             "12b",
             "a changed realm.yaml is applied after a Keycloak-only backup and "
@@ -2478,9 +2478,7 @@ class Probe:
             {**realm, "attributes": {**realm["attributes"], checksum: "restored"}},
         )
         plan = stand.plan()
-        expect(
-            "import checksum is not the recorded one" in plan.line, f"the plan says {plan.line!r}"
-        )
+        expect("import checksum is not the recorded one" in plan.why, f"the plan says {plan.why!r}")
         expect(stand.apply().failure is None, "the step after a restored database failed")
         expect(stand.plan().settled, "the checksum was not recorded again")
         self.held(
@@ -2540,7 +2538,7 @@ class Probe:
         original = entrypoint.read_text()
         entrypoint.write_text(original + "# changed\n")
         plan = stand.plan()
-        expect("keycloak/entrypoint.sh changed" in plan.line, f"the plan says {plan.line!r}")
+        expect("keycloak/entrypoint.sh changed" in plan.why, f"the plan says {plan.why!r}")
         entrypoint.write_text(original)
         expect(stand.plan().settled, "the plan is not quiet with the entrypoint as it was")
         self.held(

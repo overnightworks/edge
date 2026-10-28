@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from edge_backup_support import declare_shipped_apps, declare_two_apps, no_restore_server_left
@@ -174,11 +175,62 @@ def test_a_good_backup_prints_a_row_per_app_the_repository_row_and_the_verdict(
     first, second = (snapshot["id"][:8] for snapshot in machine.snapshots[-2:])
     assert (outcome.exit_code, outcome.err) == (0, "")
     assert outcome.out.splitlines() == [
-        f"  ✓ songmaker       backed up      {first}",
-        f"  ✓ radio           backed up      {second}",
-        "  ✓ repository      pruned         checked",
+        f"  ✓ songmaker       backed up      {first} · 4.2 MiB · <1s",
+        f"  ✓ radio           backed up      {second} · 4.2 MiB · <1s",
+        "  ✓ repository      pruned         checked · <1s",
         "✓ backup done · 2 apps · <1s",
     ]
+
+
+def test_the_backed_up_row_shows_the_source_size_and_the_apps_span_including_readiness(
+    edge_backup, machine, home
+):
+    machine.source_bytes = 2_254_857_830
+    machine.backup_seconds = 100
+    machine.absent_polls = 3
+    machine.clock.wall_drift_per_sleep = timedelta(hours=-1)
+
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio")
+
+    snapshot = machine.snapshots[-1]["id"][:8]
+    assert outcome.out.splitlines()[0] == (
+        f"  ✓ radio           backed up      {snapshot} · 2.1 GiB · 2m25s"
+    )
+
+
+def test_a_backup_row_counts_only_its_own_apps_time(edge_backup, machine, home):
+    machine.backup_seconds = 65
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    rows = outcome.out.splitlines()
+    assert rows[0].endswith(" · 1m05s")
+    assert rows[1].endswith(" · 1m05s")
+    assert rows[2] == "  ✓ repository      pruned         checked · <1s"
+
+
+@pytest.mark.parametrize(
+    "machine_settings",
+    [
+        {"prints_backup_summary": False},
+        {"summary_without": {"total_bytes_processed"}},
+        {"source_bytes": True},
+        {"source_bytes": -1},
+    ],
+    ids=["no summary", "no size", "boolean size", "negative size"],
+)
+def test_an_unreadable_backup_summary_fails_the_app_as_not_backed_up(
+    edge_backup, machine, home, machine_settings
+):
+    for name, value in machine_settings.items():
+        setattr(machine, name, value)
+
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio")
+
+    assert outcome.exit_code == 3
+    assert outcome.out.splitlines()[0] == (
+        "  ✗ radio           not backed up  backup: restic backup summary is unreadable"
+    )
 
 
 def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_repository_is_not_pruned(
@@ -191,12 +243,12 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     rows = outcome.out.splitlines()
     assert outcome.exit_code == 3
     assert rows == [
-        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
+        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]} · 4.2 MiB · <1s",
         "  ✗ keycloak        not backed up  no database container after 10 min",
         "  · repository      not pruned     a backup failed",
     ]
     assert outcome.err.splitlines() == [
-        "error: 1 of 2 apps not backed up",
+        "error: 1 of 2 apps not backed up · keycloak has no good backup recorded",
         "next: hal backup keycloak",
     ]
     assert "restic forget" not in machine.labels()
@@ -209,9 +261,60 @@ def test_a_single_failed_app_is_named_on_the_error_line(edge_backup, machine):
 
     assert outcome.exit_code == 3
     assert outcome.err.splitlines() == [
-        "error: keycloak not backed up",
+        "error: keycloak not backed up · no good backup recorded",
         "next: hal backup keycloak",
     ]
+
+
+def _fail_keycloak_after_a_good_run(edge_backup, machine, *arguments):
+    edge_backup(*declare_shipped_apps(), "backup")
+    machine.other_db_containers["edge"] = []
+    return edge_backup(*declare_shipped_apps(), "backup", *arguments)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error_line"),
+    [
+        (
+            (),
+            "error: 1 of 2 apps not backed up · keycloak's last good backup 18.10. 05:00",
+        ),
+        (
+            ("keycloak",),
+            "error: keycloak not backed up · last good backup 18.10. 05:00",
+        ),
+    ],
+    ids=["several apps", "one app"],
+)
+def test_the_error_line_names_the_failed_apps_last_good_backup_in_local_time(
+    edge_backup, machine, berlin_time, arguments, error_line
+):
+    outcome = _fail_keycloak_after_a_good_run(edge_backup, machine, *arguments)
+
+    assert outcome.exit_code == 3
+    assert outcome.err.splitlines()[0] == error_line
+
+
+def test_the_error_line_shows_the_year_of_a_last_good_backup_from_another_year(
+    edge_backup, machine, berlin_time
+):
+    edge_backup(*declare_shipped_apps(), "backup")
+    machine.clock.moment = datetime(2027, 1, 5, 9, 0, tzinfo=UTC)
+    machine.other_db_containers["edge"] = []
+
+    outcome = edge_backup(*declare_shipped_apps(), "backup", "keycloak")
+
+    assert outcome.err.splitlines()[0] == (
+        "error: keycloak not backed up · last good backup 18.10.2026 05:00"
+    )
+
+
+def test_the_pruned_row_shows_the_span_of_forget_and_check(edge_backup, machine, home):
+    machine.maintenance_seconds = 20
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    assert outcome.out.splitlines()[2] == "  ✓ repository      pruned         checked · 1m00s"
 
 
 def test_pre_apply_json_names_the_failed_apps_reason_on_the_error_line_and_prints_no_row(

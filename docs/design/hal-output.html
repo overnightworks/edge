@@ -468,7 +468,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
     <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit steht seit S2f im Urteil, nach den Zahlen und vor dem Hinweis (ganze Sekunden, abgerundet; <code>&lt;1s</code>, <code>1m05s</code>, <code>1h02m</code>); die Fakten der übrigen Zeilen (S2d) kommen in einem späteren Schritt; die <code>timers</code>-Zeile trägt ihren Fakt seit S2c (<code>3 timers · systemd reloaded</code>, nur bei <code>changed</code>), die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste gibt es nicht mehr.</p>
+  <p class="s2note"><b>Bis S3a bleibt Ansibles eigene Ausgabe da.</b> Zwischen den Zeilen von <code>system</code> erscheinen weiter Ansibles Rohtext und seine <code>BECOME password:</code>-Abfrage (das Passwort-Bild oben ist erst S3a). Die Laufzeit steht seit S2f im Urteil, nach den Zahlen und vor dem Hinweis (ganze Sekunden, abgerundet; <code>&lt;1s</code>, <code>1m05s</code>, <code>1h02m</code>); die <code>backed up</code>-Zeile von <code>hal backup</code> trägt seit S7d-1 Quellgröße und Zeit des Programms (<code>4f2a91c0 · 2.1 GiB · 3m12s</code>); die Fakten der übrigen Zeilen (S2d) kommen in einem späteren Schritt; die <code>timers</code>-Zeile trägt ihren Fakt seit S2c (<code>3 timers · systemd reloaded</code>, nur bei <code>changed</code>), die geladenen <code>ExecStart</code>- und <code>Result</code>-Zeilen der Dienste gibt es nicht mehr.</p>
   <div class="pair">
     <div class="stack">
       <figure>
@@ -639,7 +639,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-check"><span class="tag new">neu für H5m5</span> <code>hal check</code>: der tägliche Check, eine Zeile je Bereich</h2>
     <p class="sub">Gesegnet 27.10.2026, eingefroren mit H5m5. Ein bloßes <code>hal check</code> ist der tägliche Check (ab H5m6); der Timer ruft dasselbe um 09:00. Eine Zeile je Bereich, in der Reihenfolge der Mail. Der lange Bericht steht weiter in der Datei, die das Popup öffnet. Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> fünf Bereiche statt sechs, die Zeile <code>exposure</code> kommt mit H5m7; der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt.</p>
+  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt.</p>
   <p class="s2note"><b>Zeichen:</b> <code>✓</code> alles gut, <code>!</code> du musst etwas tun, <code>·</code> nur ein Hinweis, <code>✗</code> der Bereich konnte nicht prüfen. Hat ein Bereich mehrere Funde, steht der erste da und <code>+N more</code>; alle stehen im Bericht. <code>next:</code> nennt den Schritt des ersten Handlungsbedarfs.</p>
   <div class="pair">
     <div class="stack">
@@ -651,7 +651,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="g">  ✓</span> secrets         ok
 <span class="g">  ✓</span> server logs     ok
-<span class="w">✓ all well</span> <span class="d">· 5 areas checked</span></pre>
+<span class="g">  ✓</span> exposure        ok
+<span class="w">✓ all well</span> <span class="d">· 6 areas checked</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu</span> ein Handlungsbedarf und ein Hinweis, neu seit gestern</figcaption>
@@ -661,6 +662,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="d">  · secrets         1 note         Credentials for hopin are still missing</span>
 <span class="g">  ✓</span> server logs     ok
+<span class="g">  ✓</span> exposure        ok
 <span class="y">! 1 action, 1 note</span> <span class="d">· mail sent · report ~/.local/state/hal/check-report.md</span>
 <span class="c">next:</span> hal backup</pre>
       </figure>
@@ -683,7 +685,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="g">  ✓</span> commit hook     ok
 <span class="g">  ✓</span> secrets         ok
 <span class="g">  ✓</span> server logs     ok
-<span class="rw">error:</span> 1 of 5 areas could not check · mail sent
+<span class="g">  ✓</span> exposure        ok
+<span class="rw">error:</span> 1 of 6 areas could not check · mail sent
 <span class="c">next:</span> hal check</pre>
       </figure>
     </div>
@@ -739,11 +742,11 @@ edge apply: nothing published</pre>
 <span class="b">  ~</span> agent-egress    recreate       <span class="d">definition changed</span>
 <span class="b">  ~</span> traefik-mcp     recreate       <span class="d">definition changed</span>
 <span class="hd">units</span>
+<span class="b">  ~</span> agent-service   recreate       <span class="d">image edge-agent-service:0.7.0-2.1.302 → edge-agent-service:0.8.0-2.1.302 · in-flight requests end</span>
 <span class="b">  ~</span> legal           recreate       <span class="d">definition changed</span>
-<span class="b">  ~</span> agent-service   recreate       <span class="d">image 0.7.0-2.1.302 → 0.8.0-2.1.302 · in-flight requests end</span>
 <span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
-<span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
-<span class="y">  !</span> keycloak        realm skipped  <span class="d">does not answer</span>
+<span class="y">  !</span> keycloak        old image      <span class="d">quay.io/keycloak/keycloak:26.8.1@79c6… · compose.yaml @a78d…</span>
+<span class="y">  !</span> keycloak        realm skipped  <span class="d">the realm observer failed (…)</span>
 <span class="hd">apps</span>
 <span class="b">  ~</span> hopin           update         <span class="d">v2026.10.26.1 → v2026.10.27.1</span>
 <span class="hd">cloudflare</span>
@@ -769,7 +772,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
         <figcaption><span class="tag new">neu</span> der häufigste Fall: nichts zu tun</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
 <span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
-<span class="y">  !</span> keycloak        old image      <span class="d">26.8.1 @79c6… · compose.yaml @a78d…</span>
+<span class="y">  !</span> keycloak        old image      <span class="d">quay.io/keycloak/keycloak:26.8.1@79c6… · compose.yaml @a78d…</span>
 <span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
       </figure>
     </div>
@@ -779,9 +782,9 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Nach Kategorie gruppiert, darin in der Reihenfolge, in der hal arbeitet:</b> erst die Rechtsseiten, dann core, die Einheiten mit dem Realm, die Apps, zuletzt Cloudflare. So steht das Ergebnis Zeile für Zeile wie der Plan. Die Plan-Zeichen <code>+ ~ -</code> kennst du von tofu.</li>
     <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes.</li>
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
-    <li><b>Rechtsseiten:</b> Zahl und Namen; die zwölf neuen Abschnitte zeigt <code>-v</code>.</li>
+    <li><b>Rechtsseiten:</b> eine Zeile je Art; die Abschnitte geänderter Seiten stehen eingerückt darunter, die einer neuen zeigt <code>-v</code>.</li>
     <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>.</li>
-    <li><b>Welche Gruppen schon Zeilen sind:</b> die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>); der Rest des Plans steht noch als Text davor, bis seine Gruppe umgestellt ist.</li>
+    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) und die Rechtsseiten (<code>+ ~</code>, ohne Überschrift, über <code>core</code>); der Rest des Plans steht noch als Text davor, bis seine Gruppe umgestellt ist.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
   </ul>
 </section>
@@ -892,7 +895,7 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
 <span class="g">  ✓</span> keycloak        restore proven <span class="d">9b07e1d2 · realm rows present · 31s</span>
 <span class="g">  ✓</span> repository      checked        <span class="d">10 % of the data read · 6m02s</span>
 <span class="w">✓ restore test done</span> <span class="d">· 2 apps · 9m13s</span></pre>
-      <p class="was">heute: bei Erfolg keine Zeile, nur Exit 0</p>
+      <p class="was">Angepasst an den Lauf: die Zeile des Repositorys zeigt die Zeit von forget bis check (<code>checked · 1m05s</code>); die behaltenen Snapshots folgen mit S7d-3</p>
     </figure>
     <figure>
       <figcaption><span class="tag fail">neu, kaputt</span> eine App fällt aus, die andere läuft weiter</figcaption>
@@ -902,13 +905,15 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
 <span class="d">  · repository      not pruned     a backup failed</span>
 <span class="rw">error:</span> 1 of 2 apps not backed up · songmaker's last good backup 25.10. 03:04
 <span class="c">next:</span> hal backup songmaker</pre>
-      <p class="was">heute: <code>error: hal backup: fehlgeschlagen: nach 10 Minuten nicht bereit: die Datenbank von songmaker ist nicht bereit</code></p>
+      <p class="was">Angepasst an den Lauf: die Fehlerzeile nennt die letzte gute Sicherung der ersten gescheiterten App aus der Statusdatei, in Ortszeit, mit Jahr ab einem anderen Jahr; ohne Eintrag <code>songmaker has no good backup recorded</code>, bei einer App ohne den Namen noch einmal</p>
     </figure>
     <figure>
       <figcaption><span class="tag new">neu</span> <code>hal check exposure</code>: heute 272 Zeilen für einen Prozess</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal check exposure</span>
-<span class="y">  !</span> python3         listens        <span class="d">272 UDP ports beyond loopback · pid 93017</span>
-<span class="y">! 1 finding</span> <span class="d">· 272 listeners · --json lists each</span></pre>
+<span class="y">  !</span> python3         listens        <span class="d">272 UDP ports beyond loopback</span>
+<span class="y">  !</span> blog            routing name   <span class="d">Blog.App is not a valid name</span>
+<span class="y">! 2 findings</span> <span class="d">· 272 ports · --json lists each</span>
+<span class="d">(clean: </span><span class="g">✓ nothing reaches beyond loopback</span><span class="d">)</span></pre>
       <p class="was">heute: 272 mal <code>listener-beyond-loopback  python3  udp  *  32985</code>, je ein Port</p>
     </figure>
     <figure>

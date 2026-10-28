@@ -13,6 +13,7 @@ from edge import switches
 from hal_output import Glyph, Row, write_error, write_row
 
 COMMAND = "hal stop"
+NOTHING_CHANGED = "nothing changed"
 LOCK_NOT_TAKEN = "lock not taken, a start in progress may reopen it"
 APPLY_WOULD_START_IT = "hal apply would start it again"
 
@@ -35,8 +36,10 @@ _GLYPH_OF_EVENT = {
 
 
 class Interruption(StrEnum):
-    """The sites of the close sequence that a Ctrl-C ends."""
+    """The sites of the stop that a Ctrl-C ends."""
 
+    PLANNING = "planning"
+    RECORDING = "recording"
     WAITING = "waiting"
     LOCKING = "locking"
     RAISING_THE_BARRIER = "raising the barrier"
@@ -148,3 +151,8 @@ def report_cannot_plan(key: str, planning: CannotPlan, recorded: bool) -> None:
     if recorded:
         _write(key, SwitchEvent.PARTIAL, "switch recorded · nothing stopped")
     write_error(f"cannot plan, {planning.cause}", f"{COMMAND} {key}")
+
+
+def report_interrupted_early(key: str, step: Interruption, cause: str = NOTHING_CHANGED) -> None:
+    """A Ctrl-C before any marker of this run stands, or one that could not be read: no row."""
+    write_error(f"interrupted while {step} · {cause}", f"{COMMAND} {key}")

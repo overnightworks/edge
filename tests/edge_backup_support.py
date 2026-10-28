@@ -115,6 +115,15 @@ class Machine:
     clock: "Clock" = field(default_factory=lambda: Clock())
     absent_polls: int = 0
     """How many `docker ps` polls find no database container before it appears."""
+    source_bytes: int = 4_404_019
+    """What restic's backup summary reports as `total_bytes_processed`."""
+    backup_seconds: float = 0
+    """How long restic's backup takes on the machine clock."""
+    maintenance_seconds: float = 0
+    """How long restic's forget and check each take on the machine clock."""
+    prints_backup_summary: bool = True
+    summary_without: set[str] = field(default_factory=set)
+    """Fields restic's backup summary lacks."""
     hanging: set[str] = field(default_factory=set)
     """Labels of probes that never answer; only a timeout ends them."""
     leftover_servers: list[str] = field(default_factory=list)
@@ -205,8 +214,8 @@ class Machine:
             "psql": self._psql,
             SERVER_REMOVAL_LABEL: self._silent,
             "restic init": self._silent,
-            "restic forget": self._silent,
-            "restic check": self._silent,
+            "restic forget": self._maintenance,
+            "restic check": self._maintenance,
             "restic unlock": self._silent,
         }
         if label not in answers:
@@ -358,8 +367,15 @@ class Machine:
             }
         )
         status = {"message_type": "status", "percent_done": 1}
-        summary = {"message_type": "summary", "snapshot_id": snapshot_id}
-        return f"{json.dumps(status)}\n{json.dumps(summary)}\n".encode()
+        self.clock.sleep(self.backup_seconds)
+        summary = {
+            "message_type": "summary",
+            "snapshot_id": snapshot_id,
+            "total_bytes_processed": self.source_bytes,
+        }
+        summary = {key: value for key, value in summary.items() if key not in self.summary_without}
+        lines = [status, *([summary] if self.prints_backup_summary else [])]
+        return "".join(f"{json.dumps(line)}\n" for line in lines).encode()
 
     def _kept_by_folder(self, argv, app: str) -> dict[str, dict[str, bytes]]:
         """The volumes restic is told to keep beside `db/`, without what `--exclude` leaves out."""
@@ -415,6 +431,10 @@ class Machine:
         return b""
 
     def _silent(self, argv, **_) -> bytes:
+        return b""
+
+    def _maintenance(self, argv, **_) -> bytes:
+        self.clock.sleep(self.maintenance_seconds)
         return b""
 
     def _start_server(self, argv, **_) -> bytes:

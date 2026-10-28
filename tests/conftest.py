@@ -4,7 +4,8 @@ import json
 import os
 import shutil
 import socket
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,15 @@ def home(tmp_path, monkeypatch) -> Path:
     password.write_text(CANARY_PASSWORD)
     password.chmod(0o600)
     return tmp_path
+
+
+@pytest.fixture
+def berlin_time(monkeypatch) -> Iterator[None]:
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture

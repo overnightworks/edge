@@ -11,7 +11,7 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from enum import StrEnum
+from enum import Enum, StrEnum
 from hashlib import sha256
 from pathlib import Path
 
@@ -43,28 +43,39 @@ SERVICE_ANCHORS = {"keycloak": "anmeldung", "agent-service": "agent-dienst"}
 _BUILT_MODE = 0o644  # nginx-unprivileged must read the page whatever the umask
 
 
+class PageChange(Enum):
+    NEW = "no built page"
+    CHANGED = "the built page differs"
+    UNRECORDED = "the page matches, its record is missing, unreadable or stale"
+
+
+class Change(StrEnum):
+    NEW = "new"
+    CHANGED = "changed"
+    LEFT = "left"
+
+
+@dataclass(frozen=True)
+class BlockChange:
+    """A block of a page, or its frame (no anchor), as the new build changes it."""
+
+    path: str
+    change: Change
+    anchor: str = ""
+
+
 @dataclass(frozen=True)
 class LegalPlan:
     repository: Path
     record: Path  # what the last write was made of, in the apply state
     pages: Mapping[str, str]  # empty while the step does not run
-    changed: Mapping[str, str]  # the pages to write: "new", "changes" or NO_RECORD
-    changed_blocks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # lines by page
+    changed: Mapping[str, PageChange]  # the pages to write
+    changed_blocks: Mapping[str, tuple[BlockChange, ...]] = field(default_factory=dict)  # by page
     fingerprints: Mapping[str, PageFingerprint] = field(default_factory=dict)
 
     @property
     def changes_nothing(self) -> bool:
         return not self.changed
-
-    def describe(self) -> list[str]:
-        if not self.pages:
-            return []
-        if not self.changed:
-            return ["legal: unchanged"]
-        return [
-            f"legal: {page} {change}{_named(self.changed_blocks.get(page, ()))}"
-            for page, change in self.changed.items()
-        ]
 
     def write(self, progress: Progress) -> str | None:
         """Write the changed pages; the failure line, or None. The progress names this step only
@@ -73,7 +84,7 @@ class LegalPlan:
         failed = ""
         try:
             for page, change in self.changed.items():
-                if change != NO_RECORD:
+                if change is not PageChange.UNRECORDED:
                     failed = f"{BUILT_DIRECTORY}/{page}.html"
                     _replace(self.repository / BUILT_DIRECTORY, page, self.pages[page])
             if self.changed:
@@ -102,14 +113,15 @@ def plan_legal(
     frame = read_frame(repository)
     pages = build_pages(frame, all_blocks)
     fingerprints = fingerprint_pages(frame, all_blocks, pages)
-    changed: dict[str, str] = {}
-    named: dict[str, tuple[str, ...]] = {}
+    changed: dict[str, PageChange] = {}
+    named: dict[str, tuple[BlockChange, ...]] = {}
     for page, text in pages.items():
         built = _read_built(repository, page)
         previous = None if built is None else read_recorded_page(record, built, page)
         if change := _change(built, previous, text):
             changed[page] = change
-            named[page] = block_changes(page, previous, fingerprints[page])
+            if change is PageChange.CHANGED:
+                named[page] = block_changes(page, previous, fingerprints[page])
     return LegalPlan(repository, record, pages, changed, named, fingerprints)
 
 
@@ -118,10 +130,6 @@ def _read_built(repository: Path, page: str) -> bytes | None:
         return (repository / BUILT_DIRECTORY / f"{page}.html").read_bytes()
     except FileNotFoundError:
         return None
-
-
-def _named(lines: tuple[str, ...]) -> str:
-    return f": {', '.join(lines)}" if lines else ""
 
 
 def read_frame(repository: Path) -> Frame:
@@ -220,12 +228,12 @@ def _commit_date(git: checkout.Git, relative: str) -> date:
         raise LegalError(f"{relative}: has no commit") from error
 
 
-def _change(built: bytes | None, previous: PageFingerprint | None, text: str) -> str | None:
+def _change(built: bytes | None, previous: PageFingerprint | None, text: str) -> PageChange | None:
     if built is None:
-        return "new"
+        return PageChange.NEW
     if built != text.encode():
-        return "changes"
-    return NO_RECORD if previous is None else None
+        return PageChange.CHANGED
+    return PageChange.UNRECORDED if previous is None else None
 
 
 def _replace(directory: Path, page: str, text: str) -> None:
@@ -246,14 +254,7 @@ def _replace(directory: Path, page: str, text: str) -> None:
 # was made from; a missing, unreadable or stale entry makes every block of the page new, and the
 # plan then writes the record even when the page bytes already match.
 RECORD_FILE = "legal-built.json"
-NO_RECORD = "has no usable record"
 _RECORD_MODE = 0o600
-
-
-class Change(StrEnum):
-    NEW = "new"
-    CHANGED = "changed"
-    LEFT = "left"
 
 
 def read_recorded_page(record: Path, built_text: bytes, page: str) -> PageFingerprint | None:
@@ -287,23 +288,25 @@ def write_record(target: Path, fingerprints: Mapping[str, PageFingerprint]) -> N
 
 def block_changes(
     page: str, previous: PageFingerprint | None, current: PageFingerprint
-) -> tuple[str, ...]:
-    """The lines naming what the new build changes on the page against what was written."""
+) -> tuple[BlockChange, ...]:
+    """What the new build changes on the page against what was written."""
     if previous is None:
-        return tuple(_change_line(block, Change.NEW) for block in current.blocks)
+        return tuple(_block_change(block, Change.NEW) for block in current.blocks)
     before = {(block.path, block.anchor): block for block in previous.blocks}
     after = {(block.path, block.anchor): block for block in current.blocks}
-    lines = []
+    changes = []
     if previous.frame_sha256 != current.frame_sha256:
-        lines.append(f"{frame_page_path(page)} {Change.CHANGED}")
+        changes.append(BlockChange(frame_page_path(page), Change.CHANGED))
     for key, block in after.items():
         if key not in before:
-            lines.append(_change_line(block, Change.NEW))
+            changes.append(_block_change(block, Change.NEW))
         elif before[key] != block:
-            lines.append(_change_line(block, Change.CHANGED))
-    lines += (_change_line(block, Change.LEFT) for key, block in before.items() if key not in after)
-    return tuple(lines)
+            changes.append(_block_change(block, Change.CHANGED))
+    changes += (
+        _block_change(block, Change.LEFT) for key, block in before.items() if key not in after
+    )
+    return tuple(changes)
 
 
-def _change_line(block: BlockFingerprint, change: Change) -> str:
-    return f"{block.path}#{block.anchor} {change}"
+def _block_change(block: BlockFingerprint, change: Change) -> BlockChange:
+    return BlockChange(block.path, change, block.anchor)
