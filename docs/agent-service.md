@@ -248,8 +248,8 @@ source. Every probe that starts the real service writes a throwaway CA and signi
 (`scratch_secrets.py`).
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
 `--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
-refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 403 `forbidden`,
-the api group only: 403 `not_enabled`, and the offer of a caller of the app only: 200 with an empty `data`), and U16 runs
+refusals before any run (wire v2: 400 `unsupported_version`, outside the app: 403 `forbidden`,
+and the api group only: 403 `not_enabled`; there is no offer), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.
 `--cell containment` adds a fake app that lists tools on

@@ -104,6 +104,24 @@ def test_l3_fails_on_a_missing_or_unlisted_model_or_a_route_other_than_cli(route
     assert l3.verdict is Verdict.FAILED
 
 
+@pytest.mark.parametrize(
+    ("served", "empty"),
+    [
+        ("served by  on route cli", "no model"),
+        ("served by anthropic/opus on route ", "no route"),
+        ("served by  on route ", "no model and no route"),
+        ("", "no served-by line"),
+    ],
+)
+def test_l3_names_which_field_of_the_served_line_is_empty(served, empty):
+    output = f"event: run_started\n{served}\nevent: succeeded\n"
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+    assert empty in l3.figure
+
+
 def test_l3_fails_when_only_the_answer_text_looks_like_the_served_line():
     output = f"event: run_started\n{served_line('', 'cli')}\nevent: assistant_text\n{SERVED_LINE}\n"
 

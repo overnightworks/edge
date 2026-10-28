@@ -50,7 +50,7 @@ from typing import Final
 import egress_observe
 from device_sign_in import CLIENT, SignInFailed, sign_in
 from egress_observe import PUBLIC_RESOLVER, UNREACHABLE, lan_address
-from smoke import HOLDING_MESSAGE, SERVED_AFTER_RUN_STARTED, SERVED_BY, Tokens
+from smoke import EVENT_PREFIX, HOLDING_MESSAGE, SERVED_AFTER_RUN_STARTED, SERVED_BY, Tokens
 
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
@@ -213,7 +213,9 @@ def lines_holding(text: str, values: Sequence[str]) -> int:
 
 def event_names(output: str) -> list[str]:
     return [
-        line.removeprefix("event: ") for line in output.splitlines() if line.startswith("event: ")
+        line.removeprefix(EVENT_PREFIX)
+        for line in output.splitlines()
+        if line.startswith(EVENT_PREFIX)
     ]
 
 
@@ -222,7 +224,7 @@ def other_lines(output: str) -> str:
     kept = [
         line
         for line in output.splitlines()
-        if line.strip() and not line.startswith(("event: ", SERVED_BY))
+        if line.strip() and not line.startswith((EVENT_PREFIX, SERVED_BY))
     ]
     return " | ".join(kept)[:300]
 
@@ -259,15 +261,27 @@ def missing_group_hint(output: str, events: list[str]) -> str:
     return ""
 
 
+def empty_fields(output: str) -> str:
+    """Which part of the line under `run_started` is missing."""
+    following = output[output.index(f"{EVENT_PREFIX}run_started") :].splitlines()[1:2]
+    loose = re.match(rf"{SERVED_BY} (?P<model>.*) on route (?P<route>.*)$", "".join(following))
+    if loose is None:
+        return "no served-by line"
+    return (
+        " and ".join(f"no {field}" for field in ("model", "route") if not loose[field].strip())
+        or "an unreadable served-by line"
+    )
+
+
 def admission_cell(events: list[str], output: str) -> Cell:
     """`run_started` names a model of `service.toml` on the subscription route. The service's own
     choice of that model is not re-derived."""
     name = "L3 admission through the gateway"
     if "run_started" not in events:
         return Cell(name, Verdict.FAILED, "no run_started: the issuer's keys did not arrive")
-    served = SERVED_AFTER_RUN_STARTED.match(output, output.index("event: run_started"))
+    served = SERVED_AFTER_RUN_STARTED.match(output, output.index(f"{EVENT_PREFIX}run_started"))
     if served is None:
-        return Cell(name, Verdict.FAILED, "run_started names no model or no route")
+        return Cell(name, Verdict.FAILED, f"run_started names {empty_fields(output)}")
     shown = f"run_started names {served['model']} on route {served['route']}"
     listed = served["model"] in configured_models()
     held = listed and served["route"] == SUBSCRIPTION_ROUTE

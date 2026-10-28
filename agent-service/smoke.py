@@ -32,9 +32,10 @@ from typing import IO, NoReturn
 
 PROTOCOL_VERSION = 3
 AGENT = "chat"
+EVENT_PREFIX = "event: "
 SERVED_BY = "served by"
 SERVED_AFTER_RUN_STARTED = re.compile(
-    rf"^event: run_started\n{SERVED_BY} (?P<model>\S+) on route (?P<route>\S+)$",
+    rf"^{EVENT_PREFIX}run_started\n{SERVED_BY} (?P<model>\S+) on route (?P<route>\S+)$",
     re.MULTILINE,
 )
 ROLES = ["admin", "user"]
@@ -184,7 +185,7 @@ class Smoke:
         last = ""
         for frame in frames(response):
             last = frame.event
-            self.say(f"event: {frame.event}")
+            self.say(f"{EVENT_PREFIX}{frame.event}")
             self.say_text(frame)
             if cancel and frame.event == "run_started":
                 self.say(f"{HOLDING_MESSAGE} {CANCEL_HOLD_SECONDS:g} s")
