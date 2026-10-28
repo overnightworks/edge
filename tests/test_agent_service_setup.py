@@ -233,18 +233,16 @@ def test_the_check_says_the_image_is_not_built(make_setup, home, docker, termina
     docker.images.clear()
 
     assert make_setup().check() == 1
-    assert (
-        terminal.said[-1]
-        == f"agent-service/setup --check: not set up: the image {IMAGE} is not built"
-    )
+    assert terminal.said[-1] == f"the image {IMAGE} is not built"
 
 
 def test_the_check_cannot_tell_when_docker_does_not_answer(make_setup, docker, terminal):
     docker.answers = False
 
     assert make_setup().check() == 2
-    assert "cannot tell" in terminal.said[-1]
-    assert "Cannot connect to the Docker daemon" in terminal.said[-1]
+    assert terminal.said[-1] == (
+        "`docker compose config` exited 1: Cannot connect to the Docker daemon"
+    )
 
 
 def test_a_missing_login_directory_is_not_set_up_and_the_check_changes_nothing(
@@ -575,7 +573,7 @@ def test_a_host_that_cannot_be_read_makes_the_check_cannot_tell_not_not_set_up(
     monkeypatch.setattr(os, failing, fail_on_the_login_folder)
 
     assert make_setup().check() == 2
-    assert "cannot tell" in terminal.said[-1]
+    assert terminal.said[-1] == "Input/output error"
 
 
 def test_a_renewal_holds_a_lock_on_the_login_folder_from_cleanup_to_rename(
