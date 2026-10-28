@@ -1,6 +1,6 @@
 """`fleet.yaml`, the service catalog: the one owner of reading it and of its typed schemas.
 
-`edge apply` reads the entries that have a `run` block and no `repo`: the units of this
+`hal apply` reads the entries that have a `run` block and no `repo`: the units of this
 repository. A unit's key is a compose profile (docs/naming.md). An entry with `repo` and `run` is
 an app: its key is its repository's name under `github.org`, its compose project and its checkout
 `~/srv/<key>`; `apps()` reads them. Entries without `run` are no units and no apps, and `units()`

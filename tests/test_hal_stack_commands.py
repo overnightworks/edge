@@ -1,6 +1,6 @@
 """`hal apply`, `stop`, `start`, `offline` and `online` (#208): the stack's switches behind hal's
 door. Acting cells run in process through `hal.cli.main` on the fakes of the edge tests (scripted
-Compose, fake systemctl, the world of `edge apply`); cells that act on nothing run as the console
+Compose, fake systemctl, the world of `hal apply`); cells that act on nothing run as the console
 script does (`run_hal`) under an empty HOME.
 
 Nothing here may reach the real `systemctl`, `docker`, `sudo` or `pkcheck`: a directory of failing
@@ -142,7 +142,7 @@ def hal(at_terminal, capsys, monkeypatch, system_commands):  # noqa: F811
 
 @pytest.fixture
 def applying(world) -> World:  # noqa: F811
-    """The world of `edge apply`: scripted local part, fake publish, one terminal."""
+    """The world of `hal apply`: scripted local part, fake publish, one terminal."""
     return world
 
 

@@ -23,8 +23,8 @@ after the unit lines and keeps running: its image is never swapped here, and the
 nothing (#91). A unit that would be switched on, or is enabled and
 already runs, and is not set up is asked about separately; on `yes` its own setup command runs in
 the operator's terminal (key material is made there, never here) and `--check` must then pass
-before a fresh plan is shown. A unit with an emergency switch (`edge stop`) or a barrier a stop
-left is never started and its switch is never cleared here: only `edge start` ends it. If it is
+before a fresh plan is shown. A unit with an emergency switch (`hal stop`) or a barrier a stop
+left is never started and its switch is never cleared here: only `hal start` ends it. If it is
 enabled in the catalog, declares a setup, and its containers still run while it is not set up,
 the run is refused: nothing is asked or published.
 An app (an entry with `repo`) is planned last, in the same plan and under the same `yes`: its
@@ -40,8 +40,8 @@ to `appkit-<version>/` in `legal/assets/` and in both Keycloak themes; a missing
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
 (#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
 the live compose project to that tree (#79, exit 2); `apply.lock` in the state directory, held
-non-blocking for the whole run, so a second apply is refused (exit 1) while `edge stop` and
-`edge start` never wait for it; HEAD on `main` (exit 2); a clean tree, every changed path named
+non-blocking for the whole run, so a second apply is refused (exit 1) while `hal stop` and
+`hal start` never wait for it; HEAD on `main` (exit 2); a clean tree, every changed path named
 (exit 2), since a change reaches the live checkout through a pull request; and its `.env`, which
 is written when missing and otherwise named and left alone when it differs (exit 2, #136).
 

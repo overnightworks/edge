@@ -1,4 +1,4 @@
-"""The two settings `compose.yaml` reads from `.env`, written once by `edge apply --closed` (#136).
+"""The two settings `compose.yaml` reads from `.env`, written once by `hal apply --local` (#136).
 
 `EDGE_DOMAIN` is `fleet.yaml`'s `cloudflare.zone` and `DOCKER_GID` the gid of the `docker` group;
 neither is a secret. A missing `.env` is written atomically and never over a file that appears

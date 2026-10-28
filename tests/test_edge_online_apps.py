@@ -1,4 +1,4 @@
-"""`edge start --all` over the barrier of an app (#255 P5, D8), against a fake systemctl."""
+"""`hal online` over the barrier of an app (#255 P5, D8), against a fake systemctl."""
 
 from collections.abc import Callable
 

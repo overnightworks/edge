@@ -1,4 +1,4 @@
-"""`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
+"""`hal apply --local`, `hal stop` and `hal start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
 import dataclasses
@@ -596,7 +596,7 @@ def switch(
     repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
     scripted_git, monkeypatch, realm_backup,
 ):  # fmt: skip
-    """Run `edge apply --closed` from the live checkout (or `tree`); `yes` at a terminal."""
+    """Run `hal apply --local` from the live checkout (or `tree`); `yes` at a terminal."""
 
     def run(
         answer: str = "yes",
@@ -639,7 +639,7 @@ def switch(
 
 @pytest.fixture
 def stop(repository, scripted, capsys, state, ingress):
-    """Run `edge stop <unit>` with no terminal: the path an agent takes."""
+    """Run `hal stop <unit>` with no terminal: the path an agent takes."""
 
     def run(unit: str = "step-ca", marks: switches.Switches | None = None) -> tuple[int, str, str]:
         exit_code = emergency.stop_unit(
@@ -658,7 +658,7 @@ def stop(repository, scripted, capsys, state, ingress):
 
 @pytest.fixture
 def start(repository, scripted, at_terminal, capsys, state, ingress, setup_check):
-    """Run `edge start <unit>`; the operator types `yes` unless told otherwise."""
+    """Run `hal start <unit>`; the operator types `yes` unless told otherwise."""
 
     def run(
         answer: str = "yes", unit: str = "step-ca", while_prompt_waits=None
@@ -1631,7 +1631,7 @@ def assert_closed(descriptor: int) -> None:
 
 
 def test_a_stop_never_waits_for_a_running_apply(switch, stop, state, ingress):
-    """#95 rule 4, P7 and G10: `edge stop S` and `edge stop --all` complete while an apply holds
+    """#95 rule 4, P7 and G10: `hal stop S` and `hal offline` complete while an apply holds
     the lock at its prompt."""
     stopped: list[int] = []
 
@@ -1955,7 +1955,7 @@ def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
         catalog.units(document, profiles, REPOSITORY)
 
 
-# --- the emergency switch (#60): marker, edge stop, edge start, apply's precedence ---------------
+# --- the emergency switch (#60): marker, hal stop, hal start, apply's precedence ---------------
 
 
 def put_unit_in(situation: str, scripted, repository, state) -> None:
@@ -2168,7 +2168,7 @@ def test_start_with_any_answer_but_yes_aborts_and_keeps_the_switch(start, script
 
 @pytest.mark.usefixtures("agent_service_unit")
 def test_a_start_of_an_agent_service_that_restarts_is_partial_and_never_on(start, scripted, state):
-    """P15, #214: `edge start` decides through the watch, not one look: a login the upstream
+    """P15, #214: `hal start` decides through the watch, not one look: a login the upstream
     refuses makes the container restart, and the unit stays switched off."""
     switch_off(state, unit="agent-service")
     scripted.crash_loops = {"agent-service"}
@@ -2196,7 +2196,7 @@ def test_a_start_that_fails_or_is_not_observed_keeps_the_switch(start, scripted,
 
 
 def test_start_keeps_the_running_db_container_whose_image_changed(start, scripted, state):
-    """#75 rule 1, cell 3: `edge start` starts the exited app and leaves the running db as is."""
+    """#75 rule 1, cell 3: `hal start` starts the exited app and leaves the running db as is."""
     switch_off(state)
     scripted.put_containers(APP_EXITED)
     scripted.change_definition("step-ca")
@@ -2211,7 +2211,7 @@ def test_start_keeps_the_running_db_container_whose_image_changed(start, scripte
 
 
 def test_start_of_a_disabled_unit_is_refused_and_keeps_its_switch(start, repository, state):
-    """#60 rule 3 from E: a re-enabled unit stays closed until `edge start`."""
+    """#60 rule 3 from E: a re-enabled unit stays closed until `hal start`."""
     write_fleet(repository, DISABLED)
     switch_off(state)
 
@@ -2654,7 +2654,7 @@ def test_start_removes_the_barrier_after_the_up_is_observed_and_before_the_marke
 def test_a_start_that_leaves_the_barrier_answering_keeps_the_marker(
     probe_unit, start, scripted, ingress, state
 ):
-    """#61 rule 4: exit 1, partial; a second `edge start` finishes the job."""
+    """#61 rule 4: exit 1, partial; a second `hal start` finishes the job."""
     put_probe_in_b(scripted, state, ingress)
     ingress.fetch = lambda *_: NOT_FOUND  # the host still answers the barrier's 404
 
@@ -4247,7 +4247,7 @@ def test_a_unit_service_whose_definition_names_no_image_is_not_compared(
 
 
 def test_a_stop_still_closes_a_unit_whose_ps_line_names_no_image(stop, scripted, state):
-    """#91 rule 3: compose's parsing stays lenient, so `edge stop` never fails on it."""
+    """#91 rule 3: compose's parsing stays lenient, so `hal stop` never fails on it."""
     scripted.put_containers(STEP_CA_ON)
     scripted.images["step-ca"] = None
 

@@ -536,7 +536,7 @@ def test_a_switched_off_unit_with_a_routed_host_has_its_barrier_proven(checkout,
 def test_a_switched_off_unit_with_a_disabled_apex_has_the_apex_barrier_proven_again(
     checkout, marks
 ):
-    """#325 B8: `edge apply --closed` re-proves through here; a disabled unit counts."""
+    """#325 B8: `hal apply --local` re-proves through here; a disabled unit counts."""
     marks.record("probe", NOW)
     asked = []
 

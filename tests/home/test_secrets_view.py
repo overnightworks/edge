@@ -652,7 +652,7 @@ def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
 
 
 def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_with_its_place_and_rights() -> None:
-    """#36 rule 1 / rule 2: the five edge external entries come first, each with its place, and every token names its rights."""
+    """#36 rule 1 / rule 2: the five publish-phase entries come first, each with its place, and every token names its rights."""
     manifest = load_manifest(PACKAGED_MANIFEST)
 
     first = manifest[: len(EDGE_EXTERNAL_ENTRIES)]

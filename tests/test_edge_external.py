@@ -1,4 +1,5 @@
-"""`edge external`: tokens only in the child, an allowlisted environment, the pinned tofu."""
+"""The publish phase of `hal apply`: tokens only in the child, an allowlisted environment, the
+pinned tofu."""
 
 import errno
 import fcntl
@@ -1655,7 +1656,7 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
     assert (exit_code, finding["problem"]) == (1, "answer-wrong")
 
 
-# #156: `edge external apply` ends on the host check.
+# #156: the publish phase of `hal apply` ends on the host check.
 REAL_CHECK_COMMAND = external_cli.check_command
 INTERRUPTED_CHECK = 130
 RUN_MANUALLY = "run hal check hosts"

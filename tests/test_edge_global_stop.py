@@ -1,4 +1,4 @@
-"""`edge stop --all` and `edge start --all` against a fake systemctl: no systemd, no tunnel, and a
+"""`hal offline` and `hal online` against a fake systemctl: no systemd, no tunnel, and a
 `tmp_path` HOME so that no test touches the real switches."""
 
 import subprocess
@@ -151,7 +151,7 @@ def start_all(marks, systemd, repository, ingress, at_terminal, capsys):  # noqa
 
 
 def switch_off_probe(marks: switches.Switches, ingress: Ingress, repository: Path) -> None:
-    """Unit `probe` switched off the way `edge stop probe` leaves it: marker and barrier file."""
+    """Unit `probe` switched off the way `hal stop probe` leaves it: marker and barrier file."""
     switch_off(marks.directory, unit="probe")
     config = ScriptedCompose().config
     unit = catalog.Unit("probe", enabled=True, setup=None)
@@ -173,7 +173,7 @@ def hosts_asked(ingress: Ingress, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return asked
 
 
-# --- edge stop --all -----------------------------------------------------------------------
+# --- hal offline -----------------------------------------------------------------------
 
 
 def test_stop_all_records_the_switch_stops_the_tunnel_and_says_so(stop_all, marks, systemd):
@@ -417,7 +417,7 @@ def test_an_unrelated_drop_in_does_not_certify_the_reboot_protection(stop_all, s
     assert "incomplete: a reboot would reopen the tunnel" in output
 
 
-# --- edge start --all ----------------------------------------------------------------------
+# --- hal online ----------------------------------------------------------------------
 
 
 @pytest.fixture
