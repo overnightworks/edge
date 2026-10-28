@@ -129,7 +129,7 @@ def test_pre_apply_backup_tags_the_snapshot_prints_its_id_and_thins_only_pre_app
     outcome = edge_backup(*declare_two_apps(home), "backup", "radio", "--pre-apply")
 
     assert outcome.exit_code == 0, outcome.err
-    assert outcome.out.splitlines()[0].endswith(f"backed up      {machine.snapshots[-1]['id'][:8]}")
+    assert machine.snapshots[-1]["id"][:8] in outcome.out.splitlines()[0]
     backup = machine.argv_of("restic backup")
     assert backup[backup.index("--tag") + 1] == "radio,pre-apply"
     forget = machine.argv_of("restic forget")

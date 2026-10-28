@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from datetime import timedelta
 
 import pytest
 from edge_backup_support import declare_shipped_apps, declare_two_apps, no_restore_server_left
@@ -174,11 +175,57 @@ def test_a_good_backup_prints_a_row_per_app_the_repository_row_and_the_verdict(
     first, second = (snapshot["id"][:8] for snapshot in machine.snapshots[-2:])
     assert (outcome.exit_code, outcome.err) == (0, "")
     assert outcome.out.splitlines() == [
-        f"  ✓ songmaker       backed up      {first}",
-        f"  ✓ radio           backed up      {second}",
+        f"  ✓ songmaker       backed up      {first} · 4.2 MiB · <1s",
+        f"  ✓ radio           backed up      {second} · 4.2 MiB · <1s",
         "  ✓ repository      pruned         checked",
         "✓ backup done · 2 apps · <1s",
     ]
+
+
+def test_the_backed_up_row_shows_the_source_size_and_the_apps_span_including_readiness(
+    edge_backup, machine, home
+):
+    machine.source_bytes = 2_254_857_830
+    machine.backup_seconds = 100
+    machine.absent_polls = 3
+    machine.clock.wall_drift_per_sleep = timedelta(hours=-1)
+
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio")
+
+    snapshot = machine.snapshots[-1]["id"][:8]
+    assert outcome.out.splitlines()[0] == (
+        f"  ✓ radio           backed up      {snapshot} · 2.1 GiB · 2m25s"
+    )
+
+
+def test_a_backup_row_counts_only_its_own_apps_time(edge_backup, machine, home):
+    machine.backup_seconds = 65
+
+    outcome = edge_backup(*declare_two_apps(home), "backup")
+
+    rows = outcome.out.splitlines()
+    assert rows[0].endswith(" · 1m05s")
+    assert rows[1].endswith(" · 1m05s")
+    assert rows[2] == "  ✓ repository      pruned         checked"
+
+
+@pytest.mark.parametrize(
+    "machine_settings",
+    [{"prints_backup_summary": False}, {"summary_without": {"total_bytes_processed"}}],
+    ids=["no summary", "no size"],
+)
+def test_an_unreadable_backup_summary_fails_the_app_as_not_backed_up(
+    edge_backup, machine, home, machine_settings
+):
+    for name, value in machine_settings.items():
+        setattr(machine, name, value)
+
+    outcome = edge_backup(*declare_two_apps(home), "backup", "radio")
+
+    assert outcome.exit_code == 3
+    assert outcome.out.splitlines()[0] == (
+        "  ✗ radio           not backed up  backup: restic backup summary is unreadable"
+    )
 
 
 def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_repository_is_not_pruned(
@@ -191,7 +238,7 @@ def test_a_failed_app_has_its_row_while_the_others_are_backed_up_and_the_reposit
     rows = outcome.out.splitlines()
     assert outcome.exit_code == 3
     assert rows == [
-        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]}",
+        f"  ✓ songmaker       backed up      {machine.snapshots[-1]['id'][:8]} · 4.2 MiB · <1s",
         "  ✗ keycloak        not backed up  no database container after 10 min",
         "  · repository      not pruned     a backup failed",
     ]

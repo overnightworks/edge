@@ -246,8 +246,8 @@ path or file name.
   freshness per app: `last_successful_backup` no older than about 8 days,
   `last_successful_restore_test` no older than about 5 weeks.
 
-`hal backup` prints a row per app (`✓ <app>  backed up  <snapshot>` or `✗ <app>  not backed up  <reason>`;
-a failed app does not stop the others), a `repository` row (`pruned` after forget and check, `not pruned`
+`hal backup` prints a row per app (`✓ <app>  backed up  <snapshot> · <size> · <time>` or `✗ <app>  not backed up  <reason>`;
+a failed app does not stop the others; the size is restic's `total_bytes_processed`, the source size, and the time is the app's whole span from readiness to the status write; a backup summary without the id or the size fails the app), a `repository` row (`pruned` after forget and check, `not pruned`
 when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
 `hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`

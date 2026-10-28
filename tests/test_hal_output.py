@@ -16,6 +16,7 @@ from hal_output import (
     Tone,
     Verdict,
     counted,
+    format_bytes,
     format_duration,
     write_detail,
     write_error,
@@ -92,6 +93,25 @@ def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(
     """#500: under a second `<1s`, from 60 s `XmYYs`, from one hour `XhYYm`."""
 
     assert format_duration(seconds) == shown
+
+
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [
+        (0, "0 B"),
+        (999, "999 B"),
+        (1024, "1.0 KiB"),
+        (1536, "1.5 KiB"),
+        (1048575, "1.0 MiB"),
+        (4404019, "4.2 MiB"),
+        (int(9.96 * 1024**2), "10 MiB"),
+        (60 * 1024**2, "60 MiB"),
+        (2254857830, "2.1 GiB"),
+        (3 * 1024**4, "3.0 TiB"),
+    ],
+)
+def test_a_size_is_binary_units_rounded_with_one_decimal_below_ten(size: int, shown: str) -> None:
+    assert format_bytes(size) == shown
 
 
 def test_the_run_time_stands_after_the_counts_and_before_the_hint(

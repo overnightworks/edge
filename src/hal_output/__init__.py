@@ -138,6 +138,25 @@ def format_duration(seconds: float) -> str:
     return f"{whole // SECONDS_PER_HOUR}h{minutes:02d}m"
 
 
+BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB")
+BYTES_PER_UNIT = 1024
+DECIMALS_BELOW = 10
+
+
+def format_bytes(size: int) -> str:
+    """Binary units, nearest rounding, the unit chosen after rounding: `999 B`, `1.0 KiB`,
+    `4.2 MiB`, `60 MiB`; one decimal below 10 of a unit, none from 10."""
+    value, unit = float(size), 0
+    while round(value, 1) >= BYTES_PER_UNIT and unit < len(BYTE_UNITS) - 1:
+        value /= BYTES_PER_UNIT
+        unit += 1
+    if unit == 0:
+        return f"{size} B"
+    if round(value, 1) < DECIMALS_BELOW:
+        return f"{value:.1f} {BYTE_UNITS[unit]}"
+    return f"{round(value)} {BYTE_UNITS[unit]}"
+
+
 def printable(text: str) -> str:
     """`text` with every character a terminal would act on escaped (a newline as `\\n`, ESC as
     `\\x1b`), so text from outside, a path or a command's line, stays one line of plain text."""
