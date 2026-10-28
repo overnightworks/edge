@@ -1,7 +1,6 @@
 """`hal stop <unit>` (#513): one row, the barrier and the stop as it observed them, and hal's exits.
 Cells run in process through `hal.cli.main` on the fixtures of `test_hal_stack_commands`."""
 
-import dataclasses
 import functools
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,7 +46,7 @@ from test_hal_stack_commands import (
     systemd,  # noqa: F401 the fixture, used by `fakes`
 )
 
-from edge import catalog, emergency, switch_events, switches
+from edge import barrier, catalog, emergency, switch_events, switches
 from edge import cli as stack
 from edge.switch_events import SwitchEvent
 from hal.grammar import ExitCode
@@ -398,15 +397,8 @@ def interrupt_the_record(monkeypatch: pytest.MonkeyPatch, *, after_the_publish: 
     monkeypatch.setattr(switches.Switches, "record", interrupted_record)
 
 
-def interrupt_planning_of_a_target(monkeypatch: pytest.MonkeyPatch, *, at: str) -> None:
-    target_of = emergency._target_of
-
-    def interrupted(*arguments):
-        if at == "target":
-            raise KeyboardInterrupt
-        return dataclasses.replace(target_of(*arguments), running=ctrl_c)
-
-    monkeypatch.setattr(emergency, "_target_of", interrupted)
+def interrupt_the_barrier_of(monkeypatch: pytest.MonkeyPatch, constructor: str) -> None:
+    monkeypatch.setattr(barrier.Barrier, constructor, ctrl_c)
 
 
 def assert_nothing_changed(result: Result, key: str, step: str = PLANNING) -> None:
@@ -441,7 +433,6 @@ def test_stop_interrupted_reading_the_catalog_of_an_enabled_app_changes_nothing(
     monkeypatch,
 ):
     """Cell 1: the interrupt comes before any record is attempted."""
-    stops_the_app(monkeypatch, app_world)
     interrupt_in(monkeypatch, catalog, "is_enabled_app")
 
     assert_nothing_changed(hal("stop", KEY), KEY)
@@ -455,7 +446,6 @@ def test_stop_interrupted_before_the_record_is_published_leaves_no_marker_and_no
     monkeypatch,
 ):
     """Cell 2"""
-    stops_the_app(monkeypatch, app_world)
     interrupt_in(monkeypatch, switches, "_link_unless_present")
 
     assert_nothing_changed(hal("stop", KEY), KEY)
@@ -469,7 +459,6 @@ def test_stop_interrupted_after_the_record_is_published_says_the_switch_is_recor
     monkeypatch,
 ):
     """Cell 3: the record raised, yet it is the marker that is read, not the return value."""
-    stops_the_app(monkeypatch, app_world)
     interrupt_after_the_publish(monkeypatch)
 
     assert_recorded(hal("stop", KEY), KEY, PLANNING)
@@ -488,7 +477,6 @@ def test_stop_of_a_running_app_interrupted_in_compose_config_says_the_switch_is_
     deployed(app_world)
     if marked:
         switches.Switches(app_world.state).record(KEY, datetime(2026, 10, 1, tzinfo=UTC))
-    stops_the_app(monkeypatch, app_world)
     fakes.scripted.verb_config = ctrl_c
 
     monkeypatch.setenv("NO_COLOR", "1")  # deployed left a terminal as stdout
@@ -507,11 +495,19 @@ def test_stop_of_a_unit_interrupted_in_compose_config_changes_nothing_and_reads_
     fakes.unit_in(situation)
     fakes.scripted.verb_config = ctrl_c
     reads: list[str] = []
-    monkeypatch.setattr(switches.Switches, "mark", lambda _self, unit: reads.append(unit))
+    mark = switches.Switches.mark
+
+    def spy(self, unit):
+        reads.append(unit)
+        return mark(self, unit)
+
+    before = fakes.marker()
+    monkeypatch.setattr(switches.Switches, "mark", spy)
 
     assert_nothing_changed(hal("stop", UNIT), UNIT)
     assert reads == []
-    assert fakes.marker() == (None if situation == "A" else marker(fakes.state))
+    assert fakes.marker() == before
+    assert (before is None) == (situation == "A")
 
 
 def test_stop_of_a_disabled_app_interrupted_in_compose_config_changes_nothing(
@@ -525,7 +521,6 @@ def test_stop_of_a_disabled_app_interrupted_in_compose_config_changes_nothing(
         app_world.repository,
         f"cloudflare:\n  zone: {ZONE}\n" + FLEET.replace("enabled: true", "enabled: false"),
     )
-    stops_the_app(monkeypatch, app_world)
     fakes.scripted.verb_config = ctrl_c
 
     assert_nothing_changed(hal("stop", KEY), KEY)
@@ -538,7 +533,7 @@ def test_stop_of_an_unknown_key_interrupted_reading_the_apps_names_the_key_as_ty
     monkeypatch,
 ):
     """Cell 8"""
-    interrupt_in(monkeypatch, emergency, "_apps_of")
+    interrupt_in(monkeypatch, catalog, "apps")
 
     assert_nothing_changed(hal("stop", "no-such-unit"), "no-such-unit")
 
@@ -547,7 +542,7 @@ def test_edge_stop_interrupted_while_planning_ends_with_exit_1_and_no_traceback(
     fakes,  # noqa: F811
     capsys,
 ):
-    """Cell 20 under `edge stop`: the stack's own exit, `ApplyExit.REFUSED`."""
+    """Cell 20 under the stack's own entry: its exit, `ApplyExit.REFUSED`."""
     fakes.unit_in("A")
     fakes.scripted.verb_config = ctrl_c
 
@@ -568,41 +563,68 @@ def test_stop_of_a_key_that_is_a_path_builds_no_path_and_reads_no_marker(
     key = f"../{switches.GLOBAL_STOP_FILE}"
     fakes.scripted.verb_config = ctrl_c
     reads: list[str] = []
-    monkeypatch.setattr(switches.Switches, "mark", lambda _self, unit: reads.append(unit))
+    mark = switches.Switches.mark
+
+    def spy(self, unit):
+        reads.append(unit)
+        return mark(self, unit)
+
+    monkeypatch.setattr(switches.Switches, "mark", spy)
 
     assert_nothing_changed(hal("stop", key), key)
     assert reads == []
 
 
-@pytest.mark.parametrize("at", ["target", "running"])
-@pytest.mark.parametrize(
-    ("situation", "recorded"),
-    [("app", True), ("A", False), ("B", False)],
-    ids=["enabled app", "unit", "unit with a marker"],
-)
-def test_stop_interrupted_while_planning_the_target_or_looking_for_containers(
+def test_stop_of_an_enabled_app_interrupted_while_planning_its_target_says_the_switch_is_recorded(
     hal,  # noqa: F811
     fakes,  # noqa: F811
-    request,
+    app_world,  # noqa: F811
     monkeypatch,
-    at,
-    situation,
-    recorded,
 ):
-    """Cells 9-13"""
-    key = KEY if situation == "app" else UNIT
-    if situation == "app":
-        stops_the_app(monkeypatch, request.getfixturevalue("app_world"))
-    else:
-        fakes.unit_in(situation)
-    interrupt_planning_of_a_target(monkeypatch, at=at)
+    """Cell 9: the interrupt comes while the barrier of the app is built."""
+    interrupt_the_barrier_of(monkeypatch, "of_app")
 
-    result = hal("stop", key)
+    assert_recorded(hal("stop", KEY), KEY, PLANNING)
 
-    if recorded:
-        assert_recorded(result, key, PLANNING)
-    else:
-        assert_nothing_changed(result, key)
+
+def test_stop_of_an_enabled_app_interrupted_looking_for_containers_says_the_switch_is_recorded(
+    hal,  # noqa: F811
+    fakes,  # noqa: F811
+    app_world,  # noqa: F811
+    monkeypatch,
+):
+    """Cell 10: the app's own `ps` is the look for containers."""
+    stops_the_app(monkeypatch, app_world)
+    app_world.docker.interrupted_verb = "ps"
+
+    assert_recorded(hal("stop", KEY), KEY, PLANNING)
+
+
+@pytest.mark.parametrize("situation", ["A", "B"], ids=["unit", "unit with a marker"])
+def test_stop_of_a_unit_interrupted_while_planning_its_target_changes_nothing(
+    hal,  # noqa: F811
+    fakes,  # noqa: F811
+    monkeypatch,
+    situation,
+):
+    """Cells 11-12"""
+    fakes.unit_in(situation)
+    interrupt_the_barrier_of(monkeypatch, "of_unit")
+
+    assert_nothing_changed(hal("stop", UNIT), UNIT)
+
+
+@pytest.mark.parametrize("situation", ["A", "B"], ids=["unit", "unit with a marker"])
+def test_stop_of_a_unit_interrupted_looking_for_containers_changes_nothing(
+    hal,  # noqa: F811
+    fakes,  # noqa: F811
+    situation,
+):
+    """Cell 13: the first `ps` of a stop is the look for containers."""
+    fakes.unit_in(situation)
+    fakes.scripted.verb_ps = ctrl_c
+
+    assert_nothing_changed(hal("stop", UNIT), UNIT)
 
 
 @pytest.mark.parametrize(
@@ -640,7 +662,6 @@ def test_stop_interrupted_planning_an_app_whose_marker_cannot_be_read_gives_the_
 ):
     """Cell 17: a record that failed is still an attempted one, and never `nothing changed`."""
     (app_world.state / switches.STOPPED_DIRECTORY / KEY).mkdir(parents=True)
-    stops_the_app(monkeypatch, app_world)
     fakes.scripted.verb_config = ctrl_c
 
     result = hal("stop", KEY)

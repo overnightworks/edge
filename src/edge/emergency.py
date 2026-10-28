@@ -212,7 +212,7 @@ def _report_early_interrupt(
     marker of an earlier stop is never reported as this run's and no path is built from a key the
     catalog did not resolve."""
     if not attempted:
-        switch_events.report_interrupted_early(key, Interruption.PLANNING)
+        switch_events.report_interrupted_early(key, step)
         return ApplyExit.REFUSED
     try:
         mark = marks.mark(key)

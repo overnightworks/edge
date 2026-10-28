@@ -286,7 +286,7 @@ def test_the_table_names_every_member_of_the_stack_enum():
     assert set(stack_commands.EXIT_OF_STACK) == set(apply.ApplyExit)
 
 
-def test_a_ctrl_c_the_stack_does_not_catch_ends_with_130_and_no_traceback(hal, monkeypatch, capsys):
+def test_a_ctrl_c_the_stack_does_not_catch_ends_with_130_and_no_traceback(hal, monkeypatch):
     """D4: the door's 130, with nothing printed."""
     monkeypatch.setattr(stack, "stop_unit", ctrl_c)
 
