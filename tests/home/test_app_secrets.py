@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import getpass
-import io
 import re
 import stat
-import sys
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -17,6 +15,7 @@ from test_secrets_setup import FakeDisk, FakeTerminal
 from test_secrets_view import findings_of
 from test_setup import run_hal_setup
 
+from terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
@@ -722,11 +721,6 @@ def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_re
     assert "unexpected error" not in error
 
 
-class TerminalOutput(io.StringIO):
-    def isatty(self) -> bool:
-        return True
-
-
 def test_on_a_terminal_the_walk_shows_an_opened_page_dim_and_short(
     turn_home: Sandbox, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -757,10 +751,7 @@ def test_on_a_terminal_the_walk_shows_a_page_nobody_opened_yellow_and_whole(
 def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, browser_opens: bool) -> list[str]:
     """The setup walk of the GitHub token and both TURN values with stdout on a terminal, nothing pasted."""
     (sandbox.home / ".secrets/github/fleet-read").unlink()
-    monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setenv("TERM", "xterm-256color")
-    stdout = TerminalOutput()
-    monkeypatch.setattr(sys, "stdout", stdout)
+    stdout = put_stdout_on_a_terminal(monkeypatch)
     boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeDisk().sync)
 
     main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
